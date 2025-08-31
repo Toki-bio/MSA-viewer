@@ -1,0 +1,16 @@
+Scale bar & block number at top of each block
+➤ Show position range (e.g., 1–80) and block number above each block for easy navigation.
+Add consensus sequence line
+➤ Display a dynamically generated consensus row (e.g., using IUPAC codes) below the sequences in each block.
+Support MSF format input
+➤ Parse .msf (GCG Multiple Sequence Format) in addition to FASTA.
+Make menu more compact
+➤ Reduce vertical space in controls; stack elements efficiently to maximize sequence viewing area.
+Enable conservation level edits in fullscreen mode
+➤ Allow sliders (Black/Dark/Light thresholds) to remain accessible and functional when menu is minimized or in fullscreen view.
+Set "Shade By: All Sites" as default
+➤ Change default shading mode to include gaps in denominator (more accurate for low-coverage regions).
+Highlight exact feature (e.g., click-to-highlight sequence region)
+➤ Allow clicking a sequence to highlight a column or region (e.g., residue 50–70) across all sequences.
+Realign selected sequences within current block
+➤ Add option to realign only selected sequences in the current block (not full alignment), preserving local structure.
