@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Qwen MSA Viewer</title>
+  <style>
+    :root {
+      --nameLen: 20;
+    }
+
+    body {
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      margin: 0;
+      padding: 0;
+      background: white;
+      color: black;
+    }
+
+    #dropZone {
+      border: 2px dashed #1a2129;
+      border-radius: 4px;
+      padding: 8px;
+      text-align: center;
+      color: #555;
+      font-size: 13px;
+      background: #f0f8ff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+    }
+
+    #dropZone:hover {
+      border-color: #004c99;
+      background: #e0f0ff;
+    }
+
+    #controls {
+      position: sticky;
+      top: 0;
+      background: white;
+      padding: 6px 8px;
+      border-bottom: 1px solid #ddd;
+      z-index: 100;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 6px;
+      font-size: 13px;
+    }
+
+    .menu-section {
+      margin-bottom: 4px;
+    }
+
+    .section-header {
+      font-size: 14px;
+      margin: 4px 0;
+      color: #2c3e50;
+      font-weight: bold;
+    }
+
+    .control-group {
+      display: block;
+      margin: 2px 0;
+    }
+
+    .slider-container {
+      margin: 2px 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 22px;
+      line-height: 22px;
+    }
+
+    .display-slider-row {
+      min-width: 340px;
+      display: grid;
+      grid-template-columns: 70px 130px 45px auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .slider-label {
+      width: 70px;
+      display: inline-block;
+      text-align: right;
+      font-weight: normal;
+    }
+
+    .slider-container input[type="range"] {
+      width: 130px;
+      height: 22px;
+    }
+
+    .slider-container input[type="number"] {
+      width: 38px;
+      height: 22px;
+      padding: 0;
+      text-align: center;
+    }
+
+    .slider-container span {
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    /* Color sliders */
+    #blackSlider::-webkit-slider-thumb {
+      background: white; border: 2px solid black; height: 18px; width: 18px; border-radius: 0; cursor: pointer;
+    }
+    #darkSlider::-webkit-slider-thumb {
+      background: white; border: 2px solid #555; height: 18px; width: 18px; border-radius: 0; cursor: pointer;
+    }
+    #lightSlider::-webkit-slider-thumb {
+      background: black; border: 2px solid #ccc; height: 18px; width: 18px; border-radius: 0; cursor: pointer;
+    }
+
+    #blackSlider::-webkit-slider-runnable-track { background: #000; }
+    #darkSlider::-webkit-slider-runnable-track { background: #555; }
+    #lightSlider::-webkit-slider-runnable-track { background: #ccc; }
+
+    #blackSlider::-moz-range-thumb { background: white; border: 2px solid black; }
+    #darkSlider::-moz-range-thumb { background: white; border: 2px solid #555; }
+    #lightSlider::-moz-range-thumb { background: black; border: 2px solid #ccc; }
+
+    #blackSlider::-moz-range-track { background: #000; }
+    #darkSlider::-moz-range-track { background: #555; }
+    #lightSlider::-moz-range-track { background: #ccc; }
+
+    /* Shading Mode */
+    .shade-mode-label {
+      font-size: 12px;
+    }
+
+    /* Block spacing */
+    .block-block {
+      margin-bottom: 8px;
+    }
+
+    .block-sep {
+      font-weight: bold;
+      color: #666;
+      text-align: center;
+      margin: 4px 0;
+      padding: 2px 0;
+      background: #f0f0f0;
+      border-radius: 3px;
+    }
+
+    #alignmentContainer {
+      margin-top: 8px;
+      /* Remove fixed max-height, use flex to expand */
+      flex: 1;
+      overflow-x: auto;
+      overflow-y: auto;
+      background: white;
+      font-family: 'Courier New', monospace;
+      line-height: 1.0;
+      white-space: pre;
+      border: 1px solid #ddd;
+      font-size: 13px;
+      transition: font-size 0.1s;
+    }
+
+    /* Make the container flex to fill space */
+    body, html {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #controls {
+      flex-shrink: 0;
+    }
+
+    #alignmentContainer {
+      flex: 1;
+      min-height: 0; /* Allows flex to work with overflow */
+    }
+
+    .seq-line {
+      display: flex;
+      font-family: 'Courier New', monospace;
+      line-height: 1.0;
+      margin: 0;
+      padding: 0;
+      white-space: nowrap;
+    }
+
+    .seq-name {
+      flex: 0 0 auto;
+      min-width: calc(var(--nameLen) * 0.8em);
+      width: calc(var(--nameLen) * 0.8em);
+      max-width: calc(var(--nameLen) * 0.8em);
+      text-align: left;
+      padding: 0 4px 0 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: bold;
+      color: #333;
+      background: white;
+    }
+
+    .seq-data {
+      flex: 1;
+      display: inline-block;
+      white-space: nowrap;
+      margin: 0;
+      padding: 0;
+      line-height: 1.0;
+    }
+
+    /* GeneDoc-inspired coloring */
+    .black { background-color: #000 !important; color: white; }
+    .dark  { background-color: #555; color: white; }
+    .light { background-color: #ccc; color: black; }
+    .gap   { background-color: white !important; color: #888 !important; }
+    .other { background-color: white; color: black; }
+    .ambiguous { color: #0000AA; font-weight: bold; }
+    .artifact { 
+      color: red !important; 
+      background-color: #ffe6e6 !important; 
+      font-weight: bold !important; 
+    }
+    .selected {
+      background-color: #ffebcd !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <h2 style="grid-column: 1/-1; text-align: center; margin: 2px 0; font-size: 16px;">Qwen MSA Viewer</h2>
+
+    <div class="menu-section" style="grid-column: 1/-1; display: flex; gap: 6px; align-items: start;">
+      <div id="dropZone" style="flex: 0 0 180px; padding: 6px;">📁 Drop FASTA</div>
+      <textarea id="fastaInput" placeholder=">seq1&#10;ATGCGGCTA..." style="flex: 1; height: 60px; font-size: 12px; padding: 4px;"></textarea>
+      <button onclick="parseAndRender()" style="height: 60px; font-size: 13px;">Load</button>
+    </div>
+
+    <div class="menu-section">
+      <div class="section-header">Colors</div>
+      <div class="control-group">
+        <div class="slider-container">
+          <span class="slider-label">Black ≥</span>
+          <input type="range" id="blackSlider" min="50" max="100" value="90" oninput="updateLabel('blackVal', this.value); validateThresholds(); debounceRender()">
+          <input type="number" id="blackInput" min="50" max="100" value="90" oninput="document.getElementById('blackSlider').value = this.value; updateLabel('blackVal', this.value); validateThresholds(); debounceRender()">
+          <span id="blackVal">90</span>%
+        </div>
+        <div class="slider-container">
+          <span class="slider-label">Dark ≥</span>
+          <input type="range" id="darkSlider" min="30" max="90" value="70" oninput="updateLabel('darkVal', this.value); validateThresholds(); debounceRender()">
+          <input type="number" id="darkInput" min="30" max="90" value="70" oninput="document.getElementById('darkSlider').value = this.value; updateLabel('darkVal', this.value); validateThresholds(); debounceRender()">
+          <span id="darkVal">70</span>%
+        </div>
+        <div class="slider-container">
+          <span class="slider-label">Light ≥</span>
+          <input type="range" id="lightSlider" min="10" max="80" value="50" oninput="updateLabel('lightVal', this.value); validateThresholds(); debounceRender()">
+          <input type="number" id="lightInput" min="10" max="80" value="50" oninput="document.getElementById('lightSlider').value = this.value; updateLabel('lightVal', this.value); validateThresholds(); debounceRender()">
+          <span id="lightVal">50</span>%
+        </div>
+        <div class="slider-container">
+          <span class="slider-label">Shade By</span>
+          <label class="shade-mode-label">
+            <input type="radio" name="shadeMode" value="nongap" checked onchange="onShadeModeChange()"> Non-Gap
+          </label>
+          <label class="shade-mode-label">
+            <input type="radio" name="shadeMode" value="all" onchange="onShadeModeChange()"> All
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="section-header">Display</div>
+      <div class="control-group">
+        <div class="slider-container display-slider-row">
+          <span class="slider-label">Name Len</span>
+          <input type="range" id="nameLengthSlider" min="5" max="100" value="20" oninput="updateLabel('nameLengthVal', this.value); document.getElementById('nameLengthInput').value = this.value; debounceRender()">
+          <input type="number" id="nameLengthInput" min="5" max="100" value="20" oninput="document.getElementById('nameLengthSlider').value = this.value; updateLabel('nameLengthVal', this.value); debounceRender()">
+          <span id="nameLengthVal">20</span>
+        </div>
+        <div class="slider-container display-slider-row">
+          <span class="slider-label">Zoom</span>
+          <input type="range" id="zoomSlider" min="50" max="200" value="100" oninput="setZoom(this.value)">
+          <input type="number" id="zoomInput" min="50" max="200" value="100" oninput="document.getElementById('zoomSlider').value = this.value; setZoom(this.value)">
+          <span><span id="zoomVal">100</span>%</span>
+        </div>
+        <div class="slider-container display-slider-row" id="blockSizeContainer">
+          <span class="slider-label">Block Size</span>
+          <input type="range" id="blockSizeSlider" min="40" max="200" value="80" oninput="updateLabel('blockSizeVal', this.value); debounceRender()">
+          <input type="number" id="blockSizeInput" min="40" max="200" value="80" oninput="document.getElementById('blockSizeSlider').value = this.value; updateLabel('blockSizeVal', this.value); debounceRender()">
+          <span id="blockSizeVal">80</span>
+        </div>
+        <div class="slider-container">
+          <input type="radio" id="modeSingle" name="mode" value="single" onchange="toggleBlockSize(); debounceRender()">
+          <label for="modeSingle">Full</label>
+          <input type="radio" id="modeBlocks" name="mode" value="blocks" onchange="toggleBlockSize(); debounceRender()" checked>
+          <label for="modeBlocks">Block</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="menu-section" style="grid-column: 1/-1;">
+      <div class="section-header">Actions</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px;">
+        <button onclick="reverseComplementSelected()" style="padding: 2px 6px;">RevComp</button>
+        <button onclick="realignSelected()" style="padding: 2px 6px;">Realign</button>
+        <button onclick="savePreset()" style="padding: 2px 6px;">Save Preset</button>
+        <button onclick="loadPreset()" style="padding: 2px 6px;">Load Preset</button>
+        <button id="minimizeBtn" onclick="minimizeMenu()" style="padding: 2px 6px;">Minimize</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Minimize bar -->
+  <div id="minimizeBar" onclick="expandMenu()"></div>
+
+  <div id="alignmentContainer">Alignment will appear here</div>
+
+  <script>
+    let seqs = [];
+    let selectedRows = new Set();
+    let lastSelectedIndex = null;
+
+    // Hide minimize bar on load
+    document.getElementById('minimizeBar').style.display = 'none';
+
+    // Drag & Drop
+    const dropZone = document.getElementById('dropZone');
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = '#004c99';
+    });
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.style.borderColor = '#1a2129';
+    });
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = '#1a2129';
+      const file = e.dataTransfer.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        document.getElementById('fastaInput').value = e.target.result;
+        parseAndRender();
+      };
+      reader.readAsText(file);
+    });
+
+    function updateLabel(id, value) {
+      document.getElementById(id).textContent = value;
+    }
+
+    function parseFasta(text) {
+      const lines = text.trim().split(/\r?\n/);
+      const seqs = [];
+      let seq = '', header = '';
+      for (let line of lines) {
+        if (line.startsWith('>')) {
+          if (seq) {
+            const cleanHeader = header.replace('>', '').trim();
+            const displayHeader = cleanHeader.split(' ')[0] || '';
+            seqs.push({
+              header: displayHeader,
+              fullHeader: cleanHeader,
+              seq: seq.toUpperCase()
+            });
+          }
+          header = line;
+          seq = '';
+        } else {
+          seq += line.trim();
+        }
+      }
+      if (seq) {
+        const cleanHeader = header.replace('>', '').trim();
+        const displayHeader = cleanHeader.split(' ')[0] || '';
+        seqs.push({
+          header: displayHeader,
+          fullHeader: cleanHeader,
+          seq: seq.toUpperCase()
+        });
+      }
+      return seqs;
+    }
+
+    function renderAlignment() {
+      if (seqs.length === 0) return;
+      const container = document.getElementById('alignmentContainer');
+      container.innerHTML = '';
+
+      // Warn on large length variation
+      const lengths = seqs.map(s => s.seq.length);
+      const minLen = Math.min(...lengths);
+      const maxLen = Math.max(...lengths);
+      if (maxLen > 0 && (maxLen - minLen) / maxLen > 0.1) {
+        if (!window.lengthWarningShown) {
+          alert("Warning: Sequences vary in length by >10%. Consider aligning first.");
+          window.lengthWarningShown = true;
+        }
+      }
+
+      // Check for high artifacts
+      let totalBases = 0;
+      let artifactCount = 0;
+      const standard = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.']);
+      const ambiguous = new Set(['R','Y','M','K','S','W','H','B','V','D']);
+      seqs.forEach(s => {
+        for (let base of s.seq) {
+          totalBases++;
+          if (!standard.has(base) && !ambiguous.has(base)) artifactCount++;
+        }
+      });
+      if (totalBases > 0 && artifactCount / totalBases > 0.05) {
+        if (!window.artifactWarningShown) {
+          alert("Warning: High number of invalid bases (>5%) detected—check input format.");
+          window.artifactWarningShown = true;
+        }
+      }
+
+      // Update dynamic name width
+      const nameLen = parseInt(document.getElementById('nameLengthSlider').value);
+      document.documentElement.style.setProperty('--nameLen', nameLen);
+
+      // Get thresholds and enforce hierarchy
+      const blackThresh = Math.max(
+        parseInt(document.getElementById('blackSlider').value),
+        parseInt(document.getElementById('darkSlider').value)
+      ) / 100;
+      const darkThresh = Math.max(
+        parseInt(document.getElementById('darkSlider').value),
+        parseInt(document.getElementById('lightSlider').value)
+      ) / 100;
+      const lightThresh = parseInt(document.getElementById('lightSlider').value) / 100;
+
+      const useBlocks = document.getElementById('modeBlocks').checked;
+      const blockWidth = parseInt(document.getElementById('blockSizeSlider').value);
+      const len = Math.max(...seqs.map(s => s.seq.length));
+
+      // Warn on large alignments
+      if (seqs.length * len > 100000 && !window.performanceWarningShown) {
+        alert("Warning: Large alignment detected; performance may be slow. Use Block mode.");
+        window.performanceWarningShown = true;
+      }
+
+      // Detect duplicate trimmed headers
+      const trimmedHeaders = seqs.map(s => s.header.substring(0, nameLen));
+      const headerCounts = {};
+      trimmedHeaders.forEach(h => headerCounts[h] = (headerCounts[h] || 0) + 1);
+      const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      const displayHeaders = trimmedHeaders.map((h, i) => {
+        if (headerCounts[h] > 1) {
+          const suffix = letters[i % 26] || 'Z';
+          return h.length >= nameLen - 3 ? h.slice(0, nameLen - 3) + `(${suffix})` : `${h}(${suffix})`.substring(0, nameLen);
+        }
+        return h;
+      });
+
+      if (useBlocks) {
+        for (let start = 0; start < len; start += blockWidth) {
+          const end = Math.min(start + blockWidth, len);
+          const blockDiv = document.createElement('div');
+          blockDiv.className = 'block-block';
+          
+          const sep = document.createElement('div');
+          sep.className = 'block-sep';
+          sep.textContent = `--- ${start + 1}-${end} ---`;
+          blockDiv.appendChild(sep);
+
+          for (let i = 0; i < seqs.length; i++) {
+            const lineDiv = document.createElement('div');
+            lineDiv.className = 'seq-line';
+            const nameSpan = document.createElement('div');
+            nameSpan.className = 'seq-name';
+            nameSpan.title = seqs[i].fullHeader;
+            nameSpan.textContent = displayHeaders[i];
+            lineDiv.appendChild(nameSpan);
+            const dataSpan = document.createElement('div');
+            dataSpan.className = 'seq-data';
+            let currentClass = '';
+            let currentText = '';
+            for (let pos = start; pos < end; pos++) {
+              const base = seqs[i].seq[pos] || '-';
+              let cls = 'other';
+              let baseClass = '';
+              if (!standard.has(base) && !ambiguous.has(base)) {
+                baseClass = 'artifact';
+              } else if (ambiguous.has(base)) {
+                baseClass = 'ambiguous';
+              }
+
+              const col = seqs.map(s => s.seq[pos] || '-');
+              const nonGapCol = col.filter(b => b !== '-' && b !== '.');
+              if (nonGapCol.length === 0) {
+                cls = 'gap';
+              } else {
+                const counts = {};
+                nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+                const maxCount = Math.max(...Object.values(counts), 0);
+                const consensusBases = new Set(
+                  Object.keys(counts).filter(b => counts[b] === maxCount)
+                );
+
+                // Use all sequences or only non-gaps?
+                const useAllSites = document.querySelector('input[name="shadeMode"]:checked').value === 'all';
+                const denominator = useAllSites ? seqs.length : nonGapCol.length;
+                const conservation = denominator > 0 ? maxCount / denominator : 0;
+
+                if (base === '-' || base === '.') {
+                  cls = 'gap';
+                } else if (consensusBases.has(base)) {
+                  if (conservation >= blackThresh) {
+                    cls = 'black';
+                  } else if (conservation >= darkThresh) {
+                    cls = 'dark';
+                  } else if (conservation >= lightThresh) {
+                    cls = 'light';
+                  } else {
+                    cls = 'other';
+                  }
+                } else {
+                  cls = 'other'; // Minority variants
+                }
+              }
+
+              const newClass = `${cls} ${baseClass}`.trim();
+              if (newClass !== currentClass && currentText) {
+                const baseSpan = document.createElement('span');
+                baseSpan.className = currentClass;
+                baseSpan.textContent = currentText;
+                dataSpan.appendChild(baseSpan);
+                currentText = '';
+              }
+              currentClass = newClass;
+              currentText += base;
+            }
+            if (currentText) {
+              const baseSpan = document.createElement('span');
+              baseSpan.className = currentClass;
+              baseSpan.textContent = currentText;
+              dataSpan.appendChild(baseSpan);
+            }
+            lineDiv.appendChild(dataSpan);
+            blockDiv.appendChild(lineDiv);
+          }
+          container.appendChild(blockDiv);
+        }
+      } else {
+        for (let i = 0; i < seqs.length; i++) {
+          const lineDiv = document.createElement('div');
+          lineDiv.className = 'seq-line';
+          const nameSpan = document.createElement('div');
+          nameSpan.className = 'seq-name';
+          nameSpan.title = seqs[i].fullHeader;
+          nameSpan.textContent = displayHeaders[i];
+          lineDiv.appendChild(nameSpan);
+          const dataSpan = document.createElement('div');
+          dataSpan.className = 'seq-data';
+          let currentClass = '';
+          let currentText = '';
+          for (let pos = 0; pos < len; pos++) {
+            const base = seqs[i].seq[pos] || '-';
+            let cls = 'other';
+            let baseClass = '';
+            if (!standard.has(base) && !ambiguous.has(base)) {
+              baseClass = 'artifact';
+            } else if (ambiguous.has(base)) {
+              baseClass = 'ambiguous';
+            }
+
+            const col = seqs.map(s => s.seq[pos] || '-');
+            const nonGapCol = col.filter(b => b !== '-' && b !== '.');
+            if (nonGapCol.length === 0) {
+              cls = 'gap';
+            } else {
+              const counts = {};
+              nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+              const maxCount = Math.max(...Object.values(counts), 0);
+              const consensusBases = new Set(
+                Object.keys(counts).filter(b => counts[b] === maxCount)
+              );
+
+              const useAllSites = document.querySelector('input[name="shadeMode"]:checked').value === 'all';
+              const denominator = useAllSites ? seqs.length : nonGapCol.length;
+              const conservation = denominator > 0 ? maxCount / denominator : 0;
+
+              if (base === '-' || base === '.') {
+                cls = 'gap';
+              } else if (consensusBases.has(base)) {
+                if (conservation >= blackThresh) {
+                  cls = 'black';
+                } else if (conservation >= darkThresh) {
+                  cls = 'dark';
+                } else if (conservation >= lightThresh) {
+                  cls = 'light';
+                } else {
+                  cls = 'other';
+                }
+              } else {
+                cls = 'other';
+              }
+            }
+
+            const newClass = `${cls} ${baseClass}`.trim();
+            if (newClass !== currentClass && currentText) {
+              const baseSpan = document.createElement('span');
+              baseSpan.className = currentClass;
+              baseSpan.textContent = currentText;
+              dataSpan.appendChild(baseSpan);
+              currentText = '';
+            }
+            currentClass = newClass;
+            currentText += base;
+          }
+          if (currentText) {
+            const baseSpan = document.createElement('span');
+            baseSpan.className = currentClass;
+            baseSpan.textContent = currentText;
+            dataSpan.appendChild(baseSpan);
+          }
+          lineDiv.appendChild(dataSpan);
+          container.appendChild(lineDiv);
+        }
+      }
+
+      // Re-apply selection
+      document.querySelectorAll('.seq-line').forEach((row, index) => {
+        if (selectedRows.has(index)) {
+          row.classList.add('selected');
+        }
+      });
+    }
+
+    function setZoom(percent) {
+      const size = (percent / 100) * 13;
+      const container = document.getElementById('alignmentContainer');
+      container.style.fontSize = size + 'px';
+      container.style.lineHeight = (1.2 * (percent / 100)) + '';
+      document.getElementById('zoomVal').textContent = percent;
+    }
+
+    function debounce(func, delay) {
+      let timer;
+      return () => {
+        clearTimeout(timer);
+        timer = setTimeout(func, delay);
+      };
+    }
+
+    const debounceRender = debounce(renderAlignment, 100);
+
+    window.parseAndRender = function() {
+      const fasta = document.getElementById('fastaInput').value.trim();
+      if (!fasta) return;
+      try {
+        seqs = parseFasta(fasta);
+        if (seqs.length === 0) return;
+        selectedRows.clear();
+        lastSelectedIndex = null;
+        window.lengthWarningShown = false;
+        window.artifactWarningShown = false;
+        window.performanceWarningShown = false;
+        renderAlignment();
+      } catch (e) {
+        alert("Error parsing FASTA");
+        console.error(e);
+      }
+    };
+
+    function toggleBlockSize() {
+      document.getElementById('blockSizeContainer').style.display = document.getElementById('modeBlocks').checked ? 'inline' : 'none';
+    }
+
+    // Initialize
+    document.getElementById('modeBlocks').onchange = function() {
+      toggleBlockSize();
+      debounceRender();
+    };
+    document.getElementById('modeSingle').onchange = function() {
+      toggleBlockSize();
+      debounceRender();
+    };
+    document.getElementById('modeBlocks').checked = true;
+    document.getElementById('modeSingle').checked = false;
+    toggleBlockSize();
+
+    // Shading mode change
+    window.onShadeModeChange = function() {
+      validateThresholds();
+      debounceRender();
+    };
+
+    // Click to select
+    document.getElementById('alignmentContainer').onclick = function(e) {
+      const row = e.target.closest('.seq-line');
+      if (!row) return;
+      const index = Array.from(row.parentNode.children).indexOf(row);
+
+      if (e.ctrlKey || e.metaKey) {
+        row.classList.toggle('selected');
+        if (row.classList.contains('selected')) {
+          selectedRows.add(index);
+        } else {
+          selectedRows.delete(index);
+        }
+        lastSelectedIndex = index;
+      } else if (e.shiftKey && lastSelectedIndex !== null) {
+        selectedRows.clear();
+        const start = Math.min(lastSelectedIndex, index);
+        const end = Math.max(lastSelectedIndex, index);
+        for (let i = start; i <= end; i++) {
+          const r = document.querySelectorAll('.seq-line')[i];
+          r.classList.add('selected');
+          selectedRows.add(i);
+        }
+      } else {
+        selectedRows.clear();
+        document.querySelectorAll('.seq-line').forEach(r => r.classList.remove('selected'));
+        row.classList.add('selected');
+        selectedRows.add(index);
+        lastSelectedIndex = index;
+      }
+    };
+
+    // Reverse Complement
+    function reverseComplement(seq) {
+      const complement = {
+        'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N': 'N', '-': '-', '.': '.',
+        'U': 'A', 'R': 'Y', 'Y': 'R', 'M': 'K', 'K': 'M',
+        'S': 'S', 'W': 'W', 'H': 'D', 'B': 'V', 'V': 'B', 'D': 'H'
+      };
+      return seq.split('').reverse().map(base => complement[base] || base).join('');
+    }
+
+    window.reverseComplementSelected = function() {
+      if (selectedRows.size === 0) {
+        alert("Select sequences (Ctrl+click) to RevComp.");
+        return;
+      }
+      if (!window.revcompWarned) {
+        alert("Reverse complement flips sequences in place. Alignment may be disrupted. Consider realigning externally.");
+        window.revcompWarned = true;
+      }
+      for (const index of selectedRows) {
+        if (index < seqs.length) {
+          seqs[index] = { ...seqs[index], seq: reverseComplement(seqs[index].seq) };
+        }
+      }
+      renderAlignment();
+    };
+
+    // Realign Selected
+    window.realignSelected = function() {
+      if (selectedRows.size < 2) {
+        alert("Select at least two sequences to realign.");
+        return;
+      }
+      const indices = Array.from(selectedRows).sort((a, b) => a - b);
+      const refIndex = indices[0];
+      const refSeq = seqs[refIndex].seq;
+      for (let i = 1; i < indices.length; i++) {
+        const targetIndex = indices[i];
+        const targetSeq = seqs[targetIndex].seq;
+        let aligned = '';
+        let pos = 0;
+        for (let base of refSeq) {
+          if (pos < targetSeq.length && targetSeq[pos] === base) {
+            aligned += base;
+            pos++;
+          } else {
+            aligned += '-';
+          }
+        }
+        while (pos < targetSeq.length) {
+          aligned += targetSeq[pos++];
+        }
+        seqs[targetIndex].seq = aligned;
+      }
+      alert("Selected sequences realigned to first selected.");
+      renderAlignment();
+    };
+
+    // Save/Load Preset
+    const presetKey = 'qwen_msa_viewer_preset_v3';
+    function savePreset() {
+      const preset = {
+        black: document.getElementById('blackSlider').value,
+        dark:  document.getElementById('darkSlider').value,
+        light: document.getElementById('lightSlider').value,
+        zoom:  document.getElementById('zoomSlider').value,
+        mode:  document.getElementById('modeBlocks').checked ? 'blocks' : 'single',
+        blockSize: document.getElementById('blockSizeSlider').value,
+        nameLen: document.getElementById('nameLengthSlider').value
+      };
+      localStorage.setItem(presetKey, JSON.stringify(preset));
+      alert("Preset saved!");
+    }
+
+    function loadPreset() {
+      const saved = localStorage.getItem(presetKey);
+      if (!saved) {
+        const oldSaved = localStorage.getItem('qwen_msa_viewer_preset_v2');
+        if (oldSaved) {
+          alert("Loading preset from previous version.");
+          const preset = JSON.parse(oldSaved);
+          document.getElementById('blackSlider').value = preset.black;
+          document.getElementById('darkSlider').value = preset.dark;
+          document.getElementById('lightSlider').value = preset.light;
+          document.getElementById('zoomSlider').value = preset.zoom;
+          document.getElementById('blockSizeSlider').value = preset.blockSize;
+          document.getElementById('nameLengthSlider').value = preset.nameLen;
+          document.getElementById('nameLengthInput').value = preset.nameLen;
+          updateLabel('blackVal', preset.black);
+          updateLabel('darkVal', preset.dark);
+          updateLabel('lightVal', preset.light);
+          updateLabel('zoomVal', preset.zoom);
+          updateLabel('blockSizeVal', preset.blockSize);
+          updateLabel('nameLengthVal', preset.nameLen);
+          if (preset.mode === 'blocks') {
+            document.getElementById('modeBlocks').checked = true;
+            document.getElementById('modeSingle').checked = false;
+          } else {
+            document.getElementById('modeSingle').checked = true;
+            document.getElementById('modeBlocks').checked = false;
+          }
+          toggleBlockSize();
+          debounceRender();
+          return;
+        }
+        alert("No saved preset found.");
+        return;
+      }
+      const preset = JSON.parse(saved);
+      document.getElementById('blackSlider').value = preset.black;
+      document.getElementById('darkSlider').value = preset.dark;
+      document.getElementById('lightSlider').value = preset.light;
+      document.getElementById('zoomSlider').value = preset.zoom;
+      document.getElementById('blockSizeSlider').value = preset.blockSize;
+      document.getElementById('nameLengthSlider').value = preset.nameLen;
+      document.getElementById('nameLengthInput').value = preset.nameLen;
+      updateLabel('blackVal', preset.black);
+      updateLabel('darkVal', preset.dark);
+      updateLabel('lightVal', preset.light);
+      updateLabel('zoomVal', preset.zoom);
+      updateLabel('blockSizeVal', preset.blockSize);
+      updateLabel('nameLengthVal', preset.nameLen);
+      if (preset.mode === 'blocks') {
+        document.getElementById('modeBlocks').checked = true;
+        document.getElementById('modeSingle').checked = false;
+      } else {
+        document.getElementById('modeSingle').checked = true;
+        document.getElementById('modeBlocks').checked = false;
+      }
+      toggleBlockSize();
+      debounceRender();
+    }
+
+    // Minimize/Expand Menu
+    const controls = document.getElementById('controls');
+    const minimizeBar = document.getElementById('minimizeBar');
+    const minimizeBtn = document.getElementById('minimizeBtn');
+
+    function minimizeMenu() {
+      controls.style.display = 'none';
+      minimizeBar.style.display = 'block';
+      // When minimized, make alignment container take full height
+      document.getElementById('alignmentContainer').style.height = 'calc(100vh - 5px)';
+    }
+
+    function expandMenu() {
+      controls.style.display = 'block';
+      minimizeBar.style.display = 'none';
+      // Restore auto height
+      document.getElementById('alignmentContainer').style.height = '';
+    }
+
+    minimizeBar.style.height = '5px';
+    minimizeBar.style.background = '#333';
+    minimizeBar.style.position = 'sticky';
+    minimizeBar.style.top = '0';
+    minimizeBar.style.width = '100%';
+    minimizeBar.style.zIndex = '99';
+    minimizeBar.style.cursor = 'pointer';
+    minimizeBar.style.display = 'none';
+
+    minimizeBar.onmouseover = function() {
+      minimizeBar.style.height = '30px';
+      minimizeBar.style.lineHeight = '30px';
+      minimizeBar.style.textAlign = 'center';
+      minimizeBar.style.color = 'white';
+      minimizeBar.style.fontWeight = 'bold';
+      minimizeBar.textContent = 'Restore Menu';
+    };
+    minimizeBar.onmouseout = function() {
+      minimizeBar.style.height = '5px';
+      minimizeBar.style.lineHeight = 'normal';
+      minimizeBar.style.textAlign = 'left';
+      minimizeBar.style.color = 'transparent';
+      minimizeBar.textContent = '';
+    };
+
+    // Enforce threshold hierarchy
+    function validateThresholds() {
+      const black = parseInt(document.getElementById('blackSlider').value);
+      const dark = parseInt(document.getElementById('darkSlider').value);
+      const light = parseInt(document.getElementById('lightSlider').value);
+      if (black < dark) {
+        document.getElementById('darkSlider').value = black;
+        document.getElementById('darkInput').value = black;
+        updateLabel('darkVal', black);
+      }
+      if (dark < light) {
+        document.getElementById('lightSlider').value = dark;
+        document.getElementById('lightInput').value = dark;
+        updateLabel('lightVal', dark);
+      }
+    }
+  </script>
+</body>
+</html>
