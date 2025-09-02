@@ -15,6 +15,9 @@
       padding: 0;
       background: white;
       color: black;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
 
     #dropZone {
@@ -60,6 +63,42 @@
       font-weight: bold;
     }
 
+    /* Button Groups */
+    .button-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+      font-size: 12px;
+      border: 1px solid #eee;
+      border-radius: 4px;
+      padding: 2px;
+      background: #fafafa;
+    }
+
+    .button-spacer {
+      width: 1px;
+      height: 16px;
+      background: #ccc;
+      margin: 0 4px;
+    }
+
+    /* Buttons */
+    button {
+      padding: 2px 6px;
+      margin: 1px;
+      font-size: 12px;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      background: white;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #e6f3ff;
+    }
+
+    /* Control Groups */
     .control-group {
       display: block;
       margin: 2px 0;
@@ -89,52 +128,70 @@
       font-weight: normal;
     }
 
-    .slider-container input[type="range"] {
+    /* === SHADING SLIDERS (Black, Dark, Light) - Solid Rectangles === */
+    input[type="range"].shading-slider {
+      -webkit-appearance: none;
       width: 130px;
       height: 22px;
+      background: transparent;
+      outline: none;
     }
 
-    .slider-container input[type="number"] {
-      width: 38px;
-      height: 22px;
-      padding: 0;
-      text-align: center;
-    }
-
-    .slider-container span {
-      font-size: 12px;
-      white-space: nowrap;
-    }
-
-    /* Color sliders */
-    #blackSlider::-webkit-slider-thumb {
-      background: white; border: 2px solid black; height: 18px; width: 18px; border-radius: 0; cursor: pointer;
-    }
-    #darkSlider::-webkit-slider-thumb {
-      background: white; border: 2px solid #555; height: 18px; width: 18px; border-radius: 0; cursor: pointer;
-    }
-    #lightSlider::-webkit-slider-thumb {
-      background: black; border: 2px solid #ccc; height: 18px; width: 18px; border-radius: 0; cursor: pointer;
+    input[type="range"].shading-slider::-webkit-slider-runnable-track {
+      height: 8px;
+      border-radius: 4px;
+      cursor: pointer;
     }
 
     #blackSlider::-webkit-slider-runnable-track { background: #000; }
     #darkSlider::-webkit-slider-runnable-track { background: #555; }
     #lightSlider::-webkit-slider-runnable-track { background: #ccc; }
 
-    #blackSlider::-moz-range-thumb { background: white; border: 2px solid black; }
-    #darkSlider::-moz-range-thumb { background: white; border: 2px solid #555; }
-    #lightSlider::-moz-range-thumb { background: black; border: 2px solid #ccc; }
-
-    #blackSlider::-moz-range-track { background: #000; }
-    #darkSlider::-moz-range-track { background: #555; }
-    #lightSlider::-moz-range-track { background: #ccc; }
-
-    /* Shading Mode */
-    .shade-mode-label {
-      font-size: 12px;
+    input[type="range"].shading-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 14px;
+      width: 8px;
+      border: 2px solid black;
+      border-radius: 2px;
+      margin-top: -3px;
+      cursor: pointer;
+      background: white;
     }
 
-    /* Block spacing */
+    /* === OTHER SLIDERS (Name Len, Zoom, Block Size) === */
+    input[type="range"].normal-slider {
+      -webkit-appearance: none;
+      width: 130px;
+      height: 14px;
+      background: transparent;
+      outline: none;
+    }
+
+    input[type="range"].normal-slider::-webkit-slider-runnable-track {
+      height: 7px;
+      border-radius: 7px;
+      background: #888;
+    }
+
+    input[type="range"].normal-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 8px;
+      height: 14px;
+      border: 2px solid black;
+      border-radius: 2px;
+      background: white;
+      cursor: pointer;
+      margin-top: -3px;
+    }
+
+    input[type="number"] {
+      width: 38px;
+      height: 22px;
+      padding: 0;
+      text-align: center;
+    }
+
+    /* Block styling */
     .block-block {
       margin-bottom: 8px;
     }
@@ -150,8 +207,6 @@
     }
 
     #alignmentContainer {
-      margin-top: 8px;
-      /* Remove fixed max-height, use flex to expand */
       flex: 1;
       overflow-x: auto;
       overflow-y: auto;
@@ -162,22 +217,6 @@
       border: 1px solid #ddd;
       font-size: 13px;
       transition: font-size 0.1s;
-    }
-
-    /* Make the container flex to fill space */
-    body, html {
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-    }
-
-    #controls {
-      flex-shrink: 0;
-    }
-
-    #alignmentContainer {
-      flex: 1;
-      min-height: 0; /* Allows flex to work with overflow */
     }
 
     .seq-line {
@@ -225,8 +264,115 @@
       background-color: #ffe6e6 !important; 
       font-weight: bold !important; 
     }
-    .selected {
+
+    /* ✅ SELECTION: Highlight name only */
+    .selected .seq-name {
       background-color: #ffebcd !important;
+      color: #000 !important;
+      font-weight: bold;
+    }
+
+    /* Column selection */
+    .column-selected {
+      background-color: #e6ffe6 !important;
+    }
+
+    /* Consensus line */
+    .consensus-line {
+      border-top: 1px solid #ccc;
+      margin-top: 4px;
+      font-style: normal;
+      color: #555;
+      font-weight: bold;
+    }
+    .consensus-line .seq-name {
+      color: #555;
+      font-weight: bold;
+    }
+    .consensus-line .seq-data span {
+      opacity: 0.9;
+      background-color: transparent !important;
+      color: #555;
+    }
+
+    /* Error message */
+    .error-message {
+      color: red;
+      font-weight: bold;
+      padding: 10px;
+      background: #ffe6e6;
+      border: 1px solid #ff8080;
+      margin: 5px;
+      border-radius: 4px;
+    }
+
+    /* Search highlight */
+    .search-hit {
+      background-color: yellow !important;
+      color: black !important;
+      font-weight: bold;
+    }
+
+    /* Tooltip */
+    .tooltip {
+      position: absolute;
+      background: #000;
+      color: #fff;
+      font-size: 12px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      white-space: nowrap;
+      z-index: 200;
+      display: none;
+    }
+
+    /* Info Modal */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.5);
+    }
+
+    .modal-content {
+      background-color: #fefefe;
+      margin: 5% auto;
+      padding: 20px;
+      border: 1px solid #888;
+      width: 80%;
+      max-width: 800px;
+      max-height: 80vh;
+      overflow-y: auto;
+      border-radius: 8px;
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+    }
+
+    .close {
+      color: #aaa;
+      float: right;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .close:hover,
+    .close:focus {
+      color: black;
+      text-decoration: none;
+    }
+
+    .modal h2, .modal h3 {
+      color: #2c3e50;
+    }
+
+    .modal ul {
+      margin: 10px 0;
+      padding-left: 20px;
     }
   </style>
 </head>
@@ -234,40 +380,57 @@
   <div id="controls">
     <h2 style="grid-column: 1/-1; text-align: center; margin: 2px 0; font-size: 16px;">Qwen MSA Viewer</h2>
 
+    <!-- Quick Usability Tips -->
+    <div style="grid-column: 1/-1; text-align: center; font-size: 12px; color: #2980b9; font-weight: bold; background: #ecf0f1; padding: 4px; border-radius: 4px;">
+      🔍 Hover: Seq & Pos | Ctrl+click: Select Seqs | Ctrl+Alt+click: Select Cols | Drag: Range Select
+    </div>
+
     <div class="menu-section" style="grid-column: 1/-1; display: flex; gap: 6px; align-items: start;">
       <div id="dropZone" style="flex: 0 0 180px; padding: 6px;">📁 Drop FASTA</div>
-      <textarea id="fastaInput" placeholder=">seq1&#10;ATGCGGCTA..." style="flex: 1; height: 60px; font-size: 12px; padding: 4px;"></textarea>
-      <button onclick="parseAndRender()" style="height: 60px; font-size: 13px;">Load</button>
+      <textarea id="fastaInput" placeholder=">seq1&#13;&#10;ATGCGGCTA..." style="flex: 1; height: 60px; font-size: 12px; padding: 4px;"></textarea>
+      <button onclick="parseAndRender(false)" style="height: 60px; font-size: 13px;">Load</button>
     </div>
 
     <div class="menu-section">
-      <div class="section-header">Colors</div>
+      <div class="section-header">Shade</div>
       <div class="control-group">
         <div class="slider-container">
           <span class="slider-label">Black ≥</span>
-          <input type="range" id="blackSlider" min="50" max="100" value="90" oninput="updateLabel('blackVal', this.value); validateThresholds(); debounceRender()">
+          <input type="range" id="blackSlider" class="shading-slider" min="50" max="100" value="90" oninput="updateLabel('blackVal', this.value); validateThresholds(); debounceRender()">
           <input type="number" id="blackInput" min="50" max="100" value="90" oninput="document.getElementById('blackSlider').value = this.value; updateLabel('blackVal', this.value); validateThresholds(); debounceRender()">
           <span id="blackVal">90</span>%
         </div>
         <div class="slider-container">
           <span class="slider-label">Dark ≥</span>
-          <input type="range" id="darkSlider" min="30" max="90" value="70" oninput="updateLabel('darkVal', this.value); validateThresholds(); debounceRender()">
+          <input type="range" id="darkSlider" class="shading-slider" min="30" max="90" value="70" oninput="updateLabel('darkVal', this.value); validateThresholds(); debounceRender()">
           <input type="number" id="darkInput" min="30" max="90" value="70" oninput="document.getElementById('darkSlider').value = this.value; updateLabel('darkVal', this.value); validateThresholds(); debounceRender()">
           <span id="darkVal">70</span>%
         </div>
         <div class="slider-container">
           <span class="slider-label">Light ≥</span>
-          <input type="range" id="lightSlider" min="10" max="80" value="50" oninput="updateLabel('lightVal', this.value); validateThresholds(); debounceRender()">
+          <input type="range" id="lightSlider" class="shading-slider" min="10" max="80" value="50" oninput="updateLabel('lightVal', this.value); validateThresholds(); debounceRender()">
           <input type="number" id="lightInput" min="10" max="80" value="50" oninput="document.getElementById('lightSlider').value = this.value; updateLabel('lightVal', this.value); validateThresholds(); debounceRender()">
           <span id="lightVal">50</span>%
         </div>
         <div class="slider-container">
-          <span class="slider-label">Shade By</span>
+          <span class="slider-label">Enable</span>
           <label class="shade-mode-label">
-            <input type="radio" name="shadeMode" value="nongap" checked onchange="onShadeModeChange()"> Non-Gap
+            <input type="checkbox" id="enableBlack" checked onchange="debounceRender()"> Black
           </label>
           <label class="shade-mode-label">
-            <input type="radio" name="shadeMode" value="all" onchange="onShadeModeChange()"> All
+            <input type="checkbox" id="enableDark" checked onchange="debounceRender()"> Dark
+          </label>
+          <label class="shade-mode-label">
+            <input type="checkbox" id="enableLight" checked onchange="debounceRender()"> Light
+          </label>
+        </div>
+        <div class="slider-container">
+          <span class="slider-label">Shade By</span>
+          <label class="shade-mode-label">
+            <input type="radio" name="shadeMode" value="nongap" onchange="onShadeModeChange()"> Non-Gap
+          </label>
+          <label class="shade-mode-label">
+            <input type="radio" name="shadeMode" value="all" checked onchange="onShadeModeChange()"> All
           </label>
         </div>
       </div>
@@ -278,55 +441,194 @@
       <div class="control-group">
         <div class="slider-container display-slider-row">
           <span class="slider-label">Name Len</span>
-          <input type="range" id="nameLengthSlider" min="5" max="100" value="20" oninput="updateLabel('nameLengthVal', this.value); document.getElementById('nameLengthInput').value = this.value; debounceRender()">
+          <input type="range" id="nameLengthSlider" class="normal-slider" min="5" max="100" value="20" oninput="updateLabel('nameLengthVal', this.value); document.getElementById('nameLengthInput').value = this.value; debounceRender()">
           <input type="number" id="nameLengthInput" min="5" max="100" value="20" oninput="document.getElementById('nameLengthSlider').value = this.value; updateLabel('nameLengthVal', this.value); debounceRender()">
           <span id="nameLengthVal">20</span>
         </div>
         <div class="slider-container display-slider-row">
           <span class="slider-label">Zoom</span>
-          <input type="range" id="zoomSlider" min="50" max="200" value="100" oninput="setZoom(this.value)">
+          <input type="range" id="zoomSlider" class="normal-slider" min="50" max="200" value="100" oninput="setZoom(this.value)">
           <input type="number" id="zoomInput" min="50" max="200" value="100" oninput="document.getElementById('zoomSlider').value = this.value; setZoom(this.value)">
           <span><span id="zoomVal">100</span>%</span>
         </div>
         <div class="slider-container display-slider-row" id="blockSizeContainer">
           <span class="slider-label">Block Size</span>
-          <input type="range" id="blockSizeSlider" min="40" max="200" value="80" oninput="updateLabel('blockSizeVal', this.value); debounceRender()">
+          <input type="range" id="blockSizeSlider" class="normal-slider" min="40" max="200" value="80" oninput="updateLabel('blockSizeVal', this.value); debounceRender()">
           <input type="number" id="blockSizeInput" min="40" max="200" value="80" oninput="document.getElementById('blockSizeSlider').value = this.value; updateLabel('blockSizeVal', this.value); debounceRender()">
           <span id="blockSizeVal">80</span>
         </div>
         <div class="slider-container">
-          <input type="radio" id="modeSingle" name="mode" value="single" onchange="toggleBlockSize(); debounceRender()">
+          <input type="radio" id="modeSingle" name="mode" value="single" onchange="onModeChange()">
           <label for="modeSingle">Full</label>
-          <input type="radio" id="modeBlocks" name="mode" value="blocks" onchange="toggleBlockSize(); debounceRender()" checked>
+          <input type="radio" id="modeBlocks" name="mode" value="blocks" onchange="onModeChange()" checked>
           <label for="modeBlocks">Block</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="section-header">Consensus</div>
+      <div class="control-group">
+        <div class="slider-container">
+          <span class="slider-label">Threshold</span>
+          <input type="range" id="consensusThreshold" class="normal-slider" min="50" max="100" value="70" oninput="updateLabel('consensusThresholdVal', this.value); debounceRender()">
+          <input type="number" id="consensusThresholdInput" min="50" max="100" value="70" oninput="document.getElementById('consensusThreshold').value = this.value; updateLabel('consensusThresholdVal', this.value); debounceRender()">
+          <span id="consensusThresholdVal">70</span>%
+        </div>
+        <div class="slider-container">
+          <span class="slider-label">Type</span>
+          <label class="shade-mode-label">
+            <input type="radio" name="consensusType" value="normal" checked> Normal
+          </label>
+          <label class="shade-mode-label">
+            <input type="radio" name="consensusType" value="ambiguous"> Ambiguous
+          </label>
+        </div>
+        <div class="slider-container">
+          <input type="checkbox" id="showConsensus" checked onchange="debounceRender()">
+          <label for="showConsensus" style="font-size: 12px;">Show Consensus</label>
+        </div>
+        <div class="slider-container">
+          <span class="slider-label">Position</span>
+          <label class="shade-mode-label">
+            <input type="radio" name="consensusPosition" value="top" onchange="debounceRender()"> Top
+          </label>
+          <label class="shade-mode-label">
+            <input type="radio" name="consensusPosition" value="bottom" onchange="debounceRender()" checked> Bottom
+          </label>
+        </div>
+        <div class="slider-container">
+          <button onclick="copyConsensus()" style="padding: 2px 6px; font-size: 12px;">Copy Consensus</button>
+        </div>
+        <div class="slider-container">
+          <button onclick="copySelectedConsensus()" style="padding: 2px 6px; font-size: 12px;">Copy Sel Consensus</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="menu-section">
+      <div class="section-header">Search</div>
+      <div class="control-group">
+        <div class="slider-container">
+          <input type="text" id="searchInput" placeholder="Enter motif..." style="width: 130px; height: 22px; padding: 2px; font-size: 12px;">
+          <input type="color" id="searchColor" value="#FFFF00" style="width: 30px; height: 22px; padding: 0;">
+          <button onclick="searchMotif()" style="padding: 2px 6px; font-size: 12px;">Find</button>
+          <button onclick="clearLastSearch()" style="padding: 2px 6px; font-size: 12px;">Clear Last</button>
+          <button onclick="clearAllSearches()" style="padding: 2px 6px; font-size: 12px;">Clear All</button>
         </div>
       </div>
     </div>
 
     <div class="menu-section" style="grid-column: 1/-1;">
       <div class="section-header">Actions</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px;">
-        <button onclick="reverseComplementSelected()" style="padding: 2px 6px;">RevComp</button>
-        <button onclick="realignSelected()" style="padding: 2px 6px;">Realign</button>
-        <button onclick="savePreset()" style="padding: 2px 6px;">Save Preset</button>
-        <button onclick="loadPreset()" style="padding: 2px 6px;">Load Preset</button>
-        <button id="minimizeBtn" onclick="minimizeMenu()" style="padding: 2px 6px;">Minimize</button>
+      <!-- Grouped Buttons -->
+      <div class="button-group">
+        <button onclick="reverseComplementSelected()">RevComp</button>
+        <div class="button-spacer"></div>
+        <button onclick="copySelected()">Copy Sel</button>
+        <button onclick="deleteSelected()">Delete Sel</button>
+        <button onclick="undoDelete()">Undo</button>
+        <div class="button-spacer"></div>
+        <button onclick="selectAllSequences()">Select All</button>
+        <div class="button-spacer"></div>
+        <button onclick="copySelectedColumns()">Copy Cols</button>
+        <button onclick="deleteSelectedColumns()">Delete Cols</button>
+        <div class="button-spacer"></div>
+        <button onclick="savePreset()">Save Preset</button>
+        <button onclick="loadPreset()">Load Preset</button>
+        <div class="button-spacer"></div>
+        <button onclick="openInfoModal()">Program Info</button>
+        <button id="minimizeBtn" onclick="minimizeMenu()">Hide menu</button>
       </div>
     </div>
+
+    <!-- Keyboard hints -->
+    <div style="grid-column: 1/-1; text-align: right; font-size: 12px; color: #555;">
+      <span style="white-space: nowrap;">Ctrl+click: select seqs</span> |
+      <span style="white-space: nowrap;">Shift+click: range</span> |
+      <span style="white-space: nowrap;">Ctrl+Alt+click: select cols</span>
+    </div>
+
+    <!-- Filename -->
+    <div id="filenameInfo" style="grid-column: 1/-1; padding: 2px 8px; font-size: 12px; color: #555; background: #f0f0f0; text-align: center;">Source: Clipboard</div>
   </div>
 
   <!-- Minimize bar -->
   <div id="minimizeBar" onclick="expandMenu()"></div>
+
+  <!-- Tooltip -->
+  <div id="tooltip" class="tooltip"></div>
+
+  <!-- Info Modal -->
+  <div id="infoModal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="closeInfoModal()">&times;</span>
+      <h2>Qwen MSA Viewer</h2>
+      <p>A fast, interactive, and portable Multiple Sequence Alignment viewer.</p>
+
+      <h3>Features</h3>
+      <ul>
+        <li><strong>Load FASTA:</strong> Drag & drop a file or paste text.</li>
+        <li><strong>GeneDoc Coloring:</strong> Visualize conserved regions with adjustable thresholds (Black, Dark, Light).</li>
+        <li><strong>Consensus Sequence:</strong> Generate and copy consensus with normal or ambiguous base codes.</li>
+        <li><strong>Sequence Selection:</strong> Click, Ctrl+Click, or Shift+Click to select sequences. Perform actions like Reverse Complement, Copy, or Delete.</li>
+        <li><strong>Column Selection:</strong> Use Ctrl+Alt+Click to select entire columns. Copy or delete selected columns.</li>
+        <li><strong>Search:</strong> Find motifs with custom highlight colors. Clear individual or all searches.</li>
+        <li><strong>Undo:</strong> Recover deleted sequences or columns.</li>
+        <li><strong>Preset Management:</strong> Save and load your display settings.</li>
+      </ul>
+
+      <h3>Quick Tips</h3>
+      <ul>
+        <li>Hover over a nucleotide to see the sequence name and its <strong>gapless position</strong> (e.g., the 1st, 2nd, 3rd nucleotide in the gene).</li>
+        <li>Use the "Block" mode for long alignments to improve readability.</li>
+        <li>The "Hide menu" button maximizes the viewing area. Hover near the top to restore it.</li>
+      </ul>
+
+      <h3>Controls</h3>
+      <p><strong>Shade:</strong> Adjust conservation thresholds and enable/disable shading levels.</p>
+      <p><strong>Display:</strong> Change sequence name length, zoom level, and block size.</p>
+      <p><strong>Consensus:</strong> Set the frequency threshold for consensus base calling.</p>
+      <p><strong>Search:</strong> Enter a motif and choose a highlight color.</p>
+      <p><strong>Actions:</strong> All sequence and column manipulation tools are here.</p>
+    </div>
+  </div>
 
   <div id="alignmentContainer">Alignment will appear here</div>
 
   <script>
     let seqs = [];
     let selectedRows = new Set();
+    let selectedColumns = new Set();
     let lastSelectedIndex = null;
+    let consensusSeq = '';
+    let deletedHistory = [];
+    let currentFilename = '';
 
-    // Hide minimize bar on load
-    document.getElementById('minimizeBar').style.display = 'none';
+    // Search: Track multiple motifs
+    let searchHistory = [];
+
+    // Continuous selection
+    let isDragging = false;
+    let dragStartRow = null;
+    let dragStartCol = null;
+
+    // Minimize bar
+    const minimizeBar = document.getElementById('minimizeBar');
+    minimizeBar.style.cssText = 'height:5px;background:#333;position:sticky;top:0;width:100%;z-index:99;cursor:pointer;display:none';
+    minimizeBar.onmouseover = () => {
+      minimizeBar.style.height = '30px';
+      minimizeBar.style.color = 'white';
+      minimizeBar.style.display = 'flex';
+      minimizeBar.style.alignItems = 'center';
+      minimizeBar.style.justifyContent = 'center';
+      minimizeBar.textContent = 'Restore Menu';
+    };
+    minimizeBar.onmouseout = () => {
+      minimizeBar.style.height = '5px';
+      minimizeBar.textContent = '';
+      minimizeBar.style.color = 'white';
+    };
 
     // Drag & Drop
     const dropZone = document.getElementById('dropZone');
@@ -342,10 +644,14 @@
       dropZone.style.borderColor = '#1a2129';
       const file = e.dataTransfer.files[0];
       if (!file) return;
+      currentFilename = file.name;
       const reader = new FileReader();
       reader.onload = function(e) {
         document.getElementById('fastaInput').value = e.target.result;
-        parseAndRender();
+        parseAndRender(true);
+      };
+      reader.onerror = () => {
+        document.getElementById('alignmentContainer').innerHTML = '<div class="error-message">❌ Error reading file.</div>';
       };
       reader.readAsText(file);
     });
@@ -354,136 +660,174 @@
       document.getElementById(id).textContent = value;
     }
 
+    // Helper function to calculate gapless positions for a sequence
+    function calculateGaplessPositions(sequence) {
+      const positions = [];
+      let gaplessCount = 0;
+      
+      for (let i = 0; i < sequence.length; i++) {
+        const char = sequence[i];
+        if (char !== '-' && char !== '.') {
+          gaplessCount++;
+        }
+        positions.push(gaplessCount);
+      }
+      
+      return positions;
+    }
+
     function parseFasta(text) {
       const lines = text.trim().split(/\r?\n/);
       const seqs = [];
       let seq = '', header = '';
-      for (let line of lines) {
-        if (line.startsWith('>')) {
-          if (seq) {
-            const cleanHeader = header.replace('>', '').trim();
-            const displayHeader = cleanHeader.split(' ')[0] || '';
-            seqs.push({
-              header: displayHeader,
-              fullHeader: cleanHeader,
-              seq: seq.toUpperCase()
-            });
+      try {
+        for (let line of lines) {
+          line = line.trim();
+          if (!line) continue;
+          if (line.startsWith('>')) {
+            if (seq) {
+              const cleanHeader = header.replace(/^>/, '').trim();
+              const displayHeader = cleanHeader.split(' ')[0] || 'unnamed';
+              const processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
+              // Calculate gapless positions for this sequence
+              const gaplessPositions = calculateGaplessPositions(processedSeq);
+              seqs.push({
+                header: displayHeader,
+                fullHeader: cleanHeader,
+                seq: processedSeq,
+                gaplessPositions: gaplessPositions
+              });
+              seq = '';
+            }
+            header = line;
+          } else {
+            seq += line.replace(/[^A-Za-z\.\-]/g, '');
           }
-          header = line;
-          seq = '';
-        } else {
-          seq += line.trim();
         }
+        if (header && seq) {
+          const cleanHeader = header.replace(/^>/, '').trim();
+          const displayHeader = cleanHeader.split(' ')[0] || 'unnamed';
+          const processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
+          // Calculate gapless positions for this sequence
+          const gaplessPositions = calculateGaplessPositions(processedSeq);
+          seqs.push({
+            header: displayHeader,
+            fullHeader: cleanHeader,
+            seq: processedSeq,
+            gaplessPositions: gaplessPositions
+          });
+        }
+      } catch (err) {
+        console.error('Error in parseFasta:', err);
+        return null;
       }
-      if (seq) {
-        const cleanHeader = header.replace('>', '').trim();
-        const displayHeader = cleanHeader.split(' ')[0] || '';
-        seqs.push({
-          header: displayHeader,
-          fullHeader: cleanHeader,
-          seq: seq.toUpperCase()
-        });
-      }
-      return seqs;
+      return seqs.length ? seqs : null;
     }
 
     function renderAlignment() {
-      if (seqs.length === 0) return;
       const container = document.getElementById('alignmentContainer');
+      if (!seqs || seqs.length === 0) {
+        container.innerHTML = '<div class="error-message">❌ No valid sequences found.</div>';
+        return;
+      }
       container.innerHTML = '';
 
-      // Warn on large length variation
-      const lengths = seqs.map(s => s.seq.length);
-      const minLen = Math.min(...lengths);
-      const maxLen = Math.max(...lengths);
-      if (maxLen > 0 && (maxLen - minLen) / maxLen > 0.1) {
-        if (!window.lengthWarningShown) {
-          alert("Warning: Sequences vary in length by >10%. Consider aligning first.");
-          window.lengthWarningShown = true;
-        }
-      }
-
-      // Check for high artifacts
-      let totalBases = 0;
-      let artifactCount = 0;
-      const standard = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.']);
-      const ambiguous = new Set(['R','Y','M','K','S','W','H','B','V','D']);
-      seqs.forEach(s => {
-        for (let base of s.seq) {
-          totalBases++;
-          if (!standard.has(base) && !ambiguous.has(base)) artifactCount++;
-        }
-      });
-      if (totalBases > 0 && artifactCount / totalBases > 0.05) {
-        if (!window.artifactWarningShown) {
-          alert("Warning: High number of invalid bases (>5%) detected—check input format.");
-          window.artifactWarningShown = true;
-        }
-      }
-
-      // Update dynamic name width
-      const nameLen = parseInt(document.getElementById('nameLengthSlider').value);
+      const nameLen = Math.min(parseInt(document.getElementById('nameLengthSlider').value), Math.max(...seqs.map(s => s.header.length), 5));
+      document.getElementById('nameLengthSlider').max = Math.max(...seqs.map(s => s.header.length), 5);
+      document.getElementById('nameLengthInput').max = Math.max(...seqs.map(s => s.header.length), 5);
+      document.getElementById('nameLengthVal').textContent = nameLen;
       document.documentElement.style.setProperty('--nameLen', nameLen);
-
-      // Get thresholds and enforce hierarchy
-      const blackThresh = Math.max(
-        parseInt(document.getElementById('blackSlider').value),
-        parseInt(document.getElementById('darkSlider').value)
-      ) / 100;
-      const darkThresh = Math.max(
-        parseInt(document.getElementById('darkSlider').value),
-        parseInt(document.getElementById('lightSlider').value)
-      ) / 100;
-      const lightThresh = parseInt(document.getElementById('lightSlider').value) / 100;
 
       const useBlocks = document.getElementById('modeBlocks').checked;
       const blockWidth = parseInt(document.getElementById('blockSizeSlider').value);
       const len = Math.max(...seqs.map(s => s.seq.length));
 
-      // Warn on large alignments
-      if (seqs.length * len > 100000 && !window.performanceWarningShown) {
-        alert("Warning: Large alignment detected; performance may be slow. Use Block mode.");
-        window.performanceWarningShown = true;
-      }
+      const blackThresh = parseInt(document.getElementById('blackSlider').value) / 100;
+      const darkThresh = parseInt(document.getElementById('darkSlider').value) / 100;
+      const lightThresh = parseInt(document.getElementById('lightSlider').value) / 100;
 
-      // Detect duplicate trimmed headers
-      const trimmedHeaders = seqs.map(s => s.header.substring(0, nameLen));
-      const headerCounts = {};
-      trimmedHeaders.forEach(h => headerCounts[h] = (headerCounts[h] || 0) + 1);
-      const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-      const displayHeaders = trimmedHeaders.map((h, i) => {
-        if (headerCounts[h] > 1) {
-          const suffix = letters[i % 26] || 'Z';
-          return h.length >= nameLen - 3 ? h.slice(0, nameLen - 3) + `(${suffix})` : `${h}(${suffix})`.substring(0, nameLen);
+      const enableBlack = document.getElementById('enableBlack').checked;
+      const enableDark = document.getElementById('enableDark').checked;
+      const enableLight = document.getElementById('enableLight').checked;
+
+      const standard = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.']);
+      const ambiguous = new Set(['R','Y','M','K','S','W','H','B','V','D']);
+
+      // === CONSENSUS ===
+      const showConsensus = document.getElementById('showConsensus').checked;
+      const consType = document.querySelector('input[name="consensusType"]:checked').value;
+      const threshold = parseInt(document.getElementById('consensusThreshold').value) / 100;
+      let consensus = [];
+      if (showConsensus) {
+        for (let pos = 0; pos < len; pos++) {
+          const col = seqs.map(s => s.seq[pos] || '-');
+          const nonGapCol = col.filter(b => b !== '-' && b !== '.');
+          if (nonGapCol.length === 0) {
+            consensus.push('-');
+            continue;
+          }
+          const counts = {};
+          nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+          const maxBase = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, '');
+          const freq = counts[maxBase] / col.length;
+          if (freq < threshold) {
+            consensus.push('-');
+            continue;
+          }
+          if (consType === 'ambiguous') {
+            consensus.push(maxBase);
+          } else {
+            if (ambiguous.has(maxBase)) {
+              const normalBases = ['A','C','G','T'].filter(b => counts[b]);
+              if (normalBases.length > 0) {
+                consensus.push(normalBases.reduce((a,b) => counts[a] > counts[b] ? a : b, normalBases[0]));
+              } else {
+                consensus.push('-');
+              }
+            } else {
+              consensus.push(maxBase);
+            }
+          }
         }
-        return h;
-      });
+      }
+      consensusSeq = consensus.join('').replace(/-/g, '');
+
+      // Determine order
+      const consensusPosition = document.querySelector('input[name="consensusPosition"]:checked')?.value || 'bottom';
+
+      const tooltip = document.getElementById('tooltip');
 
       if (useBlocks) {
         for (let start = 0; start < len; start += blockWidth) {
           const end = Math.min(start + blockWidth, len);
           const blockDiv = document.createElement('div');
           blockDiv.className = 'block-block';
-          
+
           const sep = document.createElement('div');
           sep.className = 'block-sep';
           sep.textContent = `--- ${start + 1}-${end} ---`;
           blockDiv.appendChild(sep);
 
+          if (showConsensus && consensusPosition === 'top') {
+            addConsensusLine(blockDiv, consensus, start, end, nameLen);
+          }
+
           for (let i = 0; i < seqs.length; i++) {
             const lineDiv = document.createElement('div');
             lineDiv.className = 'seq-line';
+            lineDiv.dataset.seqIndex = i;
             const nameSpan = document.createElement('div');
             nameSpan.className = 'seq-name';
             nameSpan.title = seqs[i].fullHeader;
-            nameSpan.textContent = displayHeaders[i];
+            nameSpan.textContent = (seqs[i].header.substring(0, nameLen) + '        ').substring(0, nameLen);
             lineDiv.appendChild(nameSpan);
             const dataSpan = document.createElement('div');
             dataSpan.className = 'seq-data';
-            let currentClass = '';
-            let currentText = '';
+
             for (let pos = start; pos < end; pos++) {
               const base = seqs[i].seq[pos] || '-';
+              const gaplessPos = seqs[i].gaplessPositions[pos];
+
               let cls = 'other';
               let baseClass = '';
               if (!standard.has(base) && !ambiguous.has(base)) {
@@ -491,78 +835,89 @@
               } else if (ambiguous.has(base)) {
                 baseClass = 'ambiguous';
               }
-
               const col = seqs.map(s => s.seq[pos] || '-');
               const nonGapCol = col.filter(b => b !== '-' && b !== '.');
-              if (nonGapCol.length === 0) {
-                cls = 'gap';
-              } else {
+              if (nonGapCol.length > 0) {
                 const counts = {};
                 nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
                 const maxCount = Math.max(...Object.values(counts), 0);
-                const consensusBases = new Set(
-                  Object.keys(counts).filter(b => counts[b] === maxCount)
-                );
-
-                // Use all sequences or only non-gaps?
-                const useAllSites = document.querySelector('input[name="shadeMode"]:checked').value === 'all';
-                const denominator = useAllSites ? seqs.length : nonGapCol.length;
-                const conservation = denominator > 0 ? maxCount / denominator : 0;
-
-                if (base === '-' || base === '.') {
+                const consensusBases = new Set(Object.keys(counts).filter(b => counts[b] === maxCount));
+                const denominator = document.querySelector('input[name="shadeMode"]:checked').value === 'all' ? seqs.length : nonGapCol.length;
+                const conservation = maxCount / denominator;
+                if (base !== '-' && base !== '.' && consensusBases.has(base)) {
+                  if (enableBlack && conservation >= blackThresh) cls = 'black';
+                  else if (enableDark && conservation >= darkThresh) cls = 'dark';
+                  else if (enableLight && conservation >= lightThresh) cls = 'light';
+                } else if (base === '-' || base === '.') {
                   cls = 'gap';
-                } else if (consensusBases.has(base)) {
-                  if (conservation >= blackThresh) {
-                    cls = 'black';
-                  } else if (conservation >= darkThresh) {
-                    cls = 'dark';
-                  } else if (conservation >= lightThresh) {
-                    cls = 'light';
-                  } else {
-                    cls = 'other';
-                  }
-                } else {
-                  cls = 'other'; // Minority variants
                 }
+              } else {
+                cls = 'gap';
+              }
+              const newClass = `${cls} ${baseClass}`.trim();
+
+              const span = document.createElement('span');
+              span.className = newClass;
+              span.textContent = base;
+              span.dataset.pos = pos;
+
+              // ✅ Tooltip: Show the gapless nucleotide position
+              if (base !== '-' && base !== '.') {
+                // Capture the gapless position in a closure
+                const currentGaplessPos = gaplessPos;
+                span.onmouseover = (e) => {
+                  tooltip.style.display = 'block';
+                  tooltip.textContent = `${seqs[i].header}: ${currentGaplessPos}`;
+                  tooltip.style.left = (e.pageX + 10) + 'px';
+                  tooltip.style.top = (e.pageY - 20) + 'px';
+                };
+                span.onmouseout = () => {
+                  tooltip.style.display = 'none';
+                };
+              } else {
+                span.title = 'Gap';
               }
 
-              const newClass = `${cls} ${baseClass}`.trim();
-              if (newClass !== currentClass && currentText) {
-                const baseSpan = document.createElement('span');
-                baseSpan.className = currentClass;
-                baseSpan.textContent = currentText;
-                dataSpan.appendChild(baseSpan);
-                currentText = '';
+              if (selectedColumns.has(pos)) {
+                span.classList.add('column-selected');
               }
-              currentClass = newClass;
-              currentText += base;
-            }
-            if (currentText) {
-              const baseSpan = document.createElement('span');
-              baseSpan.className = currentClass;
-              baseSpan.textContent = currentText;
-              dataSpan.appendChild(baseSpan);
+
+              dataSpan.appendChild(span);
             }
             lineDiv.appendChild(dataSpan);
             blockDiv.appendChild(lineDiv);
+
+            if (selectedRows.has(i)) {
+              lineDiv.classList.add('selected');
+            }
           }
+
+          if (showConsensus && consensusPosition === 'bottom') {
+            addConsensusLine(blockDiv, consensus, start, end, nameLen);
+          }
+
           container.appendChild(blockDiv);
         }
       } else {
+        if (showConsensus && consensusPosition === 'top') {
+          addConsensusLine(container, consensus, 0, len, nameLen);
+        }
         for (let i = 0; i < seqs.length; i++) {
           const lineDiv = document.createElement('div');
           lineDiv.className = 'seq-line';
+          lineDiv.dataset.seqIndex = i;
           const nameSpan = document.createElement('div');
           nameSpan.className = 'seq-name';
           nameSpan.title = seqs[i].fullHeader;
-          nameSpan.textContent = displayHeaders[i];
+          nameSpan.textContent = (seqs[i].header.substring(0, nameLen) + '        ').substring(0, nameLen);
           lineDiv.appendChild(nameSpan);
           const dataSpan = document.createElement('div');
           dataSpan.className = 'seq-data';
-          let currentClass = '';
-          let currentText = '';
+          
           for (let pos = 0; pos < len; pos++) {
             const base = seqs[i].seq[pos] || '-';
+            const gaplessPos = seqs[i].gaplessPositions[pos];
+
             let cls = 'other';
             let baseClass = '';
             if (!standard.has(base) && !ambiguous.has(base)) {
@@ -570,75 +925,95 @@
             } else if (ambiguous.has(base)) {
               baseClass = 'ambiguous';
             }
-
             const col = seqs.map(s => s.seq[pos] || '-');
             const nonGapCol = col.filter(b => b !== '-' && b !== '.');
-            if (nonGapCol.length === 0) {
-              cls = 'gap';
-            } else {
+            if (nonGapCol.length > 0) {
               const counts = {};
               nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
               const maxCount = Math.max(...Object.values(counts), 0);
-              const consensusBases = new Set(
-                Object.keys(counts).filter(b => counts[b] === maxCount)
-              );
-
-              const useAllSites = document.querySelector('input[name="shadeMode"]:checked').value === 'all';
-              const denominator = useAllSites ? seqs.length : nonGapCol.length;
-              const conservation = denominator > 0 ? maxCount / denominator : 0;
-
-              if (base === '-' || base === '.') {
+              const consensusBases = new Set(Object.keys(counts).filter(b => counts[b] === maxCount));
+              const denominator = document.querySelector('input[name="shadeMode"]:checked').value === 'all' ? seqs.length : nonGapCol.length;
+              const conservation = maxCount / denominator;
+              if (base !== '-' && base !== '.' && consensusBases.has(base)) {
+                if (enableBlack && conservation >= blackThresh) cls = 'black';
+                else if (enableDark && conservation >= darkThresh) cls = 'dark';
+                else if (enableLight && conservation >= lightThresh) cls = 'light';
+              } else if (base === '-' || base === '.') {
                 cls = 'gap';
-              } else if (consensusBases.has(base)) {
-                if (conservation >= blackThresh) {
-                  cls = 'black';
-                } else if (conservation >= darkThresh) {
-                  cls = 'dark';
-                } else if (conservation >= lightThresh) {
-                  cls = 'light';
-                } else {
-                  cls = 'other';
-                }
-              } else {
-                cls = 'other';
               }
+            } else {
+              cls = 'gap';
+            }
+            const newClass = `${cls} ${baseClass}`.trim();
+
+            const span = document.createElement('span');
+            span.className = newClass;
+            span.textContent = base;
+            span.dataset.pos = pos;
+
+            // ✅ Tooltip: Show the gapless nucleotide position
+            if (base !== '-' && base !== '.') {
+              // Capture the gapless position in a closure
+              const currentGaplessPos = gaplessPos;
+              span.onmouseover = (e) => {
+                tooltip.style.display = 'block';
+                tooltip.textContent = `${seqs[i].header}: ${currentGaplessPos}`;
+                tooltip.style.left = (e.pageX + 10) + 'px';
+                tooltip.style.top = (e.pageY - 20) + 'px';
+              };
+              span.onmouseout = () => {
+                tooltip.style.display = 'none';
+              };
+            } else {
+              span.title = 'Gap';
             }
 
-            const newClass = `${cls} ${baseClass}`.trim();
-            if (newClass !== currentClass && currentText) {
-              const baseSpan = document.createElement('span');
-              baseSpan.className = currentClass;
-              baseSpan.textContent = currentText;
-              dataSpan.appendChild(baseSpan);
-              currentText = '';
+            if (selectedColumns.has(pos)) {
+              span.classList.add('column-selected');
             }
-            currentClass = newClass;
-            currentText += base;
-          }
-          if (currentText) {
-            const baseSpan = document.createElement('span');
-            baseSpan.className = currentClass;
-            baseSpan.textContent = currentText;
-            dataSpan.appendChild(baseSpan);
+
+            dataSpan.appendChild(span);
           }
           lineDiv.appendChild(dataSpan);
           container.appendChild(lineDiv);
+
+          if (selectedRows.has(i)) {
+            lineDiv.classList.add('selected');
+          }
+        }
+        if (showConsensus && consensusPosition === 'bottom') {
+          addConsensusLine(container, consensus, 0, len, nameLen);
         }
       }
+    }
 
-      // Re-apply selection
-      document.querySelectorAll('.seq-line').forEach((row, index) => {
-        if (selectedRows.has(index)) {
-          row.classList.add('selected');
-        }
-      });
+    function addConsensusLine(parent, consensus, start, end, nameLen) {
+      const consLine = document.createElement('div');
+      consLine.className = 'seq-line consensus-line';
+      const consName = document.createElement('div');
+      consName.className = 'seq-name';
+      consName.textContent = 'Consensus';
+      consLine.appendChild(consName);
+      const dataSpan = document.createElement('div');
+      dataSpan.className = 'seq-data';
+      for (let pos = start; pos < end; pos++) {
+        const base = pos < consensus.length ? consensus[pos] : '-';
+        let baseClass = '';
+        if (!['A','C','G','T','U','N','-','.'].includes(base)) baseClass = 'artifact';
+        else if (['R','Y','M','K','S','W','H','B','V','D'].includes(base)) baseClass = 'ambiguous';
+        const span = document.createElement('span');
+        span.className = baseClass;
+        span.textContent = base;
+        dataSpan.appendChild(span);
+      }
+      consLine.appendChild(dataSpan);
+      parent.appendChild(consLine);
     }
 
     function setZoom(percent) {
       const size = (percent / 100) * 13;
       const container = document.getElementById('alignmentContainer');
       container.style.fontSize = size + 'px';
-      container.style.lineHeight = (1.2 * (percent / 100)) + '';
       document.getElementById('zoomVal').textContent = percent;
     }
 
@@ -652,87 +1027,139 @@
 
     const debounceRender = debounce(renderAlignment, 100);
 
-    window.parseAndRender = function() {
+    window.parseAndRender = function(isFromDrop = false) {
       const fasta = document.getElementById('fastaInput').value.trim();
-      if (!fasta) return;
+      if (!fasta) {
+        document.getElementById('alignmentContainer').innerHTML = '<div class="error-message">❌ No input provided. Paste or drop a FASTA file.</div>';
+        return;
+      }
       try {
-        seqs = parseFasta(fasta);
-        if (seqs.length === 0) return;
+        const parsed = parseFasta(fasta);
+        if (!parsed) throw new Error("No valid sequences found");
+        seqs = parsed;
         selectedRows.clear();
+        selectedColumns.clear();
         lastSelectedIndex = null;
-        window.lengthWarningShown = false;
-        window.artifactWarningShown = false;
-        window.performanceWarningShown = false;
+        if (!isFromDrop) {
+          currentFilename = 'Clipboard';
+        }
+        document.getElementById('filenameInfo').textContent = `Source: ${currentFilename}`;
         renderAlignment();
       } catch (e) {
-        alert("Error parsing FASTA");
-        console.error(e);
+        console.error("Error in parseAndRender:", e);
+        document.getElementById('alignmentContainer').innerHTML = `<div class="error-message">❌ ${e.message}</div>`;
       }
     };
 
-    function toggleBlockSize() {
-      document.getElementById('blockSizeContainer').style.display = document.getElementById('modeBlocks').checked ? 'inline' : 'none';
+    function onModeChange() {
+      toggleBlockSize();
+      renderAlignment();
     }
 
-    // Initialize
-    document.getElementById('modeBlocks').onchange = function() {
-      toggleBlockSize();
-      debounceRender();
-    };
-    document.getElementById('modeSingle').onchange = function() {
-      toggleBlockSize();
-      debounceRender();
-    };
-    document.getElementById('modeBlocks').checked = true;
-    document.getElementById('modeSingle').checked = false;
-    toggleBlockSize();
+    function toggleBlockSize() {
+      const container = document.getElementById('blockSizeContainer');
+      if (container) {
+        container.style.display = document.getElementById('modeBlocks').checked ? 'inline' : 'none';
+      }
+    }
 
-    // Shading mode change
     window.onShadeModeChange = function() {
       validateThresholds();
       debounceRender();
     };
 
-    // Click to select
-    document.getElementById('alignmentContainer').onclick = function(e) {
+    // Continuous selection
+    document.getElementById('alignmentContainer').onmousedown = function(e) {
       const row = e.target.closest('.seq-line');
-      if (!row) return;
-      const index = Array.from(row.parentNode.children).indexOf(row);
-
+      if (!row || row.classList.contains('consensus-line')) return;
+      const index = parseInt(row.dataset.seqIndex);
       if (e.ctrlKey || e.metaKey) {
         row.classList.toggle('selected');
-        if (row.classList.contains('selected')) {
-          selectedRows.add(index);
-        } else {
-          selectedRows.delete(index);
-        }
+        if (row.classList.contains('selected')) selectedRows.add(index);
+        else selectedRows.delete(index);
         lastSelectedIndex = index;
+        isDragging = true;
+        dragStartRow = index;
       } else if (e.shiftKey && lastSelectedIndex !== null) {
         selectedRows.clear();
         const start = Math.min(lastSelectedIndex, index);
         const end = Math.max(lastSelectedIndex, index);
         for (let i = start; i <= end; i++) {
-          const r = document.querySelectorAll('.seq-line')[i];
-          r.classList.add('selected');
           selectedRows.add(i);
         }
+        debounceRender();
+      } else if (e.ctrlKey && e.altKey) {
+        const span = e.target.closest('.seq-data span');
+        if (!span) return;
+        const pos = parseInt(span.dataset.pos);
+        if (isNaN(pos)) return;
+        const isSelected = span.classList.toggle('column-selected');
+        if (isSelected) {
+          selectedColumns.add(pos);
+        } else {
+          selectedColumns.delete(pos);
+        }
+        document.querySelectorAll(`.seq-data span[data-pos="${pos}"]`).forEach(s => {
+          s.classList.toggle('column-selected', isSelected);
+        });
+        e.preventDefault();
+        isDragging = true;
+        dragStartCol = pos;
       } else {
-        selectedRows.clear();
-        document.querySelectorAll('.seq-line').forEach(r => r.classList.remove('selected'));
-        row.classList.add('selected');
+        if (!e.ctrlKey) {
+          selectedRows.clear();
+        }
         selectedRows.add(index);
         lastSelectedIndex = index;
+        isDragging = true;
+        dragStartRow = index;
+        debounceRender();
       }
     };
 
-    // Reverse Complement
+    document.getElementById('alignmentContainer').onmousemove = function(e) {
+      if (!isDragging) return;
+      if (dragStartRow !== null) {
+        const row = e.target.closest('.seq-line');
+        if (row) {
+          const index = parseInt(row.dataset.seqIndex);
+          if (!e.ctrlKey) {
+            selectedRows.clear();
+          }
+          const start = Math.min(dragStartRow, index);
+          const end = Math.max(dragStartRow, index);
+          for (let i = start; i <= end; i++) {
+            selectedRows.add(i);
+          }
+          debounceRender();
+        }
+      } else if (dragStartCol !== null) {
+        const span = e.target.closest('.seq-data span');
+        if (span) {
+          const pos = parseInt(span.dataset.pos);
+          if (isNaN(pos)) return;
+          document.querySelectorAll('.column-selected').forEach(s => s.classList.remove('column-selected'));
+          selectedColumns.clear();
+          const start = Math.min(dragStartCol, pos);
+          const end = Math.max(dragStartCol, pos);
+          for (let p = start; p <= end; p++) {
+            selectedColumns.add(p);
+            document.querySelectorAll(`.seq-data span[data-pos="${p}"]`).forEach(s => s.classList.add('column-selected'));
+          }
+        }
+      }
+    };
+
+    document.onmouseup = function() {
+      isDragging = false;
+      dragStartRow = null;
+      dragStartCol = null;
+    };
+
     function reverseComplement(seq) {
-      const complement = {
-        'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N': 'N', '-': '-', '.': '.',
-        'U': 'A', 'R': 'Y', 'Y': 'R', 'M': 'K', 'K': 'M',
-        'S': 'S', 'W': 'W', 'H': 'D', 'B': 'V', 'V': 'B', 'D': 'H'
-      };
-      return seq.split('').reverse().map(base => complement[base] || base).join('');
+      const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.',
+        'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H' };
+      return seq.split('').reverse().map(b => complement[b] || 'N').join('');
     }
 
     window.reverseComplementSelected = function() {
@@ -740,184 +1167,338 @@
         alert("Select sequences (Ctrl+click) to RevComp.");
         return;
       }
-      if (!window.revcompWarned) {
-        alert("Reverse complement flips sequences in place. Alignment may be disrupted. Consider realigning externally.");
-        window.revcompWarned = true;
-      }
-      for (const index of selectedRows) {
-        if (index < seqs.length) {
-          seqs[index] = { ...seqs[index], seq: reverseComplement(seqs[index].seq) };
+      for (const i of selectedRows) {
+        if (i < seqs.length) {
+          seqs[i] = { 
+            ...seqs[i], 
+            seq: reverseComplement(seqs[i].seq) 
+          };
+          // Recalculate gapless positions after reverse complement
+          seqs[i].gaplessPositions = calculateGaplessPositions(seqs[i].seq);
         }
       }
       renderAlignment();
     };
 
-    // Realign Selected
-    window.realignSelected = function() {
-      if (selectedRows.size < 2) {
-        alert("Select at least two sequences to realign.");
+    window.deleteSelected = function() {
+      if (selectedRows.size === 0) {
+        alert("No sequences selected for deletion.");
         return;
       }
-      const indices = Array.from(selectedRows).sort((a, b) => a - b);
-      const refIndex = indices[0];
-      const refSeq = seqs[refIndex].seq;
-      for (let i = 1; i < indices.length; i++) {
-        const targetIndex = indices[i];
-        const targetSeq = seqs[targetIndex].seq;
-        let aligned = '';
-        let pos = 0;
-        for (let base of refSeq) {
-          if (pos < targetSeq.length && targetSeq[pos] === base) {
-            aligned += base;
-            pos++;
-          } else {
-            aligned += '-';
+      if (seqs.length === 1) {
+        alert("Cannot delete the last sequence.");
+        return;
+      }
+      if (confirm(`Delete ${selectedRows.size} sequence(s)?`)) {
+        deletedHistory.push({ 
+          seqs: JSON.parse(JSON.stringify(seqs)), 
+          selectedRows: new Set(selectedRows),
+          selectedColumns: new Set(selectedColumns)
+        });
+        const indicesToDelete = Array.from(selectedRows).sort((a,b)=>b-a);
+        for (const index of indicesToDelete) {
+          if (index < seqs.length) {
+            seqs.splice(index, 1);
           }
         }
-        while (pos < targetSeq.length) {
-          aligned += targetSeq[pos++];
-        }
-        seqs[targetIndex].seq = aligned;
+        selectedRows.clear();
+        lastSelectedIndex = null;
+        renderAlignment();
       }
-      alert("Selected sequences realigned to first selected.");
+    };
+
+    window.undoDelete = function() {
+      if (deletedHistory.length === 0) {
+        alert("Nothing to undo.");
+        return;
+      }
+      const last = deletedHistory.pop();
+      seqs = last.seqs;
+      selectedRows = last.selectedRows;
+      if (last.selectedColumns) {
+        selectedColumns = last.selectedColumns;
+      }
       renderAlignment();
     };
 
-    // Save/Load Preset
-    const presetKey = 'qwen_msa_viewer_preset_v3';
+    function copySelected() {
+      if (selectedRows.size === 0) {
+        alert("No sequences selected to copy.");
+        return;
+      }
+      const fasta = Array.from(selectedRows).sort((a,b) => a - b).map(i => {
+        const s = seqs[i];
+        return `>${s.fullHeader || s.header}\n${s.seq}`;
+      }).join('\n');
+      navigator.clipboard.writeText(fasta).then(() => {
+        alert("Selected sequences copied as FASTA!");
+      }).catch(err => {
+        console.error('Copy failed:', err);
+        alert("Failed to copy. Check console.");
+      });
+    }
+
+    function copyConsensus() {
+      if (!consensusSeq) {
+        alert("No consensus available to copy.");
+        return;
+      }
+      const fasta = `>Consensus\n${consensusSeq}`;
+      navigator.clipboard.writeText(fasta).then(() => {
+        alert("Consensus copied as FASTA!");
+      }).catch(err => {
+        console.error('Copy failed:', err);
+        alert("Failed to copy. Check console.");
+      });
+    }
+
+    function copySelectedConsensus() {
+      if (selectedRows.size < 2) {
+        alert("Select at least 2 sequences to compute consensus.");
+        return;
+      }
+      const selectedSeqs = Array.from(selectedRows).map(i => seqs[i].seq);
+      const len = Math.max(...selectedSeqs.map(s => s.length));
+      const threshold = 0.5;
+      let cons = '';
+      for (let pos = 0; pos < len; pos++) {
+        const col = selectedSeqs.map(s => s[pos] || '-').filter(b => b !== '-' && b !== '.');
+        if (col.length === 0) continue;
+        const counts = {};
+        col.forEach(b => counts[b] = (counts[b] || 0) + 1);
+        const maxBase = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, '');
+        const freq = counts[maxBase] / col.length;
+        if (freq >= threshold) {
+          cons += maxBase;
+        }
+      }
+      const fasta = `>Selected_Consensus\n${cons}`;
+      navigator.clipboard.writeText(fasta).then(() => {
+        alert("Selected sequences consensus copied as FASTA!");
+      }).catch(err => {
+        console.error('Copy failed:', err);
+        alert("Failed to copy. Check console.");
+      });
+    }
+
+    window.copySelectedColumns = function() {
+      if (selectedColumns.size === 0) {
+        alert("No columns selected to copy.");
+        return;
+      }
+      const cols = Array.from(selectedColumns).sort((a,b) => a - b);
+      const fasta = seqs.map(s => {
+        let seq = '';
+        for (const pos of cols) {
+          seq += s.seq[pos] || '-';
+        }
+        return `>${s.fullHeader || s.header}\n${seq}`;
+      }).join('\n');
+      navigator.clipboard.writeText(fasta).then(() => {
+        alert("Selected columns copied as FASTA!");
+      }).catch(err => {
+        console.error('Copy failed:', err);
+        alert("Failed to copy.");
+      });
+    };
+
+    window.deleteSelectedColumns = function() {
+      if (selectedColumns.size === 0) {
+        alert("No columns selected for deletion.");
+        return;
+      }
+      if (confirm(`Delete ${selectedColumns.size} column(s)?`)) {
+        deletedHistory.push({ 
+          seqs: JSON.parse(JSON.stringify(seqs)), 
+          selectedRows: new Set(selectedRows),
+          selectedColumns: new Set(selectedColumns)
+        });
+        const colsToDelete = Array.from(selectedColumns).sort((a,b) => b - a);
+        seqs = seqs.map(s => {
+          let seq = s.seq.split('');
+          for (const pos of colsToDelete) {
+            if (pos < seq.length) seq.splice(pos, 1);
+          }
+          return { ...s, seq: seq.join('') };
+        });
+        selectedColumns.clear();
+        renderAlignment();
+      }
+    };
+
+    let allSelected = false;
+    window.selectAllSequences = function() {
+      if (allSelected) {
+        selectedRows.clear();
+        allSelected = false;
+        alert("All sequences deselected.");
+      } else {
+        selectedRows.clear();
+        for (let i = 0; i < seqs.length; i++) {
+          selectedRows.add(i);
+        }
+        allSelected = true;
+        alert("All sequences selected.");
+      }
+      renderAlignment();
+    };
+
     function savePreset() {
       const preset = {
         black: document.getElementById('blackSlider').value,
-        dark:  document.getElementById('darkSlider').value,
+        dark: document.getElementById('darkSlider').value,
         light: document.getElementById('lightSlider').value,
-        zoom:  document.getElementById('zoomSlider').value,
-        mode:  document.getElementById('modeBlocks').checked ? 'blocks' : 'single',
+        zoom: document.getElementById('zoomSlider').value,
+        mode: document.getElementById('modeBlocks').checked ? 'blocks' : 'single',
         blockSize: document.getElementById('blockSizeSlider').value,
-        nameLen: document.getElementById('nameLengthSlider').value
+        nameLen: document.getElementById('nameLengthSlider').value,
+        consensusThreshold: document.getElementById('consensusThreshold').value,
+        consensusType: document.querySelector('input[name="consensusType"]:checked').value,
+        showConsensus: document.getElementById('showConsensus').checked,
+        consensusPosition: document.querySelector('input[name="consensusPosition"]:checked').value,
+        shadeMode: document.querySelector('input[name="shadeMode"]:checked').value,
+        enableBlack: document.getElementById('enableBlack').checked,
+        enableDark: document.getElementById('enableDark').checked,
+        enableLight: document.getElementById('enableLight').checked
       };
-      localStorage.setItem(presetKey, JSON.stringify(preset));
+      localStorage.setItem('qwen_msa_viewer_preset_v44', JSON.stringify(preset));
       alert("Preset saved!");
     }
 
     function loadPreset() {
-      const saved = localStorage.getItem(presetKey);
+      const saved = localStorage.getItem('qwen_msa_viewer_preset_v44');
       if (!saved) {
-        const oldSaved = localStorage.getItem('qwen_msa_viewer_preset_v2');
-        if (oldSaved) {
-          alert("Loading preset from previous version.");
-          const preset = JSON.parse(oldSaved);
-          document.getElementById('blackSlider').value = preset.black;
-          document.getElementById('darkSlider').value = preset.dark;
-          document.getElementById('lightSlider').value = preset.light;
-          document.getElementById('zoomSlider').value = preset.zoom;
-          document.getElementById('blockSizeSlider').value = preset.blockSize;
-          document.getElementById('nameLengthSlider').value = preset.nameLen;
-          document.getElementById('nameLengthInput').value = preset.nameLen;
-          updateLabel('blackVal', preset.black);
-          updateLabel('darkVal', preset.dark);
-          updateLabel('lightVal', preset.light);
-          updateLabel('zoomVal', preset.zoom);
-          updateLabel('blockSizeVal', preset.blockSize);
-          updateLabel('nameLengthVal', preset.nameLen);
-          if (preset.mode === 'blocks') {
-            document.getElementById('modeBlocks').checked = true;
-            document.getElementById('modeSingle').checked = false;
-          } else {
-            document.getElementById('modeSingle').checked = true;
-            document.getElementById('modeBlocks').checked = false;
-          }
-          toggleBlockSize();
-          debounceRender();
-          return;
-        }
         alert("No saved preset found.");
         return;
       }
-      const preset = JSON.parse(saved);
-      document.getElementById('blackSlider').value = preset.black;
-      document.getElementById('darkSlider').value = preset.dark;
-      document.getElementById('lightSlider').value = preset.light;
-      document.getElementById('zoomSlider').value = preset.zoom;
-      document.getElementById('blockSizeSlider').value = preset.blockSize;
-      document.getElementById('nameLengthSlider').value = preset.nameLen;
-      document.getElementById('nameLengthInput').value = preset.nameLen;
-      updateLabel('blackVal', preset.black);
-      updateLabel('darkVal', preset.dark);
-      updateLabel('lightVal', preset.light);
-      updateLabel('zoomVal', preset.zoom);
-      updateLabel('blockSizeVal', preset.blockSize);
-      updateLabel('nameLengthVal', preset.nameLen);
-      if (preset.mode === 'blocks') {
-        document.getElementById('modeBlocks').checked = true;
-        document.getElementById('modeSingle').checked = false;
-      } else {
-        document.getElementById('modeSingle').checked = true;
-        document.getElementById('modeBlocks').checked = false;
-      }
+      const p = JSON.parse(saved);
+      ['black','dark','light','zoom','blockSize','nameLen','consensusThreshold'].forEach(k => {
+        document.getElementById(k + 'Slider').value = p[k];
+        document.getElementById(k + 'Input').value = p[k];
+        updateLabel(k + 'Val', p[k]);
+      });
+      setZoom(p.zoom);
+      document.getElementById('modeBlocks').checked = p.mode === 'blocks';
+      document.getElementById('modeSingle').checked = p.mode !== 'blocks';
       toggleBlockSize();
-      debounceRender();
+      document.querySelector(`input[name="consensusType"][value="${p.consensusType}"]`).checked = true;
+      document.getElementById('showConsensus').checked = p.showConsensus;
+      document.querySelector(`input[name="consensusPosition"][value="${p.consensusPosition}"]`).checked = true;
+      document.querySelector(`input[name="shadeMode"][value="${p.shadeMode}"]`).checked = true;
+      document.getElementById('enableBlack').checked = p.enableBlack;
+      document.getElementById('enableDark').checked = p.enableDark;
+      document.getElementById('enableLight').checked = p.enableLight;
+      renderAlignment();
     }
 
-    // Minimize/Expand Menu
-    const controls = document.getElementById('controls');
-    const minimizeBar = document.getElementById('minimizeBar');
-    const minimizeBtn = document.getElementById('minimizeBtn');
-
     function minimizeMenu() {
-      controls.style.display = 'none';
+      document.getElementById('controls').style.display = 'none';
       minimizeBar.style.display = 'block';
-      // When minimized, make alignment container take full height
-      document.getElementById('alignmentContainer').style.height = 'calc(100vh - 5px)';
     }
 
     function expandMenu() {
-      controls.style.display = 'block';
       minimizeBar.style.display = 'none';
-      // Restore auto height
-      document.getElementById('alignmentContainer').style.height = '';
+      document.getElementById('controls').style.display = 'grid';
     }
 
-    minimizeBar.style.height = '5px';
-    minimizeBar.style.background = '#333';
-    minimizeBar.style.position = 'sticky';
-    minimizeBar.style.top = '0';
-    minimizeBar.style.width = '100%';
-    minimizeBar.style.zIndex = '99';
-    minimizeBar.style.cursor = 'pointer';
-    minimizeBar.style.display = 'none';
-
-    minimizeBar.onmouseover = function() {
-      minimizeBar.style.height = '30px';
-      minimizeBar.style.lineHeight = '30px';
-      minimizeBar.style.textAlign = 'center';
-      minimizeBar.style.color = 'white';
-      minimizeBar.style.fontWeight = 'bold';
-      minimizeBar.textContent = 'Restore Menu';
-    };
-    minimizeBar.onmouseout = function() {
-      minimizeBar.style.height = '5px';
-      minimizeBar.style.lineHeight = 'normal';
-      minimizeBar.style.textAlign = 'left';
-      minimizeBar.style.color = 'transparent';
-      minimizeBar.textContent = '';
-    };
-
-    // Enforce threshold hierarchy
     function validateThresholds() {
-      const black = parseInt(document.getElementById('blackSlider').value);
-      const dark = parseInt(document.getElementById('darkSlider').value);
-      const light = parseInt(document.getElementById('lightSlider').value);
-      if (black < dark) {
-        document.getElementById('darkSlider').value = black;
-        document.getElementById('darkInput').value = black;
-        updateLabel('darkVal', black);
-      }
-      if (dark < light) {
-        document.getElementById('lightSlider').value = dark;
-        document.getElementById('lightInput').value = dark;
-        updateLabel('lightVal', dark);
-      }
+      const b = parseInt(document.getElementById('blackSlider').value);
+      const d = parseInt(document.getElementById('darkSlider').value);
+      const l = parseInt(document.getElementById('lightSlider').value);
+      if (b < d) document.getElementById('darkSlider').value = document.getElementById('darkInput').value = b;
+      if (d < l) document.getElementById('lightSlider').value = document.getElementById('lightInput').value = d;
+      ['blackVal','darkVal','lightVal'].forEach(id => updateLabel(id, document.getElementById(id.replace('Val','Slider')).value));
     }
+
+    // ✅ Multiple Search with Color
+    function searchMotif() {
+      const motif = document.getElementById('searchInput').value.trim().toUpperCase();
+      if (!motif) return;
+      const color = document.getElementById('searchColor').value;
+      const className = 'search-hit-' + Math.random().toString(36).substring(2, 12) + btoa(motif).replace(/=/g, '').substring(0, 5);
+
+      searchHistory = searchHistory.filter(item => {
+        if (item.motif === motif) {
+          document.querySelectorAll(`.${item.className}`).forEach(span => {
+            span.classList.remove(item.className);
+          });
+          document.querySelector(`style[data-motif="${item.motif}"]`)?.remove();
+          return false;
+        }
+        return true;
+      });
+
+      const style = document.createElement('style');
+      style.textContent = `.${className} { background-color: ${color} !important; color: black !important; font-weight: bold; }`;
+      style.setAttribute('data-motif', motif);
+      document.head.appendChild(style);
+
+      searchHistory.push({ motif, color, className });
+
+      document.querySelectorAll('.seq-line:not(.consensus-line)').forEach(row => {
+        const index = parseInt(row.dataset.seqIndex);
+        if (index >= seqs.length || index < 0) return;
+        const seq = seqs[index].seq;
+        const degapped = seq.replace(/[-.]/g, '');
+        const dataSpan = row.querySelector('.seq-data');
+        const spans = Array.from(dataSpan.children);
+        const nonGapSpans = spans.filter(s => {
+          const b = s.textContent;
+          return b !== '-' && b !== '.';
+        });
+        for (let seqPos = 0; seqPos <= degapped.length - motif.length; seqPos++) {
+          const sub = degapped.substring(seqPos, seqPos + motif.length);
+          if (sub === motif) {
+            for (let i = 0; i < motif.length; i++) {
+              const child = nonGapSpans[seqPos + i];
+              if (child) child.classList.add(className);
+            }
+          }
+        }
+      });
+
+      document.getElementById('searchInput').value = '';
+    }
+
+    // ✅ Clear Last Search
+    window.clearLastSearch = function() {
+      if (searchHistory.length === 0) return;
+      const last = searchHistory.pop();
+      document.querySelectorAll(`.${last.className}`).forEach(span => span.classList.remove(last.className));
+      document.querySelector(`style[data-motif="${last.motif}"]`)?.remove();
+    };
+
+    // ✅ Clear All Searches
+    function clearAllSearches() {
+      searchHistory.forEach(item => {
+        document.querySelectorAll(`.${item.className}`).forEach(span => {
+          span.classList.remove(item.className);
+        });
+        document.querySelector(`style[data-motif="${item.motif}"]`)?.remove();
+      });
+      searchHistory = [];
+    }
+
+    // ✅ Program Info Modal
+    const infoModal = document.getElementById('infoModal');
+    window.openInfoModal = function() {
+      infoModal.style.display = 'block';
+    };
+    window.closeInfoModal = function() {
+      infoModal.style.display = 'none';
+    };
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+      if (event.target == infoModal) {
+        closeInfoModal();
+      }
+    };
+
+    // Init
+    document.getElementById('modeBlocks').checked = true;
+    document.getElementById('modeSingle').checked = false;
+    document.querySelector('input[name="consensusPosition"][value="bottom"]').checked = true;
+    toggleBlockSize();
   </script>
 </body>
 </html>
