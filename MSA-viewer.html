@@ -7,7 +7,6 @@
     :root {
       --nameLen: 20;
     }
-
     body {
       font-family: 'Courier New', monospace;
       font-size: 13px;
@@ -19,7 +18,6 @@
       display: flex;
       flex-direction: column;
     }
-
     #dropZone {
       border: 2px dashed #1a2129;
       border-radius: 4px;
@@ -33,12 +31,10 @@
       justify-content: center;
       min-height: 40px;
     }
-
     #dropZone:hover {
       border-color: #004c99;
       background: #e0f0ff;
     }
-
     #controls {
       position: sticky;
       top: 0;
@@ -51,18 +47,15 @@
       gap: 6px;
       font-size: 13px;
     }
-
     .menu-section {
       margin-bottom: 4px;
     }
-
     .section-header {
       font-size: 14px;
       margin: 4px 0;
       color: #2c3e50;
       font-weight: bold;
     }
-
     /* Button Groups */
     .button-group {
       display: flex;
@@ -75,14 +68,12 @@
       padding: 2px;
       background: #fafafa;
     }
-
     .button-spacer {
       width: 1px;
       height: 16px;
       background: #ccc;
       margin: 0 4px;
     }
-
     /* Buttons */
     button {
       padding: 2px 6px;
@@ -93,17 +84,14 @@
       background: white;
       cursor: pointer;
     }
-
     button:hover {
       background: #e6f3ff;
     }
-
     /* Control Groups */
     .control-group {
       display: block;
       margin: 2px 0;
     }
-
     .slider-container {
       margin: 2px 0;
       display: flex;
@@ -112,7 +100,6 @@
       height: 22px;
       line-height: 22px;
     }
-
     .display-slider-row {
       min-width: 340px;
       display: grid;
@@ -120,14 +107,12 @@
       gap: 8px;
       align-items: center;
     }
-
     .slider-label {
       width: 70px;
       display: inline-block;
       text-align: right;
       font-weight: normal;
     }
-
     /* === SHADING SLIDERS (Black, Dark, Light) - Solid Rectangles === */
     input[type="range"].shading-slider {
       -webkit-appearance: none;
@@ -136,17 +121,14 @@
       background: transparent;
       outline: none;
     }
-
     input[type="range"].shading-slider::-webkit-slider-runnable-track {
       height: 8px;
       border-radius: 4px;
       cursor: pointer;
     }
-
     #blackSlider::-webkit-slider-runnable-track { background: #000; }
     #darkSlider::-webkit-slider-runnable-track { background: #555; }
     #lightSlider::-webkit-slider-runnable-track { background: #ccc; }
-
     input[type="range"].shading-slider::-webkit-slider-thumb {
       -webkit-appearance: none;
       height: 14px;
@@ -157,7 +139,6 @@
       cursor: pointer;
       background: white;
     }
-
     /* === OTHER SLIDERS (Name Len, Zoom, Block Size) === */
     input[type="range"].normal-slider {
       -webkit-appearance: none;
@@ -166,13 +147,11 @@
       background: transparent;
       outline: none;
     }
-
     input[type="range"].normal-slider::-webkit-slider-runnable-track {
       height: 7px;
       border-radius: 7px;
       background: #888;
     }
-
     input[type="range"].normal-slider::-webkit-slider-thumb {
       -webkit-appearance: none;
       width: 8px;
@@ -183,19 +162,16 @@
       cursor: pointer;
       margin-top: -3px;
     }
-
     input[type="number"] {
       width: 38px;
       height: 22px;
       padding: 0;
       text-align: center;
     }
-
     /* Block styling */
     .block-block {
       margin-bottom: 8px;
     }
-
     .block-sep {
       font-weight: bold;
       color: #666;
@@ -205,7 +181,6 @@
       background: #f0f0f0;
       border-radius: 3px;
     }
-
     #alignmentContainer {
       flex: 1;
       overflow-x: auto;
@@ -218,7 +193,6 @@
       font-size: 13px;
       transition: font-size 0.1s;
     }
-
     .seq-line {
       display: flex;
       font-family: 'Courier New', monospace;
@@ -227,14 +201,13 @@
       padding: 0;
       white-space: nowrap;
     }
-
     .seq-name {
       flex: 0 0 auto;
       min-width: calc(var(--nameLen) * 0.8em);
       width: calc(var(--nameLen) * 0.8em);
       max-width: calc(var(--nameLen) * 0.8em);
       text-align: left;
-      padding: 0 4px 0 0;
+      padding: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -242,7 +215,6 @@
       color: #333;
       background: white;
     }
-
     .seq-data {
       flex: 1;
       display: inline-block;
@@ -251,32 +223,28 @@
       padding: 0;
       line-height: 1.0;
     }
-
     /* GeneDoc-inspired coloring */
     .black { background-color: #000 !important; color: white; }
-    .dark  { background-color: #555; color: white; }
+    .dark { background-color: #555; color: white; }
     .light { background-color: #ccc; color: black; }
-    .gap   { background-color: white !important; color: #888 !important; }
+    .gap { background-color: white !important; color: #888 !important; }
     .other { background-color: white; color: black; }
     .ambiguous { color: #0000AA; font-weight: bold; }
-    .artifact { 
-      color: red !important; 
-      background-color: #ffe6e6 !important; 
-      font-weight: bold !important; 
+    .artifact {
+      color: red !important;
+      background-color: #ffe6e6 !important;
+      font-weight: bold !important;
     }
-
     /* ✅ SELECTION: Highlight name only */
     .selected .seq-name {
       background-color: #ffebcd !important;
       color: #000 !important;
       font-weight: bold;
     }
-
     /* Column selection */
     .column-selected {
       background-color: #e6ffe6 !important;
     }
-
     /* Consensus line */
     .consensus-line {
       border-top: 1px solid #ccc;
@@ -294,7 +262,6 @@
       background-color: transparent !important;
       color: #555;
     }
-
     /* Error message */
     .error-message {
       color: red;
@@ -305,27 +272,25 @@
       margin: 5px;
       border-radius: 4px;
     }
-
     /* Search highlight */
     .search-hit {
       background-color: yellow !important;
       color: black !important;
       font-weight: bold;
     }
-
     /* Tooltip */
     .tooltip {
       position: absolute;
-      background: #000;
-      color: #fff;
+      background: white;
+      color: black;
       font-size: 12px;
       padding: 2px 6px;
       border-radius: 3px;
       white-space: nowrap;
       z-index: 200;
       display: none;
+      border: 1px solid #ccc;
     }
-
     /* Info Modal */
     .modal {
       display: none;
@@ -337,7 +302,6 @@
       height: 100%;
       background-color: rgba(0,0,0,0.5);
     }
-
     .modal-content {
       background-color: #fefefe;
       margin: 5% auto;
@@ -351,7 +315,6 @@
       font-family: Arial, sans-serif;
       line-height: 1.6;
     }
-
     .close {
       color: #aaa;
       float: right;
@@ -359,17 +322,14 @@
       font-weight: bold;
       cursor: pointer;
     }
-
     .close:hover,
     .close:focus {
       color: black;
       text-decoration: none;
     }
-
     .modal h2, .modal h3 {
       color: #2c3e50;
     }
-
     .modal ul {
       margin: 10px 0;
       padding-left: 20px;
@@ -379,18 +339,15 @@
 <body>
   <div id="controls">
     <h2 style="grid-column: 1/-1; text-align: center; margin: 2px 0; font-size: 16px;">Qwen MSA Viewer</h2>
-
     <!-- Quick Usability Tips -->
     <div style="grid-column: 1/-1; text-align: center; font-size: 12px; color: #2980b9; font-weight: bold; background: #ecf0f1; padding: 4px; border-radius: 4px;">
       🔍 Hover: Seq & Pos | Ctrl+click: Select Seqs | Ctrl+Alt+click: Select Cols | Drag: Range Select
     </div>
-
     <div class="menu-section" style="grid-column: 1/-1; display: flex; gap: 6px; align-items: start;">
       <div id="dropZone" style="flex: 0 0 180px; padding: 6px;">📁 Drop FASTA</div>
       <textarea id="fastaInput" placeholder=">seq1&#13;&#10;ATGCGGCTA..." style="flex: 1; height: 60px; font-size: 12px; padding: 4px;"></textarea>
       <button onclick="parseAndRender(false)" style="height: 60px; font-size: 13px;">Load</button>
     </div>
-
     <div class="menu-section">
       <div class="section-header">Shade</div>
       <div class="control-group">
@@ -435,7 +392,6 @@
         </div>
       </div>
     </div>
-
     <div class="menu-section">
       <div class="section-header">Display</div>
       <div class="control-group">
@@ -465,7 +421,6 @@
         </div>
       </div>
     </div>
-
     <div class="menu-section">
       <div class="section-header">Consensus</div>
       <div class="control-group">
@@ -478,10 +433,10 @@
         <div class="slider-container">
           <span class="slider-label">Type</span>
           <label class="shade-mode-label">
-            <input type="radio" name="consensusType" value="normal" checked> Normal
+            <input type="radio" name="consensusType" value="normal" checked onchange="debounceRender()"> Normal
           </label>
           <label class="shade-mode-label">
-            <input type="radio" name="consensusType" value="ambiguous"> Ambiguous
+            <input type="radio" name="consensusType" value="ambiguous" onchange="debounceRender()"> Ambiguous
           </label>
         </div>
         <div class="slider-container">
@@ -505,7 +460,6 @@
         </div>
       </div>
     </div>
-
     <div class="menu-section">
       <div class="section-header">Search</div>
       <div class="control-group">
@@ -518,7 +472,6 @@
         </div>
       </div>
     </div>
-
     <div class="menu-section" style="grid-column: 1/-1;">
       <div class="section-header">Actions</div>
       <!-- Grouped Buttons -->
@@ -541,31 +494,25 @@
         <button id="minimizeBtn" onclick="minimizeMenu()">Hide menu</button>
       </div>
     </div>
-
     <!-- Keyboard hints -->
     <div style="grid-column: 1/-1; text-align: right; font-size: 12px; color: #555;">
       <span style="white-space: nowrap;">Ctrl+click: select seqs</span> |
       <span style="white-space: nowrap;">Shift+click: range</span> |
       <span style="white-space: nowrap;">Ctrl+Alt+click: select cols</span>
     </div>
-
     <!-- Filename -->
     <div id="filenameInfo" style="grid-column: 1/-1; padding: 2px 8px; font-size: 12px; color: #555; background: #f0f0f0; text-align: center;">Source: Clipboard</div>
   </div>
-
   <!-- Minimize bar -->
   <div id="minimizeBar" onclick="expandMenu()"></div>
-
   <!-- Tooltip -->
   <div id="tooltip" class="tooltip"></div>
-
   <!-- Info Modal -->
   <div id="infoModal" class="modal">
     <div class="modal-content">
       <span class="close" onclick="closeInfoModal()">&times;</span>
       <h2>Qwen MSA Viewer</h2>
       <p>A fast, interactive, and portable Multiple Sequence Alignment viewer.</p>
-
       <h3>Features</h3>
       <ul>
         <li><strong>Load FASTA:</strong> Drag & drop a file or paste text.</li>
@@ -577,14 +524,12 @@
         <li><strong>Undo:</strong> Recover deleted sequences or columns.</li>
         <li><strong>Preset Management:</strong> Save and load your display settings.</li>
       </ul>
-
       <h3>Quick Tips</h3>
       <ul>
         <li>Hover over a nucleotide to see the sequence name and its <strong>gapless position</strong> (e.g., the 1st, 2nd, 3rd nucleotide in the gene).</li>
         <li>Use the "Block" mode for long alignments to improve readability.</li>
         <li>The "Hide menu" button maximizes the viewing area. Hover near the top to restore it.</li>
       </ul>
-
       <h3>Controls</h3>
       <p><strong>Shade:</strong> Adjust conservation thresholds and enable/disable shading levels.</p>
       <p><strong>Display:</strong> Change sequence name length, zoom level, and block size.</p>
@@ -593,9 +538,7 @@
       <p><strong>Actions:</strong> All sequence and column manipulation tools are here.</p>
     </div>
   </div>
-
   <div id="alignmentContainer">Alignment will appear here</div>
-
   <script>
     let seqs = [];
     let selectedRows = new Set();
@@ -604,32 +547,61 @@
     let consensusSeq = '';
     let deletedHistory = [];
     let currentFilename = '';
-
     // Search: Track multiple motifs
     let searchHistory = [];
-
     // Continuous selection
     let isDragging = false;
     let dragStartRow = null;
     let dragStartCol = null;
-
     // Minimize bar
     const minimizeBar = document.getElementById('minimizeBar');
-    minimizeBar.style.cssText = 'height:5px;background:#333;position:sticky;top:0;width:100%;z-index:99;cursor:pointer;display:none';
+    minimizeBar.style.cssText = 'height:20px;background:#333;position:sticky;top:0;width:100%;z-index:99;cursor:pointer;display:none';
+    const minimizeBarContent = document.createElement('div');
+    minimizeBarContent.id = 'minimizeBarContent';
+    minimizeBarContent.style.cssText = 'height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;font-size:12px;cursor:pointer;padding:4px;';
+    minimizeBar.appendChild(minimizeBarContent);
     minimizeBar.onmouseover = () => {
-      minimizeBar.style.height = '30px';
-      minimizeBar.style.color = 'white';
-      minimizeBar.style.display = 'flex';
-      minimizeBar.style.alignItems = 'center';
-      minimizeBar.style.justifyContent = 'center';
-      minimizeBar.textContent = 'Restore Menu';
+      minimizeBar.style.height = '200px';
+      minimizeBarContent.innerHTML = '<div>Restore Menu (or click)</div>';
+      const displaySection = document.querySelector('.menu-section:nth-child(3)');
+      if (displaySection) {
+        const clonedDisplay = displaySection.cloneNode(true);
+        clonedDisplay.querySelectorAll('input[type="range"], input[type="number"]').forEach(input => {
+          input.id = input.id + 'Clone';
+          input.addEventListener('input', (e) => {
+            const originalId = input.id.replace('Clone', '');
+            const original = document.getElementById(originalId);
+            if (original) original.value = e.target.value;
+            if (input.type === 'range') {
+              const labelId = originalId.replace('Slider', 'Val');
+              updateLabel(labelId, e.target.value);
+              const inputId = originalId.replace('Slider', 'Input');
+              document.getElementById(inputId).value = e.target.value;
+            } else if (input.type === 'number') {
+              const sliderId = originalId.replace('Input', 'Slider');
+              document.getElementById(sliderId).value = e.target.value;
+              const labelId = originalId.replace('Input', 'Val');
+              updateLabel(labelId, e.target.value);
+            }
+            if (originalId.includes('zoom')) setZoom(e.target.value);
+            debounceRender();
+          });
+        });
+        clonedDisplay.querySelectorAll('input[type="radio"]').forEach(radio => {
+          radio.name = radio.name + 'Clone';
+          radio.addEventListener('change', (e) => {
+            const original = document.querySelector(`input[name="${radio.name.replace('Clone','')}"][value="${radio.value}"]`);
+            if (original) original.checked = radio.checked;
+            onModeChange();
+          });
+        });
+        minimizeBarContent.appendChild(clonedDisplay);
+      }
     };
     minimizeBar.onmouseout = () => {
-      minimizeBar.style.height = '5px';
-      minimizeBar.textContent = '';
-      minimizeBar.style.color = 'white';
+      minimizeBar.style.height = '20px';
+      minimizeBarContent.innerHTML = '';
     };
-
     // Drag & Drop
     const dropZone = document.getElementById('dropZone');
     dropZone.addEventListener('dragover', (e) => {
@@ -655,16 +627,13 @@
       };
       reader.readAsText(file);
     });
-
     function updateLabel(id, value) {
       document.getElementById(id).textContent = value;
     }
-
     // Helper function to calculate gapless positions for a sequence
     function calculateGaplessPositions(sequence) {
       const positions = [];
       let gaplessCount = 0;
-      
       for (let i = 0; i < sequence.length; i++) {
         const char = sequence[i];
         if (char !== '-' && char !== '.') {
@@ -672,10 +641,8 @@
         }
         positions.push(gaplessCount);
       }
-      
       return positions;
     }
-
     function parseFasta(text) {
       const lines = text.trim().split(/\r?\n/);
       const seqs = [];
@@ -689,7 +656,6 @@
               const cleanHeader = header.replace(/^>/, '').trim();
               const displayHeader = cleanHeader.split(' ')[0] || 'unnamed';
               const processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
-              // Calculate gapless positions for this sequence
               const gaplessPositions = calculateGaplessPositions(processedSeq);
               seqs.push({
                 header: displayHeader,
@@ -708,7 +674,6 @@
           const cleanHeader = header.replace(/^>/, '').trim();
           const displayHeader = cleanHeader.split(' ')[0] || 'unnamed';
           const processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
-          // Calculate gapless positions for this sequence
           const gaplessPositions = calculateGaplessPositions(processedSeq);
           seqs.push({
             header: displayHeader,
@@ -723,7 +688,6 @@
       }
       return seqs.length ? seqs : null;
     }
-
     function renderAlignment() {
       const container = document.getElementById('alignmentContainer');
       if (!seqs || seqs.length === 0) {
@@ -731,28 +695,35 @@
         return;
       }
       container.innerHTML = '';
-
       const nameLen = Math.min(parseInt(document.getElementById('nameLengthSlider').value), Math.max(...seqs.map(s => s.header.length), 5));
       document.getElementById('nameLengthSlider').max = Math.max(...seqs.map(s => s.header.length), 5);
       document.getElementById('nameLengthInput').max = Math.max(...seqs.map(s => s.header.length), 5);
       document.getElementById('nameLengthVal').textContent = nameLen;
       document.documentElement.style.setProperty('--nameLen', nameLen);
-
       const useBlocks = document.getElementById('modeBlocks').checked;
       const blockWidth = parseInt(document.getElementById('blockSizeSlider').value);
       const len = Math.max(...seqs.map(s => s.seq.length));
-
       const blackThresh = parseInt(document.getElementById('blackSlider').value) / 100;
       const darkThresh = parseInt(document.getElementById('darkSlider').value) / 100;
       const lightThresh = parseInt(document.getElementById('lightSlider').value) / 100;
-
       const enableBlack = document.getElementById('enableBlack').checked;
       const enableDark = document.getElementById('enableDark').checked;
       const enableLight = document.getElementById('enableLight').checked;
-
       const standard = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.']);
       const ambiguous = new Set(['R','Y','M','K','S','W','H','B','V','D']);
-
+      // IUPAC ambiguous code mapping for ties
+      const ambiguousMap = {
+        'A,G': 'R', 'G,A': 'R',
+        'C,T': 'Y', 'T,C': 'Y',
+        'A,C': 'M', 'C,A': 'M',
+        'G,T': 'K', 'T,G': 'K',
+        'C,G': 'S', 'G,C': 'S',
+        'A,T': 'W', 'T,A': 'W',
+        'A,C,T': 'H', 'A,T,C': 'H', 'C,A,T': 'H', 'C,T,A': 'H', 'T,A,C': 'H', 'T,C,A': 'H',
+        'G,C,T': 'B', 'G,T,C': 'B', 'C,G,T': 'B', 'C,T,G': 'B', 'T,G,C': 'B', 'T,C,G': 'B',
+        'A,G,T': 'D', 'A,T,G': 'D', 'G,A,T': 'D', 'G,T,A': 'D', 'T,A,G': 'D', 'T,G,A': 'D',
+        'A,C,G': 'V', 'A,G,C': 'V', 'C,A,G': 'V', 'C,G,A': 'V', 'G,A,C': 'V', 'G,C,A': 'V'
+      };
       // === CONSENSUS ===
       const showConsensus = document.getElementById('showConsensus').checked;
       const consType = document.querySelector('input[name="consensusType"]:checked').value;
@@ -768,50 +739,59 @@
           }
           const counts = {};
           nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
-          const maxBase = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, '');
-          const freq = counts[maxBase] / col.length;
+          const maxCount = Math.max(...Object.values(counts));
+          const maxBases = Object.keys(counts).filter(b => counts[b] === maxCount);
+          const freq = maxCount / col.length;
           if (freq < threshold) {
             consensus.push('-');
             continue;
           }
           if (consType === 'ambiguous') {
-            consensus.push(maxBase);
-          } else {
-            if (ambiguous.has(maxBase)) {
-              const normalBases = ['A','C','G','T'].filter(b => counts[b]);
-              if (normalBases.length > 0) {
-                consensus.push(normalBases.reduce((a,b) => counts[a] > counts[b] ? a : b, normalBases[0]));
+            if (maxBases.length > 1) {
+              const standardBases = maxBases.filter(b => ['A', 'C', 'G', 'T'].includes(b));
+              if (standardBases.length >= 2) {
+                const key = standardBases.sort().join(',');
+                consensus.push(ambiguousMap[key] || '-');
+              } else if (maxBases.length === 1) {
+                consensus.push(maxBases[0]);
               } else {
                 consensus.push('-');
               }
             } else {
-              consensus.push(maxBase);
+              consensus.push(maxBases[0]);
+            }
+          } else {
+            if (maxBases.length === 1 && !ambiguous.has(maxBases[0])) {
+              consensus.push(maxBases[0]);
+            } else {
+              const normalBases = ['A', 'C', 'G', 'T'].filter(b => counts[b]);
+              if (normalBases.length > 0) {
+                const maxNormalCount = Math.max(...normalBases.map(b => counts[b] || 0));
+                const maxNormalBases = normalBases.filter(b => (counts[b] || 0) === maxNormalCount);
+                consensus.push(maxNormalBases[0]);
+              } else {
+                consensus.push('-');
+              }
             }
           }
         }
       }
       consensusSeq = consensus.join('').replace(/-/g, '');
-
       // Determine order
       const consensusPosition = document.querySelector('input[name="consensusPosition"]:checked')?.value || 'bottom';
-
       const tooltip = document.getElementById('tooltip');
-
       if (useBlocks) {
         for (let start = 0; start < len; start += blockWidth) {
           const end = Math.min(start + blockWidth, len);
           const blockDiv = document.createElement('div');
           blockDiv.className = 'block-block';
-
           const sep = document.createElement('div');
           sep.className = 'block-sep';
           sep.textContent = `--- ${start + 1}-${end} ---`;
           blockDiv.appendChild(sep);
-
           if (showConsensus && consensusPosition === 'top') {
             addConsensusLine(blockDiv, consensus, start, end, nameLen);
           }
-
           for (let i = 0; i < seqs.length; i++) {
             const lineDiv = document.createElement('div');
             lineDiv.className = 'seq-line';
@@ -819,15 +799,13 @@
             const nameSpan = document.createElement('div');
             nameSpan.className = 'seq-name';
             nameSpan.title = seqs[i].fullHeader;
-            nameSpan.textContent = (seqs[i].header.substring(0, nameLen) + '        ').substring(0, nameLen);
+            nameSpan.textContent = seqs[i].header.substring(0, nameLen);
             lineDiv.appendChild(nameSpan);
             const dataSpan = document.createElement('div');
             dataSpan.className = 'seq-data';
-
             for (let pos = start; pos < end; pos++) {
               const base = seqs[i].seq[pos] || '-';
               const gaplessPos = seqs[i].gaplessPositions[pos];
-
               let cls = 'other';
               let baseClass = '';
               if (!standard.has(base) && !ambiguous.has(base)) {
@@ -855,15 +833,11 @@
                 cls = 'gap';
               }
               const newClass = `${cls} ${baseClass}`.trim();
-
               const span = document.createElement('span');
               span.className = newClass;
               span.textContent = base;
               span.dataset.pos = pos;
-
-              // ✅ Tooltip: Show the gapless nucleotide position
               if (base !== '-' && base !== '.') {
-                // Capture the gapless position in a closure
                 const currentGaplessPos = gaplessPos;
                 span.onmouseover = (e) => {
                   tooltip.style.display = 'block';
@@ -877,25 +851,20 @@
               } else {
                 span.title = 'Gap';
               }
-
               if (selectedColumns.has(pos)) {
                 span.classList.add('column-selected');
               }
-
               dataSpan.appendChild(span);
             }
             lineDiv.appendChild(dataSpan);
             blockDiv.appendChild(lineDiv);
-
             if (selectedRows.has(i)) {
               lineDiv.classList.add('selected');
             }
           }
-
           if (showConsensus && consensusPosition === 'bottom') {
             addConsensusLine(blockDiv, consensus, start, end, nameLen);
           }
-
           container.appendChild(blockDiv);
         }
       } else {
@@ -909,15 +878,13 @@
           const nameSpan = document.createElement('div');
           nameSpan.className = 'seq-name';
           nameSpan.title = seqs[i].fullHeader;
-          nameSpan.textContent = (seqs[i].header.substring(0, nameLen) + '        ').substring(0, nameLen);
+          nameSpan.textContent = seqs[i].header.substring(0, nameLen);
           lineDiv.appendChild(nameSpan);
           const dataSpan = document.createElement('div');
           dataSpan.className = 'seq-data';
-          
           for (let pos = 0; pos < len; pos++) {
             const base = seqs[i].seq[pos] || '-';
             const gaplessPos = seqs[i].gaplessPositions[pos];
-
             let cls = 'other';
             let baseClass = '';
             if (!standard.has(base) && !ambiguous.has(base)) {
@@ -945,15 +912,11 @@
               cls = 'gap';
             }
             const newClass = `${cls} ${baseClass}`.trim();
-
             const span = document.createElement('span');
             span.className = newClass;
             span.textContent = base;
             span.dataset.pos = pos;
-
-            // ✅ Tooltip: Show the gapless nucleotide position
             if (base !== '-' && base !== '.') {
-              // Capture the gapless position in a closure
               const currentGaplessPos = gaplessPos;
               span.onmouseover = (e) => {
                 tooltip.style.display = 'block';
@@ -967,16 +930,13 @@
             } else {
               span.title = 'Gap';
             }
-
             if (selectedColumns.has(pos)) {
               span.classList.add('column-selected');
             }
-
             dataSpan.appendChild(span);
           }
           lineDiv.appendChild(dataSpan);
           container.appendChild(lineDiv);
-
           if (selectedRows.has(i)) {
             lineDiv.classList.add('selected');
           }
@@ -986,7 +946,6 @@
         }
       }
     }
-
     function addConsensusLine(parent, consensus, start, end, nameLen) {
       const consLine = document.createElement('div');
       consLine.className = 'seq-line consensus-line';
@@ -1009,14 +968,12 @@
       consLine.appendChild(dataSpan);
       parent.appendChild(consLine);
     }
-
     function setZoom(percent) {
       const size = (percent / 100) * 13;
       const container = document.getElementById('alignmentContainer');
       container.style.fontSize = size + 'px';
       document.getElementById('zoomVal').textContent = percent;
     }
-
     function debounce(func, delay) {
       let timer;
       return () => {
@@ -1024,9 +981,7 @@
         timer = setTimeout(func, delay);
       };
     }
-
     const debounceRender = debounce(renderAlignment, 100);
-
     window.parseAndRender = function(isFromDrop = false) {
       const fasta = document.getElementById('fastaInput').value.trim();
       if (!fasta) {
@@ -1050,24 +1005,20 @@
         document.getElementById('alignmentContainer').innerHTML = `<div class="error-message">❌ ${e.message}</div>`;
       }
     };
-
     function onModeChange() {
       toggleBlockSize();
       renderAlignment();
     }
-
     function toggleBlockSize() {
       const container = document.getElementById('blockSizeContainer');
       if (container) {
         container.style.display = document.getElementById('modeBlocks').checked ? 'inline' : 'none';
       }
     }
-
     window.onShadeModeChange = function() {
       validateThresholds();
       debounceRender();
     };
-
     // Continuous selection
     document.getElementById('alignmentContainer').onmousedown = function(e) {
       const row = e.target.closest('.seq-line');
@@ -1116,7 +1067,6 @@
         debounceRender();
       }
     };
-
     document.getElementById('alignmentContainer').onmousemove = function(e) {
       if (!isDragging) return;
       if (dragStartRow !== null) {
@@ -1149,19 +1099,16 @@
         }
       }
     };
-
     document.onmouseup = function() {
       isDragging = false;
       dragStartRow = null;
       dragStartCol = null;
     };
-
     function reverseComplement(seq) {
       const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.',
         'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H' };
       return seq.split('').reverse().map(b => complement[b] || 'N').join('');
     }
-
     window.reverseComplementSelected = function() {
       if (selectedRows.size === 0) {
         alert("Select sequences (Ctrl+click) to RevComp.");
@@ -1169,17 +1116,15 @@
       }
       for (const i of selectedRows) {
         if (i < seqs.length) {
-          seqs[i] = { 
-            ...seqs[i], 
-            seq: reverseComplement(seqs[i].seq) 
+          seqs[i] = {
+            ...seqs[i],
+            seq: reverseComplement(seqs[i].seq)
           };
-          // Recalculate gapless positions after reverse complement
           seqs[i].gaplessPositions = calculateGaplessPositions(seqs[i].seq);
         }
       }
       renderAlignment();
     };
-
     window.deleteSelected = function() {
       if (selectedRows.size === 0) {
         alert("No sequences selected for deletion.");
@@ -1190,8 +1135,8 @@
         return;
       }
       if (confirm(`Delete ${selectedRows.size} sequence(s)?`)) {
-        deletedHistory.push({ 
-          seqs: JSON.parse(JSON.stringify(seqs)), 
+        deletedHistory.push({
+          seqs: JSON.parse(JSON.stringify(seqs)),
           selectedRows: new Set(selectedRows),
           selectedColumns: new Set(selectedColumns)
         });
@@ -1206,7 +1151,6 @@
         renderAlignment();
       }
     };
-
     window.undoDelete = function() {
       if (deletedHistory.length === 0) {
         alert("Nothing to undo.");
@@ -1220,7 +1164,6 @@
       }
       renderAlignment();
     };
-
     function copySelected() {
       if (selectedRows.size === 0) {
         alert("No sequences selected to copy.");
@@ -1237,7 +1180,6 @@
         alert("Failed to copy. Check console.");
       });
     }
-
     function copyConsensus() {
       if (!consensusSeq) {
         alert("No consensus available to copy.");
@@ -1251,7 +1193,6 @@
         alert("Failed to copy. Check console.");
       });
     }
-
     function copySelectedConsensus() {
       if (selectedRows.size < 2) {
         alert("Select at least 2 sequences to compute consensus.");
@@ -1280,7 +1221,6 @@
         alert("Failed to copy. Check console.");
       });
     }
-
     window.copySelectedColumns = function() {
       if (selectedColumns.size === 0) {
         alert("No columns selected to copy.");
@@ -1301,15 +1241,14 @@
         alert("Failed to copy.");
       });
     };
-
     window.deleteSelectedColumns = function() {
       if (selectedColumns.size === 0) {
         alert("No columns selected for deletion.");
         return;
       }
       if (confirm(`Delete ${selectedColumns.size} column(s)?`)) {
-        deletedHistory.push({ 
-          seqs: JSON.parse(JSON.stringify(seqs)), 
+        deletedHistory.push({
+          seqs: JSON.parse(JSON.stringify(seqs)),
           selectedRows: new Set(selectedRows),
           selectedColumns: new Set(selectedColumns)
         });
@@ -1319,13 +1258,13 @@
           for (const pos of colsToDelete) {
             if (pos < seq.length) seq.splice(pos, 1);
           }
+          s.gaplessPositions = calculateGaplessPositions(seq.join(''));
           return { ...s, seq: seq.join('') };
         });
         selectedColumns.clear();
         renderAlignment();
       }
     };
-
     let allSelected = false;
     window.selectAllSequences = function() {
       if (allSelected) {
@@ -1342,7 +1281,6 @@
       }
       renderAlignment();
     };
-
     function savePreset() {
       const preset = {
         black: document.getElementById('blackSlider').value,
@@ -1364,7 +1302,6 @@
       localStorage.setItem('qwen_msa_viewer_preset_v44', JSON.stringify(preset));
       alert("Preset saved!");
     }
-
     function loadPreset() {
       const saved = localStorage.getItem('qwen_msa_viewer_preset_v44');
       if (!saved) {
@@ -1390,17 +1327,26 @@
       document.getElementById('enableLight').checked = p.enableLight;
       renderAlignment();
     }
-
     function minimizeMenu() {
-      document.getElementById('controls').style.display = 'none';
+      const controls = document.getElementById('controls');
+      const filenameInfo = document.getElementById('filenameInfo');
+      minimizeBar.parentNode.insertBefore(filenameInfo, minimizeBar.nextSibling);
+      filenameInfo.style.position = 'sticky';
+      filenameInfo.style.top = '20px';
+      filenameInfo.style.zIndex = '98';
+      controls.style.display = 'none';
       minimizeBar.style.display = 'block';
     }
-
     function expandMenu() {
       minimizeBar.style.display = 'none';
-      document.getElementById('controls').style.display = 'grid';
+      const controls = document.getElementById('controls');
+      const filenameInfo = document.getElementById('filenameInfo');
+      controls.appendChild(filenameInfo);
+      filenameInfo.style.position = '';
+      filenameInfo.style.top = '';
+      filenameInfo.style.zIndex = '';
+      controls.style.display = 'grid';
     }
-
     function validateThresholds() {
       const b = parseInt(document.getElementById('blackSlider').value);
       const d = parseInt(document.getElementById('darkSlider').value);
@@ -1409,14 +1355,11 @@
       if (d < l) document.getElementById('lightSlider').value = document.getElementById('lightInput').value = d;
       ['blackVal','darkVal','lightVal'].forEach(id => updateLabel(id, document.getElementById(id.replace('Val','Slider')).value));
     }
-
-    // ✅ Multiple Search with Color
     function searchMotif() {
       const motif = document.getElementById('searchInput').value.trim().toUpperCase();
       if (!motif) return;
       const color = document.getElementById('searchColor').value;
       const className = 'search-hit-' + Math.random().toString(36).substring(2, 12) + btoa(motif).replace(/=/g, '').substring(0, 5);
-
       searchHistory = searchHistory.filter(item => {
         if (item.motif === motif) {
           document.querySelectorAll(`.${item.className}`).forEach(span => {
@@ -1427,14 +1370,11 @@
         }
         return true;
       });
-
       const style = document.createElement('style');
       style.textContent = `.${className} { background-color: ${color} !important; color: black !important; font-weight: bold; }`;
       style.setAttribute('data-motif', motif);
       document.head.appendChild(style);
-
       searchHistory.push({ motif, color, className });
-
       document.querySelectorAll('.seq-line:not(.consensus-line)').forEach(row => {
         const index = parseInt(row.dataset.seqIndex);
         if (index >= seqs.length || index < 0) return;
@@ -1456,19 +1396,14 @@
           }
         }
       });
-
       document.getElementById('searchInput').value = '';
     }
-
-    // ✅ Clear Last Search
     window.clearLastSearch = function() {
       if (searchHistory.length === 0) return;
       const last = searchHistory.pop();
       document.querySelectorAll(`.${last.className}`).forEach(span => span.classList.remove(last.className));
       document.querySelector(`style[data-motif="${last.motif}"]`)?.remove();
     };
-
-    // ✅ Clear All Searches
     function clearAllSearches() {
       searchHistory.forEach(item => {
         document.querySelectorAll(`.${item.className}`).forEach(span => {
@@ -1478,8 +1413,6 @@
       });
       searchHistory = [];
     }
-
-    // ✅ Program Info Modal
     const infoModal = document.getElementById('infoModal');
     window.openInfoModal = function() {
       infoModal.style.display = 'block';
@@ -1487,13 +1420,11 @@
     window.closeInfoModal = function() {
       infoModal.style.display = 'none';
     };
-    // Close modal when clicking outside
     window.onclick = function(event) {
       if (event.target == infoModal) {
         closeInfoModal();
       }
     };
-
     // Init
     document.getElementById('modeBlocks').checked = true;
     document.getElementById('modeSingle').checked = false;
