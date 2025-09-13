@@ -2,10 +2,31 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Qwen MSA Viewer</title>
+  <title>Qwen MSA Viewer - Fixed Offline Edition</title>
   <style>
     :root {
       --nameLen: 20;
+      --slider-value: 0%;
+      --slider-fill: #888;
+      --selected-bg: #ffebcd;
+      --column-selected-bg: #e6ffe6;
+      --nuc-selected-bg: #ffff00;
+      --tooltip-bg: white;
+      --tooltip-border: #ccc;
+      --modal-bg: #fefefe;
+      --modal-border: #888;
+      --dropzone-bg: #f0f8ff;
+      --dropzone-hover-bg: #e0f0ff;
+      --dropzone-border: #1a2129;
+      --dropzone-hover-border: #004c99;
+      --control-bg: white;
+      --button-bg: white;
+      --button-hover-bg: #e6f3ff;
+      --button-border: #ccc;
+      --block-sep-bg: #f0f0f0;
+      --error-bg: #ffe6e6;
+      --error-border: #ff8080;
+      --search-hit-bg: yellow;
     }
     body {
       font-family: 'Courier New', monospace;
@@ -19,26 +40,26 @@
       flex-direction: column;
     }
     #dropZone {
-      border: 2px dashed #1a2129;
+      border: 2px dashed var(--dropzone-border);
       border-radius: 4px;
       padding: 8px;
       text-align: center;
       color: #555;
       font-size: 13px;
-      background: #f0f8ff;
+      background: var(--dropzone-bg);
       display: flex;
       align-items: center;
       justify-content: center;
       min-height: 40px;
     }
     #dropZone:hover {
-      border-color: #004c99;
-      background: #e0f0ff;
+      border-color: var(--dropzone-hover-border);
+      background: var(--dropzone-hover-bg);
     }
     #controls {
       position: sticky;
       top: 0;
-      background: white;
+      background: var(--control-bg);
       padding: 6px 8px;
       border-bottom: 1px solid #ddd;
       z-index: 100;
@@ -56,7 +77,6 @@
       color: #2c3e50;
       font-weight: bold;
     }
-    /* Button Groups */
     .button-group {
       display: flex;
       flex-wrap: wrap;
@@ -74,20 +94,18 @@
       background: #ccc;
       margin: 0 4px;
     }
-    /* Buttons */
     button {
       padding: 2px 6px;
       margin: 1px;
       font-size: 12px;
-      border: 1px solid #ccc;
+      border: 1px solid var(--button-border);
       border-radius: 3px;
-      background: white;
+      background: var(--button-bg);
       cursor: pointer;
     }
     button:hover {
-      background: #e6f3ff;
+      background: var(--button-hover-bg);
     }
-    /* Control Groups */
     .control-group {
       display: block;
       margin: 2px 0;
@@ -102,18 +120,18 @@
     }
     .display-slider-row {
       min-width: 340px;
-      display: grid;
-      grid-template-columns: 70px 130px 45px auto;
-      gap: 8px;
+      display: flex;
       align-items: center;
+      gap: 8px;
+      flex-wrap: nowrap;
     }
     .slider-label {
       width: 70px;
       display: inline-block;
       text-align: right;
       font-weight: normal;
+      white-space: nowrap;
     }
-    /* === SHADING SLIDERS (Black, Dark, Light) - Solid Rectangles === */
     input[type="range"].shading-slider {
       -webkit-appearance: none;
       width: 130px;
@@ -125,10 +143,17 @@
       height: 8px;
       border-radius: 4px;
       cursor: pointer;
+      background: linear-gradient(to right, var(--slider-fill) 0%, var(--slider-fill) var(--slider-value), #e0e0e0 var(--slider-value), #e0e0e0 100%);
     }
-    #blackSlider::-webkit-slider-runnable-track { background: #000; }
-    #darkSlider::-webkit-slider-runnable-track { background: #555; }
-    #lightSlider::-webkit-slider-runnable-track { background: #ccc; }
+    input[type="range"].shading-slider::-moz-range-track {
+      height: 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      background: linear-gradient(to right, var(--slider-fill) 0%, var(--slider-fill) var(--slider-value), #e0e0e0 var(--slider-value), #e0e0e0 100%);
+    }
+    #blackSlider { --slider-fill: #000; }
+    #darkSlider { --slider-fill: #555; }
+    #lightSlider { --slider-fill: #ccc; }
     input[type="range"].shading-slider::-webkit-slider-thumb {
       -webkit-appearance: none;
       height: 14px;
@@ -139,7 +164,14 @@
       cursor: pointer;
       background: white;
     }
-    /* === OTHER SLIDERS (Name Len, Zoom, Block Size) === */
+    input[type="range"].shading-slider::-moz-range-thumb {
+      height: 14px;
+      width: 8px;
+      border: 2px solid black;
+      border-radius: 2px;
+      cursor: pointer;
+      background: white;
+    }
     input[type="range"].normal-slider {
       -webkit-appearance: none;
       width: 130px;
@@ -150,7 +182,12 @@
     input[type="range"].normal-slider::-webkit-slider-runnable-track {
       height: 7px;
       border-radius: 7px;
-      background: #888;
+      background: linear-gradient(to right, #888 0%, #888 var(--slider-value), #e0e0e0 var(--slider-value), #e0e0e0 100%);
+    }
+    input[type="range"].normal-slider::-moz-range-track {
+      height: 7px;
+      border-radius: 7px;
+      background: linear-gradient(to right, #888 0%, #888 var(--slider-value), #e0e0e0 var(--slider-value), #e0e0e0 100%);
     }
     input[type="range"].normal-slider::-webkit-slider-thumb {
       -webkit-appearance: none;
@@ -162,13 +199,21 @@
       cursor: pointer;
       margin-top: -3px;
     }
+    input[type="range"].normal-slider::-moz-range-thumb {
+      width: 8px;
+      height: 14px;
+      border: 2px solid black;
+      border-radius: 2px;
+      background: white;
+      cursor: pointer;
+    }
     input[type="number"] {
-      width: 38px;
-      height: 22px;
+      width: 32px;
+      height: 18px;
       padding: 0;
       text-align: center;
+      font-size: 12px;
     }
-    /* Block styling */
     .block-block {
       margin-bottom: 8px;
     }
@@ -178,7 +223,7 @@
       text-align: center;
       margin: 4px 0;
       padding: 2px 0;
-      background: #f0f0f0;
+      background: var(--block-sep-bg);
       border-radius: 3px;
     }
     #alignmentContainer {
@@ -192,6 +237,11 @@
       border: 1px solid #ddd;
       font-size: 13px;
       transition: font-size 0.1s;
+      user-select: none;
+      -moz-user-select: none;
+      -webkit-user-select: none;
+      -ms-user-select: none;
+      position: relative;
     }
     .seq-line {
       display: flex;
@@ -200,20 +250,39 @@
       margin: 0;
       padding: 0;
       white-space: nowrap;
+      user-select: none;
+      -moz-user-select: none;
+      -webkit-user-select: none;
+      -ms-user-select: none;
     }
     .seq-name {
       flex: 0 0 auto;
-      min-width: calc(var(--nameLen) * 0.8em);
-      width: calc(var(--nameLen) * 0.8em);
-      max-width: calc(var(--nameLen) * 0.8em);
+      min-width: calc(var(--nameLen) * 0.6em);
+      width: calc(var(--nameLen) * 0.6em);
+      max-width: calc(var(--nameLen) * 0.6em);
       text-align: left;
-      padding: 0;
+      padding: 0 2px 0 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       font-weight: bold;
       color: #333;
       background: white;
+      cursor: default;
+      position: sticky;
+      left: 0;
+      z-index: 10;
+      user-select: none;
+      -moz-user-select: none;
+      -webkit-user-select: none;
+      -ms-user-select: none;
+    }
+    .seq-name.static {
+      position: static;
+    }
+    .seq-name:hover {
+      background-color: #f0f0f0;
+      color: #000;
     }
     .seq-data {
       flex: 1;
@@ -222,8 +291,17 @@
       margin: 0;
       padding: 0;
       line-height: 1.0;
+      user-select: none;
+      -moz-user-select: none;
+      -webkit-user-select: none;
+      -ms-user-select: none;
     }
-    /* GeneDoc-inspired coloring */
+    .seq-data span {
+      user-select: none;
+      -moz-user-select: none;
+      -webkit-user-select: none;
+      -ms-user-select: none;
+    }
     .black { background-color: #000 !important; color: white; }
     .dark { background-color: #555; color: white; }
     .light { background-color: #ccc; color: black; }
@@ -235,17 +313,21 @@
       background-color: #ffe6e6 !important;
       font-weight: bold !important;
     }
-    /* ✅ SELECTION: Highlight name only */
     .selected .seq-name {
-      background-color: #ffebcd !important;
+      background-color: var(--selected-bg) !important;
       color: #000 !important;
       font-weight: bold;
     }
-    /* Column selection */
     .column-selected {
-      background-color: #e6ffe6 !important;
+      background-color: var(--column-selected-bg) !important;
     }
-    /* Consensus line */
+    .nuc-selected {
+      background-color: var(--nuc-selected-bg) !important;
+      color: black !important;
+    }
+    .nuc-selected:hover {
+      cursor: pointer;
+    }
     .consensus-line {
       border-top: 1px solid #ccc;
       margin-top: 4px;
@@ -262,26 +344,23 @@
       background-color: transparent !important;
       color: #555;
     }
-    /* Error message */
     .error-message {
       color: red;
       font-weight: bold;
       padding: 10px;
-      background: #ffe6e6;
-      border: 1px solid #ff8080;
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
       margin: 5px;
       border-radius: 4px;
     }
-    /* Search highlight */
     .search-hit {
-      background-color: yellow !important;
+      background-color: var(--search-hit-bg) !important;
       color: black !important;
       font-weight: bold;
     }
-    /* Tooltip */
     .tooltip {
       position: absolute;
-      background: white;
+      background: var(--tooltip-bg);
       color: black;
       font-size: 12px;
       padding: 2px 6px;
@@ -289,9 +368,8 @@
       white-space: nowrap;
       z-index: 200;
       display: none;
-      border: 1px solid #ccc;
+      border: 1px solid var(--tooltip-border);
     }
-    /* Info Modal */
     .modal {
       display: none;
       position: fixed;
@@ -303,10 +381,10 @@
       background-color: rgba(0,0,0,0.5);
     }
     .modal-content {
-      background-color: #fefefe;
+      background-color: var(--modal-bg);
       margin: 5% auto;
       padding: 20px;
-      border: 1px solid #888;
+      border: 1px solid var(--modal-border);
       width: 80%;
       max-width: 800px;
       max-height: 80vh;
@@ -334,60 +412,114 @@
       margin: 10px 0;
       padding-left: 20px;
     }
+    .zoom-buttons {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      width: 60px;
+      justify-content: space-between;
+    }
+    .zoom-button {
+      width: 18px;
+      height: 18px;
+      min-width: 18px;
+      min-height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      padding: 0;
+      border-radius: 50%;
+      line-height: 18px;
+      text-align: center;
+      box-sizing: border-box;
+    }
+    .zoom-value {
+      width: 30px;
+      min-width: 30px;
+      text-align: center;
+      display: inline-block;
+    }
+    .mode-container {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .shade-mode-label {
+      margin-right: 8px;
+    }
+    #statusMessage {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 10px 20px;
+      border-radius: 4px;
+      font-size: 14px;
+      z-index: 1000;
+      display: none;
+    }
+    #minimizeBar {
+      display: none;
+      position: sticky;
+      top: 0;
+      background: white;
+      padding: 4px;
+      text-align: center;
+      cursor: pointer;
+      border-bottom: 1px solid #ddd;
+      z-index: 99;
+      font-size: 12px;
+      color: #555;
+    }
   </style>
 </head>
 <body>
   <div id="controls">
     <h2 style="grid-column: 1/-1; text-align: center; margin: 2px 0; font-size: 16px;">Qwen MSA Viewer</h2>
-    <!-- Quick Usability Tips -->
-    <div style="grid-column: 1/-1; text-align: center; font-size: 12px; color: #2980b9; font-weight: bold; background: #ecf0f1; padding: 4px; border-radius: 4px;">
-      🔍 Hover: Seq & Pos | Ctrl+click: Select Seqs | Ctrl+Alt+click: Select Cols | Drag: Range Select
-    </div>
     <div class="menu-section" style="grid-column: 1/-1; display: flex; gap: 6px; align-items: start;">
-      <div id="dropZone" style="flex: 0 0 180px; padding: 6px;">📁 Drop FASTA</div>
+      <div id="dropZone" style="flex: 0 0 180px; padding: 6px;">Drop FASTA/MSF</div>
       <textarea id="fastaInput" placeholder=">seq1&#13;&#10;ATGCGGCTA..." style="flex: 1; height: 60px; font-size: 12px; padding: 4px;"></textarea>
-      <button onclick="parseAndRender(false)" style="height: 60px; font-size: 13px;">Load</button>
+      <button id="loadButton" style="height: 60px; font-size: 13px;" title="Load the pasted or dropped FASTA/MSF data (shortcut: Ctrl+L)">Load</button>
     </div>
     <div class="menu-section">
       <div class="section-header">Shade</div>
       <div class="control-group">
         <div class="slider-container">
-          <span class="slider-label">Black ≥</span>
-          <input type="range" id="blackSlider" class="shading-slider" min="50" max="100" value="90" oninput="updateLabel('blackVal', this.value); validateThresholds(); debounceRender()">
-          <input type="number" id="blackInput" min="50" max="100" value="90" oninput="document.getElementById('blackSlider').value = this.value; updateLabel('blackVal', this.value); validateThresholds(); debounceRender()">
-          <span id="blackVal">90</span>%
+          <span class="slider-label">Black</span>
+          <label class="shade-mode-label">
+            <input type="checkbox" id="enableBlack" checked title="Enable black shading for highly conserved positions">
+          </label>
+          <input type="range" id="blackSlider" class="shading-slider" min="50" max="100" value="90" title="Black shading threshold (50-100%)">
+          <input type="number" id="blackInput" min="50" max="100" value="90" title="Black shading threshold (50-100%)">
         </div>
         <div class="slider-container">
-          <span class="slider-label">Dark ≥</span>
-          <input type="range" id="darkSlider" class="shading-slider" min="30" max="90" value="70" oninput="updateLabel('darkVal', this.value); validateThresholds(); debounceRender()">
-          <input type="number" id="darkInput" min="30" max="90" value="70" oninput="document.getElementById('darkSlider').value = this.value; updateLabel('darkVal', this.value); validateThresholds(); debounceRender()">
-          <span id="darkVal">70</span>%
+          <span class="slider-label">Dark</span>
+          <label class="shade-mode-label">
+            <input type="checkbox" id="enableDark" checked title="Enable dark gray shading for moderately conserved positions">
+          </label>
+          <input type="range" id="darkSlider" class="shading-slider" min="30" max="90" value="70" title="Dark shading threshold (30-90%)">
+          <input type="number" id="darkInput" min="30" max="90" value="70" title="Dark shading threshold (30-90%)">
         </div>
         <div class="slider-container">
-          <span class="slider-label">Light ≥</span>
-          <input type="range" id="lightSlider" class="shading-slider" min="10" max="80" value="50" oninput="updateLabel('lightVal', this.value); validateThresholds(); debounceRender()">
-          <input type="number" id="lightInput" min="10" max="80" value="50" oninput="document.getElementById('lightSlider').value = this.value; updateLabel('lightVal', this.value); validateThresholds(); debounceRender()">
-          <span id="lightVal">50</span>%
-        </div>
-        <div class="slider-container">
-          <span class="slider-label">Enable</span>
+          <span class="slider-label">Light</span>
           <label class="shade-mode-label">
-            <input type="checkbox" id="enableBlack" checked onchange="debounceRender()"> Black
+            <input type="checkbox" id="enableLight" checked title="Enable light gray shading for less conserved positions">
           </label>
-          <label class="shade-mode-label">
-            <input type="checkbox" id="enableDark" checked onchange="debounceRender()"> Dark
-          </label>
-          <label class="shade-mode-label">
-            <input type="checkbox" id="enableLight" checked onchange="debounceRender()"> Light
-          </label>
+          <input type="range" id="lightSlider" class="shading-slider" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
+          <input type="number" id="lightInput" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
         </div>
         <div class="slider-container">
           <span class="slider-label">Shade By</span>
           <label class="shade-mode-label">
-            <input type="radio" name="shadeMode" value="nongap" onchange="onShadeModeChange()"> Non-Gap
+            <input type="radio" name="shadeMode" value="nongap" title="Shade based on non-gap positions only">
+            Non-Gap
           </label>
           <label class="shade-mode-label">
-            <input type="radio" name="shadeMode" value="all" checked onchange="onShadeModeChange()"> All
+            <input type="radio" name="shadeMode" value="all" checked title="Shade based on all positions including gaps">
+            All
           </label>
         </div>
       </div>
@@ -397,27 +529,33 @@
       <div class="control-group">
         <div class="slider-container display-slider-row">
           <span class="slider-label">Name Len</span>
-          <input type="range" id="nameLengthSlider" class="normal-slider" min="5" max="100" value="20" oninput="updateLabel('nameLengthVal', this.value); document.getElementById('nameLengthInput').value = this.value; debounceRender()">
-          <input type="number" id="nameLengthInput" min="5" max="100" value="20" oninput="document.getElementById('nameLengthSlider').value = this.value; updateLabel('nameLengthVal', this.value); debounceRender()">
-          <span id="nameLengthVal">20</span>
+          <input type="range" id="nameLengthSlider" class="normal-slider" min="5" max="100" value="20" title="Adjust sequence name display length (5-100 characters)">
+          <input type="number" id="nameLengthInput" min="5" max="100" value="20" title="Adjust sequence name display length (5-100 characters)">
         </div>
         <div class="slider-container display-slider-row">
           <span class="slider-label">Zoom</span>
-          <input type="range" id="zoomSlider" class="normal-slider" min="50" max="200" value="100" oninput="setZoom(this.value)">
-          <input type="number" id="zoomInput" min="50" max="200" value="100" oninput="document.getElementById('zoomSlider').value = this.value; setZoom(this.value)">
-          <span><span id="zoomVal">100</span>%</span>
+          <input type="range" id="zoomSlider" class="normal-slider" min="50" max="200" value="100" title="Zoom level for alignment display (50-200%)">
+          <span class="zoom-buttons">
+            <button id="zoomOutButton" class="zoom-button" title="Zoom out (shortcut: Ctrl+-)">-</button>
+            <span id="zoomVal" class="zoom-value">100%</span>
+            <button id="zoomInButton" class="zoom-button" title="Zoom in (shortcut: Ctrl++)">+</button>
+          </span>
         </div>
         <div class="slider-container display-slider-row" id="blockSizeContainer">
           <span class="slider-label">Block Size</span>
-          <input type="range" id="blockSizeSlider" class="normal-slider" min="40" max="200" value="80" oninput="updateLabel('blockSizeVal', this.value); debounceRender()">
-          <input type="number" id="blockSizeInput" min="40" max="200" value="80" oninput="document.getElementById('blockSizeSlider').value = this.value; updateLabel('blockSizeVal', this.value); debounceRender()">
-          <span id="blockSizeVal">80</span>
+          <input type="range" id="blockSizeSlider" class="normal-slider" min="40" max="200" value="80" title="Block size in Block mode (40-200 characters)">
+          <input type="number" id="blockSizeInput" min="40" max="200" value="80" title="Block size in Block mode (40-200 characters)">
+        </div>
+        <div class="slider-container mode-container">
+          <span class="slider-label">Mode</span>
+          <input type="radio" id="modeSingle" name="mode" value="single" title="Display full alignment in a single line">
+          <label for="modeSingle">Full</label>
+          <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Display alignment in blocks for better readability">
+          <label for="modeBlocks">Block</label>
         </div>
         <div class="slider-container">
-          <input type="radio" id="modeSingle" name="mode" value="single" onchange="onModeChange()">
-          <label for="modeSingle">Full</label>
-          <input type="radio" id="modeBlocks" name="mode" value="blocks" onchange="onModeChange()" checked>
-          <label for="modeBlocks">Block</label>
+          <input type="checkbox" id="stickyNames" checked title="Keep sequence names sticky when scrolling horizontally">
+          <label for="stickyNames" style="font-size: 12px;">Sticky Names</label>
         </div>
       </div>
     </div>
@@ -426,37 +564,40 @@
       <div class="control-group">
         <div class="slider-container">
           <span class="slider-label">Threshold</span>
-          <input type="range" id="consensusThreshold" class="normal-slider" min="50" max="100" value="70" oninput="updateLabel('consensusThresholdVal', this.value); debounceRender()">
-          <input type="number" id="consensusThresholdInput" min="50" max="100" value="70" oninput="document.getElementById('consensusThreshold').value = this.value; updateLabel('consensusThresholdVal', this.value); debounceRender()">
-          <span id="consensusThresholdVal">70</span>%
+          <input type="range" id="consensusThreshold" class="normal-slider" min="50" max="100" value="70" title="Consensus threshold percentage (50-100%)">
+          <input type="number" id="consensusThresholdInput" min="50" max="100" value="70" title="Consensus threshold percentage (50-100%)">
         </div>
         <div class="slider-container">
           <span class="slider-label">Type</span>
           <label class="shade-mode-label">
-            <input type="radio" name="consensusType" value="normal" checked onchange="debounceRender()"> Normal
+            <input type="radio" name="consensusType" value="normal" checked title="Normal consensus (single base)">
+            Normal
           </label>
           <label class="shade-mode-label">
-            <input type="radio" name="consensusType" value="ambiguous" onchange="debounceRender()"> Ambiguous
+            <input type="radio" name="consensusType" value="ambiguous" title="Ambiguous consensus (IUPAC codes)">
+            Ambiguous
           </label>
         </div>
         <div class="slider-container">
-          <input type="checkbox" id="showConsensus" checked onchange="debounceRender()">
+          <input type="checkbox" id="showConsensus" checked title="Show consensus line">
           <label for="showConsensus" style="font-size: 12px;">Show Consensus</label>
         </div>
         <div class="slider-container">
           <span class="slider-label">Position</span>
           <label class="shade-mode-label">
-            <input type="radio" name="consensusPosition" value="top" onchange="debounceRender()"> Top
+            <input type="radio" name="consensusPosition" value="top" title="Show consensus at top">
+            Top
           </label>
           <label class="shade-mode-label">
-            <input type="radio" name="consensusPosition" value="bottom" onchange="debounceRender()" checked> Bottom
+            <input type="radio" name="consensusPosition" value="bottom" checked title="Show consensus at bottom">
+            Bottom
           </label>
         </div>
         <div class="slider-container">
-          <button onclick="copyConsensus()" style="padding: 2px 6px; font-size: 12px;">Copy Consensus</button>
+          <button id="copyConsensusButton" title="Copy full consensus as FASTA (shortcut: Ctrl+Shift+K)">Copy Consensus</button>
         </div>
         <div class="slider-container">
-          <button onclick="copySelectedConsensus()" style="padding: 2px 6px; font-size: 12px;">Copy Sel Consensus</button>
+          <button id="copySelectedConsensusButton" title="Copy consensus of selected sequences (shortcut: Ctrl+Shift+J)">Copy Sel Consensus</button>
         </div>
       </div>
     </div>
@@ -464,50 +605,56 @@
       <div class="section-header">Search</div>
       <div class="control-group">
         <div class="slider-container">
-          <input type="text" id="searchInput" placeholder="Enter motif..." style="width: 130px; height: 22px; padding: 2px; font-size: 12px;">
-          <input type="color" id="searchColor" value="#FFFF00" style="width: 30px; height: 22px; padding: 0;">
-          <button onclick="searchMotif()" style="padding: 2px 6px; font-size: 12px;">Find</button>
-          <button onclick="clearLastSearch()" style="padding: 2px 6px; font-size: 12px;">Clear Last</button>
-          <button onclick="clearAllSearches()" style="padding: 2px 6px; font-size: 12px;">Clear All</button>
+          <input type="text" id="searchInput" placeholder="Enter motif..." style="width: 130px; height: 22px; padding: 2px; font-size: 12px;" title="Enter motif to search (case-insensitive, searches degapped sequences)">
+          <input type="color" id="searchColor" value="#FFFF00" style="width: 30px; height: 22px; padding: 0;" title="Choose highlight color for search hits">
+          <button id="searchButton" title="Find motif in sequences (shortcut: Ctrl+F)">Find</button>
+          <button id="clearLastSearchButton" title="Clear last search highlight (shortcut: Ctrl+Shift+F)">Clear Last</button>
+          <button id="clearAllSearchesButton" title="Clear all search highlights (shortcut: Ctrl+Alt+F)">Clear All</button>
         </div>
       </div>
     </div>
     <div class="menu-section" style="grid-column: 1/-1;">
       <div class="section-header">Actions</div>
-      <!-- Grouped Buttons -->
       <div class="button-group">
-        <button onclick="reverseComplementSelected()">RevComp</button>
+        <button id="reverseComplementButton" title="Reverse complement selected sequences (shortcut: Ctrl+R)">RevComp</button>
         <div class="button-spacer"></div>
-        <button onclick="copySelected()">Copy Sel</button>
-        <button onclick="deleteSelected()">Delete Sel</button>
-        <button onclick="undoDelete()">Undo</button>
+        <button id="copySelectedButton" title="Copy selected sequences or nucleotides (shortcut: Ctrl+Shift+C)">Copy Sel</button>
+        <button id="deleteSelectedButton" title="Delete selected sequences (shortcut: Ctrl+Del)">Delete Sel</button>
+        <button id="undoButton" title="Undo last action (shortcut: Ctrl+Z)">Undo</button>
         <div class="button-spacer"></div>
-        <button onclick="selectAllSequences()">Select All</button>
+        <button id="moveUpButton" title="Move selected up (shortcut: Ctrl+Up)">Up</button>
+        <button id="moveDownButton" title="Move selected down (shortcut: Ctrl+Down)">Down</button>
+        <button id="moveToTopButton" title="Move selected to top (shortcut: Ctrl+Home)">To Top</button>
+        <button id="moveToBottomButton" title="Move selected to bottom (shortcut: Ctrl+End)">To Bottom</button>
         <div class="button-spacer"></div>
-        <button onclick="copySelectedColumns()">Copy Cols</button>
-        <button onclick="deleteSelectedColumns()">Delete Cols</button>
+        <button id="insertGroupConsensusButton" title="Insert consensus below selected (shortcut: Ctrl+B)">Consensus Below</button>
         <div class="button-spacer"></div>
-        <button onclick="savePreset()">Save Preset</button>
-        <button onclick="loadPreset()">Load Preset</button>
+        <button id="duplicateButton" title="Duplicate selected (shortcut: Ctrl+U)">Duplicate</button>
+        <button id="openInNewTabButton" title="Open selected in new tab (shortcut: Ctrl+T)">New Tab</button>
         <div class="button-spacer"></div>
-        <button onclick="openInfoModal()">Program Info</button>
-        <button id="minimizeBtn" onclick="minimizeMenu()">Hide menu</button>
+        <button id="selectAllButton" title="Select/deselect all sequences (shortcut: Ctrl+A)">Select All</button>
+        <div class="button-spacer"></div>
+        <button id="copyColumnsButton" title="Copy selected columns as FASTA (shortcut: Ctrl+Shift+V)">Copy Cols</button>
+        <button id="deleteColumnsButton" title="Delete selected columns (shortcut: Ctrl+Shift+D)">Delete Cols</button>
+        <div class="button-spacer"></div>
+        <button id="realignBlockButton" title="Realign selected block (shortcut: Ctrl+Shift+R)">Realign Block</button>
+        <div class="button-spacer"></div>
+        <button id="savePresetButton" title="Save current settings (shortcut: Ctrl+S)">Save Preset</button>
+        <button id="loadPresetButton" title="Load saved settings (shortcut: Ctrl+O)">Load Preset</button>
+        <div class="button-spacer"></div>
+        <button id="infoButton" title="Show program info and shortcuts (shortcut: Ctrl+I)">Program Info</button>
+        <button id="minimizeBtn" title="Hide menu (shortcut: Ctrl+H)">Hide menu</button>
       </div>
     </div>
-    <!-- Keyboard hints -->
     <div style="grid-column: 1/-1; text-align: right; font-size: 12px; color: #555;">
       <span style="white-space: nowrap;">Ctrl+click: select seqs</span> |
       <span style="white-space: nowrap;">Shift+click: range</span> |
       <span style="white-space: nowrap;">Ctrl+Alt+click: select cols</span>
     </div>
-    <!-- Filename -->
-    <div id="filenameInfo" style="grid-column: 1/-1; padding: 2px 8px; font-size: 12px; color: #555; background: #f0f0f0; text-align: center;">Source: Clipboard</div>
+    <div id="filenameInfo" style="grid-column: 1/-1; padding: 2px 8px; font-size: 12px; color: #555; background: #f0f0f0; text-align: center;"></div>
   </div>
-  <!-- Minimize bar -->
-  <div id="minimizeBar" onclick="expandMenu()"></div>
-  <!-- Tooltip -->
+  <div id="minimizeBar" style="display: none;">Restore Menu</div>
   <div id="tooltip" class="tooltip"></div>
-  <!-- Info Modal -->
   <div id="infoModal" class="modal">
     <div class="modal-content">
       <span class="close" onclick="closeInfoModal()">&times;</span>
@@ -515,7 +662,7 @@
       <p>A fast, interactive, and portable Multiple Sequence Alignment viewer.</p>
       <h3>Features</h3>
       <ul>
-        <li><strong>Load FASTA:</strong> Drag & drop a file or paste text.</li>
+        <li><strong>Load FASTA/MSF:</strong> Drag & drop a file or paste text (auto-detects .msf).</li>
         <li><strong>GeneDoc Coloring:</strong> Visualize conserved regions with adjustable thresholds (Black, Dark, Light).</li>
         <li><strong>Consensus Sequence:</strong> Generate and copy consensus with normal or ambiguous base codes.</li>
         <li><strong>Sequence Selection:</strong> Click, Ctrl+Click, or Shift+Click to select sequences. Perform actions like Reverse Complement, Copy, or Delete.</li>
@@ -523,114 +670,102 @@
         <li><strong>Search:</strong> Find motifs with custom highlight colors. Clear individual or all searches.</li>
         <li><strong>Undo:</strong> Recover deleted sequences or columns.</li>
         <li><strong>Preset Management:</strong> Save and load your display settings.</li>
+        <li><strong>Sticky Names:</strong> Option to keep sequence names visible when scrolling horizontally (works in both Full and Block modes).</li>
       </ul>
       <h3>Quick Tips</h3>
       <ul>
         <li>Hover over a nucleotide to see the sequence name and its <strong>gapless position</strong> (e.g., the 1st, 2nd, 3rd nucleotide in the gene).</li>
         <li>Use the "Block" mode for long alignments to improve readability.</li>
-        <li>The "Hide menu" button maximizes the viewing area. Hover near the top to restore it.</li>
+        <li>The "Hide menu" button maximizes the viewing area. Click "Restore Menu" to bring it back.</li>
+        <li>Enable "Sticky Names" to keep sequence names in view while scrolling sequences.</li>
       </ul>
       <h3>Controls</h3>
       <p><strong>Shade:</strong> Adjust conservation thresholds and enable/disable shading levels.</p>
-      <p><strong>Display:</strong> Change sequence name length, zoom level, and block size.</p>
+      <p><strong>Display:</strong> Change sequence name length, zoom level, block size, and sticky names option.</p>
       <p><strong>Consensus:</strong> Set the frequency threshold for consensus base calling.</p>
       <p><strong>Search:</strong> Enter a motif and choose a highlight color.</p>
       <p><strong>Actions:</strong> All sequence and column manipulation tools are here.</p>
+      <h3>Keyboard Shortcuts</h3>
+      <ul>
+        <li>Ctrl+R: Reverse Complement</li>
+        <li>Ctrl+Shift+C: Copy Selected</li>
+        <li>Ctrl+Del: Delete Selected</li>
+        <li>Ctrl+Z: Undo</li>
+        <li>Ctrl+Up: Move Up</li>
+        <li>Ctrl+Down: Move Down</li>
+        <li>Ctrl+Home: Move to Top</li>
+        <li>Ctrl+End: Move to Bottom</li>
+        <li>Ctrl+B: Consensus Below</li>
+        <li>Ctrl+U: Duplicate</li>
+        <li>Ctrl+T: New Tab</li>
+        <li>Ctrl+A: Select All</li>
+        <li>Ctrl+Shift+V: Copy Columns</li>
+        <li>Ctrl+Shift+D: Delete Columns</li>
+        <li>Ctrl+Shift+R: Realign Block</li>
+        <li>Ctrl+S: Save Preset</li>
+        <li>Ctrl+O: Load Preset</li>
+        <li>Ctrl+I: Program Info</li>
+        <li>Ctrl+H: Hide Menu</li>
+        <li>Ctrl+F: Find Motif</li>
+        <li>Ctrl+Shift+F: Clear Last Search</li>
+        <li>Ctrl+Alt+F: Clear All Searches</li>
+        <li>Ctrl+Shift+K: Copy Consensus</li>
+        <li>Ctrl+Shift+J: Copy Selected Consensus</li>
+        <li>Ctrl+-: Zoom Out</li>
+        <li>Ctrl++: Zoom In</li>
+      </ul>
     </div>
   </div>
-  <div id="alignmentContainer">Alignment will appear here</div>
+  <div id="alignmentContainer">Paste MSF or FASTA into the box and click Load, or drop a file.</div>
+  <div id="statusMessage"></div>
   <script>
-    let seqs = [];
-    let selectedRows = new Set();
-    let selectedColumns = new Set();
-    let lastSelectedIndex = null;
-    let consensusSeq = '';
-    let deletedHistory = [];
-    let currentFilename = '';
-    // Search: Track multiple motifs
-    let searchHistory = [];
-    // Continuous selection
-    let isDragging = false;
-    let dragStartRow = null;
-    let dragStartCol = null;
-    // Minimize bar
-    const minimizeBar = document.getElementById('minimizeBar');
-    minimizeBar.style.cssText = 'height:20px;background:#333;position:sticky;top:0;width:100%;z-index:99;cursor:pointer;display:none';
-    const minimizeBarContent = document.createElement('div');
-    minimizeBarContent.id = 'minimizeBarContent';
-    minimizeBarContent.style.cssText = 'height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;font-size:12px;cursor:pointer;padding:4px;';
-    minimizeBar.appendChild(minimizeBarContent);
-    minimizeBar.onmouseover = () => {
-      minimizeBar.style.height = '200px';
-      minimizeBarContent.innerHTML = '<div>Restore Menu (or click)</div>';
-      const displaySection = document.querySelector('.menu-section:nth-child(3)');
-      if (displaySection) {
-        const clonedDisplay = displaySection.cloneNode(true);
-        clonedDisplay.querySelectorAll('input[type="range"], input[type="number"]').forEach(input => {
-          input.id = input.id + 'Clone';
-          input.addEventListener('input', (e) => {
-            const originalId = input.id.replace('Clone', '');
-            const original = document.getElementById(originalId);
-            if (original) original.value = e.target.value;
-            if (input.type === 'range') {
-              const labelId = originalId.replace('Slider', 'Val');
-              updateLabel(labelId, e.target.value);
-              const inputId = originalId.replace('Slider', 'Input');
-              document.getElementById(inputId).value = e.target.value;
-            } else if (input.type === 'number') {
-              const sliderId = originalId.replace('Input', 'Slider');
-              document.getElementById(sliderId).value = e.target.value;
-              const labelId = originalId.replace('Input', 'Val');
-              updateLabel(labelId, e.target.value);
-            }
-            if (originalId.includes('zoom')) setZoom(e.target.value);
-            debounceRender();
-          });
-        });
-        clonedDisplay.querySelectorAll('input[type="radio"]').forEach(radio => {
-          radio.name = radio.name + 'Clone';
-          radio.addEventListener('change', (e) => {
-            const original = document.querySelector(`input[name="${radio.name.replace('Clone','')}"][value="${radio.value}"]`);
-            if (original) original.checked = radio.checked;
-            onModeChange();
-          });
-        });
-        minimizeBarContent.appendChild(clonedDisplay);
-      }
+    // STATE OBJECT
+    const state = {
+      seqs: [],
+      selectedRows: new Set(),
+      selectedColumns: new Set(),
+      selectedNucs: new Map(),
+      pendingNucStart: null,
+      lastSelectedIndex: null,
+      consensusSeq: '',
+      deletedHistory: [],
+      currentFilename: '',
+      searchHistory: [],
+      isDragging: false,
+      dragStartRow: null,
+      dragStartCol: null,
+      dragMode: null,
+      ctrlPressed: false,
+      lastAction: null
     };
-    minimizeBar.onmouseout = () => {
-      minimizeBar.style.height = '20px';
-      minimizeBarContent.innerHTML = '';
-    };
-    // Drag & Drop
-    const dropZone = document.getElementById('dropZone');
-    dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.style.borderColor = '#004c99';
-    });
-    dropZone.addEventListener('dragleave', () => {
-      dropZone.style.borderColor = '#1a2129';
-    });
-    dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.style.borderColor = '#1a2129';
-      const file = e.dataTransfer.files[0];
-      if (!file) return;
-      currentFilename = file.name;
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        document.getElementById('fastaInput').value = e.target.result;
-        parseAndRender(true);
-      };
-      reader.onerror = () => {
-        document.getElementById('alignmentContainer').innerHTML = '<div class="error-message">❌ Error reading file.</div>';
-      };
-      reader.readAsText(file);
-    });
-    function updateLabel(id, value) {
-      document.getElementById(id).textContent = value;
+    // DOM ELEMENTS
+    const el = id => document.getElementById(id);
+    const dropZone = el('dropZone');
+    const fastaInput = el('fastaInput');
+    const alignmentContainer = el('alignmentContainer');
+    const tooltip = el('tooltip');
+    const statusMessage = el('statusMessage');
+    const minimizeBar = el('minimizeBar');
+    const infoModal = el('infoModal');
+    // UTILITY FUNCTIONS
+    function showMessage(msg, duration = 2000) {
+      statusMessage.textContent = msg;
+      statusMessage.style.display = 'block';
+      setTimeout(() => {
+        statusMessage.style.display = 'none';
+      }, duration);
     }
-    // Helper function to calculate gapless positions for a sequence
+    function updateSliderBackground(slider) {
+      const value = (slider.value - slider.min) / (slider.max - slider.min) * 100;
+      slider.style.setProperty('--slider-value', value + '%');
+    }
+    function toggleStickyNames() {
+      const sticky = el('stickyNames').checked;
+      document.querySelectorAll('.seq-name').forEach(name => {
+        name.classList.toggle('static', !sticky);
+      });
+      alignmentContainer.offsetHeight; // Force reflow
+    }
     function calculateGaplessPositions(sequence) {
       const positions = [];
       let gaplessCount = 0;
@@ -643,6 +778,14 @@
       }
       return positions;
     }
+    function reverseComplement(seq) {
+      const complement = {
+        'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.',
+        'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H'
+      };
+      return seq.split('').reverse().map(b => complement[b] || 'N').join('');
+    }
+    // PARSING FUNCTIONS
     function parseFasta(text) {
       const lines = text.trim().split(/\r?\n/);
       const seqs = [];
@@ -655,7 +798,8 @@
             if (seq) {
               const cleanHeader = header.replace(/^>/, '').trim();
               const displayHeader = cleanHeader.split(' ')[0] || 'unnamed';
-              const processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
+              let processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
+              processedSeq = processedSeq.replace(/\./g, '-');
               const gaplessPositions = calculateGaplessPositions(processedSeq);
               seqs.push({
                 header: displayHeader,
@@ -673,7 +817,8 @@
         if (header && seq) {
           const cleanHeader = header.replace(/^>/, '').trim();
           const displayHeader = cleanHeader.split(' ')[0] || 'unnamed';
-          const processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
+          let processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
+          processedSeq = processedSeq.replace(/\./g, '-');
           const gaplessPositions = calculateGaplessPositions(processedSeq);
           seqs.push({
             header: displayHeader,
@@ -688,30 +833,130 @@
       }
       return seqs.length ? seqs : null;
     }
+    function parseMsf(text) {
+      const lines = text.trim().split(/\r?\n/);
+      let i = 0;
+      let isNucleic = true;
+      let maxLen = 0;
+      const seqMap = {};
+      // Find MSF header line
+      const headerIndex = lines.findIndex(l => l.includes('MSF:') && l.includes('Check:'));
+      if (headerIndex !== -1) {
+        i = headerIndex;
+        const headerLine = lines[headerIndex].trim();
+        if (headerLine.includes('Type: P')) {
+          isNucleic = false;
+        } else if (headerLine.includes('Type: N')) {
+          isNucleic = true;
+        }
+        i += 1; // Start after header
+      } else {
+        i = 0;
+      }
+      // Skip to after //
+      while (i < lines.length) {
+        const line = lines[i].trim();
+        if (line === '//') {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      // Parse alignment blocks
+      while (i < lines.length) {
+        let line = lines[i].trim();
+        if (!line) {
+          i += 1;
+          continue;
+        }
+        // Skip position lines like "1 50"
+        if (/^\d+\s+\d+$/.test(line)) {
+          i += 1;
+          continue;
+        }
+        const parts = line.split(/\s+/);
+        if (parts.length > 1) {
+          const name = parts[0];
+          if (!seqMap[name]) {
+            seqMap[name] = { header: name, fullHeader: name, seq: '' };
+          }
+          const chunks = parts.slice(1);
+          let blockSeq = chunks.join('').replace(/ /g, '');
+          blockSeq = blockSeq.replace(/~/g, '-');
+          const seqObj = seqMap[name];
+          seqObj.seq += blockSeq;
+          if (seqObj.seq.length > maxLen) maxLen = seqObj.seq.length;
+          i += 1;
+        } else {
+          i += 1;
+        }
+      }
+      const seqs = [];
+      for (let name in seqMap) {
+        let seqObj = seqMap[name];
+        let processedSeq;
+        if (isNucleic) {
+          processedSeq = seqObj.seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
+        } else {
+          processedSeq = seqObj.seq.toUpperCase().replace(/[^A-Z\.\-]/g, 'X');
+        }
+        processedSeq = processedSeq.replace(/\./g, '-');
+        while (processedSeq.length < maxLen) {
+          processedSeq += '-';
+        }
+        const gaplessPositions = calculateGaplessPositions(processedSeq);
+        seqs.push({
+          header: seqObj.header,
+          fullHeader: seqObj.fullHeader,
+          seq: processedSeq,
+          gaplessPositions: gaplessPositions
+        });
+      }
+      return seqs.length ? seqs : null;
+    }
+    // VALIDATION FUNCTIONS
+    function validateThresholds() {
+      const b = parseInt(el('blackSlider').value);
+      const d = parseInt(el('darkSlider').value);
+      const l = parseInt(el('lightSlider').value);
+      if (b < d) {
+        el('darkSlider').value = el('darkInput').value = b;
+        showMessage("Dark threshold adjusted to match Black threshold", 3000);
+      }
+      if (d < l) {
+        el('lightSlider').value = el('lightInput').value = d;
+        showMessage("Light threshold adjusted to match Dark threshold", 3000);
+      }
+      ['blackSlider', 'darkSlider', 'lightSlider'].forEach(id => updateSliderBackground(el(id)));
+    }
+    // RENDERING FUNCTIONS
     function renderAlignment() {
-      const container = document.getElementById('alignmentContainer');
-      if (!seqs || seqs.length === 0) {
-        container.innerHTML = '<div class="error-message">❌ No valid sequences found.</div>';
+      if (!state.seqs || state.seqs.length === 0) {
+        alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
         return;
       }
-      container.innerHTML = '';
-      const nameLen = Math.min(parseInt(document.getElementById('nameLengthSlider').value), Math.max(...seqs.map(s => s.header.length), 5));
-      document.getElementById('nameLengthSlider').max = Math.max(...seqs.map(s => s.header.length), 5);
-      document.getElementById('nameLengthInput').max = Math.max(...seqs.map(s => s.header.length), 5);
-      document.getElementById('nameLengthVal').textContent = nameLen;
+      alignmentContainer.innerHTML = '';
+      const nameLengthSlider = el('nameLengthSlider');
+      const nameLengthInput = el('nameLengthInput');
+      const maxNameLen = Math.max(...state.seqs.map(s => s.header.length), 5);
+      nameLengthSlider.max = maxNameLen;
+      nameLengthInput.max = maxNameLen;
+      nameLengthSlider.value = Math.min(parseInt(nameLengthSlider.value), maxNameLen);
+      nameLengthInput.value = nameLengthSlider.value;
+      const nameLen = parseInt(nameLengthSlider.value);
       document.documentElement.style.setProperty('--nameLen', nameLen);
-      const useBlocks = document.getElementById('modeBlocks').checked;
-      const blockWidth = parseInt(document.getElementById('blockSizeSlider').value);
-      const len = Math.max(...seqs.map(s => s.seq.length));
-      const blackThresh = parseInt(document.getElementById('blackSlider').value) / 100;
-      const darkThresh = parseInt(document.getElementById('darkSlider').value) / 100;
-      const lightThresh = parseInt(document.getElementById('lightSlider').value) / 100;
-      const enableBlack = document.getElementById('enableBlack').checked;
-      const enableDark = document.getElementById('enableDark').checked;
-      const enableLight = document.getElementById('enableLight').checked;
+      const useBlocks = el('modeBlocks').checked;
+      const blockWidth = parseInt(el('blockSizeSlider').value);
+      const len = Math.max(...state.seqs.map(s => s.seq.length));
+      const blackThresh = parseInt(el('blackSlider').value) / 100;
+      const darkThresh = parseInt(el('darkSlider').value) / 100;
+      const lightThresh = parseInt(el('lightSlider').value) / 100;
+      const enableBlack = el('enableBlack').checked;
+      const enableDark = el('enableDark').checked;
+      const enableLight = el('enableLight').checked;
+      const stickyNames = el('stickyNames').checked;
       const standard = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.']);
       const ambiguous = new Set(['R','Y','M','K','S','W','H','B','V','D']);
-      // IUPAC ambiguous code mapping for ties
       const ambiguousMap = {
         'A,G': 'R', 'G,A': 'R',
         'C,T': 'Y', 'T,C': 'Y',
@@ -724,14 +969,13 @@
         'A,G,T': 'D', 'A,T,G': 'D', 'G,A,T': 'D', 'G,T,A': 'D', 'T,A,G': 'D', 'T,G,A': 'D',
         'A,C,G': 'V', 'A,G,C': 'V', 'C,A,G': 'V', 'C,G,A': 'V', 'G,A,C': 'V', 'G,C,A': 'V'
       };
-      // === CONSENSUS ===
-      const showConsensus = document.getElementById('showConsensus').checked;
+      const showConsensus = el('showConsensus').checked;
       const consType = document.querySelector('input[name="consensusType"]:checked').value;
-      const threshold = parseInt(document.getElementById('consensusThreshold').value) / 100;
+      const threshold = parseInt(el('consensusThreshold').value) / 100;
       let consensus = [];
       if (showConsensus) {
         for (let pos = 0; pos < len; pos++) {
-          const col = seqs.map(s => s.seq[pos] || '-');
+          const col = state.seqs.map(s => s.seq[pos] || '-');
           const nonGapCol = col.filter(b => b !== '-' && b !== '.');
           if (nonGapCol.length === 0) {
             consensus.push('-');
@@ -776,10 +1020,8 @@
           }
         }
       }
-      consensusSeq = consensus.join('').replace(/-/g, '');
-      // Determine order
+      state.consensusSeq = consensus.join('').replace(/-/g, '');
       const consensusPosition = document.querySelector('input[name="consensusPosition"]:checked')?.value || 'bottom';
-      const tooltip = document.getElementById('tooltip');
       if (useBlocks) {
         for (let start = 0; start < len; start += blockWidth) {
           const end = Math.min(start + blockWidth, len);
@@ -790,167 +1032,124 @@
           sep.textContent = `--- ${start + 1}-${end} ---`;
           blockDiv.appendChild(sep);
           if (showConsensus && consensusPosition === 'top') {
-            addConsensusLine(blockDiv, consensus, start, end, nameLen);
+            addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames);
           }
-          for (let i = 0; i < seqs.length; i++) {
-            const lineDiv = document.createElement('div');
-            lineDiv.className = 'seq-line';
-            lineDiv.dataset.seqIndex = i;
-            const nameSpan = document.createElement('div');
-            nameSpan.className = 'seq-name';
-            nameSpan.title = seqs[i].fullHeader;
-            nameSpan.textContent = seqs[i].header.substring(0, nameLen);
-            lineDiv.appendChild(nameSpan);
-            const dataSpan = document.createElement('div');
-            dataSpan.className = 'seq-data';
-            for (let pos = start; pos < end; pos++) {
-              const base = seqs[i].seq[pos] || '-';
-              const gaplessPos = seqs[i].gaplessPositions[pos];
-              let cls = 'other';
-              let baseClass = '';
-              if (!standard.has(base) && !ambiguous.has(base)) {
-                baseClass = 'artifact';
-              } else if (ambiguous.has(base)) {
-                baseClass = 'ambiguous';
-              }
-              const col = seqs.map(s => s.seq[pos] || '-');
-              const nonGapCol = col.filter(b => b !== '-' && b !== '.');
-              if (nonGapCol.length > 0) {
-                const counts = {};
-                nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
-                const maxCount = Math.max(...Object.values(counts), 0);
-                const consensusBases = new Set(Object.keys(counts).filter(b => counts[b] === maxCount));
-                const denominator = document.querySelector('input[name="shadeMode"]:checked').value === 'all' ? seqs.length : nonGapCol.length;
-                const conservation = maxCount / denominator;
-                if (base !== '-' && base !== '.' && consensusBases.has(base)) {
-                  if (enableBlack && conservation >= blackThresh) cls = 'black';
-                  else if (enableDark && conservation >= darkThresh) cls = 'dark';
-                  else if (enableLight && conservation >= lightThresh) cls = 'light';
-                } else if (base === '-' || base === '.') {
-                  cls = 'gap';
-                }
-              } else {
-                cls = 'gap';
-              }
-              const newClass = `${cls} ${baseClass}`.trim();
-              const span = document.createElement('span');
-              span.className = newClass;
-              span.textContent = base;
-              span.dataset.pos = pos;
-              if (base !== '-' && base !== '.') {
-                const currentGaplessPos = gaplessPos;
-                span.onmouseover = (e) => {
-                  tooltip.style.display = 'block';
-                  tooltip.textContent = `${seqs[i].header}: ${currentGaplessPos}`;
-                  tooltip.style.left = (e.pageX + 10) + 'px';
-                  tooltip.style.top = (e.pageY - 20) + 'px';
-                };
-                span.onmouseout = () => {
-                  tooltip.style.display = 'none';
-                };
-              } else {
-                span.title = 'Gap';
-              }
-              if (selectedColumns.has(pos)) {
-                span.classList.add('column-selected');
-              }
-              dataSpan.appendChild(span);
-            }
-            lineDiv.appendChild(dataSpan);
+          for (let i = 0; i < state.seqs.length; i++) {
+            const lineDiv = createSequenceLine(i, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight);
             blockDiv.appendChild(lineDiv);
-            if (selectedRows.has(i)) {
-              lineDiv.classList.add('selected');
-            }
           }
           if (showConsensus && consensusPosition === 'bottom') {
-            addConsensusLine(blockDiv, consensus, start, end, nameLen);
+            addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames);
           }
-          container.appendChild(blockDiv);
+          alignmentContainer.appendChild(blockDiv);
         }
       } else {
         if (showConsensus && consensusPosition === 'top') {
-          addConsensusLine(container, consensus, 0, len, nameLen);
+          addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames);
         }
-        for (let i = 0; i < seqs.length; i++) {
-          const lineDiv = document.createElement('div');
-          lineDiv.className = 'seq-line';
-          lineDiv.dataset.seqIndex = i;
-          const nameSpan = document.createElement('div');
-          nameSpan.className = 'seq-name';
-          nameSpan.title = seqs[i].fullHeader;
-          nameSpan.textContent = seqs[i].header.substring(0, nameLen);
-          lineDiv.appendChild(nameSpan);
-          const dataSpan = document.createElement('div');
-          dataSpan.className = 'seq-data';
-          for (let pos = 0; pos < len; pos++) {
-            const base = seqs[i].seq[pos] || '-';
-            const gaplessPos = seqs[i].gaplessPositions[pos];
-            let cls = 'other';
-            let baseClass = '';
-            if (!standard.has(base) && !ambiguous.has(base)) {
-              baseClass = 'artifact';
-            } else if (ambiguous.has(base)) {
-              baseClass = 'ambiguous';
-            }
-            const col = seqs.map(s => s.seq[pos] || '-');
-            const nonGapCol = col.filter(b => b !== '-' && b !== '.');
-            if (nonGapCol.length > 0) {
-              const counts = {};
-              nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
-              const maxCount = Math.max(...Object.values(counts), 0);
-              const consensusBases = new Set(Object.keys(counts).filter(b => counts[b] === maxCount));
-              const denominator = document.querySelector('input[name="shadeMode"]:checked').value === 'all' ? seqs.length : nonGapCol.length;
-              const conservation = maxCount / denominator;
-              if (base !== '-' && base !== '.' && consensusBases.has(base)) {
-                if (enableBlack && conservation >= blackThresh) cls = 'black';
-                else if (enableDark && conservation >= darkThresh) cls = 'dark';
-                else if (enableLight && conservation >= lightThresh) cls = 'light';
-              } else if (base === '-' || base === '.') {
-                cls = 'gap';
-              }
-            } else {
-              cls = 'gap';
-            }
-            const newClass = `${cls} ${baseClass}`.trim();
-            const span = document.createElement('span');
-            span.className = newClass;
-            span.textContent = base;
-            span.dataset.pos = pos;
-            if (base !== '-' && base !== '.') {
-              const currentGaplessPos = gaplessPos;
-              span.onmouseover = (e) => {
-                tooltip.style.display = 'block';
-                tooltip.textContent = `${seqs[i].header}: ${currentGaplessPos}`;
-                tooltip.style.left = (e.pageX + 10) + 'px';
-                tooltip.style.top = (e.pageY - 20) + 'px';
-              };
-              span.onmouseout = () => {
-                tooltip.style.display = 'none';
-              };
-            } else {
-              span.title = 'Gap';
-            }
-            if (selectedColumns.has(pos)) {
-              span.classList.add('column-selected');
-            }
-            dataSpan.appendChild(span);
-          }
-          lineDiv.appendChild(dataSpan);
-          container.appendChild(lineDiv);
-          if (selectedRows.has(i)) {
-            lineDiv.classList.add('selected');
-          }
+        for (let i = 0; i < state.seqs.length; i++) {
+          const lineDiv = createSequenceLine(i, 0, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight);
+          alignmentContainer.appendChild(lineDiv);
         }
         if (showConsensus && consensusPosition === 'bottom') {
-          addConsensusLine(container, consensus, 0, len, nameLen);
+          addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames);
         }
       }
+      setTimeout(() => toggleStickyNames(), 0);
+      ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold'].forEach(id => {
+        updateSliderBackground(el(id));
+      });
     }
-    function addConsensusLine(parent, consensus, start, end, nameLen) {
+    function createSequenceLine(index, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight) {
+      const lineDiv = document.createElement('div');
+      lineDiv.className = 'seq-line';
+      lineDiv.dataset.seqIndex = index;
+      const nameSpan = document.createElement('div');
+      nameSpan.className = `seq-name ${stickyNames ? '' : 'static'}`;
+      nameSpan.title = state.seqs[index].fullHeader;
+      nameSpan.textContent = state.seqs[index].header.substring(0, nameLen);
+      lineDiv.appendChild(nameSpan);
+      const dataSpan = document.createElement('div');
+      dataSpan.className = 'seq-data';
+      for (let pos = start; pos < end; pos++) {
+        const base = state.seqs[index].seq[pos] || '-';
+        const gaplessPos = state.seqs[index].gaplessPositions[pos];
+        let cls = 'other';
+        let baseClass = '';
+        if (!standard.has(base) && !ambiguous.has(base)) {
+          baseClass = 'artifact';
+        } else if (ambiguous.has(base)) {
+          baseClass = 'ambiguous';
+        }
+        const col = state.seqs.map(s => s.seq[pos] || '-');
+        const nonGapCol = col.filter(b => b !== '-' && b !== '.');
+        if (nonGapCol.length > 0) {
+          const counts = {};
+          nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+          const maxCount = Math.max(...Object.values(counts), 0);
+          const consensusBases = new Set(Object.keys(counts).filter(b => counts[b] === maxCount));
+          const denominator = document.querySelector('input[name="shadeMode"]:checked').value === 'all' ? state.seqs.length : nonGapCol.length;
+          const conservation = maxCount / denominator;
+          if (base !== '-' && base !== '.' && consensusBases.has(base)) {
+            if (enableBlack && conservation >= blackThresh) cls = 'black';
+            else if (enableDark && conservation >= darkThresh) cls = 'dark';
+            else if (enableLight && conservation >= lightThresh) cls = 'light';
+          } else if (base === '-' || base === '.') {
+            cls = 'gap';
+          }
+        } else {
+          cls = 'gap';
+        }
+        const newClass = `${cls} ${baseClass}`.trim();
+        const span = document.createElement('span');
+        span.className = newClass;
+        span.textContent = base;
+        span.dataset.pos = pos;
+        if (state.selectedNucs.get(index)?.has(pos)) {
+          span.classList.add('nuc-selected');
+          span.addEventListener('mouseover', (e) => {
+            tooltip.style.display = 'block';
+            tooltip.textContent = `Copy`;
+            tooltip.style.left = (e.pageX + 10) + 'px';
+            tooltip.style.top = (e.pageY - 20) + 'px';
+          });
+          span.addEventListener('mouseout', () => {
+            tooltip.style.display = 'none';
+          });
+          span.addEventListener('click', () => {
+            copySelected();
+          });
+        }
+        if (base !== '-' && base !== '.') {
+          const currentGaplessPos = gaplessPos;
+          span.addEventListener('mouseover', (e) => {
+            tooltip.style.display = 'block';
+            tooltip.textContent = `${state.seqs[index].header}: ${currentGaplessPos}`;
+            tooltip.style.left = (e.pageX + 10) + 'px';
+            tooltip.style.top = (e.pageY - 20) + 'px';
+          });
+          span.addEventListener('mouseout', () => {
+            tooltip.style.display = 'none';
+          });
+        } else {
+          span.title = 'Gap';
+        }
+        if (state.selectedColumns.has(pos)) {
+          span.classList.add('column-selected');
+        }
+        dataSpan.appendChild(span);
+      }
+      lineDiv.appendChild(dataSpan);
+      if (state.selectedRows.has(index)) {
+        lineDiv.classList.add('selected');
+      }
+      return lineDiv;
+    }
+    function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames) {
       const consLine = document.createElement('div');
       consLine.className = 'seq-line consensus-line';
       const consName = document.createElement('div');
-      consName.className = 'seq-name';
+      consName.className = `seq-name ${stickyNames ? '' : 'static'}`;
       consName.textContent = 'Consensus';
       consLine.appendChild(consName);
       const dataSpan = document.createElement('div');
@@ -970,9 +1169,16 @@
     }
     function setZoom(percent) {
       const size = (percent / 100) * 13;
-      const container = document.getElementById('alignmentContainer');
-      container.style.fontSize = size + 'px';
-      document.getElementById('zoomVal').textContent = percent;
+      alignmentContainer.style.fontSize = size + 'px';
+      el('zoomVal').textContent = percent + '%';
+      updateSliderBackground(el('zoomSlider'));
+    }
+    function adjustZoom(delta) {
+      const slider = el('zoomSlider');
+      let value = parseInt(slider.value) + delta;
+      value = Math.max(parseInt(slider.min), Math.min(parseInt(slider.max), value));
+      slider.value = value;
+      setZoom(value);
     }
     function debounce(func, delay) {
       let timer;
@@ -981,226 +1187,419 @@
         timer = setTimeout(func, delay);
       };
     }
-    const debounceRender = debounce(renderAlignment, 100);
-    window.parseAndRender = function(isFromDrop = false) {
-      const fasta = document.getElementById('fastaInput').value.trim();
-      if (!fasta) {
-        document.getElementById('alignmentContainer').innerHTML = '<div class="error-message">❌ No input provided. Paste or drop a FASTA file.</div>';
+    const debounceRender = debounce(renderAlignment, 50);
+    // CORE FUNCTIONS
+    function parseAndRender(isFromDrop = false) {
+      showMessage("Parsing file...", 0);
+      const inputText = fastaInput.value.trim();
+      if (!inputText) {
+        alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
+        statusMessage.style.display = 'none';
         return;
       }
       try {
-        const parsed = parseFasta(fasta);
-        if (!parsed) throw new Error("No valid sequences found");
-        seqs = parsed;
-        selectedRows.clear();
-        selectedColumns.clear();
-        lastSelectedIndex = null;
-        if (!isFromDrop) {
-          currentFilename = 'Clipboard';
+        let parsed;
+        if (state.currentFilename.toLowerCase().endsWith('.msf') || isFromDrop || (inputText.includes('MSF:') && inputText.includes('Check:')) || inputText.includes('!!AA_MULTIPLE_ALIGNMENT') || inputText.includes('!!NA_MULTIPLE_ALIGNMENT')) {
+          parsed = parseMsf(inputText);
+          if (!parsed) {
+            showMessage("MSF parsing failed, trying FASTA...", 2000);
+            parsed = parseFasta(inputText);
+          }
+        } else {
+          parsed = parseFasta(inputText);
         }
-        document.getElementById('filenameInfo').textContent = `Source: ${currentFilename}`;
+        if (!parsed) throw new Error("No valid sequences found");
+        state.seqs = parsed;
+        state.selectedRows.clear();
+        state.selectedColumns.clear();
+        state.selectedNucs.clear();
+        state.pendingNucStart = null;
+        state.lastSelectedIndex = null;
+        if (!isFromDrop) {
+          state.currentFilename = 'Clipboard';
+        }
+        el('filenameInfo').textContent = `Source: ${state.currentFilename}`;
         renderAlignment();
+        showMessage("File loaded successfully!", 2000);
       } catch (e) {
         console.error("Error in parseAndRender:", e);
-        document.getElementById('alignmentContainer').innerHTML = `<div class="error-message">❌ ${e.message}</div>`;
+        alignmentContainer.innerHTML = `<div class="error-message">âŒ ${e.message}</div>`;
+        showMessage(`Error: ${e.message}`, 5000);
       }
-    };
+    }
     function onModeChange() {
-      toggleBlockSize();
+      const container = el('blockSizeContainer');
+      if (container) {
+        container.style.display = el('modeBlocks').checked ? 'flex' : 'none';
+      }
       renderAlignment();
     }
-    function toggleBlockSize() {
-      const container = document.getElementById('blockSizeContainer');
-      if (container) {
-        container.style.display = document.getElementById('modeBlocks').checked ? 'inline' : 'none';
-      }
-    }
-    window.onShadeModeChange = function() {
+    function onShadeModeChange() {
       validateThresholds();
       debounceRender();
-    };
-    // Continuous selection
-    document.getElementById('alignmentContainer').onmousedown = function(e) {
+    }
+    // EVENT HANDLERS
+    function handleMouseDown(e) {
       const row = e.target.closest('.seq-line');
       if (!row || row.classList.contains('consensus-line')) return;
       const index = parseInt(row.dataset.seqIndex);
-      if (e.ctrlKey || e.metaKey) {
-        row.classList.toggle('selected');
-        if (row.classList.contains('selected')) selectedRows.add(index);
-        else selectedRows.delete(index);
-        lastSelectedIndex = index;
-        isDragging = true;
-        dragStartRow = index;
-      } else if (e.shiftKey && lastSelectedIndex !== null) {
-        selectedRows.clear();
-        const start = Math.min(lastSelectedIndex, index);
-        const end = Math.max(lastSelectedIndex, index);
-        for (let i = start; i <= end; i++) {
-          selectedRows.add(i);
+      const name = e.target.closest('.seq-name');
+      const span = e.target.closest('.seq-data span');
+      if (name) {
+        if (e.ctrlKey || e.metaKey) {
+          state.isDragging = true;
+          state.dragStartRow = index;
+          state.dragMode = 'row';
+          if (state.selectedRows.has(index)) {
+            state.selectedRows.delete(index);
+          } else {
+            state.selectedRows.add(index);
+          }
+          state.lastSelectedIndex = index;
+          renderAlignment();
+          e.preventDefault();
+        } else if (e.shiftKey && state.lastSelectedIndex !== null) {
+          const start = Math.min(state.lastSelectedIndex, index);
+          const end = Math.max(state.lastSelectedIndex, index);
+          for (let i = start; i <= end; i++) {
+            state.selectedRows.add(i);
+          }
+          renderAlignment();
+          e.preventDefault();
         }
-        debounceRender();
-      } else if (e.ctrlKey && e.altKey) {
-        const span = e.target.closest('.seq-data span');
-        if (!span) return;
+      } else if (span && (e.ctrlKey || e.metaKey)) {
+        const pos = parseInt(span.dataset.pos);
+        if (isNaN(pos)) return;
+        if (state.pendingNucStart === null) {
+          state.pendingNucStart = {row: index, pos: pos};
+        } else if (state.pendingNucStart.row === index) {
+          const startPos = Math.min(state.pendingNucStart.pos, pos);
+          const endPos = Math.max(state.pendingNucStart.pos, pos);
+          let rowSet = new Set();
+          for (let p = startPos; p <= endPos; p++) {
+            rowSet.add(p);
+          }
+          state.selectedNucs.set(index, rowSet);
+          state.pendingNucStart = null;
+          debounceRender();
+        } else {
+          state.pendingNucStart = null;
+        }
+        e.preventDefault();
+      } else if (span && (e.ctrlKey || e.metaKey) && e.altKey) {
         const pos = parseInt(span.dataset.pos);
         if (isNaN(pos)) return;
         const isSelected = span.classList.toggle('column-selected');
         if (isSelected) {
-          selectedColumns.add(pos);
+          state.selectedColumns.add(pos);
         } else {
-          selectedColumns.delete(pos);
+          state.selectedColumns.delete(pos);
         }
         document.querySelectorAll(`.seq-data span[data-pos="${pos}"]`).forEach(s => {
           s.classList.toggle('column-selected', isSelected);
         });
+        state.isDragging = true;
+        state.dragStartCol = pos;
+        state.dragMode = 'col';
         e.preventDefault();
-        isDragging = true;
-        dragStartCol = pos;
-      } else {
-        if (!e.ctrlKey) {
-          selectedRows.clear();
-        }
-        selectedRows.add(index);
-        lastSelectedIndex = index;
-        isDragging = true;
-        dragStartRow = index;
-        debounceRender();
       }
-    };
-    document.getElementById('alignmentContainer').onmousemove = function(e) {
-      if (!isDragging) return;
-      if (dragStartRow !== null) {
+    }
+    function handleMouseMove(e) {
+      if (!state.isDragging) return;
+      if (state.dragMode === 'row') {
         const row = e.target.closest('.seq-line');
         if (row) {
           const index = parseInt(row.dataset.seqIndex);
-          if (!e.ctrlKey) {
-            selectedRows.clear();
+          if (index !== undefined) {
+            const start = Math.min(state.dragStartRow, index);
+            const end = Math.max(state.dragStartRow, index);
+            state.selectedRows.clear();
+            for (let i = start; i <= end; i++) {
+              state.selectedRows.add(i);
+            }
+            renderAlignment(); // Immediate for drag feedback
           }
-          const start = Math.min(dragStartRow, index);
-          const end = Math.max(dragStartRow, index);
-          for (let i = start; i <= end; i++) {
-            selectedRows.add(i);
-          }
-          debounceRender();
         }
-      } else if (dragStartCol !== null) {
+      } else if (state.dragMode === 'col') {
         const span = e.target.closest('.seq-data span');
         if (span) {
           const pos = parseInt(span.dataset.pos);
           if (isNaN(pos)) return;
           document.querySelectorAll('.column-selected').forEach(s => s.classList.remove('column-selected'));
-          selectedColumns.clear();
-          const start = Math.min(dragStartCol, pos);
-          const end = Math.max(dragStartCol, pos);
+          state.selectedColumns.clear();
+          const start = Math.min(state.dragStartCol, pos);
+          const end = Math.max(state.dragStartCol, pos);
           for (let p = start; p <= end; p++) {
-            selectedColumns.add(p);
+            state.selectedColumns.add(p);
             document.querySelectorAll(`.seq-data span[data-pos="${p}"]`).forEach(s => s.classList.add('column-selected'));
           }
         }
       }
-    };
-    document.onmouseup = function() {
-      isDragging = false;
-      dragStartRow = null;
-      dragStartCol = null;
-    };
-    function reverseComplement(seq) {
-      const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.',
-        'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H' };
-      return seq.split('').reverse().map(b => complement[b] || 'N').join('');
+      e.preventDefault();
     }
-    window.reverseComplementSelected = function() {
-      if (selectedRows.size === 0) {
-        alert("Select sequences (Ctrl+click) to RevComp.");
-        return;
+    function handleMouseUp() {
+      state.isDragging = false;
+      state.dragStartRow = null;
+      state.dragStartCol = null;
+      state.dragMode = null;
+    }
+    function handleKeyDown(e) {
+      if (e.ctrlKey || e.metaKey) {
+        state.ctrlPressed = true;
       }
-      for (const i of selectedRows) {
-        if (i < seqs.length) {
-          seqs[i] = {
-            ...seqs[i],
-            seq: reverseComplement(seqs[i].seq)
-          };
-          seqs[i].gaplessPositions = calculateGaplessPositions(seqs[i].seq);
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        copySelected();
+        e.preventDefault();
+      }
+      if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+          case 'r':
+            reverseComplementSelected();
+            e.preventDefault();
+            break;
+          case 'del':
+            deleteSelected();
+            e.preventDefault();
+            break;
+          case 'z':
+            undoDelete();
+            e.preventDefault();
+            break;
+          case 'b':
+            insertGroupConsensus();
+            e.preventDefault();
+            break;
+          case 'u':
+            duplicateSelected();
+            e.preventDefault();
+            break;
+          case 't':
+            openSelectedInNewTab();
+            e.preventDefault();
+            break;
+          case 'a':
+            selectAllSequences();
+            e.preventDefault();
+            break;
+          case 's':
+            if (e.shiftKey) {
+              savePreset();
+              e.preventDefault();
+            }
+            break;
+          case 'o':
+            loadPreset();
+            e.preventDefault();
+            break;
+          case 'i':
+            openInfoModal();
+            e.preventDefault();
+            break;
+          case 'h':
+            minimizeMenu();
+            e.preventDefault();
+            break;
+          case 'f':
+            if (e.shiftKey) {
+              clearLastSearch();
+            } else if (e.altKey) {
+              clearAllSearches();
+            } else {
+              searchMotif();
+            }
+            e.preventDefault();
+            break;
+          case 'k':
+            if (e.shiftKey) {
+              copyConsensus();
+            }
+            e.preventDefault();
+            break;
+          case 'j':
+            if (e.shiftKey) {
+              copySelectedConsensus();
+            }
+            e.preventDefault();
+            break;
+          case 'v':
+            if (e.shiftKey) {
+              copyColumnsButton();
+            }
+            e.preventDefault();
+            break;
+          case 'd':
+            if (e.shiftKey) {
+              deleteColumnsButton();
+            }
+            e.preventDefault();
+            break;
+          case '+':
+            adjustZoom(10);
+            e.preventDefault();
+            break;
+          case '-':
+            adjustZoom(-10);
+            e.preventDefault();
+            break;
         }
       }
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'ArrowUp') {
+          moveSelectedUp();
+          e.preventDefault();
+        } else if (e.key === 'ArrowDown') {
+          moveSelectedDown();
+          e.preventDefault();
+        } else if (e.key === 'Home') {
+          moveSelectedToTop();
+          e.preventDefault();
+        } else if (e.key === 'End') {
+          moveSelectedToBottom();
+          e.preventDefault();
+        }
+      }
+    }
+    function handleKeyUp(e) {
+      if (!e.ctrlKey && !e.metaKey) {
+        state.ctrlPressed = false;
+      }
+    }
+    // ACTION FUNCTIONS
+    function reverseComplementSelected() {
+      if (state.selectedRows.size === 0) {
+        showMessage("Select sequences (Ctrl+click) to RevComp.", 3000);
+        return;
+      }
+      state.deletedHistory.push({
+        type: 'revcomp',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+      });
+      for (const i of state.selectedRows) {
+        if (i < state.seqs.length) {
+          state.seqs[i] = {
+            ...state.seqs[i],
+            seq: reverseComplement(state.seqs[i].seq)
+          };
+          state.seqs[i].gaplessPositions = calculateGaplessPositions(state.seqs[i].seq);
+        }
+      }
+      state.lastAction = 'revcomp';
       renderAlignment();
-    };
-    window.deleteSelected = function() {
-      if (selectedRows.size === 0) {
-        alert("No sequences selected for deletion.");
+      showMessage("Reverse complement applied!", 2000);
+    }
+    function deleteSelected() {
+      if (state.selectedRows.size === 0) {
+        showMessage("No sequences selected for deletion.", 3000);
         return;
       }
-      if (seqs.length === 1) {
-        alert("Cannot delete the last sequence.");
+      if (state.seqs.length === 1) {
+        showMessage("Cannot delete the last sequence.", 3000);
         return;
       }
-      if (confirm(`Delete ${selectedRows.size} sequence(s)?`)) {
-        deletedHistory.push({
-          seqs: JSON.parse(JSON.stringify(seqs)),
-          selectedRows: new Set(selectedRows),
-          selectedColumns: new Set(selectedColumns)
+      if (confirm(`Delete ${state.selectedRows.size} sequence(s)?`)) {
+        state.deletedHistory.push({
+          type: 'delete',
+          seqs: JSON.parse(JSON.stringify(state.seqs)),
+          selectedRows: new Set(state.selectedRows),
+          selectedColumns: new Set(state.selectedColumns)
         });
-        const indicesToDelete = Array.from(selectedRows).sort((a,b)=>b-a);
+        const indicesToDelete = Array.from(state.selectedRows).sort((a,b)=>b-a);
         for (const index of indicesToDelete) {
-          if (index < seqs.length) {
-            seqs.splice(index, 1);
+          if (index < state.seqs.length) {
+            state.seqs.splice(index, 1);
           }
         }
-        selectedRows.clear();
-        lastSelectedIndex = null;
+        state.selectedRows.clear();
+        state.lastSelectedIndex = null;
+        state.lastAction = 'delete';
         renderAlignment();
+        showMessage("Sequences deleted!", 2000);
       }
-    };
-    window.undoDelete = function() {
-      if (deletedHistory.length === 0) {
-        alert("Nothing to undo.");
+    }
+    function undoDelete() {
+      if (state.deletedHistory.length === 0) {
+        showMessage("Nothing to undo.", 3000);
         return;
       }
-      const last = deletedHistory.pop();
-      seqs = last.seqs;
-      selectedRows = last.selectedRows;
+      const last = state.deletedHistory.pop();
+      state.seqs = last.seqs;
+      state.selectedRows = last.selectedRows;
       if (last.selectedColumns) {
-        selectedColumns = last.selectedColumns;
+        state.selectedColumns = last.selectedColumns;
       }
+      state.lastAction = null;
       renderAlignment();
-    };
+      showMessage("Undo completed!", 2000);
+    }
     function copySelected() {
-      if (selectedRows.size === 0) {
-        alert("No sequences selected to copy.");
+      let nucText = '';
+      for (let [i, posSet] of state.selectedNucs.entries()) {
+        if (posSet.size === 0) continue;
+        const s = state.seqs[i];
+        const poss = Array.from(posSet).sort((a, b) => a - b);
+        let start = poss[0], end = poss[0];
+        let ranges = [];
+        for (let j = 1; j < poss.length; j++) {
+          if (poss[j] === end + 1) {
+            end = poss[j];
+          } else {
+            ranges.push([start, end]);
+            start = end = poss[j];
+          }
+        }
+        ranges.push([start, end]);
+        for (let [st, en] of ranges) {
+          const sub = s.seq.slice(st, en + 1);
+          nucText += sub + '\n';
+        }
+      }
+      if (nucText) {
+        navigator.clipboard.writeText(nucText.trim()).then(() => {
+          showMessage("Selected nucleotides copied!", 2000);
+        }).catch(err => {
+          console.error('Copy failed:', err);
+          showMessage("Failed to copy. Check console.", 5000);
+        });
         return;
       }
-      const fasta = Array.from(selectedRows).sort((a,b) => a - b).map(i => {
-        const s = seqs[i];
-        return `>${s.fullHeader || s.header}\n${s.seq}`;
+      if (state.selectedRows.size === 0) {
+        showMessage("No sequences or nucleotides selected to copy.", 3000);
+        return;
+      }
+      const seqText = Array.from(state.selectedRows).sort((a,b) => a - b).map(i => {
+        const s = state.seqs[i];
+        return s.seq;
       }).join('\n');
-      navigator.clipboard.writeText(fasta).then(() => {
-        alert("Selected sequences copied as FASTA!");
+      navigator.clipboard.writeText(seqText).then(() => {
+        showMessage("Selected sequences copied!", 2000);
       }).catch(err => {
         console.error('Copy failed:', err);
-        alert("Failed to copy. Check console.");
+        showMessage("Failed to copy. Check console.", 5000);
       });
     }
     function copyConsensus() {
-      if (!consensusSeq) {
-        alert("No consensus available to copy.");
+      if (!state.consensusSeq) {
+        showMessage("No consensus available to copy.", 3000);
         return;
       }
-      const fasta = `>Consensus\n${consensusSeq}`;
+      const fasta = `>Consensus\n${state.consensusSeq}`;
       navigator.clipboard.writeText(fasta).then(() => {
-        alert("Consensus copied as FASTA!");
+        showMessage("Consensus copied as FASTA!", 2000);
       }).catch(err => {
         console.error('Copy failed:', err);
-        alert("Failed to copy. Check console.");
+        showMessage("Failed to copy. Check console.", 5000);
       });
     }
     function copySelectedConsensus() {
-      if (selectedRows.size < 2) {
-        alert("Select at least 2 sequences to compute consensus.");
+      if (state.selectedRows.size < 2) {
+        showMessage("Select at least 2 sequences to compute consensus.", 3000);
         return;
       }
-      const selectedSeqs = Array.from(selectedRows).map(i => seqs[i].seq);
+      const selectedSeqs = Array.from(state.selectedRows).map(i => state.seqs[i].seq);
       const len = Math.max(...selectedSeqs.map(s => s.length));
-      const threshold = 0.5;
+      const threshold = parseInt(el('consensusThreshold').value) / 100;
       let cons = '';
       for (let pos = 0; pos < len; pos++) {
         const col = selectedSeqs.map(s => s[pos] || '-').filter(b => b !== '-' && b !== '.');
@@ -1215,19 +1614,19 @@
       }
       const fasta = `>Selected_Consensus\n${cons}`;
       navigator.clipboard.writeText(fasta).then(() => {
-        alert("Selected sequences consensus copied as FASTA!");
+        showMessage("Selected sequences consensus copied as FASTA!", 2000);
       }).catch(err => {
         console.error('Copy failed:', err);
-        alert("Failed to copy. Check console.");
+        showMessage("Failed to copy. Check console.", 5000);
       });
     }
-    window.copySelectedColumns = function() {
-      if (selectedColumns.size === 0) {
-        alert("No columns selected to copy.");
+    function copySelectedColumns() {
+      if (state.selectedColumns.size === 0) {
+        showMessage("No columns selected to copy.", 3000);
         return;
       }
-      const cols = Array.from(selectedColumns).sort((a,b) => a - b);
-      const fasta = seqs.map(s => {
+      const cols = Array.from(state.selectedColumns).sort((a,b) => a - b);
+      const fasta = state.seqs.map(s => {
         let seq = '';
         for (const pos of cols) {
           seq += s.seq[pos] || '-';
@@ -1235,25 +1634,26 @@
         return `>${s.fullHeader || s.header}\n${seq}`;
       }).join('\n');
       navigator.clipboard.writeText(fasta).then(() => {
-        alert("Selected columns copied as FASTA!");
+        showMessage("Selected columns copied as FASTA!", 2000);
       }).catch(err => {
         console.error('Copy failed:', err);
-        alert("Failed to copy.");
+        showMessage("Failed to copy.", 5000);
       });
-    };
-    window.deleteSelectedColumns = function() {
-      if (selectedColumns.size === 0) {
-        alert("No columns selected for deletion.");
+    }
+    function deleteSelectedColumns() {
+      if (state.selectedColumns.size === 0) {
+        showMessage("No columns selected for deletion.", 3000);
         return;
       }
-      if (confirm(`Delete ${selectedColumns.size} column(s)?`)) {
-        deletedHistory.push({
-          seqs: JSON.parse(JSON.stringify(seqs)),
-          selectedRows: new Set(selectedRows),
-          selectedColumns: new Set(selectedColumns)
+      if (confirm(`Delete ${state.selectedColumns.size} column(s)?`)) {
+        state.deletedHistory.push({
+          type: 'deleteColumns',
+          seqs: JSON.parse(JSON.stringify(state.seqs)),
+          selectedRows: new Set(state.selectedRows),
+          selectedColumns: new Set(state.selectedColumns)
         });
-        const colsToDelete = Array.from(selectedColumns).sort((a,b) => b - a);
-        seqs = seqs.map(s => {
+        const colsToDelete = Array.from(state.selectedColumns).sort((a,b) => b - a);
+        state.seqs = state.seqs.map(s => {
           let seq = s.seq.split('');
           for (const pos of colsToDelete) {
             if (pos < seq.length) seq.splice(pos, 1);
@@ -1261,106 +1661,232 @@
           s.gaplessPositions = calculateGaplessPositions(seq.join(''));
           return { ...s, seq: seq.join('') };
         });
-        selectedColumns.clear();
+        state.selectedColumns.clear();
+        state.lastAction = 'deleteColumns';
         renderAlignment();
+        showMessage("Columns deleted!", 2000);
       }
-    };
-    let allSelected = false;
-    window.selectAllSequences = function() {
-      if (allSelected) {
-        selectedRows.clear();
-        allSelected = false;
-        alert("All sequences deselected.");
+    }
+    function selectAllSequences() {
+      if (state.selectedRows.size === state.seqs.length) {
+        state.selectedRows.clear();
+        showMessage("All sequences deselected.", 2000);
       } else {
-        selectedRows.clear();
-        for (let i = 0; i < seqs.length; i++) {
-          selectedRows.add(i);
+        state.selectedRows.clear();
+        for (let i = 0; i < state.seqs.length; i++) {
+          state.selectedRows.add(i);
         }
-        allSelected = true;
-        alert("All sequences selected.");
+        showMessage("All sequences selected.", 2000);
       }
       renderAlignment();
-    };
+    }
+    function moveSelectedUp() {
+      if (state.selectedRows.size === 0) return;
+      const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+      if (indices[0] === 0) return;
+      const newSeqs = [...state.seqs];
+      const group = indices.map(i => newSeqs[i]);
+      for (let j = indices.length - 1; j >= 0; j--) {
+        newSeqs.splice(indices[j], 1);
+      }
+      const insertPos = indices[0] - 1;
+      newSeqs.splice(insertPos, 0, ...group);
+      state.seqs = newSeqs;
+      state.selectedRows.clear();
+      for (let k = 0; k < indices.length; k++) {
+        state.selectedRows.add(insertPos + k);
+      }
+      renderAlignment();
+      showMessage("Sequences moved up!", 2000);
+    }
+    function moveSelectedDown() {
+      if (state.selectedRows.size === 0) return;
+      const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+      if (indices[indices.length - 1] === state.seqs.length - 1) return;
+      const newSeqs = [...state.seqs];
+      const group = indices.map(i => newSeqs[i]);
+      for (let j = indices.length - 1; j >= 0; j--) {
+        newSeqs.splice(indices[j], 1);
+      }
+      const insertPos = indices[indices.length - 1] - indices.length + 2;
+      newSeqs.splice(insertPos, 0, ...group);
+      state.seqs = newSeqs;
+      state.selectedRows.clear();
+      for (let k = 0; k < indices.length; k++) {
+        state.selectedRows.add(insertPos + k);
+      }
+      renderAlignment();
+      showMessage("Sequences moved down!", 2000);
+    }
+    function moveSelectedToTop() {
+      if (state.selectedRows.size === 0) return;
+      const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+      const newSeqs = [...state.seqs];
+      const group = indices.map(i => newSeqs[i]);
+      for (let j = indices.length - 1; j >= 0; j--) {
+        newSeqs.splice(indices[j], 1);
+      }
+      newSeqs.unshift(...group);
+      state.seqs = newSeqs;
+      state.selectedRows.clear();
+      for (let k = 0; k < group.length; k++) {
+        state.selectedRows.add(k);
+      }
+      renderAlignment();
+      showMessage("Sequences moved to top!", 2000);
+    }
+    function moveSelectedToBottom() {
+      if (state.selectedRows.size === 0) return;
+      const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+      const newSeqs = [...state.seqs];
+      const group = indices.map(i => newSeqs[i]);
+      for (let j = indices.length - 1; j >= 0; j--) {
+        newSeqs.splice(indices[j], 1);
+      }
+      newSeqs.push(...group);
+      state.seqs = newSeqs;
+      state.selectedRows.clear();
+      const newLen = state.seqs.length;
+      for (let k = 0; k < group.length; k++) {
+        state.selectedRows.add(newLen - group.length + k);
+      }
+      renderAlignment();
+      showMessage("Sequences moved to bottom!", 2000);
+    }
+    function insertGroupConsensus() {
+      if (state.selectedRows.size < 2) {
+        showMessage("Select at least 2 sequences to compute group consensus.", 3000);
+        return;
+      }
+      const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+      const selectedSeqs = indices.map(i => state.seqs[i].seq);
+      const len = Math.max(...selectedSeqs.map(s => s.length));
+      const threshold = parseInt(el('consensusThreshold').value) / 100;
+      let cons = '';
+      for (let pos = 0; pos < len; pos++) {
+        const col = selectedSeqs.map(s => s[pos] || '-').filter(b => b !== '-' && b !== '.');
+        if (col.length === 0) {
+          cons += '-';
+          continue;
+        }
+        const counts = {};
+        col.forEach(b => counts[b] = (counts[b] || 0) + 1);
+        const maxBase = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, '');
+        const freq = counts[maxBase] / col.length;
+        cons += (freq >= threshold) ? maxBase : '-';
+      }
+      const consObj = {
+        header: 'Group_Consensus',
+        fullHeader: 'Consensus of selected group',
+        seq: cons,
+        gaplessPositions: calculateGaplessPositions(cons)
+      };
+      const insertPos = indices[indices.length - 1] + 1;
+      state.seqs.splice(insertPos, 0, consObj);
+      renderAlignment();
+      showMessage("Group consensus inserted!", 2000);
+    }
+    function duplicateSelected() {
+      if (state.selectedRows.size === 0) return;
+      const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+      const copies = indices.map(i => ({...state.seqs[i], header: state.seqs[i].header + '_copy'}));
+      state.seqs.push(...copies);
+      renderAlignment();
+      showMessage("Selected sequences duplicated!", 2000);
+    }
+    function openSelectedInNewTab() {
+      if (state.selectedRows.size === 0) {
+        showMessage("No sequences selected.", 3000);
+        return;
+      }
+      const fasta = Array.from(state.selectedRows).sort((a,b) => a - b).map(i => {
+        const s = state.seqs[i];
+        return `>${s.fullHeader || s.header}\n${s.seq}`;
+      }).join('\n');
+      const htmlTemplate = document.documentElement.outerHTML;
+      const modifiedHtml = htmlTemplate.replace(/<textarea id="fastaInput" placeholder="[^"]*"><\/textarea>/, `<textarea id="fastaInput">${fasta}</textarea>`);
+      const newWindow = window.open();
+      newWindow.document.write(modifiedHtml);
+      newWindow.document.close();
+      showMessage("Selected sequences opened in new tab!", 2000);
+    }
     function savePreset() {
       const preset = {
-        black: document.getElementById('blackSlider').value,
-        dark: document.getElementById('darkSlider').value,
-        light: document.getElementById('lightSlider').value,
-        zoom: document.getElementById('zoomSlider').value,
-        mode: document.getElementById('modeBlocks').checked ? 'blocks' : 'single',
-        blockSize: document.getElementById('blockSizeSlider').value,
-        nameLen: document.getElementById('nameLengthSlider').value,
-        consensusThreshold: document.getElementById('consensusThreshold').value,
+        black: el('blackSlider').value,
+        dark: el('darkSlider').value,
+        light: el('lightSlider').value,
+        zoom: el('zoomSlider').value,
+        mode: el('modeBlocks').checked ? 'blocks' : 'single',
+        blockSize: el('blockSizeSlider').value,
+        nameLen: el('nameLengthSlider').value,
+        consensusThreshold: el('consensusThreshold').value,
         consensusType: document.querySelector('input[name="consensusType"]:checked').value,
-        showConsensus: document.getElementById('showConsensus').checked,
+        showConsensus: el('showConsensus').checked,
         consensusPosition: document.querySelector('input[name="consensusPosition"]:checked').value,
         shadeMode: document.querySelector('input[name="shadeMode"]:checked').value,
-        enableBlack: document.getElementById('enableBlack').checked,
-        enableDark: document.getElementById('enableDark').checked,
-        enableLight: document.getElementById('enableLight').checked
+        enableBlack: el('enableBlack').checked,
+        enableDark: el('enableDark').checked,
+        enableLight: el('enableLight').checked,
+        stickyNames: el('stickyNames').checked
       };
       localStorage.setItem('qwen_msa_viewer_preset_v44', JSON.stringify(preset));
-      alert("Preset saved!");
+      showMessage("Preset saved!", 2000);
     }
     function loadPreset() {
       const saved = localStorage.getItem('qwen_msa_viewer_preset_v44');
       if (!saved) {
-        alert("No saved preset found.");
+        showMessage("No saved preset found.", 3000);
         return;
       }
       const p = JSON.parse(saved);
       ['black','dark','light','zoom','blockSize','nameLen','consensusThreshold'].forEach(k => {
-        document.getElementById(k + 'Slider').value = p[k];
-        document.getElementById(k + 'Input').value = p[k];
-        updateLabel(k + 'Val', p[k]);
+        el(k + 'Slider').value = p[k];
+        const inputElement = el(k + 'Input');
+        if (inputElement) inputElement.value = p[k];
+        updateSliderBackground(el(k + 'Slider'));
       });
       setZoom(p.zoom);
-      document.getElementById('modeBlocks').checked = p.mode === 'blocks';
-      document.getElementById('modeSingle').checked = p.mode !== 'blocks';
-      toggleBlockSize();
+      el('modeBlocks').checked = p.mode === 'blocks';
+      el('modeSingle').checked = p.mode !== 'blocks';
+      el('stickyNames').checked = p.stickyNames !== undefined ? p.stickyNames : true;
+      onModeChange();
+      toggleStickyNames();
       document.querySelector(`input[name="consensusType"][value="${p.consensusType}"]`).checked = true;
-      document.getElementById('showConsensus').checked = p.showConsensus;
+      el('showConsensus').checked = p.showConsensus;
       document.querySelector(`input[name="consensusPosition"][value="${p.consensusPosition}"]`).checked = true;
       document.querySelector(`input[name="shadeMode"][value="${p.shadeMode}"]`).checked = true;
-      document.getElementById('enableBlack').checked = p.enableBlack;
-      document.getElementById('enableDark').checked = p.enableDark;
-      document.getElementById('enableLight').checked = p.enableLight;
+      el('enableBlack').checked = p.enableBlack;
+      el('enableDark').checked = p.enableDark;
+      el('enableLight').checked = p.enableLight;
       renderAlignment();
+      showMessage("Preset loaded!", 2000);
     }
     function minimizeMenu() {
-      const controls = document.getElementById('controls');
-      const filenameInfo = document.getElementById('filenameInfo');
+      const controls = el('controls');
+      const filenameInfo = el('filenameInfo');
       minimizeBar.parentNode.insertBefore(filenameInfo, minimizeBar.nextSibling);
       filenameInfo.style.position = 'sticky';
-      filenameInfo.style.top = '20px';
+      filenameInfo.style.top = '0px';
       filenameInfo.style.zIndex = '98';
       controls.style.display = 'none';
       minimizeBar.style.display = 'block';
     }
     function expandMenu() {
       minimizeBar.style.display = 'none';
-      const controls = document.getElementById('controls');
-      const filenameInfo = document.getElementById('filenameInfo');
+      const controls = el('controls');
+      const filenameInfo = el('filenameInfo');
       controls.appendChild(filenameInfo);
       filenameInfo.style.position = '';
       filenameInfo.style.top = '';
       filenameInfo.style.zIndex = '';
       controls.style.display = 'grid';
     }
-    function validateThresholds() {
-      const b = parseInt(document.getElementById('blackSlider').value);
-      const d = parseInt(document.getElementById('darkSlider').value);
-      const l = parseInt(document.getElementById('lightSlider').value);
-      if (b < d) document.getElementById('darkSlider').value = document.getElementById('darkInput').value = b;
-      if (d < l) document.getElementById('lightSlider').value = document.getElementById('lightInput').value = d;
-      ['blackVal','darkVal','lightVal'].forEach(id => updateLabel(id, document.getElementById(id.replace('Val','Slider')).value));
-    }
     function searchMotif() {
-      const motif = document.getElementById('searchInput').value.trim().toUpperCase();
+      const motif = el('searchInput').value.trim().toUpperCase();
       if (!motif) return;
-      const color = document.getElementById('searchColor').value;
+      const color = el('searchColor').value;
       const className = 'search-hit-' + Math.random().toString(36).substring(2, 12) + btoa(motif).replace(/=/g, '').substring(0, 5);
-      searchHistory = searchHistory.filter(item => {
+      state.searchHistory = state.searchHistory.filter(item => {
         if (item.motif === motif) {
           document.querySelectorAll(`.${item.className}`).forEach(span => {
             span.classList.remove(item.className);
@@ -1374,18 +1900,15 @@
       style.textContent = `.${className} { background-color: ${color} !important; color: black !important; font-weight: bold; }`;
       style.setAttribute('data-motif', motif);
       document.head.appendChild(style);
-      searchHistory.push({ motif, color, className });
+      state.searchHistory.push({ motif, color, className });
       document.querySelectorAll('.seq-line:not(.consensus-line)').forEach(row => {
         const index = parseInt(row.dataset.seqIndex);
-        if (index >= seqs.length || index < 0) return;
-        const seq = seqs[index].seq;
+        if (index >= state.seqs.length || index < 0) return;
+        const seq = state.seqs[index].seq;
         const degapped = seq.replace(/[-.]/g, '');
         const dataSpan = row.querySelector('.seq-data');
         const spans = Array.from(dataSpan.children);
-        const nonGapSpans = spans.filter(s => {
-          const b = s.textContent;
-          return b !== '-' && b !== '.';
-        });
+        const nonGapSpans = spans.filter(s => s.textContent !== '-' && s.textContent !== '.');
         for (let seqPos = 0; seqPos <= degapped.length - motif.length; seqPos++) {
           const sub = degapped.substring(seqPos, seqPos + motif.length);
           if (sub === motif) {
@@ -1396,40 +1919,205 @@
           }
         }
       });
-      document.getElementById('searchInput').value = '';
+      el('searchInput').value = '';
+      showMessage(`Found "${motif}"!`, 2000);
     }
-    window.clearLastSearch = function() {
-      if (searchHistory.length === 0) return;
-      const last = searchHistory.pop();
+    function clearLastSearch() {
+      if (state.searchHistory.length === 0) {
+        showMessage("No searches to clear.", 3000);
+        return;
+      }
+      const last = state.searchHistory.pop();
       document.querySelectorAll(`.${last.className}`).forEach(span => span.classList.remove(last.className));
       document.querySelector(`style[data-motif="${last.motif}"]`)?.remove();
-    };
+      showMessage("Last search cleared!", 2000);
+    }
     function clearAllSearches() {
-      searchHistory.forEach(item => {
+      state.searchHistory.forEach(item => {
         document.querySelectorAll(`.${item.className}`).forEach(span => {
           span.classList.remove(item.className);
         });
         document.querySelector(`style[data-motif="${item.motif}"]`)?.remove();
       });
-      searchHistory = [];
+      state.searchHistory = [];
+      showMessage("All searches cleared!", 2000);
     }
-    const infoModal = document.getElementById('infoModal');
-    window.openInfoModal = function() {
+    function openInfoModal() {
       infoModal.style.display = 'block';
-    };
-    window.closeInfoModal = function() {
+    }
+    function closeInfoModal() {
       infoModal.style.display = 'none';
-    };
-    window.onclick = function(event) {
-      if (event.target == infoModal) {
-        closeInfoModal();
+    }
+    function realignSelectedBlock() {
+      showMessage("Realign Block not implemented yet.", 3000);
+    }
+    // EVENT LISTENERS
+    document.addEventListener('DOMContentLoaded', () => {
+      dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'var(--dropzone-hover-border)';
+      });
+      dropZone.addEventListener('dragleave', () => {
+        dropZone.style.borderColor = 'var(--dropzone-border)';
+      });
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'var(--dropzone-border)';
+        const file = e.dataTransfer.files[0];
+        if (!file) return;
+        state.currentFilename = file.name;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          fastaInput.value = e.target.result;
+          parseAndRender(true);
+        };
+        reader.onerror = () => {
+          alignmentContainer.innerHTML = '<div class="error-message">âŒ Error reading file.</div>';
+          showMessage("Error reading file.", 5000);
+        };
+        reader.readAsText(file);
+      });
+      el('loadButton').addEventListener('click', () => parseAndRender(false));
+      el('reverseComplementButton').addEventListener('click', reverseComplementSelected);
+      el('copySelectedButton').addEventListener('click', copySelected);
+      el('deleteSelectedButton').addEventListener('click', deleteSelected);
+      el('undoButton').addEventListener('click', undoDelete);
+      el('moveUpButton').addEventListener('click', moveSelectedUp);
+      el('moveDownButton').addEventListener('click', moveSelectedDown);
+      el('moveToTopButton').addEventListener('click', moveSelectedToTop);
+      el('moveToBottomButton').addEventListener('click', moveSelectedToBottom);
+      el('insertGroupConsensusButton').addEventListener('click', insertGroupConsensus);
+      el('duplicateButton').addEventListener('click', duplicateSelected);
+      el('openInNewTabButton').addEventListener('click', openSelectedInNewTab);
+      el('selectAllButton').addEventListener('click', selectAllSequences);
+      el('copyColumnsButton').addEventListener('click', copySelectedColumns);
+      el('deleteColumnsButton').addEventListener('click', deleteSelectedColumns);
+      el('realignBlockButton').addEventListener('click', realignSelectedBlock);
+      el('savePresetButton').addEventListener('click', savePreset);
+      el('loadPresetButton').addEventListener('click', loadPreset);
+      el('infoButton').addEventListener('click', openInfoModal);
+      el('minimizeBtn').addEventListener('click', minimizeMenu);
+      minimizeBar.addEventListener('click', expandMenu);
+      el('zoomInButton').addEventListener('click', () => adjustZoom(10));
+      el('zoomOutButton').addEventListener('click', () => adjustZoom(-10));
+      el('searchButton').addEventListener('click', searchMotif);
+      el('clearLastSearchButton').addEventListener('click', clearLastSearch);
+      el('clearAllSearchesButton').addEventListener('click', clearAllSearches);
+      el('copyConsensusButton').addEventListener('click', copyConsensus);
+      el('copySelectedConsensusButton').addEventListener('click', copySelectedConsensus);
+      ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold'].forEach(id => {
+        el(id).addEventListener('input', () => {
+          if (id === 'zoomSlider') {
+            setZoom(el(id).value);
+          } else {
+            debounceRender();
+          }
+          updateSliderBackground(el(id));
+          if (id.includes('Slider') && (id.includes('black') || id.includes('dark') || id.includes('light'))) {
+            validateThresholds();
+          }
+        });
+      });
+      ['blackInput', 'darkInput', 'lightInput', 'nameLengthInput', 'blockSizeInput', 'consensusThresholdInput'].forEach(id => {
+        el(id).addEventListener('input', () => {
+          const sliderId = id.replace('Input', 'Slider');
+          el(sliderId).value = el(id).value;
+          if (sliderId === 'zoomSlider') {
+            setZoom(el(id).value);
+          } else {
+            debounceRender();
+          }
+          updateSliderBackground(el(sliderId));
+          if (id.includes('Input') && (id.includes('black') || id.includes('dark') || id.includes('light'))) {
+            validateThresholds();
+          }
+        });
+      });
+      document.querySelectorAll('input[name="shadeMode"]').forEach(radio => {
+        radio.addEventListener('change', onShadeModeChange);
+      });
+      document.querySelectorAll('input[name="mode"]').forEach(radio => {
+        radio.addEventListener('change', onModeChange);
+      });
+      document.querySelectorAll('input[name="consensusType"]').forEach(radio => {
+        radio.addEventListener('change', debounceRender);
+      });
+      document.querySelectorAll('input[name="consensusPosition"]').forEach(radio => {
+        radio.addEventListener('change', debounceRender);
+      });
+      el('enableBlack').addEventListener('change', debounceRender);
+      el('enableDark').addEventListener('change', debounceRender);
+      el('enableLight').addEventListener('change', debounceRender);
+      el('showConsensus').addEventListener('change', debounceRender);
+      el('stickyNames').addEventListener('change', toggleStickyNames);
+      alignmentContainer.addEventListener('mousedown', handleMouseDown);
+      alignmentContainer.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.addEventListener('keydown', handleKeyDown);
+      document.addEventListener('keyup', handleKeyUp);
+      document.addEventListener('click', (event) => {
+        if (event.target === infoModal) {
+          closeInfoModal();
+        }
+      });
+      el('modeBlocks').checked = true;
+      el('modeSingle').checked = false;
+      document.querySelector('input[name="consensusPosition"][value="bottom"]').checked = true;
+      onModeChange();
+      toggleStickyNames();
+      ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold'].forEach(id => {
+        updateSliderBackground(el(id));
+      });
+      document.addEventListener('contextmenu', handleContextMenu);
+    });
+    let contextMenu = null;
+    function handleContextMenu(e) {
+      if (contextMenu) {
+        contextMenu.remove();
+        contextMenu = null;
       }
-    };
-    // Init
-    document.getElementById('modeBlocks').checked = true;
-    document.getElementById('modeSingle').checked = false;
-    document.querySelector('input[name="consensusPosition"][value="bottom"]').checked = true;
-    toggleBlockSize();
+      const row = e.target.closest('.seq-line');
+      if (!row || row.classList.contains('consensus-line')) return;
+      const index = parseInt(row.dataset.seqIndex);
+      const name = e.target.closest('.seq-name');
+      const span = e.target.closest('.seq-data span');
+      if (name || span) {
+        e.preventDefault();
+        contextMenu = document.createElement('div');
+        contextMenu.style.position = 'absolute';
+        contextMenu.style.background = 'white';
+        contextMenu.style.border = '1px solid #ccc';
+        contextMenu.style.padding = '5px';
+        contextMenu.style.zIndex = '1000';
+        contextMenu.style.left = `${e.pageX}px`;
+        contextMenu.style.top = `${e.pageY}px`;
+        const deselectSeqName = document.createElement('div');
+        deselectSeqName.textContent = 'Deselect seq name';
+        deselectSeqName.style.cursor = 'pointer';
+        deselectSeqName.addEventListener('click', () => {
+          state.selectedRows.clear();
+          renderAlignment();
+          contextMenu.remove();
+        });
+        contextMenu.appendChild(deselectSeqName);
+        const deselectSequence = document.createElement('div');
+        deselectSequence.textContent = 'Deselect sequence';
+        deselectSequence.style.cursor = 'pointer';
+        deselectSequence.addEventListener('click', () => {
+          state.selectedNucs.clear();
+          renderAlignment();
+          contextMenu.remove();
+        });
+        contextMenu.appendChild(deselectSequence);
+        document.body.appendChild(contextMenu);
+      }
+    }
+    document.addEventListener('click', () => {
+      if (contextMenu) {
+        contextMenu.remove();
+        contextMenu = null;
+      }
+    });
   </script>
 </body>
 </html>
