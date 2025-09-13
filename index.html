@@ -8,8 +8,8 @@
       --nameLen: 20;
       --slider-value: 0%;
       --slider-fill: #888;
-      --selected-bg: #ffebcd;
-      --column-selected-bg: #e6ffe6;
+      --selected-bg: #e6ffe6;
+      --column-selected-bg: #90ee90;
       --nuc-selected-bg: #ffff00;
       --tooltip-bg: white;
       --tooltip-border: #ccc;
@@ -154,6 +154,7 @@
     #blackSlider { --slider-fill: #000; }
     #darkSlider { --slider-fill: #555; }
     #lightSlider { --slider-fill: #ccc; }
+    #groupConsensusThreshold { --slider-fill: #888; }
     input[type="range"].shading-slider::-webkit-slider-thumb {
       -webkit-appearance: none;
       height: 14px;
@@ -320,6 +321,7 @@
     }
     .column-selected {
       background-color: var(--column-selected-bg) !important;
+      color: black !important;
     }
     .nuc-selected {
       background-color: var(--nuc-selected-bg) !important;
@@ -474,6 +476,20 @@
       font-size: 12px;
       color: #555;
     }
+    .context-menu {
+      position: absolute;
+      background: white;
+      border: 1px solid #ccc;
+      padding: 5px;
+      z-index: 1000;
+    }
+    .context-menu div {
+      cursor: pointer;
+      padding: 2px 5px;
+    }
+    .context-menu div:hover {
+      background: #f0f0f0;
+    }
   </style>
 </head>
 <body>
@@ -566,6 +582,11 @@
           <span class="slider-label">Threshold</span>
           <input type="range" id="consensusThreshold" class="normal-slider" min="50" max="100" value="70" title="Consensus threshold percentage (50-100%)">
           <input type="number" id="consensusThresholdInput" min="50" max="100" value="70" title="Consensus threshold percentage (50-100%)">
+        </div>
+        <div class="slider-container">
+          <span class="slider-label">Group Thr</span>
+          <input type="range" id="groupConsensusThreshold" class="normal-slider" min="50" max="100" value="70" title="Group consensus threshold percentage (50-100%)">
+          <input type="number" id="groupConsensusThresholdInput" min="50" max="100" value="70" title="Group consensus threshold percentage (50-100%)">
         </div>
         <div class="slider-container">
           <span class="slider-label">Type</span>
@@ -736,7 +757,9 @@
       dragStartCol: null,
       dragMode: null,
       ctrlPressed: false,
-      lastAction: null
+      altPressed: false,
+      lastAction: null,
+      draggingGroup: null
     };
     // DOM ELEMENTS
     const el = id => document.getElementById(id);
@@ -839,6 +862,7 @@
       let isNucleic = true;
       let maxLen = 0;
       const seqMap = {};
+      let names = [];
       // Find MSF header line
       const headerIndex = lines.findIndex(l => l.includes('MSF:') && l.includes('Check:'));
       if (headerIndex !== -1) {
@@ -853,12 +877,24 @@
       } else {
         i = 0;
       }
-      // Skip to after //
+      // Collect names from Name: lines before //
       while (i < lines.length) {
-        const line = lines[i].trim();
+        let line = lines[i].trim();
         if (line === '//') {
           i += 1;
           break;
+        }
+        if (line.startsWith('Name:')) {
+          const parts = line.split(/\s+/);
+          let name = '';
+          let j = 1; // after 'Name:'
+          while (j < parts.length && !parts[j].startsWith('Len:')) {
+            name += (name ? ' ' : '') + parts[j];
+            j++;
+          }
+          if (name) {
+            names.push(name);
+          }
         }
         i += 1;
       }
@@ -874,43 +910,46 @@
           i += 1;
           continue;
         }
-        const parts = line.split(/\s+/);
-        if (parts.length > 1) {
-          const name = parts[0];
-          if (!seqMap[name]) {
-            seqMap[name] = { header: name, fullHeader: name, seq: '' };
+        let foundName = null;
+        for (let n of names) {
+          if (line.startsWith(n + ' ') || line.startsWith(n + '\t')) {
+            foundName = n;
+            let seqPart = line.substring(n.length).trim();
+            let blockSeq = seqPart.replace(/\s+/g, '').replace(/~/g, '-');
+            if (!seqMap[foundName]) {
+              seqMap[foundName] = { header: foundName, fullHeader: foundName, seq: '' };
+            }
+            const seqObj = seqMap[foundName];
+            seqObj.seq += blockSeq;
+            if (seqObj.seq.length > maxLen) maxLen = seqObj.seq.length;
+            break;
           }
-          const chunks = parts.slice(1);
-          let blockSeq = chunks.join('').replace(/ /g, '');
-          blockSeq = blockSeq.replace(/~/g, '-');
-          const seqObj = seqMap[name];
-          seqObj.seq += blockSeq;
-          if (seqObj.seq.length > maxLen) maxLen = seqObj.seq.length;
-          i += 1;
-        } else {
-          i += 1;
         }
+        i += 1;
       }
       const seqs = [];
-      for (let name in seqMap) {
-        let seqObj = seqMap[name];
-        let processedSeq;
-        if (isNucleic) {
-          processedSeq = seqObj.seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
-        } else {
-          processedSeq = seqObj.seq.toUpperCase().replace(/[^A-Z\.\-]/g, 'X');
+      for (let name of names) {
+        if (seqMap[name]) {
+          let seqObj = seqMap[name];
+          let processedSeq;
+          if (isNucleic) {
+            processedSeq = seqObj.seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
+          } else {
+            processedSeq = seqObj.seq.toUpperCase().replace(/[^A-Z\.\-]/g, 'X');
+          }
+          processedSeq = processedSeq.replace(/\./g, '-');
+          while (processedSeq.length < maxLen) {
+            processedSeq += '-';
+          }
+          const gaplessPositions = calculateGaplessPositions(processedSeq);
+          const displayHeader = name.split(' ')[0] || 'unnamed';
+          seqs.push({
+            header: displayHeader,
+            fullHeader: name,
+            seq: processedSeq,
+            gaplessPositions: gaplessPositions
+          });
         }
-        processedSeq = processedSeq.replace(/\./g, '-');
-        while (processedSeq.length < maxLen) {
-          processedSeq += '-';
-        }
-        const gaplessPositions = calculateGaplessPositions(processedSeq);
-        seqs.push({
-          header: seqObj.header,
-          fullHeader: seqObj.fullHeader,
-          seq: processedSeq,
-          gaplessPositions: gaplessPositions
-        });
       }
       return seqs.length ? seqs : null;
     }
@@ -1056,7 +1095,7 @@
         }
       }
       setTimeout(() => toggleStickyNames(), 0);
-      ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold'].forEach(id => {
+      ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold'].forEach(id => {
         updateSliderBackground(el(id));
       });
     }
@@ -1068,6 +1107,50 @@
       nameSpan.className = `seq-name ${stickyNames ? '' : 'static'}`;
       nameSpan.title = state.seqs[index].fullHeader;
       nameSpan.textContent = state.seqs[index].header.substring(0, nameLen);
+      nameSpan.draggable = true;
+      nameSpan.addEventListener('dragstart', handleDragStart);
+      nameSpan.addEventListener('dragend', handleDragEnd);
+      nameSpan.addEventListener('dblclick', () => {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = state.seqs[index].header;
+        input.style.width = `${nameSpan.offsetWidth}px`;
+        input.style.fontSize = getComputedStyle(nameSpan).fontSize;
+        input.style.fontFamily = getComputedStyle(nameSpan).fontFamily;
+        input.style.padding = '0';
+        input.style.border = '1px solid #ccc';
+        nameSpan.innerHTML = '';
+        nameSpan.appendChild(input);
+        input.focus();
+        input.select();
+        const save = () => {
+          const newName = input.value.trim();
+          if (newName && newName !== state.seqs[index].header) {
+            state.deletedHistory.push({
+              type: 'rename',
+              seqs: JSON.parse(JSON.stringify(state.seqs)),
+              selectedRows: new Set(state.selectedRows),
+              selectedColumns: new Set(state.selectedColumns)
+            });
+            state.seqs[index].header = newName;
+            state.seqs[index].fullHeader = newName;
+            renderAlignment();
+            showMessage("Sequence renamed!", 2000);
+          } else {
+            renderAlignment();
+          }
+        };
+        input.addEventListener('blur', save);
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            save();
+          } else if (e.key === 'Escape') {
+            renderAlignment();
+          }
+        });
+      });
+      lineDiv.addEventListener('dragover', (e) => e.preventDefault());
+      lineDiv.addEventListener('drop', handleDrop);
       lineDiv.appendChild(nameSpan);
       const dataSpan = document.createElement('div');
       dataSpan.className = 'seq-data';
@@ -1238,6 +1321,57 @@
       validateThresholds();
       debounceRender();
     }
+    // DRAG AND DROP HANDLERS
+    function handleDragStart(e) {
+      const row = e.target.closest('.seq-line');
+      if (row.classList.contains('consensus-line')) return;
+      const index = parseInt(row.dataset.seqIndex);
+      if (state.selectedRows.has(index)) {
+        state.draggingGroup = Array.from(state.selectedRows).sort((a, b) => a - b);
+      } else {
+        e.preventDefault();
+        return;
+      }
+      e.dataTransfer.setData('text/plain', '');
+      e.dataTransfer.effectAllowed = 'move';
+    }
+    function handleDragEnd(e) {
+      state.draggingGroup = null;
+    }
+    function handleDrop(e) {
+      e.preventDefault();
+      if (!state.draggingGroup) return;
+      const targetRow = e.target.closest('.seq-line');
+      if (!targetRow || targetRow.classList.contains('consensus-line')) return;
+      const targetIndex = parseInt(targetRow.dataset.seqIndex);
+      const rect = targetRow.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const insertAfter = y > rect.height / 2;
+      const groupIndices = state.draggingGroup;
+      if (groupIndices.includes(targetIndex)) return;
+      state.deletedHistory.push({
+        type: 'order',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+      });
+      const newSeqs = [...state.seqs];
+      const group = groupIndices.map(i => newSeqs[i]);
+      for (let j = groupIndices.length - 1; j >= 0; j--) {
+        newSeqs.splice(groupIndices[j], 1);
+      }
+      let insertPos = targetIndex - groupIndices.filter(i => i < targetIndex).length;
+      if (insertAfter) insertPos += 1;
+      newSeqs.splice(insertPos, 0, ...group);
+      state.seqs = newSeqs;
+      state.selectedRows.clear();
+      for (let k = 0; k < group.length; k++) {
+        state.selectedRows.add(insertPos + k);
+      }
+      state.draggingGroup = null;
+      renderAlignment();
+      showMessage("Sequences reordered!", 2000);
+    }
     // EVENT HANDLERS
     function handleMouseDown(e) {
       const row = e.target.closest('.seq-line');
@@ -1250,6 +1384,9 @@
           state.isDragging = true;
           state.dragStartRow = index;
           state.dragMode = 'row';
+          if (!e.shiftKey && !state.selectedRows.has(index)) {
+            state.selectedRows.clear();
+          }
           if (state.selectedRows.has(index)) {
             state.selectedRows.delete(index);
           } else {
@@ -1267,10 +1404,11 @@
           renderAlignment();
           e.preventDefault();
         }
-      } else if (span && (e.ctrlKey || e.metaKey)) {
+      } else if (span && (e.ctrlKey || e.metaKey) && !e.altKey) {
         const pos = parseInt(span.dataset.pos);
         if (isNaN(pos)) return;
         if (state.pendingNucStart === null) {
+          state.selectedNucs.clear();
           state.pendingNucStart = {row: index, pos: pos};
         } else if (state.pendingNucStart.row === index) {
           const startPos = Math.min(state.pendingNucStart.pos, pos);
@@ -1289,18 +1427,15 @@
       } else if (span && (e.ctrlKey || e.metaKey) && e.altKey) {
         const pos = parseInt(span.dataset.pos);
         if (isNaN(pos)) return;
-        const isSelected = span.classList.toggle('column-selected');
-        if (isSelected) {
-          state.selectedColumns.add(pos);
-        } else {
-          state.selectedColumns.delete(pos);
-        }
-        document.querySelectorAll(`.seq-data span[data-pos="${pos}"]`).forEach(s => {
-          s.classList.toggle('column-selected', isSelected);
-        });
         state.isDragging = true;
         state.dragStartCol = pos;
         state.dragMode = 'col';
+        if (state.selectedColumns.has(pos)) {
+          state.selectedColumns.delete(pos);
+        } else {
+          state.selectedColumns.add(pos);
+        }
+        renderAlignment();
         e.preventDefault();
       }
     }
@@ -1325,14 +1460,13 @@
         if (span) {
           const pos = parseInt(span.dataset.pos);
           if (isNaN(pos)) return;
-          document.querySelectorAll('.column-selected').forEach(s => s.classList.remove('column-selected'));
-          state.selectedColumns.clear();
           const start = Math.min(state.dragStartCol, pos);
           const end = Math.max(state.dragStartCol, pos);
+          state.selectedColumns.clear();
           for (let p = start; p <= end; p++) {
             state.selectedColumns.add(p);
-            document.querySelectorAll(`.seq-data span[data-pos="${p}"]`).forEach(s => s.classList.add('column-selected'));
           }
+          renderAlignment();
         }
       }
       e.preventDefault();
@@ -1346,6 +1480,9 @@
     function handleKeyDown(e) {
       if (e.ctrlKey || e.metaKey) {
         state.ctrlPressed = true;
+      }
+      if (e.altKey) {
+        state.altPressed = true;
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
         copySelected();
@@ -1423,13 +1560,13 @@
             break;
           case 'v':
             if (e.shiftKey) {
-              copyColumnsButton();
+              copySelectedColumns();
             }
             e.preventDefault();
             break;
           case 'd':
             if (e.shiftKey) {
-              deleteColumnsButton();
+              deleteSelectedColumns();
             }
             e.preventDefault();
             break;
@@ -1462,6 +1599,9 @@
     function handleKeyUp(e) {
       if (!e.ctrlKey && !e.metaKey) {
         state.ctrlPressed = false;
+      }
+      if (!e.altKey) {
+        state.altPressed = false;
       }
     }
     // ACTION FUNCTIONS
@@ -1682,6 +1822,12 @@
     }
     function moveSelectedUp() {
       if (state.selectedRows.size === 0) return;
+      state.deletedHistory.push({
+        type: 'order',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+      });
       const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
       if (indices[0] === 0) return;
       const newSeqs = [...state.seqs];
@@ -1701,6 +1847,12 @@
     }
     function moveSelectedDown() {
       if (state.selectedRows.size === 0) return;
+      state.deletedHistory.push({
+        type: 'order',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+      });
       const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
       if (indices[indices.length - 1] === state.seqs.length - 1) return;
       const newSeqs = [...state.seqs];
@@ -1720,6 +1872,12 @@
     }
     function moveSelectedToTop() {
       if (state.selectedRows.size === 0) return;
+      state.deletedHistory.push({
+        type: 'order',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+      });
       const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
       const newSeqs = [...state.seqs];
       const group = indices.map(i => newSeqs[i]);
@@ -1737,6 +1895,12 @@
     }
     function moveSelectedToBottom() {
       if (state.selectedRows.size === 0) return;
+      state.deletedHistory.push({
+        type: 'order',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+      });
       const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
       const newSeqs = [...state.seqs];
       const group = indices.map(i => newSeqs[i]);
@@ -1761,7 +1925,7 @@
       const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
       const selectedSeqs = indices.map(i => state.seqs[i].seq);
       const len = Math.max(...selectedSeqs.map(s => s.length));
-      const threshold = parseInt(el('consensusThreshold').value) / 100;
+      const threshold = parseInt(el('groupConsensusThreshold').value) / 100;
       let cons = '';
       for (let pos = 0; pos < len; pos++) {
         const col = selectedSeqs.map(s => s[pos] || '-').filter(b => b !== '-' && b !== '.');
@@ -1803,10 +1967,11 @@
         const s = state.seqs[i];
         return `>${s.fullHeader || s.header}\n${s.seq}`;
       }).join('\n');
-      const htmlTemplate = document.documentElement.outerHTML;
-      const modifiedHtml = htmlTemplate.replace(/<textarea id="fastaInput" placeholder="[^"]*"><\/textarea>/, `<textarea id="fastaInput">${fasta}</textarea>`);
+      const blob = new Blob([fasta], {type: 'text/plain'});
+      const url = URL.createObjectURL(blob);
       const newWindow = window.open();
-      newWindow.document.write(modifiedHtml);
+      newWindow.document.write('<textarea style="width:100%;height:100%;">' + fasta + '</textarea>');
+      newWindow.document.title = 'Selected Sequences';
       newWindow.document.close();
       showMessage("Selected sequences opened in new tab!", 2000);
     }
@@ -1820,6 +1985,7 @@
         blockSize: el('blockSizeSlider').value,
         nameLen: el('nameLengthSlider').value,
         consensusThreshold: el('consensusThreshold').value,
+        groupConsensusThreshold: el('groupConsensusThreshold').value,
         consensusType: document.querySelector('input[name="consensusType"]:checked').value,
         showConsensus: el('showConsensus').checked,
         consensusPosition: document.querySelector('input[name="consensusPosition"]:checked').value,
@@ -1839,7 +2005,7 @@
         return;
       }
       const p = JSON.parse(saved);
-      ['black','dark','light','zoom','blockSize','nameLen','consensusThreshold'].forEach(k => {
+      ['black','dark','light','zoom','blockSize','nameLen','consensusThreshold', 'groupConsensusThreshold'].forEach(k => {
         el(k + 'Slider').value = p[k];
         const inputElement = el(k + 'Input');
         if (inputElement) inputElement.value = p[k];
@@ -1951,6 +2117,113 @@
     function realignSelectedBlock() {
       showMessage("Realign Block not implemented yet.", 3000);
     }
+    function copySequence(index, gapped = true) {
+      const s = state.seqs[index];
+      let seq = s.seq;
+      if (!gapped) {
+        seq = seq.replace(/[-.]/g, '');
+      }
+      const fasta = `>${s.fullHeader || s.header}\n${seq}`;
+      navigator.clipboard.writeText(fasta).then(() => {
+        showMessage(`Sequence copied as FASTA (${gapped ? 'gapped' : 'ungapped'})!`, 2000);
+      }).catch(err => {
+        console.error('Copy failed:', err);
+        showMessage("Failed to copy.", 5000);
+      });
+    }
+    function deleteSequence(index) {
+      if (state.seqs.length === 1) {
+        showMessage("Cannot delete the last sequence.", 3000);
+        return;
+      }
+      if (confirm('Delete this sequence?')) {
+        state.deletedHistory.push({
+          type: 'delete',
+          seqs: JSON.parse(JSON.stringify(state.seqs)),
+          selectedRows: new Set(),
+          selectedColumns: new Set(state.selectedColumns)
+        });
+        state.seqs.splice(index, 1);
+        state.selectedRows.clear();
+        renderAlignment();
+        showMessage("Sequence deleted!", 2000);
+      }
+    }
+    let contextMenu = null;
+    function showContextMenu(e, index) {
+      if (contextMenu) {
+        contextMenu.remove();
+      }
+      contextMenu = document.createElement('div');
+      contextMenu.className = 'context-menu';
+      contextMenu.style.left = `${e.pageX}px`;
+      contextMenu.style.top = `${e.pageY}px`;
+      const copyGapped = document.createElement('div');
+      copyGapped.textContent = 'Copy sequence gapped (FASTA)';
+      copyGapped.addEventListener('click', () => {
+        copySequence(index, true);
+        contextMenu.remove();
+      });
+      const copyUngapped = document.createElement('div');
+      copyUngapped.textContent = 'Copy sequence ungapped (FASTA)';
+      copyUngapped.addEventListener('click', () => {
+        copySequence(index, false);
+        contextMenu.remove();
+      });
+      const deleteItem = document.createElement('div');
+      deleteItem.textContent = 'Delete sequence';
+      deleteItem.addEventListener('click', () => {
+        deleteSequence(index);
+        contextMenu.remove();
+      });
+      const renameItem = document.createElement('div');
+      renameItem.textContent = 'Rename sequence';
+      renameItem.addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = state.seqs[index].header;
+        input.style.width = `${e.target.offsetWidth}px`;
+        input.style.fontSize = getComputedStyle(e.target).fontSize;
+        input.style.fontFamily = getComputedStyle(e.target).fontFamily;
+        input.style.padding = '0';
+        input.style.border = '1px solid #ccc';
+        e.target.innerHTML = '';
+        e.target.appendChild(input);
+        input.focus();
+        input.select();
+        const save = () => {
+          const newName = input.value.trim();
+          if (newName && newName !== state.seqs[index].header) {
+            state.deletedHistory.push({
+              type: 'rename',
+              seqs: JSON.parse(JSON.stringify(state.seqs)),
+              selectedRows: new Set(),
+              selectedColumns: new Set(state.selectedColumns)
+            });
+            state.seqs[index].header = newName;
+            state.seqs[index].fullHeader = newName;
+            renderAlignment();
+            showMessage("Sequence renamed!", 2000);
+          } else {
+            renderAlignment();
+          }
+        };
+        input.addEventListener('blur', save);
+        input.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') {
+            save();
+          } else if (ev.key === 'Escape') {
+            renderAlignment();
+          }
+        });
+        contextMenu.remove();
+      });
+      contextMenu.appendChild(copyGapped);
+      contextMenu.appendChild(copyUngapped);
+      contextMenu.appendChild(deleteItem);
+      contextMenu.appendChild(renameItem);
+      document.body.appendChild(contextMenu);
+    }
     // EVENT LISTENERS
     document.addEventListener('DOMContentLoaded', () => {
       dropZone.addEventListener('dragover', (e) => {
@@ -2005,7 +2278,7 @@
       el('clearAllSearchesButton').addEventListener('click', clearAllSearches);
       el('copyConsensusButton').addEventListener('click', copyConsensus);
       el('copySelectedConsensusButton').addEventListener('click', copySelectedConsensus);
-      ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold'].forEach(id => {
+      ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold'].forEach(id => {
         el(id).addEventListener('input', () => {
           if (id === 'zoomSlider') {
             setZoom(el(id).value);
@@ -2018,7 +2291,7 @@
           }
         });
       });
-      ['blackInput', 'darkInput', 'lightInput', 'nameLengthInput', 'blockSizeInput', 'consensusThresholdInput'].forEach(id => {
+      ['blackInput', 'darkInput', 'lightInput', 'nameLengthInput', 'blockSizeInput', 'consensusThresholdInput', 'groupConsensusThresholdInput'].forEach(id => {
         el(id).addEventListener('input', () => {
           const sliderId = id.replace('Input', 'Slider');
           el(sliderId).value = el(id).value;
@@ -2060,63 +2333,29 @@
           closeInfoModal();
         }
       });
+      alignmentContainer.addEventListener('contextmenu', (e) => {
+        const name = e.target.closest('.seq-name');
+        if (name) {
+          e.preventDefault();
+          const row = e.target.closest('.seq-line');
+          const index = parseInt(row.dataset.seqIndex);
+          showContextMenu(e, index);
+        }
+      });
+      document.addEventListener('click', () => {
+        if (contextMenu) {
+          contextMenu.remove();
+          contextMenu = null;
+        }
+      });
       el('modeBlocks').checked = true;
       el('modeSingle').checked = false;
       document.querySelector('input[name="consensusPosition"][value="bottom"]').checked = true;
       onModeChange();
       toggleStickyNames();
-      ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold'].forEach(id => {
+      ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold'].forEach(id => {
         updateSliderBackground(el(id));
       });
-      document.addEventListener('contextmenu', handleContextMenu);
-    });
-    let contextMenu = null;
-    function handleContextMenu(e) {
-      if (contextMenu) {
-        contextMenu.remove();
-        contextMenu = null;
-      }
-      const row = e.target.closest('.seq-line');
-      if (!row || row.classList.contains('consensus-line')) return;
-      const index = parseInt(row.dataset.seqIndex);
-      const name = e.target.closest('.seq-name');
-      const span = e.target.closest('.seq-data span');
-      if (name || span) {
-        e.preventDefault();
-        contextMenu = document.createElement('div');
-        contextMenu.style.position = 'absolute';
-        contextMenu.style.background = 'white';
-        contextMenu.style.border = '1px solid #ccc';
-        contextMenu.style.padding = '5px';
-        contextMenu.style.zIndex = '1000';
-        contextMenu.style.left = `${e.pageX}px`;
-        contextMenu.style.top = `${e.pageY}px`;
-        const deselectSeqName = document.createElement('div');
-        deselectSeqName.textContent = 'Deselect seq name';
-        deselectSeqName.style.cursor = 'pointer';
-        deselectSeqName.addEventListener('click', () => {
-          state.selectedRows.clear();
-          renderAlignment();
-          contextMenu.remove();
-        });
-        contextMenu.appendChild(deselectSeqName);
-        const deselectSequence = document.createElement('div');
-        deselectSequence.textContent = 'Deselect sequence';
-        deselectSequence.style.cursor = 'pointer';
-        deselectSequence.addEventListener('click', () => {
-          state.selectedNucs.clear();
-          renderAlignment();
-          contextMenu.remove();
-        });
-        contextMenu.appendChild(deselectSequence);
-        document.body.appendChild(contextMenu);
-      }
-    }
-    document.addEventListener('click', () => {
-      if (contextMenu) {
-        contextMenu.remove();
-        contextMenu = null;
-      }
     });
   </script>
 </body>
