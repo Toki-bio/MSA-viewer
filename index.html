@@ -8,8 +8,8 @@
       --nameLen: 20;
       --slider-value: 0%;
       --slider-fill: #888;
-      --selected-bg: #e6ffe6;
-      --column-selected-bg: #90ee90;
+      --selected-bg: #e8f5e9;
+      --column-selected-bg: #a5d6a7;
       --nuc-selected-bg: #ffff00;
       --tooltip-bg: white;
       --tooltip-border: #ccc;
@@ -1178,6 +1178,14 @@
             renderAlignment();
           }
         });
+        // Add outside click handler for faster exit
+        const handleOutsideClick = (ev) => {
+          if (!nameSpan.contains(ev.target)) {
+            save();
+            document.removeEventListener('click', handleOutsideClick);
+          }
+        };
+        setTimeout(() => document.addEventListener('click', handleOutsideClick), 0);
       });
       lineDiv.addEventListener('dragover', (e) => e.preventDefault());
       lineDiv.addEventListener('drop', handleDrop);
@@ -1250,12 +1258,16 @@
         if (state.selectedColumns.has(pos)) {
           span.classList.add('column-selected');
         }
-        span.addEventListener('click', (e) => {
-          if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
-          editNucleotide(index, pos, span);
-        });
         dataSpan.appendChild(span);
       }
+      dataSpan.addEventListener('click', (e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+        if (el('modeBlocks').checked) {
+          showMessage("Switch to Full mode to edit whole sequence.", 3000);
+          return;
+        }
+        editWholeSequence(index);
+      });
       lineDiv.appendChild(dataSpan);
       if (state.selectedRows.has(index)) {
         lineDiv.classList.add('selected');
@@ -1340,7 +1352,7 @@
         showMessage("File loaded successfully!", 2000);
       } catch (e) {
         console.error("Error in parseAndRender:", e);
-        alignmentContainer.innerHTML = `<div class="error-message">❌ ${e.message}</div>`;
+        alignmentContainer.innerHTML = `<div class="error-message">âŒ ${e.message}</div>`;
         showMessage(`Error: ${e.message}`, 5000);
       }
     }
@@ -1408,6 +1420,7 @@
     }
     // EVENT HANDLERS
     function handleMouseDown(e) {
+      if (e.button !== 0) return;
       const row = e.target.closest('.seq-line');
       if (!row || row.classList.contains('consensus-line')) return;
       const index = parseInt(row.dataset.seqIndex);
@@ -2350,7 +2363,7 @@
           parseAndRender(true);
         };
         reader.onerror = () => {
-          alignmentContainer.innerHTML = '<div class="error-message">❌ Error reading file.</div>';
+          alignmentContainer.innerHTML = '<div class="error-message">âŒ Error reading file.</div>';
           showMessage("Error reading file.", 5000);
         };
         reader.readAsText(file);
@@ -2473,52 +2486,51 @@
       });
     });
     // NEW EDITING FUNCTIONS
-    function editNucleotide(row, col, span) {
-      const s = state.seqs[row];
-      const base = s.seq[col];
+    function editWholeSequence(index) {
+      const s = state.seqs[index];
+      const lineDiv = document.querySelector(`.seq-line[data-seq-index="${index}"]`);
+      const dataSpan = lineDiv.querySelector('.seq-data');
       const input = document.createElement('input');
       input.type = 'text';
-      input.maxLength = 1;
-      input.value = base;
-      input.style.width = '1ch';
-      input.style.font = 'inherit';
-      input.style.border = 'none';
-      input.style.background = 'transparent';
+      input.value = s.seq;
+      input.style.width = `${dataSpan.offsetWidth}px`;
+      input.style.fontFamily = 'Courier New, monospace';
+      input.style.fontSize = getComputedStyle(dataSpan).fontSize;
+      input.style.border = '1px solid #ccc';
       input.style.padding = '0';
       input.style.margin = '0';
+      input.style.boxSizing = 'border-box';
+      input.style.background = 'white';
+      input.style.color = 'black';
+      input.style.letterSpacing = '0';
       input.style.outline = 'none';
-      input.style.color = 'inherit';
-      input.style.textAlign = 'center';
-      span.textContent = '';
-      span.appendChild(input);
+      dataSpan.innerHTML = '';
+      dataSpan.appendChild(input);
       input.focus();
       input.select();
-      const update = () => {
-        let newBase = input.value.toUpperCase();
-        if (!/^[ACGTUNRYMKSWHBVD.-]$/i.test(newBase)) {
-          newBase = base;
-        }
-        if (newBase !== base) {
+      const save = () => {
+        let newSeq = input.value.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD.-]/g, 'N');
+        if (newSeq !== s.seq) {
           state.deletedHistory.push({
-            type: 'edit',
+            type: 'editWhole',
             seqs: JSON.parse(JSON.stringify(state.seqs)),
             selectedRows: new Set(state.selectedRows),
             selectedColumns: new Set(state.selectedColumns)
           });
-          s.seq = s.seq.slice(0, col) + newBase + s.seq.slice(col + 1);
-          s.gaplessPositions = calculateGaplessPositions(s.seq);
+          s.seq = newSeq;
+          s.gaplessPositions = calculateGaplessPositions(newSeq);
           renderAlignment();
-          showMessage("Nucleotide edited!", 2000);
+          showMessage("Sequence edited!", 2000);
         } else {
-          span.textContent = base;
+          renderAlignment();
         }
       };
-      input.addEventListener('blur', update);
-      input.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter') {
-          update();
-        } else if (ev.key === 'Escape') {
-          span.textContent = base;
+      input.addEventListener('blur', save);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          save();
+        } else if (e.key === 'Escape') {
+          renderAlignment();
         }
       });
     }
