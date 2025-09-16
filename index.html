@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Qwen MSA Viewer - Fixed Offline Edition</title>
+  <title>Qwen MSA Viewer - Final Edition</title>
   <style>
     :root {
       --nameLen: 20;
       --slider-value: 0%;
       --slider-fill: #888;
-      --selected-bg: #e8f5e9;
+      --selected-bg: #90ee90;
       --column-selected-bg: #a5d6a7;
       --nuc-selected-bg: #ffff00;
       --tooltip-bg: white;
@@ -268,11 +268,11 @@
       white-space: nowrap;
       font-weight: bold;
       color: #333;
-      background: white;
+      background: white !important;
       cursor: default;
       position: sticky;
       left: 0;
-      z-index: 10;
+      z-index: 11;
       user-select: none;
       -moz-user-select: none;
       -webkit-user-select: none;
@@ -326,6 +326,10 @@
       color: #000 !important;
       font-weight: bold;
     }
+    .selected .seq-data span {
+      background-color: #e0ffe0 !important;
+      color: black !important;
+    }
     .column-selected {
       background-color: var(--column-selected-bg) !important;
       color: black !important;
@@ -347,6 +351,8 @@
     .consensus-line .seq-name {
       color: #555;
       font-weight: bold;
+      background: white !important;
+      z-index: 11;
     }
     .consensus-line .seq-data span {
       opacity: 0.9;
@@ -679,14 +685,13 @@
       </div>
     </div>
     <div style="grid-column: 1/-1; text-align: right; font-size: 12px; color: #555;">
-      <span style="white-space: nowrap;">Click name: deselect seq if selected</span> |
+      <span style="white-space: nowrap;">Click name: copy name</span> |
       <span style="white-space: nowrap;">Ctrl+click name: select/deselect seq (drag for range)</span> |
       <span style="white-space: nowrap;">Shift+click name: range from last</span> |
       <span style="white-space: nowrap;">Ctrl+Alt+click nuc: select column</span> |
-      <span style="white-space: nowrap;">Drag on seq: select nucs</span> |
-      <span style="white-space: nowrap;">Ctrl+click on seq: two clicks for nuc range</span> |
+      <span style="white-space: nowrap;">Ctrl+click on nuc: start/extend range</span> |
       <span style="white-space: nowrap;">Right-click drag seq: slide</span> |
-      <span style="white-space: nowrap;">Right-click name: menu with clear selection</span>
+      <span style="white-space: nowrap;">Right-click name: menu</span>
     </div>
     <div id="filenameInfo" style="grid-column: 1/-1; padding: 2px 8px; font-size: 12px; color: #555; background: #f0f0f0; text-align: center;"></div>
   </div>
@@ -702,9 +707,9 @@
         <li><strong>Load FASTA/MSF:</strong> Drag & drop a file or paste text (auto-detects .msf).</li>
         <li><strong>GeneDoc Coloring:</strong> Visualize conserved regions with adjustable thresholds (Black, Dark, Light).</li>
         <li><strong>Consensus Sequence:</strong> Generate and copy consensus with normal or ambiguous base codes.</li>
-        <li><strong>Sequence Selection:</strong> Ctrl+Click to select multiple names, Shift+Click for range. Simple click deselects if selected. Perform actions like Reverse Complement, Copy, or Delete.</li>
+        <li><strong>Sequence Selection:</strong> Ctrl+Click to select multiple names, Shift+Click for range. Simple click copies name. Perform actions like Reverse Complement, Copy, or Delete.</li>
         <li><strong>Column Selection:</strong> Use Ctrl+Alt+Click to select entire columns. Copy or delete selected columns.</li>
-        <li><strong>Nucleotide Selection:</strong> Drag on sequence to select range. With Ctrl, two clicks to select range.</li>
+        <li><strong>Nucleotide Selection:</strong> With Ctrl, click to start/extend range. Use “Copy Sel” to copy.</li>
         <li><strong>Search:</strong> Find motifs with custom highlight colors. Clear individual or all searches.</li>
         <li><strong>Undo:</strong> Recover deleted sequences or columns.</li>
         <li><strong>Preset Management:</strong> Save and load your display settings.</li>
@@ -936,7 +941,7 @@
         }
         let foundName = null;
         for (let n of names) {
-          if (line.startsWith(n + ' ') || line.startsWith(n + '\t')) {
+          if (line.startsWith(n)) {
             foundName = n;
             let seqPart = line.substring(n.length).trim();
             let blockSeq = seqPart.replace(/\s+/g, '').replace(/~/g, '-');
@@ -995,7 +1000,7 @@
     // RENDERING FUNCTIONS
     function renderAlignment() {
       if (!state.seqs || state.seqs.length === 0) {
-        alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
+        alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
         return;
       }
       alignmentContainer.innerHTML = '';
@@ -1140,6 +1145,17 @@
       nameSpan.draggable = true;
       nameSpan.addEventListener('dragstart', handleDragStart);
       nameSpan.addEventListener('dragend', handleDragEnd);
+      // 👇 CLICK NAME → COPY NAME (no selection toggle)
+      nameSpan.addEventListener('click', (e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) return; // let mousedown handle selection
+        navigator.clipboard.writeText(state.seqs[index].header).then(() => {
+          showMessage(`Copied: ${state.seqs[index].header}`, 1500);
+        }).catch(err => {
+          console.error('Copy failed:', err);
+          showMessage("Failed to copy name.", 2000);
+        });
+        e.preventDefault();
+      });
       nameSpan.addEventListener('dblclick', () => {
         const input = document.createElement('input');
         input.type = 'text';
@@ -1192,6 +1208,11 @@
       lineDiv.appendChild(nameSpan);
       const dataSpan = document.createElement('div');
       dataSpan.className = 'seq-data';
+      // 👇 NO ACTION on plain click — only Ctrl+Click for selection
+      dataSpan.addEventListener('click', (e) => {
+        if (e.ctrlKey || e.metaKey) return; // handled by mousedown
+        // 👉 Do nothing on single click — no copy, no selection
+      });
       for (let pos = start; pos < end; pos++) {
         const base = state.seqs[index].seq[pos] || '-';
         const gaplessPos = state.seqs[index].gaplessPositions[pos];
@@ -1237,7 +1258,8 @@
           span.addEventListener('mouseout', () => {
             tooltip.style.display = 'none';
           });
-          span.addEventListener('click', () => {
+          span.addEventListener('click', (e) => {
+            e.stopPropagation();
             copySelected();
           });
         }
@@ -1260,14 +1282,6 @@
         }
         dataSpan.appendChild(span);
       }
-      dataSpan.addEventListener('click', (e) => {
-        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
-        if (el('modeBlocks').checked) {
-          showMessage("Switch to Full mode to edit whole sequence.", 3000);
-          return;
-        }
-        editWholeSequence(index);
-      });
       lineDiv.appendChild(dataSpan);
       if (state.selectedRows.has(index)) {
         lineDiv.classList.add('selected');
@@ -1352,7 +1366,7 @@
         showMessage("File loaded successfully!", 2000);
       } catch (e) {
         console.error("Error in parseAndRender:", e);
-        alignmentContainer.innerHTML = `<div class="error-message">âŒ ${e.message}</div>`;
+        alignmentContainer.innerHTML = `<div class="error-message">❌ ${e.message}</div>`;
         showMessage(`Error: ${e.message}`, 5000);
       }
     }
@@ -1447,13 +1461,8 @@
           }
           updateRowSelections();
           e.preventDefault();
-        } else {
-          if (state.selectedRows.has(index)) {
-            state.selectedRows.delete(index);
-          }
-          updateRowSelections();
-          e.preventDefault();
         }
+        // 👉 No else clause — click without Ctrl/Shift copies name (handled in nameSpan.click)
       } else if (span && (e.ctrlKey || e.metaKey) && !e.altKey) {
         const pos = parseInt(span.dataset.pos);
         if (isNaN(pos)) return;
@@ -1487,15 +1496,8 @@
         }
         updateColumnSelections();
         e.preventDefault();
-      } else if (span && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
-        const pos = parseInt(span.dataset.pos);
-        if (isNaN(pos)) return;
-        state.pendingNucStart = {row: index, pos: pos};
-        state.isDragging = true;
-        state.dragMode = 'nuc';
-        state.selectedNucs.clear();
-        e.preventDefault();
       }
+      // 👉 No handler for plain click on span — do nothing
     }
     function handleMouseMove(e) {
       if (!state.isDragging) return;
@@ -1780,16 +1782,25 @@
         });
         return;
       }
+      // 👇 Removed "No sequence selected" message — silent if nothing to copy
       if (state.selectedRows.size === 0) {
-        showMessage("No sequences or nucleotides selected to copy.", 3000);
         return;
       }
-      const seqText = Array.from(state.selectedRows).sort((a,b) => a - b).map(i => {
+      const fasta = Array.from(state.selectedRows).sort((a,b) => a - b).map(i => {
         const s = state.seqs[i];
-        return s.seq;
+        return `>${s.fullHeader || s.header}\n${s.seq}`;
       }).join('\n');
-      navigator.clipboard.writeText(seqText).then(() => {
-        showMessage("Selected sequences copied!", 2000);
+      navigator.clipboard.writeText(fasta).then(() => {
+        showMessage("Selected sequences copied as FASTA!", 2000);
+      }).catch(err => {
+        console.error('Copy failed:', err);
+        showMessage("Failed to copy. Check console.", 5000);
+      });
+    }
+    function copyPlainSingle(index) {
+      const s = state.seqs[index];
+      navigator.clipboard.writeText(s.seq).then(() => {
+        showMessage("Sequence copied as plain text!", 2000);
       }).catch(err => {
         console.error('Copy failed:', err);
         showMessage("Failed to copy. Check console.", 5000);
@@ -2193,15 +2204,30 @@
     function realignSelectedBlock() {
       showMessage("Realign Block not implemented yet.", 3000);
     }
-    function copySequence(index, gapped = true) {
-      const s = state.seqs[index];
-      let seq = s.seq;
-      if (!gapped) {
-        seq = seq.replace(/[-.]/g, '');
+    function copySequences(gapped, isFasta, index) {
+      let indices = Array.from(state.selectedRows).sort((a,b)=>a-b);
+      if (indices.length === 0) {
+        indices = [index];
       }
-      const fasta = `>${s.fullHeader || s.header}\n${seq}`;
-      navigator.clipboard.writeText(fasta).then(() => {
-        showMessage(`Sequence copied as FASTA (${gapped ? 'gapped' : 'ungapped'})!`, 2000);
+      let text = '';
+      if (isFasta) {
+        text = indices.map(i => {
+          let seq = state.seqs[i].seq;
+          if (!gapped) seq = seq.replace(/[-.]/g, '');
+          return `>${state.seqs[i].fullHeader || state.seqs[i].header}\n${seq}`;
+        }).join('\n');
+      } else {
+        text = indices.map(i => {
+          let seq = state.seqs[i].seq;
+          if (!gapped) seq = seq.replace(/[-.]/g, '');
+          return seq;
+        }).join('\n');
+      }
+      navigator.clipboard.writeText(text).then(() => {
+        const count = indices.length;
+        const type = isFasta ? 'FASTA' : 'plain text';
+        const gapType = gapped ? 'gapped' : 'ungapped';
+        showMessage(`${count > 1 ? 'Selected sequences' : 'Sequence'} copied as ${type} (${gapType})!`, 2000);
       }).catch(err => {
         console.error('Copy failed:', err);
         showMessage("Failed to copy.", 5000);
@@ -2234,66 +2260,90 @@
       contextMenu.className = 'context-menu';
       contextMenu.style.left = `${e.pageX}px`;
       contextMenu.style.top = `${e.pageY}px`;
-      const copyGapped = document.createElement('div');
-      copyGapped.textContent = 'Copy sequence gapped (FASTA)';
-      copyGapped.addEventListener('click', () => {
-        copySequence(index, true);
+      const copyFastaGapped = document.createElement('div');
+      copyFastaGapped.textContent = 'Copy as FASTA gapped';
+      copyFastaGapped.addEventListener('click', () => {
+        copySequences(true, true, index);
         contextMenu.remove();
       });
-      const copyUngapped = document.createElement('div');
-      copyUngapped.textContent = 'Copy sequence ungapped (FASTA)';
-      copyUngapped.addEventListener('click', () => {
-        copySequence(index, false);
+      const copyFastaUngapped = document.createElement('div');
+      copyFastaUngapped.textContent = 'Copy as FASTA ungapped';
+      copyFastaUngapped.addEventListener('click', () => {
+        copySequences(false, true, index);
         contextMenu.remove();
       });
+      const copyPlainGapped = document.createElement('div');
+      copyPlainGapped.textContent = 'Copy as plain text gapped';
+      copyPlainGapped.addEventListener('click', () => {
+        copySequences(true, false, index);
+        contextMenu.remove();
+      });
+      const copyPlainUngapped = document.createElement('div');
+      copyPlainUngapped.textContent = 'Copy as plain text ungapped';
+      copyPlainUngapped.addEventListener('click', () => {
+        copySequences(false, false, index);
+        contextMenu.remove();
+      });
+      contextMenu.appendChild(copyFastaGapped);
+      contextMenu.appendChild(copyFastaUngapped);
+      contextMenu.appendChild(copyPlainGapped);
+      contextMenu.appendChild(copyPlainUngapped);
       const deleteItem = document.createElement('div');
-      deleteItem.textContent = 'Delete sequence';
+      deleteItem.textContent = state.selectedRows.size > 1 ? 'Delete selected' : 'Delete sequence';
       deleteItem.addEventListener('click', () => {
-        deleteSequence(index);
+        if (state.selectedRows.size > 1) {
+          deleteSelected();
+        } else {
+          deleteSequence(index);
+        }
         contextMenu.remove();
       });
-      const renameItem = document.createElement('div');
-      renameItem.textContent = 'Rename sequence';
-      renameItem.addEventListener('click', () => {
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.value = state.seqs[index].header;
-        input.style.width = `${e.target.offsetWidth}px`;
-        input.style.fontSize = getComputedStyle(e.target).fontSize;
-        input.style.fontFamily = getComputedStyle(e.target).fontFamily;
-        input.style.padding = '0';
-        input.style.border = '1px solid #ccc';
-        e.target.innerHTML = '';
-        e.target.appendChild(input);
-        input.focus();
-        input.select();
-        const save = () => {
-          const newName = input.value.trim();
-          if (newName && newName !== state.seqs[index].header) {
-            state.deletedHistory.push({
-              type: 'rename',
-              seqs: JSON.parse(JSON.stringify(state.seqs)),
-              selectedRows: new Set(),
-              selectedColumns: new Set(state.selectedColumns)
-            });
-            state.seqs[index].header = newName;
-            state.seqs[index].fullHeader = newName;
-            renderAlignment();
-            showMessage("Sequence renamed!", 2000);
-          } else {
-            renderAlignment();
-          }
-        };
-        input.addEventListener('blur', save);
-        input.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Enter') {
-            save();
-          } else if (ev.key === 'Escape') {
-            renderAlignment();
-          }
+      contextMenu.appendChild(deleteItem);
+      if (state.selectedRows.size <= 1) {
+        const renameItem = document.createElement('div');
+        renameItem.textContent = 'Rename sequence';
+        renameItem.addEventListener('click', () => {
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.value = state.seqs[index].header;
+          input.style.width = `${e.target.offsetWidth}px`;
+          input.style.fontSize = getComputedStyle(e.target).fontSize;
+          input.style.fontFamily = getComputedStyle(e.target).fontFamily;
+          input.style.padding = '0';
+          input.style.border = '1px solid #ccc';
+          e.target.innerHTML = '';
+          e.target.appendChild(input);
+          input.focus();
+          input.select();
+          const save = () => {
+            const newName = input.value.trim();
+            if (newName && newName !== state.seqs[index].header) {
+              state.deletedHistory.push({
+                type: 'rename',
+                seqs: JSON.parse(JSON.stringify(state.seqs)),
+                selectedRows: new Set(),
+                selectedColumns: new Set(state.selectedColumns)
+              });
+              state.seqs[index].header = newName;
+              state.seqs[index].fullHeader = newName;
+              renderAlignment();
+              showMessage("Sequence renamed!", 2000);
+            } else {
+              renderAlignment();
+            }
+          };
+          input.addEventListener('blur', save);
+          input.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') {
+              save();
+            } else if (ev.key === 'Escape') {
+              renderAlignment();
+            }
+          });
+          contextMenu.remove();
         });
-        contextMenu.remove();
-      });
+        contextMenu.appendChild(renameItem);
+      }
       const clearSelItem = document.createElement('div');
       clearSelItem.textContent = 'Clear selection';
       clearSelItem.addEventListener('click', () => {
@@ -2305,10 +2355,6 @@
         renderAlignment();
         contextMenu.remove();
       });
-      contextMenu.appendChild(copyGapped);
-      contextMenu.appendChild(copyUngapped);
-      contextMenu.appendChild(deleteItem);
-      contextMenu.appendChild(renameItem);
       contextMenu.appendChild(clearSelItem);
       // Add insert/remove single gap if on span
       if (e.target.tagName === 'SPAN' && e.target.parentNode.className === 'seq-data') {
@@ -2363,7 +2409,7 @@
           parseAndRender(true);
         };
         reader.onerror = () => {
-          alignmentContainer.innerHTML = '<div class="error-message">âŒ Error reading file.</div>';
+          alignmentContainer.innerHTML = '<div class="error-message">❌ Error reading file.</div>';
           showMessage("Error reading file.", 5000);
         };
         reader.readAsText(file);
@@ -2476,6 +2522,13 @@
           contextMenu = null;
         }
       });
+      alignmentContainer.addEventListener('scroll', () => {
+        document.querySelectorAll('.seq-name').forEach(name => {
+          name.style.display = 'none';
+          name.offsetHeight;
+          name.style.display = '';
+        });
+      });
       el('modeBlocks').checked = true;
       el('modeSingle').checked = false;
       document.querySelector('input[name="consensusPosition"][value="bottom"]').checked = true;
@@ -2486,54 +2539,6 @@
       });
     });
     // NEW EDITING FUNCTIONS
-    function editWholeSequence(index) {
-      const s = state.seqs[index];
-      const lineDiv = document.querySelector(`.seq-line[data-seq-index="${index}"]`);
-      const dataSpan = lineDiv.querySelector('.seq-data');
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.value = s.seq;
-      input.style.width = `${dataSpan.offsetWidth}px`;
-      input.style.fontFamily = 'Courier New, monospace';
-      input.style.fontSize = getComputedStyle(dataSpan).fontSize;
-      input.style.border = '1px solid #ccc';
-      input.style.padding = '0';
-      input.style.margin = '0';
-      input.style.boxSizing = 'border-box';
-      input.style.background = 'white';
-      input.style.color = 'black';
-      input.style.letterSpacing = '0';
-      input.style.outline = 'none';
-      dataSpan.innerHTML = '';
-      dataSpan.appendChild(input);
-      input.focus();
-      input.select();
-      const save = () => {
-        let newSeq = input.value.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD.-]/g, 'N');
-        if (newSeq !== s.seq) {
-          state.deletedHistory.push({
-            type: 'editWhole',
-            seqs: JSON.parse(JSON.stringify(state.seqs)),
-            selectedRows: new Set(state.selectedRows),
-            selectedColumns: new Set(state.selectedColumns)
-          });
-          s.seq = newSeq;
-          s.gaplessPositions = calculateGaplessPositions(newSeq);
-          renderAlignment();
-          showMessage("Sequence edited!", 2000);
-        } else {
-          renderAlignment();
-        }
-      };
-      input.addEventListener('blur', save);
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          save();
-        } else if (e.key === 'Escape') {
-          renderAlignment();
-        }
-      });
-    }
     function removeGapColumns() {
       if (state.seqs.length === 0) return;
       const len = state.seqs[0].seq.length;
@@ -2635,6 +2640,9 @@
     function handleSlideEnd() {
       document.removeEventListener('mousemove', handleSlideMove);
       document.removeEventListener('mouseup', handleSlideEnd);
+      if (state.slideSeqIndex !== null) {
+        renderAlignment(); // Re-render to update DOM and reapply sticky
+      }
       state.slideSeqIndex = null;
     }
     function getLeadingGaps(seq) {
