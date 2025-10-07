@@ -325,13 +325,7 @@ function initializeCollapsibleSections() {
     document.querySelectorAll('.control-group').forEach(group => {
         group.classList.remove('collapsed');
         group.style.maxHeight = ''; // Clear inline styles
-        group.style.display = ''; // Clear inline display
-        
-        // Special handling for Input section - always visible
-        const header = group.previousElementSibling;
-        if (header && header.dataset.section === 'input') {
-            group.style.display = 'block'; // Force Input to be visible
-        }
+        group.style.display = ''; // Clear inline display - let CSS handle it
     });
     
     // Remove click handlers - menus now work on hover via CSS
@@ -359,9 +353,7 @@ function toggleAllSections() {
 
 function recalculateCollapsibleHeights() {
     // No longer needed - hover handles display via CSS
-    document.querySelectorAll('.control-group:not(.collapsed)').forEach(group => {
-        group.style.maxHeight = group.scrollHeight + 'px';
-    });
+    // Do nothing - let CSS handle everything
 }
 
 function generateScale(maxLength, interval = 10, startPos = 0) {
@@ -398,7 +390,7 @@ function generateScale(maxLength, interval = 10, startPos = 0) {
 
 function renderAlignment() {
     if (!state.seqs || state.seqs.length === 0) {
-        alignmentContainer.innerHTML = '';
+        alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
         return;
     }
     alignmentContainer.innerHTML = '';
@@ -816,7 +808,7 @@ function parseAndRender(isFromDrop = false) {
     const inputText = fastaInput.value.trim();
     console.log("parseAndRender called. isFromDrop:", isFromDrop, "input length:", inputText.length);
     if (!inputText) {
-        alignmentContainer.innerHTML = '';
+        alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
         statusMessage.style.display = 'none';
         console.log("No input text found.");
         return;
@@ -866,23 +858,17 @@ function parseAndRender(isFromDrop = false) {
         renderAlignment();
         showMessage("File loaded successfully!", 2000);
 
-        // Auto-hide (collapse) the Input menu after a successful load
+        // Ensure menus don't have inline styles that interfere with hover
         setTimeout(() => {
             try {
-                const inputHeader = document.querySelector('.section-header[data-section="input"]');
-                if (inputHeader) {
-                    const inputGroup = inputHeader.nextElementSibling;
-                    const toggleIcon = inputHeader.querySelector('.toggle-icon');
-                    if (inputGroup && inputGroup.classList.contains('control-group')) {
-                        // Just change the icon, don't add collapsed class or styles
-                        if (toggleIcon) toggleIcon.textContent = 'в–¶';
-                        localStorage.setItem('section-input-collapsed', 'true');
-                    }
-                }
+                document.querySelectorAll('.control-group').forEach(group => {
+                    group.style.maxHeight = '';
+                    group.style.display = '';
+                });
             } catch (err) {
-                console.warn('Failed to auto-collapse Input section after load', err);
+                console.warn('Failed to clear menu inline styles after load', err);
             }
-        }, 100); // Small delay to ensure no hover interference
+        }, 100);
     } catch (e) {
         console.error("Error in parseAndRender:", e);
         alignmentContainer.innerHTML = `<div class="error-message">вќЊ ${e.message}</div>`;
@@ -1717,7 +1703,7 @@ function replaceSelectedWithConsensus() {
     
     // Save to history
     state.deletedHistory.push({
-        type: 'rename',
+        type: 'replaceWithConsensus',
         seqs: JSON.parse(JSON.stringify(state.seqs)),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
@@ -2232,23 +2218,16 @@ function initializeAppUI() {
         console.warn('Failed to initialize collapsible sections', err);
     }
 
-    // Ensure the Input section is always expanded on startup
+    // No longer needed - hover handles all menu display
     setTimeout(() => {
         try {
-            const inputHeader = document.querySelector('.section-header[data-section="input"]');
-            if (inputHeader) {
-                const inputGroup = inputHeader.nextElementSibling;
-                const toggleIcon = inputHeader.querySelector('.toggle-icon');
-                if (inputGroup && inputGroup.classList.contains('control-group')) {
-                    inputGroup.classList.remove('collapsed');
-                    inputGroup.style.maxHeight = inputGroup.scrollHeight + 'px';
-                    inputHeader.classList.remove('collapsed');
-                    if (toggleIcon) toggleIcon.textContent = 'в–ј';
-                    localStorage.setItem('section-input-collapsed', 'false');
-                }
-            }
+            // Clear any inline styles that might interfere with hover
+            document.querySelectorAll('.control-group').forEach(group => {
+                group.style.maxHeight = '';
+                group.style.display = '';
+            });
         } catch (err) {
-            console.warn('Failed to expand Input section on startup', err);
+            console.warn('Failed to clear menu styles', err);
         }
     }, 50);
     
