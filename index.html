@@ -8,258 +8,270 @@
 </head>
 <body>
     <div id="controls">
-        <h2 style="grid-column: 1/-1; text-align: center; margin: 2px 0; font-size: 16px;">Qwen MSA Viewer</h2>
-        <div class="menu-section" style="grid-column: 1/-1; display: flex; gap: 6px; align-items: start;">
-            <div id="dropZone" style="flex: 0 0 180px; padding: 6px;" title="Drop FASTA/MSF or click to browse for file">Drop FASTA/MSF
-                <!-- Hidden file input for browsing -->
-                <input type="file" id="fileInput" accept=".fasta,.fa,.msf,.txt" style="display: none;">
+        <div class="control-row" style="justify-content: space-between; align-items: center;">
+            <!-- Left: Input -->
+            <div class="menu-section side-section" id="input-section">
+                <div class="section-header" title="File input and loading controls" data-section="input">
+                    <span>Input</span>
+                    <span class="toggle-icon">в–ј</span>
+                </div>
+                <div class="control-group" id="input-controls">
+                    <div id="dropZone" style="width: 100%; padding: 20px; min-height: 100px; margin-bottom: 8px;" title="Drop FASTA/MSF or click to browse for file">рџ“Ѓ Drop FASTA/MSF file here or click to browse
+                        <input type="file" id="fileInput" accept="*" style="display: none;">
+                    </div>
+                    <div style="display: flex; gap: 6px; align-items: start;">
+                        <textarea id="fastaInput" placeholder=">seq1&#13;&#10;ATGCGGCTA..." style="flex: 1; height: 80px; font-size: 12px; padding: 4px;" title="Paste FASTA/MSF text here or drop a file above"></textarea>
+                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                            <button id="loadButton" style="height: 80px; font-size: 13px;" title="Load the pasted or dropped FASTA/MSF data (shortcut: Ctrl+L)">Load</button>
+                            <button id="clearButton" style="height: 24px; font-size: 12px;" title="Clear the sequence input">Clear</button>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <textarea id="fastaInput" placeholder=">seq1&#13;&#10;ATGCGGCTA..." style="flex: 1; height: 60px; font-size: 12px; padding: 4px;"></textarea>
-            <div style="display: flex; flex-direction: column; gap: 4px;">
-                <button id="loadButton" style="height: 60px; font-size: 13px;" title="Load the pasted or dropped FASTA/MSF data (shortcut: Ctrl+L)">Load</button>
-                <button id="clearButton" style="height: 22px; font-size: 12px;" title="Clear the sequence input">Clear</button>
+
+            <!-- Center: main menu buttons -->
+            <div class="standard-menu-group">
+                <div class="menu-section">
+                    <div class="section-header" title="Conservation shading controls" data-section="shade">
+                        <span>Shade</span>
+                        <span class="toggle-icon">в–ј</span>
+                    </div>
+                    <div class="control-group" id="shade-controls">
+                        <div class="slider-container shade-row">
+                            <div class="shade-controls">
+                                <span class="slider-label" id="blackLabel" style="cursor:pointer; text-decoration:underline;" title="Highly conserved shading">Black</span>
+                                <input type="color" id="blackColorPicker" value="#000000" style="display:none;">
+                                <button class="reset-button" id="blackReset" title="Reset Black shading to default color">Reset</button>
+                            </div>
+                            <label class="shade-mode-label">
+                                <input type="checkbox" id="enableBlack" checked title="Enable black shading for highly conserved positions">
+                            </label>
+                            <input type="range" id="blackSlider" class="shading-slider" min="50" max="100" value="90" title="Black shading threshold (50-100%)">
+                            <input type="number" id="blackInput" min="50" max="100" value="90" title="Black shading threshold (50-100%)">
+                        </div>
+                        <div class="slider-container shade-row">
+                            <div class="shade-controls">
+                                <span class="slider-label" id="darkLabel" style="cursor:pointer; text-decoration:underline;" title="Moderately conserved shading">Dark</span>
+                                <input type="color" id="darkColorPicker" value="#555555" style="display:none;">
+                                <button class="reset-button" id="darkReset" title="Reset Dark shading to default color">Reset</button>
+                            </div>
+                            <label class="shade-mode-label">
+                                <input type="checkbox" id="enableDark" checked title="Enable dark gray shading for moderately conserved positions">
+                            </label>
+                            <input type="range" id="darkSlider" class="shading-slider" min="30" max="90" value="70" title="Dark shading threshold (30-90%)">
+                            <input type="number" id="darkInput" min="30" max="90" value="70" title="Dark shading threshold (30-90%)">
+                        </div>
+                        <div class="slider-container shade-row">
+                            <div class="shade-controls">
+                                <span class="slider-label" id="lightLabel" style="cursor:pointer; text-decoration:underline;" title="Lightly conserved shading">Light</span>
+                                <input type="color" id="lightColorPicker" value="#cccccc" style="display:none;">
+                                <button class="reset-button" id="lightReset" title="Reset Light shading to default color">Reset</button>
+                            </div>
+                            <label class="shade-mode-label">
+                                <input type="checkbox" id="enableLight" checked title="Enable light gray shading for less conserved positions">
+                            </label>
+                            <input type="range" id="lightSlider" class="shading-slider" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
+                            <input type="number" id="lightInput" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
+                        </div>
+                        <div class="slider-container shade-row">
+                            <div class="shade-controls">
+                                <span class="slider-label">Shade By</span>
+                            </div>
+                            <label class="shade-mode-label">
+                                <input type="radio" name="shadeMode" value="nongap" title="Shade based on non-gap positions only"> Non-Gap
+                            </label>
+                            <label class="shade-mode-label">
+                                <input type="radio" name="shadeMode" value="all" checked title="Shade based on all positions including gaps"> All
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="menu-section">
+                    <div class="section-header" title="Display and layout options" data-section="display">
+                        <span>Display</span>
+                        <span class="toggle-icon">в–ј</span>
+                    </div>
+                    <div class="control-group" id="display-controls">
+                        <div class="slider-container display-slider-row">
+                            <span class="slider-label" title="How many characters of sequence names to show">Name Len</span>
+                            <input type="range" id="nameLengthSlider" class="normal-slider" min="3" max="50" value="6" title="Adjust sequence name display length (3-50 characters)">
+                            <input type="number" id="nameLengthInput" min="3" max="50" value="6" title="Adjust sequence name display length (3-50 characters)">
+                        </div>
+                        <div class="slider-container display-slider-row">
+                            <span class="slider-label" title="Zoom controls for alignment display">Zoom</span>
+                            <input type="range" id="zoomSlider" class="normal-slider" min="50" max="200" value="100" title="Zoom level for alignment display (50-200%)">
+                            <span class="zoom-buttons">
+                                <button id="zoomOutButton" class="zoom-button" title="Zoom out (shortcut: Ctrl+-)">-</button>
+                                <span id="zoomVal" class="zoom-value" title="Current zoom level">100%</span>
+                                <button id="zoomInButton" class="zoom-button" title="Zoom in (shortcut: Ctrl++)">+</button>
+                            </span>
+                        </div>
+                        <div class="slider-container display-slider-row" id="blockSizeContainer">
+                            <span class="slider-label" title="Characters per block in block mode">Block Size</span>
+                            <input type="range" id="blockSizeSlider" class="normal-slider" min="40" max="200" value="80" title="Block size in Block mode (40-200 characters)">
+                            <input type="number" id="blockSizeInput" min="40" max="200" value="80" title="Block size in Block mode (40-200 characters)">
+                        </div>
+                        <div class="slider-container mode-container">
+                            <span class="slider-label" title="Toggle display mode">Mode</span>
+                            <input type="radio" id="modeSingle" name="mode" value="single" title="Display full alignment in a single line">
+                            <label for="modeSingle">Full</label>
+                            <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Display alignment in blocks for better readability">
+                            <label for="modeBlocks">Block</label>
+                        </div>
+                        <div class="slider-container">
+                            <input type="checkbox" id="stickyNames" checked title="Keep sequence names sticky when scrolling horizontally">
+                            <label for="stickyNames" style="font-size: 12px;">Sticky Names</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="menu-section">
+                    <div class="section-header" title="Consensus sequence settings" data-section="consensus">
+                        <span>Consensus</span>
+                        <span class="toggle-icon">в–ј</span>
+                    </div>
+                    <div class="control-group" id="consensus-controls">
+                        <div class="slider-container">
+                            <span class="slider-label" title="Consensus frequency threshold">Threshold</span>
+                            <input type="range" id="consensusThreshold" class="normal-slider" min="50" max="100" value="70" title="Consensus threshold percentage (50-100%)">
+                            <input type="number" id="consensusThresholdInput" min="50" max="100" value="70" title="Consensus threshold percentage (50-100%)">
+                        </div>
+                        <div class="slider-container">
+                            <span class="slider-label" title="Group consensus threshold">Group Thr</span>
+                            <input type="range" id="groupConsensusThreshold" class="normal-slider" min="50" max="100" value="70" title="Group consensus threshold percentage (50-100%)">
+                            <input type="number" id="groupConsensusThresholdInput" min="50" max="100" value="70" title="Group consensus threshold percentage (50-100%)">
+                        </div>
+                        <div class="slider-container">
+                            <span class="slider-label" title="Consensus output type">Type</span>
+                            <label class="shade-mode-label">
+                                <input type="radio" name="consensusType" value="normal" checked title="Normal consensus (single base)"> Normal
+                            </label>
+                            <label class="shade-mode-label">
+                                <input type="radio" name="consensusType" value="ambiguous" title="Ambiguous consensus (IUPAC codes)"> Ambiguous
+                            </label>
+                        </div>
+                        <div class="slider-container">
+                            <input type="checkbox" id="showConsensus" checked title="Show consensus line">
+                            <label for="showConsensus" style="font-size: 12px;">Show Consensus</label>
+                        </div>
+                        <div class="slider-container">
+                            <span class="slider-label" title="Consensus line position">Position</span>
+                            <label class="shade-mode-label">
+                                <input type="radio" name="consensusPosition" value="top" title="Show consensus at top"> Top
+                            </label>
+                            <label class="shade-mode-label">
+                                <input type="radio" name="consensusPosition" value="bottom" checked title="Show consensus at bottom"> Bottom
+                            </label>
+                        </div>
+                        <div class="slider-container">
+                            <button id="copyConsensusButton" title="Copy full consensus as FASTA (shortcut: Ctrl+Shift+K)">Copy Consensus</button>
+                        </div>
+                        <div class="slider-container">
+                            <button id="copySelectedConsensusButton" title="Copy consensus of selected sequences (shortcut: Ctrl+Shift+J)">Copy Sel Consensus</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="menu-section">
+                    <div class="section-header" title="Search sequences and highlight matches" data-section="search">
+                        <span>Search</span>
+                        <span class="toggle-icon">в–ј</span>
+                    </div>
+                    <div class="control-group" id="search-controls">
+                        <div class="slider-container search-row">
+                            <div class="search-input-group">
+                                <input type="text" id="searchInput" placeholder="Enter motif..." style="width: 120px; height: 22px; padding: 2px; font-size: 12px;" title="Enter motif to search (case-insensitive, searches degapped sequences)">
+                                <input type="number" id="maxMismatches" min="0" max="10" value="0" style="width: 40px; height: 22px; padding: 2px; font-size: 12px;" title="Allowed mismatches (0 = exact match)">
+                                <input type="color" id="searchColor" value="#FFFF00" style="width: 32px; height: 26px; padding: 0;" title="Choose highlight color for search hits">
+                            </div>
+                            <div class="search-button-group">
+                                <button id="searchButton" title="Find motif in sequences (shortcut: Ctrl+F)">Find</button>
+                                <button id="clearLastSearchButton" title="Clear last search highlight (shortcut: Ctrl+Shift+F)">Clear Last</button>
+                                <button id="clearAllSearchesButton" title="Clear all search highlights (shortcut: Ctrl+Alt+F)">Clear All</button>
+                            </div>
+                        </div>
+                        <div id="activeSearches" class="active-searches" style="display: none; margin-top: 4px; padding: 4px; background: #f8f8f8; border-radius: 3px; font-size: 11px;">
+                            <strong>Active searches:</strong>
+                            <div id="searchList" style="margin-top: 2px;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Actions -->
+            <div class="menu-section side-section" id="actions-section">
+                <div class="section-header" title="Sequence and column actions" data-section="actions">
+                    <span>Actions</span>
+                    <span class="toggle-icon">в–ј</span>
+                </div>
+                <div class="control-group" id="actions-controls">
+                    <div class="action-section">
+                        <div class="action-section-label">рџ“‹ Selection</div>
+                        <div class="button-group">
+                            <button id="selectAllButton" title="Select/deselect all sequences (shortcut: Ctrl+A)">вњ“ Select All</button>
+                            <button id="copySelectedButton" title="Copy selected sequences or nucleotides (shortcut: Ctrl+Shift+C)">рџ“„ Copy Sel</button>
+                            <button id="deleteSelectedButton" title="Delete selected sequences (shortcut: Ctrl+Del)">рџ—‘пёЏ Delete Sel</button>
+                            <button id="undoButton" title="Undo last action (shortcut: Ctrl+Z)">в†¶ Undo</button>
+                        </div>
+                    </div>
+                    <div class="action-section">
+                        <div class="action-section-label">в†•пёЏ Sequence Order</div>
+                        <div class="button-group">
+                            <button id="moveUpButton" title="Move selected up (shortcut: Ctrl+Up)">в¬†пёЏ Up</button>
+                            <button id="moveDownButton" title="Move selected down (shortcut: Ctrl+Down)">в¬‡пёЏ Down</button>
+                            <button id="moveToTopButton" title="Move selected to top (shortcut: Ctrl+Home)">в¤’ To Top</button>
+                            <button id="moveToBottomButton" title="Move selected to bottom (shortcut: Ctrl+End)">в¤“ To Bottom</button>
+                        </div>
+                    </div>
+                    <div class="action-section">
+                        <div class="action-section-label">вњЏпёЏ Editing</div>
+                        <div class="button-group">
+                            <button id="reverseComplementButton" title="Reverse complement selected sequences (shortcut: Ctrl+R)">вҐ® RevComp</button>
+                            <button id="duplicateButton" title="Duplicate selected (shortcut: Ctrl+U)">вЋ Duplicate</button>
+                            <button id="insertGroupConsensusButton" title="Insert consensus below selected (shortcut: Ctrl+B)">вћ• Consensus Below</button>
+                        </div>
+                    </div>
+                    <div class="action-section">
+                        <div class="action-section-label">в«ґ Columns</div>
+                        <div class="button-group">
+                            <button id="copyColumnsButton" title="Copy selected columns as FASTA (shortcut: Ctrl+Shift+V)">рџ“„ Copy Cols</button>
+                            <button id="deleteColumnsButton" title="Delete selected columns (shortcut: Ctrl+Shift+D)">рџ—‘пёЏ Delete Cols</button>
+                            <button id="removeGapColumnsButton" title="Remove columns with only gaps">вЊ« Remove Gap Cols</button>
+                            <button id="insertGapColumnAllButton" title="Insert gap column at selected position in all sequences">вћ• Gap Col (All)</button>
+                            <button id="insertGapColumnExceptButton" title="Insert gap column at selected position in all except selected sequences">вћ• Gap Col (Except)</button>
+                        </div>
+                    </div>
+                    <div class="action-section">
+                        <div class="action-section-label">рџ”§ Tools</div>
+                        <div class="button-group">
+                            <button id="realignBlockButton" title="Realign selected block (shortcut: Ctrl+Shift+R)">вљЎ Realign Block</button>
+                            <button id="openInNewTabButton" title="Open selected in new tab (shortcut: Ctrl+T)">рџ—— New Tab</button>
+                        </div>
+                    </div>
+                    <div class="action-section">
+                        <div class="action-section-label">вљ™пёЏ Settings</div>
+                        <div class="button-group">
+                            <button id="savePresetButton" title="Save current settings (shortcut: Ctrl+S)">рџ’ѕ Save Preset</button>
+                            <button id="loadPresetButton" title="Load saved settings (shortcut: Ctrl+O)">рџ“‚ Load Preset</button>
+                            <button id="infoButton" title="Show program info and shortcuts (shortcut: Ctrl+I)">в„№пёЏ Info</button>
+                            <button id="minimizeBtn" title="Hide menu (shortcut: Ctrl+H)">в–І Hide Menu</button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
-        <div class="menu-section">
-            <div class="section-header">Shade</div>
-            <div class="control-group">
-                <div class="slider-container">
-                    <span class="slider-label">Black</span>
-                    <label class="shade-mode-label">
-                        <input type="checkbox" id="enableBlack" checked title="Enable black shading for highly conserved positions">
-                    </label>
-                    <input type="range" id="blackSlider" class="shading-slider" min="50" max="100" value="90" title="Black shading threshold (50-100%)">
-                    <input type="number" id="blackInput" min="50" max="100" value="90" title="Black shading threshold (50-100%)">
-                </div>
-                <div class="slider-container">
-                    <span class="slider-label">Dark</span>
-                    <label class="shade-mode-label">
-                        <input type="checkbox" id="enableDark" checked title="Enable dark gray shading for moderately conserved positions">
-                    </label>
-                    <input type="range" id="darkSlider" class="shading-slider" min="30" max="90" value="70" title="Dark shading threshold (30-90%)">
-                    <input type="number" id="darkInput" min="30" max="90" value="70" title="Dark shading threshold (30-90%)">
-                </div>
-                <div class="slider-container">
-                    <span class="slider-label">Light</span>
-                    <label class="shade-mode-label">
-                        <input type="checkbox" id="enableLight" checked title="Enable light gray shading for less conserved positions">
-                    </label>
-                    <input type="range" id="lightSlider" class="shading-slider" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
-                    <input type="number" id="lightInput" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
-                </div>
-                <div class="slider-container">
-                    <span class="slider-label">Shade By</span>
-                    <label class="shade-mode-label">
-                        <input type="radio" name="shadeMode" value="nongap" title="Shade based on non-gap positions only"> Non-Gap
-                    </label>
-                    <label class="shade-mode-label">
-                        <input type="radio" name="shadeMode" value="all" checked title="Shade based on all positions including gaps"> All
-                    </label>
-                </div>
-            </div>
-        </div>
-        <div class="menu-section">
-            <div class="section-header">Display</div>
-            <div class="control-group">
-                <div class="slider-container display-slider-row">
-                    <span class="slider-label">Name Len</span>
-                    <input type="range" id="nameLengthSlider" class="normal-slider" min="3" max="50" value="20" title="Adjust sequence name display length (3-50 characters)">
-                    <input type="number" id="nameLengthInput" min="3" max="50" value="20" title="Adjust sequence name display length (3-50 characters)">
-                </div>
-                <div class="slider-container display-slider-row">
-                    <span class="slider-label">Zoom</span>
-                    <input type="range" id="zoomSlider" class="normal-slider" min="50" max="200" value="100" title="Zoom level for alignment display (50-200%)">
-                    <span class="zoom-buttons">
-                        <button id="zoomOutButton" class="zoom-button" title="Zoom out (shortcut: Ctrl+-)">-</button>
-                        <span id="zoomVal" class="zoom-value">100%</span>
-                        <button id="zoomInButton" class="zoom-button" title="Zoom in (shortcut: Ctrl++)">+</button>
-                    </span>
-                </div>
-                <div class="slider-container display-slider-row" id="blockSizeContainer">
-                    <span class="slider-label">Block Size</span>
-                    <input type="range" id="blockSizeSlider" class="normal-slider" min="40" max="200" value="80" title="Block size in Block mode (40-200 characters)">
-                    <input type="number" id="blockSizeInput" min="40" max="200" value="80" title="Block size in Block mode (40-200 characters)">
-                </div>
-                <div class="slider-container mode-container">
-                    <span class="slider-label">Mode</span>
-                    <input type="radio" id="modeSingle" name="mode" value="single" title="Display full alignment in a single line">
-                    <label for="modeSingle">Full</label>
-                    <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Display alignment in blocks for better readability">
-                    <label for="modeBlocks">Block</label>
-                </div>
-                <div class="slider-container">
-                    <input type="checkbox" id="stickyNames" checked title="Keep sequence names sticky when scrolling horizontally">
-                    <label for="stickyNames" style="font-size: 12px;">Sticky Names</label>
-                </div>
-            </div>
-        </div>
-        <div class="menu-section">
-            <div class="section-header">Consensus</div>
-            <div class="control-group">
-                <div class="slider-container">
-                    <span class="slider-label">Threshold</span>
-                    <input type="range" id="consensusThreshold" class="normal-slider" min="50" max="100" value="70" title="Consensus threshold percentage (50-100%)">
-                    <input type="number" id="consensusThresholdInput" min="50" max="100" value="70" title="Consensus threshold percentage (50-100%)">
-                </div>
-                <div class="slider-container">
-                    <span class="slider-label">Group Thr</span>
-                    <input type="range" id="groupConsensusThreshold" class="normal-slider" min="50" max="100" value="70" title="Group consensus threshold percentage (50-100%)">
-                    <input type="number" id="groupConsensusThresholdInput" min="50" max="100" value="70" title="Group consensus threshold percentage (50-100%)">
-                </div>
-                <div class="slider-container">
-                    <span class="slider-label">Type</span>
-                    <label class="shade-mode-label">
-                        <input type="radio" name="consensusType" value="normal" checked title="Normal consensus (single base)"> Normal
-                    </label>
-                    <label class="shade-mode-label">
-                        <input type="radio" name="consensusType" value="ambiguous" title="Ambiguous consensus (IUPAC codes)"> Ambiguous
-                    </label>
-                </div>
-                <div class="slider-container">
-                    <input type="checkbox" id="showConsensus" checked title="Show consensus line">
-                    <label for="showConsensus" style="font-size: 12px;">Show Consensus</label>
-                </div>
-                <div class="slider-container">
-                    <span class="slider-label">Position</span>
-                    <label class="shade-mode-label">
-                        <input type="radio" name="consensusPosition" value="top" title="Show consensus at top"> Top
-                    </label>
-                    <label class="shade-mode-label">
-                        <input type="radio" name="consensusPosition" value="bottom" checked title="Show consensus at bottom"> Bottom
-                    </label>
-                </div>
-                <div class="slider-container">
-                    <button id="copyConsensusButton" title="Copy full consensus as FASTA (shortcut: Ctrl+Shift+K)">Copy Consensus</button>
-                </div>
-                <div class="slider-container">
-                    <button id="copySelectedConsensusButton" title="Copy consensus of selected sequences (shortcut: Ctrl+Shift+J)">Copy Sel Consensus</button>
-                </div>
-            </div>
-        </div>
-        <div class="menu-section">
-            <div class="section-header">Search</div>
-            <div class="control-group">
-                <div class="slider-container">
-                    <input type="text" id="searchInput" placeholder="Enter motif..." style="width: 130px; height: 22px; padding: 2px; font-size: 12px;" title="Enter motif to search (case-insensitive, searches degapped sequences)">
-                    <input type="color" id="searchColor" value="#FFFF00" style="width: 30px; height: 22px; padding: 0;" title="Choose highlight color for search hits">
-                    <button id="searchButton" title="Find motif in sequences (shortcut: Ctrl+F)">Find</button>
-                    <button id="clearLastSearchButton" title="Clear last search highlight (shortcut: Ctrl+Shift+F)">Clear Last</button>
-                    <button id="clearAllSearchesButton" title="Clear all search highlights (shortcut: Ctrl+Alt+F)">Clear All</button>
-                </div>
-            </div>
-        </div>
-        <div class="menu-section" style="grid-column: 1/-1;">
-            <div class="section-header">Actions</div>
-            <div class="button-group">
-                <button id="reverseComplementButton" title="Reverse complement selected sequences (shortcut: Ctrl+R)">RevComp</button>
-                <div class="button-spacer"></div>
-                <button id="copySelectedButton" title="Copy selected sequences or nucleotides (shortcut: Ctrl+Shift+C)">Copy Sel</button>
-                <button id="deleteSelectedButton" title="Delete selected sequences (shortcut: Ctrl+Del)">Delete Sel</button>
-                <button id="undoButton" title="Undo last action (shortcut: Ctrl+Z)">Undo</button>
-                <div class="button-spacer"></div>
-                <button id="moveUpButton" title="Move selected up (shortcut: Ctrl+Up)">Up</button>
-                <button id="moveDownButton" title="Move selected down (shortcut: Ctrl+Down)">Down</button>
-                <button id="moveToTopButton" title="Move selected to top (shortcut: Ctrl+Home)">To Top</button>
-                <button id="moveToBottomButton" title="Move selected to bottom (shortcut: Ctrl+End)">To Bottom</button>
-                <div class="button-spacer"></div>
-                <button id="insertGroupConsensusButton" title="Insert consensus below selected (shortcut: Ctrl+B)">Consensus Below</button>
-                <div class="button-spacer"></div>
-                <button id="duplicateButton" title="Duplicate selected (shortcut: Ctrl+U)">Duplicate</button>
-                <button id="openInNewTabButton" title="Open selected in new tab (shortcut: Ctrl+T)">New Tab</button>
-                <div class="button-spacer"></div>
-                <button id="selectAllButton" title="Select/deselect all sequences (shortcut: Ctrl+A)">Select All</button>
-                <div class="button-spacer"></div>
-                <button id="copyColumnsButton" title="Copy selected columns as FASTA (shortcut: Ctrl+Shift+V)">Copy Cols</button>
-                <button id="deleteColumnsButton" title="Delete selected columns (shortcut: Ctrl+Shift+D)">Delete Cols</button>
-                <div class="button-spacer"></div>
-                <button id="realignBlockButton" title="Realign selected block (shortcut: Ctrl+Shift+R)">Realign Block</button>
-                <div class="button-spacer"></div>
-                <button id="savePresetButton" title="Save current settings (shortcut: Ctrl+S)">Save Preset</button>
-                <button id="loadPresetButton" title="Load saved settings (shortcut: Ctrl+O)">Load Preset</button>
-                <div class="button-spacer"></div>
-                <button id="infoButton" title="Show program info and shortcuts (shortcut: Ctrl+I)">Program Info</button>
-                <button id="minimizeBtn" title="Hide menu (shortcut: Ctrl+H)">Hide menu</button>
-                <div class="button-spacer"></div>
-                <button id="removeGapColumnsButton" title="Remove columns with only gaps">Remove Gap Columns</button>
-                <button id="insertGapColumnAllButton" title="Insert gap column at selected position in all sequences">Insert Gap Col (All)</button>
-                <button id="insertGapColumnExceptButton" title="Insert gap column at selected position in all except selected sequences">Insert Gap Col (Except Sel)</button>
-            </div>
-        </div>
-        <div style="grid-column: 1/-1; text-align: right; font-size: 12px; color: #555;">
+        
+        <div style="text-align: right; font-size: 12px; color: #555;">
             <span style="white-space: nowrap;">Click name: copy name</span> | <span style="white-space: nowrap;">Ctrl+click name: select/deselect seq (drag for range)</span> | <span style="white-space: nowrap;">Shift+click name: range from last</span> | <span style="white-space: nowrap;">Ctrl+Alt+click nuc: select column</span> | <span style="white-space: nowrap;">Ctrl+click on nuc: start/extend range</span> | <span style="white-space: nowrap;">Right-click drag seq: slide</span> | <span style="white-space: nowrap;">Right-click name: menu</span>
         </div>
-        <div id="filenameInfo" style="grid-column: 1/-1; padding: 2px 8px; font-size: 12px; color: #555; background: #f0f0f0; text-align: center;"></div>
     </div>
-    <div id="minimizeBar" style="display: none;">Restore Menu</div>
-    <div id="tooltip" class="tooltip"></div>
-    <div id="infoModal" class="modal">
-        <div class="modal-content">
-            <span class="close" onclick="closeInfoModal()">&times;</span>
-            <h2>Qwen MSA Viewer</h2>
-            <p>A fast, interactive, and portable Multiple Sequence Alignment viewer.</p>
-            <h3>Features</h3>
-            <ul>
-                <li><strong>Load FASTA/MSF:</strong> Drag & drop a file or paste text (auto-detects .msf).</li>
-                <li><strong>GeneDoc Coloring:</strong> Visualize conserved regions with adjustable thresholds (Black, Dark, Light).</li>
-                <li><strong>Consensus Sequence:</strong> Generate and copy consensus with normal or ambiguous base codes.</li>
-                <li><strong>Sequence Selection:</strong> Ctrl+Click to select multiple names, Shift+Click for range. Simple click copies name. Perform actions like Reverse Complement, Copy, or Delete.</li>
-                <li><strong>Column Selection:</strong> Use Ctrl+Alt+Click to select entire columns. Copy or delete selected columns.</li>
-                <li><strong>Nucleotide Selection:</strong> With Ctrl, click to start/extend range. Use “Copy Sel” to copy.</li>
-                <li><strong>Search:</strong> Find motifs with custom highlight colors. Clear individual or all searches.</li>
-                <li><strong>Undo:</strong> Recover deleted sequences or columns.</li>
-                <li><strong>Preset Management:</strong> Save and load your display settings.</li>
-                <li><strong>Sticky Names:</strong> Option to keep sequence names visible when scrolling horizontally (works in both Full and Block modes).</li>
-                <li><strong>Remove Gap Columns:</strong> Remove columns with only gaps.</li>
-                <li><strong>Insert Gap Column:</strong> Insert a gap column in all or all except selected sequences.</li>
-                <li><strong>Insert/Remove Single Gap:</strong> Right-click on a position to insert or remove a single gap.</li>
-                <li><strong>Slide Sequence:</strong> Right-click and drag the sequence data to shift left/right.</li>
-            </ul>
-            <h3>Quick Tips</h3>
-            <ul>
-                <li>Hover over a nucleotide to see the sequence name and its <strong>gapless position</strong> (e.g., the 1st, 2nd, 3rd nucleotide in the gene).</li>
-                <li>Use the "Block" mode for long alignments to improve readability.</li>
-                <li>The "Hide menu" button maximizes the viewing area. Click "Restore Menu" to bring it back.</li>
-                <li>Enable "Sticky Names" to keep sequence names in view while scrolling sequences.</li>
-            </ul>
-            <h3>Controls</h3>
-            <p><strong>Shade:</strong> Adjust conservation thresholds and enable/disable shading levels.</p>
-            <p><strong>Display:</strong> Change sequence name length, zoom level, block size, and sticky names option.</p>
-            <p><strong>Consensus:</strong> Set the frequency threshold for consensus base calling.</p>
-            <p><strong>Search:</strong> Enter a motif and choose a highlight color.</p>
-            <p><strong>Actions:</strong> All sequence and column manipulation tools are here.</p>
-            <h3>Keyboard Shortcuts</h3>
-            <ul>
-                <li>Ctrl+R: Reverse Complement</li>
-                <li>Ctrl+Shift+C: Copy Selected</li>
-                <li>Ctrl+Del: Delete Selected</li>
-                <li>Ctrl+Z: Undo</li>
-                <li>Ctrl+Up: Move Up</li>
-                <li>Ctrl+Down: Move Down</li>
-                <li>Ctrl+Home: Move to Top</li>
-                <li>Ctrl+End: Move to Bottom</li>
-                <li>Ctrl+B: Consensus Below</li>
-                <li>Ctrl+U: Duplicate</li>
-                <li>Ctrl+T: New Tab</li>
-                <li>Ctrl+A: Select All</li>
-                <li>Ctrl+Shift+V: Copy Columns</li>
-                <li>Ctrl+Shift+D: Delete Columns</li>
-                <li>Ctrl+Shift+R: Realign Block</li>
-                <li>Ctrl+S: Save Preset</li>
-                <li>Ctrl+O: Load Preset</li>
-                <li>Ctrl+I: Program Info</li>
-                <li>Ctrl+H: Hide Menu</li>
-                <li>Ctrl+F: Find Motif</li>
-                <li>Ctrl+Shift+F: Clear Last Search</li>
-                <li>Ctrl+Alt+F: Clear All Searches</li>
-                <li>Ctrl+Shift+K: Copy Consensus</li>
-                <li>Ctrl+Shift+J: Copy Selected Consensus</li>
-                <li>Ctrl+-: Zoom Out</li>
-                <li>Ctrl++: Zoom In</li>
-            </ul>
-        </div>
+    
+    <!-- Status line moved below menu -->
+    <div class="status-row">
+        <div id="sourceInfo" style="text-align: center; margin: 2px 0; font-size: 14px; color: #666;">No file loaded</div>
     </div>
-    <div id="alignmentContainer">Paste MSF or FASTA into the box and click Load, or drop a file.</div>
+    
+    <div id="alignmentContainer"></div>
     <div id="statusMessage"></div>
+    <div id="tooltip" class="tooltip"></div>
     <script src="script.js"></script>
     <script>
 // All functionality moved to script.js
