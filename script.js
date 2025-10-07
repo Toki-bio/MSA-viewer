@@ -22,6 +22,28 @@ const state = {
   slideDragStartPos: null,
   slideSeqIndex: null
 };
+// Ensure drag handlers are globally available before any usage
+window.handleDragStart = function(e) {
+    try {
+        if (e && e.dataTransfer) {
+            e.dataTransfer.setData('text/plain', e.target ? e.target.textContent : '');
+            e.dataTransfer.effectAllowed = 'move';
+        }
+    } catch (err) {
+        console.warn('dragstart error', err);
+    }
+};
+window.handleDragEnd = function(e) {
+    // optional cleanup
+};
+
+// Minimal drop handler to avoid undefined reference; can be expanded later
+window.handleDrop = function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    // If files are dropped on a specific sequence line, we could implement
+    // sequence-specific behavior here. For now, do nothing to avoid errors.
+};
 // DOM ELEMENTS
 const el = id => document.getElementById(id);
 const dropZone = el('dropZone');
@@ -31,6 +53,18 @@ const tooltip = el('tooltip');
 const statusMessage = el('statusMessage');
 const minimizeBar = el('minimizeBar');
 const infoModal = el('infoModal');
+// Quick sanity check: ensure essential elements exist to avoid silent failures
+if (!fastaInput || !alignmentContainer || !statusMessage) {
+    console.error('Essential DOM elements missing:', {
+        fastaInput: !!fastaInput,
+        alignmentContainer: !!alignmentContainer,
+        statusMessage: !!statusMessage
+    });
+    if (statusMessage) {
+        statusMessage.textContent = 'Error: missing essential UI elements. Check console for details.';
+        statusMessage.style.display = 'block';
+    }
+}
 // UTILITY FUNCTIONS
 function showMessage(msg, duration = 2000) {
     statusMessage.textContent = msg;
@@ -286,24 +320,90 @@ function validateThresholds() {
     ['blackSlider', 'darkSlider', 'lightSlider'].forEach(id => updateSliderBackground(el(id)));
 }
 // RENDERING FUNCTIONS
+function initializeCollapsibleSections() {
+    // Remove all collapsed classes to let CSS hover handle menu display
+    document.querySelectorAll('.control-group').forEach(group => {
+        group.classList.remove('collapsed');
+        group.style.maxHeight = ''; // Clear inline styles
+        group.style.display = ''; // Clear inline display
+        
+        // Special handling for Input section - always visible
+        const header = group.previousElementSibling;
+        if (header && header.dataset.section === 'input') {
+            group.style.display = 'block'; // Force Input to be visible
+        }
+    });
+    
+    // Remove click handlers - menus now work on hover via CSS
+    document.querySelectorAll('.section-header[data-section]').forEach(header => {
+        header.classList.remove('collapsed');
+        const toggleIcon = header.querySelector('.toggle-icon');
+        if (toggleIcon) {
+            toggleIcon.remove(); // Remove toggle icons since we're using hover
+        }
+    });
+}
+
+function toggleSection(e) {
+    // No longer needed - hover handles display
+}
+
+function restoreCollapsedState() {
+    // No longer needed - hover handles display via CSS
+}
+
+function toggleAllSections() {
+    // No longer needed - hover handles display via CSS
+    showMessage("Menus now work on hover", 2000);
+}
+
+function recalculateCollapsibleHeights() {
+    // No longer needed - hover handles display via CSS
+    document.querySelectorAll('.control-group:not(.collapsed)').forEach(group => {
+        group.style.maxHeight = group.scrollHeight + 'px';
+    });
+}
+
+function generateScale(maxLength, interval = 10, startPos = 0) {
+    const scaleArray = new Array(maxLength).fill(' ');
+    
+    // Find the first multiple of interval in this block's range
+    const startAbs = startPos + 1;
+    const endAbs = startPos + maxLength;
+    const firstMultiple = Math.ceil(startAbs / interval) * interval;
+    
+    // Show position markers at multiples of interval within this block
+    for (let absPos = firstMultiple; absPos < endAbs; absPos += interval) {
+        let label;
+        // Alternate: 10 number, 20 *, 30 number, 40 *, etc.
+        if ((absPos / interval) % 2 === 1) {
+            label = absPos.toString();
+        } else {
+            label = '*';
+        }
+        
+        const relIdx = absPos - startPos - 1; // 0-based index for the target position
+        const startIdx = relIdx - (label.length - 1); // Right-align: last digit at relIdx
+        
+        // Only place the label if it fits completely within the block
+        if (startIdx >= 0 && startIdx + label.length <= maxLength) {
+            for (let i = 0; i < label.length; i++) {
+                scaleArray[startIdx + i] = label[i];
+            }
+        }
+    }
+    
+    return scaleArray.join('');
+}
+
 function renderAlignment() {
     if (!state.seqs || state.seqs.length === 0) {
-        alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
+        alignmentContainer.innerHTML = '';
         return;
     }
     alignmentContainer.innerHTML = '';
+    
     const nameLengthSlider = el('nameLengthSlider');
-    const nameLengthInput = el('nameLengthInput');
-    const maxNameLen = Math.max(...state.seqs.map(s => s.header.length), 5);
-    nameLengthSlider.max = maxNameLen;
-    nameLengthInput.max = maxNameLen;
-    nameLengthSlider.value = Math.min(parseInt(nameLengthSlider.value), maxNameLen);
-    nameLengthInput.value = nameLengthSlider.value;
-    const nameLen = parseInt(nameLengthSlider.value);
-    document.documentElement.style.setProperty('--nameLen', nameLen);
-    const useBlocks = el('modeBlocks').checked;
-    const blockWidth = parseInt(el('blockSizeSlider').value);
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
     const blackThresh = parseInt(el('blackSlider').value) / 100;
     const darkThresh = parseInt(el('darkSlider').value) / 100;
     const lightThresh = parseInt(el('lightSlider').value) / 100;
@@ -311,6 +411,11 @@ function renderAlignment() {
     const enableDark = el('enableDark').checked;
     const enableLight = el('enableLight').checked;
     const stickyNames = el('stickyNames').checked;
+    const useBlocks = el('modeBlocks').checked;
+    const blockWidth = parseInt(el('blockSizeSlider').value);
+    const nameLen = parseInt(nameLengthSlider.value);
+    // Update CSS variable for scale ruler padding
+    document.documentElement.style.setProperty('--nameLen', nameLen);
     const standard = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.']);
     const ambiguous = new Set(['R','Y','M','K','S','W','H','B','V','D']);
     const ambiguousMap = {
@@ -324,6 +429,10 @@ function renderAlignment() {
     const showConsensus = el('showConsensus').checked;
     const consType = document.querySelector('input[name="consensusType"]:checked').value;
     const threshold = parseInt(el('consensusThreshold').value) / 100;
+    
+    // Calculate sequence length for consensus and scale
+    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    
     let consensus = [];
     if (showConsensus) {
         for (let pos = 0; pos < len; pos++) {
@@ -374,37 +483,67 @@ function renderAlignment() {
     }
     state.consensusSeq = consensus.join('').replace(/-/g, '');
     const consensusPosition = document.querySelector('input[name="consensusPosition"]:checked')?.value || 'bottom';
+    
     if (useBlocks) {
         for (let start = 0; start < len; start += blockWidth) {
             const end = Math.min(start + blockWidth, len);
+            const blockLen = end - start;
             const blockDiv = document.createElement('div');
             blockDiv.className = 'block-block';
-            const sep = document.createElement('div');
-            sep.className = 'block-sep';
-            sep.textContent = `--- ${start + 1}-${end} ---`;
-            blockDiv.appendChild(sep);
+            
+            // Add scale/ruler above each block (replaces separator)
+            const scaleDiv = document.createElement('div');
+            scaleDiv.className = 'seq-line scale-ruler-line';
+            const scaleNameDiv = document.createElement('div');
+            scaleNameDiv.className = 'seq-name';
+            scaleNameDiv.textContent = '';
+            const scaleDataDiv = document.createElement('div');
+            scaleDataDiv.className = 'seq-data';
+            const scaleText = generateScale(blockLen, 10, start);
+            console.log(`Block scale length: ${scaleText.length}, expected: ${blockLen}, start: ${start}`);
+            scaleDataDiv.textContent = scaleText;
+            scaleDiv.appendChild(scaleNameDiv);
+            scaleDiv.appendChild(scaleDataDiv);
+            blockDiv.appendChild(scaleDiv);
+            const isLastBlock = (start + blockWidth >= len);
+            
             if (showConsensus && consensusPosition === 'top') {
-                addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames);
+                addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'top');
             }
             for (let i = 0; i < state.seqs.length; i++) {
-                const lineDiv = createSequenceLine(i, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight);
+                const lineDiv = createSequenceLine(i, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock);
                 blockDiv.appendChild(lineDiv);
             }
             if (showConsensus && consensusPosition === 'bottom') {
-                addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames);
+                addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'bottom');
             }
             alignmentContainer.appendChild(blockDiv);
         }
     } else {
+        // Add scale/ruler at the top for full mode
+        const scaleDiv = document.createElement('div');
+        scaleDiv.className = 'seq-line scale-ruler-line';
+        const scaleNameDiv = document.createElement('div');
+        scaleNameDiv.className = 'seq-name';
+        scaleNameDiv.textContent = '';
+        const scaleDataDiv = document.createElement('div');
+        scaleDataDiv.className = 'seq-data';
+        const scaleText = generateScale(len);
+        console.log(`Full scale length: ${scaleText.length}, expected: ${len}`);
+        scaleDataDiv.textContent = scaleText;
+        scaleDiv.appendChild(scaleNameDiv);
+        scaleDiv.appendChild(scaleDataDiv);
+        alignmentContainer.appendChild(scaleDiv);
+        
         if (showConsensus && consensusPosition === 'top') {
-            addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames);
+            addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'top');
         }
         for (let i = 0; i < state.seqs.length; i++) {
-            const lineDiv = createSequenceLine(i, 0, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight);
+            const lineDiv = createSequenceLine(i, 0, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true);
             alignmentContainer.appendChild(lineDiv);
         }
         if (showConsensus && consensusPosition === 'bottom') {
-            addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames);
+            addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'bottom');
         }
     }
     setTimeout(() => toggleStickyNames(), 0);
@@ -413,41 +552,32 @@ function renderAlignment() {
     });
     updateRowSelections();
     updateColumnSelections();
+    recalculateCollapsibleHeights();
     // Re-attach drag listeners for sliding
     document.querySelectorAll('.seq-data').forEach(dataSpan => {
         dataSpan.addEventListener('mousedown', handleSlideStart);
     });
 }
-function createSequenceLine(index, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight) {
+function createSequenceLine(index, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false) {
     const lineDiv = document.createElement('div');
     lineDiv.className = 'seq-line';
     lineDiv.dataset.seqIndex = index;
     const nameSpan = document.createElement('div');
     nameSpan.className = `seq-name ${stickyNames ? '' : 'static'}`;
-    nameSpan.title = state.seqs[index].fullHeader;
-    let displayName = state.seqs[index].header.substring(0, nameLen);
-    let isTruncated = state.seqs[index].header.length > nameLen;
-    nameSpan.textContent = displayName;
-    if (isTruncated) {
-        nameSpan.textContent += '…';
-        // Remove faded color, keep normal color
-        nameSpan.style.color = '';
-        nameSpan.title = state.seqs[index].header; // show full name on hover
+    nameSpan.title = `${state.seqs[index].fullHeader} (length: ${state.seqs[index].seq.length})`;
+    let displayName = state.seqs[index].header;
+    let nameLenInt = parseInt(nameLen, 10);
+    if (displayName.length > nameLenInt) {
+        nameSpan.textContent = displayName.slice(0, nameLenInt) + 'вЂ¦';
+        nameSpan.title = `${displayName} (length: ${state.seqs[index].seq.length})`;
+    } else {
+        nameSpan.textContent = displayName;
+        nameSpan.title = `${displayName} (length: ${state.seqs[index].seq.length})`;
     }
     nameSpan.draggable = true;
     nameSpan.addEventListener('dragstart', handleDragStart);
     nameSpan.addEventListener('dragend', handleDragEnd);
-    // 👇 CLICK NAME → COPY NAME (no selection toggle)
-    nameSpan.addEventListener('click', (e) => {
-        if (e.ctrlKey || e.metaKey || e.shiftKey) return; // let mousedown handle selection
-        navigator.clipboard.writeText(state.seqs[index].header).then(() => {
-            showMessage(`Copied: ${state.seqs[index].header}`, 1500);
-        }).catch(err => {
-            console.error('Copy failed:', err);
-            showMessage("Failed to copy name.", 2000);
-        });
-        e.preventDefault();
-    });
+    // Single click no longer copies the name. Use double-click to edit.
     nameSpan.addEventListener('dblclick', () => {
         const input = document.createElement('input');
         input.type = 'text';
@@ -495,10 +625,10 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     lineDiv.appendChild(nameSpan);
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
-    // 👇 NO ACTION on plain click — only Ctrl+Click for selection
+    // рџ‘‡ NO ACTION on plain click вЂ” only Ctrl+Click for selection
     dataSpan.addEventListener('click', (e) => {
         if (e.ctrlKey || e.metaKey) return; // handled by mousedown
-        // 👉 Do nothing on single click — no copy, no selection
+        // рџ‘‰ Do nothing on single click вЂ” no copy, no selection
     });
     for (let pos = start; pos < end; pos++) {
         const base = state.seqs[index].seq[pos] || '-';
@@ -539,8 +669,10 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
             span.addEventListener('mouseover', (e) => {
                 tooltip.style.display = 'block';
                 tooltip.textContent = `Copy`;
-                tooltip.style.left = (e.pageX + 10) + 'px';
-                tooltip.style.top = (e.pageY - 20) + 'px';
+                const rect = span.getBoundingClientRect();
+                tooltip.style.left = (rect.left + rect.width / 2) + 'px';
+                tooltip.style.top = (rect.top - 30) + 'px';
+                tooltip.style.transform = 'translateX(-50%)';
             });
             span.addEventListener('mouseout', () => {
                 tooltip.style.display = 'none';
@@ -554,8 +686,10 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
             span.addEventListener('mouseover', (e) => {
                 tooltip.style.display = 'block';
                 tooltip.textContent = `Selection start - Ctrl+click another nucleotide to complete range`;
-                tooltip.style.left = (e.pageX + 10) + 'px';
-                tooltip.style.top = (e.pageY - 20) + 'px';
+                const rect = span.getBoundingClientRect();
+                tooltip.style.left = (rect.left + rect.width / 2) + 'px';
+                tooltip.style.top = (rect.top - 30) + 'px';
+                tooltip.style.transform = 'translateX(-50%)';
             });
             span.addEventListener('mouseout', () => {
                 tooltip.style.display = 'none';
@@ -566,8 +700,10 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
             span.addEventListener('mouseover', (e) => {
                 tooltip.style.display = 'block';
                 tooltip.textContent = `${state.seqs[index].header}: ${currentGaplessPos}`;
-                tooltip.style.left = (e.pageX + 10) + 'px';
-                tooltip.style.top = (e.pageY - 20) + 'px';
+                const rect = span.getBoundingClientRect();
+                tooltip.style.left = (rect.left + rect.width / 2) + 'px';
+                tooltip.style.top = (rect.top - 30) + 'px';
+                tooltip.style.transform = 'translateX(-50%)';
             });
             span.addEventListener('mouseout', () => {
                 tooltip.style.display = 'none';
@@ -580,15 +716,24 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         }
         dataSpan.appendChild(span);
     }
+    // Add sequence length at the end (only for last block and using gapless length)
+    if (showLength) {
+        const lengthSpan = document.createElement('span');
+        lengthSpan.className = 'seq-length';
+        const gaplessLength = state.seqs[index].gaplessPositions[state.seqs[index].gaplessPositions.length - 1] || 0;
+        lengthSpan.textContent = gaplessLength;
+        lengthSpan.title = `Sequence length: ${gaplessLength} (gapless)`;
+        dataSpan.appendChild(lengthSpan);
+    }
     lineDiv.appendChild(dataSpan);
     if (state.selectedRows.has(index)) {
         lineDiv.classList.add('selected');
     }
     return lineDiv;
 }
-function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames) {
+function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false, position = 'bottom') {
     const consLine = document.createElement('div');
-    consLine.className = 'seq-line consensus-line';
+    consLine.className = `seq-line consensus-line consensus-${position}`;
     const consName = document.createElement('div');
     consName.className = `seq-name ${stickyNames ? '' : 'static'}`;
     consName.textContent = 'Consensus';
@@ -600,10 +745,46 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames) {
         let baseClass = '';
         if (!['A','C','G','T','U','N','-','.'].includes(base)) baseClass = 'artifact';
         else if (['R','Y','M','K','S','W','H','B','V','D'].includes(base)) baseClass = 'ambiguous';
+        
+        // Calculate conservation for case sensitivity
+        const col = state.seqs.map(s => s.seq[pos] || '-');
+        const nonGapCol = col.filter(b => b !== '-' && b !== '.');
+        let displayBase = base;
+        if (nonGapCol.length > 0) {
+            const counts = {};
+            nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+            const maxCount = Math.max(...Object.values(counts), 0);
+            const consensusBases = new Set(Object.keys(counts).filter(b => counts[b] === maxCount));
+            const denominator = document.querySelector('input[name="shadeMode"]:checked').value === 'all' ? state.seqs.length : nonGapCol.length;
+            const conservation = maxCount / denominator;
+            
+            // Apply case based on shading: uppercase for black (highly conserved), lowercase for light (less conserved)
+            if (base !== '-' && base !== '.' && consensusBases.has(base.toUpperCase())) {
+                if (enableBlack && conservation >= blackThresh) {
+                    displayBase = base.toUpperCase(); // Black shading = uppercase
+                } else if (enableLight && conservation >= lightThresh) {
+                    displayBase = base.toLowerCase(); // Light shading = lowercase
+                } else {
+                    displayBase = base.toUpperCase(); // Default to uppercase
+                }
+            }
+        }
+        
         const span = document.createElement('span');
         span.className = baseClass;
-        span.textContent = base;
+        span.textContent = displayBase;
         dataSpan.appendChild(span);
+    }
+    // Add consensus length at the end (only for last block and using gapless length)
+    if (showLength) {
+        const lengthSpan = document.createElement('span');
+        lengthSpan.className = 'seq-length';
+        // For consensus, count non-gap characters
+        const consensusStr = String(consensus || '');
+        const gaplessLength = (consensusStr.match(/[^-.\s]/g) || []).length;
+        lengthSpan.textContent = gaplessLength;
+        lengthSpan.title = `Consensus length: ${gaplessLength} (gapless)`;
+        dataSpan.appendChild(lengthSpan);
     }
     consLine.appendChild(dataSpan);
     parent.appendChild(consLine);
@@ -635,14 +816,14 @@ function parseAndRender(isFromDrop = false) {
     const inputText = fastaInput.value.trim();
     console.log("parseAndRender called. isFromDrop:", isFromDrop, "input length:", inputText.length);
     if (!inputText) {
-        alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
+        alignmentContainer.innerHTML = '';
         statusMessage.style.display = 'none';
         console.log("No input text found.");
         return;
     }
     try {
         let parsed;
-        // 👇 PRIORITIZE CONTENT-BASED DETECTION. Ignore filename for pasted data.
+        // рџ‘‡ PRIORITIZE CONTENT-BASED DETECTION. Ignore filename for pasted data.
         const isMsfContent = (inputText.includes('MSF:') && inputText.includes('Check:')) ||
                              inputText.includes('!!AA_MULTIPLE_ALIGNMENT') ||
                              inputText.includes('!!NA_MULTIPLE_ALIGNMENT');
@@ -658,7 +839,7 @@ function parseAndRender(isFromDrop = false) {
             parsed = parseFasta(inputText);
         }
         if (!parsed) throw new Error("No valid sequences found");
-        // 👇 MOVE THIS LINE UP: Set filename BEFORE any parsing that might fail.
+        // рџ‘‡ MOVE THIS LINE UP: Set filename BEFORE any parsing that might fail.
         if (!isFromDrop) {
             state.currentFilename = 'Clipboard';
         }
@@ -672,15 +853,43 @@ function parseAndRender(isFromDrop = false) {
         // Update name length slider range based on loaded sequences
         updateNameLengthSliderRange();
         
-        el('filenameInfo').textContent = `Source: ${state.currentFilename}`;
+        // Update source info with comprehensive statistics
+        const seqCount = state.seqs.length;
+        const aliLength = state.seqs[0]?.seq.length || 0;
+        const gaplessLengths = state.seqs.map(seq => seq.gaplessPositions[seq.gaplessPositions.length - 1] || 0);
+        const minLength = Math.min(...gaplessLengths);
+        const maxLength = Math.max(...gaplessLengths);
+        const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
+        
+        const filename = state.currentFilename ? `<strong>${state.currentFilename}</strong>: ` : '';
+        el('sourceInfo').innerHTML = `${filename}${seqCount} sequences, ${aliLength} columns, ${lengthRange} bp/seq`;
         renderAlignment();
         showMessage("File loaded successfully!", 2000);
+
+        // Auto-hide (collapse) the Input menu after a successful load
+        setTimeout(() => {
+            try {
+                const inputHeader = document.querySelector('.section-header[data-section="input"]');
+                if (inputHeader) {
+                    const inputGroup = inputHeader.nextElementSibling;
+                    const toggleIcon = inputHeader.querySelector('.toggle-icon');
+                    if (inputGroup && inputGroup.classList.contains('control-group')) {
+                        // Just change the icon, don't add collapsed class or styles
+                        if (toggleIcon) toggleIcon.textContent = 'в–¶';
+                        localStorage.setItem('section-input-collapsed', 'true');
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to auto-collapse Input section after load', err);
+            }
+        }, 100); // Small delay to ensure no hover interference
     } catch (e) {
         console.error("Error in parseAndRender:", e);
-        alignmentContainer.innerHTML = `<div class="error-message">❌ ${e.message}</div>`;
+        alignmentContainer.innerHTML = `<div class="error-message">вќЊ ${e.message}</div>`;
         showMessage(`Error: ${e.message}`, 5000);
-        // 👇 Reset filename on error to avoid poisoning future loads
+        // рџ‘‡ Reset filename on error to avoid poisoning future loads
         state.currentFilename = '';
+        el('sourceInfo').innerHTML = 'No file loaded';
     }
 }
 function onModeChange() {
@@ -694,52 +903,104 @@ function onShadeModeChange() {
     validateThresholds();
     debounceRender();
 }
-// DRAG AND DROP HANDLERS
-function handleDragStart(e) {
-    const row = e.target.closest('.seq-line');
-    if (row.classList.contains('consensus-line')) return;
-    const index = parseInt(row.dataset.seqIndex);
-    if (state.selectedRows.has(index)) {
-        state.draggingGroup = Array.from(state.selectedRows).sort((a, b) => a - b);
-    } else {
-        e.preventDefault();
-        return;
+// Color picker logic for Black, Dark, Light
+['black', 'dark', 'light'].forEach(function(shade) {
+    const label = document.getElementById(shade + 'Label');
+    const picker = document.getElementById(shade + 'ColorPicker');
+    const slider = document.getElementById(shade + 'Slider');
+    if (label && picker) {
+        // Show picker on hover instead of click
+        label.addEventListener('mouseenter', function() {
+            picker.style.display = 'inline-block';
+        });
+        label.addEventListener('mouseleave', function() {
+            // Hide picker when mouse leaves both label and picker
+            setTimeout(() => {
+                if (!label.matches(':hover') && !picker.matches(':hover')) {
+                    picker.style.display = 'none';
+                }
+            }, 100);
+        });
+        picker.addEventListener('mouseleave', function() {
+            // Hide picker when mouse leaves picker
+            setTimeout(() => {
+                if (!label.matches(':hover') && !picker.matches(':hover')) {
+                    picker.style.display = 'none';
+                }
+            }, 100);
+        });
+        picker.addEventListener('input', function() {
+            // Update CSS variable for slider fill
+            slider.style.setProperty('--slider-fill', picker.value);
+            // Also update the corresponding CSS variable for alignment shading if needed
+            document.documentElement.style.setProperty('--' + shade + 'Shading', picker.value);
+            // Compute readable text color (black or white) based on chosen color brightness
+            try {
+                const hex = (picker.value || '#000').replace('#', '');
+                const r = parseInt(hex.substring(0,2), 16) || 0;
+                const g = parseInt(hex.substring(2,4), 16) || 0;
+                const b = parseInt(hex.substring(4,6), 16) || 0;
+                const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+                const textColor = brightness > 128 ? '#000' : '#fff';
+                document.documentElement.style.setProperty('--' + shade + 'Text', textColor);
+            } catch (err) {
+                // ignore
+            }
+            // Update slider background
+            updateSliderBackground(slider);
+            // Optionally re-render alignment if color affects display
+            if (typeof renderAlignment === 'function') {
+                renderAlignment();
+            }
+        });
     }
-    e.dataTransfer.setData('text/plain', '');
-    e.dataTransfer.effectAllowed = 'move';
-}
-function handleDragEnd(e) {
-    state.draggingGroup = null;
-}
-function handleDrop(e) {
-    e.preventDefault();
-    if (!state.draggingGroup) return;
-    const targetRow = e.target.closest('.seq-line');
-    if (!targetRow || targetRow.classList.contains('consensus-line')) return;
-    const targetIndex = parseInt(targetRow.dataset.seqIndex);
-    const rect = targetRow.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const insertAfter = y > rect.height / 2;
-    const groupIndices = state.draggingGroup;
-    if (groupIndices.includes(targetIndex)) return;
-    state.deletedHistory.push({ type: 'order', seqs: JSON.parse(JSON.stringify(state.seqs)), selectedRows: new Set(state.selectedRows), selectedColumns: new Set(state.selectedColumns) });
-    const newSeqs = [...state.seqs];
-    const group = groupIndices.map(i => newSeqs[i]);
-    for (let j = groupIndices.length - 1; j >= 0; j--) {
-        newSeqs.splice(groupIndices[j], 1);
+});
+
+// Reset button functionality for color pickers
+['black', 'dark', 'light'].forEach(function(shade) {
+    const resetButton = document.getElementById(shade + 'Reset');
+    const picker = document.getElementById(shade + 'ColorPicker');
+    const slider = document.getElementById(shade + 'Slider');
+    
+    if (resetButton && picker) {
+        resetButton.addEventListener('click', function() {
+            // Reset to default colors
+            const defaultColors = {
+                'black': '#000000',
+                'dark': '#555555', 
+                'light': '#cccccc'
+            };
+            
+            const defaultColor = defaultColors[shade];
+            picker.value = defaultColor;
+            
+            // Update CSS variable for slider fill
+            slider.style.setProperty('--slider-fill', defaultColor);
+            // Update the corresponding CSS variable for alignment shading
+            document.documentElement.style.setProperty('--' + shade + 'Shading', defaultColor);
+            
+            // Compute readable text color
+            try {
+                const hex = (defaultColor || '#000').replace('#', '');
+                const r = parseInt(hex.substring(0,2), 16) || 0;
+                const g = parseInt(hex.substring(2,4), 16) || 0;
+                const b = parseInt(hex.substring(4,6), 16) || 0;
+                const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+                const textColor = brightness > 128 ? '#000' : '#fff';
+                document.documentElement.style.setProperty('--' + shade + 'Text', textColor);
+            } catch (err) {
+                // ignore
+            }
+            
+            // Update slider background and re-render
+            updateSliderBackground(slider);
+            if (typeof renderAlignment === 'function') {
+                renderAlignment();
+            }
+        });
     }
-    let insertPos = targetIndex - groupIndices.filter(i => i < targetIndex).length;
-    if (insertAfter) insertPos += 1;
-    newSeqs.splice(insertPos, 0, ...group);
-    state.seqs = newSeqs;
-    state.selectedRows.clear();
-    for (let k = 0; k < group.length; k++) {
-        state.selectedRows.add(insertPos + k);
-    }
-    state.draggingGroup = null;
-    renderAlignment();
-    showMessage("Sequences reordered!", 2000);
-}
+});
+
 // EVENT HANDLERS
 function handleMouseDown(e) {
     if (e.button !== 0) return;
@@ -770,7 +1031,7 @@ function handleMouseDown(e) {
             updateRowSelections();
             e.preventDefault();
         }
-        // 👉 No else clause — click without Ctrl/Shift copies name (handled in nameSpan.click)
+        // рџ‘‰ No else clause вЂ” click without Ctrl/Shift copies name (handled in nameSpan.click)
     } else if (span && (e.ctrlKey || e.metaKey) && !e.altKey) {
         const pos = parseInt(span.dataset.pos);
         if (isNaN(pos)) return;
@@ -840,7 +1101,7 @@ function handleMouseDown(e) {
         updateColumnSelections();
         e.preventDefault();
     }
-    // 👉 No handler for plain click on span — do nothing
+    // рџ‘‰ No handler for plain click on span вЂ” do nothing
 }
 function handleMouseMove(e) {
     if (!state.isDragging) return;
@@ -905,6 +1166,8 @@ function handleMouseUp() {
     state.dragMode = null;
 }
 function handleKeyDown(e) {
+    // If focus is in the sequence entry box, do not interfere with standard shortcuts
+    if (document.activeElement === fastaInput) return;
     if (e.ctrlKey || e.metaKey) {
         state.ctrlPressed = true;
     }
@@ -1005,6 +1268,17 @@ function handleKeyDown(e) {
                 adjustZoom(-10);
                 e.preventDefault();
                 break;
+            case '0':
+                // Reset zoom to 100%
+                el('zoomSlider').value = 100;
+                setZoom(100);
+                e.preventDefault();
+                break;
+            case 'm':
+                // Toggle all menu sections
+                toggleAllSections();
+                e.preventDefault();
+                break;
         }
     }
     if (e.ctrlKey || e.metaKey) {
@@ -1021,6 +1295,27 @@ function handleKeyDown(e) {
             moveSelectedToBottom();
             e.preventDefault();
         }
+    }
+    
+    // Navigation shortcuts (non-Ctrl)
+    if (e.key === 'F3') {
+        if (e.shiftKey) {
+            // Previous search result (placeholder for future implementation)
+            showMessage("Previous search result (not implemented)", 2000);
+        } else {
+            // Next search result (placeholder for future implementation) 
+            showMessage("Next search result (not implemented)", 2000);
+        }
+        e.preventDefault();
+    }
+    
+    // Page navigation for large alignments
+    if (e.key === 'PageUp' || e.key === 'PageDown') {
+        const container = alignmentContainer;
+        const direction = e.key === 'PageUp' ? -1 : 1;
+        const scrollAmount = container.clientHeight * 0.8;
+        container.scrollTop += direction * scrollAmount;
+        e.preventDefault();
     }
 }
 function handleKeyUp(e) {
@@ -1131,7 +1426,7 @@ function copySelected() {
         });
         return;
     }
-    // 👇 Removed "No sequence selected" message — silent if nothing to copy
+    // рџ‘‡ Removed "No sequence selected" message вЂ” silent if nothing to copy
     if (state.selectedRows.size === 0) {
         return;
     }
@@ -1361,7 +1656,46 @@ function insertGroupConsensus() {
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
     const len = Math.max(...selectedSeqs.map(s => s.length));
+    const threshold = parseInt(el('groupConsensusThreshold').value);  // % value from slider (e.g., 70)
+    const groupSize = selectedSeqs.length;
+    const plurality = Math.ceil(groupSize * threshold / 100);  // NEW: Absolute min support, like your $plur
+    let cons = '';
+    for (let pos = 0; pos < len; pos++) {
+        const fullCol = selectedSeqs.map(s => s[pos] || '-');
+        const nonGapCol = fullCol.filter(b => b !== '-' && b !== '.');
+        if (nonGapCol.length === 0) {
+            cons += '-';
+            continue;
+        }
+        const counts = {};
+        nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+        const maxCount = Math.max(...Object.values(counts));
+        const maxBases = Object.keys(counts).filter(b => counts[b] === maxCount).sort();  // Stable tie-break
+        if (maxCount >= plurality) {  // CHANGED: Absolute check vs. plurality
+            cons += maxBases[0];  // Pick first after sort
+        } else {
+            cons += '-';
+        }
+    }
+    const consObj = { header: 'Group_Consensus', fullHeader: 'Consensus of selected group', seq: cons, gaplessPositions: calculateGaplessPositions(cons) };
+    const insertPos = indices[indices.length - 1] + 1;
+    state.seqs.splice(insertPos, 0, consObj);
+    renderAlignment();
+    showMessage("Group consensus inserted!", 2000);
+}
+
+function replaceSelectedWithConsensus() {
+    if (state.selectedRows.size < 2) {
+        showMessage("Select at least 2 sequences to create consensus.", 3000);
+        return;
+    }
+    
+    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    const selectedSeqs = indices.map(i => state.seqs[i].seq);
+    const len = Math.max(...selectedSeqs.map(s => s.length));
     const threshold = parseInt(el('groupConsensusThreshold').value) / 100;
+    
+    // Generate consensus sequence
     let cons = '';
     for (let pos = 0; pos < len; pos++) {
         const col = selectedSeqs.map(s => s[pos] || '-').filter(b => b !== '-' && b !== '.');
@@ -1375,11 +1709,39 @@ function insertGroupConsensus() {
         const freq = counts[maxBase] / col.length;
         cons += (freq >= threshold) ? maxBase : '-';
     }
-    const consObj = { header: 'Group_Consensus', fullHeader: 'Consensus of selected group', seq: cons, gaplessPositions: calculateGaplessPositions(cons) };
-    const insertPos = indices[indices.length - 1] + 1;
-    state.seqs.splice(insertPos, 0, consObj);
+    
+    // Create consensus name based on selected sequence indices
+    const firstIdx = indices[0] + 1; // 1-based for display
+    const lastIdx = indices[indices.length - 1] + 1;
+    const consName = `cons_seq${firstIdx}-${lastIdx}`;
+    
+    // Save to history
+    state.deletedHistory.push({
+        type: 'rename',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    });
+    
+    // Remove selected sequences (from end to start to preserve indices)
+    for (let i = indices.length - 1; i >= 0; i--) {
+        state.seqs.splice(indices[i], 1);
+    }
+    
+    // Insert consensus at the position of the first selected sequence
+    const consObj = { 
+        header: consName, 
+        fullHeader: `Consensus of sequences ${firstIdx}-${lastIdx}`, 
+        seq: cons, 
+        gaplessPositions: calculateGaplessPositions(cons) 
+    };
+    state.seqs.splice(indices[0], 0, consObj);
+    
+    // Clear selection
+    state.selectedRows.clear();
+    
     renderAlignment();
-    showMessage("Group consensus inserted!", 2000);
+    showMessage(`Replaced ${indices.length} sequences with consensus: ${consName}`, 3000);
 }
 function duplicateSelected() {
     if (state.selectedRows.size === 0) return;
@@ -1460,64 +1822,167 @@ function loadPreset() {
 }
 function minimizeMenu() {
     const controls = el('controls');
-    const filenameInfo = el('filenameInfo');
-    minimizeBar.parentNode.insertBefore(filenameInfo, minimizeBar.nextSibling);
-    filenameInfo.style.position = 'sticky';
-    filenameInfo.style.top = '0px';
-    filenameInfo.style.zIndex = '98';
     controls.style.display = 'none';
+    // Reset any overlay positioning
+    controls.style.position = '';
+    controls.style.top = '';
+    controls.style.left = '';
+    controls.style.right = '';
+    controls.style.zIndex = '';
+    controls.style.boxShadow = '';
     minimizeBar.style.display = 'block';
+    // Move alignment up to fill the space
+    alignmentContainer.style.top = '0';
 }
 function expandMenu() {
     minimizeBar.style.display = 'none';
     const controls = el('controls');
-    const filenameInfo = el('filenameInfo');
-    controls.appendChild(filenameInfo);
-    filenameInfo.style.position = '';
-    filenameInfo.style.top = '';
-    filenameInfo.style.zIndex = '';
     controls.style.display = 'grid';
+    // Reset any overlay positioning
+    controls.style.position = '';
+    controls.style.top = '';
+    controls.style.left = '';
+    controls.style.right = '';
+    controls.style.zIndex = '';
+    controls.style.boxShadow = '';
+    // Move alignment back down
+    const menuHeight = controls.offsetHeight;
+    alignmentContainer.style.top = menuHeight + 'px';
 }
+function findFuzzyPositions(degapped, motif, maxMismatches) {
+    const positions = [];
+    for (let i = 0; i <= degapped.length - motif.length; i++) {
+        let mismatches = 0;
+        for (let j = 0; j < motif.length; j++) {
+            if (degapped[i + j] !== motif[j]) {
+                mismatches++;
+                if (mismatches > maxMismatches) break;
+            }
+        }
+        if (mismatches <= maxMismatches) {
+            positions.push(i);
+        }
+    }
+    return positions;
+}
+
+function updateActiveSearchesPanel() {
+    const panel = el('activeSearches');
+    const list = el('searchList');
+    
+    if (state.searchHistory.length === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+    
+    panel.style.display = 'block';
+    list.innerHTML = '';
+    
+    state.searchHistory.forEach((search, index) => {
+        const item = document.createElement('div');
+        item.className = 'search-item';
+        
+        const swatch = document.createElement('div');
+        swatch.className = 'search-swatch';
+        swatch.style.backgroundColor = search.color;
+        
+        const text = document.createElement('span');
+        text.textContent = `${search.motif} (${search.matchCount || 0})`;
+        
+        const remove = document.createElement('button');
+        remove.className = 'search-remove';
+        remove.innerHTML = 'Г—';
+        remove.title = 'Remove this search';
+        remove.addEventListener('click', () => {
+            // Remove this specific search
+            document.querySelectorAll(`.${search.className}`).forEach(span => span.classList.remove(search.className));
+            document.querySelector(`style[data-motif="${search.motif}"]`)?.remove();
+            state.searchHistory.splice(index, 1);
+            updateActiveSearchesPanel();
+        });
+        
+        item.appendChild(swatch);
+        item.appendChild(text);
+        item.appendChild(remove);
+        list.appendChild(item);
+    });
+}
+
 function searchMotif() {
-    const motif = el('searchInput').value.trim().toUpperCase();
+    const raw = el('searchInput').value || '';
+    const motif = raw.trim().replace(/\s+/g, '').toUpperCase();
     if (!motif) return;
     const color = el('searchColor').value;
+    const maxMismatches = parseInt(el('maxMismatches').value) || 0;
     const className = 'search-hit-' + Math.random().toString(36).substring(2, 12) + btoa(motif).replace(/=/g, '').substring(0, 5);
+
+    // Remove any existing identical motif highlights first
     state.searchHistory = state.searchHistory.filter(item => {
         if (item.motif === motif) {
-            document.querySelectorAll(`.${item.className}`).forEach(span => {
-                span.classList.remove(item.className);
-            });
+            document.querySelectorAll(`.${item.className}`).forEach(span => span.classList.remove(item.className));
             document.querySelector(`style[data-motif="${item.motif}"]`)?.remove();
             return false;
         }
         return true;
     });
+
     const style = document.createElement('style');
     style.textContent = `.${className} { background-color: ${color} !important; color: black !important; font-weight: bold; }`;
     style.setAttribute('data-motif', motif);
     document.head.appendChild(style);
-    state.searchHistory.push({ motif, color, className });
+
+    // For each sequence row, map degapped indices back to span elements robustly
+    let totalMatches = 0;
+    let sequencesWithMatches = 0;
     document.querySelectorAll('.seq-line:not(.consensus-line)').forEach(row => {
         const index = parseInt(row.dataset.seqIndex);
-        if (index >= state.seqs.length || index < 0) return;
-        const seq = state.seqs[index].seq;
-        const degapped = seq.replace(/[-.]/g, '');
+        if (isNaN(index) || index < 0 || index >= state.seqs.length) return;
         const dataSpan = row.querySelector('.seq-data');
+        if (!dataSpan) return;
         const spans = Array.from(dataSpan.children);
-        const nonGapSpans = spans.filter(s => s.textContent !== '-' && s.textContent !== '.');
-        for (let seqPos = 0; seqPos <= degapped.length - motif.length; seqPos++) {
-            const sub = degapped.substring(seqPos, seqPos + motif.length);
-            if (sub === motif) {
-                for (let i = 0; i < motif.length; i++) {
-                    const child = nonGapSpans[seqPos + i];
-                    if (child) child.classList.add(className);
-                }
+
+        // Build mapping and the displayed degapped string from the visible spans only
+        const nonGapSpanIndices = [];
+        const displayedChars = [];
+        for (let si = 0; si < spans.length; si++) {
+            const ch = (spans[si].textContent || '').toUpperCase();
+            if (ch !== '-' && ch !== '.') {
+                nonGapSpanIndices.push(si);
+                displayedChars.push(ch);
             }
         }
+        const displayedDegapped = displayedChars.join('');
+        if (displayedDegapped.length < motif.length) return;
+
+        // Find fuzzy matches in the displayed (visible) degapped sequence
+        const fuzzyPositions = findFuzzyPositions(displayedDegapped, motif, maxMismatches);
+        let matchesThisSeq = fuzzyPositions.length;
+        totalMatches += matchesThisSeq;
+        
+        for (let seqPos of fuzzyPositions) {
+            for (let k = 0; k < motif.length; k++) {
+                const spanIdx = nonGapSpanIndices[seqPos + k];
+                if (spanIdx !== undefined) spans[spanIdx].classList.add(className);
+            }
+        }
+        
+        if (matchesThisSeq > 0) sequencesWithMatches++;
     });
-    el('searchInput').value = '';
-    showMessage(`Found "${motif}"!`, 2000);
+
+    // Add to search history with match count
+    const searchEntry = { motif, color, className, matchCount: totalMatches, maxMismatches };
+    state.searchHistory.push(searchEntry);
+    
+    // Update active searches panel
+    updateActiveSearchesPanel();
+    
+    // Leave the search term in the input so users can refine it; show counts
+    if (totalMatches === 0) {
+        showMessage(`No matches for "${motif}"${maxMismatches > 0 ? ` (в‰¤${maxMismatches} mismatches)` : ''}`, 3000);
+    } else {
+        const mismatchText = maxMismatches > 0 ? ` (в‰¤${maxMismatches} mismatches)` : '';
+        showMessage(`Found ${totalMatches} match${totalMatches>1? 'es':''} in ${sequencesWithMatches} sequence${sequencesWithMatches>1? 's':''}${mismatchText}`, 4000);
+    }
 }
 function clearLastSearch() {
     if (state.searchHistory.length === 0) {
@@ -1527,6 +1992,7 @@ function clearLastSearch() {
     const last = state.searchHistory.pop();
     document.querySelectorAll(`.${last.className}`).forEach(span => span.classList.remove(last.className));
     document.querySelector(`style[data-motif="${last.motif}"]`)?.remove();
+    updateActiveSearchesPanel();
     showMessage("Last search cleared!", 2000);
 }
 function clearAllSearches() {
@@ -1537,6 +2003,7 @@ function clearAllSearches() {
         document.querySelector(`style[data-motif="${item.motif}"]`)?.remove();
     });
     state.searchHistory = [];
+    updateActiveSearchesPanel();
     showMessage("All searches cleared!", 2000);
 }
 function openInfoModal() {
@@ -1632,6 +2099,24 @@ function showContextMenu(e, index) {
     contextMenu.appendChild(copyFastaUngapped);
     contextMenu.appendChild(copyPlainGapped);
     contextMenu.appendChild(copyPlainUngapped);
+    
+    // Add "Replace with Consensus" option if multiple sequences selected
+    if (state.selectedRows.size >= 2) {
+        const replaceConsensusItem = document.createElement('div');
+        replaceConsensusItem.textContent = `Replace ${state.selectedRows.size} selected with consensus`;
+        replaceConsensusItem.addEventListener('click', () => {
+            replaceSelectedWithConsensus();
+            contextMenu.remove();
+        });
+        contextMenu.appendChild(replaceConsensusItem);
+        
+        // Add separator
+        const separator = document.createElement('div');
+        separator.style.borderTop = '1px solid #ccc';
+        separator.style.margin = '4px 0';
+        contextMenu.appendChild(separator);
+    }
+    
     const deleteItem = document.createElement('div');
     deleteItem.textContent = state.selectedRows.size > 1 ? 'Delete selected' : 'Delete sequence';
     deleteItem.addEventListener('click', () => {
@@ -1733,43 +2218,81 @@ function updateColumnSelections() {
     });
 }
 // EVENT LISTENERS
-document.addEventListener('DOMContentLoaded', () => {
-    dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropZone.style.borderColor = 'var(--dropzone-hover-border)';
-    });
-    dropZone.addEventListener('dragleave', () => {
-        dropZone.style.borderColor = 'var(--dropzone-border)';
-    });
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.style.borderColor = 'var(--dropzone-border)';
-        const file = e.dataTransfer.files[0];
-        if (!file) return;
-        state.currentFilename = file.name;
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            fastaInput.value = e.target.result;
-           
-            parseAndRender(true);
-        };
-        reader.onerror = () => {
-            alignmentContainer.innerHTML = '<div class="error-message">❌ Error reading file.</div>';
-            showMessage("Error reading file.", 5000);
-        };
-        reader.readAsText(file);
-    });
+function initializeAppUI() {
+    // This function is called once the DOM is fully loaded.
     
-    // Add click handler for dropzone to open file dialog
-    dropZone.addEventListener('click', (e) => {
-        if (window.getSelection().toString()) return; // Don't open if user is selecting text
-        const fileInput = el('fileInput');
-        fileInput.value = '';
-        fileInput.click();
-    });
+    // Initialize source info
+    el('sourceInfo').innerHTML = 'No file loaded';
     
-    // Add file input change handler
-    el('fileInput').addEventListener('change', (e) => {
+    // Initialize collapsible sections
+    try {
+        initializeCollapsibleSections();
+        restoreCollapsedState();
+    } catch (err) {
+        console.warn('Failed to initialize collapsible sections', err);
+    }
+
+    // Ensure the Input section is always expanded on startup
+    setTimeout(() => {
+        try {
+            const inputHeader = document.querySelector('.section-header[data-section="input"]');
+            if (inputHeader) {
+                const inputGroup = inputHeader.nextElementSibling;
+                const toggleIcon = inputHeader.querySelector('.toggle-icon');
+                if (inputGroup && inputGroup.classList.contains('control-group')) {
+                    inputGroup.classList.remove('collapsed');
+                    inputGroup.style.maxHeight = inputGroup.scrollHeight + 'px';
+                    inputHeader.classList.remove('collapsed');
+                    if (toggleIcon) toggleIcon.textContent = 'в–ј';
+                    localStorage.setItem('section-input-collapsed', 'false');
+                }
+            }
+        } catch (err) {
+            console.warn('Failed to expand Input section on startup', err);
+        }
+    }, 50);
+    
+    const dropZone = el('dropZone');
+    const fastaInput = el('fastaInput');
+    const alignmentContainer = el('alignmentContainer');
+    const infoModal = el('infoModal');
+    const minimizeBar = el('minimizeBar');
+    let contextMenu = null;
+
+    if (dropZone) {
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = 'var(--dropzone-hover-border)';
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = 'var(--dropzone-border)';
+        });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = 'var(--dropzone-border)';
+            const file = e.dataTransfer.files[0];
+            if (!file) return;
+            state.currentFilename = file.name;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                fastaInput.value = e.target.result;
+                parseAndRender(true);
+            };
+            reader.onerror = () => {
+                alignmentContainer.innerHTML = '<div class="error-message">вќЊ Error reading file.</div>';
+                showMessage("Error reading file.", 5000);
+            };
+            reader.readAsText(file);
+        });
+        dropZone.addEventListener('click', (e) => {
+            if (window.getSelection().toString()) return;
+            const fileInput = el('fileInput');
+            fileInput.value = '';
+            fileInput.click();
+        });
+    }
+    
+    el('fileInput')?.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (!file) return;
         state.currentFilename = file.name;
@@ -1779,57 +2302,104 @@ document.addEventListener('DOMContentLoaded', () => {
             parseAndRender(true);
         };
         reader.onerror = () => {
-            alignmentContainer.innerHTML = '<div class="error-message">❌ Error reading file.</div>';
+            alignmentContainer.innerHTML = '<div class="error-message">вќЊ Error reading file.</div>';
             showMessage("Error reading file.", 5000);
         };
         reader.readAsText(file);
     });
     
-    // Add auto-load on paste into textarea
-    fastaInput.addEventListener('paste', () => {
+    fastaInput?.addEventListener('paste', () => {
         setTimeout(() => {
             parseAndRender(false);
         }, 100);
     });
     
-    // Add clear button functionality
-    el('clearButton').addEventListener('click', () => {
-        fastaInput.value = '';
+    // Attach listeners to all buttons
+    const buttonActions = {
+        'clearButton': () => fastaInput.value = '',
+        'loadButton': () => parseAndRender(false),
+        'reverseComplementButton': reverseComplementSelected,
+        'copySelectedButton': copySelected,
+        'deleteSelectedButton': deleteSelected,
+        'undoButton': undoDelete,
+        'moveUpButton': moveSelectedUp,
+        'moveDownButton': moveSelectedDown,
+        'moveToTopButton': moveSelectedToTop,
+        'moveToBottomButton': moveSelectedToBottom,
+        'insertGroupConsensusButton': insertGroupConsensus,
+        'duplicateButton': duplicateSelected,
+        'openInNewTabButton': openSelectedInNewTab,
+        'selectAllButton': selectAllSequences,
+        'copyColumnsButton': copySelectedColumns,
+        'deleteColumnsButton': deleteSelectedColumns,
+        'realignBlockButton': realignSelectedBlock,
+        'savePresetButton': savePreset,
+        'loadPresetButton': loadPreset,
+        'infoButton': openInfoModal,
+        'minimizeBtn': minimizeMenu,
+        'zoomInButton': () => adjustZoom(10),
+        'zoomOutButton': () => adjustZoom(-10),
+        'searchButton': searchMotif,
+        'clearLastSearchButton': clearLastSearch,
+        'clearAllSearchesButton': clearAllSearches,
+        'copyConsensusButton': copyConsensus,
+        'copySelectedConsensusButton': copySelectedConsensus,
+        'removeGapColumnsButton': removeGapColumns,
+        'insertGapColumnAllButton': () => insertGapColumn(true),
+        'insertGapColumnExceptButton': () => insertGapColumn(false)
+    };
+
+    for (const id in buttonActions) {
+        el(id)?.addEventListener('click', buttonActions[id]);
+    }
+
+    const searchInputEl = el('searchInput');
+    if (searchInputEl) {
+        searchInputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                searchMotif();
+            }
+        });
+    }
+    
+    minimizeBar?.addEventListener('click', expandMenu);
+    
+    // UI listener wiring
+    attachUIListeners();
+
+    // Set initial state for controls
+    el('modeBlocks').checked = true;
+    el('modeSingle').checked = false;
+    document.querySelector('input[name="consensusPosition"][value="bottom"]').checked = true;
+    
+    // Trigger initial render/setup based on defaults
+    onModeChange();
+    toggleStickyNames();
+    
+    // Initialize menu height and positioning
+    const controls = el('controls');
+    let menuHeight = 0;
+    setTimeout(() => {
+        if (controls) {
+            menuHeight = controls.offsetHeight;
+            if (alignmentContainer) alignmentContainer.style.top = menuHeight + 'px';
+        }
+    }, 100);
+    
+    // Initialize slider backgrounds
+    ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold'].forEach(id => {
+        const slider = el(id);
+        if (slider) {
+            updateSliderBackground(slider);
+        }
     });
-    
-    el('loadButton').addEventListener('click', () => parseAndRender(false));
-    el('reverseComplementButton').addEventListener('click', reverseComplementSelected);
-    el('copySelectedButton').addEventListener('click', copySelected);
-    el('deleteSelectedButton').addEventListener('click', deleteSelected);
-    el('undoButton').addEventListener('click', undoDelete);
-    el('moveUpButton').addEventListener('click', moveSelectedUp);
-    el('moveDownButton').addEventListener('click', moveSelectedDown);
-    el('moveToTopButton').addEventListener('click', moveSelectedToTop);
-    el('moveToBottomButton').addEventListener('click', moveSelectedToBottom);
-    el('insertGroupConsensusButton').addEventListener('click', insertGroupConsensus);
-    el('duplicateButton').addEventListener('click', duplicateSelected);
-    el('openInNewTabButton').addEventListener('click', openSelectedInNewTab);
-    el('selectAllButton').addEventListener('click', selectAllSequences);
-    el('copyColumnsButton').addEventListener('click', copySelectedColumns);
-    el('deleteColumnsButton').addEventListener('click', deleteSelectedColumns);
-    el('realignBlockButton').addEventListener('click', realignSelectedBlock);
-    el('savePresetButton').addEventListener('click', savePreset);
-    el('loadPresetButton').addEventListener('click', loadPreset);
-    el('infoButton').addEventListener('click', openInfoModal);
-    el('minimizeBtn').addEventListener('click', minimizeMenu);
-    el('zoomInButton').addEventListener('click', () => adjustZoom(10));
-    el('zoomOutButton').addEventListener('click', () => adjustZoom(-10));
-    el('searchButton').addEventListener('click', searchMotif);
-    el('clearLastSearchButton').addEventListener('click', clearLastSearch);
-    el('clearAllSearchesButton').addEventListener('click', clearAllSearches);
-    el('copyConsensusButton').addEventListener('click', copyConsensus);
-    el('copySelectedConsensusButton').addEventListener('click', copySelectedConsensus);
-    el('removeGapColumnsButton').addEventListener('click', removeGapColumns);
-    el('insertGapColumnAllButton').addEventListener('click', () => insertGapColumn(true));
-    el('insertGapColumnExceptButton').addEventListener('click', () => insertGapColumn(false));
-    
-    minimizeBar.addEventListener('click', expandMenu);
-    
+}
+
+document.addEventListener('DOMContentLoaded', initializeAppUI);
+
+// UI listener wiring is wrapped in a function so we can attach listeners after DOMContentLoaded
+function attachUIListeners() {
     // Set up slider/input pairs manually to avoid function reference issues
     const sliderPairs = [
         ['blackSlider', 'blackInput'],
@@ -1840,41 +2410,32 @@ document.addEventListener('DOMContentLoaded', () => {
         ['consensusThreshold', 'consensusThresholdInput'],
         ['groupConsensusThreshold', 'groupConsensusThresholdInput']
     ];
-    
+
     sliderPairs.forEach(([sliderId, inputId]) => {
         const slider = el(sliderId);
         const input = el(inputId);
         if (slider && input) {
+            const renderCb = debounceRender;
             slider.addEventListener('input', () => {
                 input.value = slider.value;
                 updateSliderBackground(slider);
                 if (sliderId.includes('black') || sliderId.includes('dark') || sliderId.includes('light')) {
                     validateThresholds();
                 }
-                // Defer render call
-                setTimeout(() => {
-                    if (typeof renderAlignment === 'function') {
-                        renderAlignment();
-                    }
-                }, 10);
+                renderCb();
             });
-            
+
             input.addEventListener('input', () => {
                 slider.value = input.value;
                 updateSliderBackground(slider);
                 if (inputId.includes('black') || inputId.includes('dark') || inputId.includes('light')) {
                     validateThresholds();
                 }
-                // Defer render call
-                setTimeout(() => {
-                    if (typeof renderAlignment === 'function') {
-                        renderAlignment();
-                    }
-                }, 10);
+                renderCb();
             });
         }
     });
-    
+
     // Set up zoom slider separately (no input pair)
     const zoomSlider = el('zoomSlider');
     if (zoomSlider) {
@@ -1885,7 +2446,7 @@ document.addEventListener('DOMContentLoaded', () => {
             updateSliderBackground(zoomSlider);
         });
     }
-    
+
     // Set up radio button groups
     const radioGroups = ['shadeMode', 'mode', 'consensusType', 'consensusPosition'];
     radioGroups.forEach(group => {
@@ -1895,65 +2456,124 @@ document.addEventListener('DOMContentLoaded', () => {
             radio.addEventListener('change', handler);
         });
     });
-    
+
     // Set up checkbox listeners
     const checkboxes = ['enableBlack', 'enableDark', 'enableLight', 'showConsensus'];
     checkboxes.forEach(id => {
-        el(id).addEventListener('change', debounceRender);
+        const elRef = el(id);
+        if (elRef) elRef.addEventListener('change', debounceRender);
     });
-    
-    el('stickyNames').addEventListener('change', toggleStickyNames);
-    alignmentContainer.addEventListener('mousedown', handleMouseDown);
-    alignmentContainer.addEventListener('mousemove', handleMouseMove);
+
+    const sticky = el('stickyNames');
+    if (sticky) sticky.addEventListener('change', toggleStickyNames);
+
+    // Alignment container events
+    const alignmentContainer = el('alignmentContainer');
+    const controls = el('controls');
+    if (alignmentContainer) {
+        alignmentContainer.addEventListener('mousedown', handleMouseDown);
+        alignmentContainer.addEventListener('mousemove', handleMouseMove);
+        alignmentContainer.addEventListener('click', () => {
+            // If menu is shown as overlay, hide it when clicking on alignment
+            if (controls && controls.style.position === 'fixed' && controls.style.transform !== 'translateY(-100%)') {
+                controls.style.transform = 'translateY(-100%)';
+                controls.style.position = '';
+                controls.style.top = '';
+                controls.style.left = '';
+                controls.style.right = '';
+                controls.style.zIndex = '';
+                controls.style.boxShadow = '';
+            }
+        });
+    }
+
     document.addEventListener('mouseup', handleMouseUp);
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
+    
+    const infoModal = el('infoModal');
     document.addEventListener('click', (event) => {
         if (event.target === infoModal) {
             closeInfoModal();
         }
     });
-    alignmentContainer.addEventListener('contextmenu', (e) => {
-        const name = e.target.closest('.seq-name');
-        if (name) {
-            e.preventDefault();
-            const row = e.target.closest('.seq-line');
-            const index = parseInt(row.dataset.seqIndex);
-            showContextMenu(e, index);
-        } else if (e.target.tagName === 'SPAN' && e.target.parentNode.className === 'seq-data') {
-            e.preventDefault();
-            const row = e.target.closest('.seq-line');
-            const index = parseInt(row.dataset.seqIndex);
-            showContextMenu(e, index);
-        }
-    });
-    document.addEventListener('click', () => {
-        if (contextMenu) {
-            contextMenu.remove();
-            contextMenu = null;
-        }
-    });
+
+    if (alignmentContainer) {
+        let contextMenu = null;
+        alignmentContainer.addEventListener('contextmenu', (e) => {
+            const name = e.target.closest('.seq-name');
+            if (name) {
+                e.preventDefault();
+                const row = e.target.closest('.seq-line');
+                const index = parseInt(row.dataset.seqIndex);
+                contextMenu = showContextMenu(e, index, contextMenu);
+            } else if (e.target.tagName === 'SPAN' && e.target.parentNode.className === 'seq-data') {
+                e.preventDefault();
+                const row = e.target.closest('.seq-line');
+                const index = parseInt(row.dataset.seqIndex);
+                contextMenu = showContextMenu(e, index, contextMenu);
+            }
+        });
+        document.addEventListener('click', () => {
+            if (contextMenu) {
+                contextMenu.remove();
+                contextMenu = null;
+            }
+        });
+    }
+}
+
+// Auto-hide menu on scroll
+let lastScrollTop = 0;
+
+function setupMenuScrollBehavior() {
+    const controls = el('controls');
+    const alignmentContainer = el('alignmentContainer');
+    if (!controls || !alignmentContainer) return;
+
+    let menuHeight = controls.offsetHeight;
+
+    function updateMenuVisibility() {
+        const isHidden = controls.style.transform === 'translateY(-100%)';
+        alignmentContainer.style.top = isHidden ? '0' : (menuHeight + 'px');
+    }
+
     alignmentContainer.addEventListener('scroll', () => {
         document.querySelectorAll('.seq-name').forEach(name => {
             name.style.display = 'none';
             name.offsetHeight;
             name.style.display = '';
         });
+        
+        if (menuHeight === 0) menuHeight = controls.offsetHeight;
+        
+        const scrollTop = alignmentContainer.scrollTop;
+        const wasHidden = controls.style.transform === 'translateY(-100%)';
+        
+        if (scrollTop > lastScrollTop && scrollTop > 100) {
+            controls.style.transform = 'translateY(-100%)';
+            Object.assign(controls.style, { position: '', top: '', left: '', right: '', zIndex: '', boxShadow: '' });
+        } else if (scrollTop === 0) {
+            controls.style.transform = 'translateY(0)';
+            Object.assign(controls.style, { position: '', top: '', left: '', right: '', zIndex: '', boxShadow: '' });
+        }
+        
+        const isHidden = controls.style.transform === 'translateY(-100%)';
+        if (wasHidden !== isHidden) {
+            updateMenuVisibility();
+        }
+        
+        lastScrollTop = scrollTop;
     });
-    el('modeBlocks').checked = true;
-    el('modeSingle').checked = false;
-    document.querySelector('input[name="consensusPosition"][value="bottom"]').checked = true;
-    onModeChange();
-    toggleStickyNames();
-    
-    // Initialize slider backgrounds
-    ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold'].forEach(id => {
-        const slider = el(id);
-        if (slider) {
-            updateSliderBackground(slider);
+
+    document.addEventListener('mousemove', (e) => {
+        if (e.clientY <= 50 && controls.style.transform === 'translateY(-100%)') {
+            controls.style.transform = 'translateY(0)';
+            Object.assign(controls.style, { position: 'fixed', top: '0', left: '0', right: '0', zIndex: '1000', boxShadow: '0 2px 8px rgba(0,0,0,0.3)' });
         }
     });
-});
+}
+setupMenuScrollBehavior();
 // NEW EDITING FUNCTIONS
 function removeGapColumns() {
     if (state.seqs.length === 0) return;
@@ -2111,6 +2731,8 @@ function shiftSequence(index, amount) {
 // Prevent Ctrl+A from selecting nucleotides in alignment when fastaInput is focused.
 fastaInput.addEventListener('keydown', function(e) {
     if (e.ctrlKey && e.key === 'a') {
-        e.stopPropagation(); // Prevent alignment selection
+        e.stopPropagation();
     }
 });
+
+// Drag handlers are defined at top of file (window.handleDragStart / window.handleDragEnd)
