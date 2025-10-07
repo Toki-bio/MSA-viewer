@@ -1,5 +1,5 @@
 :root {
-    --nameLen: 20;
+    --nameLen: 6;
     --slider-value: 0%;
     --slider-fill: #888;
     --selected-bg: #90ee90;
@@ -21,81 +21,303 @@
     --error-bg: #ffe6e6;
     --error-border: #ff8080;
     --search-hit-bg: yellow;
-}
-/* Utility class for no user selection */
-.no-select {
-    user-select: none;
-    -moz-user-select: none;
-    -webkit-user-select: none;
-    -ms-user-select: none;
-}
-
-body {
-    font-family: 'Courier New', monospace;
-    font-size: 13px;
-    margin: 0;
-    padding: 0;
-    background: white;
-    color: black;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
+    /* shading defaults (can be overridden by JS color-pickers) */
+    --blackShading: #000;
+    --darkShading: #555;
+    --lightShading: #ccc;
+    --blackText: white;
 }
 #dropZone {
     border: 2px dashed var(--dropzone-border);
     border-radius: 4px;
-    padding: 8px;
+    padding: 12px;
     text-align: center;
     color: #555;
-    font-size: 13px;
+    font-size: 14px;
     background: var(--dropzone-bg);
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 40px;
+    min-height: 80px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+#dropZone small {
+    font-size: 11px;
+    color: #777;
+    margin-top: 4px;
 }
 #dropZone:hover {
     border-color: var(--dropzone-hover-border);
     background: var(--dropzone-hover-bg);
 }
 #controls {
-    position: sticky;
+    position: relative;
     top: 0;
+    left: 0;
+    right: 0;
+    background: var(--control-bg);
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 13px;
+    border-bottom: 1px solid #ddd;
+    z-index: 100;
+}
+
+.status-row {
     background: var(--control-bg);
     padding: 6px 8px;
     border-bottom: 1px solid #ddd;
-    z-index: 100;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 6px;
-    font-size: 13px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 99;
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 28px;
+}
+
+.control-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    width: 100%;
+    flex-wrap: nowrap;
+}
+
+.control-row.justify-center {
+    justify-content: center;
+}
+
+.wide-section {
+    width: 100%;
 }
 .menu-section {
-    margin-bottom: 4px;
+    position: relative;
+    display: inline-block;
+    z-index: 10;
+    /* Ensure this contains the absolutely positioned dropdown */
+    isolation: isolate;
 }
+
+.standard-menu-group {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+}
+
+.side-section {
+    display: inline-block;
+    vertical-align: middle;
+    flex: 0 0 28%; /* reserve ~28% for left/right side sections */
+    max-width: 36%;
+    min-width: 180px;
+    box-sizing: border-box;
+    overflow: visible; /* allow dropdowns to overflow outside the side section */
+}
+
+.standard-menu-group {
+    flex: 1 1 auto; /* center group grows and shrinks as needed */
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    align-items: center;
+    min-width: 220px;
+}
+
+/* Prevent side-section headers from stretching full width */
+.side-section .section-header {
+    display: inline-block;
+    width: auto;
+}
+
+/* Ensure all menu headers are inline so they don't stretch full width */
+.menu-section .section-header {
+    display: inline-block;
+    width: auto;
+}
+
+/* Make sure control-group absolute positioning lines up under its header only */
+.side-section .control-group {
+    left: 0;
+    min-width: 0;
+}
+
+/* For side sections (Input/Actions) allow dropdowns to be wider than the small header
+   and align them so they don't get clipped: input dropdown aligns left, actions aligns right. */
+.menu-section.side-section#input-section .control-group {
+    left: 0;
+    right: auto;
+    min-width: 260px;
+    display: block !important; /* Input menu always visible by default */
+    padding: 15px; /* Increase padding for better hover area */
+}
+
+/* Increase hover area for Input section to prevent gaps */
+.menu-section.side-section#input-section::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: -5px; /* Extend below to cover gap */
+    z-index: 9997;
+    pointer-events: none;
+}
+
+/* Ensure Input section header has better hover area */
+.menu-section.side-section#input-section .section-header {
+    padding: 10px 18px; /* Increase padding */
+    margin-bottom: 0; /* Remove gap */
+}
+.menu-section.side-section#actions-section .control-group {
+    right: 0 !important;
+    left: auto !important;
+    min-width: fit-content !important; /* Ensure it fits content */
+    width: fit-content !important; /* Strictly fit content */
+    max-width: 180px !important; /* Further reduce maximum width */
+    white-space: nowrap !important; /* Prevent wrapping of content */
+    overflow: hidden !important; /* Hide overflow if any */
+    background-size: fit-content !important; /* Ensure background fits content */
+}
+
+/* Ensure control-groups inside side-sections are visible outside the parent */
+.side-section .control-group {
+    overflow: visible;
+}
+
 .section-header {
-    font-size: 14px;
-    margin: 4px 0;
-    color: #2c3e50;
+    padding: 8px 16px;
+    background: #f0f0f0;
+    border: 1px solid #ccc;
+    cursor: pointer;
+    user-select: none;
     font-weight: bold;
+    border-radius: 4px 4px 0 0;
+    font-size: 13px;
+    margin: 0;
+    color: #2c3e50;
 }
+
+.section-header:hover {
+    background: #e0e0e0;
+}
+
+.control-group {
+    position: absolute;
+    top: calc(100% - 1px);
+    left: 0;
+    width: auto;
+    max-width: 400px;
+    background: #ffffff;
+    border: 1px solid #ccc;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    padding: 15px; /* Increased padding for better hover area */
+    display: none;
+    z-index: 9999;
+    border-radius: 0 4px 4px 4px;
+    margin: 0;
+    max-height: 70vh;
+    overflow: auto;
+}
+
+/* Show control groups on hover */
+.menu-section:hover .control-group,
+.section-header:hover + .control-group,
+.control-group:hover {
+    display: block !important;
+}
+
+/* Add a larger invisible bridge to prevent hover breaking */
+.menu-section:hover::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 5px; /* Increased from 2px to 5px for safer hover */
+    z-index: 9998;
+}
+
+.color-picker {
+    width: 30px;
+    height: 20px;
+    border: 1px solid #ccc;
+    cursor: pointer;
+    display: inline-block;
+    margin: 2px;
+}
+
+.control-group label {
+    display: inline-block;
+    margin-right: 8px;
+    font-size: 12px;
+    min-width: 60px;
+}
+
+.control-group select,
+.control-group input[type="number"],
+.control-group input[type="text"] {
+    font-size: 12px;
+    padding: 2px 4px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    margin-right: 8px;
+}
+
+.control-group input[type="number"] {
+    width: 60px;
+}
+
+/* Action sections organization */
+.action-section {
+    margin: 0;
+    padding: 8px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+}
+
+.action-section:first-child {
+    margin-top: 0;
+}
+
+.action-section:last-child {
+    margin-bottom: 0;
+}
+
+.action-section-label {
+    font-size: 11px;
+    font-weight: bold;
+    color: #444;
+    margin-bottom: 6px;
+    padding: 3px 6px;
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 3px;
+    display: inline-block;
+}
+
 .button-group {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 4px;
     align-items: center;
     font-size: 12px;
-    border: 1px solid #eee;
-    border-radius: 4px;
-    padding: 2px;
-    background: #fafafa;
+    width: min-content;
 }
+
 .button-spacer {
     width: 1px;
     height: 16px;
     background: #ccc;
     margin: 0 4px;
 }
+
 button {
     padding: 2px 6px;
     margin: 1px;
@@ -105,20 +327,68 @@ button {
     background: var(--button-bg);
     cursor: pointer;
 }
+
 button:hover {
     background: var(--button-hover-bg);
 }
-.control-group {
-    display: block;
-    margin: 2px 0;
-}
 .slider-container {
-    margin: 2px 0;
+    margin: 1px 0;
     display: flex;
     align-items: center;
     gap: 6px;
     height: 22px;
     line-height: 22px;
+}
+
+/* Improved shade section alignment */
+.shade-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    min-height: 28px;
+}
+
+.shade-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 140px;
+}
+
+.reset-button {
+    padding: 1px 4px;
+    font-size: 10px;
+    background: #f0f0f0;
+    border: 1px solid #ccc;
+    cursor: pointer;
+    border-radius: 2px;
+}
+
+.reset-button:hover {
+    background: #e0e0e0;
+}
+
+/* Improved search section alignment */
+.search-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 28px;
+}
+
+.search-input-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.search-button-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
 }
 .display-slider-row {
     min-width: 340px;
@@ -230,7 +500,7 @@ input[type="number"] {
     font-size: 12px;
 }
 .block-block {
-    margin-bottom: 8px;
+    margin-bottom: 24px;
 }
 .block-sep {
     font-weight: bold;
@@ -242,7 +512,9 @@ input[type="number"] {
     border-radius: 3px;
 }
 #alignmentContainer {
-    flex: 1;
+    position: static; /* flow in document under controls/status */
+    margin: 0;
+    padding: 0.5rem 0.5rem 0 0.5rem;
     overflow-x: auto;
     overflow-y: auto;
     background: white;
@@ -252,11 +524,11 @@ input[type="number"] {
     border: 1px solid #ddd;
     font-size: 13px;
     transition: font-size 0.1s;
-    position: relative;
     user-select: none;
     -moz-user-select: none;
     -webkit-user-select: none;
     -ms-user-select: none;
+    scroll-behavior: smooth;
 }
 .seq-line {
     display: flex;
@@ -269,14 +541,19 @@ input[type="number"] {
     -moz-user-select: none;
     -webkit-user-select: none;
     -ms-user-select: none;
+    align-items: flex-start;
+    position: relative;
+    min-width: max-content;
+    height: 1em;
 }
 .seq-name {
     flex: 0 0 auto;
-    min-width: calc(var(--nameLen) * 0.8em);
-    width: calc(var(--nameLen) * 0.8em);
-    max-width: calc(var(--nameLen) * 0.8em);
+    min-width: calc(var(--nameLen) * 1em);
+    width: calc(var(--nameLen) * 1em);
+    max-width: calc(var(--nameLen) * 1em);
     text-align: left;
-    padding: 0 1px 0 0;
+    padding: 0 2px 0 2px;
+    margin-right: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -291,6 +568,8 @@ input[type="number"] {
     -moz-user-select: none;
     -webkit-user-select: none;
     -ms-user-select: none;
+    contain: layout;
+    line-height: 1.0;
 }
 .seq-name.static {
     position: static;
@@ -300,7 +579,7 @@ input[type="number"] {
     color: #000;
 }
 .seq-data {
-    flex: 1;
+    flex: 1 1 auto;
     display: inline-block;
     white-space: nowrap;
     margin: 0;
@@ -311,6 +590,122 @@ input[type="number"] {
     -moz-user-select: none;
     -webkit-user-select: none;
     -ms-user-select: none;
+    overflow: visible;
+}
+
+.seq-length {
+    display: inline-block;
+    margin-left: 2px;
+    padding: 0 4px;
+    background-color: #f0f0f0;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font-size: 0.85em;
+    color: #666;
+    font-weight: bold;
+    vertical-align: baseline;
+    line-height: 1.0;
+}
+
+.active-searches {
+    display: none;
+    margin-top: 4px;
+    padding: 4px;
+    background: #f8f8f8;
+    border-radius: 3px;
+    font-size: 11px;
+    border: 1px solid #ddd;
+}
+
+.search-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 2px 4px 2px 0;
+    padding: 2px 6px;
+    background: white;
+    border-radius: 3px;
+    border: 1px solid #ccc;
+}
+
+.search-swatch {
+    width: 12px;
+    height: 12px;
+    border: 1px solid #666;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+.search-remove {
+    background: none;
+    border: none;
+    color: #999;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    margin-left: 2px;
+}
+
+.section-header {
+    font-weight: bold;
+    font-size: 13px;
+    margin: 2px 0 1px 0;
+    padding: 2px 6px;
+    background: #f0f8ff;
+    border-radius: 3px;
+    border: 1px solid #d0e0ff;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background-color 0.2s;
+    min-height: 20px;
+}
+
+.section-header:hover {
+    background: #e0f0ff;
+}
+
+.section-header .toggle-icon {
+    font-size: 10px;
+    color: #666;
+    transition: transform 0.2s;
+    margin-left: 4px;
+}
+
+.section-header.collapsed .toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.control-group {
+    background: #ffffff;
+}
+
+/* Reset any problematic styling in menu items */
+.control-group .slider-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 2px 0;
+    height: auto;
+}
+
+.control-group .shade-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 0;
+    height: auto;
+}
+
+.control-group.collapsed {
+    display: none !important;
+}
+
+.search-remove:hover {
+    color: #666;
 }
 
 .seq-data span {
@@ -318,6 +713,11 @@ input[type="number"] {
     -moz-user-select: none;
     -webkit-user-select: none;
     -ms-user-select: none;
+    display: inline-block;
+    vertical-align: top;
+    margin: 0;
+    padding: 0;
+    line-height: 1.0;
 }
 .seq-data:active {
     cursor: grabbing;
@@ -326,9 +726,18 @@ input[type="number"] {
 .seq-data span:not(.nuc-selected):hover {
     cursor: default;
 }
-.black { background-color: #000 !important; color: white; }
-.dark { background-color: #555; color: white; }
-.light { background-color: #ccc; color: black; }
+.black {
+    background-color: var(--blackShading, #000) !important;
+    color: var(--blackText, white) !important;
+}
+.dark {
+    background-color: var(--darkShading, #555) !important;
+    color: var(--darkText, white) !important;
+}
+.light {
+    background-color: var(--lightShading, #ccc) !important;
+    color: var(--lightText, black) !important;
+}
 .gap { background-color: white !important; color: #888 !important; }
 .other { background-color: white; color: black; }
 .ambiguous { color: #0000AA; font-weight: bold; }
@@ -365,11 +774,19 @@ input[type="number"] {
     cursor: pointer;
 }
 .consensus-line {
-    border-top: 1px solid #ccc;
-    margin-top: 4px;
     font-style: normal;
     color: #555;
     font-weight: bold;
+}
+
+.consensus-line.consensus-top {
+    border-bottom: 1px solid #ccc;
+    margin-bottom: 4px;
+}
+
+.consensus-line.consensus-bottom {
+    border-top: 1px solid #ccc;
+    margin-top: 4px;
 }
 .consensus-line .seq-name {
     color: #555;
@@ -535,4 +952,47 @@ input[type="number"] {
     position: relative;
     box-shadow: none !important; /* Remove box-shadow to fix edge glitch */
     border-radius: 2px; /* Optional: slightly rounded corners */
+}
+
+/* Scale ruler styling */
+.scale-ruler-line {
+    margin-bottom: 2px;
+    height: 1em;
+}
+
+.scale-ruler-line .seq-name {
+    /* Keep the name column visible but empty to maintain alignment */
+    min-width: calc(var(--nameLen) * 1em);
+    width: calc(var(--nameLen) * 1em);
+    max-width: calc(var(--nameLen) * 1em);
+}
+
+.scale-ruler-line .seq-data {
+    font-family: 'Courier New', monospace;
+    color: #666;
+    padding: 0;
+    white-space: pre;
+    overflow: visible !important;
+    display: inline-block;
+    line-height: 1.0;
+}
+
+/* Hide horizontal scrollbar cross-browser */
+#alignmentContainer::-webkit-scrollbar:horizontal {
+    height: 0;
+}
+#alignmentContainer {
+    -ms-overflow-style: none;  /* IE/Edge */
+    scrollbar-width: none;     /* Firefox */
+    overflow-x: auto;          /* Keep scrollable */
+    overflow-y: auto;          /* Vertical scroll when needed */
+}
+#alignmentContainer::-webkit-scrollbar {
+    display: none;             /* Chrome/Safari */
+}
+
+/* Remove page-wide vertical scrollbar */
+/* Remove page-wide vertical scrollbar (allow normal scrolling) */
+body {
+    overflow: auto;
 }
