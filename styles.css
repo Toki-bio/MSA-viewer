@@ -221,9 +221,14 @@
     z-index: 9999;
     border-radius: 0 4px 4px 4px;
     margin: 0;
-    max-height: 70vh;
-    overflow-y: auto; /* Only vertical scrolling */
+    max-height: 85vh; /* Increased to prevent scrollbar for typical menus */
+    overflow-y: auto; /* Only vertical scrolling when truly needed */
     overflow-x: visible; /* Allow horizontal content to be visible */
+}
+
+/* Reduce padding for shade controls to fit without scrollbar */
+#shade-controls {
+    padding: 10px;
 }
 
 /* Show control groups on hover */
@@ -547,6 +552,11 @@ input[type="number"] {
     min-width: max-content;
     height: 1em;
 }
+.seq-line.context-menu-highlight {
+    background-color: rgba(255, 215, 0, 0.2);
+    outline: 2px solid rgba(255, 215, 0, 0.5);
+    outline-offset: -1px;
+}
 .seq-name {
     flex: 0 0 auto;
     min-width: calc(var(--nameLen) * 1em);
@@ -561,10 +571,12 @@ input[type="number"] {
     font-weight: bold;
     color: #333;
     background: white !important;
+    box-shadow: -10px 0 0 0 white;
     cursor: default;
     position: sticky;
     left: 0;
-    z-index: 11;
+    z-index: 100;
+    isolation: isolate;
     user-select: none;
     -moz-user-select: none;
     -webkit-user-select: none;
@@ -719,6 +731,8 @@ input[type="number"] {
     margin: 0;
     padding: 0;
     line-height: 1.0;
+    position: relative;
+    z-index: 1;
 }
 .seq-data:active {
     cursor: grabbing;
@@ -949,8 +963,6 @@ input[type="number"] {
 .seq-data span.nuc-selected {
     background-color: #ffe600 !important; /* bright yellow */
     color: #222 !important;
-    z-index: 2;
-    position: relative;
     box-shadow: none !important; /* Remove box-shadow to fix edge glitch */
     border-radius: 2px; /* Optional: slightly rounded corners */
 }
@@ -996,4 +1008,29 @@ input[type="number"] {
 /* Remove page-wide vertical scrollbar (allow normal scrolling) */
 body {
     overflow: auto;
+}
+
+/* ============================================================================
+   FULL-WINDOW DRAG AND DROP OVERLAY
+   ============================================================================ */
+.drag-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(59, 130, 246, 0.15);
+    backdrop-filter: blur(4px);
+    border: 4px dashed rgba(59, 130, 246, 0.5);
+    z-index: 10000;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.drag-overlay.hidden {
+    opacity: 0;
+}
+
+.drag-overlay.active {
+    opacity: 1;
 }
