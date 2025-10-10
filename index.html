@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Qwen MSA Viewer</title>
     <link rel="stylesheet" href="styles.css">
@@ -206,37 +207,37 @@
                     <div class="action-section">
                         <div class="action-section-label">рџ“‹ Selection</div>
                         <div class="button-group">
-                            <button id="selectAllButton" title="Select/deselect all sequences (shortcut: Ctrl+A)">вњ“ Select All</button>
-                            <button id="copySelectedButton" title="Copy selected sequences or nucleotides (shortcut: Ctrl+Shift+C)">рџ“„ Copy Sel</button>
-                            <button id="deleteSelectedButton" title="Delete selected sequences (shortcut: Ctrl+Del)">рџ—‘пёЏ Delete Sel</button>
+                            <button id="selectAllButton" title="Select/deselect all sequences (shortcut: Ctrl+A)">в‘ Select All</button>
+                            <button id="copySelectedButton" title="Copy selected sequences or nucleotides (shortcut: Ctrl+Shift+C)">рџ“‹ Copy Sel</button>
+                            <button id="deleteSelectedButton" title="Delete selected sequences (shortcut: Ctrl+Del)">вњ– Delete Sel</button>
                             <button id="undoButton" title="Undo last action (shortcut: Ctrl+Z)">в†¶ Undo</button>
                         </div>
                     </div>
                     <div class="action-section">
-                        <div class="action-section-label">в†•пёЏ Sequence Order</div>
+                        <div class="action-section-label">в†• Sequence Order</div>
                         <div class="button-group">
-                            <button id="moveUpButton" title="Move selected up (shortcut: Ctrl+Up)">в¬†пёЏ Up</button>
-                            <button id="moveDownButton" title="Move selected down (shortcut: Ctrl+Down)">в¬‡пёЏ Down</button>
-                            <button id="moveToTopButton" title="Move selected to top (shortcut: Ctrl+Home)">в¤’ To Top</button>
-                            <button id="moveToBottomButton" title="Move selected to bottom (shortcut: Ctrl+End)">в¤“ To Bottom</button>
+                            <button id="moveUpButton" title="Move selected up (shortcut: Ctrl+Up)">в–І Up</button>
+                            <button id="moveDownButton" title="Move selected down (shortcut: Ctrl+Down)">в–ј Down</button>
+                            <button id="moveToTopButton" title="Move selected to top (shortcut: Ctrl+Home)">в¤ґ To Top</button>
+                            <button id="moveToBottomButton" title="Move selected to bottom (shortcut: Ctrl+End)">в¤µ To Bottom</button>
                         </div>
                     </div>
                     <div class="action-section">
-                        <div class="action-section-label">вњЏпёЏ Editing</div>
+                        <div class="action-section-label">вњЏ Editing</div>
                         <div class="button-group">
-                            <button id="reverseComplementButton" title="Reverse complement selected sequences (shortcut: Ctrl+R)">вҐ® RevComp</button>
-                            <button id="duplicateButton" title="Duplicate selected (shortcut: Ctrl+U)">вЋ Duplicate</button>
-                            <button id="insertGroupConsensusButton" title="Insert consensus below selected (shortcut: Ctrl+B)">вћ• Consensus Below</button>
+                            <button id="reverseComplementButton" title="Reverse complement selected sequences (shortcut: Ctrl+R)">вџІ RevComp</button>
+                            <button id="duplicateButton" title="Duplicate selected (shortcut: Ctrl+U)">в§‰ Duplicate</button>
+                            <button id="insertGroupConsensusButton" title="Insert consensus below selected (shortcut: Ctrl+B)">+ Consensus Below</button>
                         </div>
                     </div>
                     <div class="action-section">
-                        <div class="action-section-label">в«ґ Columns</div>
+                        <div class="action-section-label">в«ї Columns</div>
                         <div class="button-group">
-                            <button id="copyColumnsButton" title="Copy selected columns as FASTA (shortcut: Ctrl+Shift+V)">рџ“„ Copy Cols</button>
-                            <button id="deleteColumnsButton" title="Delete selected columns (shortcut: Ctrl+Shift+D)">рџ—‘пёЏ Delete Cols</button>
+                            <button id="copyColumnsButton" title="Copy selected columns as FASTA (shortcut: Ctrl+Shift+V)">рџ“‹ Copy Cols</button>
+                            <button id="deleteColumnsButton" title="Delete selected columns (shortcut: Ctrl+Shift+D)">вњ– Delete Cols</button>
                             <button id="removeGapColumnsButton" title="Remove columns with only gaps">вЊ« Remove Gap Cols</button>
-                            <button id="insertGapColumnAllButton" title="Insert gap column at selected position in all sequences">вћ• Gap Col (All)</button>
-                            <button id="insertGapColumnExceptButton" title="Insert gap column at selected position in all except selected sequences">вћ• Gap Col (Except)</button>
+                            <button id="insertGapColumnAllButton" title="Insert gap column at selected position in all sequences">+ Gap Col (All)</button>
+                            <button id="insertGapColumnExceptButton" title="Insert gap column at selected position in all except selected sequences">+ Gap Col (Except)</button>
                         </div>
                     </div>
                     <div class="action-section">
@@ -247,11 +248,11 @@
                         </div>
                     </div>
                     <div class="action-section">
-                        <div class="action-section-label">вљ™пёЏ Settings</div>
+                        <div class="action-section-label">вљ™ Settings</div>
                         <div class="button-group">
                             <button id="savePresetButton" title="Save current settings (shortcut: Ctrl+S)">рџ’ѕ Save Preset</button>
-                            <button id="loadPresetButton" title="Load saved settings (shortcut: Ctrl+O)">рџ“‚ Load Preset</button>
-                            <button id="infoButton" title="Show program info and shortcuts (shortcut: Ctrl+I)">в„№пёЏ Info</button>
+                            <button id="loadPresetButton" title="Load saved settings (shortcut: Ctrl+O)">рџ“Ѓ Load Preset</button>
+                            <button id="infoButton" title="Show program info and shortcuts (shortcut: Ctrl+I)">в„№ Info</button>
                             <button id="minimizeBtn" title="Hide menu (shortcut: Ctrl+H)">в–І Hide Menu</button>
                         </div>
                     </div>
@@ -259,19 +260,56 @@
             </div>
         </div>
         
-        <div style="text-align: right; font-size: 12px; color: #555;">
-            <span style="white-space: nowrap;">Click name: copy name</span> | <span style="white-space: nowrap;">Ctrl+click name: select/deselect seq (drag for range)</span> | <span style="white-space: nowrap;">Shift+click name: range from last</span> | <span style="white-space: nowrap;">Ctrl+Alt+click nuc: select column</span> | <span style="white-space: nowrap;">Ctrl+click on nuc: start/extend range</span> | <span style="white-space: nowrap;">Right-click drag seq: slide</span> | <span style="white-space: nowrap;">Right-click name: menu</span>
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; font-size: 12px; color: #555;">
+            <div style="text-align: left; flex: 1;">
+                <span style="white-space: nowrap;">Click name: copy name</span> | <span style="white-space: nowrap;">Ctrl+click name: select/deselect seq (drag for range)</span> | <span style="white-space: nowrap;">Shift+click name: range from last</span> | <span style="white-space: nowrap;">Ctrl+Alt+click nuc: select column</span> | <span style="white-space: nowrap;">Ctrl+click on nuc: start/extend range</span> | <span style="white-space: nowrap;">Right-click drag seq: slide</span> | <span style="white-space: nowrap;">Right-click name: menu</span>
+            </div>
+            <div id="sourceInfo" style="text-align: right; white-space: nowrap; font-size: 14px; color: #666; margin-left: 12px;">No file loaded</div>
         </div>
     </div>
     
-    <!-- Status line moved below menu -->
-    <div class="status-row">
-        <div id="sourceInfo" style="text-align: center; margin: 2px 0; font-size: 14px; color: #666;">No file loaded</div>
+    <!-- Minimize bar (hidden by default) -->
+    <div id="minimizeBar" style="display: none; padding: 8px; background: #f0f0f0; border-bottom: 1px solid #ccc; text-align: center; cursor: pointer;">
+        <button id="expandButton" style="padding: 4px 12px; cursor: pointer;">в–ј Show Menu</button>
     </div>
     
     <div id="alignmentContainer">Paste MSF or FASTA into the box and click Load, or drop a file.</div>
     <div id="statusMessage"></div>
     <div id="tooltip" class="tooltip"></div>
+    
+    <!-- Info Modal -->
+    <div id="infoModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10001; overflow: auto;">
+        <div style="background: white; margin: 50px auto; padding: 20px; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+            <h2 style="margin-top: 0;">MSA Viewer - Keyboard Shortcuts</h2>
+            <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-family: monospace; font-size: 13px;">
+                <strong>Ctrl+L</strong><span>Load file</span>
+                <strong>Ctrl+A</strong><span>Select/deselect all</span>
+                <strong>Ctrl+C</strong><span>Copy sequence name</span>
+                <strong>Ctrl+Shift+C</strong><span>Copy selected sequences</span>
+                <strong>Ctrl+Del</strong><span>Delete selected</span>
+                <strong>Ctrl+Z</strong><span>Undo</span>
+                <strong>Ctrl+R</strong><span>Reverse complement</span>
+                <strong>Ctrl+U</strong><span>Duplicate</span>
+                <strong>Ctrl+B</strong><span>Consensus below</span>
+                <strong>Ctrl+Up</strong><span>Move selected up</span>
+                <strong>Ctrl+Down</strong><span>Move selected down</span>
+                <strong>Ctrl+Home</strong><span>Move to top</span>
+                <strong>Ctrl+End</strong><span>Move to bottom</span>
+                <strong>Ctrl+Shift+V</strong><span>Copy columns</span>
+                <strong>Ctrl+Shift+D</strong><span>Delete columns</span>
+                <strong>Ctrl+Shift+R</strong><span>Realign block</span>
+                <strong>Ctrl+T</strong><span>Open in new tab</span>
+                <strong>Ctrl+S</strong><span>Save preset</span>
+                <strong>Ctrl+O</strong><span>Load preset</span>
+                <strong>Ctrl+H</strong><span>Hide/show menu</span>
+                <strong>Ctrl+I</strong><span>Show this info</span>
+            </div>
+            <div style="margin-top: 20px; text-align: right;">
+                <button onclick="document.getElementById('infoModal').style.display='none'" style="padding: 8px 16px; cursor: pointer;">Close</button>
+            </div>
+        </div>
+    </div>
+    
     <script src="script.js"></script>
     <script>
 // All functionality moved to script.js
