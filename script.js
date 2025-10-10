@@ -25,6 +25,10 @@ const state = {
 // Ensure drag handlers are globally available before any usage
 window.handleDragStart = function(e) {
     try {
+
+// ============================================================================
+// End of Full-window drag-and-drop
+// ============================================================================
         if (e && e.dataTransfer) {
             e.dataTransfer.setData('text/plain', e.target ? e.target.textContent : '');
             e.dataTransfer.effectAllowed = 'move';
@@ -2049,37 +2053,59 @@ function deleteSequence(index) {
     }
 }
 let contextMenu = null;
-function showContextMenu(e, index) {
+let contextMenuHighlightedRow = null;
+
+function closeContextMenu() {
     if (contextMenu) {
         contextMenu.remove();
+        contextMenu = null;
     }
+    // Remove highlight
+    if (contextMenuHighlightedRow !== null) {
+        document.querySelectorAll(`.seq-line[data-seq-index="${contextMenuHighlightedRow}"]`)
+            .forEach(line => line.classList.remove('context-menu-highlight'));
+        contextMenuHighlightedRow = null;
+    }
+}
+
+function showContextMenu(e, index) {
+    closeContextMenu();
+    
+    // Highlight the sequence this menu is for
+    contextMenuHighlightedRow = index;
+    document.querySelectorAll(`.seq-line[data-seq-index="${index}"]`)
+        .forEach(line => line.classList.add('context-menu-highlight'));
+    
     contextMenu = document.createElement('div');
     contextMenu.className = 'context-menu';
+    
+    // Temporarily position off-screen to measure height
+    contextMenu.style.visibility = 'hidden';
     contextMenu.style.left = `${e.pageX}px`;
     contextMenu.style.top = `${e.pageY}px`;
     const copyFastaGapped = document.createElement('div');
     copyFastaGapped.textContent = 'Copy as FASTA gapped';
     copyFastaGapped.addEventListener('click', () => {
         copySequences(true, true, index);
-        contextMenu.remove();
+        closeContextMenu();
     });
     const copyFastaUngapped = document.createElement('div');
     copyFastaUngapped.textContent = 'Copy as FASTA ungapped';
     copyFastaUngapped.addEventListener('click', () => {
         copySequences(false, true, index);
-        contextMenu.remove();
+        closeContextMenu();
     });
     const copyPlainGapped = document.createElement('div');
     copyPlainGapped.textContent = 'Copy as plain text gapped';
     copyPlainGapped.addEventListener('click', () => {
         copySequences(true, false, index);
-        contextMenu.remove();
+        closeContextMenu();
     });
     const copyPlainUngapped = document.createElement('div');
     copyPlainUngapped.textContent = 'Copy as plain text ungapped';
     copyPlainUngapped.addEventListener('click', () => {
         copySequences(false, false, index);
-        contextMenu.remove();
+        closeContextMenu();
     });
     contextMenu.appendChild(copyFastaGapped);
     contextMenu.appendChild(copyFastaUngapped);
@@ -2092,7 +2118,7 @@ function showContextMenu(e, index) {
         replaceConsensusItem.textContent = `Replace ${state.selectedRows.size} selected with consensus`;
         replaceConsensusItem.addEventListener('click', () => {
             replaceSelectedWithConsensus();
-            contextMenu.remove();
+            closeContextMenu();
         });
         contextMenu.appendChild(replaceConsensusItem);
         
@@ -2111,7 +2137,7 @@ function showContextMenu(e, index) {
         } else {
             deleteSequence(index);
         }
-        contextMenu.remove();
+        closeContextMenu();
     });
     contextMenu.appendChild(deleteItem);
     if (state.selectedRows.size <= 1) {
@@ -2155,7 +2181,7 @@ function showContextMenu(e, index) {
                     renderAlignment();
                 }
             });
-            contextMenu.remove();
+            closeContextMenu();
         });
         contextMenu.appendChild(renameItem);
     }
@@ -2168,7 +2194,7 @@ function showContextMenu(e, index) {
         updateRowSelections();
         updateColumnSelections();
         renderAlignment();
-        contextMenu.remove();
+        closeContextMenu();
     });
     contextMenu.appendChild(clearSelItem);
     // Add insert/remove single gap if on span
@@ -2178,18 +2204,58 @@ function showContextMenu(e, index) {
         insertGapItem.textContent = 'Insert Single Gap Here';
         insertGapItem.addEventListener('click', () => {
             insertSingleGap(index, pos);
-            contextMenu.remove();
+            closeContextMenu();
         });
         contextMenu.appendChild(insertGapItem);
         const removeGapItem = document.createElement('div');
         removeGapItem.textContent = 'Remove Single Gap Here';
         removeGapItem.addEventListener('click', () => {
             removeSingleGap(index, pos);
-            contextMenu.remove();
+            closeContextMenu();
         });
         contextMenu.appendChild(removeGapItem);
     }
     document.body.appendChild(contextMenu);
+    
+    // Adjust position if menu would overflow viewport
+    const menuRect = contextMenu.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+    
+    // Check vertical overflow
+    if (menuRect.bottom > viewportHeight) {
+        // Position above the cursor instead
+        const newTop = e.pageY - menuRect.height;
+        contextMenu.style.top = `${Math.max(0, newTop)}px`;
+    }
+    
+    // Check horizontal overflow
+    if (menuRect.right > viewportWidth) {
+        // Position to the left of the cursor instead
+        const newLeft = e.pageX - menuRect.width;
+        contextMenu.style.left = `${Math.max(0, newLeft)}px`;
+    }
+    
+    // Make visible after positioning
+    contextMenu.style.visibility = 'visible';
+    
+    // Close menu when clicking outside
+    const closeOnClickOutside = (event) => {
+        if (contextMenu && !contextMenu.contains(event.target)) {
+            contextMenu.remove();
+            // Remove highlight when menu closes
+            if (contextMenuHighlightedRow !== null) {
+                document.querySelectorAll(`.seq-line[data-seq-index="${contextMenuHighlightedRow}"]`)
+                    .forEach(line => line.classList.remove('context-menu-highlight'));
+                contextMenuHighlightedRow = null;
+            }
+            document.removeEventListener('click', closeOnClickOutside);
+        }
+    };
+    // Use setTimeout to avoid immediate closure from the same click that opened the menu
+    setTimeout(() => {
+        document.addEventListener('click', closeOnClickOutside);
+    }, 0);
 }
 function updateRowSelections() {
     document.querySelectorAll('.seq-line.selected').forEach(line => line.classList.remove('selected'));
@@ -2231,11 +2297,7 @@ function initializeAppUI() {
         }
     }, 50);
     
-    const dropZone = el('dropZone');
-    const fastaInput = el('fastaInput');
-    const alignmentContainer = el('alignmentContainer');
-    const infoModal = el('infoModal');
-    const minimizeBar = el('minimizeBar');
+    // Use existing global DOM element references
     let contextMenu = null;
 
     if (dropZone) {
@@ -2343,6 +2405,7 @@ function initializeAppUI() {
     }
     
     minimizeBar?.addEventListener('click', expandMenu);
+    el('expandButton')?.addEventListener('click', expandMenu);
     
     // UI listener wiring
     attachUIListeners();
@@ -2470,7 +2533,7 @@ function attachUIListeners() {
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
     
-    const infoModal = el('infoModal');
+    // Use existing global infoModal reference
     document.addEventListener('click', (event) => {
         if (event.target === infoModal) {
             closeInfoModal();
@@ -2715,3 +2778,95 @@ fastaInput.addEventListener('keydown', function(e) {
 });
 
 // Drag handlers are defined at top of file (window.handleDragStart / window.handleDragEnd)
+
+// ============================================================================
+// FULL-WINDOW DRAG AND DROP - Add at the very end of script.js
+// ============================================================================
+
+(function() {
+    // Create overlay element if it doesn't exist
+    let dragOverlay = document.getElementById('drag-overlay');
+    if (!dragOverlay) {
+        dragOverlay = document.createElement('div');
+        dragOverlay.id = 'drag-overlay';
+        dragOverlay.className = 'drag-overlay hidden';
+        // Empty overlay - just visual backdrop
+        document.body.appendChild(dragOverlay);
+    }
+
+    let dragCounter = 0;
+
+    // Prevent default drag behaviors on entire document
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        document.body.addEventListener(eventName, function(e) {
+            // Only prevent if it's a file drag, not text/element drag
+            if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }, true); // Use capture phase to catch events early
+    });
+
+    // Show overlay when file enters window
+    document.body.addEventListener('dragenter', function(e) {
+        if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+            dragCounter++;
+            dragOverlay.classList.remove('hidden');
+            dragOverlay.classList.add('active');
+        }
+    }, true);
+
+    // Hide overlay when file leaves window
+    document.body.addEventListener('dragleave', function(e) {
+        if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+            dragCounter--;
+            if (dragCounter === 0) {
+                dragOverlay.classList.remove('active');
+                dragOverlay.classList.add('hidden');
+            }
+        }
+    }, true);
+
+    // Handle file drop on entire window
+    document.body.addEventListener('drop', function(e) {
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            dragCounter = 0;
+            dragOverlay.classList.remove('active');
+            dragOverlay.classList.add('hidden');
+            
+            const file = e.dataTransfer.files[0];
+            
+            // Validate file type
+            const validExtensions = ['.fasta', '.fa', '.msf', '.aln', '.clustal', '.txt'];
+            const fileName = file.name.toLowerCase();
+            const isValid = validExtensions.some(ext => fileName.endsWith(ext));
+            
+            if (!isValid) {
+                showMessage('Please upload a valid alignment file (FASTA, MSF, Clustal, .txt)', 4000);
+                return;
+            }
+            
+            // Process the file
+            state.currentFilename = file.name;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const fastaInputElement = el('fastaInput');
+                if (fastaInputElement) {
+                    fastaInputElement.value = event.target.result;
+                    parseAndRender(true);
+                }
+            };
+            reader.onerror = function() {
+                showMessage('Error reading file. Please try again.', 5000);
+            };
+            reader.readAsText(file);
+        }
+    }, true);
+})();
+
+// ============================================================================
+// End of Full-window drag-and-drop
+// ============================================================================
