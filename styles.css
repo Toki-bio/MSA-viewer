@@ -1,5 +1,5 @@
 :root {
-    --nameLen: 6;
+    --nameLen: 25;
     --slider-value: 0%;
     --slider-fill: #888;
     --selected-bg: #90ee90;
@@ -40,6 +40,8 @@
     align-items: center;
     justify-content: center;
     min-height: 80px;
+    width: 100%;
+    box-sizing: border-box;
     cursor: pointer;
     transition: all 0.2s;
 }
@@ -66,7 +68,6 @@
     border-bottom: 1px solid #ddd;
     z-index: 100;
 }
-
 .status-row {
     background: var(--control-bg);
     padding: 6px 8px;
@@ -102,6 +103,11 @@
     z-index: 10;
     /* Ensure this contains the absolutely positioned dropdown */
     isolation: isolate;
+}
+
+/* Input section needs higher z-index to appear above seq-names */
+#input-section {
+    z-index: 200;
 }
 
 .standard-menu-group {
@@ -149,11 +155,13 @@
 
 /* For side sections (Input/Actions) allow dropdowns to be wider than the small header
    and align them so they don't get clipped: input dropdown aligns left, actions aligns right. */
+/* Fix Input menu z-index to appear above sticky sequence names */
 .menu-section.side-section#input-section .control-group {
     left: 0;
     right: auto;
     min-width: 260px;
     padding: 15px; /* Increase padding for better hover area */
+    z-index: 99999; /* Very high to ensure it's above seq-names (z-index: 100) */
 }
 
 /* Increase hover area for Input section to prevent gaps */
@@ -228,7 +236,9 @@
 
 /* Reduce padding for shade controls to fit without scrollbar */
 #shade-controls {
-    padding: 10px;
+    padding: 8px;
+    overflow-y: visible;
+    max-height: none;
 }
 
 /* Show control groups on hover */
@@ -559,24 +569,23 @@ input[type="number"] {
 }
 .seq-name {
     flex: 0 0 auto;
-    min-width: calc(var(--nameLen) * 1em);
-    width: calc(var(--nameLen) * 1em);
-    max-width: calc(var(--nameLen) * 1em);
+    min-width: calc(var(--nameLen) * 1ch + 16px);
+    width: calc(var(--nameLen) * 1ch + 16px);
+    max-width: calc(var(--nameLen) * 1ch + 16px);
     text-align: left;
-    padding: 0 2px 0 2px;
+    padding: 0 4px 0 12px;
     margin-right: 0;
+    margin-left: -12px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-weight: bold;
     color: #333;
     background: white !important;
-    box-shadow: -10px 0 0 0 white;
     cursor: default;
     position: sticky;
-    left: 0;
-    z-index: 100;
-    isolation: isolate;
+    left: -15px;
+    z-index: 50;
     user-select: none;
     -moz-user-select: none;
     -webkit-user-select: none;
@@ -709,7 +718,7 @@ input[type="number"] {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin: 2px 0;
+    margin: 0;
     height: auto;
 }
 
@@ -975,9 +984,9 @@ input[type="number"] {
 
 .scale-ruler-line .seq-name {
     /* Keep the name column visible but empty to maintain alignment */
-    min-width: calc(var(--nameLen) * 1em);
-    width: calc(var(--nameLen) * 1em);
-    max-width: calc(var(--nameLen) * 1em);
+    min-width: calc(var(--nameLen) * 1ch + 16px);
+    width: calc(var(--nameLen) * 1ch + 16px);
+    max-width: calc(var(--nameLen) * 1ch + 16px);
 }
 
 .scale-ruler-line .seq-data {
