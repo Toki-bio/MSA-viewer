@@ -1,10 +1,20 @@
 // STATE OBJECT
+const DEFAULTS = {
+    consensusThreshold: 50,
+    groupConsensusThreshold: 70,
+    nameLength: 25
+};
+
 const state = {
   seqs: [],
   selectedRows: new Set(),
   selectedColumns: new Set(),
-  selectedNucs: new Map(),
-  pendingNucStart: null,
+    selectedNucs: new Map(),
+    pendingNucStart: null,
+    spanCache: new Map(),
+    domSelectedNucs: new Map(),
+        domSelectedColumns: new Map(),
+    domPendingNuc: null,
   lastSelectedIndex: null,
   consensusSeq: '',
   deletedHistory: [],
@@ -19,8 +29,16 @@ const state = {
   lastAction: null,
   draggingGroup: null,
   slideDragStartX: null,
-  slideDragStartPos: null,
-  slideSeqIndex: null
+    slideDragStartPos: null,
+        slideSeqIndex: null,
+    panning: {
+        active: false,
+        startX: 0,
+        startY: 0,
+        scrollLeft: 0,
+        scrollTop: 0,
+        started: false
+    }
 };
 // Ensure drag handlers are globally available before any usage
 window.handleDragStart = function(e) {
@@ -122,8 +140,6 @@ function updateNameLengthSliderRange() {
         // Update title to reflect new range
         slider.title = `Adjust sequence name display length (3-${newMax} characters)`;
         
-        console.log(`Updated name length slider range: 3-${newMax} (max name length: ${maxNameLength})`);
-        console.log('Sample names:', state.seqs.slice(0, 3).map(s => `"${s.header}" (${s.header.length}) / "${s.fullHeader}" (${s.fullHeader ? s.fullHeader.length : 'N/A'})`));
     }
 }
 
@@ -154,6 +170,92 @@ function setupSliderInputPair(sliderId, inputId, callback = null) {
         }
     });
 }
+
+function clampConsensusPercent(value) {
+    const num = parseInt(value, 10);
+    if (Number.isNaN(num)) return DEFAULTS.consensusThreshold;
+    return Math.max(30, Math.min(100, num));
+}
+
+function clampGroupConsensusPercent(value) {
+    const num = parseInt(value, 10);
+    if (Number.isNaN(num)) return DEFAULTS.groupConsensusThreshold;
+    return Math.max(50, Math.min(100, num));
+}
+
+function clampNameLength(value) {
+    const num = parseInt(value, 10);
+    if (Number.isNaN(num)) return DEFAULTS.nameLength;
+    return Math.max(3, Math.min(50, num));
+}
+
+function setNameLengthUI(value, triggerRender = false) {
+    const slider = el('nameLengthSlider');
+    const input = el('nameLengthInput');
+    const clamped = clampNameLength(value);
+    if (slider) {
+        slider.value = clamped;
+        updateSliderBackground(slider);
+    }
+    if (input) {
+        input.value = clamped;
+    }
+    document.documentElement.style.setProperty('--nameLen', clamped);
+    if (triggerRender) {
+        debounceRender();
+    }
+}
+
+function setConsensusThresholdUI(value, triggerRender = false) {
+    const slider = el('consensusThreshold');
+    const input = el('consensusThresholdInput');
+    const clamped = clampConsensusPercent(value);
+    if (slider) {
+        slider.min = 30;
+        slider.max = 100;
+        slider.value = clamped;
+        updateSliderBackground(slider);
+    }
+    if (input) {
+        input.min = 30;
+        input.max = 100;
+        input.value = clamped;
+    }
+    if (triggerRender) {
+        debounceRender();
+    }
+}
+
+function setGroupConsensusThresholdUI(value, triggerRender = false) {
+    const slider = el('groupConsensusThreshold');
+    const input = el('groupConsensusThresholdInput');
+    const clamped = clampGroupConsensusPercent(value);
+    if (slider) {
+        slider.min = 50;
+        slider.max = 100;
+        slider.value = clamped;
+        updateSliderBackground(slider);
+    }
+    if (input) {
+        input.min = 50;
+        input.max = 100;
+        input.value = clamped;
+    }
+    if (triggerRender) {
+        debounceRender();
+    }
+}
+
+function setConsensusThresholdDefault(value, options = {}) {
+    const clamped = clampConsensusPercent(value);
+    DEFAULTS.consensusThreshold = clamped;
+    const applyNow = options.applyNow !== false;
+    if (applyNow) {
+        setConsensusThresholdUI(clamped, Boolean(options.triggerRender));
+    }
+}
+
+window.setConsensusThresholdDefault = setConsensusThresholdDefault;
 
 function toggleStickyNames() {
     const sticky = el('stickyNames').checked;
@@ -398,6 +500,10 @@ function renderAlignment() {
         return;
     }
     alignmentContainer.innerHTML = '';
+    state.spanCache = new Map();
+    state.domSelectedNucs = new Map();
+    state.domSelectedColumns = new Map();
+    state.domPendingNuc = null;
     
     const nameLengthSlider = el('nameLengthSlider');
     const blackThresh = parseInt(el('blackSlider').value) / 100;
@@ -424,7 +530,7 @@ function renderAlignment() {
     };
     const showConsensus = el('showConsensus').checked;
     const consType = document.querySelector('input[name="consensusType"]:checked').value;
-    const threshold = parseInt(el('consensusThreshold').value) / 100;
+    const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
     
     // Calculate sequence length for consensus and scale
     const len = Math.max(...state.seqs.map(s => s.seq.length));
@@ -496,7 +602,6 @@ function renderAlignment() {
             const scaleDataDiv = document.createElement('div');
             scaleDataDiv.className = 'seq-data';
             const scaleText = generateScale(blockLen, 10, start);
-            console.log(`Block scale length: ${scaleText.length}, expected: ${blockLen}, start: ${start}`);
             scaleDataDiv.textContent = scaleText;
             scaleDiv.appendChild(scaleNameDiv);
             scaleDiv.appendChild(scaleDataDiv);
@@ -525,7 +630,6 @@ function renderAlignment() {
         const scaleDataDiv = document.createElement('div');
         scaleDataDiv.className = 'seq-data';
         const scaleText = generateScale(len);
-        console.log(`Full scale length: ${scaleText.length}, expected: ${len}`);
         scaleDataDiv.textContent = scaleText;
         scaleDiv.appendChild(scaleNameDiv);
         scaleDiv.appendChild(scaleDataDiv);
@@ -548,12 +652,31 @@ function renderAlignment() {
     });
     updateRowSelections();
     updateColumnSelections();
+    scheduleNucSelectionRefresh();
     recalculateCollapsibleHeights();
     // Re-attach drag listeners for sliding
     document.querySelectorAll('.seq-data').forEach(dataSpan => {
         dataSpan.addEventListener('mousedown', handleSlideStart);
     });
 }
+
+function ensureSpanCacheRow(row) {
+    let rowCache = state.spanCache.get(row);
+    if (!rowCache) {
+        rowCache = new Map();
+        state.spanCache.set(row, rowCache);
+    }
+    return rowCache;
+}
+
+function registerSpanInCache(row, pos, span) {
+    ensureSpanCacheRow(row).set(pos, span);
+}
+
+function getCachedSpan(row, pos) {
+    return state.spanCache.get(row)?.get(pos) || null;
+}
+
 function createSequenceLine(index, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false) {
     const lineDiv = document.createElement('div');
     lineDiv.className = 'seq-line';
@@ -660,37 +783,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         span.className = newClass;
         span.textContent = base;
         span.dataset.pos = pos;
-        if (state.selectedNucs.get(index)?.has(pos)) {
-            span.classList.add('nuc-selected');
-            span.addEventListener('mouseover', (e) => {
-                tooltip.style.display = 'block';
-                tooltip.textContent = `Copy`;
-                const rect = span.getBoundingClientRect();
-                tooltip.style.left = (rect.left + rect.width / 2) + 'px';
-                tooltip.style.top = (rect.top - 30) + 'px';
-                tooltip.style.transform = 'translateX(-50%)';
-            });
-            span.addEventListener('mouseout', () => {
-                tooltip.style.display = 'none';
-            });
-            span.addEventListener('click', (e) => {
-                e.stopPropagation();
-                copySelected();
-            });
-        } else if (state.pendingNucStart && state.pendingNucStart.row === index && state.pendingNucStart.pos === pos) {
-            span.classList.add('nuc-pending');
-            span.addEventListener('mouseover', (e) => {
-                tooltip.style.display = 'block';
-                tooltip.textContent = `Selection start - Ctrl+click another nucleotide to complete range`;
-                const rect = span.getBoundingClientRect();
-                tooltip.style.left = (rect.left + rect.width / 2) + 'px';
-                tooltip.style.top = (rect.top - 30) + 'px';
-                tooltip.style.transform = 'translateX(-50%)';
-            });
-            span.addEventListener('mouseout', () => {
-                tooltip.style.display = 'none';
-            });
-        }
+        registerSpanInCache(index, pos, span);
         if (base !== '-' && base !== '.') {
             const currentGaplessPos = gaplessPos;
             span.addEventListener('mouseover', (e) => {
@@ -810,11 +903,9 @@ const debounceRender = debounce(renderAlignment, 50);
 function parseAndRender(isFromDrop = false) {
     showMessage("Parsing file...", 0);
     const inputText = fastaInput.value.trim();
-    console.log("parseAndRender called. isFromDrop:", isFromDrop, "input length:", inputText.length);
     if (!inputText) {
         alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
         statusMessage.style.display = 'none';
-        console.log("No input text found.");
         return;
     }
     try {
@@ -1046,7 +1137,7 @@ function handleMouseDown(e) {
             rowSet.add(pos);
             state.selectedNucs.set(index, rowSet);
             
-            debounceRender();
+            scheduleNucSelectionRefresh();
         } else if (state.pendingNucStart.row === index) {
             // Second click on same row - complete the two-click selection
             const startPos = Math.min(state.pendingNucStart.pos, pos);
@@ -1057,7 +1148,7 @@ function handleMouseDown(e) {
             }
             state.selectedNucs.set(index, rowSet);
             state.pendingNucStart = null;
-            debounceRender();
+            scheduleNucSelectionRefresh();
         } else {
             // Click on different row - clear pending and start fresh
             state.selectedNucs.clear();
@@ -1073,7 +1164,7 @@ function handleMouseDown(e) {
             rowSet.add(pos);
             state.selectedNucs.set(index, rowSet);
             
-            debounceRender();
+            scheduleNucSelectionRefresh();
         }
         
         e.preventDefault();
@@ -1138,7 +1229,7 @@ function handleMouseMove(e) {
                     rowSet.add(p);
                 }
                 state.selectedNucs.set(currentIndex, rowSet);
-                debounceRender();
+                scheduleNucSelectionRefresh();
             }
         }
     }
@@ -1407,9 +1498,13 @@ function copySelected() {
             nucText += sub + '\n';
         }
     }
-    if (nucText) {
-        navigator.clipboard.writeText(nucText.trim()).then(() => {
-            showMessage("Selected nucleotides copied!", 2000);
+    const trimmedNucText = nucText.trim();
+    if (trimmedNucText) {
+        const previewSource = trimmedNucText.replace(/\s+/g, ' ');
+        const preview = previewSource.length > 50 ? previewSource.slice(0, 50) + 'вЂ¦' : previewSource;
+        const baseCount = trimmedNucText.replace(/\s+/g, '').length;
+        navigator.clipboard.writeText(trimmedNucText).then(() => {
+            showMessage(`Copied ${baseCount} bp: ${preview}`, 4000);
         }).catch(err => {
             console.error('Copy failed:', err);
             showMessage("Failed to copy. Check console.", 5000);
@@ -1460,7 +1555,7 @@ function copySelectedConsensus() {
     }
     const selectedSeqs = Array.from(state.selectedRows).map(i => state.seqs[i].seq);
     const len = Math.max(...selectedSeqs.map(s => s.length));
-    const threshold = parseInt(el('consensusThreshold').value) / 100;
+    const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
     let cons = '';
     for (let pos = 0; pos < len; pos++) {
         const col = selectedSeqs.map(s => s[pos] || '-').filter(b => b !== '-' && b !== '.');
@@ -1646,7 +1741,7 @@ function insertGroupConsensus() {
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
     const len = Math.max(...selectedSeqs.map(s => s.length));
-    const threshold = parseInt(el('groupConsensusThreshold').value);  // % value from slider (e.g., 70)
+    const threshold = clampGroupConsensusPercent(el('groupConsensusThreshold').value);  // % value from slider (e.g., 70)
     const groupSize = selectedSeqs.length;
     const plurality = Math.ceil(groupSize * threshold / 100);  // NEW: Absolute min support, like your $plur
     let cons = '';
@@ -1683,7 +1778,7 @@ function replaceSelectedWithConsensus() {
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
     const len = Math.max(...selectedSeqs.map(s => s.length));
-    const threshold = parseInt(el('groupConsensusThreshold').value) / 100;
+    const threshold = clampGroupConsensusPercent(el('groupConsensusThreshold').value) / 100;
     
     // Generate consensus sequence
     let cons = '';
@@ -1789,10 +1884,27 @@ function loadPreset() {
     }
     const p = JSON.parse(saved);
     ['black','dark','light','zoom','blockSize','nameLen','consensusThreshold', 'groupConsensusThreshold'].forEach(k => {
-        el(k + 'Slider').value = p[k];
+        let value = p[k];
+        if (k === 'consensusThreshold') {
+            value = clampConsensusPercent(value);
+            setConsensusThresholdUI(value);
+            return;
+        }
+        if (k === 'groupConsensusThreshold') {
+            value = clampGroupConsensusPercent(value);
+            setGroupConsensusThresholdUI(value);
+            return;
+        }
+        const sliderEl = el(k + 'Slider');
+        if (sliderEl) {
+            sliderEl.value = value;
+            updateSliderBackground(sliderEl);
+        }
         const inputElement = el(k + 'Input');
-        if (inputElement) inputElement.value = p[k];
-        updateSliderBackground(el(k + 'Slider'));
+        if (inputElement) inputElement.value = value;
+        if (k === 'nameLen') {
+            document.documentElement.style.setProperty('--nameLen', value);
+        }
     });
     setZoom(p.zoom);
     el('modeBlocks').checked = p.mode === 'blocks';
@@ -2191,9 +2303,10 @@ function showContextMenu(e, index) {
         state.selectedRows.clear();
         state.selectedColumns.clear();
         state.selectedNucs.clear();
+        state.pendingNucStart = null;
         updateRowSelections();
         updateColumnSelections();
-        renderAlignment();
+        scheduleNucSelectionRefresh();
         closeContextMenu();
     });
     contextMenu.appendChild(clearSelItem);
@@ -2264,9 +2377,172 @@ function updateRowSelections() {
     });
 }
 function updateColumnSelections() {
-    document.querySelectorAll('.seq-data span.column-selected').forEach(span => span.classList.remove('column-selected'));
+    state.domSelectedColumns.forEach(spanSet => {
+        spanSet.forEach(span => span.classList.remove('column-selected'));
+    });
+    state.domSelectedColumns = new Map();
+    if (!state.spanCache) return;
     state.selectedColumns.forEach(pos => {
-        document.querySelectorAll(`.seq-data span[data-pos="${pos}"]`).forEach(span => span.classList.add('column-selected'));
+        const spanSet = new Set();
+        state.spanCache.forEach(rowMap => {
+            const span = rowMap.get(pos);
+            if (!span) return;
+            span.classList.add('column-selected');
+            spanSet.add(span);
+        });
+        if (spanSet.size > 0) {
+            state.domSelectedColumns.set(pos, spanSet);
+        }
+    });
+}
+
+let pendingNucDomUpdate = false;
+
+function detachNucSelectedHandlers(span) {
+    if (span.dataset.nucSelectedBound !== '1') return;
+    const handlers = span._nucSelectedHandlers;
+    if (handlers) {
+        span.removeEventListener('mouseover', handlers.mouseover);
+        span.removeEventListener('mouseout', handlers.mouseout);
+        span.removeEventListener('click', handlers.click);
+    }
+    delete span._nucSelectedHandlers;
+    delete span.dataset.nucSelectedBound;
+}
+
+function detachNucPendingHandlers(span) {
+    if (span.dataset.nucPendingBound !== '1') return;
+    const handlers = span._nucPendingHandlers;
+    if (handlers) {
+        span.removeEventListener('mouseover', handlers.mouseover);
+        span.removeEventListener('mouseout', handlers.mouseout);
+    }
+    delete span._nucPendingHandlers;
+    delete span.dataset.nucPendingBound;
+}
+
+function attachNucSelectedHandlers(span) {
+    if (span.dataset.nucSelectedBound === '1') return;
+    const mouseover = () => {
+        if (!tooltip) return;
+        tooltip.style.display = 'block';
+        tooltip.textContent = 'Copy';
+        const rect = span.getBoundingClientRect();
+        tooltip.style.left = (rect.left + rect.width / 2) + 'px';
+        tooltip.style.top = (rect.top - 30) + 'px';
+        tooltip.style.transform = 'translateX(-50%)';
+    };
+    const mouseout = () => {
+        if (!tooltip) return;
+        tooltip.style.display = 'none';
+    };
+    const click = (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        copySelected();
+    };
+    span.addEventListener('mouseover', mouseover);
+    span.addEventListener('mouseout', mouseout);
+    span.addEventListener('click', click);
+    span.dataset.nucSelectedBound = '1';
+    span._nucSelectedHandlers = { mouseover, mouseout, click };
+}
+
+function attachNucPendingHandlers(span) {
+    if (span.dataset.nucPendingBound === '1') return;
+    const mouseover = () => {
+        if (!tooltip) return;
+        tooltip.style.display = 'block';
+        tooltip.textContent = 'Selection start - Ctrl+click another nucleotide to complete range';
+        const rect = span.getBoundingClientRect();
+        tooltip.style.left = (rect.left + rect.width / 2) + 'px';
+        tooltip.style.top = (rect.top - 30) + 'px';
+        tooltip.style.transform = 'translateX(-50%)';
+    };
+    const mouseout = () => {
+        if (!tooltip) return;
+        tooltip.style.display = 'none';
+    };
+    span.addEventListener('mouseover', mouseover);
+    span.addEventListener('mouseout', mouseout);
+    span.dataset.nucPendingBound = '1';
+    span._nucPendingHandlers = { mouseover, mouseout };
+}
+
+function refreshNucleotideSelectionsImmediate() {
+    const container = alignmentContainer;
+    if (!container) return;
+    const desiredSelections = state.selectedNucs;
+
+    // Remove selections that are no longer desired
+    for (const [row, posMap] of Array.from(state.domSelectedNucs.entries())) {
+        const desiredSet = desiredSelections.get(row);
+        if (!desiredSet || desiredSet.size === 0) {
+            for (const [pos, span] of Array.from(posMap.entries())) {
+                span.classList.remove('nuc-selected');
+                detachNucSelectedHandlers(span);
+                posMap.delete(pos);
+            }
+            state.domSelectedNucs.delete(row);
+            continue;
+        }
+        for (const [pos, span] of Array.from(posMap.entries())) {
+            if (!desiredSet.has(pos)) {
+                span.classList.remove('nuc-selected');
+                detachNucSelectedHandlers(span);
+                posMap.delete(pos);
+            }
+        }
+        if (posMap.size === 0) {
+            state.domSelectedNucs.delete(row);
+        }
+    }
+
+    // Add new selections
+    desiredSelections.forEach((posSet, row) => {
+        posSet.forEach(pos => {
+            if (!state.domSelectedNucs.get(row)?.has(pos)) {
+                const span = getCachedSpan(row, pos);
+                if (!span) return;
+                span.classList.add('nuc-selected');
+                attachNucSelectedHandlers(span);
+                let rowMap = state.domSelectedNucs.get(row);
+                if (!rowMap) {
+                    rowMap = new Map();
+                    state.domSelectedNucs.set(row, rowMap);
+                }
+                rowMap.set(pos, span);
+            }
+        });
+    });
+
+    // Update pending indicator
+    if (state.domPendingNuc) {
+        const { span } = state.domPendingNuc;
+        span.classList.remove('nuc-pending');
+        detachNucPendingHandlers(span);
+        state.domPendingNuc = null;
+    }
+    if (state.pendingNucStart) {
+        const { row, pos } = state.pendingNucStart;
+        const span = getCachedSpan(row, pos);
+        if (span && !span.classList.contains('nuc-selected')) {
+            span.classList.add('nuc-pending');
+            attachNucPendingHandlers(span);
+            state.domPendingNuc = { row, pos, span };
+        }
+    }
+}
+
+function scheduleNucSelectionRefresh() {
+    if (pendingNucDomUpdate) return;
+    pendingNucDomUpdate = true;
+    const raf = (typeof window !== 'undefined' && window.requestAnimationFrame)
+        ? window.requestAnimationFrame.bind(window)
+        : (cb) => setTimeout(cb, 16);
+    raf(() => {
+        pendingNucDomUpdate = false;
+        refreshNucleotideSelectionsImmediate();
     });
 }
 // EVENT LISTENERS
@@ -2410,6 +2686,11 @@ function initializeAppUI() {
     // UI listener wiring
     attachUIListeners();
 
+    // Apply default consensus thresholds
+    setConsensusThresholdUI(DEFAULTS.consensusThreshold);
+    setGroupConsensusThresholdUI(DEFAULTS.groupConsensusThreshold);
+    setNameLengthUI(DEFAULTS.nameLength);
+
     // Set initial state for controls
     el('modeBlocks').checked = true;
     el('modeSingle').checked = false;
@@ -2459,7 +2740,22 @@ function attachUIListeners() {
         if (slider && input) {
             const renderCb = debounceRender;
             slider.addEventListener('input', () => {
-                input.value = slider.value;
+                if (sliderId === 'consensusThreshold') {
+                    const clamped = clampConsensusPercent(slider.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                } else if (sliderId === 'groupConsensusThreshold') {
+                    const clamped = clampGroupConsensusPercent(slider.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                } else if (sliderId === 'nameLengthSlider') {
+                    const clamped = clampNameLength(slider.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                    document.documentElement.style.setProperty('--nameLen', clamped);
+                } else {
+                    input.value = slider.value;
+                }
                 updateSliderBackground(slider);
                 if (sliderId.includes('black') || sliderId.includes('dark') || sliderId.includes('light')) {
                     validateThresholds();
@@ -2468,7 +2764,22 @@ function attachUIListeners() {
             });
 
             input.addEventListener('input', () => {
-                slider.value = input.value;
+                if (sliderId === 'consensusThreshold') {
+                    const clamped = clampConsensusPercent(input.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                } else if (sliderId === 'groupConsensusThreshold') {
+                    const clamped = clampGroupConsensusPercent(input.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                } else if (sliderId === 'nameLengthSlider') {
+                    const clamped = clampNameLength(input.value);
+                    slider.value = clamped;
+                    input.value = clamped;
+                    document.documentElement.style.setProperty('--nameLen', clamped);
+                } else {
+                    slider.value = input.value;
+                }
                 updateSliderBackground(slider);
                 if (inputId.includes('black') || inputId.includes('dark') || inputId.includes('light')) {
                     validateThresholds();
@@ -2515,6 +2826,7 @@ function attachUIListeners() {
     if (alignmentContainer) {
         alignmentContainer.addEventListener('mousedown', handleMouseDown);
         alignmentContainer.addEventListener('mousemove', handleMouseMove);
+        alignmentContainer.addEventListener('mousedown', handleAlignmentPanStart);
         alignmentContainer.addEventListener('click', () => {
             // If menu is shown as overlay, hide it when clicking on alignment
             if (controls && controls.style.position === 'fixed' && controls.style.transform !== 'translateY(-100%)') {
@@ -2530,6 +2842,9 @@ function attachUIListeners() {
     }
 
     document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('mouseup', handleAlignmentPanEnd);
+    document.addEventListener('mousemove', handleAlignmentPanMove);
+    document.addEventListener('contextmenu', handleAlignmentPanContextMenu, true);
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
     
@@ -2698,6 +3013,7 @@ function removeSingleGap(rowIndex, pos) {
 // Slide by dragging seq-data
 function handleSlideStart(e) {
     if (e.button !== 2) return; // Right click only
+    if (state.panning.active) return;
     e.preventDefault(); // Prevent context menu
     const dataSpan = e.target.closest('.seq-data');
     if (!dataSpan) return;
@@ -2723,6 +3039,61 @@ function handleSlideEnd() {
     }
     state.slideSeqIndex = null;
 }
+
+function handleAlignmentPanStart(e) {
+    if (e.button !== 2) return;
+    if (!alignmentContainer) return;
+    // Only pan if NOT on a seq-data or seq-name element
+    const dataTarget = e.target.closest('.seq-data');
+    const nameTarget = e.target.closest('.seq-name');
+    if (dataTarget || nameTarget) return;
+    
+    e.preventDefault();
+    state.panning.active = true;
+    state.panning.started = false;
+    state.panning.startX = e.clientX;
+    state.panning.startY = e.clientY;
+    state.panning.scrollLeft = alignmentContainer.scrollLeft;
+    state.panning.scrollTop = alignmentContainer.scrollTop;
+}
+
+function handleAlignmentPanMove(e) {
+    if (!state.panning.active || !alignmentContainer) return;
+    
+    // Check if right button is still held
+    if (e.buttons !== undefined && (e.buttons & 2) === 0) {
+        handleAlignmentPanEnd();
+        return;
+    }
+    
+    const deltaX = state.panning.startX - e.clientX;
+    const deltaY = state.panning.startY - e.clientY;
+    
+    // Small threshold before activating pan
+    if (!state.panning.started) {
+        if (Math.abs(deltaX) < 3 && Math.abs(deltaY) < 3) {
+            return;
+        }
+        state.panning.started = true;
+    }
+    
+    e.preventDefault();
+    alignmentContainer.scrollLeft = state.panning.scrollLeft + deltaX;
+    alignmentContainer.scrollTop = state.panning.scrollTop + deltaY;
+}
+
+function handleAlignmentPanEnd() {
+    if (!state.panning.active) return;
+    state.panning.active = false;
+    state.panning.started = false;
+}
+
+function handleAlignmentPanContextMenu(e) {
+    if (state.panning.started) {
+        e.preventDefault();
+    }
+}
+
 function getLeadingGaps(seq) {
     let count = 0;
     for (let char of seq) {
