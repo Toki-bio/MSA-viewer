@@ -55,22 +55,22 @@
     background: var(--dropzone-hover-bg);
 }
 #controls {
-    position: relative;
+    position: sticky;
     top: 0;
     left: 0;
     right: 0;
     background: var(--control-bg);
-    padding: 6px 8px;
+    padding: 2px 4px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    font-size: 13px;
+    gap: 2px;
+    font-size: 12px;
     border-bottom: 1px solid #ddd;
     z-index: 100;
 }
 .status-row {
     background: var(--control-bg);
-    padding: 6px 8px;
+    padding: 2px 4px;
     border-bottom: 1px solid #ddd;
     display: flex;
     justify-content: center;
@@ -79,12 +79,12 @@
     position: relative;
     width: 100%;
     box-sizing: border-box;
-    min-height: 28px;
+    min-height: 18px;
 }
 
 .control-row {
     display: flex;
-    gap: 10px;
+    gap: 3px;
     align-items: center;
     width: 100%;
     flex-wrap: nowrap;
@@ -113,7 +113,7 @@
 .standard-menu-group {
     display: flex;
     justify-content: center;
-    gap: 10px;
+    gap: 3px;
 }
 
 .side-section {
@@ -176,38 +176,27 @@
     pointer-events: none;
 }
 
-/* Ensure Input section header has better hover area */
-.menu-section.side-section#input-section .section-header {
-    padding: 10px 18px; /* Increase padding */
-    margin-bottom: 0; /* Remove gap */
-}
-.menu-section.side-section#actions-section .control-group {
-    right: 0 !important;
-    left: auto !important;
-    min-width: fit-content !important; /* Ensure it fits content */
-    width: fit-content !important; /* Strictly fit content */
-    max-width: 180px !important; /* Further reduce maximum width */
-    white-space: nowrap !important; /* Prevent wrapping of content */
-    overflow: hidden !important; /* Hide overflow if any */
-    background-size: fit-content !important; /* Ensure background fits content */
-}
-
 /* Ensure control-groups inside side-sections are visible outside the parent */
 .side-section .control-group {
     overflow: visible;
 }
 
 .section-header {
-    padding: 8px 16px;
+    padding: 1px 4px;
     background: #f0f0f0;
     border: 1px solid #ccc;
     cursor: pointer;
     user-select: none;
     font-weight: bold;
     border-radius: 4px 4px 0 0;
-    font-size: 13px;
+    font-size: 9px;
     margin: 0;
     color: #2c3e50;
+    height: 14px;
+    line-height: 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
 }
 
 .section-header:hover {
@@ -248,6 +237,19 @@
     display: block !important;
 }
 
+/* Prevent menu from closing when interacting with inputs inside */
+.control-group input,
+.control-group button,
+.control-group textarea {
+    pointer-events: auto;
+}
+
+/* Keep menu open when hovering anywhere in control-group area */
+.menu-section:hover,
+.menu-section:has(.control-group:hover) {
+    z-index: 10001;
+}
+
 /* Show control groups when menu is open via JS (stable state) */
 .menu-section.menu-open .control-group {
     display: block !important;
@@ -258,9 +260,9 @@
     content: '';
     position: absolute;
     top: 100%;
-    left: 0;
-    right: 0;
-    height: 5px; /* Increased from 2px to 5px for safer hover */
+    left: -20px;
+    right: -20px;
+    height: 80px; /* Cover entire autocomplete popup area */
     z-index: 9998;
 }
 
@@ -269,9 +271,9 @@
     content: '';
     position: absolute;
     top: 100%;
-    left: 0;
-    right: 0;
-    height: 5px;
+    left: -20px;
+    right: -20px;
+    height: 80px;
     z-index: 9998;
 }
 
@@ -562,6 +564,7 @@ input[type="number"] {
     -webkit-user-select: none;
     -ms-user-select: none;
     scroll-behavior: smooth;
+    z-index: 1; /* Ensure it's below the fixed menu (z-index: 1000) when menu appears */
 }
 .seq-line {
     display: flex;
@@ -616,6 +619,16 @@ input[type="number"] {
 .seq-name:hover {
     background-color: #f0f0f0;
     color: #000;
+}
+.seq-name.selected::before {
+    content: '';
+    position: absolute;
+    left: -3px;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #0066ff;
+    border-radius: 2px;
 }
 .seq-data {
     flex: 1 1 auto;
@@ -688,19 +701,20 @@ input[type="number"] {
 
 .section-header {
     font-weight: bold;
-    font-size: 13px;
-    margin: 2px 0 1px 0;
-    padding: 2px 6px;
-    background: #f0f8ff;
-    border-radius: 3px;
-    border: 1px solid #d0e0ff;
+    font-size: 10px;
+    margin: 0;
+    padding: 1px 4px;
+    background: #f0f0f0;
+    border-radius: 4px 4px 0 0;
+    border: 1px solid #ccc;
     cursor: pointer;
     user-select: none;
-    display: flex;
-    justify-content: space-between;
+    display: inline-flex;
     align-items: center;
+    gap: 2px;
+    height: 14px;
+    line-height: 14px;
     transition: background-color 0.2s;
-    min-height: 20px;
 }
 
 .section-header:hover {
