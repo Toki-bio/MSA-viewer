@@ -236,7 +236,7 @@
 
 /* Reduce padding for shade controls to fit without scrollbar */
 #shade-controls {
-    padding: 8px;
+    padding: 6px 6px;
     overflow-y: visible;
     max-height: none;
 }
@@ -248,6 +248,11 @@
     display: block !important;
 }
 
+/* Show control groups when menu is open via JS (stable state) */
+.menu-section.menu-open .control-group {
+    display: block !important;
+}
+
 /* Add a larger invisible bridge to prevent hover breaking */
 .menu-section:hover::after {
     content: '';
@@ -256,6 +261,17 @@
     left: 0;
     right: 0;
     height: 5px; /* Increased from 2px to 5px for safer hover */
+    z-index: 9998;
+}
+
+/* Keep bridge visible for open menus */
+.menu-section.menu-open::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 5px;
     z-index: 9998;
 }
 
@@ -360,7 +376,7 @@ button:hover {
 .shade-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     flex-wrap: nowrap;
     min-height: 28px;
 }
@@ -368,8 +384,9 @@ button:hover {
 .shade-controls {
     display: flex;
     align-items: center;
-    gap: 4px;
-    min-width: 140px;
+    gap: 2px;
+    min-width: auto;
+    max-width: 180px;
 }
 
 .reset-button {
@@ -838,7 +855,7 @@ input[type="number"] {
     font-weight: bold;
 }
 .tooltip {
-    position: absolute;
+    position: fixed;
     background: var(--tooltip-bg);
     color: black;
     font-size: 12px;
@@ -848,6 +865,7 @@ input[type="number"] {
     z-index: 200;
     display: none;
     border: 1px solid var(--tooltip-border);
+    pointer-events: none;
 }
 .modal {
     display: none;

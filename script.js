@@ -94,6 +94,80 @@ function showMessage(msg, duration = 2000) {
     setTimeout(() => { statusMessage.style.display = 'none'; }, duration);
 }
 
+// Tooltip helper functions with viewport-aware positioning
+function showTooltipAt(content, target, options = {}) {
+    if (!tooltip || !target) return;
+    
+    tooltip.textContent = content;
+    tooltip.style.display = 'block';
+    
+    // Force a reflow to get accurate dimensions after content is set
+    const tooltipWidth = tooltip.offsetWidth || 150;
+    const tooltipHeight = tooltip.offsetHeight || 30;
+    const gapSize = 8;
+    
+    // Get target position
+    const rect = target.getBoundingClientRect();
+    const scrollX = window.scrollX || window.pageXOffset;
+    const scrollY = window.scrollY || window.pageYOffset;
+    
+    // Try to center horizontally above the target
+    let left = rect.left + rect.width / 2 - tooltipWidth / 2;
+    let top = rect.top - tooltipHeight - gapSize;
+    let useTransform = false;
+    
+    // Clamp horizontal position to keep tooltip on screen
+    const padding = 5;
+    if (left < padding) {
+        left = padding;
+    } else if (left + tooltipWidth > window.innerWidth - padding) {
+        left = window.innerWidth - tooltipWidth - padding;
+    }
+    
+    // If tooltip goes above viewport, position it below instead
+    if (top < padding) {
+        top = rect.bottom + gapSize;
+    }
+    
+    // Add scroll offset for absolute positioning
+    tooltip.style.position = 'fixed';
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
+    tooltip.style.transform = 'none';
+}
+
+function hideTooltip() {
+    if (!tooltip) return;
+    tooltip.style.display = 'none';
+}
+
+// Menu stability: delay closing menus when mouse leaves to prevent flickering
+const menuCloseDelays = new Map();
+const MENU_CLOSE_DELAY = 300; // milliseconds
+
+function setupMenuStability() {
+    const menuSections = document.querySelectorAll('.menu-section');
+    menuSections.forEach(section => {
+        section.addEventListener('mouseenter', () => {
+            // Clear any pending close timeout for this menu
+            if (menuCloseDelays.has(section)) {
+                clearTimeout(menuCloseDelays.get(section));
+                menuCloseDelays.delete(section);
+            }
+            section.classList.add('menu-open');
+        });
+        
+        section.addEventListener('mouseleave', () => {
+            // Delay closing the menu to avoid flickering on brief mouse movements
+            const timeoutId = setTimeout(() => {
+                section.classList.remove('menu-open');
+                menuCloseDelays.delete(section);
+            }, MENU_CLOSE_DELAY);
+            menuCloseDelays.set(section, timeoutId);
+        });
+    });
+}
+
 function updateSliderBackground(slider) {
     const value = (slider.value - slider.min) / (slider.max - slider.min) * 100;
     slider.style.setProperty('--slider-value', value + '%');
@@ -122,11 +196,12 @@ function updateNameLengthSliderRange() {
         input.min = 3;
         input.max = newMax;
         
-        // If current value exceeds new max, adjust it
-        if (parseInt(slider.value) > newMax) {
-            slider.value = newMax;
-            input.value = newMax;
-        }
+        // Set slider to maximum when loading new file
+        slider.value = newMax;
+        input.value = newMax;
+        
+        // Update the state to reflect the new value
+        state.nameLength = newMax;
         
         // If current value is below new min, adjust it
         if (parseInt(slider.value) < 3) {
@@ -654,10 +729,10 @@ function renderAlignment() {
     updateColumnSelections();
     scheduleNucSelectionRefresh();
     recalculateCollapsibleHeights();
-    // Re-attach drag listeners for sliding
-    document.querySelectorAll('.seq-data').forEach(dataSpan => {
-        dataSpan.addEventListener('mousedown', handleSlideStart);
-    });
+    // DISABLED: Sequence shifting removed
+    // document.querySelectorAll('.seq-data').forEach(dataSpan => {
+    //     dataSpan.addEventListener('mousedown', handleSlideStart);
+    // });
 }
 
 function ensureSpanCacheRow(row) {
@@ -787,15 +862,10 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         if (base !== '-' && base !== '.') {
             const currentGaplessPos = gaplessPos;
             span.addEventListener('mouseover', (e) => {
-                tooltip.style.display = 'block';
-                tooltip.textContent = `${state.seqs[index].header}: ${currentGaplessPos}`;
-                const rect = span.getBoundingClientRect();
-                tooltip.style.left = (rect.left + rect.width / 2) + 'px';
-                tooltip.style.top = (rect.top - 30) + 'px';
-                tooltip.style.transform = 'translateX(-50%)';
+                showTooltipAt(`${state.seqs[index].header}: ${currentGaplessPos}`, span);
             });
             span.addEventListener('mouseout', () => {
-                tooltip.style.display = 'none';
+                hideTooltip();
             });
         } else {
             span.title = 'Gap';
@@ -878,6 +948,115 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
     consLine.appendChild(dataSpan);
     parent.appendChild(consLine);
 }
+function setupHoverMenuReveal() {
+    const controls = el('controls');
+    const alignmentContainer = el('alignmentContainer');
+    if (!controls || !alignmentContainer) return;
+    
+    let hideMenuTimeout;
+    let isScrolledDown = false;
+    let lastScrollTop = 0;
+    let lastCheckTime = 0;
+    let isMenuOverlayVisible = false;
+    let userClickedOutside = false;
+    const checkInterval = 100;
+    
+    // Scroll detection with debounce
+    const checkScroll = () => {
+        const now = Date.now();
+        if (now - lastCheckTime < checkInterval) return;
+        lastCheckTime = now;
+        
+        const scrollTop = alignmentContainer.scrollTop || window.scrollY || document.documentElement.scrollTop;
+        
+        if (scrollTop > 50 && !isScrolledDown) {
+            controls.style.transform = 'translateY(-100%)';
+            controls.style.position = 'fixed';
+            controls.style.top = '0';
+            controls.style.left = '0';
+            controls.style.right = '0';
+            controls.style.zIndex = '1000';
+            isScrolledDown = true;
+            isMenuOverlayVisible = false;
+            clearTimeout(hideMenuTimeout);
+        } 
+        else if (scrollTop <= 50 && isScrolledDown) {
+            controls.style.transform = 'translateY(0)';
+            controls.style.position = 'static';
+            controls.style.boxShadow = 'none';
+            controls.style.zIndex = '';
+            isScrolledDown = false;
+            isMenuOverlayVisible = false;
+            clearTimeout(hideMenuTimeout);
+        }
+        lastScrollTop = scrollTop;
+    };
+    
+    alignmentContainer.addEventListener('scroll', checkScroll, { passive: true });
+    window.addEventListener('scroll', checkScroll, { passive: true });
+    
+    // Close other menu sections when one opens (prevent overlap)
+    controls.addEventListener('click', (e) => {
+        const header = e.target.closest('.section-header');
+        if (header) {
+            // When clicking a menu section header, close others
+            document.querySelectorAll('.control-group').forEach(group => {
+                const isRelated = header.nextElementSibling === group;
+                if (!isRelated && group.style.display === 'block') {
+                    group.style.display = 'none';
+                }
+            });
+        }
+    });
+    
+    // Hover detection - show menu and keep it visible
+    let lastHoverCheck = 0;
+    document.addEventListener('mousemove', (e) => {
+        const now = Date.now();
+        
+        if (now - lastHoverCheck < 50) return;
+        lastHoverCheck = now;
+        
+        checkScroll();
+        
+        // Show menu when hovering at top while scrolled down
+        if (isScrolledDown && e.clientY <= 40) {
+            if (!isMenuOverlayVisible) {
+                clearTimeout(hideMenuTimeout);
+                controls.style.transform = 'translateY(0)';
+                controls.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
+                isMenuOverlayVisible = true;
+                userClickedOutside = false;
+            }
+        }
+    }, { passive: true });
+    
+    // Keep menu visible while hovering over it
+    controls.addEventListener('mouseenter', () => {
+        clearTimeout(hideMenuTimeout);
+        isMenuOverlayVisible = true;
+        userClickedOutside = false;
+    });
+    
+    controls.addEventListener('mouseleave', () => {
+        // Only hide after user explicitly clicks outside (not on idle)
+    });
+    
+    // Track clicks to know when to close menu
+    document.addEventListener('click', (e) => {
+        if (isMenuOverlayVisible && isScrolledDown) {
+            if (!controls.contains(e.target)) {
+                // Click was outside menu - close it
+                controls.style.transform = 'translateY(-100%)';
+                controls.style.boxShadow = 'none';
+                isMenuOverlayVisible = false;
+                clearTimeout(hideMenuTimeout);
+                userClickedOutside = true;
+            }
+        }
+    });
+}
+
 function setZoom(percent) {
     const size = (percent / 100) * 13;
     alignmentContainer.style.fontSize = size + 'px';
@@ -938,6 +1117,7 @@ function parseAndRender(isFromDrop = false) {
         state.lastSelectedIndex = null;
         
         // Update name length slider range based on loaded sequences
+        // This will set the slider to maximum actual name length
         updateNameLengthSliderRange();
         
         // Update source info with comprehensive statistics
@@ -951,6 +1131,7 @@ function parseAndRender(isFromDrop = false) {
         const filename = state.currentFilename ? `<strong>${state.currentFilename}</strong>: ` : '';
         el('sourceInfo').innerHTML = `${filename}${seqCount} sequences, ${aliLength} columns, ${lengthRange} bp/seq`;
         renderAlignment();
+        setupHoverMenuReveal();
         showMessage("File loaded successfully!", 2000);
 
         // Ensure menus don't have inline styles that interfere with hover
@@ -979,6 +1160,7 @@ function onModeChange() {
         container.style.display = el('modeBlocks').checked ? 'flex' : 'none';
     }
     renderAlignment();
+    setupHoverMenuReveal();
 }
 function onShadeModeChange() {
     validateThresholds();
@@ -2424,17 +2606,10 @@ function detachNucPendingHandlers(span) {
 function attachNucSelectedHandlers(span) {
     if (span.dataset.nucSelectedBound === '1') return;
     const mouseover = () => {
-        if (!tooltip) return;
-        tooltip.style.display = 'block';
-        tooltip.textContent = 'Copy';
-        const rect = span.getBoundingClientRect();
-        tooltip.style.left = (rect.left + rect.width / 2) + 'px';
-        tooltip.style.top = (rect.top - 30) + 'px';
-        tooltip.style.transform = 'translateX(-50%)';
+        showTooltipAt('Copy', span);
     };
     const mouseout = () => {
-        if (!tooltip) return;
-        tooltip.style.display = 'none';
+        hideTooltip();
     };
     const click = (event) => {
         event.stopPropagation();
@@ -2451,17 +2626,10 @@ function attachNucSelectedHandlers(span) {
 function attachNucPendingHandlers(span) {
     if (span.dataset.nucPendingBound === '1') return;
     const mouseover = () => {
-        if (!tooltip) return;
-        tooltip.style.display = 'block';
-        tooltip.textContent = 'Selection start - Ctrl+click another nucleotide to complete range';
-        const rect = span.getBoundingClientRect();
-        tooltip.style.left = (rect.left + rect.width / 2) + 'px';
-        tooltip.style.top = (rect.top - 30) + 'px';
-        tooltip.style.transform = 'translateX(-50%)';
+        showTooltipAt('Selection start - Ctrl+click another nucleotide to complete range', span);
     };
     const mouseout = () => {
-        if (!tooltip) return;
-        tooltip.style.display = 'none';
+        hideTooltip();
     };
     span.addEventListener('mouseover', mouseover);
     span.addEventListener('mouseout', mouseout);
@@ -2717,6 +2885,9 @@ function initializeAppUI() {
             updateSliderBackground(slider);
         }
     });
+    
+    // Setup menu stability to prevent flickering on mouse movement
+    setupMenuStability();
 }
 
 document.addEventListener('DOMContentLoaded', initializeAppUI);
@@ -2930,7 +3101,8 @@ function setupMenuScrollBehavior() {
         }
     });
 }
-setupMenuScrollBehavior();
+//setupMenuScrollBehavior();  // Disabled - using setupHoverMenuReveal() instead
+setupHoverMenuReveal();
 // NEW EDITING FUNCTIONS
 function removeGapColumns() {
     if (state.seqs.length === 0) return;
@@ -3237,6 +3409,30 @@ fastaInput.addEventListener('keydown', function(e) {
         }
     }, true);
 })();
+
+// Right-click horizontal scroll
+window.addEventListener('load', () => {
+    if (!alignmentContainer) return;
+    let scrolling = false, sx = 0, sl = 0;
+    
+    alignmentContainer.addEventListener('mousedown', (e) => {
+        if (e.button !== 2) return;
+        if (e.target.closest('.seq-data, .seq-name')) return;
+        scrolling = true;
+        sx = e.clientX;
+        sl = alignmentContainer.scrollLeft;
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+        if (scrolling) alignmentContainer.scrollLeft = sl - (e.clientX - sx);
+    });
+    
+    document.addEventListener('mouseup', () => { scrolling = false; });
+    
+    alignmentContainer.addEventListener('contextmenu', (e) => {
+        if (!e.target.closest('.seq-data, .seq-name')) e.preventDefault();
+    });
+});
 
 // ============================================================================
 // End of Full-window drag-and-drop
