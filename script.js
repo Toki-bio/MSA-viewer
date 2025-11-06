@@ -148,6 +148,8 @@ const MENU_CLOSE_DELAY = 300; // milliseconds
 function setupMenuStability() {
     const menuSections = document.querySelectorAll('.menu-section');
     menuSections.forEach(section => {
+        const controlGroup = section.querySelector('.control-group');
+        
         section.addEventListener('mouseenter', () => {
             // Clear any pending close timeout for this menu
             if (menuCloseDelays.has(section)) {
@@ -158,6 +160,14 @@ function setupMenuStability() {
         });
         
         section.addEventListener('mouseleave', () => {
+            // Check if any input in this menu is focused (autocomplete might be open)
+            const hasFocusedInput = controlGroup?.querySelector('input:focus') !== null;
+            
+            if (hasFocusedInput) {
+                // Don't close if input is focused - let blur event handle it
+                return;
+            }
+            
             // Delay closing the menu to avoid flickering on brief mouse movements
             const timeoutId = setTimeout(() => {
                 section.classList.remove('menu-open');
@@ -165,6 +175,31 @@ function setupMenuStability() {
             }, MENU_CLOSE_DELAY);
             menuCloseDelays.set(section, timeoutId);
         });
+        
+        // Keep menu open when hovering over control-group
+        if (controlGroup) {
+            controlGroup.addEventListener('mouseenter', () => {
+                if (menuCloseDelays.has(section)) {
+                    clearTimeout(menuCloseDelays.get(section));
+                    menuCloseDelays.delete(section);
+                }
+                section.classList.add('menu-open');
+            });
+            
+            // Close menu when blur happens and mouse is not hovering
+            controlGroup.querySelectorAll('input').forEach(input => {
+                input.addEventListener('blur', () => {
+                    // Check if mouse is still over the section
+                    if (!section.matches(':hover')) {
+                        section.classList.remove('menu-open');
+                        if (menuCloseDelays.has(section)) {
+                            clearTimeout(menuCloseDelays.get(section));
+                            menuCloseDelays.delete(section);
+                        }
+                    }
+                });
+            });
+        }
     });
 }
 
@@ -758,6 +793,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     lineDiv.dataset.seqIndex = index;
     const nameSpan = document.createElement('div');
     nameSpan.className = `seq-name ${stickyNames ? '' : 'static'}`;
+    nameSpan.dataset.seqIndex = index;
     nameSpan.title = `${state.seqs[index].fullHeader} (length: ${state.seqs[index].seq.length})`;
     let displayName = state.seqs[index].header;
     let nameLenInt = parseInt(nameLen, 10);
@@ -953,49 +989,9 @@ function setupHoverMenuReveal() {
     const alignmentContainer = el('alignmentContainer');
     if (!controls || !alignmentContainer) return;
     
-    let hideMenuTimeout;
-    let isScrolledDown = false;
-    let lastScrollTop = 0;
-    let lastCheckTime = 0;
-    let isMenuOverlayVisible = false;
-    let userClickedOutside = false;
-    const checkInterval = 100;
+    // Menu stays visible via CSS sticky positioning
+    // This JavaScript just handles closing overlapping menu sections
     
-    // Scroll detection with debounce
-    const checkScroll = () => {
-        const now = Date.now();
-        if (now - lastCheckTime < checkInterval) return;
-        lastCheckTime = now;
-        
-        const scrollTop = alignmentContainer.scrollTop || window.scrollY || document.documentElement.scrollTop;
-        
-        if (scrollTop > 50 && !isScrolledDown) {
-            controls.style.transform = 'translateY(-100%)';
-            controls.style.position = 'fixed';
-            controls.style.top = '0';
-            controls.style.left = '0';
-            controls.style.right = '0';
-            controls.style.zIndex = '1000';
-            isScrolledDown = true;
-            isMenuOverlayVisible = false;
-            clearTimeout(hideMenuTimeout);
-        } 
-        else if (scrollTop <= 50 && isScrolledDown) {
-            controls.style.transform = 'translateY(0)';
-            controls.style.position = 'static';
-            controls.style.boxShadow = 'none';
-            controls.style.zIndex = '';
-            isScrolledDown = false;
-            isMenuOverlayVisible = false;
-            clearTimeout(hideMenuTimeout);
-        }
-        lastScrollTop = scrollTop;
-    };
-    
-    alignmentContainer.addEventListener('scroll', checkScroll, { passive: true });
-    window.addEventListener('scroll', checkScroll, { passive: true });
-    
-    // Close other menu sections when one opens (prevent overlap)
     controls.addEventListener('click', (e) => {
         const header = e.target.closest('.section-header');
         if (header) {
@@ -1006,53 +1002,6 @@ function setupHoverMenuReveal() {
                     group.style.display = 'none';
                 }
             });
-        }
-    });
-    
-    // Hover detection - show menu and keep it visible
-    let lastHoverCheck = 0;
-    document.addEventListener('mousemove', (e) => {
-        const now = Date.now();
-        
-        if (now - lastHoverCheck < 50) return;
-        lastHoverCheck = now;
-        
-        checkScroll();
-        
-        // Show menu when hovering at top while scrolled down
-        if (isScrolledDown && e.clientY <= 40) {
-            if (!isMenuOverlayVisible) {
-                clearTimeout(hideMenuTimeout);
-                controls.style.transform = 'translateY(0)';
-                controls.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
-                isMenuOverlayVisible = true;
-                userClickedOutside = false;
-            }
-        }
-    }, { passive: true });
-    
-    // Keep menu visible while hovering over it
-    controls.addEventListener('mouseenter', () => {
-        clearTimeout(hideMenuTimeout);
-        isMenuOverlayVisible = true;
-        userClickedOutside = false;
-    });
-    
-    controls.addEventListener('mouseleave', () => {
-        // Only hide after user explicitly clicks outside (not on idle)
-    });
-    
-    // Track clicks to know when to close menu
-    document.addEventListener('click', (e) => {
-        if (isMenuOverlayVisible && isScrolledDown) {
-            if (!controls.contains(e.target)) {
-                // Click was outside menu - close it
-                controls.style.transform = 'translateY(-100%)';
-                controls.style.boxShadow = 'none';
-                isMenuOverlayVisible = false;
-                clearTimeout(hideMenuTimeout);
-                userClickedOutside = true;
-            }
         }
     });
 }
@@ -2406,6 +2355,40 @@ function showContextMenu(e, index) {
     contextMenu.appendChild(copyPlainGapped);
     contextMenu.appendChild(copyPlainUngapped);
     
+    // Add color-specific copy options if this sequence has a color
+    const seqName = state.seqs[index].header;
+    if (colourState.mappings.has(seqName)) {
+        const separator1 = document.createElement('div');
+        separator1.style.borderTop = '1px solid #ccc';
+        separator1.style.margin = '4px 0';
+        contextMenu.appendChild(separator1);
+        
+        const colour = colourState.mappings.get(seqName);
+        const colorLabel = document.createElement('div');
+        colorLabel.textContent = `Color: ${colour}`;
+        colorLabel.style.fontSize = '11px';
+        colorLabel.style.color = '#666';
+        colorLabel.style.padding = '2px 0';
+        contextMenu.appendChild(colorLabel);
+        
+        const copySameColorGapped = document.createElement('div');
+        copySameColorGapped.textContent = 'Copy this color (gapped)';
+        copySameColorGapped.addEventListener('click', () => {
+            copySequencesByColor(colour, true, true);
+            closeContextMenu();
+        });
+        
+        const copySameColorUngapped = document.createElement('div');
+        copySameColorUngapped.textContent = 'Copy this color (ungapped)';
+        copySameColorUngapped.addEventListener('click', () => {
+            copySequencesByColor(colour, false, true);
+            closeContextMenu();
+        });
+        
+        contextMenu.appendChild(copySameColorGapped);
+        contextMenu.appendChild(copySameColorUngapped);
+    }
+    
     // Add "Replace with Consensus" option if multiple sequences selected
     if (state.selectedRows.size >= 2) {
         const replaceConsensusItem = document.createElement('div');
@@ -2554,8 +2537,10 @@ function showContextMenu(e, index) {
 }
 function updateRowSelections() {
     document.querySelectorAll('.seq-line.selected').forEach(line => line.classList.remove('selected'));
+    document.querySelectorAll('.seq-name.selected').forEach(name => name.classList.remove('selected'));
     state.selectedRows.forEach(index => {
         document.querySelectorAll(`.seq-line[data-seq-index="${index}"]`).forEach(line => line.classList.add('selected'));
+        document.querySelectorAll(`.seq-name[data-seq-index="${index}"]`).forEach(name => name.classList.add('selected'));
     });
 }
 function updateColumnSelections() {
@@ -2888,6 +2873,9 @@ function initializeAppUI() {
     
     // Setup menu stability to prevent flickering on mouse movement
     setupMenuStability();
+    
+    // Initialize colour seqs feature
+    initColourSeqs();
 }
 
 document.addEventListener('DOMContentLoaded', initializeAppUI);
@@ -3433,6 +3421,416 @@ window.addEventListener('load', () => {
         if (!e.target.closest('.seq-data, .seq-name')) e.preventDefault();
     });
 });
+
+// ============================================================================
+// COLOUR SEQUENCE NAMES FEATURE
+// ============================================================================
+
+// Copy all sequences with a specific color
+function copySequencesByColor(colour, ungapped = false, asFasta = true) {
+    const matchingSeqs = [];
+    
+    state.seqs.forEach((seq, idx) => {
+        if (colourState.mappings.get(seq.header) === colour) {
+            const seqData = ungapped ? seq.seq.replace(/-/g, '') : seq.seq;
+            if (asFasta) {
+                matchingSeqs.push(`>${seq.header}\n${seqData}`);
+            } else {
+                matchingSeqs.push(seqData);
+            }
+        }
+    });
+    
+    if (matchingSeqs.length === 0) {
+        showMessage('No sequences with this color', 2000);
+        return;
+    }
+    
+    const text = matchingSeqs.join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+        showMessage(`Copied ${matchingSeqs.length} sequence(s) with this color`, 2000);
+    }).catch(err => {
+        showMessage('Failed to copy', 2000);
+    });
+}
+
+// Sort sequences by their assigned color
+function sortSequencesByColor() {
+    const colorOrder = new Map();
+    let colorIndex = 0;
+    
+    // First pass: assign order to each color
+    state.seqs.forEach((seq) => {
+        const color = colourState.mappings.get(seq.header);
+        if (color && !colorOrder.has(color)) {
+            colorOrder.set(color, colorIndex++);
+        }
+    });
+    
+    // Sort: colored seqs first (by color), then uncolored
+    const sortedSeqs = [...state.seqs].sort((a, b) => {
+        const colorA = colourState.mappings.get(a.header);
+        const colorB = colourState.mappings.get(b.header);
+        
+        const orderA = colorA ? colorOrder.get(colorA) : Infinity;
+        const orderB = colorB ? colorOrder.get(colorB) : Infinity;
+        
+        return orderA - orderB;
+    });
+    
+    // Update state and re-render
+    state.seqs = sortedSeqs;
+    state.selectedRows.clear();
+    renderAlignment();
+    showMessage('Sequences sorted by color', 2000);
+}
+
+// Group colored sequences at top
+function groupColoredSequencesAtTop() {
+    const coloredSeqs = [];
+    const ungroupedSeqs = [];
+    
+    state.seqs.forEach((seq) => {
+        if (colourState.mappings.has(seq.header)) {
+            coloredSeqs.push(seq);
+        } else {
+            ungroupedSeqs.push(seq);
+        }
+    });
+    
+    // Combine: colored at top, then ungrouped
+    state.seqs = [...coloredSeqs, ...ungroupedSeqs];
+    state.selectedRows.clear();
+    renderAlignment();
+    showMessage(`Moved ${coloredSeqs.length} colored sequence(s) to top`, 2000);
+}
+
+// 10-color discrete palette
+const colourPalette = [
+    '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
+    '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B88B', '#A9DFBF'
+];
+
+// Store current color mappings and presets
+let colourState = {
+    mappings: new Map(), // seqName -> color (current)
+    history: new Map(), // seqName -> [{color, method, timestamp}, ...]
+    presets: JSON.parse(localStorage.getItem('seqColourPresets') || '{}')
+};
+
+// Levenshtein distance - compare first N characters
+function levenshteinDistance(str1, str2, maxChars = 10) {
+    const s1 = str1.substring(0, maxChars).toLowerCase();
+    const s2 = str2.substring(0, maxChars).toLowerCase();
+    const m = s1.length, n = s2.length;
+    const dp = Array(n + 1).fill(0).map((_, i) => i);
+    
+    for (let i = 1; i <= m; i++) {
+        let prev = i;
+        for (let j = 1; j <= n; j++) {
+            const curr = s1[i - 1] === s2[j - 1] ? dp[j - 1] : 1 + Math.min(dp[j], dp[j - 1], prev);
+            dp[j] = prev;
+            prev = curr;
+        }
+        dp[0] = i;
+    }
+    return dp[n];
+}
+
+// Cluster sequences by similarity
+function clusterByName(seqNames, maxChars = 10, threshold = 3) {
+    const clusters = [];
+    const assigned = new Set();
+    
+    for (const name of seqNames) {
+        if (assigned.has(name)) continue;
+        
+        const cluster = [name];
+        assigned.add(name);
+        
+        for (const other of seqNames) {
+            if (!assigned.has(other)) {
+                if (levenshteinDistance(name, other, maxChars) <= threshold) {
+                    cluster.push(other);
+                    assigned.add(other);
+                }
+            }
+        }
+        clusters.push(cluster);
+    }
+    return clusters;
+}
+
+// Apply color to sequence name elements
+function applyColourToSeqNames(mappings) {
+    const seqNameElements = document.querySelectorAll('.seq-name');
+    seqNameElements.forEach(el => {
+        const text = el.textContent.trim();
+        if (mappings.has(text)) {
+            const colour = mappings.get(text);
+            el.setAttribute('style', `background-color: ${colour} !important; color: #000 !important; font-weight: bold !important;`);
+            el.title = `Color: ${colour}`;
+        } else {
+            el.removeAttribute('style');
+            el.title = '';
+        }
+    });
+}
+
+// Helper: Record color in history
+function recordColorHistory(seqName, color, method) {
+    if (!colourState.history.has(seqName)) {
+        colourState.history.set(seqName, []);
+    }
+    colourState.history.get(seqName).push({
+        color,
+        method,
+        timestamp: new Date().toLocaleTimeString()
+    });
+}
+
+// Pattern matching function
+function applyPatternColour() {
+    const patternInput = el('colourPatternInput');
+    const colourInput = el('colourPatternColor');
+    
+    if (!patternInput.value.trim()) {
+        showMessage('Please enter a pattern', 2000);
+        return;
+    }
+    
+    const pattern = patternInput.value.trim();
+    const colour = colourInput.value;
+    let matchCount = 0;
+    
+    try {
+        const regex = new RegExp(pattern, 'i');
+        const seqNameElements = document.querySelectorAll('.seq-name');
+        
+        seqNameElements.forEach(el => {
+            const text = el.textContent.trim();
+            if (regex.test(text)) {
+                colourState.mappings.set(text, colour);
+                recordColorHistory(text, colour, 'Pattern');
+                matchCount++;
+            }
+        });
+        
+        applyColourToSeqNames(colourState.mappings);
+        showMessage(`Applied to ${matchCount} sequence(s)`, 2000);
+        
+    } catch (e) {
+        showMessage(`Invalid regex: ${e.message}`, 3000);
+    }
+}
+
+// Auto-color by similarity
+function autoColourBySimilarity() {
+    const maxChars = parseInt(el('colourSimilarityChars').value) || 10;
+    const threshold = parseInt(el('colourSimilarityThreshold').value) || 3;
+    const mode = document.querySelector('input[name="colourMode"]:checked').value;
+    
+    const seqNameElements = document.querySelectorAll('.seq-name');
+    // Get unique sequence names (each seq appears in multiple blocks)
+    const uniqueSeqNames = new Set(Array.from(seqNameElements).map(el => el.textContent.trim()));
+    const seqNames = Array.from(uniqueSeqNames);
+    
+    if (seqNames.length === 0) {
+        showMessage('No sequences loaded', 2000);
+        return;
+    }
+    
+    // Cluster sequences
+    const clusters = clusterByName(seqNames, maxChars, threshold);
+    
+    // Assign colors based on mode
+    clusters.forEach((cluster, clusterIdx) => {
+        if (mode === 'discrete') {
+            const colour = colourPalette[clusterIdx % colourPalette.length];
+            cluster.forEach(name => {
+                colourState.mappings.set(name, colour);
+                recordColorHistory(name, colour, 'Auto-Similarity');
+            });
+        } else {
+            // Gradient mode - create shades
+            const hue = (clusterIdx * 360 / clusters.length) % 360;
+            cluster.forEach((name, nameIdx) => {
+                const lightness = 50 + (nameIdx * 20 / cluster.length);
+                const colour = `hsl(${hue}, 70%, ${Math.min(lightness, 85)}%)`;
+                colourState.mappings.set(name, colour);
+                recordColorHistory(name, colour, 'Auto-Similarity');
+            });
+        }
+    });
+    
+    applyColourToSeqNames(colourState.mappings);
+    showMessage(`Colored ${seqNames.length} sequences in ${clusters.length} cluster(s)`, 2000);
+}
+
+// Save preset
+function saveColourPreset() {
+    const presetName = el('colourPresetName').value.trim();
+    
+    if (!presetName) {
+        showMessage('Please enter a preset name', 2000);
+        return;
+    }
+    
+    if (colourState.mappings.size === 0) {
+        showMessage('No colors to save', 2000);
+        return;
+    }
+    
+    colourState.presets[presetName] = Array.from(colourState.mappings.entries());
+    localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets));
+    
+    el('colourPresetName').value = '';
+    updateColourPresetList();
+    showMessage(`Preset '${presetName}' saved`, 2000);
+}
+
+// Load preset
+function loadColourPreset() {
+    if (Object.keys(colourState.presets).length === 0) {
+        showMessage('No saved presets', 2000);
+        return;
+    }
+    
+    const presetNames = Object.keys(colourState.presets);
+    const presetName = presetNames[0]; // TODO: could add dialog to select
+    
+    colourState.mappings = new Map(colourState.presets[presetName]);
+    applyColourToSeqNames(colourState.mappings);
+    showMessage(`Loaded preset '${presetName}'`, 2000);
+}
+
+// Reset all colours
+function resetAllColours() {
+    colourState.mappings.clear();
+    colourState.history.clear();
+    const seqNameElements = document.querySelectorAll('.seq-name');
+    seqNameElements.forEach(el => {
+        el.removeAttribute('style');
+        el.title = '';
+    });
+    showMessage('All colors reset', 2000);
+}
+
+// Update preset list display
+function updateColourPresetList() {
+    const presetList = el('colourPresetList');
+    const presetItems = el('presetItems');
+    const presets = colourState.presets;
+    
+    if (Object.keys(presets).length === 0) {
+        presetList.style.display = 'none';
+        return;
+    }
+    
+    presetList.style.display = 'block';
+    presetItems.innerHTML = Object.keys(presets).map(name => 
+        `<div style="cursor: pointer; padding: 2px; border-radius: 2px; margin: 2px 0; background: #f0f0f0;" 
+              onclick="(function() { 
+                colourState.mappings = new Map(colourState.presets['${name}']); 
+                applyColourToSeqNames(colourState.mappings); 
+                showMessage('Loaded ${name}', 2000);
+              })()">
+            ${name} <span style="float: right; cursor: pointer; color: #888;" onclick="(function(e) { e.stopPropagation(); delete colourState.presets['${name}']; localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets)); updateColourPresetList(); })(event)">✕</span>
+        </div>`
+    ).join('');
+}
+
+// Initialize colour seqs feature
+// Show color history inspector
+function showColorHistory() {
+    const modal = el('colourInspectorModal');
+    const content = el('colourHistoryContent');
+    
+    if (colourState.history.size === 0) {
+        content.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No colors assigned yet</div>';
+        modal.style.display = 'block';
+        return;
+    }
+    
+    // Group by sequence name
+    let html = '';
+    const sortedNames = Array.from(colourState.history.keys()).sort();
+    
+    sortedNames.forEach(seqName => {
+        const history = colourState.history.get(seqName);
+        const currentColor = colourState.mappings.get(seqName);
+        
+        html += `<div style="margin-bottom: 12px; padding: 8px; background: #f9f9f9; border-radius: 3px; border-left: 3px solid ${currentColor};">`;
+        html += `<div style="font-weight: bold; margin-bottom: 4px; word-break: break-all;">${seqName}</div>`;
+        html += `<div style="font-size: 10px; color: #666; margin-bottom: 6px;">Current: <span style="display: inline-block; width: 12px; height: 12px; background: ${currentColor}; border: 1px solid #ccc; vertical-align: middle;"></span> ${currentColor}</div>`;
+        html += `<div style="font-size: 10px;">History:</div>`;
+        html += `<div style="margin-left: 8px;">`;
+        
+        history.forEach((entry, idx) => {
+            html += `<div style="margin: 2px 0; display: flex; align-items: center; gap: 6px;">`;
+            html += `<span style="color: #999; min-width: 20px;">${idx + 1}.</span>`;
+            html += `<span style="display: inline-block; width: 14px; height: 14px; background: ${entry.color}; border: 1px solid #ccc; border-radius: 2px;"></span>`;
+            html += `<span>${entry.color}</span>`;
+            html += `<span style="color: #0066cc; margin: 0 4px;">← ${entry.method}</span>`;
+            html += `<span style="color: #999; font-size: 9px;">${entry.timestamp}</span>`;
+            html += `</div>`;
+        });
+        
+        html += `</div></div>`;
+    });
+    
+    content.innerHTML = html;
+    modal.style.display = 'block';
+}
+
+function initColourSeqs() {
+    const patternBtn = el('colourPatternButton');
+    const autoBtn = el('colourAutoButton');
+    const saveBtn = el('colourSavePresetButton');
+    const loadBtn = el('colourLoadPresetButton');
+    const resetBtn = el('colourResetButton');
+    const sortBtn = el('colourSortButton');
+    const groupBtn = el('colourGroupButton');
+    const inspectBtn = el('colourInspectButton');
+    const thresholdSlider = el('colourSimilarityThreshold');
+    const patternInput = el('colourPatternInput');
+    
+    if (patternBtn) patternBtn.addEventListener('click', applyPatternColour);
+    if (autoBtn) autoBtn.addEventListener('click', autoColourBySimilarity);
+    if (saveBtn) saveBtn.addEventListener('click', saveColourPreset);
+    if (loadBtn) loadBtn.addEventListener('click', loadColourPreset);
+    if (resetBtn) resetBtn.addEventListener('click', resetAllColours);
+    if (sortBtn) sortBtn.addEventListener('click', sortSequencesByColor);
+    if (groupBtn) groupBtn.addEventListener('click', groupColoredSequencesAtTop);
+    if (inspectBtn) inspectBtn.addEventListener('click', showColorHistory);
+    
+    // Keep menu open when interacting with pattern input
+    if (patternInput) {
+        patternInput.addEventListener('focus', () => {
+            const colourMenu = document.querySelector('[id="colourseqs-controls"]')?.parentElement;
+            if (colourMenu) {
+                colourMenu.classList.add('menu-open');
+            }
+        });
+        patternInput.addEventListener('blur', () => {
+            setTimeout(() => {
+                if (!document.querySelector('[id="colourseqs-controls"]')?.parentElement?.matches(':hover')) {
+                    document.querySelector('[id="colourseqs-controls"]')?.parentElement?.classList.remove('menu-open');
+                }
+            }, 100);
+        });
+    }
+    
+    // Update threshold display
+    if (thresholdSlider) {
+        thresholdSlider.addEventListener('input', (e) => {
+            el('colourThresholdValue').textContent = e.target.value;
+        });
+    }
+    
+    // Load initial presets list
+    updateColourPresetList();
+}
 
 // ============================================================================
 // End of Full-window drag-and-drop
