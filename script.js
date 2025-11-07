@@ -3835,3 +3835,89 @@ function initColourSeqs() {
 // ============================================================================
 // End of Full-window drag-and-drop
 // ============================================================================
+
+// ============================================================================
+// Persistent horizontal scrollbar synced with alignment
+// ============================================================================
+(function setupPersistentScrollbar() {
+    const alignment = document.getElementById('alignmentContainer');
+    const bar = document.querySelector('.horizontal-scrollbar');
+    const thumb = document.querySelector('.horizontal-scrollbar-thumb');
+    if (!alignment || !bar || !thumb) return;
+
+    let syncing = false;
+
+    function syncSizes() {
+        const w = alignment.scrollWidth || alignment.clientWidth;
+        thumb.style.width = Math.max(w, alignment.clientWidth + 1) + 'px';
+        syncing = true;
+        bar.scrollLeft = alignment.scrollLeft;
+        syncing = false;
+    }
+
+    function onBarScroll() {
+        if (syncing) return;
+        syncing = true;
+        alignment.scrollLeft = bar.scrollLeft;
+        syncing = false;
+    }
+
+    function onAlignmentScroll() {
+        if (syncing) return;
+        syncing = true;
+        bar.scrollLeft = alignment.scrollLeft;
+        syncing = false;
+    }
+
+    syncSizes();
+    bar.addEventListener('scroll', onBarScroll, { passive: true });
+    alignment.addEventListener('scroll', onAlignmentScroll, { passive: true });
+    window.addEventListener('resize', () => window.requestAnimationFrame(syncSizes));
+    const mo = new MutationObserver(() => window.requestAnimationFrame(syncSizes));
+    mo.observe(alignment, { childList: true, subtree: true, characterData: true });
+    
+    // Drag-to-pan with Pointer Events and capture for robustness
+    let isDown = false, startX = 0, startScroll = 0;
+    let dragRaf = null, lastDx = 0;
+    bar.addEventListener('pointerdown', (e) => {
+        isDown = true;
+        try { bar.setPointerCapture(e.pointerId); } catch {}
+        bar.classList.add('grabbing');
+        document.body.classList.add('no-select');
+        startX = e.clientX;
+        startScroll = bar.scrollLeft;
+        e.preventDefault();
+    });
+    bar.addEventListener('pointermove', (e) => {
+        if (!isDown) return;
+        lastDx = e.clientX - startX;
+        if (dragRaf) { e.preventDefault(); return; }
+        dragRaf = window.requestAnimationFrame(() => {
+            const newScroll = startScroll - lastDx;
+            syncing = true;
+            alignment.scrollLeft = newScroll;
+            bar.scrollLeft = newScroll;
+            syncing = false;
+            dragRaf = null;
+        });
+        e.preventDefault();
+    }, { passive: false });
+    const endDrag = () => {
+        if (!isDown) return;
+        isDown = false;
+        bar.classList.remove('grabbing');
+        document.body.classList.remove('no-select');
+        if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = null; }
+    };
+    bar.addEventListener('pointerup', endDrag);
+    bar.addEventListener('pointercancel', endDrag);
+    window.addEventListener('mouseup', endDrag);
+
+    // Map vertical wheel to horizontal scroll when user hovers the bar
+    bar.addEventListener('wheel', (e) => {
+        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+            bar.scrollLeft += e.deltaY;
+            e.preventDefault();
+        }
+    }, { passive: false });
+})();
