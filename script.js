@@ -211,16 +211,16 @@ function updateSliderBackground(slider) {
 function updateNameLengthSliderRange() {
     if (state.seqs.length === 0) return;
     
-    // Find the maximum name length in the current alignment
-    // Check both header (display name) and fullHeader (complete name) to get the true maximum
-    const maxNameLength = Math.max(...state.seqs.map(s => Math.max(s.header.length, s.fullHeader ? s.fullHeader.length : s.header.length)));
+    // Use the display header (first token) only to size the name column,
+    // so long descriptions in fullHeader don't blow up spacing.
+    const maxNameLength = Math.max(...state.seqs.map(s => s.header.length));
     
     const slider = el('nameLengthSlider');
     const input = el('nameLengthInput');
     
     if (slider && input) {
         // Set range from 3 to maximum name length + 2 buffer (with minimum of 12 for reasonable display)
-        // The +2 buffer ensures that when slider is set to max name length, the full name is visible
+        // The +2 buffer ensures that when slider is set to max name length, the full display name is visible
         const newMax = Math.max(maxNameLength + 2, 12);
         
         // Update slider attributes
@@ -231,9 +231,9 @@ function updateNameLengthSliderRange() {
         input.min = 3;
         input.max = newMax;
         
-        // Set slider to maximum when loading new file
-        slider.value = newMax;
-        input.value = newMax;
+    // Set slider to maximum display length when loading new file
+    slider.value = newMax;
+    input.value = newMax;
         
         // Update the state to reflect the new value
         state.nameLength = newMax;
@@ -401,8 +401,8 @@ function parseFasta(text) {
             if (!line) continue;
             if (line.startsWith('>')) {
                 if (seq) {
-                    const cleanHeader = header.replace(/^>/, '').trim();
-                    const displayHeader = cleanHeader.split(' ')[0] || 'unnamed';
+                    const cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ');
+                    const displayHeader = cleanHeader.split(/\s+/)[0] || 'unnamed';
                     let processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
                     processedSeq = processedSeq.replace(/\./g, '-');
                     const gaplessPositions = calculateGaplessPositions(processedSeq);
@@ -415,8 +415,8 @@ function parseFasta(text) {
             }
         }
         if (header && seq) {
-            const cleanHeader = header.replace(/^>/, '').trim();
-            const displayHeader = cleanHeader.split(' ')[0] || 'unnamed';
+            const cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ');
+            const displayHeader = cleanHeader.split(/\s+/)[0] || 'unnamed';
             let processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
             processedSeq = processedSeq.replace(/\./g, '-');
             const gaplessPositions = calculateGaplessPositions(processedSeq);
@@ -514,7 +514,7 @@ function parseMsf(text) {
                 processedSeq += '-';
             }
             const gaplessPositions = calculateGaplessPositions(processedSeq);
-            const displayHeader = name.split(' ')[0] || 'unnamed';
+            const displayHeader = name.split(/\s+/)[0] || 'unnamed';
             seqs.push({ header: displayHeader, fullHeader: name, seq: processedSeq, gaplessPositions: gaplessPositions });
         }
     }
@@ -768,6 +768,28 @@ function renderAlignment() {
     // document.querySelectorAll('.seq-data').forEach(dataSpan => {
     //     dataSpan.addEventListener('mousedown', handleSlideStart);
     // });
+    // Update sequence/source statistics after any rendering change
+    if (typeof updateSourceInfo === 'function') {
+        updateSourceInfo();
+    }
+}
+
+// Unified source info updater so counts stay accurate after deletions/insertions
+function updateSourceInfo() {
+    const infoEl = el('sourceInfo');
+    if (!infoEl) return;
+    if (!state.seqs || state.seqs.length === 0) {
+        infoEl.innerHTML = 'No file loaded';
+        return;
+    }
+    const seqCount = state.seqs.length;
+    const aliLength = Math.max(...state.seqs.map(s => s.seq.length));
+    const gaplessLengths = state.seqs.map(seq => seq.gaplessPositions[seq.gaplessPositions.length - 1] || 0);
+    const minLength = Math.min(...gaplessLengths);
+    const maxLength = Math.max(...gaplessLengths);
+    const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
+    const filename = state.currentFilename ? `<strong>${state.currentFilename}</strong>: ` : '';
+    infoEl.innerHTML = `${filename}${seqCount} sequences, ${aliLength} columns, ${lengthRange} bp/seq`;
 }
 
 function ensureSpanCacheRow(row) {
@@ -807,6 +829,16 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     nameSpan.draggable = true;
     nameSpan.addEventListener('dragstart', handleDragStart);
     nameSpan.addEventListener('dragend', handleDragEnd);
+    // Tooltip: show truncated full header on hover (avoid OS tooltip delay)
+    nameSpan.addEventListener('mouseover', () => {
+        const full = state.seqs[index].fullHeader || state.seqs[index].header;
+        const maxLen = 120;
+        const text = (full.length > maxLen) ? (full.slice(0, maxLen - 1) + '…') : full;
+        showTooltipAt(text, nameSpan);
+    });
+    nameSpan.addEventListener('mouseout', () => {
+        hideTooltip();
+    });
     // Single click no longer copies the name. Use double-click to edit.
     nameSpan.addEventListener('dblclick', () => {
         const input = document.createElement('input');
