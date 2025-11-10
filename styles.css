@@ -563,9 +563,14 @@ input[type="number"] {
     -moz-user-select: none;
     -webkit-user-select: none;
     -ms-user-select: none;
-    scroll-behavior: smooth;
+    /* Instant scroll updates during drag to avoid jank */
+    scroll-behavior: auto;
     z-index: 1; /* Ensure it's below the fixed menu (z-index: 1000) when menu appears */
 }
+/* Hide native horizontal scrollbar so only the custom bar is visible */
+#alignmentContainer::-webkit-scrollbar:horizontal { height: 0; }
+#alignmentContainer::-webkit-scrollbar { display: none; }
+#alignmentContainer { -ms-overflow-style: none; scrollbar-width: none; }
 .seq-line {
     display: flex;
     font-family: 'Courier New', monospace;
@@ -582,6 +587,45 @@ input[type="number"] {
     min-width: max-content;
     height: 1em;
 }
+
+/* Persistent tiny scrollbar area below the alignment */
+.horizontal-scrollbar {
+    width: 100%;
+    height: 14px; /* Tiny persistent scrollbar */
+    background: transparent; /* Remove yellow coloring to avoid visual glitch */
+    border-top: 1px solid #ddd;
+    overflow-x: auto;
+    overflow-y: hidden;
+    position: sticky;
+    bottom: 0;
+    z-index: 50;
+    /* Easier to grab without affecting layout height */
+    position: sticky;
+    box-sizing: content-box;
+    cursor: grab;
+    user-select: none;
+    touch-action: pan-x;
+}
+.horizontal-scrollbar-thumb { height: 1px; }
+.horizontal-scrollbar.grabbing { cursor: grabbing; }
+
+/* Invisible larger hit area around the tiny bar */
+.horizontal-scrollbar { position: sticky; }
+.horizontal-scrollbar::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    top: -10px; bottom: -10px; /* 10px larger on both sides */
+    /* Keep it transparent but receive pointer events */
+    background: transparent;
+    pointer-events: auto;
+}
+
+/* Utility to temporarily disable text selection during drag */
+.no-select { user-select: none !important; }
+
+/* Optional: ensure container stacks alignment and bar vertically */
+#viewer-container { display: flex; flex-direction: column; gap: 0; }
 .seq-line.context-menu-highlight {
     background-color: rgba(255, 215, 0, 0.2);
     outline: 2px solid rgba(255, 215, 0, 0.5);
