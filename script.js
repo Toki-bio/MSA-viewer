@@ -1941,21 +1941,31 @@ function replaceSelectedWithConsensus() {
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
     const len = Math.max(...selectedSeqs.map(s => s.length));
-    const threshold = clampGroupConsensusPercent(el('groupConsensusThreshold').value) / 100;
+    // Use absolute plurality (like insertGroupConsensus): require that a base
+    // is present in at least ceil(groupSize * threshold%) sequences.
+    const threshold = clampGroupConsensusPercent(el('groupConsensusThreshold').value); // percent
+    const groupSize = selectedSeqs.length;
+    const plurality = Math.ceil(groupSize * threshold / 100);
     
     // Generate consensus sequence
     let cons = '';
     for (let pos = 0; pos < len; pos++) {
-        const col = selectedSeqs.map(s => s[pos] || '-').filter(b => b !== '-' && b !== '.');
-        if (col.length === 0) {
+        const fullCol = selectedSeqs.map(s => s[pos] || '-');
+        const nonGapCol = fullCol.filter(b => b !== '-' && b !== '.');
+        if (nonGapCol.length === 0) {
             cons += '-';
             continue;
         }
         const counts = {};
-        col.forEach(b => counts[b] = (counts[b] || 0) + 1);
-        const maxBase = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, '');
-        const freq = counts[maxBase] / col.length;
-        cons += (freq >= threshold) ? maxBase : '-';
+        nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+        const maxCount = Math.max(...Object.values(counts));
+        if (maxCount >= plurality) {
+            // Stable tie-break: pick first after sort
+            const maxBases = Object.keys(counts).filter(b => counts[b] === maxCount).sort();
+            cons += maxBases[0];
+        } else {
+            cons += '-';
+        }
     }
     
     // Create consensus name based on selected sequence indices
