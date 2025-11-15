@@ -136,9 +136,9 @@
                             <input type="number" id="consensusThresholdInput" min="30" max="100" value="50" title="Consensus threshold percentage (30-100%)">
                         </div>
                         <div class="slider-container">
-                            <span class="slider-label" title="Group consensus threshold">Group Thr</span>
-                            <input type="range" id="groupConsensusThreshold" class="normal-slider" min="50" max="100" value="70" title="Group consensus threshold percentage (50-100%)">
-                            <input type="number" id="groupConsensusThresholdInput" min="50" max="100" value="70" title="Group consensus threshold percentage (50-100%)">
+                            <span class="slider-label" title="Minimum non-gap coverage to call a base (else treated as gap)">Min Cov</span>
+                            <input type="range" id="consensusMinCoverage" class="normal-slider" min="0" max="100" value="30" title="Minimum coverage percentage to emit base/IUPAC (0-100%)">
+                            <input type="number" id="consensusMinCoverageInput" min="0" max="100" value="30" title="Minimum coverage percentage to emit base/IUPAC (0-100%)">
                         </div>
                         <div class="slider-container">
                             <span class="slider-label" title="Consensus output type">Type</span>
@@ -148,6 +148,14 @@
                             <label class="shade-mode-label">
                                 <input type="radio" name="consensusType" value="ambiguous" title="Ambiguous consensus (IUPAC codes)"> Ambiguous
                             </label>
+                        </div>
+                        <div class="slider-container">
+                            <span class="slider-label" title="Fallback below threshold">Fallback</span>
+                            <select id="consensusFallback" title="What to show when below threshold or ambiguous">
+                                <option value="gap">Gap (-)</option>
+                                <option value="n">N (unknown)</option>
+                                <option value="iupac" selected>IUPAC (no gaps)</option>
+                            </select>
                         </div>
                         <div class="slider-container">
                             <input type="checkbox" id="showConsensus" checked title="Show consensus line">
@@ -325,7 +333,7 @@
         
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; font-size: 12px; color: #555;">
             <div style="text-align: left; flex: 1;">
-                <span style="white-space: nowrap;">Click name: copy name</span> | <span style="white-space: nowrap;">Ctrl+click name: select/deselect seq (drag for range)</span> | <span style="white-space: nowrap;">Shift+click name: range from last</span> | <span style="white-space: nowrap;">Ctrl+Alt+click nuc: select column</span> | <span style="white-space: nowrap;">Ctrl+click on nuc: start/extend range</span> | <span style="white: nowrap;">Right-click drag seq: slide</span> | <span style="white-space: nowrap;">Right-click name: menu</span> | <span style="white-space: nowrap;">Use bottom scrollbar to move alignment</span>
+                <span style="white-space: nowrap;">Click name: copy name</span> | <span style="white-space: nowrap;">Ctrl+click name: select/deselect seq (drag for range)</span> | <span style="white-space: nowrap;">Shift+click name: range from last</span> | <span style="white-space: nowrap;">Ctrl+Alt+click nuc: select column</span> | <span style="white-space: nowrap;">Ctrl+click on nuc: start/extend range</span> | <span style="white-space: nowrap;">Right-click drag seq: slide</span> | <span style="white-space: nowrap;">Right-click name: menu</span> | <span style="white-space: nowrap;">Use bottom scrollbar to move alignment</span>
             </div>
             <div id="sourceInfo" style="text-align: right; white-space: nowrap; font-size: 14px; color: #666; margin-left: 12px;">No file loaded</div>
         </div>
