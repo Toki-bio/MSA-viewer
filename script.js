@@ -1,8 +1,8 @@
 // STATE OBJECT
 const DEFAULTS = {
     consensusThreshold: 50,
-    groupConsensusThreshold: 70,
-    nameLength: 25
+    nameLength: 25,
+    minCoverage: 30
 };
 
 const state = {
@@ -75,6 +75,13 @@ const tooltip = el('tooltip');
 const statusMessage = el('statusMessage');
 const minimizeBar = el('minimizeBar');
 const infoModal = el('infoModal');
+// Wire consensus fallback select to trigger re-render
+const consensusFallbackSelect = el('consensusFallback');
+if (consensusFallbackSelect) {
+    consensusFallbackSelect.addEventListener('change', () => {
+        debounceRender();
+    });
+}
 // Quick sanity check: ensure essential elements exist to avoid silent failures
 if (!fastaInput || !alignmentContainer || !statusMessage) {
     console.error('Essential DOM elements missing:', {
@@ -97,8 +104,16 @@ function showMessage(msg, duration = 2000) {
 // Tooltip helper functions with viewport-aware positioning
 function showTooltipAt(content, target, options = {}) {
     if (!tooltip || !target) return;
-    
-    tooltip.textContent = content;
+    // Reset to base class then optionally extend
+    tooltip.className = 'tooltip';
+    if (options.className) {
+        tooltip.className += ' ' + options.className;
+    }
+    if (options.html) {
+        tooltip.innerHTML = content;
+    } else {
+        tooltip.textContent = content;
+    }
     tooltip.style.display = 'block';
     
     // Force a reflow to get accurate dimensions after content is set
@@ -139,6 +154,7 @@ function showTooltipAt(content, target, options = {}) {
 function hideTooltip() {
     if (!tooltip) return;
     tooltip.style.display = 'none';
+    tooltip.className = 'tooltip';
 }
 
 // Menu stability: delay closing menus when mouse leaves to prevent flickering
@@ -204,6 +220,7 @@ function setupMenuStability() {
 }
 
 function updateSliderBackground(slider) {
+    if (!slider) return; // Gracefully skip missing sliders (e.g., deprecated controls)
     const value = (slider.value - slider.min) / (slider.max - slider.min) * 100;
     slider.style.setProperty('--slider-value', value + '%');
 }
@@ -289,14 +306,20 @@ function clampConsensusPercent(value) {
 
 function clampGroupConsensusPercent(value) {
     const num = parseInt(value, 10);
-    if (Number.isNaN(num)) return DEFAULTS.groupConsensusThreshold;
-    return Math.max(50, Math.min(100, num));
+    // Deprecated: group consensus threshold removed; fall back to general threshold
+    if (Number.isNaN(num)) return DEFAULTS.consensusThreshold;
+    return Math.max(30, Math.min(100, num));
 }
 
 function clampNameLength(value) {
     const num = parseInt(value, 10);
     if (Number.isNaN(num)) return DEFAULTS.nameLength;
     return Math.max(3, Math.min(50, num));
+}
+function clampMinCoverage(value) {
+    const num = parseInt(value, 10);
+    if (Number.isNaN(num)) return DEFAULTS.minCoverage;
+    return Math.max(0, Math.min(100, num));
 }
 
 function setNameLengthUI(value, triggerRender = false) {
@@ -337,23 +360,7 @@ function setConsensusThresholdUI(value, triggerRender = false) {
 }
 
 function setGroupConsensusThresholdUI(value, triggerRender = false) {
-    const slider = el('groupConsensusThreshold');
-    const input = el('groupConsensusThresholdInput');
-    const clamped = clampGroupConsensusPercent(value);
-    if (slider) {
-        slider.min = 50;
-        slider.max = 100;
-        slider.value = clamped;
-        updateSliderBackground(slider);
-    }
-    if (input) {
-        input.min = 50;
-        input.max = 100;
-        input.value = clamped;
-    }
-    if (triggerRender) {
-        debounceRender();
-    }
+    // Deprecated control; safely no-op
 }
 
 function setConsensusThresholdDefault(value, options = {}) {
@@ -389,6 +396,109 @@ function calculateGaplessPositions(sequence) {
 function reverseComplement(seq) {
     const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.', 'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H' };
     return seq.split('').reverse().map(b => complement[b] || 'N').join('');
+}
+// IUPAC ambiguity code resolver for a set of standard bases
+// Input: Array or Set containing any of A,C,G,T,U (U is treated as T)
+// Output: Single IUPAC character representing the set, or 'N' if not resolvable
+function iupacFromBases(bases) {
+    if (!bases || (Array.isArray(bases) && bases.length === 0)) return 'N';
+    const set = new Set();
+    for (const b of bases) {
+        if (!b) continue;
+        const up = String(b).toUpperCase();
+        if (up === 'U') set.add('T');
+        else if (['A','C','G','T'].includes(up)) set.add(up);
+    }
+    if (set.size === 0) return 'N';
+    if (set.size === 1) return [...set][0];
+    const key = [...set].sort().join('');
+    switch (key) {
+        case 'AG': return 'R';
+        case 'CT': return 'Y';
+        case 'AC': return 'M';
+        case 'GT': return 'K';
+        case 'CG': return 'S';
+        case 'AT': return 'W';
+        case 'ACT': return 'H';
+        case 'CGT': return 'B';
+        case 'AGT': return 'D';
+        case 'ACG': return 'V';
+        case 'ACGT': return 'N';
+        default: return 'N';
+    }
+}
+// Map an IUPAC code back to the set of standard bases it represents
+function iupacToBases(code) {
+    const c = String(code || '').toUpperCase();
+    switch (c) {
+        case 'A': return ['A'];
+        case 'C': return ['C'];
+        case 'G': return ['G'];
+        case 'T':
+        case 'U': return ['T'];
+        case 'R': return ['A','G'];
+        case 'Y': return ['C','T'];
+        case 'M': return ['A','C'];
+        case 'K': return ['G','T'];
+        case 'S': return ['C','G'];
+        case 'W': return ['A','T'];
+        case 'H': return ['A','C','T'];
+        case 'B': return ['C','G','T'];
+        case 'D': return ['A','G','T'];
+        case 'V': return ['A','C','G'];
+        case 'N': return ['A','C','G','T'];
+        default: return [];
+    }
+}
+
+// Unified consensus calculator used for:
+//  - Displayed consensus (via renderAlignment when showConsensus true)
+//  - Group consensus insertion / replacement
+//  - Copy Selected Consensus
+// Options derive from current UI controls so all paths stay identical.
+// Returns full length consensus string (with gaps retained); caller can strip gaps if needed.
+function computeConsensusForSequences(seqArray) {
+    if (!seqArray || seqArray.length === 0) return '';
+    const len = Math.max(...seqArray.map(s => s.length));
+    const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100; // frequency threshold
+    const coverageMin = clampMinCoverage(el('consensusMinCoverage')?.value) / 100;
+    const consType = document.querySelector('input[name="consensusType"]:checked').value;
+    const fallbackMode = (document.getElementById('consensusFallback')?.value) || 'gap';
+    let out = '';
+    for (let pos = 0; pos < len; pos++) {
+        const col = seqArray.map(s => s[pos] || '-');
+        const nonGapCol = col.filter(b => b !== '-' && b !== '.');
+        if (nonGapCol.length === 0) { out += '-'; continue; }
+        const coverage = nonGapCol.length / seqArray.length;
+        if (coverage < coverageMin) { out += '-'; continue; }
+        const counts = {};
+        nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+        const maxCount = Math.max(...Object.values(counts));
+        const maxBases = Object.keys(counts).filter(b => counts[b] === maxCount);
+        const freq = maxCount / col.length; // denominator includes gaps for consistency with display
+        if (freq >= threshold) {
+            const stdTop = maxBases.map(b => (b === 'U' ? 'T' : b)).filter(b => ['A','C','G','T'].includes(b));
+            if (consType === 'ambiguous') {
+                if (stdTop.length >= 2) out += iupacFromBases(stdTop);
+                else if (stdTop.length === 1) out += stdTop[0];
+                else out += maxBases.sort()[0];
+            } else {
+                const normalBases = ['A','C','G','T'].filter(b => counts[b]);
+                if (normalBases.length > 0) {
+                    const maxNormal = Math.max(...normalBases.map(b => counts[b] || 0));
+                    const topNormal = normalBases.filter(b => (counts[b] || 0) === maxNormal).sort()[0];
+                    out += topNormal;
+                } else out += maxBases.sort()[0];
+            }
+        } else {
+            const presentStd = Object.keys(counts).map(b => (b === 'U' ? 'T' : b)).filter(b => ['A','C','G','T'].includes(b));
+            const uniqueStd = Array.from(new Set(presentStd));
+            if (fallbackMode === 'iupac' && uniqueStd.length >= 2) out += iupacFromBases(uniqueStd);
+            else if (fallbackMode === 'n' && uniqueStd.length >= 2) out += 'N';
+            else out += '-';
+        }
+    }
+    return out;
 }
 // PARSING FUNCTIONS
 function parseFasta(text) {
@@ -609,6 +719,7 @@ function renderAlignment() {
         alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
         return;
     }
+    const coverageMin = clampMinCoverage(el('consensusMinCoverage')?.value) / 100;
     alignmentContainer.innerHTML = '';
     state.spanCache = new Map();
     state.domSelectedNucs = new Map();
@@ -641,57 +752,15 @@ function renderAlignment() {
     const showConsensus = el('showConsensus').checked;
     const consType = document.querySelector('input[name="consensusType"]:checked').value;
     const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
+    const fallbackMode = (document.getElementById('consensusFallback')?.value) || 'gap';
     
     // Calculate sequence length for consensus and scale
     const len = Math.max(...state.seqs.map(s => s.seq.length));
     
     let consensus = [];
     if (showConsensus) {
-        for (let pos = 0; pos < len; pos++) {
-            const col = state.seqs.map(s => s.seq[pos] || '-');
-            const nonGapCol = col.filter(b => b !== '-' && b !== '.');
-            if (nonGapCol.length === 0) {
-                consensus.push('-');
-                continue;
-            }
-            const counts = {};
-            nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
-            const maxCount = Math.max(...Object.values(counts));
-            const maxBases = Object.keys(counts).filter(b => counts[b] === maxCount);
-            const freq = maxCount / col.length;
-            if (freq < threshold) {
-                consensus.push('-');
-                continue;
-            }
-            if (consType === 'ambiguous') {
-                if (maxBases.length > 1) {
-                    const standardBases = maxBases.filter(b => ['A', 'C', 'G', 'T'].includes(b));
-                    if (standardBases.length >= 2) {
-                        const key = standardBases.sort().join(',');
-                        consensus.push(ambiguousMap[key] || '-');
-                    } else if (maxBases.length === 1) {
-                        consensus.push(maxBases[0]);
-                    } else {
-                        consensus.push('-');
-                    }
-                } else {
-                    consensus.push(maxBases[0]);
-                }
-            } else {
-                if (maxBases.length === 1 && !ambiguous.has(maxBases[0])) {
-                    consensus.push(maxBases[0]);
-                } else {
-                    const normalBases = ['A', 'C', 'G', 'T'].filter(b => counts[b]);
-                    if (normalBases.length > 0) {
-                        const maxNormalCount = Math.max(...normalBases.map(b => counts[b] || 0));
-                        const maxNormalBases = normalBases.filter(b => (counts[b] || 0) === maxNormalCount);
-                        consensus.push(maxNormalBases[0]);
-                    } else {
-                        consensus.push('-');
-                    }
-                }
-            }
-        }
+        // Use unified helper for consensus computation
+        consensus = computeConsensusForSequences(state.seqs.map(s => s.seq)).split('');
     }
     state.consensusSeq = consensus.join('').replace(/-/g, '');
     const consensusPosition = document.querySelector('input[name="consensusPosition"]:checked')?.value || 'bottom';
@@ -757,7 +826,7 @@ function renderAlignment() {
         }
     }
     setTimeout(() => toggleStickyNames(), 0);
-    ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold'].forEach(id => {
+    ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold'].forEach(id => {
         updateSliderBackground(el(id));
     });
     updateRowSelections();
@@ -829,6 +898,16 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     nameSpan.draggable = true;
     nameSpan.addEventListener('dragstart', handleDragStart);
     nameSpan.addEventListener('dragend', handleDragEnd);
+    // Extra reliability: direct ctrl/meta click handler for sequence selection.
+    // Using mousedown to precede potential drag initiation; stops propagation so global handler won't double toggle.
+    nameSpan.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (e.ctrlKey || e.metaKey || state.ctrlPressed) {
+            toggleRowSelection(index);
+            e.preventDefault();
+            e.stopPropagation();
+        }
+    });
     // Tooltip: show truncated full header on hover (avoid OS tooltip delay)
     nameSpan.addEventListener('mouseover', () => {
         const full = state.seqs[index].fullHeader || state.seqs[index].header;
@@ -986,7 +1065,19 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
             const conservation = maxCount / denominator;
             
             // Apply case based on shading: uppercase for black (highly conserved), lowercase for light (less conserved)
-            if (base !== '-' && base !== '.' && consensusBases.has(base.toUpperCase())) {
+            let matchesTop = false;
+            if (base !== '-' && base !== '.') {
+                const bUp = base.toUpperCase();
+                if (consensusBases.has(bUp)) {
+                    matchesTop = true;
+                } else {
+                    const iBases = iupacToBases(bUp);
+                    if (iBases.length > 0) {
+                        matchesTop = iBases.some(x => consensusBases.has(x));
+                    }
+                }
+            }
+            if (matchesTop) {
                 if (enableBlack && conservation >= blackThresh) {
                     displayBase = base.toUpperCase(); // Black shading = uppercase
                 } else if (enableLight && conservation >= lightThresh) {
@@ -1000,6 +1091,41 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
         const span = document.createElement('span');
         span.className = baseClass;
         span.textContent = displayBase;
+        // Tooltip on hover: show coverage and per-nucleotide percentages for this column
+        span.addEventListener('mouseover', () => {
+            const totalSeqs = state.seqs.length || 1;
+            const colAll = state.seqs.map(s => s.seq[pos] || '-');
+            const nonGaps = colAll.filter(b => b !== '-' && b !== '.');
+            const coveragePct = Math.round((nonGaps.length / totalSeqs) * 100);
+            const counts = {};
+            for (const ch of nonGaps) {
+                const up = String(ch).toUpperCase();
+                const norm = up === 'U' ? 'T' : up;
+                counts[norm] = (counts[norm] || 0) + 1;
+            }
+            const denom = nonGaps.length || 1;
+            const entries = Object.entries(counts)
+                .filter(([b,_]) => b !== '-' && b !== '.')
+                .sort((a,b) => b[1]-a[1]);
+            const colorMap = { A:'#27ae60', C:'#2980b9', G:'#d35400', T:'#c0392b', N:'#7f8c8d' };
+            let html = `<div class="cov-row">Coverage: <strong>${coveragePct}%</strong> (${nonGaps.length}/${totalSeqs})</div>`;
+            if (entries.length === 0) {
+                html += '<div class="freq-row"><em>No bases</em></div>';
+            } else {
+                entries.forEach(([base,count]) => {
+                    const pct = Math.round((count/denom)*100);
+                    const color = colorMap[base] || '#555';
+                    html += `<div class="freq-row"><span class="base" style="background:${color}">${base}</span><span class="pct">${pct}%</span><span class="raw">(${count})</span></div>`;
+                });
+            }
+            // Additional counts for ambiguous, etc.
+            const ambigBases = Object.keys(counts).filter(b => 'RYMKSWHBVD'.includes(b));
+            if (ambigBases.length) {
+                html += `<div class="freq-row"><span class="base" style="background:#8e44ad">Ambig</span><span class="pct">${ambigBases.length}</span></div>`;
+            }
+            showTooltipAt(html, span, {html:true, className:'consensus-box'});
+        });
+        span.addEventListener('mouseout', () => hideTooltip());
         dataSpan.appendChild(span);
     }
     // Add consensus length at the end (only for last block and using gapless length)
@@ -1258,13 +1384,7 @@ function handleMouseDown(e) {
             state.isDragging = true;
             state.dragStartRow = index;
             state.dragMode = 'row';
-            if (state.selectedRows.has(index)) {
-                state.selectedRows.delete(index);
-            } else {
-                state.selectedRows.add(index);
-            }
-            state.lastSelectedIndex = index;
-            updateRowSelections();
+            toggleRowSelection(index);
             e.preventDefault();
         } else if (e.shiftKey && state.lastSelectedIndex !== null) {
             const start = Math.min(state.lastSelectedIndex, index);
@@ -1346,6 +1466,16 @@ function handleMouseDown(e) {
         e.preventDefault();
     }
     // рџ‘‰ No handler for plain click on span вЂ” do nothing
+}
+// Selection helper consolidating toggle behavior
+function toggleRowSelection(index) {
+    if (state.selectedRows.has(index)) {
+        state.selectedRows.delete(index);
+    } else {
+        state.selectedRows.add(index);
+    }
+    state.lastSelectedIndex = index;
+    updateRowSelections();
 }
 function handleMouseMove(e) {
     if (!state.isDragging) return;
@@ -1719,19 +1849,68 @@ function copySelectedConsensus() {
     const selectedSeqs = Array.from(state.selectedRows).map(i => state.seqs[i].seq);
     const len = Math.max(...selectedSeqs.map(s => s.length));
     const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
-    let cons = '';
+    const consType = document.querySelector('input[name="consensusType"]:checked').value;
+    const fallbackMode = (document.getElementById('consensusFallback')?.value) || 'gap';
+    const coverageMin = clampMinCoverage(el('consensusMinCoverage')?.value) / 100;
+    let consArr = [];
     for (let pos = 0; pos < len; pos++) {
-        const col = selectedSeqs.map(s => s[pos] || '-').filter(b => b !== '-' && b !== '.');
-        if (col.length === 0) continue;
+        const fullCol = selectedSeqs.map(s => s[pos] || '-');
+        const nonGapCol = fullCol.filter(b => b !== '-' && b !== '.');
+        if (nonGapCol.length === 0) {
+            consArr.push('-');
+            continue;
+        }
+        // Enforce min coverage relative to selected sequences
+        const coverage = nonGapCol.length / selectedSeqs.length;
+        if (coverage < coverageMin) {
+            consArr.push('-');
+            continue;
+        }
         const counts = {};
-        col.forEach(b => counts[b] = (counts[b] || 0) + 1);
-        const maxBase = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b, '');
-        const freq = counts[maxBase] / col.length;
+        nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+        const maxCount = Math.max(...Object.values(counts));
+        const maxBases = Object.keys(counts).filter(b => counts[b] === maxCount);
+        const freq = maxCount / fullCol.length; // align with displayed consensus
         if (freq >= threshold) {
-            cons += maxBase;
+            if (consType === 'ambiguous') {
+                const stdTop = maxBases
+                    .map(b => (b === 'U' ? 'T' : b))
+                    .filter(b => ['A','C','G','T'].includes(b));
+                if (stdTop.length >= 2) {
+                    consArr.push(iupacFromBases(stdTop));
+                } else if (stdTop.length === 1) {
+                    consArr.push(stdTop[0]);
+                } else {
+                    consArr.push(maxBases.sort()[0]);
+                }
+            } else {
+                const normalBases = ['A','C','G','T'].filter(b => counts[b]);
+                if (normalBases.length > 0) {
+                    const maxNormal = Math.max(...normalBases.map(b => counts[b] || 0));
+                    const maxNormalBases = normalBases.filter(b => (counts[b] || 0) === maxNormal);
+                    consArr.push(maxNormalBases.sort()[0]);
+                } else {
+                    consArr.push(maxBases.sort()[0]);
+                }
+            }
+        } else {
+            const presentStd = Object.keys(counts)
+                .map(b => (b === 'U' ? 'T' : b))
+                .filter(b => ['A','C','G','T'].includes(b));
+            const uniqueStd = Array.from(new Set(presentStd));
+            if (fallbackMode === 'iupac' && uniqueStd.length >= 2) {
+                consArr.push(iupacFromBases(uniqueStd));
+            } else if (fallbackMode === 'n' && uniqueStd.length >= 2) {
+                consArr.push('N');
+            } else {
+                consArr.push('-');
+            }
         }
     }
-    const fasta = `>Selected_Consensus\n${cons}`;
+    // By default we copy consensus without gaps, mirroring Copy Consensus behavior
+    const consStr = consArr.join('');
+    const gapless = consStr.replace(/-/g, '');
+    const fasta = `>Selected_Consensus\n${gapless}`;
     navigator.clipboard.writeText(fasta).then(() => {
         showMessage("Selected sequences consensus copied as FASTA!", 2000);
     }).catch(err => {
@@ -1903,28 +2082,7 @@ function insertGroupConsensus() {
     }
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
-    const len = Math.max(...selectedSeqs.map(s => s.length));
-    const threshold = clampGroupConsensusPercent(el('groupConsensusThreshold').value);  // % value from slider (e.g., 70)
-    const groupSize = selectedSeqs.length;
-    const plurality = Math.ceil(groupSize * threshold / 100);  // NEW: Absolute min support, like your $plur
-    let cons = '';
-    for (let pos = 0; pos < len; pos++) {
-        const fullCol = selectedSeqs.map(s => s[pos] || '-');
-        const nonGapCol = fullCol.filter(b => b !== '-' && b !== '.');
-        if (nonGapCol.length === 0) {
-            cons += '-';
-            continue;
-        }
-        const counts = {};
-        nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
-        const maxCount = Math.max(...Object.values(counts));
-        const maxBases = Object.keys(counts).filter(b => counts[b] === maxCount).sort();  // Stable tie-break
-        if (maxCount >= plurality) {  // CHANGED: Absolute check vs. plurality
-            cons += maxBases[0];  // Pick first after sort
-        } else {
-            cons += '-';
-        }
-    }
+    const cons = computeConsensusForSequences(selectedSeqs);
     const consObj = { header: 'Group_Consensus', fullHeader: 'Consensus of selected group', seq: cons, gaplessPositions: calculateGaplessPositions(cons) };
     const insertPos = indices[indices.length - 1] + 1;
     state.seqs.splice(insertPos, 0, consObj);
@@ -1941,32 +2099,10 @@ function replaceSelectedWithConsensus() {
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
     const len = Math.max(...selectedSeqs.map(s => s.length));
-    // Use absolute plurality (like insertGroupConsensus): require that a base
-    // is present in at least ceil(groupSize * threshold%) sequences.
-    const threshold = clampGroupConsensusPercent(el('groupConsensusThreshold').value); // percent
-    const groupSize = selectedSeqs.length;
-    const plurality = Math.ceil(groupSize * threshold / 100);
     
     // Generate consensus sequence
     let cons = '';
-    for (let pos = 0; pos < len; pos++) {
-        const fullCol = selectedSeqs.map(s => s[pos] || '-');
-        const nonGapCol = fullCol.filter(b => b !== '-' && b !== '.');
-        if (nonGapCol.length === 0) {
-            cons += '-';
-            continue;
-        }
-        const counts = {};
-        nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
-        const maxCount = Math.max(...Object.values(counts));
-        if (maxCount >= plurality) {
-            // Stable tie-break: pick first after sort
-            const maxBases = Object.keys(counts).filter(b => counts[b] === maxCount).sort();
-            cons += maxBases[0];
-        } else {
-            cons += '-';
-        }
-    }
+    cons = computeConsensusForSequences(selectedSeqs);
     
     // Create consensus name based on selected sequence indices
     const firstIdx = indices[0] + 1; // 1-based for display
@@ -2040,6 +2176,9 @@ function savePreset() {
         consensusType: document.querySelector('input[name="consensusType"]:checked').value,
         showConsensus: el('showConsensus').checked,
         consensusPosition: document.querySelector('input[name="consensusPosition"]:checked').value,
+        // Persist new consensus options
+        consensusMinCoverage: el('consensusMinCoverage')?.value,
+        consensusFallback: el('consensusFallback')?.value,
         shadeMode: document.querySelector('input[name="shadeMode"]:checked').value,
         enableBlack: el('enableBlack').checked,
         enableDark: el('enableDark').checked,
@@ -2056,7 +2195,7 @@ function loadPreset() {
         return;
     }
     const p = JSON.parse(saved);
-    ['black','dark','light','zoom','blockSize','nameLen','consensusThreshold', 'groupConsensusThreshold'].forEach(k => {
+    ['black','dark','light','zoom','blockSize','nameLen','consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(k => {
         let value = p[k];
         if (k === 'consensusThreshold') {
             value = clampConsensusPercent(value);
@@ -2066,6 +2205,18 @@ function loadPreset() {
         if (k === 'groupConsensusThreshold') {
             value = clampGroupConsensusPercent(value);
             setGroupConsensusThresholdUI(value);
+            return;
+        }
+        if (k === 'consensusMinCoverage') {
+            // Clamp and apply to slider/input pair if present
+            const clamped = clampMinCoverage(value ?? DEFAULTS.minCoverage);
+            const sliderEl = el('consensusMinCoverage');
+            const inputElement = el('consensusMinCoverageInput');
+            if (sliderEl) {
+                sliderEl.value = clamped;
+                updateSliderBackground(sliderEl);
+            }
+            if (inputElement) inputElement.value = clamped;
             return;
         }
         const sliderEl = el(k + 'Slider');
@@ -2088,6 +2239,10 @@ function loadPreset() {
     document.querySelector(`input[name="consensusType"][value="${p.consensusType}"]`).checked = true;
     el('showConsensus').checked = p.showConsensus;
     document.querySelector(`input[name="consensusPosition"][value="${p.consensusPosition}"]`).checked = true;
+    // Restore fallback mode if present (defaults to current select's default)
+    if (p.consensusFallback && el('consensusFallback')) {
+        el('consensusFallback').value = p.consensusFallback;
+    }
     document.querySelector(`input[name="shadeMode"][value="${p.shadeMode}"]`).checked = true;
     el('enableBlack').checked = p.enableBlack;
     el('enableDark').checked = p.enableDark;
@@ -2906,7 +3061,7 @@ function initializeAppUI() {
     }, 100);
     
     // Initialize slider backgrounds
-    ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold'].forEach(id => {
+    ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(id => {
         const slider = el(id);
         if (slider) {
             updateSliderBackground(slider);
@@ -2932,7 +3087,8 @@ function attachUIListeners() {
         ['nameLengthSlider', 'nameLengthInput'],
         ['blockSizeSlider', 'blockSizeInput'],
         ['consensusThreshold', 'consensusThresholdInput'],
-        ['groupConsensusThreshold', 'groupConsensusThresholdInput']
+        ['groupConsensusThreshold', 'groupConsensusThresholdInput'],
+        ['consensusMinCoverage', 'consensusMinCoverageInput']
     ];
 
     sliderPairs.forEach(([sliderId, inputId]) => {
@@ -2978,6 +3134,10 @@ function attachUIListeners() {
                     slider.value = clamped;
                     input.value = clamped;
                     document.documentElement.style.setProperty('--nameLen', clamped);
+                } else if (sliderId === 'consensusMinCoverage') {
+                    const clamped = clampMinCoverage(input.value);
+                    slider.value = clamped;
+                    input.value = clamped;
                 } else {
                     slider.value = input.value;
                 }
@@ -3607,9 +3767,10 @@ function clusterByName(seqNames, maxChars = 10, threshold = 3) {
 function applyColourToSeqNames(mappings) {
     const seqNameElements = document.querySelectorAll('.seq-name');
     seqNameElements.forEach(el => {
-        const text = el.textContent.trim();
-        if (mappings.has(text)) {
-            const colour = mappings.get(text);
+        // Use underlying sequence header (not truncated display) for stable mapping
+        let headerKey = el.dataset.seqIndex !== undefined ? (state.seqs[parseInt(el.dataset.seqIndex)]?.header || el.textContent.trim()) : el.textContent.trim();
+        if (mappings.has(headerKey)) {
+            const colour = mappings.get(headerKey);
             el.setAttribute('style', `background-color: ${colour} !important; color: #000 !important; font-weight: bold !important;`);
             el.title = `Color: ${colour}`;
         } else {
@@ -3643,23 +3804,23 @@ function applyPatternColour() {
     
     const pattern = patternInput.value.trim();
     const colour = colourInput.value;
-    let matchCount = 0;
+    let matchedNames = new Set();
     
     try {
         const regex = new RegExp(pattern, 'i');
         const seqNameElements = document.querySelectorAll('.seq-name');
-        
         seqNameElements.forEach(el => {
-            const text = el.textContent.trim();
-            if (regex.test(text)) {
-                colourState.mappings.set(text, colour);
-                recordColorHistory(text, colour, 'Pattern');
-                matchCount++;
+            const idx = el.dataset.seqIndex;
+            const header = idx !== undefined ? (state.seqs[parseInt(idx)]?.header || el.textContent.trim()) : el.textContent.trim();
+            if (regex.test(header) && !matchedNames.has(header)) {
+                matchedNames.add(header);
+                colourState.mappings.set(header, colour);
+                recordColorHistory(header, colour, 'Pattern');
             }
         });
         
         applyColourToSeqNames(colourState.mappings);
-        showMessage(`Applied to ${matchCount} sequence(s)`, 2000);
+    showMessage(`Applied to ${matchedNames.size} unique sequence(s)`, 2000);
         
     } catch (e) {
         showMessage(`Invalid regex: ${e.message}`, 3000);
