@@ -571,6 +571,7 @@ input[type="number"] {
 #alignmentContainer::-webkit-scrollbar:horizontal { height: 0; }
 #alignmentContainer::-webkit-scrollbar { display: none; }
 #alignmentContainer { -ms-overflow-style: none; scrollbar-width: none; }
+    /* revert layout: seq-line stretches to container width */
 .seq-line {
     display: flex;
     font-family: 'Courier New', monospace;
@@ -645,7 +646,7 @@ input[type="number"] {
     white-space: nowrap;
     font-weight: bold;
     color: #333;
-    background: white !important;
+    background: white;
     cursor: default;
     position: sticky;
     left: -15px;
@@ -854,24 +855,63 @@ input[type="number"] {
     background-color: #e0ffe0 !important;
     color: black !important;
 }
-.column-selected {
-    background-color: var(--column-selected-bg) !important;
-    color: black !important;
-}
-.nuc-selected {
-    background-color: var(--nuc-selected-bg) !important;
-    color: black !important;
+
+/* Column highlight: left and right pseudo-element bars only, no horizontal lines */
+span.column-highlighted {
+    position: relative;
 }
 
-.nuc-pending {
-    background-color: #ffb347 !important; /* orange for pending selection start */
-    color: black !important;
-    border: 2px dashed #ff6600 !important;
-    box-sizing: border-box;
+span.column-highlighted::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(52, 152, 219, 0.9);
+    pointer-events: none;
 }
-.nuc-selected:hover {
-    cursor: pointer;
+
+span.column-highlighted::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(52, 152, 219, 0.9);
+    pointer-events: none;
 }
+
+/* Row highlight: top and bottom pseudo-element bars, no width expansion */
+.seq-line.highlighted-row {
+    position: relative;
+}
+
+.seq-line.highlighted-row::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1px;
+    background: rgba(220, 53, 69, 0.9);
+    pointer-events: none;
+    z-index: 2;
+}
+
+.seq-line.highlighted-row::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    background: rgba(220, 53, 69, 0.9);
+    pointer-events: none;
+    z-index: 2;
+}
+
 .consensus-line {
     font-style: normal;
     color: #555;
@@ -897,6 +937,19 @@ input[type="number"] {
     opacity: 0.9;
     background-color: transparent !important;
     color: #555;
+}
+
+/* Trim region indicators in consensus */
+.consensus-line .seq-data span.trim-left {
+    background-color: #ff6b6b !important;
+    color: white !important;
+    opacity: 1 !important;
+}
+
+.consensus-line .seq-data span.trim-right {
+    background-color: #4ecdc4 !important;
+    color: white !important;
+    opacity: 1 !important;
 }
 .error-message {
     color: red;
@@ -1162,4 +1215,10 @@ body {
 
 .drag-overlay.active {
     opacity: 1;
+}
+
+/* Diagnostic mutation highlighting */
+span.diagnostic-mutation {
+    font-weight: bold !important;
+    cursor: help;
 }
