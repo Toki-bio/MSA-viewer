@@ -164,10 +164,10 @@
                         <div class="slider-container">
                             <span class="slider-label" title="Consensus line position">Position</span>
                             <label class="shade-mode-label">
-                                <input type="radio" name="consensusPosition" value="top" title="Show consensus at top"> Top
+                                <input type="radio" name="consensusPosition" value="top" checked title="Show consensus at top"> Top
                             </label>
                             <label class="shade-mode-label">
-                                <input type="radio" name="consensusPosition" value="bottom" checked title="Show consensus at bottom"> Bottom
+                                <input type="radio" name="consensusPosition" value="bottom" title="Show consensus at bottom"> Bottom
                             </label>
                         </div>
                         <div class="slider-container">
@@ -175,6 +175,106 @@
                         </div>
                         <div class="slider-container">
                             <button id="copySelectedConsensusButton" title="Copy consensus of selected sequences (shortcut: Ctrl+Shift+J)">Copy Sel Consensus</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="menu-section">
+                    <div class="section-header" title="Sequence clustering and trimming tools" data-section="clustering">
+                        <span>Clustering</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                    <div class="control-group" id="clustering-controls">
+                        <div style="padding: 8px;">
+                            <!-- Trimming Section -->
+                            <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
+                                <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Trimming</div>
+                                <div style="margin-bottom: 6px;">
+                                    <label for="leftGapInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Left Trim Gap %:</label>
+                                    <input type="number" id="leftGapInput" min="0" max="100" value="50" step="5" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;">
+                                </div>
+                                <div style="margin-bottom: 6px;">
+                                    <label for="rightGapInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Right Trim Gap %:</label>
+                                    <input type="number" id="rightGapInput" min="0" max="100" value="80" step="5" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;">
+                                </div>
+                                <div style="margin-bottom: 6px;">
+                                    <label for="edgeWindowInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Edge Window (cols):</label>
+                                    <input type="number" id="edgeWindowInput" min="1" max="50" value="15" step="1" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;">
+                                </div>
+                                <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                                    <button id="previewTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Preview</button>
+                                    <button id="executeTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Trim</button>
+                                    <button id="undoTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Undo</button>
+                                </div>
+                            </div>
+                            <!-- Clustering Parameters Section -->
+                            <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
+                                <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Basic Parameters</div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
+                                    <div>
+                                        <label for="clusterMinSizeInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Min Size:</label>
+                                        <input type="number" id="clusterMinSizeInput" min="2" max="20" value="3" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                    </div>
+                                    <div>
+                                        <label for="clusterMinPerfectInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Min Features:</label>
+                                        <input type="number" id="clusterMinPerfectInput" min="1" max="50" value="5" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                    </div>
+                                    <div>
+                                        <label for="clusterMaxIterationsInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Max Iter:</label>
+                                        <input type="number" id="clusterMaxIterationsInput" min="1" max="20" value="10" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                    </div>
+                                </div>
+                                <!-- Quality Thresholds -->
+                                <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Quality Thresholds (%)</div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
+                                    <div>
+                                        <label for="qualitySmallInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Small &lt;11:</label>
+                                        <input type="number" id="qualitySmallInput" min="0" max="100" value="80" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                    </div>
+                                    <div>
+                                        <label for="qualityMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Medium 11-19:</label>
+                                        <input type="number" id="qualityMediumInput" min="0" max="100" value="70" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                    </div>
+                                    <div>
+                                        <label for="qualityLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Large ≥20:</label>
+                                        <input type="number" id="qualityLargeInput" min="0" max="100" value="60" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                    </div>
+                                </div>
+                                <!-- Size Breakpoints -->
+                                <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Size Breakpoints</div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
+                                    <div>
+                                        <label for="sizeSmallMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Small→Med:</label>
+                                        <input type="number" id="sizeSmallMediumInput" min="1" max="50" value="11" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                    </div>
+                                    <div>
+                                        <label for="sizeMediumLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Med→Large:</label>
+                                        <input type="number" id="sizeMediumLargeInput" min="1" max="50" value="20" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                    </div>
+                                    <div>
+                                        <label for="minOccurrencesInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Min Occur (positions):</label>
+                                        <input type="number" id="minOccurrencesInput" min="1" max="20" value="2" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Minimum number of diagnostic positions (features) required to form a cluster">
+                                    </div>
+                                </div>
+                                <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                                    <button id="clusterNowButton" style="flex: 1; min-width: 70px; height: 24px; font-size: 11px; background: #4CAF50; color: white; border: none; border-radius: 2px; cursor: pointer;">Cluster Now</button>
+                                </div>
+                            </div>
+                            <!-- Presets Section -->
+                            <div style="padding-bottom: 0;">
+                                <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Presets</div>
+                                <div style="margin-bottom: 6px;">
+                                    <label for="presetNameInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Preset Name:</label>
+                                    <input type="text" id="presetNameInput" placeholder="e.g. strict_clustering" style="width: 100%; max-width: 150px; height: 22px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                </div>
+                                <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px;">
+                                    <button id="clusteringSavePresetButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Save</button>
+                                    <button id="clusteringLoadPresetButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Load</button>
+                                    <button id="clusteringOptimalPresetButton" style="flex: 1; min-width: 70px; height: 22px; font-size: 10px;" title="Create optimal preset for complete clustering">Optimal</button>
+                                </div>
+                                <select id="clusteringPresetList" style="width: 100%; max-width: 150px; height: 24px; font-size: 11px;">
+                                    <option value="">-- Select preset --</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -394,7 +494,19 @@
             <!-- Populated by JavaScript -->
         </div>
     </div>
+
+    <!-- Clustering Results Modal -->
+    <div id="clusteringModal" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border: 2px solid #333; border-radius: 4px; max-width: 700px; width: 95%; max-height: 80vh; overflow: auto; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+        <div style="background: #f5f5f5; padding: 12px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0;">
+            <h3 style="margin: 0; font-size: 14px;">Sequence Clustering Results</h3>
+            <button onclick="document.getElementById('clusteringModal').style.display='none'" style="background: none; border: none; font-size: 18px; cursor: pointer; padding: 0 4px;">×</button>
+        </div>
+        <div id="clusteringContent" style="padding: 12px; font-size: 11px;">
+            <!-- Populated by JavaScript -->
+        </div>
+    </div>
     
+    <script src="cluster.js"></script>
     <script src="script.js"></script>
     <script>
 // All functionality moved to script.js

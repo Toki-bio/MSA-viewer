@@ -38,7 +38,9 @@ const state = {
         scrollLeft: 0,
         scrollTop: 0,
         started: false
-    }
+    },
+    trimBoundaries: null,
+    trimBackup: null  // Store original sequences before trimming
 };
 // Ensure drag handlers are globally available before any usage
 window.handleDragStart = function(e) {
@@ -763,7 +765,7 @@ function renderAlignment() {
         consensus = computeConsensusForSequences(state.seqs.map(s => s.seq)).split('');
     }
     state.consensusSeq = consensus.join('').replace(/-/g, '');
-    const consensusPosition = document.querySelector('input[name="consensusPosition"]:checked')?.value || 'bottom';
+    const shouldRenderConsensus = showConsensus;
     
     if (useBlocks) {
         for (let start = 0; start < len; start += blockWidth) {
@@ -787,15 +789,12 @@ function renderAlignment() {
             blockDiv.appendChild(scaleDiv);
             const isLastBlock = (start + blockWidth >= len);
             
-            if (showConsensus && consensusPosition === 'top') {
+            if (shouldRenderConsensus) {
                 addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'top');
             }
             for (let i = 0; i < state.seqs.length; i++) {
                 const lineDiv = createSequenceLine(i, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock);
                 blockDiv.appendChild(lineDiv);
-            }
-            if (showConsensus && consensusPosition === 'bottom') {
-                addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'bottom');
             }
             alignmentContainer.appendChild(blockDiv);
         }
@@ -814,15 +813,12 @@ function renderAlignment() {
         scaleDiv.appendChild(scaleDataDiv);
         alignmentContainer.appendChild(scaleDiv);
         
-        if (showConsensus && consensusPosition === 'top') {
+        if (shouldRenderConsensus) {
             addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'top');
         }
         for (let i = 0; i < state.seqs.length; i++) {
             const lineDiv = createSequenceLine(i, 0, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true);
             alignmentContainer.appendChild(lineDiv);
-        }
-        if (showConsensus && consensusPosition === 'bottom') {
-            addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'bottom');
         }
     }
     setTimeout(() => toggleStickyNames(), 0);
@@ -1046,6 +1042,12 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
     consLine.appendChild(consName);
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
+    
+    // Get trim boundaries if available
+    const trimBounds = state.trimBoundaries || {};
+    const leftTrimEnd = trimBounds.leftTrimEnd !== undefined ? trimBounds.leftTrimEnd : -1;
+    const rightTrimStart = trimBounds.rightTrimStart !== undefined ? trimBounds.rightTrimStart : Infinity;
+    
     for (let pos = start; pos < end; pos++) {
         const base = pos < consensus.length ? consensus[pos] : '-';
         let baseClass = '';
@@ -1091,6 +1093,16 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
         const span = document.createElement('span');
         span.className = baseClass;
         span.textContent = displayBase;
+        
+        // Apply trim region coloring (using ABSOLUTE position indices, not relative to block)
+        if (pos <= leftTrimEnd) {
+            span.classList.add('trim-left');
+            span.title = 'Trimmed (left)';
+        } else if (pos >= rightTrimStart) {
+            span.classList.add('trim-right');
+            span.title = 'Trimmed (right)';
+        }
+        
         // Tooltip on hover: show coverage and per-nucleotide percentages for this column
         span.addEventListener('mouseover', () => {
             const totalSeqs = state.seqs.length || 1;
@@ -2173,9 +2185,8 @@ function savePreset() {
         nameLen: el('nameLengthSlider').value,
         consensusThreshold: el('consensusThreshold').value,
         groupConsensusThreshold: el('groupConsensusThreshold').value,
-        consensusType: document.querySelector('input[name="consensusType"]:checked').value,
-        showConsensus: el('showConsensus').checked,
-        consensusPosition: document.querySelector('input[name="consensusPosition"]:checked').value,
+    consensusType: document.querySelector('input[name="consensusType"]:checked').value,
+    showConsensus: el('showConsensus').checked,
         // Persist new consensus options
         consensusMinCoverage: el('consensusMinCoverage')?.value,
         consensusFallback: el('consensusFallback')?.value,
@@ -2238,7 +2249,6 @@ function loadPreset() {
     toggleStickyNames();
     document.querySelector(`input[name="consensusType"][value="${p.consensusType}"]`).checked = true;
     el('showConsensus').checked = p.showConsensus;
-    document.querySelector(`input[name="consensusPosition"][value="${p.consensusPosition}"]`).checked = true;
     // Restore fallback mode if present (defaults to current select's default)
     if (p.consensusFallback && el('consensusFallback')) {
         el('consensusFallback').value = p.consensusFallback;
@@ -2442,6 +2452,750 @@ function openInfoModal() {
 function closeInfoModal() {
     infoModal.style.display = 'none';
 }
+
+// ============================================================================
+// Clustering and Trimming Functions
+// ============================================================================
+
+function updateClusteringStatus(msg) {
+    const statusEl = el('clusteringStatus');
+    if (statusEl) statusEl.textContent = msg;
+    console.log('[Clustering] ' + msg);
+}
+
+function getTrimParameters() {
+    return {
+        edgeWindow: parseInt(el('edgeWindowInput')?.value) || 15,
+        leftGapThresh: (parseInt(el('leftGapInput')?.value) || 50) / 100,
+        rightGapThresh: (parseInt(el('rightGapInput')?.value) || 80) / 100
+    };
+}
+
+function previewTrimming() {
+    if (state.seqs.length < 1) {
+        showMessage("No sequences loaded.", 3000);
+        return;
+    }
+    
+    updateClusteringStatus('Analyzing trim boundaries...');
+    
+    const sequences = state.seqs.map((seq, idx) => ({
+        id: seq.header || `Seq${idx+1}`,
+        seq: seq.seq
+    }));
+    
+    const params = getTrimParameters();
+    const trimBounds = getTrimBoundaries(sequences, params);
+    
+    state.trimBoundaries = trimBounds;
+    
+    const leftRemove = trimBounds.leftTrimEnd + 1;
+    const rightRemove = state.seqs[0].seq.length - trimBounds.rightTrimStart;
+    const status = `Preview: ${leftRemove} left + ${rightRemove} right would be removed`;
+    
+    updateClusteringStatus(status);
+    debounceRender();
+    showMessage(status, 3000);
+}
+
+function executeTrimming() {
+    if (state.seqs.length < 1) {
+        showMessage("No sequences loaded.", 3000);
+        return;
+    }
+    
+    if (!state.trimBoundaries) {
+        showMessage("Run Preview first to set trim boundaries.", 3000);
+        return;
+    }
+    
+    // Backup original sequences before trimming
+    state.trimBackup = state.seqs.map(seq => ({
+        header: seq.header,
+        fullHeader: seq.fullHeader,
+        seq: seq.seq,
+        gaplessPositions: seq.gaplessPositions
+    }));
+    
+    const leftTrimEnd = state.trimBoundaries.leftTrimEnd;
+    const rightTrimStart = state.trimBoundaries.rightTrimStart;
+    
+    const trimStart = leftTrimEnd + 1;
+    const trimEnd = rightTrimStart;
+    const alnLen = state.seqs[0].seq.length;
+    
+    // Trim each sequence
+    for (let i = 0; i < state.seqs.length; i++) {
+        const seq = state.seqs[i].seq;
+        state.seqs[i].seq = seq.substring(trimStart, trimEnd);
+        // Recalculate gapless positions
+        state.seqs[i].gaplessPositions = calculateGaplessPositions(state.seqs[i].seq);
+    }
+    
+    const leftRemoved = trimStart;
+    const rightRemoved = alnLen - trimEnd;
+    const newLen = trimEnd - trimStart;
+    
+    const status = `✓ Trimmed: ${leftRemoved}L + ${rightRemoved}R = ${leftRemoved + rightRemoved} cols. New length: ${newLen}`;
+    updateClusteringStatus(status);
+    showMessage(status, 3000);
+    
+    // Clear visual trim indicators
+    state.trimBoundaries = null;
+    debounceRender();
+}
+
+function undoTrimming() {
+    if (!state.trimBackup) {
+        showMessage("No trimming to undo.", 3000);
+        return;
+    }
+    
+    state.seqs = state.trimBackup.map(seq => ({...seq}));
+    state.trimBackup = null;
+    state.trimBoundaries = null;
+    
+    updateClusteringStatus('✓ Trimming reverted');
+    showMessage('Trimming reverted - original alignment restored', 3000);
+    debounceRender();
+}
+
+function clusterSequences() {
+    if (state.seqs.length < 3) {
+        showMessage("Need at least 3 sequences to cluster.", 3000);
+        return;
+    }
+    
+    updateClusteringStatus('Running clustering algorithm...');
+    
+    // Prepare sequences for clustering
+    const seqsForClustering = state.seqs.map(seq => ({
+        id: seq.header || seq.name || 'unnamed',
+        seq: seq.seq
+    }));
+    
+    // Get clustering parameters from UI
+    const clusterParams = getClusteringParameters();
+    
+    // Run clustering
+    const clusterer = new SINEClusterer(seqsForClustering);
+    const clusterResults = clusterer.cluster({
+        minSize: clusterParams.minSize,
+        minPerfect: clusterParams.minPerfect,
+        maxIterations: clusterParams.maxIterations,
+        qualitySmall: clusterParams.qualitySmall,
+        qualityMedium: clusterParams.qualityMedium,
+        qualityLarge: clusterParams.qualityLarge,
+        sizeSmallMedium: clusterParams.sizeSmallMedium,
+        sizeMediumLarge: clusterParams.sizeMediumLarge,
+        minOccurrences: clusterParams.minOccurrences
+    });
+    
+    // Store results in state
+    state.clusterResults = clusterResults;
+    
+    // Log to console
+    console.log('=== CLUSTERING RESULTS ===');
+    console.log(`Parameters: minSize=${clusterParams.minSize}, minPerfect=${clusterParams.minPerfect}, maxIterations=${clusterParams.maxIterations}`);
+    console.log(`Quality Thresholds: small=${clusterParams.qualitySmall}%, medium=${clusterParams.qualityMedium}%, large=${clusterParams.qualityLarge}%`);
+    console.log(`Size Breakpoints: small-medium=${clusterParams.sizeSmallMedium}, medium-large=${clusterParams.sizeMediumLarge}`);
+    console.log(`Min Occurrences: ${clusterParams.minOccurrences}`);
+    console.log(`Total sequences: ${clusterResults.summary.nTotal}`);
+    console.log(`Clusters found: ${clusterResults.summary.nClusters}`);
+    console.log(`Assigned: ${clusterResults.summary.nAssigned}`);
+    console.log(`Unassigned: ${clusterResults.summary.nUnassigned}`);
+    console.log('');
+    
+    const colors = SINEClusterer.getClusterColors();
+    
+    // Create cluster name map
+    state.clusterMap = {};
+    
+    clusterResults.clusters.forEach((cluster, idx) => {
+        const color = colors[idx % colors.length];
+        console.log(`\n--- CLUSTER ${idx + 1} ---`);
+        console.log(`Size: ${cluster.size} sequences`);
+        console.log(`Diagnostic features: ${cluster.nPerfect} (${cluster.nReliable || cluster.nPerfect} reliable)`);
+        if (cluster.nFiltered) {
+            console.log(`⚠️  Filtered (high-leakage): ${cluster.nFiltered} features`);
+        }
+        console.log(`Color: ${color}`);
+        console.log('Sequences:');
+        
+        cluster.sequences.forEach(seq => {
+            console.log(`  • ${seq.id} (index ${seq.index})`);
+            state.clusterMap[seq.index] = {
+                cluster: idx,
+                color: color,
+                name: `Cluster ${idx + 1}`
+            };
+        });
+        
+        if (cluster.perfectFeatures.length > 0) {
+            console.log(`Perfect features (${cluster.perfectFeatures.length} reliable):`);
+            cluster.perfectFeatures.slice(0, 5).forEach(f => {
+                console.log(`  Pos ${f.pos}: ${f.char}`);
+            });
+        }
+        
+        if (cluster.imperfectFeatures && cluster.imperfectFeatures.length > 0) {
+            console.log(`Imperfect features (${cluster.imperfectFeatures.length} reliable):`);
+            cluster.imperfectFeatures.slice(0, 5).forEach(f => {
+                console.log(`  Pos ${f.pos}: ${f.char} (leaks to ${f.countOutside})`);
+            });
+        }
+    });
+    
+    if (clusterResults.unassigned.length > 0) {
+        console.log(`\n--- UNASSIGNED (${clusterResults.unassigned.length} sequences) ---`);
+        clusterResults.unassigned.forEach(seq => {
+            console.log(`  • ${seq.id} (index ${seq.index})`);
+            state.clusterMap[seq.index] = {
+                cluster: -1,
+                color: '#cccccc',
+                name: 'Unassigned'
+            };
+        });
+    }
+    
+    console.log('\n=== END CLUSTERING ===\n');
+    
+    // Color the sequence names in UI
+    colorSequencesByCluster();
+    
+    updateClusteringStatus(`Clustering complete: ${clusterResults.summary.nClusters} clusters found`);
+}
+
+function colorSequencesByCluster() {
+    if (!state.clusterMap) {
+        return;
+    }
+    
+    // First, re-render to make sure we have fresh DOM elements
+    renderAlignment();
+    
+    // Then find all sequence name elements and color them
+    setTimeout(() => {
+        const seqNameElements = document.querySelectorAll('.seq-name');
+        
+        seqNameElements.forEach((el) => {
+            // Get the sequence index from data-seq-index attribute
+            const seqIdx = parseInt(el.dataset.seqIndex);
+            
+            if (state.clusterMap[seqIdx] !== undefined) {
+                const {color, name} = state.clusterMap[seqIdx];
+                // Remove the default white background by using setProperty with important
+                el.style.setProperty('background-color', color, 'important');
+                el.style.setProperty('color', '#000000', 'important');
+                el.style.setProperty('font-weight', 'bold', 'important');
+                el.style.setProperty('background', color, 'important'); // Also set background shorthand
+                el.title = name;
+                el.classList.add('cluster-colored');
+            }
+        });
+        
+        // Now highlight diagnostic mutations
+        highlightDiagnosticMutations();
+    }, 50);
+}
+
+function highlightDiagnosticMutations() {
+    if (!state.clusterResults) return;
+    
+    // Create a map: position -> [{clusterIdx, color, char, seqIndices, isPerfect}, ...]
+    // seqIndices are the sequences that have this diagnostic feature
+    const diagnosticMap = {};
+    
+    state.clusterResults.clusters.forEach((cluster, clusterIdx) => {
+        const colors = SINEClusterer.getClusterColors();
+        const color = colors[clusterIdx % colors.length];
+        
+        // Option: Paint ALL found features (not just validated ones)
+        // This helps diagnose if the algorithm is missing features
+        if (cluster.allFoundFeatures && cluster.allFoundFeatures.length > 0) {
+            cluster.allFoundFeatures.forEach(feature => {
+                const pos = feature.pos; // Already 0-based from cluster.js
+                const char = feature.char;
+                
+                if (!diagnosticMap[pos]) {
+                    diagnosticMap[pos] = [];
+                }
+                
+                // Calculate inter-cluster leakage for this feature
+                let leakageCount = 0;
+                let totalOtherClusterSeqs = 0;
+                state.clusterResults.clusters.forEach((otherCluster, otherIdx) => {
+                    if (otherIdx !== clusterIdx) {
+                        totalOtherClusterSeqs += otherCluster.sequences.length;
+                        otherCluster.sequences.forEach(seq => {
+                            // Check if this sequence has this feature at this position
+                            if (seq.seq && seq.seq[pos] === char) {
+                                leakageCount++;
+                            }
+                        });
+                    }
+                });
+                
+                const leakagePercent = totalOtherClusterSeqs > 0 ? Math.round((leakageCount / totalOtherClusterSeqs) * 100) : 0;
+                
+                // Mark as "all-found" to differentiate from validated features
+                diagnosticMap[pos].push({
+                    clusterIdx,
+                    color,
+                    char: char,
+                    clusterName: `Cluster ${clusterIdx + 1}`,
+                    seqIndices: new Set(cluster.sequences.map(s => s.index)),
+                    isPerfect: true, // Default to perfect; will be styled differently if unvalidated
+                    isAllFound: true, // Mark that this is from allFoundFeatures
+                    interClusterLeakage: {
+                        count: leakageCount,
+                        total: totalOtherClusterSeqs,
+                        percent: leakagePercent
+                    }
+                });
+            });
+        } else {
+            // Fallback: use validated features if allFoundFeatures not available
+            // Perfect features (full saturation)
+            cluster.perfectFeatures.forEach(feature => {
+                const pos = feature.pos - 1; // Convert to 0-based index
+                
+                if (!diagnosticMap[pos]) {
+                    diagnosticMap[pos] = [];
+                }
+                
+                // Calculate inter-cluster leakage for this feature
+                let leakageCount = 0;
+                let totalOtherClusterSeqs = 0;
+                state.clusterResults.clusters.forEach((otherCluster, otherIdx) => {
+                    if (otherIdx !== clusterIdx) {
+                        totalOtherClusterSeqs += otherCluster.sequences.length;
+                        otherCluster.sequences.forEach(seq => {
+                            // Check if this sequence has this feature at this position
+                            if (seq.seq && seq.seq[pos] === feature.char) {
+                                leakageCount++;
+                            }
+                        });
+                    }
+                });
+                
+                const leakagePercent = totalOtherClusterSeqs > 0 ? Math.round((leakageCount / totalOtherClusterSeqs) * 100) : 0;
+                
+                diagnosticMap[pos].push({
+                    clusterIdx,
+                    color,
+                    char: feature.char,
+                    clusterName: `Cluster ${clusterIdx + 1}`,
+                    seqIndices: new Set(cluster.sequences.map(s => s.index)),
+                    isPerfect: true,
+                    interClusterLeakage: {
+                        count: leakageCount,
+                        total: totalOtherClusterSeqs,
+                        percent: leakagePercent
+                    }
+                });
+            });
+            
+            // Imperfect features (faint/reduced opacity)
+            if (cluster.imperfectFeatures) {
+                cluster.imperfectFeatures.forEach(feature => {
+                    const pos = feature.pos - 1; // Convert to 0-based index
+                    
+                    if (!diagnosticMap[pos]) {
+                        diagnosticMap[pos] = [];
+                    }
+                    
+                    // Calculate inter-cluster leakage for this feature
+                    let leakageCount = 0;
+                    let totalOtherClusterSeqs = 0;
+                    state.clusterResults.clusters.forEach((otherCluster, otherIdx) => {
+                        if (otherIdx !== clusterIdx) {
+                            totalOtherClusterSeqs += otherCluster.sequences.length;
+                            otherCluster.sequences.forEach(seq => {
+                                // Check if this sequence has this feature at this position
+                                if (seq.seq && seq.seq[pos] === feature.char) {
+                                    leakageCount++;
+                                }
+                            });
+                        }
+                    });
+                    
+                    const leakagePercent = totalOtherClusterSeqs > 0 ? Math.round((leakageCount / totalOtherClusterSeqs) * 100) : 0;
+                    
+                    diagnosticMap[pos].push({
+                        clusterIdx,
+                        color,
+                        char: feature.char,
+                        countOutside: feature.countOutside,
+                        clusterName: `Cluster ${clusterIdx + 1}`,
+                        seqIndices: new Set(cluster.sequences.map(s => s.index)),
+                        isPerfect: false,
+                        interClusterLeakage: {
+                            count: leakageCount,
+                            total: totalOtherClusterSeqs,
+                            percent: leakagePercent
+                        }
+                    });
+                });
+            }
+        }
+    });
+    
+    console.log('[Clustering] Found', Object.keys(diagnosticMap).length, 'diagnostic positions');
+    
+    // Find all seq-line rows and highlight diagnostic positions
+    const seqLines = document.querySelectorAll('.seq-line');
+    
+    seqLines.forEach(seqLine => {
+        // Get the sequence index for this row
+        const seqIdx = parseInt(seqLine.dataset.seqIndex);
+        if (isNaN(seqIdx)) return;
+        
+        const seqDataDiv = seqLine.querySelector('.seq-data');
+        if (!seqDataDiv) return;
+        
+        const spans = seqDataDiv.querySelectorAll('span');
+        
+        spans.forEach(span => {
+            // Get the alignment position
+            const pos = parseInt(span.dataset.pos);
+            if (isNaN(pos)) return;
+            
+            // Check if this position has diagnostics
+            if (diagnosticMap[pos]) {
+                // Find diagnostics relevant to this sequence's cluster
+                // Prefer perfect features over imperfect
+                const relevantDiags = diagnosticMap[pos].filter(diag => 
+                    diag.seqIndices.has(seqIdx)
+                );
+                
+                if (relevantDiags.length > 0) {
+                    // Prioritize perfect features
+                    const diag = relevantDiags.find(d => d.isPerfect) || relevantDiags[0];
+                    
+                    // Only highlight if the base matches the diagnostic character
+                    const baseChar = span.textContent;
+                    if (baseChar === diag.char) {
+                        const alpha = diag.isPerfect ? 1.0 : 0.4; // Perfect = full opacity, Imperfect = 40% opacity
+                        
+                        // Convert hex color to RGB with alpha
+                        const rgb = hexToRgb(diag.color);
+                        const bgColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+                        const textColor = diag.isPerfect ? 'white' : '#333';
+                        
+                        span.style.setProperty('background-color', bgColor, 'important');
+                        span.style.setProperty('color', textColor, 'important');
+                        span.style.setProperty('font-weight', diag.isPerfect ? 'bold' : 'normal', 'important');
+                        
+                        // Create enhanced tooltip showing inter-cluster leakage
+                        let title = `${diag.clusterName}: ${diag.isPerfect ? 'diagnostic' : 'partial'} ${diag.char}`;
+                        
+                        // If this feature has inter-cluster leakage info, show it
+                        if (diag.interClusterLeakage) {
+                            title += ` [leaks to ${diag.interClusterLeakage.count}/${diag.interClusterLeakage.total} in other clusters (${diag.interClusterLeakage.percent}%)]`;
+                        } else if (diag.countOutside !== undefined) {
+                            title += ` (found in ${diag.countOutside} outside)`;
+                        }
+                        span.title = title;
+                        span.classList.add('diagnostic-mutation');
+                    }
+                }
+            }
+        });
+    });
+}
+
+/**
+ * Helper to convert hex color to RGB
+ */
+function hexToRgb(hex) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+    } : {r: 0, g: 0, b: 0};
+}
+
+
+function getClusteringParameters() {
+    return {
+        // Basic clustering
+        minSize: parseInt(el('clusterMinSizeInput')?.value) || 3,
+        minPerfect: parseInt(el('clusterMinPerfectInput')?.value) || 5,
+        maxIterations: parseInt(el('clusterMaxIterationsInput')?.value) || 10,
+        
+        // Quality thresholds for imperfect features (based on cluster size)
+        qualitySmall: parseInt(el('qualitySmallInput')?.value) || 90,      // < 11 sequences
+        qualityMedium: parseInt(el('qualityMediumInput')?.value) || 80,    // 11-19 sequences
+        qualityLarge: parseInt(el('qualityLargeInput')?.value) || 70,      // >= 20 sequences
+        
+        // Size breakpoints
+        sizeSmallMedium: parseInt(el('sizeSmallMediumInput')?.value) || 11,
+        sizeMediumLarge: parseInt(el('sizeMediumLargeInput')?.value) || 20,
+        
+        // Feature occurrence threshold
+        minOccurrences: parseInt(el('minOccurrencesInput')?.value) || 5
+    };
+}
+
+function saveClusteringPreset() {
+    const presetName = el('presetNameInput')?.value?.trim();
+    if (!presetName) {
+        showMessage("Please enter a preset name", 2000);
+        return;
+    }
+    
+    const preset = {
+        name: presetName,
+        trimming: getTrimParameters(),
+        clustering: getClusteringParameters(),
+        timestamp: new Date().toISOString()
+    };
+    
+    // Store in localStorage
+    let presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
+    presets[presetName] = preset;
+    localStorage.setItem('clusteringPresets', JSON.stringify(presets));
+    
+    // Update preset list
+    updateClusteringPresetList();
+    
+    el('presetNameInput').value = '';
+    showMessage(`Preset "${presetName}" saved!`, 2000);
+    console.log('[Clustering] Saved preset:', presetName, preset);
+}
+
+function createOptimalPreset() {
+    // Auto-create an "optimal" preset based on lesson learned:
+    // The problem is NOT parameter relaxation - the problem is the INITIAL values
+    // "two" preset works because it starts with minOccurrences=2 (LOW!)
+    // "three" preset fails because it starts with minOccurrences=10 (HIGH!)
+    // 
+    // Solution: Create preset with LOW initial minOccurrences (3-4)
+    // This allows final clusters to form without over-relaxation complexity
+    
+    const optimalPreset = {
+        name: 'optimal',
+        trimming: {
+            leftGapThresh: 0.6,
+            rightGapThresh: 0.6,
+            edgeWindow: 20
+        },
+        clustering: {
+            minSize: 3,
+            minPerfect: 5,
+            maxIterations: 10,
+            qualitySmall: 80,       // Conservative initial
+            qualityMedium: 70,      // Conservative initial
+            qualityLarge: 60,       // Conservative initial
+            sizeSmallMedium: 11,
+            sizeMediumLarge: 20,
+            minOccurrences: 3       // KEY: LOW initial value (not 10 or 16)!
+        },
+        timestamp: new Date().toISOString()
+    };
+    
+    // Store in localStorage
+    let presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
+    presets['optimal'] = optimalPreset;
+    localStorage.setItem('clusteringPresets', JSON.stringify(presets));
+    
+    // Update preset list and select it
+    updateClusteringPresetList();
+    const presetSelect = el('clusteringPresetList');
+    if (presetSelect) {
+        presetSelect.value = 'optimal';
+        // Immediately load it so user can see the parameters
+        loadClusteringPreset();
+    }
+    
+    showMessage('Created "optimal" preset (minOccurrences=3) - now run clustering!', 3000);
+    console.log('[Clustering] Created optimal preset:', optimalPreset);
+}
+
+function loadClusteringPreset() {
+    const presetSelect = el('clusteringPresetList');
+    const presetName = presetSelect?.value;
+    
+    if (!presetName) {
+        showMessage("Please select a preset", 2000);
+        return;
+    }
+    
+    let presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
+    const preset = presets[presetName];
+    
+    if (!preset) {
+        showMessage("Preset not found", 2000);
+        return;
+    }
+    
+    // Apply trimming parameters
+    el('leftGapInput').value = preset.trimming.leftGapThresh * 100;
+    el('rightGapInput').value = preset.trimming.rightGapThresh * 100;
+    el('edgeWindowInput').value = preset.trimming.edgeWindow;
+    
+    // Apply clustering parameters
+    el('clusterMinSizeInput').value = preset.clustering.minSize;
+    el('clusterMinPerfectInput').value = preset.clustering.minPerfect;
+    el('clusterMaxIterationsInput').value = preset.clustering.maxIterations;
+    
+    // Apply quality thresholds (with fallback to defaults for older presets)
+    el('qualitySmallInput').value = preset.clustering.qualitySmall || 90;
+    el('qualityMediumInput').value = preset.clustering.qualityMedium || 80;
+    el('qualityLargeInput').value = preset.clustering.qualityLarge || 70;
+    
+    // Apply size breakpoints (with fallback to defaults for older presets)
+    el('sizeSmallMediumInput').value = preset.clustering.sizeSmallMedium || 11;
+    el('sizeMediumLargeInput').value = preset.clustering.sizeMediumLarge || 20;
+    
+    // Apply min occurrences (with fallback to default for older presets)
+    el('minOccurrencesInput').value = preset.clustering.minOccurrences || 5;
+    
+    showMessage(`Preset "${presetName}" loaded!`, 2000);
+    console.log('[Clustering] Loaded preset:', presetName, preset);
+}
+
+function updateClusteringPresetList() {
+    const presetSelect = el('clusteringPresetList');
+    if (!presetSelect) return;
+    
+    let presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
+    const presetNames = Object.keys(presets).sort();
+    
+    // Clear and rebuild options
+    presetSelect.innerHTML = '<option value="">-- Select preset --</option>';
+    
+    presetNames.forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = `${name} (${new Date(presets[name].timestamp).toLocaleDateString()})`;
+        presetSelect.appendChild(option);
+    });
+    
+    console.log('[Clustering] Preset list updated:', presetNames.length, 'presets');
+}
+
+function deleteClusteringPreset() {
+    const presetSelect = el('clusteringPresetList');
+    const presetName = presetSelect?.value;
+    
+    if (!presetName) {
+        showMessage("Please select a preset to delete", 2000);
+        return;
+    }
+    
+    if (!confirm(`Delete preset "${presetName}"?`)) {
+        return;
+    }
+    
+    let presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
+    delete presets[presetName];
+    localStorage.setItem('clusteringPresets', JSON.stringify(presets));
+    
+    updateClusteringPresetList();
+    showMessage(`Preset "${presetName}" deleted`, 2000);
+}
+
+function displayClusteringResults(results) {
+    const modal = el('clusteringModal');
+    const content = el('clusteringContent');
+    
+    if (!modal || !content) return;
+    
+    const colors = SINEClusterer.getClusterColors();
+    
+    let html = `
+        <div style="margin-bottom: 16px; padding: 8px; background: #e8f4f8; border-radius: 4px;">
+            <strong>Summary:</strong> ${results.summary.nClusters} cluster${results.summary.nClusters !== 1 ? 's' : ''} | 
+            ${results.summary.nAssigned} sequences assigned | ${results.summary.nUnassigned} unassigned
+        </div>
+    `;
+    
+    // Display each cluster
+    results.clusters.forEach((cluster, idx) => {
+        const color = colors[idx % colors.length];
+        html += `
+            <div style="margin-bottom: 12px; padding: 8px; border: 1px solid #ddd; border-left: 4px solid ${color}; border-radius: 2px;">
+                <div style="cursor: pointer; font-weight: bold; user-select: none; margin-bottom: 4px;" onclick="document.getElementById('cluster${idx}').style.display = document.getElementById('cluster${idx}').style.display === 'none' ? 'block' : 'none';">
+                    ▶ Cluster ${idx + 1}: ${cluster.size} sequences, ${cluster.nPerfect} diagnostic features
+                </div>
+                <div id="cluster${idx}" style="display: none; margin-left: 8px; margin-top: 8px;">
+                    <div style="margin-bottom: 8px;">
+                        <strong>Sequences:</strong>
+                        <div style="margin: 4px 0; padding: 4px; background: #f9f9f9; border-radius: 2px;">
+                            ${cluster.sequences.map((s, i) => `<div style="font-family: monospace; font-size: 10px;">• ${s.id}</div>`).join('')}
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 8px;">
+                        <strong>Diagnostic Features (first 20):</strong>
+                        <div style="margin: 4px 0; padding: 4px; background: #f9f9f9; border-radius: 2px; max-height: 150px; overflow-y: auto;">
+                            ${cluster.perfectFeatures.length > 0 ? cluster.perfectFeatures.map(f => `<div style="font-family: monospace; font-size: 10px;">Pos ${f.pos}: ${f.char}</div>`).join('') : '<em>None</em>'}
+                        </div>
+                    </div>
+                    <button onclick="highlightCluster(${idx})" style="padding: 4px 8px; font-size: 11px; background: ${color}; color: white; border: none; border-radius: 2px; cursor: pointer;">Highlight in alignment</button>
+                </div>
+            </div>
+        `;
+    });
+    
+    // Display unassigned
+    if (results.unassigned.length > 0) {
+        html += `
+            <div style="margin-bottom: 12px; padding: 8px; border: 1px solid #ddd; border-left: 4px solid #999999; border-radius: 2px;">
+                <div style="cursor: pointer; font-weight: bold; user-select: none; margin-bottom: 4px;" onclick="document.getElementById('unassignedCluster').style.display = document.getElementById('unassignedCluster').style.display === 'none' ? 'block' : 'none';">
+                    ▶ Unassigned: ${results.unassigned.length} sequences
+                </div>
+                <div id="unassignedCluster" style="display: none; margin-left: 8px; margin-top: 8px;">
+                    <div style="margin: 4px 0; padding: 4px; background: #f9f9f9; border-radius: 2px;">
+                        ${results.unassigned.map(s => `<div style="font-family: monospace; font-size: 10px;">• ${s.id}</div>`).join('')}
+                    </div>
+                    <button onclick="highlightCluster(-1)" style="padding: 4px 8px; font-size: 11px; background: #999999; color: white; border: none; border-radius: 2px; cursor: pointer; margin-top: 4px;">Highlight in alignment</button>
+                </div>
+            </div>
+        `;
+    }
+    
+    content.innerHTML = html;
+    modal.style.display = 'block';
+}
+
+function highlightCluster(clusterIdx) {
+    if (!state.clusteringResults) return;
+    
+    const results = state.clusteringResults;
+    const colors = SINEClusterer.getClusterColors();
+    
+    // Clear previous cluster highlighting
+    document.querySelectorAll('[data-cluster-highlight]').forEach(el => {
+        el.removeAttribute('data-cluster-highlight');
+        el.style.backgroundColor = '';
+    });
+    
+    let indicesToHighlight = [];
+    
+    if (clusterIdx === -1) {
+        // Highlight unassigned
+        indicesToHighlight = results.unassigned.map(s => s.index);
+    } else {
+        // Highlight specific cluster
+        indicesToHighlight = results.clusters[clusterIdx].sequences.map(s => s.index);
+    }
+    
+    const color = clusterIdx === -1 ? '#999999' : colors[clusterIdx % colors.length];
+    
+    // Apply highlights
+    indicesToHighlight.forEach(idx => {
+        document.querySelectorAll(`.seq-line[data-seq-index="${idx}"]`).forEach(line => {
+            line.setAttribute('data-cluster-highlight', 'true');
+            line.style.backgroundColor = color + '33'; // 33 = 20% opacity
+        });
+    });
+    
+    showMessage(`Highlighted ${indicesToHighlight.length} sequence${indicesToHighlight.length !== 1 ? 's' : ''}`, 2000);
+}
+
 function realignSelectedBlock() {
     showMessage("Realign Block not implemented yet.", 3000);
 }
@@ -3000,6 +3754,15 @@ function initializeAppUI() {
         'copyColumnsButton': copySelectedColumns,
         'deleteColumnsButton': deleteSelectedColumns,
         'realignBlockButton': realignSelectedBlock,
+        'clusterSequencesButton': clusterSequences,
+        'clusterNowButton': clusterSequences,
+        'previewTrimButton': previewTrimming,
+        'executeTrimButton': executeTrimming,
+        'undoTrimButton': undoTrimming,
+        'fullClusteringButton': clusterSequences,
+        'clusteringSavePresetButton': saveClusteringPreset,
+        'clusteringLoadPresetButton': loadClusteringPreset,
+        'clusteringOptimalPresetButton': createOptimalPreset,
         'savePresetButton': savePreset,
         'loadPresetButton': loadPreset,
         'infoButton': openInfoModal,
@@ -3019,6 +3782,9 @@ function initializeAppUI() {
     for (const id in buttonActions) {
         el(id)?.addEventListener('click', buttonActions[id]);
     }
+    
+    // Initialize clustering preset list
+    updateClusteringPresetList();
 
     const searchInputEl = el('searchInput');
     if (searchInputEl) {
@@ -3044,7 +3810,16 @@ function initializeAppUI() {
     // Set initial state for controls
     el('modeBlocks').checked = true;
     el('modeSingle').checked = false;
-    document.querySelector('input[name="consensusPosition"][value="bottom"]').checked = true;
+    const topConsensusRadio = document.querySelector('input[name="consensusPosition"][value="top"]');
+    const bottomConsensusRadio = document.querySelector('input[name="consensusPosition"][value="bottom"]');
+    if (topConsensusRadio) {
+        topConsensusRadio.checked = true;
+    }
+    if (bottomConsensusRadio) {
+        bottomConsensusRadio.checked = false;
+        bottomConsensusRadio.disabled = true;
+        bottomConsensusRadio.closest('label')?.classList.add('disabled-option');
+    }
     
     // Trigger initial render/setup based on defaults
     onModeChange();
@@ -3162,7 +3937,7 @@ function attachUIListeners() {
     }
 
     // Set up radio button groups
-    const radioGroups = ['shadeMode', 'mode', 'consensusType', 'consensusPosition'];
+    const radioGroups = ['shadeMode', 'mode', 'consensusType'];
     radioGroups.forEach(group => {
         document.querySelectorAll(`input[name="${group}"]`).forEach(radio => {
             const handler = group === 'shadeMode' ? onShadeModeChange : 
