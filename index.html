@@ -78,10 +78,10 @@
                                 <span class="slider-label">Shade By</span>
                             </div>
                             <label class="shade-mode-label">
-                                <input type="radio" name="shadeMode" value="nongap" title="Shade based on non-gap positions only"> Non-Gap
+                                <input type="radio" name="shadeMode" value="nongap" checked title="Shade based on non-gap positions only"> Non-Gap
                             </label>
                             <label class="shade-mode-label">
-                                <input type="radio" name="shadeMode" value="all" checked title="Shade based on all positions including gaps"> All
+                                <input type="radio" name="shadeMode" value="all" title="Shade based on all positions including gaps"> All
                             </label>
                         </div>
                     </div>
@@ -94,22 +94,20 @@
                     <div class="control-group" id="display-controls">
                         <div class="slider-container display-slider-row">
                             <span class="slider-label" title="How many characters of sequence names to show">Name Len</span>
-                            <input type="range" id="nameLengthSlider" class="normal-slider" min="3" max="50" value="25" title="Adjust sequence name display length (3-50 characters)">
-                            <input type="number" id="nameLengthInput" min="3" max="50" value="25" title="Adjust sequence name display length (3-50 characters)">
+                            <input type="range" id="nameLengthSlider" class="normal-slider" min="3" max="50" value="50" title="Adjust sequence name display length (3-50 characters)">
+                            <input type="number" id="nameLengthInput" min="3" max="50" value="50" title="Adjust sequence name display length (3-50 characters)">
                         </div>
-                        <div class="slider-container display-slider-row">
+                        <div class="slider-container display-slider-row" style="flex: 1; max-width: 500px;">
                             <span class="slider-label" title="Zoom controls for alignment display">Zoom</span>
-                            <input type="range" id="zoomSlider" class="normal-slider" min="50" max="200" value="100" title="Zoom level for alignment display (50-200%)">
-                            <span class="zoom-buttons">
-                                <button id="zoomOutButton" class="zoom-button" title="Zoom out (shortcut: Ctrl+-)">-</button>
-                                <span id="zoomVal" class="zoom-value" title="Current zoom level">100%</span>
-                                <button id="zoomInButton" class="zoom-button" title="Zoom in (shortcut: Ctrl++)">+</button>
-                            </span>
+                            <button id="zoomOutButton" class="zoom-button" title="Zoom out (shortcut: Ctrl+-)">−</button>
+                            <input type="range" id="zoomSlider" class="normal-slider" min="50" max="200" value="100" title="Zoom level for alignment display (50-200%)" style="flex: 1; min-width: 200px;">
+                            <span id="zoomVal" class="zoom-value" title="Current zoom level" style="min-width: 45px; text-align: center;">100%</span>
+                            <button id="zoomInButton" class="zoom-button" title="Zoom in (shortcut: Ctrl++)">+</button>
                         </div>
                         <div class="slider-container display-slider-row" id="blockSizeContainer">
                             <span class="slider-label" title="Characters per block in block mode">Block Size</span>
-                            <input type="range" id="blockSizeSlider" class="normal-slider" min="40" max="200" value="80" title="Block size in Block mode (40-200 characters)">
-                            <input type="number" id="blockSizeInput" min="40" max="200" value="80" title="Block size in Block mode (40-200 characters)">
+                            <input type="range" id="blockSizeSlider" class="normal-slider" min="40" max="200" value="200" title="Block size in Block mode (40-200 characters)">
+                            <input type="number" id="blockSizeInput" min="40" max="200" value="200" title="Block size in Block mode (40-200 characters)">
                         </div>
                         <div class="slider-container mode-container">
                             <span class="slider-label" title="Toggle display mode">Mode</span>
@@ -152,9 +150,9 @@
                         <div class="slider-container">
                             <span class="slider-label" title="Fallback below threshold">Fallback</span>
                             <select id="consensusFallback" title="What to show when below threshold or ambiguous">
-                                <option value="gap">Gap (-)</option>
+                                <option value="gap" selected>Gap (-)</option>
                                 <option value="n">N (unknown)</option>
-                                <option value="iupac" selected>IUPAC (no gaps)</option>
+                                <option value="iupac">IUPAC (no gaps)</option>
                             </select>
                         </div>
                         <div class="slider-container">
@@ -296,6 +294,12 @@
                                 <button id="clearAllSearchesButton" title="Clear all search highlights (shortcut: Ctrl+Alt+F)">Clear All</button>
                             </div>
                         </div>
+                        <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
+                            <button id="reverseComplementQueryButton" style="height: 22px; font-size: 11px; padding: 0 6px;">Reverse complement query</button>
+                            <label style="font-size: 11px; display: flex; align-items: center; gap: 4px;">
+                                <input type="checkbox" id="searchBothStrands" style="margin: 0;"> Search both strands
+                            </label>
+                        </div>
                         <div id="activeSearches" class="active-searches" style="display: none; margin-top: 4px; padding: 4px; background: #f8f8f8; border-radius: 3px; font-size: 11px;">
                             <strong>Active searches:</strong>
                             <div id="searchList" style="margin-top: 2px;"></div>
@@ -380,6 +384,7 @@
                         <div class="button-group">
                             <button id="selectAllButton" title="Select/deselect all sequences (shortcut: Ctrl+A)">☑️ Select All</button>
                             <button id="copySelectedButton" title="Copy selected sequences or nucleotides (shortcut: Ctrl+Shift+C)">📋 Copy Sel</button>
+                            <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">📋 Copy Align</button>
                             <button id="deleteSelectedButton" title="Delete selected sequences (shortcut: Ctrl+Del)">❌ Delete Sel</button>
                             <button id="undoButton" title="Undo last action (shortcut: Ctrl+Z)">↩️ Undo</button>
                         </div>
@@ -433,7 +438,7 @@
         
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; font-size: 12px; color: #555;">
             <div style="text-align: left; flex: 1;">
-                <span style="white-space: nowrap;">Click name: copy name</span> | <span style="white-space: nowrap;">Ctrl+click name: select/deselect seq (drag for range)</span> | <span style="white-space: nowrap;">Shift+click name: range from last</span> | <span style="white-space: nowrap;">Ctrl+Alt+click nuc: select column</span> | <span style="white-space: nowrap;">Ctrl+click on nuc: start/extend range</span> | <span style="white-space: nowrap;">Right-click drag seq: slide</span> | <span style="white-space: nowrap;">Right-click name: menu</span> | <span style="white-space: nowrap;">Use bottom scrollbar to move alignment</span>
+                <span style="white-space: nowrap;">Click name: copy name</span> | <span style="white-space: nowrap;">Ctrl+click name: select/deselect seq (drag for range)</span> | <span style="white-space: nowrap;">Shift+click name: range from last</span> | <span style="white-space: nowrap;">Ctrl+Alt+click nuc: select column</span> | <span style="white-space: nowrap;">Shift+Ctrl+Alt+click nuc: extend column range</span> | <span style="white-space: nowrap;">Ctrl+click on nuc: start/extend range</span> | <span style="white-space: nowrap;">Right-click drag seq: slide</span> | <span style="white-space: nowrap;">Right-click name: menu</span> | <span style="white-space: nowrap;">Use bottom scrollbar to move alignment</span>
             </div>
             <div id="sourceInfo" style="text-align: right; white-space: nowrap; font-size: 14px; color: #666; margin-left: 12px;">No file loaded</div>
         </div>
