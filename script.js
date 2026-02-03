@@ -1,36 +1,40 @@
-// STATE OBJECT
+// DEFAULTS & STATE
 const DEFAULTS = {
     consensusThreshold: 50,
+    groupConsensusThreshold: 50,
     nameLength: 25,
     minCoverage: 30
 };
 
 const state = {
-  seqs: [],
-  selectedRows: new Set(),
-  selectedColumns: new Set(),
+    seqs: [],
+    selectedRows: new Set(),
+    selectedColumns: new Set(),
     selectedNucs: new Map(),
     pendingNucStart: null,
     spanCache: new Map(),
     domSelectedNucs: new Map(),
-        domSelectedColumns: new Map(),
+    domSelectedColumns: new Map(),
     domPendingNuc: null,
-  lastSelectedIndex: null,
-  consensusSeq: '',
-  deletedHistory: [],
-  currentFilename: '',
-  searchHistory: [],
-  isDragging: false,
-  dragStartRow: null,
-  dragStartCol: null,
-  dragMode: null,
-  ctrlPressed: false,
-  altPressed: false,
-  lastAction: null,
-  draggingGroup: null,
-  slideDragStartX: null,
+    lastSelectedIndex: null,
+    lastSelectedColumn: null,
+    consensusSeq: '',
+    deletedHistory: [],
+    currentFilename: '',
+    searchHistory: [],
+    isDragging: false,
+    dragStartRow: null,
+    dragStartCol: null,
+    dragMode: null,
+    ctrlPressed: false,
+    altPressed: false,
+    lastAction: null,
+    draggingGroup: null,
+    slideDragStartX: null,
     slideDragStartPos: null,
-        slideSeqIndex: null,
+    slideSeqIndex: null,
+    nameLength: DEFAULTS.nameLength,
+    uiListenersAttached: false,
     panning: {
         active: false,
         startX: 0,
@@ -40,33 +44,71 @@ const state = {
         started: false
     },
     trimBoundaries: null,
-    trimBackup: null  // Store original sequences before trimming
+    trimBackup: null
 };
-// Ensure drag handlers are globally available before any usage
-window.handleDragStart = function(e) {
-    try {
 
-// ============================================================================
-// End of Full-window drag-and-drop
-// ============================================================================
-        if (e && e.dataTransfer) {
-            e.dataTransfer.setData('text/plain', e.target ? e.target.textContent : '');
-            e.dataTransfer.effectAllowed = 'move';
-        }
+function handleDragStart(e) {
+    try {
+        if (!e || !e.dataTransfer) return;
+        const nameEl = e.target?.closest('.seq-name');
+        if (!nameEl) return;
+        const seqIndex = nameEl.dataset.seqIndex;
+        if (seqIndex === undefined || seqIndex === null) return;
+        e.dataTransfer.setData('draggedSequenceIndex', String(seqIndex));
+        e.dataTransfer.effectAllowed = 'move';
+        nameEl.classList.add('dragging');
     } catch (err) {
         console.warn('dragstart error', err);
     }
-};
-window.handleDragEnd = function(e) {
-    // optional cleanup
-};
+}
 
-// Minimal drop handler to avoid undefined reference; can be expanded later
+function handleDragEnd(e) {
+    try {
+        const nameEl = e.target?.closest('.seq-name');
+        if (nameEl) nameEl.classList.remove('dragging');
+    } catch (err) {
+        console.warn('dragend error', err);
+    }
+}
 window.handleDrop = function(e) {
     e.preventDefault();
     e.stopPropagation();
-    // If files are dropped on a specific sequence line, we could implement
-    // sequence-specific behavior here. For now, do nothing to avoid errors.
+    
+    try {
+        const draggedIndexStr = e.dataTransfer?.getData('draggedSequenceIndex');
+        if (!draggedIndexStr) return;
+        
+        const draggedIndex = parseInt(draggedIndexStr);
+        if (isNaN(draggedIndex) || draggedIndex < 0) return;
+        
+        // Find the target sequence line
+        const targetLine = e.target?.closest('.seq-line');
+        if (!targetLine || targetLine.classList.contains('consensus-line')) return;
+        
+        const targetIndexStr = targetLine.dataset.seqIndex;
+        if (!targetIndexStr) return;
+        
+        const targetIndex = parseInt(targetIndexStr);
+        if (isNaN(targetIndex) || draggedIndex === targetIndex) return;
+        
+        // Reorder the sequences
+        const seq = state.seqs[draggedIndex];
+        state.seqs.splice(draggedIndex, 1);
+        state.seqs.splice(targetIndex, 0, seq);
+        
+        // Add to history for undo
+        state.deletedHistory.push({
+            type: 'reorder',
+            seqs: JSON.parse(JSON.stringify(state.seqs)),
+            selectedRows: new Set(state.selectedRows),
+            selectedColumns: new Set(state.selectedColumns)
+        });
+        
+        renderAlignment();
+        showMessage(`Sequence moved to position ${targetIndex + 1}!`, 2000);
+    } catch (err) {
+        console.warn('drop error', err);
+    }
 };
 // DOM ELEMENTS
 const el = id => document.getElementById(id);
@@ -222,7 +264,7 @@ function setupMenuStability() {
 }
 
 function updateSliderBackground(slider) {
-    if (!slider) return; // Gracefully skip missing sliders (e.g., deprecated controls)
+    if (!slider) return;
     const value = (slider.value - slider.min) / (slider.max - slider.min) * 100;
     slider.style.setProperty('--slider-value', value + '%');
 }
@@ -270,34 +312,6 @@ function updateNameLengthSliderRange() {
         slider.title = `Adjust sequence name display length (3-${newMax} characters)`;
         
     }
-}
-
-// Helper function to set up slider/input pairs
-function setupSliderInputPair(sliderId, inputId, callback = null) {
-    const slider = el(sliderId);
-    const input = el(inputId);
-    
-    if (!slider || !input) {
-        return; // Skip if elements don't exist
-    }
-    
-    slider.addEventListener('input', () => {
-        input.value = slider.value;
-        if (callback) callback();
-        updateSliderBackground(slider);
-        if (sliderId.includes('Slider') && (sliderId.includes('black') || sliderId.includes('dark') || sliderId.includes('light'))) {
-            validateThresholds();
-        }
-    });
-    
-    input.addEventListener('input', () => {
-        slider.value = input.value;
-        if (callback) callback();
-        updateSliderBackground(slider);
-        if (inputId.includes('Input') && (inputId.includes('black') || inputId.includes('dark') || inputId.includes('light'))) {
-            validateThresholds();
-        }
-    });
 }
 
 function clampConsensusPercent(value) {
@@ -398,6 +412,68 @@ function calculateGaplessPositions(sequence) {
 function reverseComplement(seq) {
     const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.', 'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H' };
     return seq.split('').reverse().map(b => complement[b] || 'N').join('');
+}
+
+function hexToRgb(hex) {
+    const clean = hex.replace('#', '');
+    if (clean.length !== 6) return null;
+    const num = parseInt(clean, 16);
+    return {
+        r: (num >> 16) & 255,
+        g: (num >> 8) & 255,
+        b: num & 255
+    };
+}
+
+function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+    if (max === min) {
+        h = s = 0;
+    } else {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+    }
+    return { h: h * 360, s: s * 100, l: l * 100 };
+}
+
+function hslToHex(h, s, l) {
+    h /= 360; s /= 100; l /= 100;
+    const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+    };
+    let r, g, b;
+    if (s === 0) {
+        r = g = b = l;
+    } else {
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1/3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1/3);
+    }
+    const toHex = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function getComplementaryColor(hex) {
+    const rgb = hexToRgb(hex);
+    if (!rgb) return '#00FFFF';
+    const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+    const compHue = (hsl.h + 180) % 360;
+    return hslToHex(compHue, Math.min(hsl.s + 10, 90), Math.min(hsl.l + 5, 85));
 }
 // IUPAC ambiguity code resolver for a set of standard bases
 // Input: Array or Set containing any of A,C,G,T,U (U is treated as T)
@@ -716,6 +792,56 @@ function generateScale(maxLength, interval = 10, startPos = 0) {
     return scaleArray.join('');
 }
 
+function preCalculateConservation(seqs, len, shadeMode) {
+    const conservationData = new Array(len);
+    const minCoverage = 0.3; // Require at least 30% non-gap sequences for coloring
+    const seqCount = seqs.length;
+    
+    for (let pos = 0; pos < len; pos++) {
+        // Count bases directly without creating intermediate arrays
+        const counts = {};
+        let nonGapCount = 0;
+        
+        for (let s = 0; s < seqCount; s++) {
+            const base = seqs[s].seq[pos] || '-';
+            if (base !== '-' && base !== '.') {
+                counts[base] = (counts[base] || 0) + 1;
+                nonGapCount++;
+            }
+        }
+        
+        if (nonGapCount > 0) {
+            // Find max count
+            let maxCount = 0;
+            for (const count of Object.values(counts)) {
+                if (count > maxCount) maxCount = count;
+            }
+            
+            // Get all bases with max count
+            const consensusBases = new Set();
+            for (const [base, count] of Object.entries(counts)) {
+                if (count === maxCount) consensusBases.add(base);
+            }
+            
+            const denominator = shadeMode === 'all' ? seqCount : nonGapCount;
+            const conservation = maxCount / denominator;
+            const coverage = nonGapCount / seqCount;
+            const hasValidCoverage = coverage >= minCoverage;
+            
+            conservationData[pos] = {
+                consensusBases,
+                conservation,
+                hasData: true,
+                hasValidCoverage: hasValidCoverage
+            };
+        } else {
+            conservationData[pos] = { hasData: false, hasValidCoverage: false };
+        }
+    }
+    
+    return conservationData;
+}
+
 function renderAlignment() {
     if (!state.seqs || state.seqs.length === 0) {
         alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
@@ -767,6 +893,10 @@ function renderAlignment() {
     state.consensusSeq = consensus.join('').replace(/-/g, '');
     const shouldRenderConsensus = showConsensus;
     
+    // *** NEW: Pre-calculate conservation for ALL columns ONCE ***
+    const shadeMode = document.querySelector('input[name="shadeMode"]:checked').value;
+    const conservationData = preCalculateConservation(state.seqs, len, shadeMode);
+    
     if (useBlocks) {
         for (let start = 0; start < len; start += blockWidth) {
             const end = Math.min(start + blockWidth, len);
@@ -793,7 +923,8 @@ function renderAlignment() {
                 addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'top');
             }
             for (let i = 0; i < state.seqs.length; i++) {
-                const lineDiv = createSequenceLine(i, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock);
+                // *** PASS conservationData to createSequenceLine ***
+                const lineDiv = createSequenceLine(i, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, conservationData);
                 blockDiv.appendChild(lineDiv);
             }
             alignmentContainer.appendChild(blockDiv);
@@ -817,7 +948,8 @@ function renderAlignment() {
             addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'top');
         }
         for (let i = 0; i < state.seqs.length; i++) {
-            const lineDiv = createSequenceLine(i, 0, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true);
+            // *** PASS conservationData to createSequenceLine ***
+            const lineDiv = createSequenceLine(i, 0, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, conservationData);
             alignmentContainer.appendChild(lineDiv);
         }
     }
@@ -874,7 +1006,7 @@ function getCachedSpan(row, pos) {
     return state.spanCache.get(row)?.get(pos) || null;
 }
 
-function createSequenceLine(index, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false) {
+function createSequenceLine(index, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false, conservationData) {
     const lineDiv = document.createElement('div');
     lineDiv.className = 'seq-line';
     lineDiv.dataset.seqIndex = index;
@@ -885,7 +1017,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     let displayName = state.seqs[index].header;
     let nameLenInt = parseInt(nameLen, 10);
     if (displayName.length > nameLenInt) {
-        nameSpan.textContent = displayName.slice(0, nameLenInt) + 'вЂ¦';
+        nameSpan.textContent = displayName.slice(0, nameLenInt) + '…';
         nameSpan.title = `${displayName} (length: ${state.seqs[index].seq.length})`;
     } else {
         nameSpan.textContent = displayName;
@@ -962,71 +1094,66 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     lineDiv.appendChild(nameSpan);
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
-    // рџ‘‡ NO ACTION on plain click вЂ” only Ctrl+Click for selection
+    // NO ACTION on plain click — only Ctrl+Click for selection
     dataSpan.addEventListener('click', (e) => {
         if (e.ctrlKey || e.metaKey) return; // handled by mousedown
-        // рџ‘‰ Do nothing on single click вЂ” no copy, no selection
+        // Do nothing on single click — no copy, no selection
     });
+    
+    // *** PERFORMANCE: Pre-cache references and build HTML string ***
+    const seq = state.seqs[index].seq;
+    const gaplessPositions = state.seqs[index].gaplessPositions;
+    const selectedCols = state.selectedColumns;
+    const htmlParts = [];
+    
     for (let pos = start; pos < end; pos++) {
-        const base = state.seqs[index].seq[pos] || '-';
-        const gaplessPos = state.seqs[index].gaplessPositions[pos];
+        const base = seq[pos] || '-';
         let cls = 'other';
         let baseClass = '';
+        
         if (!standard.has(base) && !ambiguous.has(base)) {
             baseClass = 'artifact';
         } else if (ambiguous.has(base)) {
             baseClass = 'ambiguous';
         }
-        const col = state.seqs.map(s => s.seq[pos] || '-');
-        const nonGapCol = col.filter(b => b !== '-' && b !== '.');
-        if (nonGapCol.length > 0) {
-            const counts = {};
-            nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
-            const maxCount = Math.max(...Object.values(counts), 0);
-            const consensusBases = new Set(Object.keys(counts).filter(b => counts[b] === maxCount));
-            const denominator = document.querySelector('input[name="shadeMode"]:checked').value === 'all' ? state.seqs.length : nonGapCol.length;
-            const conservation = maxCount / denominator;
-            if (base !== '-' && base !== '.' && consensusBases.has(base)) {
-                if (enableBlack && conservation >= blackThresh) cls = 'black';
-                else if (enableDark && conservation >= darkThresh) cls = 'dark';
-                else if (enableLight && conservation >= lightThresh) cls = 'light';
+        
+        const posData = conservationData[pos];
+        if (posData.hasData && posData.hasValidCoverage) {
+            if (base !== '-' && base !== '.' && posData.consensusBases.has(base)) {
+                if (enableBlack && posData.conservation >= blackThresh) cls = 'black';
+                else if (enableDark && posData.conservation >= darkThresh) cls = 'dark';
+                else if (enableLight && posData.conservation >= lightThresh) cls = 'light';
             } else if (base === '-' || base === '.') {
                 cls = 'gap';
             }
-        } else {
+        } else if (base === '-' || base === '.') {
             cls = 'gap';
         }
-        const newClass = `${cls} ${baseClass}`.trim();
-        const span = document.createElement('span');
-        span.className = newClass;
-        span.textContent = base;
-        span.dataset.pos = pos;
-        registerSpanInCache(index, pos, span);
-        if (base !== '-' && base !== '.') {
-            const currentGaplessPos = gaplessPos;
-            span.addEventListener('mouseover', (e) => {
-                showTooltipAt(`${state.seqs[index].header}: ${currentGaplessPos}`, span);
-            });
-            span.addEventListener('mouseout', () => {
-                hideTooltip();
-            });
-        } else {
-            span.title = 'Gap';
-        }
-        if (state.selectedColumns.has(pos)) {
-            span.classList.add('column-selected');
-        }
-        dataSpan.appendChild(span);
+        
+        const colSelected = selectedCols.has(pos) ? ' column-selected' : '';
+        const finalClass = `${cls}${baseClass ? ' ' + baseClass : ''}${colSelected}`;
+        htmlParts.push(`<span class="${finalClass}" data-pos="${pos}">${base}</span>`);
     }
-    // Add sequence length at the end (only for last block and using gapless length)
+    
+    // Add sequence length at the end (only for last block)
     if (showLength) {
-        const lengthSpan = document.createElement('span');
-        lengthSpan.className = 'seq-length';
-        const gaplessLength = state.seqs[index].gaplessPositions[state.seqs[index].gaplessPositions.length - 1] || 0;
-        lengthSpan.textContent = gaplessLength;
-        lengthSpan.title = `Sequence length: ${gaplessLength} (gapless)`;
-        dataSpan.appendChild(lengthSpan);
+        const gaplessLength = gaplessPositions[gaplessPositions.length - 1] || 0;
+        htmlParts.push(`<span class="seq-length" title="Sequence length: ${gaplessLength} (gapless)">${gaplessLength}</span>`);
     }
+    
+    // *** PERFORMANCE: Set innerHTML once instead of many appendChild calls ***
+    dataSpan.innerHTML = htmlParts.join('');
+    
+    // Register spans in cache for selection features
+    const spans = dataSpan.children;
+    for (let i = 0; i < spans.length; i++) {
+        const span = spans[i];
+        const pos = span.dataset.pos;
+        if (pos !== undefined) {
+            registerSpanInCache(index, parseInt(pos), span);
+        }
+    }
+    
     lineDiv.appendChild(dataSpan);
     if (state.selectedRows.has(index)) {
         lineDiv.classList.add('selected');
@@ -1156,7 +1283,6 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
 }
 function setupHoverMenuReveal() {
     const controls = el('controls');
-    const alignmentContainer = el('alignmentContainer');
     if (!controls || !alignmentContainer) return;
     
     // Menu stays visible via CSS sticky positioning
@@ -1180,7 +1306,6 @@ function setZoom(percent) {
     const size = (percent / 100) * 13;
     alignmentContainer.style.fontSize = size + 'px';
     el('zoomVal').textContent = percent + '%';
-    updateSliderBackground(el('zoomSlider'));
 }
 function adjustZoom(delta) {
     const slider = el('zoomSlider');
@@ -1208,7 +1333,7 @@ function parseAndRender(isFromDrop = false) {
     }
     try {
         let parsed;
-        // рџ‘‡ PRIORITIZE CONTENT-BASED DETECTION. Ignore filename for pasted data.
+    // PRIORITIZE CONTENT-BASED DETECTION. Ignore filename for pasted data.
         const isMsfContent = (inputText.includes('MSF:') && inputText.includes('Check:')) ||
                              inputText.includes('!!AA_MULTIPLE_ALIGNMENT') ||
                              inputText.includes('!!NA_MULTIPLE_ALIGNMENT');
@@ -1224,7 +1349,7 @@ function parseAndRender(isFromDrop = false) {
             parsed = parseFasta(inputText);
         }
         if (!parsed) throw new Error("No valid sequences found");
-        // рџ‘‡ MOVE THIS LINE UP: Set filename BEFORE any parsing that might fail.
+    // MOVE THIS LINE UP: Set filename BEFORE any parsing that might fail.
         if (!isFromDrop) {
             state.currentFilename = 'Clipboard';
         }
@@ -1266,9 +1391,9 @@ function parseAndRender(isFromDrop = false) {
         }, 100);
     } catch (e) {
         console.error("Error in parseAndRender:", e);
-        alignmentContainer.innerHTML = `<div class="error-message">вќЊ ${e.message}</div>`;
+    alignmentContainer.innerHTML = `<div class="error-message">✖ ${e.message}</div>`;
         showMessage(`Error: ${e.message}`, 5000);
-        // рџ‘‡ Reset filename on error to avoid poisoning future loads
+    // Reset filename on error to avoid poisoning future loads
         state.currentFilename = '';
         el('sourceInfo').innerHTML = 'No file loaded';
     }
@@ -1407,7 +1532,7 @@ function handleMouseDown(e) {
             updateRowSelections();
             e.preventDefault();
         }
-        // рџ‘‰ No else clause вЂ” click without Ctrl/Shift copies name (handled in nameSpan.click)
+    // No else clause — click without Ctrl/Shift copies name (handled in nameSpan.click)
     } else if (span && (e.ctrlKey || e.metaKey) && !e.altKey) {
         const pos = parseInt(span.dataset.pos);
         if (isNaN(pos)) return;
@@ -1469,15 +1594,28 @@ function handleMouseDown(e) {
         state.isDragging = true;
         state.dragStartCol = pos;
         state.dragMode = 'col';
-        if (state.selectedColumns.has(pos)) {
-            state.selectedColumns.delete(pos);
+        
+        if (e.shiftKey && state.lastSelectedColumn !== null) {
+            // Shift+Ctrl+Alt+Click: Select range from last selected column
+            const start = Math.min(state.lastSelectedColumn, pos);
+            const end = Math.max(state.lastSelectedColumn, pos);
+            for (let p = start; p <= end; p++) {
+                state.selectedColumns.add(p);
+            }
         } else {
-            state.selectedColumns.add(pos);
+            // Regular Ctrl+Alt+Click: Toggle single column
+            if (state.selectedColumns.has(pos)) {
+                state.selectedColumns.delete(pos);
+            } else {
+                state.selectedColumns.add(pos);
+            }
         }
+        
+        state.lastSelectedColumn = pos;
         updateColumnSelections();
         e.preventDefault();
     }
-    // рџ‘‰ No handler for plain click on span вЂ” do nothing
+    // No handler for plain click on span — do nothing
 }
 // Selection helper consolidating toggle behavior
 function toggleRowSelection(index) {
@@ -1552,8 +1690,11 @@ function handleMouseUp() {
     state.dragMode = null;
 }
 function handleKeyDown(e) {
-    // If focus is in the sequence entry box, do not interfere with standard shortcuts
-    if (document.activeElement === fastaInput) return;
+    // If focus is in an input/textarea/contenteditable, do not interfere with standard shortcuts
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
+        return;
+    }
     if (e.ctrlKey || e.metaKey) {
         state.ctrlPressed = true;
     }
@@ -1806,7 +1947,7 @@ function copySelected() {
     const trimmedNucText = nucText.trim();
     if (trimmedNucText) {
         const previewSource = trimmedNucText.replace(/\s+/g, ' ');
-        const preview = previewSource.length > 50 ? previewSource.slice(0, 50) + 'вЂ¦' : previewSource;
+    const preview = previewSource.length > 50 ? previewSource.slice(0, 50) + '…' : previewSource;
         const baseCount = trimmedNucText.replace(/\s+/g, '').length;
         navigator.clipboard.writeText(trimmedNucText).then(() => {
             showMessage(`Copied ${baseCount} bp: ${preview}`, 4000);
@@ -1816,7 +1957,7 @@ function copySelected() {
         });
         return;
     }
-    // рџ‘‡ Removed "No sequence selected" message вЂ” silent if nothing to copy
+    // Removed "No sequence selected" message — silent if nothing to copy
     if (state.selectedRows.size === 0) {
         return;
     }
@@ -1826,6 +1967,21 @@ function copySelected() {
     }).join('\n');
     navigator.clipboard.writeText(fasta).then(() => {
         showMessage("Selected sequences copied as FASTA!", 2000);
+    }).catch(err => {
+        console.error('Copy failed:', err);
+        showMessage("Failed to copy. Check console.", 5000);
+    });
+}
+function copyAlignment() {
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage("No alignment loaded to copy.", 3000);
+        return;
+    }
+    const fasta = state.seqs.map(s => `>${s.fullHeader || s.header}\n${s.seq}`).join('\n');
+    navigator.clipboard.writeText(fasta).then(() => {
+        const seqCount = state.seqs.length;
+        const seqLen = state.seqs[0]?.seq.length || 0;
+        showMessage(`Copied ${seqCount} sequences (${seqLen} bp) to clipboard!`, 2000);
     }).catch(err => {
         console.error('Copy failed:', err);
         showMessage("Failed to copy. Check console.", 5000);
@@ -1845,7 +2001,8 @@ function copyConsensus() {
         showMessage("No consensus available to copy.", 3000);
         return;
     }
-    const fasta = `>Consensus\n${state.consensusSeq}`;
+    const seqCount = state.seqs.length;
+    const fasta = `>consensus_${seqCount}seqs\n${state.consensusSeq}`;
     navigator.clipboard.writeText(fasta).then(() => {
         showMessage("Consensus copied as FASTA!", 2000);
     }).catch(err => {
@@ -2306,6 +2463,126 @@ function findFuzzyPositions(degapped, motif, maxMismatches) {
     return positions;
 }
 
+function findMatchesWithMismatches(degapped, motif, maxMismatches) {
+    return findFuzzyPositions(degapped, motif, maxMismatches);
+}
+
+function searchMotif() {
+    const raw = el('searchInput').value || '';
+    const motif = raw.trim().replace(/\s+/g, '').toUpperCase();
+    if (!motif) return;
+    const color = el('searchColor').value;
+    const maxMismatches = parseInt(el('maxMismatches').value) || 0;
+    const bothStrands = el('searchBothStrands')?.checked;
+
+    const motifsToSearch = [{ motif, color, label: bothStrands ? `${motif} (+)` : motif, strand: '+' }];
+    if (bothStrands) {
+        const rcMotif = reverseComplement(motif);
+        if (rcMotif && rcMotif !== motif) {
+            motifsToSearch.push({
+                motif: rcMotif,
+                color: getComplementaryColor(color),
+                label: `${rcMotif} (-)`,
+                strand: '-'
+            });
+        }
+    }
+
+    let totalMatches = 0;
+    let sequencesWithMatches = 0;
+    let plusMatches = 0;
+    let minusMatches = 0;
+    let plusSeqs = 0;
+    let minusSeqs = 0;
+
+    motifsToSearch.forEach(({ motif: searchMotifValue, color: searchColorValue, label, strand }) => {
+        let motifMatches = 0;
+        let motifSeqsWithMatches = 0;
+        const className = 'search-hit-' + Math.random().toString(36).substring(2, 12) + btoa(searchMotifValue).replace(/=/g, '').substring(0, 5);
+
+        // Remove any existing identical motif highlights first
+        state.searchHistory = state.searchHistory.filter(item => {
+            if (item.motif === searchMotifValue) {
+                document.querySelectorAll(`.${item.className}`).forEach(span => span.classList.remove(item.className));
+                document.querySelector(`style[data-motif="${item.motif}"]`)?.remove();
+                return false;
+            }
+            return true;
+        });
+
+        const style = document.createElement('style');
+        style.textContent = `.${className} { background-color: ${searchColorValue} !important; color: black !important; font-weight: bold; }`;
+        style.setAttribute('data-motif', searchMotifValue);
+        document.head.appendChild(style);
+
+        // For each sequence row, map degapped indices back to span elements robustly
+        document.querySelectorAll('.seq-line:not(.consensus-line)').forEach(row => {
+            const index = parseInt(row.dataset.seqIndex);
+            if (isNaN(index) || index < 0 || index >= state.seqs.length) return;
+            const dataSpan = row.querySelector('.seq-data');
+            if (!dataSpan) return;
+            const spans = Array.from(dataSpan.children);
+
+            // Build mapping and the displayed degapped string from the visible spans only
+            const nonGapSpanIndices = [];
+            const displayedChars = [];
+            for (let si = 0; si < spans.length; si++) {
+                const ch = (spans[si].textContent || '').toUpperCase();
+                if (ch !== '-' && ch !== '.') {
+                    nonGapSpanIndices.push(si);
+                    displayedChars.push(ch);
+                }
+            }
+
+            const displayString = displayedChars.join('');
+            if (!displayString) return;
+
+            // Treat U and T as equivalent for DNA/RNA searches
+            const normalizedDisplay = displayString.replace(/U/g, 'T');
+            const normalizedMotif = searchMotifValue.replace(/U/g, 'T');
+
+            // Find matches with mismatches allowed
+            const matches = findMatchesWithMismatches(normalizedDisplay, normalizedMotif, maxMismatches);
+            if (matches.length > 0) {
+                sequencesWithMatches++;
+                motifSeqsWithMatches++;
+            }
+            totalMatches += matches.length;
+            motifMatches += matches.length;
+            if (strand === '+') {
+                plusMatches += matches.length;
+                if (matches.length > 0) plusSeqs++;
+            } else if (strand === '-') {
+                minusMatches += matches.length;
+                if (matches.length > 0) minusSeqs++;
+            }
+
+            // Highlight matching spans
+            matches.forEach(startIdx => {
+                for (let i = 0; i < searchMotifValue.length; i++) {
+                    const spanIndex = nonGapSpanIndices[startIdx + i];
+                    if (spanIndex !== undefined && spans[spanIndex]) {
+                        spans[spanIndex].classList.add(className);
+                    }
+                }
+            });
+        });
+
+        // Track search history
+        state.searchHistory.push({ motif: searchMotifValue, color: searchColorValue, className, matchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches, label, strand });
+    });
+
+    updateActiveSearchesPanel();
+    if (bothStrands) {
+        showMessage(
+            `Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} (+:${plusMatches}, -:${minusMatches}) in ${sequencesWithMatches} sequence${sequencesWithMatches !== 1 ? 's' : ''} (+:${plusSeqs}, -:${minusSeqs})`,
+            2500
+        );
+    } else {
+        showMessage(`Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} in ${sequencesWithMatches} sequence${sequencesWithMatches !== 1 ? 's' : ''}`, 2000);
+    }
+}
+
 function updateActiveSearchesPanel() {
     const panel = el('activeSearches');
     const list = el('searchList');
@@ -2326,12 +2603,13 @@ function updateActiveSearchesPanel() {
         swatch.className = 'search-swatch';
         swatch.style.backgroundColor = search.color;
         
-        const text = document.createElement('span');
-        text.textContent = `${search.motif} (${search.matchCount || 0})`;
+    const text = document.createElement('span');
+    const label = search.label || search.motif;
+    text.textContent = `${label} (${search.matchCount || 0})`;
         
         const remove = document.createElement('button');
         remove.className = 'search-remove';
-        remove.innerHTML = 'Г—';
+    remove.innerHTML = '×';
         remove.title = 'Remove this search';
         remove.addEventListener('click', () => {
             // Remove this specific search
@@ -2966,7 +3244,7 @@ function saveClusteringPreset() {
     console.log('[Clustering] Saved preset:', presetName, preset);
 }
 
-function createOptimalPreset() {
+function createOptimalPreset(silent = false) {
     // Auto-create an "optimal" preset based on lesson learned:
     // The problem is NOT parameter relaxation - the problem is the INITIAL values
     // "two" preset works because it starts with minOccurrences=2 (LOW!)
@@ -3007,14 +3285,16 @@ function createOptimalPreset() {
     if (presetSelect) {
         presetSelect.value = 'optimal';
         // Immediately load it so user can see the parameters
-        loadClusteringPreset();
+        loadClusteringPreset(true);
     }
     
-    showMessage('Created "optimal" preset (minOccurrences=3) - now run clustering!', 3000);
+    if (!silent) {
+        showMessage('Created "optimal" preset (minOccurrences=3) - now run clustering!', 3000);
+    }
     console.log('[Clustering] Created optimal preset:', optimalPreset);
 }
 
-function loadClusteringPreset() {
+function loadClusteringPreset(silent = false) {
     const presetSelect = el('clusteringPresetList');
     const presetName = presetSelect?.value;
     
@@ -3053,7 +3333,10 @@ function loadClusteringPreset() {
     // Apply min occurrences (with fallback to default for older presets)
     el('minOccurrencesInput').value = preset.clustering.minOccurrences || 5;
     
-    showMessage(`Preset "${presetName}" loaded!`, 2000);
+    const shouldSilent = silent || presetName === 'optimal';
+    if (!shouldSilent) {
+        showMessage(`Preset "${presetName}" loaded!`, 2000);
+    }
     console.log('[Clustering] Loaded preset:', presetName, preset);
 }
 
@@ -3197,6 +3480,7 @@ function highlightCluster(clusterIdx) {
 }
 
 function realignSelectedBlock() {
+    // TODO: Implement block realignment or remove this action if not planned.
     showMessage("Realign Block not implemented yet.", 3000);
 }
 function copySequences(gapped, isFasta, index) {
@@ -3741,6 +4025,7 @@ function initializeAppUI() {
         'loadButton': () => parseAndRender(false),
         'reverseComplementButton': reverseComplementSelected,
         'copySelectedButton': copySelected,
+        'copyAlignmentButton': copyAlignment,
         'deleteSelectedButton': deleteSelected,
         'undoButton': undoDelete,
         'moveUpButton': moveSelectedUp,
@@ -3785,6 +4070,22 @@ function initializeAppUI() {
     
     // Initialize clustering preset list
     updateClusteringPresetList();
+    
+    // Auto-create and load "optimal" preset as default if not already present
+    setTimeout(() => {
+        const presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
+        if (!presets['optimal']) {
+            // Create optimal preset silently
+            createOptimalPreset(true);
+        } else {
+            // Load existing optimal preset
+            const presetSelect = el('clusteringPresetList');
+            if (presetSelect) {
+                presetSelect.value = 'optimal';
+                loadClusteringPreset(true);
+            }
+        }
+    }, 100);
 
     const searchInputEl = el('searchInput');
     if (searchInputEl) {
@@ -3793,6 +4094,15 @@ function initializeAppUI() {
                 e.preventDefault();
                 searchMotif();
             }
+        });
+    }
+    const reverseQueryButton = el('reverseComplementQueryButton');
+    if (reverseQueryButton && searchInputEl) {
+        reverseQueryButton.addEventListener('click', () => {
+            const raw = searchInputEl.value || '';
+            const motif = raw.trim().replace(/\s+/g, '').toUpperCase();
+            if (!motif) return;
+            searchInputEl.value = reverseComplement(motif);
         });
     }
     
@@ -3854,6 +4164,8 @@ document.addEventListener('DOMContentLoaded', initializeAppUI);
 
 // UI listener wiring is wrapped in a function so we can attach listeners after DOMContentLoaded
 function attachUIListeners() {
+    if (state.uiListenersAttached) return;
+    state.uiListenersAttached = true;
     // Set up slider/input pairs manually to avoid function reference issues
     const sliderPairs = [
         ['blackSlider', 'blackInput'],
@@ -3925,15 +4237,12 @@ function attachUIListeners() {
         }
     });
 
-    // Set up zoom slider separately (no input pair)
+    // Set up zoom slider (no input pair, just direct handling)
     const zoomSlider = el('zoomSlider');
     if (zoomSlider) {
-        zoomSlider.addEventListener('input', () => {
-            if (typeof setZoom === 'function') {
-                setZoom(zoomSlider.value);
-            }
-            updateSliderBackground(zoomSlider);
-        });
+        zoomSlider.addEventListener('input', debounce(() => {
+            setZoom(zoomSlider.value);
+        }, 50));
     }
 
     // Set up radio button groups
@@ -3957,12 +4266,36 @@ function attachUIListeners() {
     if (sticky) sticky.addEventListener('change', toggleStickyNames);
 
     // Alignment container events
-    const alignmentContainer = el('alignmentContainer');
     const controls = el('controls');
     if (alignmentContainer) {
         alignmentContainer.addEventListener('mousedown', handleMouseDown);
         alignmentContainer.addEventListener('mousemove', handleMouseMove);
         alignmentContainer.addEventListener('mousedown', handleAlignmentPanStart);
+        
+        // *** PERFORMANCE: Event delegation for nucleotide tooltips ***
+        alignmentContainer.addEventListener('mouseover', (e) => {
+            const span = e.target.closest('.seq-data > span[data-pos]');
+            if (span) {
+                const pos = parseInt(span.dataset.pos);
+                const seqLine = span.closest('.seq-line');
+                if (seqLine && !seqLine.classList.contains('consensus-line')) {
+                    const seqIdx = parseInt(seqLine.dataset.seqIndex);
+                    if (seqIdx !== undefined && state.seqs[seqIdx]) {
+                        const base = span.textContent;
+                        if (base !== '-' && base !== '.') {
+                            const gaplessPos = state.seqs[seqIdx].gaplessPositions[pos];
+                            showTooltipAt(`${state.seqs[seqIdx].header}: ${gaplessPos}`, span);
+                        }
+                    }
+                }
+            }
+        });
+        alignmentContainer.addEventListener('mouseout', (e) => {
+            if (e.target.matches('.seq-data > span[data-pos]')) {
+                hideTooltip();
+            }
+        });
+        
         alignmentContainer.addEventListener('click', () => {
             // If menu is shown as overlay, hide it when clicking on alignment
             if (controls && controls.style.position === 'fixed' && controls.style.transform !== 'translateY(-100%)') {
@@ -4021,7 +4354,6 @@ let lastScrollTop = 0;
 
 function setupMenuScrollBehavior() {
     const controls = el('controls');
-    const alignmentContainer = el('alignmentContainer');
     if (!controls || !alignmentContainer) return;
 
     let menuHeight = controls.offsetHeight;
@@ -4495,47 +4827,46 @@ let colourState = {
     presets: JSON.parse(localStorage.getItem('seqColourPresets') || '{}')
 };
 
-// Levenshtein distance - compare first N characters
-function levenshteinDistance(str1, str2, maxChars = 10) {
-    const s1 = str1.substring(0, maxChars).toLowerCase();
-    const s2 = str2.substring(0, maxChars).toLowerCase();
-    const m = s1.length, n = s2.length;
-    const dp = Array(n + 1).fill(0).map((_, i) => i);
-    
-    for (let i = 1; i <= m; i++) {
-        let prev = i;
-        for (let j = 1; j <= n; j++) {
-            const curr = s1[i - 1] === s2[j - 1] ? dp[j - 1] : 1 + Math.min(dp[j], dp[j - 1], prev);
-            dp[j] = prev;
-            prev = curr;
-        }
-        dp[0] = i;
-    }
-    return dp[n];
+// Normalize name for grouping: lowercase, normalize separators, strip trailing numbers
+function normalizeName(name, maxChars = 10) {
+    let n = name.substring(0, maxChars).toLowerCase();
+    // Normalize all separators (hyphen, underscore, dot) to underscore
+    n = n.replace(/[-_.]/g, '_');
+    // Remove trailing numbers and separators to group "name_001", "name_002" together
+    n = n.replace(/_?\d+$/, '');
+    // Remove trailing separator if any
+    n = n.replace(/_+$/, '');
+    return n;
 }
 
-// Cluster sequences by similarity
+// Get a canonical prefix for color assignment (used for sorting similar groups together)
+function getCanonicalPrefix(name, maxChars = 10) {
+    let n = normalizeName(name, maxChars);
+    // Extract just alphabetic prefix for broader grouping
+    const match = n.match(/^([a-z]+)/);
+    return match ? match[1] : n;
+}
+
+// Cluster sequences by normalized prefix
 function clusterByName(seqNames, maxChars = 10, threshold = 3) {
-    const clusters = [];
-    const assigned = new Set();
+    const clusters = new Map(); // normalizedPrefix -> [names]
     
     for (const name of seqNames) {
-        if (assigned.has(name)) continue;
-        
-        const cluster = [name];
-        assigned.add(name);
-        
-        for (const other of seqNames) {
-            if (!assigned.has(other)) {
-                if (levenshteinDistance(name, other, maxChars) <= threshold) {
-                    cluster.push(other);
-                    assigned.add(other);
-                }
-            }
+        const prefix = normalizeName(name, maxChars);
+        if (!clusters.has(prefix)) {
+            clusters.set(prefix, []);
         }
-        clusters.push(cluster);
+        clusters.get(prefix).push(name);
     }
-    return clusters;
+    
+    // Sort clusters by canonical prefix so similar names get adjacent colors
+    const sortedEntries = Array.from(clusters.entries()).sort((a, b) => {
+        const prefixA = getCanonicalPrefix(a[1][0], maxChars);
+        const prefixB = getCanonicalPrefix(b[1][0], maxChars);
+        return prefixA.localeCompare(prefixB);
+    });
+    
+    return sortedEntries.map(([prefix, names]) => names);
 }
 
 // Apply color to sequence name elements
@@ -4608,10 +4939,14 @@ function autoColourBySimilarity() {
     const threshold = parseInt(el('colourSimilarityThreshold').value) || 3;
     const mode = document.querySelector('input[name="colourMode"]:checked').value;
     
-    const seqNameElements = document.querySelectorAll('.seq-name');
-    // Get unique sequence names (each seq appears in multiple blocks)
-    const uniqueSeqNames = new Set(Array.from(seqNameElements).map(el => el.textContent.trim()));
-    const seqNames = Array.from(uniqueSeqNames);
+    // Use actual sequence headers from state, not truncated display text
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage('No sequences loaded', 2000);
+        return;
+    }
+    
+    // Get unique sequence names from state (full headers, not truncated)
+    const seqNames = state.seqs.map(s => s.header);
     
     if (seqNames.length === 0) {
         showMessage('No sequences loaded', 2000);
@@ -4622,19 +4957,54 @@ function autoColourBySimilarity() {
     const clusters = clusterByName(seqNames, maxChars, threshold);
     
     // Assign colors based on mode
+    // Use maximally distinct colors for better visual separation
+    const nClusters = clusters.length;
+    
+    // High-contrast discrete palette (ColorBrewer/Tableau-inspired)
+    const distinctColors = [
+        '#e41a1c', // red
+        '#377eb8', // blue
+        '#4daf4a', // green
+        '#ff7f00', // orange
+        '#984ea3', // purple
+        '#00bfc4', // cyan
+        '#ffd92f', // yellow
+        '#a65628', // brown
+        '#f781bf', // pink
+        '#999999', // gray
+        '#66c2a5', // teal
+        '#e6ab02'  // gold
+    ];
+    
+    // Predefined hues for gradient mode (maximally separated)
+    const distinctHues = [
+        0, 210, 120, 30, 270, 180, 60, 300, 90, 240, 15, 165
+    ];
+    
     clusters.forEach((cluster, clusterIdx) => {
+        let hue;
+        if (nClusters <= distinctHues.length) {
+            // Use predefined maximally distinct hues
+            hue = distinctHues[clusterIdx];
+        } else {
+            // For many clusters, use golden ratio distribution
+            const goldenRatio = 0.618033988749895;
+            hue = ((clusterIdx * goldenRatio) % 1) * 360;
+        }
+        
         if (mode === 'discrete') {
-            const colour = colourPalette[clusterIdx % colourPalette.length];
+            const colour = (nClusters <= distinctColors.length)
+                ? distinctColors[clusterIdx]
+                : `hsl(${Math.round(hue)}, 70%, 70%)`;
             cluster.forEach(name => {
                 colourState.mappings.set(name, colour);
                 recordColorHistory(name, colour, 'Auto-Similarity');
             });
         } else {
-            // Gradient mode - create shades
-            const hue = (clusterIdx * 360 / clusters.length) % 360;
+            // Gradient mode - create shades within each cluster
             cluster.forEach((name, nameIdx) => {
-                const lightness = 50 + (nameIdx * 20 / cluster.length);
-                const colour = `hsl(${hue}, 70%, ${Math.min(lightness, 85)}%)`;
+                const lightness = 55 + (nameIdx * 25 / Math.max(cluster.length, 1));
+                const colour = `hsl(${Math.round(hue)}, 70%, ${Math.min(lightness, 85)}%)`;
                 colourState.mappings.set(name, colour);
                 recordColorHistory(name, colour, 'Auto-Similarity');
             });
@@ -4851,8 +5221,9 @@ function initColourSeqs() {
     bar.addEventListener('scroll', onBarScroll, { passive: true });
     alignment.addEventListener('scroll', onAlignmentScroll, { passive: true });
     window.addEventListener('resize', () => window.requestAnimationFrame(syncSizes));
+    // Only watch for actual content changes, NOT style changes (which would be triggered by zoom)
     const mo = new MutationObserver(() => window.requestAnimationFrame(syncSizes));
-    mo.observe(alignment, { childList: true, subtree: true, characterData: true });
+    mo.observe(alignment, { childList: true, subtree: true, characterData: false, attributes: false });
     
     // Drag-to-pan with Pointer Events and capture for robustness
     let isDown = false, startX = 0, startScroll = 0;
