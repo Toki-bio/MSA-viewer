@@ -2473,36 +2473,54 @@ function searchMotif() {
     if (!motif) return;
     const color = el('searchColor').value;
     const maxMismatches = parseInt(el('maxMismatches').value) || 0;
-    const bothStrands = el('searchBothStrands')?.checked;
+    const checkboxEl = el('searchBothStrands');
+    const bothStrands = checkboxEl && checkboxEl.checked;
 
-    const motifsToSearch = [{ motif, color, label: bothStrands ? `${motif} (+)` : motif, strand: '+' }];
+    console.log('=== SEARCH MOTIF STARTED ===');
+    console.log('Input motif:', motif);
+    console.log('Checkbox element found:', !!checkboxEl);
+    console.log('Checkbox checked:', bothStrands);
+    console.log('===============================');
+
+    const fwdMotifRaw = motif;
+    const fwdMotif = fwdMotifRaw.replace(/U/g, 'T');
+    const motifsToSearch = [{ motif: fwdMotif, color, label: bothStrands ? `${fwdMotifRaw} (fwd)` : fwdMotifRaw, strand: 'fwd' }];
     if (bothStrands) {
-        const rcMotif = reverseComplement(motif);
-        if (rcMotif && rcMotif !== motif) {
+        const rcMotifRaw = reverseComplement(fwdMotifRaw);
+        const rcMotif = rcMotifRaw.replace(/U/g, 'T');
+        console.log('Both strands enabled. Reverse complement:', { fwdMotif, fwdMotifRaw, rcMotif, rcMotifRaw });
+        if (rcMotif && rcMotif !== fwdMotif) {
+            console.log('Adding reverse complement motif to search list');
             motifsToSearch.push({
                 motif: rcMotif,
                 color: getComplementaryColor(color),
-                label: `${rcMotif} (-)`,
-                strand: '-'
+                label: `${rcMotifRaw} (rev comp)`,
+                strand: 'rev comp'
             });
+        } else {
+            console.log('NOT adding reverse complement (palindromic or empty)');
         }
+    } else {
+        console.log('Both strands NOT checked');
     }
+    console.log('Final motifs to search:', motifsToSearch.map(m => ({ motif: m.motif, label: m.label })));
 
     let totalMatches = 0;
-    let sequencesWithMatches = 0;
-    let plusMatches = 0;
-    let minusMatches = 0;
-    let plusSeqs = 0;
-    let minusSeqs = 0;
+    let fwdMatches = 0;
+    let revMatches = 0;
+    let fwdSeqs = new Set();
+    let revSeqs = new Set();
 
     motifsToSearch.forEach(({ motif: searchMotifValue, color: searchColorValue, label, strand }) => {
+        console.log(`Searching for motif: "${searchMotifValue}" (${label}, ${strand})`);
         let motifMatches = 0;
-        let motifSeqsWithMatches = 0;
-        const className = 'search-hit-' + Math.random().toString(36).substring(2, 12) + btoa(searchMotifValue).replace(/=/g, '').substring(0, 5);
+        let motifSeqsWithMatches = new Set();
+        const motifKey = `${searchMotifValue}:${strand}`;
+        const className = 'search-hit-' + Math.random().toString(36).substring(2, 12) + btoa(motifKey).replace(/=/g, '').substring(0, 5);
 
         // Remove any existing identical motif highlights first
         state.searchHistory = state.searchHistory.filter(item => {
-            if (item.motif === searchMotifValue) {
+            if (item.motif === motifKey) {
                 document.querySelectorAll(`.${item.className}`).forEach(span => span.classList.remove(item.className));
                 document.querySelector(`style[data-motif="${item.motif}"]`)?.remove();
                 return false;
@@ -2512,7 +2530,7 @@ function searchMotif() {
 
         const style = document.createElement('style');
         style.textContent = `.${className} { background-color: ${searchColorValue} !important; color: black !important; font-weight: bold; }`;
-        style.setAttribute('data-motif', searchMotifValue);
+        style.setAttribute('data-motif', motifKey);
         document.head.appendChild(style);
 
         // For each sequence row, map degapped indices back to span elements robustly
@@ -2539,22 +2557,25 @@ function searchMotif() {
 
             // Treat U and T as equivalent for DNA/RNA searches
             const normalizedDisplay = displayString.replace(/U/g, 'T');
-            const normalizedMotif = searchMotifValue.replace(/U/g, 'T');
+            const normalizedMotif = searchMotifValue;
 
             // Find matches with mismatches allowed
             const matches = findMatchesWithMismatches(normalizedDisplay, normalizedMotif, maxMismatches);
+            console.log(`  Seq ${index}: "${displayString}" vs "${normalizedMotif}" -> ${matches.length} matches`);
             if (matches.length > 0) {
-                sequencesWithMatches++;
-                motifSeqsWithMatches++;
+                motifSeqsWithMatches.add(index);
+                if (strand === 'fwd') {
+                    fwdSeqs.add(index);
+                } else if (strand === 'rev comp') {
+                    revSeqs.add(index);
+                }
             }
             totalMatches += matches.length;
             motifMatches += matches.length;
-            if (strand === '+') {
-                plusMatches += matches.length;
-                if (matches.length > 0) plusSeqs++;
-            } else if (strand === '-') {
-                minusMatches += matches.length;
-                if (matches.length > 0) minusSeqs++;
+            if (strand === 'fwd') {
+                fwdMatches += matches.length;
+            } else if (strand === 'rev comp') {
+                revMatches += matches.length;
             }
 
             // Highlight matching spans
@@ -2569,17 +2590,17 @@ function searchMotif() {
         });
 
         // Track search history
-        state.searchHistory.push({ motif: searchMotifValue, color: searchColorValue, className, matchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches, label, strand });
+        state.searchHistory.push({ motif: motifKey, color: searchColorValue, className, matchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size, label, strand });
     });
 
     updateActiveSearchesPanel();
     if (bothStrands) {
         showMessage(
-            `Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} (+:${plusMatches}, -:${minusMatches}) in ${sequencesWithMatches} sequence${sequencesWithMatches !== 1 ? 's' : ''} (+:${plusSeqs}, -:${minusSeqs})`,
-            2500
+            `Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} (fwd:${fwdMatches}, rev comp:${revMatches}) in ${fwdSeqs.size + revSeqs.size} sequence${(fwdSeqs.size + revSeqs.size) !== 1 ? 's' : ''}`,
+            3000
         );
     } else {
-        showMessage(`Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} in ${sequencesWithMatches} sequence${sequencesWithMatches !== 1 ? 's' : ''}`, 2000);
+        showMessage(`Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} in ${fwdSeqs.size} sequence${fwdSeqs.size !== 1 ? 's' : ''}`, 2000);
     }
 }
 
@@ -2626,82 +2647,7 @@ function updateActiveSearchesPanel() {
     });
 }
 
-function searchMotif() {
-    const raw = el('searchInput').value || '';
-    const motif = raw.trim().replace(/\s+/g, '').toUpperCase();
-    if (!motif) return;
-    const color = el('searchColor').value;
-    const maxMismatches = parseInt(el('maxMismatches').value) || 0;
-    const className = 'search-hit-' + Math.random().toString(36).substring(2, 12) + btoa(motif).replace(/=/g, '').substring(0, 5);
 
-    // Remove any existing identical motif highlights first
-    state.searchHistory = state.searchHistory.filter(item => {
-        if (item.motif === motif) {
-            document.querySelectorAll(`.${item.className}`).forEach(span => span.classList.remove(item.className));
-            document.querySelector(`style[data-motif="${item.motif}"]`)?.remove();
-            return false;
-        }
-        return true;
-    });
-
-    const style = document.createElement('style');
-    style.textContent = `.${className} { background-color: ${color} !important; color: black !important; font-weight: bold; }`;
-    style.setAttribute('data-motif', motif);
-    document.head.appendChild(style);
-
-    // For each sequence row, map degapped indices back to span elements robustly
-    let totalMatches = 0;
-    let sequencesWithMatches = 0;
-    document.querySelectorAll('.seq-line:not(.consensus-line)').forEach(row => {
-        const index = parseInt(row.dataset.seqIndex);
-        if (isNaN(index) || index < 0 || index >= state.seqs.length) return;
-        const dataSpan = row.querySelector('.seq-data');
-        if (!dataSpan) return;
-        const spans = Array.from(dataSpan.children);
-
-        // Build mapping and the displayed degapped string from the visible spans only
-        const nonGapSpanIndices = [];
-        const displayedChars = [];
-        for (let si = 0; si < spans.length; si++) {
-            const ch = (spans[si].textContent || '').toUpperCase();
-            if (ch !== '-' && ch !== '.') {
-                nonGapSpanIndices.push(si);
-                displayedChars.push(ch);
-            }
-        }
-        const displayedDegapped = displayedChars.join('');
-        if (displayedDegapped.length < motif.length) return;
-
-        // Find fuzzy matches in the displayed (visible) degapped sequence
-        const fuzzyPositions = findFuzzyPositions(displayedDegapped, motif, maxMismatches);
-        let matchesThisSeq = fuzzyPositions.length;
-        totalMatches += matchesThisSeq;
-        
-        for (let seqPos of fuzzyPositions) {
-            for (let k = 0; k < motif.length; k++) {
-                const spanIdx = nonGapSpanIndices[seqPos + k];
-                if (spanIdx !== undefined) spans[spanIdx].classList.add(className);
-            }
-        }
-        
-        if (matchesThisSeq > 0) sequencesWithMatches++;
-    });
-
-    // Add to search history with match count
-    const searchEntry = { motif, color, className, matchCount: totalMatches, maxMismatches };
-    state.searchHistory.push(searchEntry);
-    
-    // Update active searches panel
-    updateActiveSearchesPanel();
-    
-    // Leave the search term in the input so users can refine it; show counts
-    if (totalMatches === 0) {
-        showMessage(`No matches for "${motif}"${maxMismatches > 0 ? ` (в‰¤${maxMismatches} mismatches)` : ''}`, 3000);
-    } else {
-        const mismatchText = maxMismatches > 0 ? ` (в‰¤${maxMismatches} mismatches)` : '';
-        showMessage(`Found ${totalMatches} match${totalMatches>1? 'es':''} in ${sequencesWithMatches} sequence${sequencesWithMatches>1? 's':''}${mismatchText}`, 4000);
-    }
-}
 function clearLastSearch() {
     if (state.searchHistory.length === 0) {
         showMessage("No searches to clear.", 3000);
