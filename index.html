@@ -1,520 +1,403 @@
-﻿<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Qwen MSA Viewer</title>
-    <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-    <div id="controls">
-        <div class="control-row" style="justify-content: flex-start; align-items: center; gap: 2px; flex-wrap: wrap;">
-            <!-- ACTUAL BUTTONS -->
-            <div class="menu-section side-section" id="input-section">
-                <div class="section-header" title="File input and loading controls" data-section="input">
-                    <span>Input</span>
-                    <span class="toggle-icon">▼</span>
-                </div>
-                <div class="control-group" id="input-controls">
-                    <div id="dropZone" style="width: 100%; padding: 20px; min-height: 100px; margin-bottom: 8px;" title="Drop FASTA/MSF or click to browse for file">📁 Drop FASTA/MSF file here or click to browse
-                        <input type="file" id="fileInput" accept="*" style="display: none;">
-                    </div>
-                    <div style="display: flex; gap: 6px; align-items: start;">
-                        <textarea id="fastaInput" placeholder=">seq1&#13;&#10;ATGCGGCTA..." style="flex: 1; height: 80px; font-size: 12px; padding: 4px;" title="Paste FASTA/MSF text here or drop a file above"></textarea>
-                        <div style="display: flex; flex-direction: column; gap: 4px;">
-                            <button id="loadButton" style="height: 20px; font-size: 10px;" title="Load the pasted or dropped FASTA/MSF data (shortcut: Ctrl+L)">Load</button>
-                            <button id="clearButton" style="height: 24px; font-size: 12px;" title="Clear the sequence input">Clear</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
+class SINEClusterer {
+    constructor(sequences) {
+        this.sequences = sequences;
+        this.nSeqs = sequences.length;
+        this.alnLen = sequences[0].seq.length;
+        this.matrix = sequences.map(s => s.seq.split(''));
+    }
 
-            <div class="standard-menu-group">
-                <div class="menu-section">
-                    <div class="section-header" title="Conservation shading controls" data-section="shade">
-                        <span>Shade</span>
-                        <span class="toggle-icon">▼</span>
-                    </div>
-                    <div class="control-group" id="shade-controls">
-                        <div class="slider-container shade-row">
-                            <div class="shade-controls">
-                                <span class="slider-label" id="blackLabel" style="cursor:pointer; text-decoration:underline;" title="Highly conserved shading">Black</span>
-                                <input type="color" id="blackColorPicker" value="#000000" style="display:none;">
-                                <button class="reset-button" id="blackReset" title="Reset Black shading to default color">Reset</button>
-                            </div>
-                            <label class="shade-mode-label">
-                                <input type="checkbox" id="enableBlack" checked title="Enable black shading for highly conserved positions">
-                            </label>
-                            <input type="range" id="blackSlider" class="shading-slider" min="50" max="100" value="90" title="Black shading threshold (50-100%)">
-                            <input type="number" id="blackInput" min="50" max="100" value="90" title="Black shading threshold (50-100%)">
-                        </div>
-                        <div class="slider-container shade-row">
-                            <div class="shade-controls">
-                                <span class="slider-label" id="darkLabel" style="cursor:pointer; text-decoration:underline;" title="Moderately conserved shading">Dark</span>
-                                <input type="color" id="darkColorPicker" value="#555555" style="display:none;">
-                                <button class="reset-button" id="darkReset" title="Reset Dark shading to default color">Reset</button>
-                            </div>
-                            <label class="shade-mode-label">
-                                <input type="checkbox" id="enableDark" checked title="Enable dark gray shading for moderately conserved positions">
-                            </label>
-                            <input type="range" id="darkSlider" class="shading-slider" min="30" max="90" value="70" title="Dark shading threshold (30-90%)">
-                            <input type="number" id="darkInput" min="30" max="90" value="70" title="Dark shading threshold (30-90%)">
-                        </div>
-                        <div class="slider-container shade-row">
-                            <div class="shade-controls">
-                                <span class="slider-label" id="lightLabel" style="cursor:pointer; text-decoration:underline;" title="Lightly conserved shading">Light</span>
-                                <input type="color" id="lightColorPicker" value="#cccccc" style="display:none;">
-                                <button class="reset-button" id="lightReset" title="Reset Light shading to default color">Reset</button>
-                            </div>
-                            <label class="shade-mode-label">
-                                <input type="checkbox" id="enableLight" checked title="Enable light gray shading for less conserved positions">
-                            </label>
-                            <input type="range" id="lightSlider" class="shading-slider" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
-                            <input type="number" id="lightInput" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
-                        </div>
-                        <div class="slider-container shade-row">
-                            <div class="shade-controls">
-                                <span class="slider-label">Shade By</span>
-                            </div>
-                            <label class="shade-mode-label">
-                                <input type="radio" name="shadeMode" value="nongap" checked title="Shade based on non-gap positions only"> Non-Gap
-                            </label>
-                            <label class="shade-mode-label">
-                                <input type="radio" name="shadeMode" value="all" title="Shade based on all positions including gaps"> All
-                            </label>
-                        </div>
-                    </div>
-                </div>
-                <div class="menu-section">
-                    <div class="section-header" title="Display and layout options" data-section="display">
-                        <span>Display</span>
-                        <span class="toggle-icon">▼</span>
-                    </div>
-                    <div class="control-group" id="display-controls">
-                        <div class="slider-container display-slider-row">
-                            <span class="slider-label" title="How many characters of sequence names to show">Name Len</span>
-                            <input type="range" id="nameLengthSlider" class="normal-slider" min="3" max="50" value="50" title="Adjust sequence name display length (3-50 characters)">
-                            <input type="number" id="nameLengthInput" min="3" max="50" value="50" title="Adjust sequence name display length (3-50 characters)">
-                        </div>
-                        <div class="slider-container display-slider-row" style="flex: 1; max-width: 500px;">
-                            <span class="slider-label" title="Zoom controls for alignment display">Zoom</span>
-                            <button id="zoomOutButton" class="zoom-button" title="Zoom out (shortcut: Ctrl+-)">−</button>
-                            <input type="range" id="zoomSlider" class="normal-slider" min="50" max="200" value="100" title="Zoom level for alignment display (50-200%)" style="flex: 1; min-width: 200px;">
-                            <span id="zoomVal" class="zoom-value" title="Current zoom level" style="min-width: 45px; text-align: center;">100%</span>
-                            <button id="zoomInButton" class="zoom-button" title="Zoom in (shortcut: Ctrl++)">+</button>
-                        </div>
-                        <div class="slider-container display-slider-row" id="blockSizeContainer">
-                            <span class="slider-label" title="Characters per block in block mode">Block Size</span>
-                            <input type="range" id="blockSizeSlider" class="normal-slider" min="40" max="200" value="200" title="Block size in Block mode (40-200 characters)">
-                            <input type="number" id="blockSizeInput" min="40" max="200" value="200" title="Block size in Block mode (40-200 characters)">
-                        </div>
-                        <div class="slider-container mode-container">
-                            <span class="slider-label" title="Toggle display mode">Mode</span>
-                            <input type="radio" id="modeSingle" name="mode" value="single" title="Display full alignment in a single line">
-                            <label for="modeSingle">Full</label>
-                            <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Display alignment in blocks for better readability">
-                            <label for="modeBlocks">Block</label>
-                        </div>
-                        <div class="slider-container">
-                            <input type="checkbox" id="stickyNames" checked title="Keep sequence names sticky when scrolling horizontally">
-                            <label for="stickyNames" style="font-size: 12px;">Sticky Names</label>
-                        </div>
-                    </div>
-                </div>
-                <div class="menu-section">
-                    <div class="section-header" title="Consensus sequence settings" data-section="consensus">
-                        <span>Consensus</span>
-                        <span class="toggle-icon">▼</span>
-                    </div>
-                    <div class="control-group" id="consensus-controls">
-                        <div class="slider-container">
-                            <span class="slider-label" title="Consensus frequency threshold">Threshold</span>
-                            <input type="range" id="consensusThreshold" class="normal-slider" min="30" max="100" value="50" title="Consensus threshold percentage (30-100%)">
-                            <input type="number" id="consensusThresholdInput" min="30" max="100" value="50" title="Consensus threshold percentage (30-100%)">
-                        </div>
-                        <div class="slider-container">
-                            <span class="slider-label" title="Minimum non-gap coverage to call a base (else treated as gap)">Min Cov</span>
-                            <input type="range" id="consensusMinCoverage" class="normal-slider" min="0" max="100" value="30" title="Minimum coverage percentage to emit base/IUPAC (0-100%)">
-                            <input type="number" id="consensusMinCoverageInput" min="0" max="100" value="30" title="Minimum coverage percentage to emit base/IUPAC (0-100%)">
-                        </div>
-                        <div class="slider-container">
-                            <span class="slider-label" title="Consensus output type">Type</span>
-                            <label class="shade-mode-label">
-                                <input type="radio" name="consensusType" value="normal" checked title="Normal consensus (single base)"> Normal
-                            </label>
-                            <label class="shade-mode-label">
-                                <input type="radio" name="consensusType" value="ambiguous" title="Ambiguous consensus (IUPAC codes)"> Ambiguous
-                            </label>
-                        </div>
-                        <div class="slider-container">
-                            <span class="slider-label" title="Fallback below threshold">Fallback</span>
-                            <select id="consensusFallback" title="What to show when below threshold or ambiguous">
-                                <option value="gap" selected>Gap (-)</option>
-                                <option value="n">N (unknown)</option>
-                                <option value="iupac">IUPAC (no gaps)</option>
-                            </select>
-                        </div>
-                        <div class="slider-container">
-                            <input type="checkbox" id="showConsensus" checked title="Show consensus line">
-                            <label for="showConsensus" style="font-size: 12px;">Show Consensus</label>
-                        </div>
-                        <div class="slider-container">
-                            <span class="slider-label" title="Consensus line position">Position</span>
-                            <label class="shade-mode-label">
-                                <input type="radio" name="consensusPosition" value="top" checked title="Show consensus at top"> Top
-                            </label>
-                            <label class="shade-mode-label">
-                                <input type="radio" name="consensusPosition" value="bottom" title="Show consensus at bottom"> Bottom
-                            </label>
-                        </div>
-                        <div class="slider-container">
-                            <button id="copyConsensusButton" title="Copy full consensus as FASTA (shortcut: Ctrl+Shift+K)">Copy Consensus</button>
-                        </div>
-                        <div class="slider-container">
-                            <button id="copySelectedConsensusButton" title="Copy consensus of selected sequences (shortcut: Ctrl+Shift+J)">Copy Sel Consensus</button>
-                        </div>
-                    </div>
-                </div>
-                <div class="menu-section">
-                    <div class="section-header" title="Sequence clustering and trimming tools" data-section="clustering">
-                        <span>Clustering</span>
-                        <span class="toggle-icon">▼</span>
-                    </div>
-                    <div class="control-group" id="clustering-controls">
-                        <div style="padding: 8px;">
-                            <!-- Trimming Section -->
-                            <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
-                                <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Trimming</div>
-                                <div style="margin-bottom: 6px;">
-                                    <label for="leftGapInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Left Trim Gap %:</label>
-                                    <input type="number" id="leftGapInput" min="0" max="100" value="50" step="5" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;">
-                                </div>
-                                <div style="margin-bottom: 6px;">
-                                    <label for="rightGapInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Right Trim Gap %:</label>
-                                    <input type="number" id="rightGapInput" min="0" max="100" value="80" step="5" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;">
-                                </div>
-                                <div style="margin-bottom: 6px;">
-                                    <label for="edgeWindowInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Edge Window (cols):</label>
-                                    <input type="number" id="edgeWindowInput" min="1" max="50" value="15" step="1" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;">
-                                </div>
-                                <div style="display: flex; gap: 4px; flex-wrap: wrap;">
-                                    <button id="previewTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Preview</button>
-                                    <button id="executeTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Trim</button>
-                                    <button id="undoTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Undo</button>
-                                </div>
-                            </div>
-                            <!-- Clustering Parameters Section -->
-                            <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
-                                <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Basic Parameters</div>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
-                                    <div>
-                                        <label for="clusterMinSizeInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Min Size:</label>
-                                        <input type="number" id="clusterMinSizeInput" min="2" max="20" value="3" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
-                                    </div>
-                                    <div>
-                                        <label for="clusterMinPerfectInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Min Features:</label>
-                                        <input type="number" id="clusterMinPerfectInput" min="1" max="50" value="5" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
-                                    </div>
-                                    <div>
-                                        <label for="clusterMaxIterationsInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Max Iter:</label>
-                                        <input type="number" id="clusterMaxIterationsInput" min="1" max="20" value="10" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
-                                    </div>
-                                </div>
-                                <!-- Quality Thresholds -->
-                                <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Quality Thresholds (%)</div>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
-                                    <div>
-                                        <label for="qualitySmallInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Small &lt;11:</label>
-                                        <input type="number" id="qualitySmallInput" min="0" max="100" value="80" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
-                                    </div>
-                                    <div>
-                                        <label for="qualityMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Medium 11-19:</label>
-                                        <input type="number" id="qualityMediumInput" min="0" max="100" value="70" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
-                                    </div>
-                                    <div>
-                                        <label for="qualityLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Large ≥20:</label>
-                                        <input type="number" id="qualityLargeInput" min="0" max="100" value="60" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
-                                    </div>
-                                </div>
-                                <!-- Size Breakpoints -->
-                                <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Size Breakpoints</div>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
-                                    <div>
-                                        <label for="sizeSmallMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Small→Med:</label>
-                                        <input type="number" id="sizeSmallMediumInput" min="1" max="50" value="11" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
-                                    </div>
-                                    <div>
-                                        <label for="sizeMediumLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Med→Large:</label>
-                                        <input type="number" id="sizeMediumLargeInput" min="1" max="50" value="20" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
-                                    </div>
-                                    <div>
-                                        <label for="minOccurrencesInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Min Occur (positions):</label>
-                                        <input type="number" id="minOccurrencesInput" min="1" max="20" value="2" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Minimum number of diagnostic positions (features) required to form a cluster">
-                                    </div>
-                                </div>
-                                <div style="display: flex; gap: 4px; flex-wrap: wrap;">
-                                    <button id="clusterNowButton" style="flex: 1; min-width: 70px; height: 24px; font-size: 11px; background: #4CAF50; color: white; border: none; border-radius: 2px; cursor: pointer;">Cluster Now</button>
-                                </div>
-                            </div>
-                            <!-- Presets Section -->
-                            <div style="padding-bottom: 0;">
-                                <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Presets</div>
-                                <div style="margin-bottom: 6px;">
-                                    <label for="presetNameInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Preset Name:</label>
-                                    <input type="text" id="presetNameInput" placeholder="e.g. strict_clustering" style="width: 100%; max-width: 150px; height: 22px; padding: 2px; font-size: 11px; box-sizing: border-box;">
-                                </div>
-                                <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px;">
-                                    <button id="clusteringSavePresetButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Save</button>
-                                    <button id="clusteringLoadPresetButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Load</button>
-                                    <button id="clusteringOptimalPresetButton" style="flex: 1; min-width: 70px; height: 22px; font-size: 10px;" title="Create optimal preset for complete clustering">Optimal</button>
-                                </div>
-                                <select id="clusteringPresetList" style="width: 100%; max-width: 150px; height: 24px; font-size: 11px;">
-                                    <option value="">-- Select preset --</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="menu-section">
-                    <div class="section-header" title="Search sequences and highlight matches" data-section="search">
-                        <span>Search</span>
-                        <span class="toggle-icon">▼</span>
-                    </div>
-                    <div class="control-group" id="search-controls">
-                        <div class="slider-container search-row">
-                            <div class="search-input-group">
-                                <input type="text" id="searchInput" placeholder="Enter motif..." style="width: 120px; height: 22px; padding: 2px; font-size: 12px;" title="Enter motif to search (case-insensitive, searches degapped sequences)">
-                                <input type="number" id="maxMismatches" min="0" max="10" value="0" style="width: 40px; height: 22px; padding: 2px; font-size: 12px;" title="Allowed mismatches (0 = exact match)">
-                                <input type="color" id="searchColor" value="#FFFF00" style="width: 32px; height: 26px; padding: 0;" title="Choose highlight color for search hits">
-                            </div>
-                            <div class="search-button-group">
-                                <button id="searchButton" title="Find motif in sequences (shortcut: Ctrl+F)">Find</button>
-                                <button id="clearLastSearchButton" title="Clear last search highlight (shortcut: Ctrl+Shift+F)">Clear Last</button>
-                                <button id="clearAllSearchesButton" title="Clear all search highlights (shortcut: Ctrl+Alt+F)">Clear All</button>
-                            </div>
-                        </div>
-                        <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
-                            <button id="reverseComplementQueryButton" style="height: 22px; font-size: 11px; padding: 0 6px;">Reverse complement query</button>
-                            <label style="font-size: 11px; display: flex; align-items: center; gap: 4px;">
-                                <input type="checkbox" id="searchBothStrands" style="margin: 0;"> Search both strands
-                            </label>
-                        </div>
-                        <div id="activeSearches" class="active-searches" style="display: none; margin-top: 4px; padding: 4px; background: #f8f8f8; border-radius: 3px; font-size: 11px;">
-                            <strong>Active searches:</strong>
-                            <div id="searchList" style="margin-top: 2px;"></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="menu-section">
-                    <div class="section-header" title="Color sequence names by pattern or similarity" data-section="colourseqs">
-                        <span>Colour Names</span>
-                        <span class="toggle-icon">▼</span>
-                    </div>
-                    <div class="control-group" id="colourseqs-controls">
-                        <!-- Pattern Matching Section -->
-                        <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
-                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 4px;">Pattern Match</div>
-                            <div style="display: flex; gap: 4px; margin-bottom: 4px; flex-wrap: wrap;">
-                                <input type="text" id="colourPatternInput" placeholder="regex/text..." style="flex: 1; min-width: 100px; height: 22px; padding: 2px; font-size: 11px;" title="Enter regex or text to match sequence names">
-                                <input type="color" id="colourPatternColor" value="#FF6B6B" style="width: 32px; height: 26px; padding: 0;" title="Color for matched names">
-                                <button id="colourPatternButton" style="height: 26px; padding: 0 8px; font-size: 11px;">Apply</button>
-                            </div>
-                        </div>
-                        <!-- Auto Similarity Section -->
-                        <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
-                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 4px;">Auto by Similarity</div>
-                            <div style="display: flex; gap: 4px; align-items: center; margin-bottom: 4px;">
-                                <label style="font-size: 11px; white-space: nowrap;">First N chars:</label>
-                                <input type="number" id="colourSimilarityChars" value="10" min="1" max="50" style="width: 40px; height: 22px; padding: 2px; font-size: 11px;" title="Number of first characters to consider for similarity (default: 10)">
-                            </div>
-                            <div style="display: flex; gap: 4px; align-items: center; margin-bottom: 4px;">
-                                <label style="font-size: 11px; white-space: nowrap;">Sensitivity:</label>
-                                <input type="range" id="colourSimilarityThreshold" value="3" min="0" max="10" style="flex: 1;" title="Levenshtein distance threshold (0=very strict, 10=very loose)">
-                                <span id="colourThresholdValue" style="font-size: 11px; min-width: 20px; text-align: right;">3</span>
-                            </div>
-                            <div style="display: flex; gap: 4px; align-items: center; margin-bottom: 4px;">
-                                <label style="font-size: 11px; white-space: nowrap;">Mode:</label>
-                                <label style="font-size: 11px; margin-right: 8px;">
-                                    <input type="radio" name="colourMode" value="discrete" checked title="Use discrete color palette"> Discrete
-                                </label>
-                                <label style="font-size: 11px;">
-                                    <input type="radio" name="colourMode" value="gradient" title="Use gradient colors"> Gradient
-                                </label>
-                            </div>
-                            <button id="colourAutoButton" style="width: 100%; height: 24px; font-size: 11px;">Auto-Color by Similarity</button>
-                        </div>
-                        <!-- Presets Section -->
-                        <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
-                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 4px;">Presets</div>
-                            <div style="display: flex; gap: 4px; flex-wrap: wrap;">
-                                <input type="text" id="colourPresetName" placeholder="preset name" style="flex: 1; min-width: 80px; height: 22px; padding: 2px; font-size: 11px;" title="Name for this color preset">
-                                <button id="colourSavePresetButton" style="height: 24px; padding: 0 8px; font-size: 11px;">Save</button>
-                                <button id="colourLoadPresetButton" style="height: 24px; padding: 0 8px; font-size: 11px;">Load</button>
-                                <button id="colourResetButton" style="height: 24px; padding: 0 8px; font-size: 11px;">Reset</button>
-                            </div>
-                            <div id="colourPresetList" style="margin-top: 4px; font-size: 10px; display: none;">
-                                <strong>Saved presets:</strong>
-                                <div id="presetItems" style="margin-top: 2px;"></div>
-                            </div>
-                        </div>
-                        <!-- Actions Section -->
-                        <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
-                            <div style="font-weight: bold; font-size: 11px; margin-bottom: 4px;">Actions</div>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 4px;">
-                                <button id="colourSortButton" style="height: 24px; font-size: 11px;">Sort by Color</button>
-                                <button id="colourGroupButton" style="height: 24px; font-size: 11px;">Group at Top</button>
-                            </div>
-                            <div style="display: flex;">
-                                <button id="colourInspectButton" style="flex: 1; height: 24px; font-size: 11px;" title="View color assignment history">Inspect Colors</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+    getPositionPatterns(pos, availableSeqs) {
+        const patterns = {};
+        for (const i of availableSeqs) {
+            const ch = this.matrix[i][pos];
+            if (!patterns[ch]) patterns[ch] = new Set();
+            patterns[ch].add(i);
+        }
+        return patterns;
+    }
 
-            <div class="menu-section side-section" id="actions-section">
-                <div class="section-header" title="Sequence and column actions" data-section="actions">
-                    <span>Actions</span>
-                    <span class="toggle-icon">▼</span>
-                </div>
-                <div class="control-group" id="actions-controls">
-                    <div class="action-section">
-                        <div class="action-section-label">📋 Selection</div>
-                        <div class="button-group">
-                            <button id="selectAllButton" title="Select/deselect all sequences (shortcut: Ctrl+A)">☑️ Select All</button>
-                            <button id="copySelectedButton" title="Copy selected sequences or nucleotides (shortcut: Ctrl+Shift+C)">📋 Copy Sel</button>
-                            <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">📋 Copy Align</button>
-                            <button id="deleteSelectedButton" title="Delete selected sequences (shortcut: Ctrl+Del)">❌ Delete Sel</button>
-                            <button id="undoButton" title="Undo last action (shortcut: Ctrl+Z)">↩️ Undo</button>
-                        </div>
-                    </div>
-                    <div class="action-section">
-                        <div class="action-section-label">↔️ Sequence Order</div>
-                        <div class="button-group">
-                            <button id="moveUpButton" title="Move selected up (shortcut: Ctrl+Up)">▲ Up</button>
-                            <button id="moveDownButton" title="Move selected down (shortcut: Ctrl+Down)">▼ Down</button>
-                            <button id="moveToTopButton" title="Move selected to top (shortcut: Ctrl+Home)">↖️ To Top</button>
-                            <button id="moveToBottomButton" title="Move selected to bottom (shortcut: Ctrl+End)">↘️ To Bottom</button>
-                        </div>
-                    </div>
-                    <div class="action-section">
-                        <div class="action-section-label">✏️ Editing</div>
-                        <div class="button-group">
-                            <button id="reverseComplementButton" title="Reverse complement selected sequences (shortcut: Ctrl+R)">🔂 RevComp</button>
-                            <button id="duplicateButton" title="Duplicate selected (shortcut: Ctrl+U)">🖨️ Duplicate</button>
-                            <button id="insertGroupConsensusButton" title="Insert consensus below selected (shortcut: Ctrl+B)">+ Consensus Below</button>
-                        </div>
-                    </div>
-                    <div class="action-section">
-                        <div class="action-section-label">▦ Columns</div>
-                        <div class="button-group">
-                            <button id="copyColumnsButton" title="Copy selected columns as FASTA (shortcut: Ctrl+Shift+V)">📋 Copy Cols</button>
-                            <button id="deleteColumnsButton" title="Delete selected columns (shortcut: Ctrl+Shift+D)">❌ Delete Cols</button>
-                            <button id="removeGapColumnsButton" title="Remove columns with only gaps">⌫ Remove Gap Cols</button>
-                            <button id="insertGapColumnAllButton" title="Insert gap column at selected position in all sequences">+ Gap Col (All)</button>
-                            <button id="insertGapColumnExceptButton" title="Insert gap column at selected position in all except selected sequences">+ Gap Col (Except)</button>
-                        </div>
-                    </div>
-                    <div class="action-section">
-                        <div class="action-section-label">🛠️ Tools</div>
-                        <div class="button-group">
-                            <button id="realignBlockButton" title="Realign selected block (shortcut: Ctrl+Shift+R)">✨ Realign Block</button>
-                            <button id="openInNewTabButton" title="Open selected in new tab (shortcut: Ctrl+T)">📖 New Tab</button>
-                        </div>
-                    </div>
-                    <div class="action-section">
-                        <div class="action-section-label">⚙️ Settings</div>
-                        <div class="button-group">
-                            <button id="savePresetButton" title="Save current settings (shortcut: Ctrl+S)">💾 Save Preset</button>
-                            <button id="loadPresetButton" title="Load saved settings (shortcut: Ctrl+O)">📁 Load Preset</button>
-                            <button id="infoButton" title="Show program info and shortcuts (shortcut: Ctrl+I)">ℹ️ Info</button>
-                            <button id="minimizeBtn" title="Hide menu (shortcut: Ctrl+H)">▲ Hide Menu</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+    findBestGroup(availableSeqs, options = {}) {
+        const minSize = options.minSize || 3;
+        let minOcc = options.minOccurrences || 2;
+        if (options.datasetSize > 300) minOcc = 1;
+
+        const qSmall = options.qualitySmall ?? 90;
+        const qMed   = options.qualityMedium ?? 80;
+        const qLarge = options.qualityLarge ?? 70;
+
+        const breakSM = options.sizeSmallMedium || 11;
+        const breakML = options.sizeMediumLarge || 20;
+
+        // FIX: Respect trimming boundaries to avoid "ragged end" features
+        const startPos = options.trimStart || 0;
+        const endPos = options.trimEnd !== undefined ? options.trimEnd : this.alnLen;
+
+        let upperBound = availableSeqs.length;
         
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; font-size: 12px; color: #555;">
-            <div style="text-align: left; flex: 1;">
-                <span style="white-space: nowrap;">Click name: copy name</span> | <span style="white-space: nowrap;">Ctrl+click name: select/deselect seq (drag for range)</span> | <span style="white-space: nowrap;">Shift+click name: range from last</span> | <span style="white-space: nowrap;">Ctrl+Alt+click nuc: select column</span> | <span style="white-space: nowrap;">Shift+Ctrl+Alt+click nuc: extend column range</span> | <span style="white-space: nowrap;">Ctrl+click on nuc: start/extend range</span> | <span style="white-space: nowrap;">Right-click drag seq: slide</span> | <span style="white-space: nowrap;">Right-click name: menu</span> | <span style="white-space: nowrap;">Use bottom scrollbar to move alignment</span>
-            </div>
-            <div id="sourceInfo" style="text-align: right; white-space: nowrap; font-size: 14px; color: #666; margin-left: 12px;">No file loaded</div>
-        </div>
-    </div>
-    
-    <div id="minimizeBar" style="display: none; padding: 8px; background: #f0f0f0; border-bottom: 1px solid #ccc; text-align: center; cursor: pointer;">
-        <button id="expandButton" style="padding: 4px 12px; cursor: pointer;">▼ Show Menu</button>
-    </div>
-    
-    <div id="viewer-container">
-        <div id="alignmentContainer">Paste MSF or FASTA into the box and click Load, or drop a file.</div>
-        <div class="horizontal-scrollbar">
-            <div class="horizontal-scrollbar-thumb"></div>
-        </div>
-    </div>
-    <div id="statusMessage"></div>
-    <div id="tooltip" class="tooltip"></div>
-    
-    <div id="infoModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10001; overflow: auto;">
-        <div style="background: white; margin: 50px auto; padding: 20px; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
-            <h2 style="margin-top: 0;">MSA Viewer - Keyboard Shortcuts</h2>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-family: monospace; font-size: 13px;">
-                <strong>Ctrl+L</strong><span>Load file</span>
-                <strong>Ctrl+A</strong><span>Select/deselect all</span>
-                <strong>Ctrl+C</strong><span>Copy sequence name</span>
-                <strong>Ctrl+Shift+C</strong><span>Copy selected sequences</span>
-                <strong>Ctrl+Del</strong><span>Delete selected</span>
-                <strong>Ctrl+Z</strong><span>Undo</span>
-                <strong>Ctrl+R</strong><span>Reverse complement</span>
-                <strong>Ctrl+U</strong><span>Duplicate</span>
-                <strong>Ctrl+B</strong><span>Consensus below</span>
-                <strong>Ctrl+Up</strong><span>Move selected up</span>
-                <strong>Ctrl+Down</strong><span>Move selected down</span>
-                <strong>Ctrl+Home</strong><span>Move to top</span>
-                <strong>Ctrl+End</strong><span>Move to bottom</span>
-                <strong>Ctrl+Shift+V</strong><span>Copy columns</span>
-                <strong>Ctrl+Shift+D</strong><span>Delete columns</span>
-                <strong>Ctrl+Shift+R</strong><span>Realign block</span>
-                <strong>Ctrl+T</strong><span>Open in new tab</span>
-                <strong>Ctrl+S</strong><span>Save preset</span>
-                <strong>Ctrl+O</strong><span>Load preset</span>
-                <strong>Ctrl+H</strong><span>Hide/show menu</span>
-                <strong>Ctrl+I</strong><span>Show this info</span>
-            </div>
-            <div style="margin-top: 20px; text-align: right;">
-                <button onclick="document.getElementById('infoModal').style.display='none'" style="padding: 8px 16px; cursor: pointer;">Close</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Color Inspector Modal -->
-    <div id="colourInspectorModal" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border: 2px solid #333; border-radius: 4px; max-width: 500px; width: 90%; max-height: 60vh; overflow: auto; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-        <div style="background: #f5f5f5; padding: 12px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0;">
-            <h3 style="margin: 0; font-size: 14px;">Color Assignment History</h3>
-            <button onclick="document.getElementById('colourInspectorModal').style.display='none'" style="background: none; border: none; font-size: 18px; cursor: pointer; padding: 0 4px;">×</button>
-        </div>
-        <div id="colourHistoryContent" style="padding: 12px; font-size: 11px;">
-            <!-- Populated by JavaScript -->
-        </div>
-    </div>
+        // FIX: Calculate upperBound once, and allow relaxation
+        if (!options.relaxUpperBound) {
+            if (availableSeqs.length > 80)  upperBound = Math.floor(availableSeqs.length * 0.60);
+            else if (availableSeqs.length > 50) upperBound = Math.floor(availableSeqs.length * 0.75);
+            else if (availableSeqs.length > 30) upperBound = Math.floor(availableSeqs.length * 0.90);
+        }
 
-    <!-- Clustering Results Modal -->
-    <div id="clusteringModal" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border: 2px solid #333; border-radius: 4px; max-width: 700px; width: 95%; max-height: 80vh; overflow: auto; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-        <div style="background: #f5f5f5; padding: 12px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0;">
-            <h3 style="margin: 0; font-size: 14px;">Sequence Clustering Results</h3>
-            <button onclick="document.getElementById('clusteringModal').style.display='none'" style="background: none; border: none; font-size: 18px; cursor: pointer; padding: 0 4px;">×</button>
-        </div>
-        <div id="clusteringContent" style="padding: 12px; font-size: 11px;">
-            <!-- Populated by JavaScript -->
-        </div>
-    </div>
+        const candidates = new Map();
+
+        // FIX: Loop only within valid trimmed region
+        for (let pos = startPos; pos < endPos; pos++) {
+            const patterns = this.getPositionPatterns(pos, availableSeqs);
+
+            for (const [ch, set] of Object.entries(patterns)) {
+                const size = set.size;
+
+                if (size >= minSize && size <= upperBound) {
+                    const arr = Array.from(set).sort((a,b)=>a-b);
+                    const key = arr.join(',');
+                    if (!candidates.has(key)) candidates.set(key, {seq: arr, feats: []});
+                    candidates.get(key).feats.push({pos, ch});
+                }
+            }
+        }
+
+        // fuzzy merge near-identical groups
+        const merged = new Map();
+        const done = new Set();
+        for (const [k1, d1] of candidates) {
+            if (done.has(k1)) continue;
+            let list = [d1];
+            for (const [k2, d2] of candidates) {
+                if (k1===k2 || done.has(k2)) continue;
+                const inter = d1.seq.filter(x=>d2.seq.includes(x)).length;
+                const union = new Set([...d1.seq, ...d2.seq]).size;
+                if (inter/union >= 0.90 && Math.abs(d1.seq.length - d2.seq.length) <= 5) {
+                    list.push(d2);
+                    done.add(k2);
+                }
+            }
+            const best = list.reduce((a,b)=> a.seq.length > b.seq.length ? a : b);
+            const key = best.seq.join(',');
+            if (!merged.has(key)) merged.set(key, {seq: best.seq, feats: []});
+            for (const g of list) merged.get(key).feats.push(...g.feats);
+            done.add(k1);
+        }
+
+        // dedup feats
+        for (const d of merged.values()) {
+            const seen = new Set();
+            d.feats = d.feats.filter(f => {
+                const sig = f.pos+':'+f.ch;
+                if (seen.has(sig)) return false;
+                seen.add(sig);
+                return true;
+            });
+        }
+
+        let best = null;
+        let bestScore = -1;
+
+        for (const d of merged.values()) {
+            if (d.feats.length < minOcc) continue;
+            const gsize = d.seq.length;
+            const thresh = gsize < breakSM ? qSmall : gsize < breakML ? qMed : qLarge;
+
+            let good = 0;
+            let score = 0;
+            const validFeats = [];
+
+            for (const {pos, ch} of d.feats) {
+                let inside = 0;
+                for (const i of d.seq) if (this.matrix[i][pos] === ch) inside++;
+
+                let outside = 0;
+                for (let i=0; i<this.nSeqs; i++) {
+                    if (!d.seq.includes(i) && this.matrix[i][pos] === ch) outside++;
+                }
+
+                const inP = inside / gsize * 100;
+                const outP = outside / (this.nSeqs - gsize) * 100 || 0;
+                const qual = Math.max(0, inP - outP);
+
+                if (outside === 0) {
+                    good++;
+                    score += inside === gsize ? 3 : inside >= gsize*0.8 ? 2 : 1.5;
+                    validFeats.push({pos, ch});
+                } else if (qual >= thresh) {
+                    good++;
+                    score += 1;
+                    validFeats.push({pos, ch});
+                }
+            }
+
+            if (good >= options.minPerfect && score > bestScore) {
+                bestScore = score;
+                best = {
+                    sequences: d.seq,
+                    size: gsize,
+                    nPerfect: good,
+                    nOccurrences: validFeats.length,
+                    occurrences: validFeats
+                };
+            }
+        }
+
+        // FIX: Prune outliers (The "Seq 270" Fix)
+        // If a sequence matches < 50% of the group's features, kick it out.
+        if (best && best.occurrences.length > 2) {
+            const originalSize = best.sequences.length;
+            const robustSequences = [];
+            
+            for (const seqIdx of best.sequences) {
+                let matchCount = 0;
+                for (const {pos, ch} of best.occurrences) {
+                    if (this.matrix[seqIdx][pos] === ch) matchCount++;
+                }
+                
+                // Requirement: Must match at least 50% of the cluster's features
+                if (matchCount / best.occurrences.length >= 0.5) {
+                    robustSequences.push(seqIdx);
+                }
+            }
+
+            // Update the group if we pruned anyone
+            if (robustSequences.length < originalSize) {
+                console.log(`[PRUNE] Removed ${originalSize - robustSequences.length} outliers from candidate group (e.g. seq 270 case)`);
+                best.sequences = robustSequences;
+                best.size = robustSequences.length;
+                
+                // Re-verify if the group is still valid after pruning
+                if (best.size < minSize) best = null; 
+            }
+        }
+
+        if (!best && merged.size > 0) {
+            console.log(`[DEBUG] No cluster | avail=${availableSeqs.length} minPerfect=${options.minPerfect} upper=${upperBound}`);
+        }
+        return best;
+    }
+
+    getFeaturesByQuality(c) {
+        const perfect = [], imperfect = [];
+        const set = new Set(c.sequences);
+        for (const {pos, ch} of c.occurrences) {
+            let out = 0;
+            for (let i=0; i<this.nSeqs; i++) if (!set.has(i) && this.matrix[i][pos]===ch) out++;
+            (out===0 ? perfect : imperfect).push({pos:pos+1, char:ch, countOutside:out});
+        }
+        return {perfectFeatures: perfect, imperfectFeatures: imperfect};
+    }
+
+    cluster(opts = {}) {
+        const o = {
+            minSize: 3,
+            minPerfect: 4,
+            maxIterations: 20,
+            qualitySmall: 85,
+            qualityMedium: 75,
+            qualityLarge: 65,
+            minOccurrences: 2,
+            trimStart: 0,            // Default to no trimming
+            trimEnd: this.alnLen,    // Default to full length
+            ...opts
+        };
+
+        const clusters = [];
+        let avail = Array.from({length:this.nSeqs},(_,i)=>i);
+
+        console.log('Starting SINE clustering — final stable version');
+
+        let it = 0;
+        while (avail.length >= o.minSize && it < o.maxIterations) {
+            it++;
+            const prog = it / o.maxIterations;
+
+            const curMinP = Math.max(1, Math.round(o.minPerfect * (1 - prog * 0.75)));
+            const curMinO = avail.length <= 20 ? 1 : o.minOccurrences;
+            const curQS = Math.max(25, o.qualitySmall - prog*50);
+            const curQM = Math.max(20, o.qualityMedium - prog*50);
+            const curQL = Math.max(15, o.qualityLarge - prog*50);
+
+            const assigned = clusters.flatMap(c => c.sequences);
+
+            const go = {
+                minSize: o.minSize,
+                minPerfect: curMinP,
+                minOccurrences: curMinO,
+                qualitySmall: curQS,
+                qualityMedium: curQM,
+                qualityLarge: curQL,
+                datasetSize: this.nSeqs,
+                assignedSeqs: assigned,
+                relaxUpperBound: false,
+                trimStart: o.trimStart, // Pass trimming down
+                trimEnd: o.trimEnd      // Pass trimming down
+            };
+
+            if (avail.length <= 10) {
+                console.log(`[RESCUE] ${avail.length} left → ultra relaxed`);
+                go.minPerfect = 1;
+                go.minOccurrences = 1;
+            }
+
+            let group = this.findBestGroup(avail, go);
+
+            // FIX: Retry with relaxed upper bound if strict search fails
+            if (!group && avail.length >= o.minSize) {
+                console.log(`[RETRY] No group found. Retrying with relaxed upper bound...`);
+                go.relaxUpperBound = true;
+                group = this.findBestGroup(avail, go);
+            }
+
+            if (group) {
+                // FIX: Attach features to the group object so script.js can access them
+                const f = this.getFeaturesByQuality(group);
+                group.perfectFeatures = f.perfectFeatures;
+                group.imperfectFeatures = f.imperfectFeatures;
+
+                clusters.push(group);
+                avail = avail.filter(i => !group.sequences.includes(i));
+                console.log(`Cluster ${clusters.length}: size=${group.size} perfect=${f.perfectFeatures.length} total=${group.nOccurrences}`);
+            } else {
+                if (avail.length >= o.minSize) console.log(`Stopped — ${avail.length} left as noise`);
+                break;
+            }
+        }
+
+        // FIX: Return object structure expected by script.js
+        // Map sequence indices to full sequence objects for the clusters
+        const validClusters = clusters.map(c => ({
+            ...c,
+            sequences: c.sequences.map(idx => ({
+                index: idx,
+                id: this.sequences[idx].id,
+                seq: this.sequences[idx].seq
+            }))
+        }));
+        
+        const assignedCount = validClusters.reduce((a,c) => a + c.size, 0);
+
+        return {
+            clusters: validClusters,
+            unassigned: avail.map(i => ({index: i, id: this.sequences[i].id, seq: this.sequences[i].seq})),
+            summary: {
+                nClusters: validClusters.length,
+                nAssigned: assignedCount,
+                nUnassigned: avail.length,
+                nTotal: this.nSeqs
+            }
+        };
+    }
+
+    static getClusterColors() {
+        return [
+            '#e41a1c', // red
+            '#377eb8', // blue
+            '#4daf4a', // green
+            '#984ea3', // purple
+            '#ff7f00', // orange
+            '#ffff33', // yellow
+            '#a65628', // brown
+            '#f781bf', // pink
+            '#999999'  // gray
+        ];
+    }
+}
+
+/**
+ * Calculate trim boundaries using sliding window gap analysis
+ * @param {Array} sequences - [{id, seq}, ...]
+ * @param {Object} options - {edgeWindow, leftGapThresh, rightGapThresh}
+ * @returns {Object} {leftTrimEnd, rightTrimStart} - 0-based indices
+ */
+function getTrimBoundaries(sequences, options = {}) {
+    const EDGE_WINDOW = options.edgeWindow || 15;
+    const LEFT_GAP = options.leftGapThresh !== undefined ? options.leftGapThresh : 0.50;
+    const RIGHT_GAP = options.rightGapThresh !== undefined ? options.rightGapThresh : 0.80;
     
-    <script src="cluster.js"></script>
-    <script src="script.js"></script>
-    <script>
-// All functionality moved to script.js
-</script>
-</body>
-</html>
+    const nSeqs = sequences.length;
+    const alnLen = sequences[0].seq.length;
+    
+    // Convert to matrix for fast access
+    const matrix = sequences.map(s => s.seq.split(''));
+    
+    let leftTrimEnd = -1;
+    let rightTrimStart = alnLen;
+    
+    // STEP 1: Trim from LEFT
+    let winGaps = 0;
+    let winCols = 0;
+    
+    for (let col = 0; col < alnLen; col++) {
+        // Count gaps in current column
+        let gapCount = 0;
+        for (let s = 0; s < nSeqs; s++) {
+            const char = matrix[s][col];
+            if (char === '-' || char === '.') gapCount++;
+        }
+        
+        // Add to window
+        winCols++;
+        winGaps += gapCount;
+        
+        // Slide window if larger than EDGE_WINDOW
+        if (winCols > EDGE_WINDOW) {
+            let oldGapCount = 0;
+            const oldCol = col - EDGE_WINDOW;
+            for (let s = 0; s < nSeqs; s++) {
+                const char = matrix[s][oldCol];
+                if (char === '-' || char === '.') oldGapCount++;
+            }
+            winGaps -= oldGapCount;
+            winCols--;
+        }
+        
+        const cumulativeGapPct = winGaps / (winCols * nSeqs);
+        
+        if (cumulativeGapPct > LEFT_GAP) {
+            leftTrimEnd = col;
+        } else {
+            // Found first position with acceptable gaps, stop trimming left
+            break;
+        }
+    }
+    
+    // STEP 2: Trim from RIGHT
+    winGaps = 0;
+    winCols = 0;
+    const winGapArray = [];
+    
+    for (let col = alnLen - 1; col >= 0; col--) {
+        // Count gaps in current column
+        let gapCount = 0;
+        for (let s = 0; s < nSeqs; s++) {
+            const char = matrix[s][col];
+            if (char === '-' || char === '.') gapCount++;
+        }
+        
+        // Add to window
+        winGapArray.push(gapCount);
+        winCols++;
+        winGaps += gapCount;
+        
+        // Slide window if larger than EDGE_WINDOW
+        if (winCols > EDGE_WINDOW) {
+            winGaps -= winGapArray.shift();
+            winCols--;
+        }
+        
+        const cumulativeGapPct = winGaps / (winCols * nSeqs);
+        
+        if (cumulativeGapPct > RIGHT_GAP) {
+            rightTrimStart = col;
+        } else {
+            // Found last position with acceptable gaps, stop trimming right
+            break;
+        }
+    }
+    
+    console.log(`Trim boundaries: left=${leftTrimEnd + 1} cols removed, right=${alnLen - rightTrimStart} cols removed`);
+    
+    return {
+        leftTrimEnd: leftTrimEnd,    // Last removed column index on left (0-based)
+        rightTrimStart: rightTrimStart // First removed column index on right (0-based)
+    };
+}
