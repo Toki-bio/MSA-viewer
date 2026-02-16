@@ -4104,6 +4104,48 @@ function initializeAppUI() {
     
     // Initialize colour seqs feature
     initColourSeqs();
+
+    // ── URL parameter auto-loading ──────────────────────────────────────
+    // Supports:
+    //   ?url=<relative_or_absolute_url>   — fetch FASTA/MSF from URL
+    //   ?data=<base64_encoded_text>        — decode inline data
+    //   ?title=<text>                      — optional display title
+    const urlParams = new URLSearchParams(window.location.search);
+    const autoUrl   = urlParams.get('url');
+    const autoData  = urlParams.get('data');
+    const autoTitle = urlParams.get('title');
+
+    if (autoUrl) {
+        showMessage('Loading alignment from URL...', 0);
+        fetch(autoUrl)
+            .then(resp => {
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+                return resp.text();
+            })
+            .then(text => {
+                const fastaInputEl = el('fastaInput');
+                if (fastaInputEl) fastaInputEl.value = text;
+                state.currentFilename = autoTitle || autoUrl.split('/').pop() || 'URL';
+                parseAndRender(true);
+                showMessage('Alignment loaded from URL', 2000);
+            })
+            .catch(err => {
+                console.error('URL auto-load failed:', err);
+                showMessage(`Failed to load URL: ${err.message}`, 5000);
+            });
+    } else if (autoData) {
+        try {
+            const text = atob(autoData);
+            const fastaInputEl = el('fastaInput');
+            if (fastaInputEl) fastaInputEl.value = text;
+            state.currentFilename = autoTitle || 'Inline data';
+            parseAndRender(true);
+            showMessage('Alignment loaded from inline data', 2000);
+        } catch (err) {
+            console.error('Inline data decode failed:', err);
+            showMessage(`Failed to decode data: ${err.message}`, 5000);
+        }
+    }
 }
 
 document.addEventListener('DOMContentLoaded', initializeAppUI);
