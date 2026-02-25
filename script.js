@@ -3570,6 +3570,24 @@ function showContextMenu(e, index) {
         contextMenu.appendChild(copySameColorUngapped);
     }
     
+    // Add BLAST search option
+    if (state.selectedRows.size <= 1) {
+        const sep = document.createElement('div');
+        sep.style.borderTop = '1px solid #ccc';
+        sep.style.margin = '4px 0';
+        contextMenu.appendChild(sep);
+        
+        const blastItem = document.createElement('div');
+        blastItem.textContent = 'BLAST Search';
+        blastItem.addEventListener('click', () => {
+            const seqData = state.seqs[index];
+            const ungappedSeq = seqData.seq.replace(/-/g, '');
+            showBlastDialog(seqData.header, ungappedSeq);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(blastItem);
+    }
+    
     // Add "Replace with Consensus" option if multiple sequences selected
     if (state.selectedRows.size >= 2) {
         const replaceConsensusItem = document.createElement('div');
@@ -5258,3 +5276,405 @@ function initColourSeqs() {
         }
     }, { passive: false });
 })();
+
+// ============ BLAST SEARCH FUNCTIONS ============
+let blastResultsModal = null;
+let blastWorker = null;
+
+function getBlastWorker() {
+    if (!blastWorker) blastWorker = new Worker('./blast-worker.js');
+    return blastWorker;
+}
+
+function showBlastDialog(sequenceHeader, sequenceSeq) {
+    // Create modal for database selection
+    const modal = document.createElement('div');
+    modal.className = 'blast-modal-backdrop';
+    
+    const dialog = document.createElement('div');
+    dialog.className = 'blast-dialog';
+    
+    const title = document.createElement('div');
+    title.className = 'blast-dialog-title';
+    title.textContent = 'BLAST Search';
+    
+    const content = document.createElement('div');
+    content.className = 'blast-dialog-content';
+    
+    const seqLabel = document.createElement('div');
+    seqLabel.innerHTML = `<strong>Sequence:</strong> ${sequenceHeader}`;
+    seqLabel.style.marginBottom = '12px';
+    seqLabel.style.fontSize = '12px';
+    seqLabel.style.wordBreak = 'break-word';
+    content.appendChild(seqLabel);
+    
+    const dbLabel = document.createElement('div');
+    dbLabel.innerHTML = '<strong>Search databases:</strong>';
+    dbLabel.style.marginBottom = '8px';
+    content.appendChild(dbLabel);
+    
+    // Database checkboxes
+    const databases = [
+        { name: 'SINEBase.nr95',    url: './SINEBase.nr95.fa',           label: 'SINEBase.nr95',                                     checked: true  },
+        { name: 'RepBase_filtered', url: './RepBase_filtered.bnk',        label: 'RepBase (filtered: SINE/LINE/mammal/reptile)',        checked: true  },
+        { name: 'RepBase.bnk',      url: './RepBase.bnk',                 label: 'RepBase (full, 49k seqs \u2014 slow)',               checked: false },
+        { name: 'snake_gekko_SINEs',url: './snake_gekko_SINEs_cons.fas',  label: 'snake_gekko_SINEs',                                 checked: true  },
+    ];
+    
+    const dbCheckboxes = {};
+    const dbContainer = document.createElement('div');
+    dbContainer.style.marginBottom = '16px';
+    
+    for (const db of databases) {
+        const label = document.createElement('label');
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.marginBottom = '6px';
+        label.style.cursor = 'pointer';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = db.checked;
+        checkbox.style.marginRight = '8px';
+        dbCheckboxes[db.name] = checkbox;
+        
+        const span = document.createElement('span');
+        span.textContent = db.label || db.name;
+        span.style.fontSize = '12px';
+        
+        label.appendChild(checkbox);
+        label.appendChild(span);
+        dbContainer.appendChild(label);
+    }
+    content.appendChild(dbContainer);
+    
+    // E-value setting
+    const evalueLabel = document.createElement('div');
+    evalueLabel.innerHTML = '<strong>E-value threshold:</strong>';
+    evalueLabel.style.marginBottom = '6px';
+    evalueLabel.style.fontSize = '12px';
+    content.appendChild(evalueLabel);
+    
+    const evalueInput = document.createElement('input');
+    evalueInput.type = 'text';
+    evalueInput.value = '1e-5';
+    evalueInput.style.width = '100px';
+    evalueInput.style.padding = '4px';
+    evalueInput.style.marginBottom = '16px';
+    evalueInput.style.fontSize = '12px';
+    content.appendChild(evalueInput);
+    
+    // Buttons
+    const buttonContainer = document.createElement('div');
+    buttonContainer.style.display = 'flex';
+    buttonContainer.style.gap = '8px';
+    buttonContainer.style.justifyContent = 'flex-end';
+    
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.padding = '6px 16px';
+    cancelBtn.style.fontSize = '12px';
+    cancelBtn.style.cursor = 'pointer';
+    cancelBtn.addEventListener('click', () => {
+        modal.remove();
+    });
+    
+    const searchBtn = document.createElement('button');
+    searchBtn.textContent = 'Search';
+    searchBtn.style.padding = '6px 16px';
+    searchBtn.style.fontSize = '12px';
+    searchBtn.style.cursor = 'pointer';
+    searchBtn.style.backgroundColor = '#4CAF50';
+    searchBtn.style.color = 'white';
+    searchBtn.style.border = 'none';
+    searchBtn.style.borderRadius = '4px';
+    searchBtn.addEventListener('click', async () => {
+        const selectedDbs = [];
+        for (const db of databases) {
+            if (dbCheckboxes[db.name].checked) selectedDbs.push({ name: db.name, url: db.url });
+        }
+        
+        if (selectedDbs.length === 0) {
+            alert('Please select at least one database');
+            return;
+        }
+        
+        modal.remove();
+        await runBlastSearch(sequenceHeader, sequenceSeq, selectedDbs, evalueInput.value);
+    });
+    
+    buttonContainer.appendChild(cancelBtn);
+    buttonContainer.appendChild(searchBtn);
+    content.appendChild(buttonContainer);
+    
+    dialog.appendChild(title);
+    dialog.appendChild(content);
+    modal.appendChild(dialog);
+    document.body.appendChild(modal);
+    
+    // Close on backdrop click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.remove();
+        }
+    });
+}
+
+// Reverse complement helper for copy-FASTA buttons
+function _rcStr(s) {
+    const comp = {A:'T',T:'A',C:'G',G:'C',a:'t',t:'a',c:'g',g:'c',
+                   R:'Y',Y:'R',S:'S',W:'W',K:'M',M:'K',B:'V',V:'B',D:'H',H:'D',N:'N',
+                   r:'y',y:'r',s:'s',w:'w',k:'m',m:'k',b:'v',v:'b',d:'h',h:'d',n:'n','-':'-'};
+    return s.split('').reverse().map(c => comp[c] || 'N').join('');
+}
+
+async function runBlastSearch(seqHeader, seqSeq, databases, evalue) {
+    showMessage('Running BLAST search...', 0);
+    const worker = getBlastWorker();
+    const queryLen = seqSeq.replace(/[-\s]/g, '').length;
+
+    const makeSearch = (db) => new Promise((resolve) => {
+        const requestId = `${Date.now()}-${Math.random()}`;
+        const handler = (e) => {
+            const d = e.data;
+            if (d.requestId !== requestId) return;
+            if (d.type === 'progress') {
+                showMessage(`[${db.name}] ${d.stage}...`, 0);
+                return;
+            }
+            if (d.type === 'result') {
+                worker.removeEventListener('message', handler);
+                resolve([db.name, d]);
+            }
+        };
+        worker.addEventListener('message', handler);
+        worker.postMessage({ type: 'search', requestId, querySeq: seqSeq, dbName: db.name, dbUrl: db.url, maxHits: 10 });
+    });
+
+    try {
+        const pairs = await Promise.all(databases.map(db => makeSearch(db)));
+        const results = Object.fromEntries(pairs);
+        showMessage('BLAST search complete!', 2000);
+        displayBlastResults(seqHeader, queryLen, results);
+    } catch (err) {
+        console.error('BLAST search error:', err);
+        showMessage(`Error: ${err.message}`, 5000);
+    }
+}
+
+function buildBlastHitElement(hit, hitIndex, dbIndex, queryLen) {
+    const W = 60;
+    const hsp = hit.hsps[0];
+
+    const div = document.createElement('div');
+    div.className = 'blast-hit';
+    div.id = `blast-hit-${dbIndex}-${hitIndex}`;
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'blast-hit-header';
+    header.textContent = `>> ${hit.def || hit.id}  (${hit.length} nt)`;
+    div.appendChild(header);
+
+    // Copy buttons
+    const actions = document.createElement('div');
+    actions.className = 'blast-hit-actions';
+
+    const makeBtn = (label, getFasta) => {
+        const btn = document.createElement('button');
+        btn.className = 'blast-copy-btn';
+        btn.textContent = `\uD83D\uDCCB ${label}`;
+        btn.addEventListener('click', () => {
+            navigator.clipboard.writeText(getFasta()).then(() => {
+                btn.classList.add('copied');
+                btn.textContent = '\u2713 Copied!';
+                setTimeout(() => { btn.classList.remove('copied'); btn.textContent = `\uD83D\uDCCB ${label}`; }, 1800);
+            });
+        });
+        return btn;
+    };
+
+    const regionSeq = hsp.strand === '-'
+        ? _rcStr((hit.seq || '').substring(hsp.hitStart - 1, hsp.hitEnd))
+        : (hit.seq || '').substring(hsp.hitStart - 1, hsp.hitEnd);
+    const regionHeader = `${hit.def || hit.id}:${hsp.hitStart}-${hsp.hitEnd}${hsp.strand === '-' ? '(rc)' : ''}`;
+
+    actions.appendChild(makeBtn('Copy region FASTA', () => `>${regionHeader}\n${regionSeq}`));
+    actions.appendChild(makeBtn('Copy full seq FASTA', () => `>${hit.def || hit.id}\n${hit.seq || ''}`));
+    div.appendChild(actions);
+
+    // Stats
+    const stats = document.createElement('div');
+    stats.className = 'blast-hit-stats';
+    const strandLabel = hsp.strand === '-' ? 'Plus/Minus' : 'Plus/Plus';
+    const strandClass = hsp.strand === '-' ? 'stat-strand-minus' : 'stat-strand-plus';
+    stats.innerHTML =
+        `Score = ${hsp.bitScore} bits (${hsp.score})&nbsp;&nbsp; ` +
+        `Identity = ${hsp.identity}/${hsp.alignLen} (${hsp.percent}%)&nbsp;&nbsp; ` +
+        `Gaps = ${hsp.gaps}/${hsp.alignLen}<br>` +
+        `Strand = <span class="${strandClass}">${strandLabel}</span>&nbsp;&nbsp; ` +
+        `Query: ${hsp.queryStart}..${hsp.queryEnd} of ${queryLen} nt &rarr; ` +
+        `Subject: ${hsp.hitStart}..${hsp.hitEnd} of ${hit.length} nt`;
+    div.appendChild(stats);
+
+    // Alignment blocks
+    const pre = document.createElement('pre');
+    pre.className = 'blast-alignment-block';
+    let alnText = '';
+    let qPos = hsp.queryStart;
+    let sPos = hsp.hitStart;
+    const numW = Math.max(String(hsp.queryEnd).length, String(hsp.hitEnd).length, 1);
+    for (let i = 0; i < hsp.querySeq.length; i += W) {
+        const qBlock = hsp.querySeq.substring(i, i + W);
+        const mBlock = hsp.midline.substring(i, i + W);
+        const sBlock = hsp.hitSeq.substring(i, i + W);
+        const qAdv = qBlock.replace(/-/g, '').length;
+        const sAdv = sBlock.replace(/-/g, '').length;
+        const qEnd = qPos + qAdv - 1;
+        const sEnd = sPos + sAdv - 1;
+        const pad = ' '.repeat(7 + numW + 2);
+        alnText += `Query  ${String(qPos).padStart(numW)}  ${qBlock}  ${qEnd}\n`;
+        alnText += `${pad}${mBlock}\n`;
+        alnText += `Sbjct  ${String(sPos).padStart(numW)}  ${sBlock}  ${sEnd}\n\n`;
+        qPos = qEnd + 1;
+        sPos = sEnd + 1;
+    }
+    pre.textContent = alnText;
+    div.appendChild(pre);
+
+    return div;
+}
+
+function displayBlastResults(queryName, queryLen, results) {
+    if (blastResultsModal) {
+        blastResultsModal.remove();
+        blastResultsModal = null;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'blast-results-modal-backdrop';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'blast-results-dialog-text';
+
+    // ---- Title bar ----
+    const titleBar = document.createElement('div');
+    titleBar.className = 'blast-text-title-bar';
+    const titleEl = document.createElement('span');
+    titleEl.textContent = `BLAST Results \u2014 ${queryName}  (${queryLen} nt)`;
+    titleEl.style.fontWeight = 'bold';
+    titleEl.style.fontSize = '13px';
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '\u2715';
+    closeBtn.className = 'blast-close-btn';
+    closeBtn.onclick = () => { overlay.remove(); blastResultsModal = null; };
+    titleBar.appendChild(titleEl);
+    titleBar.appendChild(closeBtn);
+    dialog.appendChild(titleBar);
+
+    // ---- Tab bar ----
+    const tabBar = document.createElement('div');
+    tabBar.className = 'blast-tab-bar';
+    const panes = [];
+
+    const dbNames = Object.keys(results);
+
+    for (let di = 0; di < dbNames.length; di++) {
+        const dbName = dbNames[di];
+        const dbResults = results[dbName];
+        const hits = dbResults.hits || [];
+        const numSeqs = dbResults.numSeqs || 0;
+        const searchMs = dbResults.searchMs || 0;
+
+        // Tab button
+        const tab = document.createElement('button');
+        tab.className = 'blast-tab-btn' + (di === 0 ? ' active' : '');
+        tab.textContent = `${dbName}  (${dbResults.error ? 'error' : hits.length + ' hits'})`;
+        tabBar.appendChild(tab);
+
+        // Pane
+        const pane = document.createElement('div');
+        pane.className = 'blast-pane' + (di === 0 ? ' active' : '');
+
+        if (dbResults.error) {
+            const errPre = document.createElement('pre');
+            errPre.className = 'blast-text-content';
+            errPre.textContent = `Error searching ${dbName}:\n${dbResults.error}`;
+            pane.appendChild(errPre);
+        } else if (hits.length === 0) {
+            const noPre = document.createElement('pre');
+            noPre.className = 'blast-text-content';
+            noPre.textContent = `No significant hits found in ${dbName}.`;
+            pane.appendChild(noPre);
+        } else {
+            // --- Summary section ---
+            const summarySection = document.createElement('div');
+            summarySection.className = 'blast-summary-section';
+
+            const dbStats = document.createElement('div');
+            dbStats.className = 'blast-db-stats';
+            dbStats.textContent = `Database: ${dbName}   Sequences: ${numSeqs}   Hits: ${hits.length}   Search time: ${searchMs} ms`;
+            summarySection.appendChild(dbStats);
+
+            const table = document.createElement('table');
+            table.className = 'blast-summary-table';
+            table.innerHTML = `<thead><tr>
+                <th>#</th><th>Score</th><th>Ident%</th><th>Align</th>
+                <th>Q range</th><th>S range</th><th>S len</th><th>Strand</th><th class="desc">Description</th>
+            </tr></thead>`;
+            const tbody = document.createElement('tbody');
+            hits.forEach((hit, hi) => {
+                const hsp = hit.hsps[0];
+                const tr = document.createElement('tr');
+                tr.className = 'blast-summary-row';
+                const strandCls = hsp.strand === '-' ? 'strand-minus' : 'strand-plus';
+                const strandTxt = hsp.strand === '-' ? 'Plus/Minus' : 'Plus/Plus';
+                tr.innerHTML = `
+                    <td>${hi + 1}</td>
+                    <td>${hsp.bitScore}</td>
+                    <td>${hsp.percent}%</td>
+                    <td>${hsp.alignLen}</td>
+                    <td>${hsp.queryStart}..${hsp.queryEnd}</td>
+                    <td>${hsp.hitStart}..${hsp.hitEnd}</td>
+                    <td>${hit.length}</td>
+                    <td class="${strandCls}">${strandTxt}</td>
+                    <td class="desc">${(hit.def || hit.id).substring(0, 80)}</td>`;
+                tr.addEventListener('click', () => {
+                    const target = hitsSection.querySelector(`#blast-hit-${di}-${hi}`);
+                    if (target) hitsSection.scrollTop = target.offsetTop;
+                });
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            summarySection.appendChild(table);
+            pane.appendChild(summarySection);
+
+            // --- Hits section ---
+            const hitsSection = document.createElement('div');
+            hitsSection.className = 'blast-hits-section';
+            hits.forEach((hit, hi) => {
+                hitsSection.appendChild(buildBlastHitElement(hit, hi, di, queryLen));
+            });
+            pane.appendChild(hitsSection);
+        }
+
+        dialog.appendChild(pane);
+        panes.push(pane);
+
+        tab.addEventListener('click', () => {
+            tabBar.querySelectorAll('.blast-tab-btn').forEach(t => t.classList.remove('active'));
+            panes.forEach(p => p.classList.remove('active'));
+            tab.classList.add('active');
+            pane.classList.add('active');
+        });
+    }
+
+    dialog.insertBefore(tabBar, panes[0]);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    blastResultsModal = overlay;
+
+    overlay.addEventListener('click', e => {
+        if (e.target === overlay) { overlay.remove(); blastResultsModal = null; }
+    });
+}
