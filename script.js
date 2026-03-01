@@ -969,6 +969,10 @@ function renderAlignment() {
     if (typeof updateSourceInfo === 'function') {
         updateSourceInfo();
     }
+    // Re-apply sequence name colours if any mappings exist
+    if (typeof applyColourToSeqNames === 'function' && colourState && colourState.mappings.size > 0) {
+        applyColourToSeqNames(colourState.mappings);
+    }
 }
 
 // Unified source info updater so counts stay accurate after deletions/insertions
