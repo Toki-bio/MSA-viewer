@@ -4840,12 +4840,10 @@ let colourState = {
 // Normalize name for grouping: lowercase, normalize separators, strip trailing numbers
 function normalizeName(name, maxChars = 10) {
     let n = name.substring(0, maxChars).toLowerCase();
-    // Normalize all separators (hyphen, underscore, dot) to underscore
-    n = n.replace(/[-_.]/g, '_');
-    // Remove trailing numbers and separators to group "name_001", "name_002" together
-    n = n.replace(/_?\d+$/, '');
-    // Remove trailing separator if any
-    n = n.replace(/_+$/, '');
+    // Normalize all separators (hyphen, underscore, dot, space) to underscore
+    n = n.replace(/[-_.\s]/g, '_');
+    // Remove trailing numbers and surrounding underscores so "name_001_", "name_002" all → "name"
+    n = n.replace(/[_\d]+$/, '');
     return n;
 }
 
