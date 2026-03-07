@@ -20,6 +20,7 @@ const state = {
     lastSelectedColumn: null,
     consensusSeq: '',
     deletedHistory: [],
+    redoHistory: [],
     currentFilename: '',
     searchHistory: [],
     isDragging: false,
@@ -91,18 +92,13 @@ window.handleDrop = function(e) {
         const targetIndex = parseInt(targetIndexStr);
         if (isNaN(targetIndex) || draggedIndex === targetIndex) return;
         
+        // Save undo BEFORE mutation
+        pushUndo('reorder');
+        
         // Reorder the sequences
         const seq = state.seqs[draggedIndex];
         state.seqs.splice(draggedIndex, 1);
         state.seqs.splice(targetIndex, 0, seq);
-        
-        // Add to history for undo
-        state.deletedHistory.push({
-            type: 'reorder',
-            seqs: JSON.parse(JSON.stringify(state.seqs)),
-            selectedRows: new Set(state.selectedRows),
-            selectedColumns: new Set(state.selectedColumns)
-        });
         
         renderAlignment();
         showMessage(`Sequence moved to position ${targetIndex + 1}!`, 2000);
@@ -1067,7 +1063,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         const save = () => {
             const newName = input.value.trim();
             if (newName && newName !== state.seqs[index].header) {
-                state.deletedHistory.push({ type: 'rename', seqs: JSON.parse(JSON.stringify(state.seqs)), selectedRows: new Set(state.selectedRows), selectedColumns: new Set(state.selectedColumns) });
+                pushUndo('rename');
                 state.seqs[index].header = newName;
                 state.seqs[index].fullHeader = newName;
                 renderAlignment();
@@ -1727,6 +1723,10 @@ function handleKeyDown(e) {
                 undoDelete();
                 e.preventDefault();
                 break;
+            case 'y':
+                redoAction();
+                e.preventDefault();
+                break;
             case 'b':
                 insertGroupConsensus();
                 e.preventDefault();
@@ -1869,12 +1869,7 @@ function reverseComplementSelected() {
         showMessage("Select sequences (Ctrl+click) to RevComp.", 3000);
         return;
     }
-    state.deletedHistory.push({
-        type: 'revcomp',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
-    });
+    pushUndo('revcomp');
     for (const i of state.selectedRows) {
         if (i < state.seqs.length) {
             state.seqs[i] = {
@@ -1898,12 +1893,7 @@ function deleteSelected() {
         return;
     }
     if (confirm(`Delete ${state.selectedRows.size} sequence(s)?`)) {
-        state.deletedHistory.push({
-            type: 'delete',
-            seqs: JSON.parse(JSON.stringify(state.seqs)),
-            selectedRows: new Set(state.selectedRows),
-            selectedColumns: new Set(state.selectedColumns)
-        });
+        pushUndo('delete');
         const indicesToDelete = Array.from(state.selectedRows).sort((a,b)=>b-a);
         for (const index of indicesToDelete) {
             if (index < state.seqs.length) {
@@ -1917,20 +1907,62 @@ function deleteSelected() {
         showMessage("Sequences deleted!", 2000);
     }
 }
+/**
+ * Push current state onto undo stack. Call BEFORE mutating state.
+ */
+function pushUndo(type) {
+    state.deletedHistory.push({
+        type: type,
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    });
+    // Clear redo stack whenever a new action is performed
+    state.redoHistory = [];
+}
+
 function undoDelete() {
     if (state.deletedHistory.length === 0) {
         showMessage("Nothing to undo.", 3000);
         return;
     }
+    // Save current state to redo stack before restoring
+    state.redoHistory.push({
+        type: 'redo-snapshot',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    });
     const last = state.deletedHistory.pop();
     state.seqs = last.seqs;
-    state.selectedRows = last.selectedRows;
-    if (last.selectedColumns) {
-        state.selectedColumns = last.selectedColumns;
-    }
+    state.selectedRows = last.selectedRows || new Set();
+    state.selectedColumns = last.selectedColumns || new Set();
+    state.selectedNucs.clear();
     state.lastAction = null;
     renderAlignment();
-    showMessage("Undo completed!", 2000);
+    showMessage(`Undo: ${last.type}`, 2000);
+}
+
+function redoAction() {
+    if (state.redoHistory.length === 0) {
+        showMessage("Nothing to redo.", 3000);
+        return;
+    }
+    // Save current state to undo stack before redo
+    state.deletedHistory.push({
+        type: 'before-redo',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    });
+    const next = state.redoHistory.pop();
+    state.seqs = next.seqs;
+    state.selectedRows = next.selectedRows || new Set();
+    state.selectedColumns = next.selectedColumns || new Set();
+    state.selectedNucs.clear();
+    state.lastAction = null;
+    renderAlignment();
+    showMessage("Redo completed!", 2000);
 }
 function copySelected() {
     let nucText = '';
@@ -2123,12 +2155,7 @@ function deleteSelectedColumns(skipConfirm) {
         return;
     }
     if (skipConfirm || confirm(`Delete ${state.selectedColumns.size} column(s)?`)) {
-        state.deletedHistory.push({
-            type: 'deleteColumns',
-            seqs: JSON.parse(JSON.stringify(state.seqs)),
-            selectedRows: new Set(state.selectedRows),
-            selectedColumns: new Set(state.selectedColumns)
-        });
+        pushUndo('deleteColumns');
         const colsToDelete = Array.from(state.selectedColumns).sort((a,b) => b - a);
         state.seqs = state.seqs.map(s => {
             let seq = s.seq.split('');
@@ -2159,12 +2186,7 @@ function selectAllSequences() {
 }
 function moveSelectedUp() {
     if (state.selectedRows.size === 0) return;
-    state.deletedHistory.push({
-        type: 'order',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
-    });
+    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     if (indices[0] === 0) return;
     const newSeqs = [...state.seqs];
@@ -2184,12 +2206,7 @@ function moveSelectedUp() {
 }
 function moveSelectedDown() {
     if (state.selectedRows.size === 0) return;
-    state.deletedHistory.push({
-        type: 'order',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
-    });
+    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     if (indices[indices.length - 1] === state.seqs.length - 1) return;
     const newSeqs = [...state.seqs];
@@ -2209,12 +2226,7 @@ function moveSelectedDown() {
 }
 function moveSelectedToTop() {
     if (state.selectedRows.size === 0) return;
-    state.deletedHistory.push({
-        type: 'order',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
-    });
+    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
@@ -2232,12 +2244,7 @@ function moveSelectedToTop() {
 }
 function moveSelectedToBottom() {
     if (state.selectedRows.size === 0) return;
-    state.deletedHistory.push({
-        type: 'order',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
-    });
+    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
@@ -2289,12 +2296,7 @@ function replaceSelectedWithConsensus() {
     const consName = `cons_seq${firstIdx}-${lastIdx}`;
     
     // Save to history
-    state.deletedHistory.push({
-        type: 'replaceWithConsensus',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
-    });
+    pushUndo('replaceWithConsensus');
     
     // Remove selected sequences (from end to start to preserve indices)
     for (let i = indices.length - 1; i >= 0; i--) {
@@ -3469,12 +3471,7 @@ function realignSelectedBlock() {
     const maxCol = cols[cols.length - 1];
 
     // Save undo state
-    state.deletedHistory.push({
-        type: 'realign-block',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
-    });
+    pushUndo('realign-block');
 
     // Extract block sub-sequences as FASTA
     let blockFasta = '';
@@ -3534,12 +3531,7 @@ function realignAll() {
     }
 
     // Save undo state
-    state.deletedHistory.push({
-        type: 'realign-all',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
-    });
+    pushUndo('realign-all');
 
     // Build ungapped FASTA
     let fasta = '';
@@ -3610,12 +3602,7 @@ function realignSelected() {
     }
 
     // Save undo state
-    state.deletedHistory.push({
-        type: 'realign-selected',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
-    });
+    pushUndo('realign-selected');
 
     const selectedIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
 
@@ -3697,12 +3684,7 @@ function addSequencesAndAlign() {
     }
 
     // Save undo state
-    state.deletedHistory.push({
-        type: 'add-and-align',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        selectedRows: new Set(state.selectedRows),
-        selectedColumns: new Set(state.selectedColumns)
-    });
+    pushUndo('add-and-align');
 
     // Build ungapped FASTA from existing sequences
     let existingFasta = '';
@@ -3797,18 +3779,229 @@ function copySequences(gapped, isFasta, index) {
         showMessage("Failed to copy.", 5000);
     });
 }
+
+// ============================================================
+// Sequence Editor (SeqEdit)
+// ============================================================
+
+function openSeqEditor(index) {
+    if (index === undefined || index === null) {
+        // Use first selected row
+        if (state.selectedRows.size === 0) {
+            showMessage("Select a sequence first.", 2000);
+            return;
+        }
+        index = Math.min(...state.selectedRows);
+    }
+    if (index < 0 || index >= state.seqs.length) return;
+
+    const s = state.seqs[index];
+    const modal = document.getElementById('seqEditModal');
+    if (!modal) return;
+
+    document.getElementById('seqEditName').textContent = s.fullHeader || s.header;
+    document.getElementById('seqEditIndex').textContent = String(index);
+
+    const textarea = document.getElementById('seqEditTextarea');
+    textarea.value = `>${s.fullHeader || s.header}\n${s.seq}`;
+    _updateSeqEditLength();
+
+    modal.style.display = 'block';
+    textarea.focus();
+}
+
+function _updateSeqEditLength() {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return;
+    const lines = textarea.value.split('\n');
+    let seqLen = 0;
+    for (const line of lines) {
+        if (!line.startsWith('>')) seqLen += line.trim().length;
+    }
+    const lenSpan = document.getElementById('seqEditLength');
+    if (lenSpan) lenSpan.textContent = String(seqLen);
+}
+
+function closeSeqEditor() {
+    const modal = document.getElementById('seqEditModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function _getSeqEditSequence() {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return '';
+    const lines = textarea.value.split('\n');
+    let seq = '';
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('>')) seq += trimmed;
+    }
+    return seq;
+}
+
+function _setSeqEditSequence(seq) {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return;
+    const nameEl = document.getElementById('seqEditName');
+    const name = nameEl ? nameEl.textContent : 'sequence';
+    textarea.value = `>${name}\n${seq}`;
+    _updateSeqEditLength();
+}
+
+function seqEditDegap() {
+    const seq = _getSeqEditSequence();
+    _setSeqEditSequence(seq.replace(/[-.\s]/g, ''));
+}
+
+function seqEditReverse() {
+    const seq = _getSeqEditSequence();
+    _setSeqEditSequence(seq.split('').reverse().join(''));
+}
+
+function seqEditComplement() {
+    const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.',
+        'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W',
+        'H':'D','B':'V','V':'B','D':'H',
+        'a':'t','t':'a','c':'g','g':'c','n':'n','u':'a',
+        'r':'y','y':'r','m':'k','k':'m','s':'s','w':'w',
+        'h':'d','b':'v','v':'b','d':'h' };
+    const seq = _getSeqEditSequence();
+    _setSeqEditSequence(seq.split('').map(b => complement[b] || b).join(''));
+}
+
+function seqEditRevComp() {
+    const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.',
+        'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W',
+        'H':'D','B':'V','V':'B','D':'H',
+        'a':'t','t':'a','c':'g','g':'c','n':'n','u':'a',
+        'r':'y','y':'r','m':'k','k':'m','s':'s','w':'w',
+        'h':'d','b':'v','v':'b','d':'h' };
+    const seq = _getSeqEditSequence();
+    _setSeqEditSequence(seq.split('').reverse().map(b => complement[b] || b).join(''));
+}
+
+function seqEditUppercase() {
+    const seq = _getSeqEditSequence();
+    _setSeqEditSequence(seq.toUpperCase());
+}
+
+function seqEditLowercase() {
+    const seq = _getSeqEditSequence();
+    _setSeqEditSequence(seq.toLowerCase());
+}
+
+function seqEditApply() {
+    const indexStr = document.getElementById('seqEditIndex')?.textContent;
+    const index = parseInt(indexStr);
+    if (isNaN(index) || index < 0 || index >= state.seqs.length) {
+        showMessage("Invalid sequence index.", 3000);
+        return;
+    }
+
+    let seq = _getSeqEditSequence();
+    if (!seq) {
+        showMessage("Sequence is empty.", 2000);
+        return;
+    }
+
+    // Get header from textarea (first line starting with >)
+    const textarea = document.getElementById('seqEditTextarea');
+    const firstLine = textarea.value.split('\n')[0].trim();
+    let newHeader = state.seqs[index].header;
+    let newFullHeader = state.seqs[index].fullHeader;
+    if (firstLine.startsWith('>')) {
+        const headerText = firstLine.substring(1).trim();
+        if (headerText) {
+            newHeader = headerText.split(/\s+/)[0];
+            newFullHeader = headerText;
+        }
+    }
+
+    // Pad or trim if checkbox is checked
+    const padCheckbox = document.getElementById('seqEditPadGaps');
+    if (padCheckbox && padCheckbox.checked && state.seqs.length > 1) {
+        const alignLen = Math.max(...state.seqs.map(s => s.seq.length));
+        if (seq.length < alignLen) {
+            seq = seq.padEnd(alignLen, '-');
+        } else if (seq.length > alignLen) {
+            seq = seq.substring(0, alignLen);
+        }
+    }
+
+    pushUndo('seqedit');
+
+    state.seqs[index].header = newHeader;
+    state.seqs[index].fullHeader = newFullHeader;
+    state.seqs[index].seq = seq;
+    state.seqs[index].gaplessPositions = calculateGaplessPositions(seq);
+
+    closeSeqEditor();
+    renderAlignment();
+    showMessage("Sequence updated!", 2000);
+}
+
+// ============================================================
+// Undo/Redo Dropdown Menus
+// ============================================================
+
+function showUndoRedoDropdown(buttonEl, stack, actionFn, labelPrefix) {
+    // Remove any existing dropdown
+    document.querySelectorAll('.undo-redo-dropdown').forEach(d => d.remove());
+
+    if (stack.length === 0) {
+        showMessage(`Nothing to ${labelPrefix.toLowerCase()}.`, 2000);
+        return;
+    }
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'undo-redo-dropdown';
+    dropdown.style.cssText = 'position:absolute; background:white; border:1px solid #ccc; box-shadow:0 2px 8px rgba(0,0,0,0.2); z-index:10000; max-height:200px; overflow-y:auto; min-width:140px; font-size:11px;';
+
+    const rect = buttonEl.getBoundingClientRect();
+    dropdown.style.left = `${rect.left}px`;
+    dropdown.style.top = `${rect.bottom + 2}px`;
+
+    // Show items in reverse order (most recent first)
+    for (let i = stack.length - 1; i >= 0; i--) {
+        const entry = stack[i];
+        const item = document.createElement('div');
+        item.style.cssText = 'padding:4px 8px; cursor:pointer; border-bottom:1px solid #eee;';
+        const num = stack.length - i;
+        item.textContent = `${num}. ${entry.type}`;
+        item.title = `${labelPrefix} to this point (${num} step${num > 1 ? 's' : ''})`;
+        item.addEventListener('mouseenter', () => item.style.background = '#e8f0fe');
+        item.addEventListener('mouseleave', () => item.style.background = 'white');
+        const stepsToUndo = stack.length - i;
+        item.addEventListener('click', () => {
+            dropdown.remove();
+            for (let j = 0; j < stepsToUndo; j++) {
+                actionFn();
+            }
+        });
+        dropdown.appendChild(item);
+    }
+
+    document.body.appendChild(dropdown);
+
+    // Close on click outside
+    setTimeout(() => {
+        const closeHandler = (ev) => {
+            if (!dropdown.contains(ev.target)) {
+                dropdown.remove();
+                document.removeEventListener('click', closeHandler);
+            }
+        };
+        document.addEventListener('click', closeHandler);
+    }, 0);
+}
+
 function deleteSequence(index) {
     if (state.seqs.length === 1) {
         showMessage("Cannot delete the last sequence.", 3000);
         return;
     }
     if (confirm('Delete this sequence?')) {
-        state.deletedHistory.push({
-            type: 'delete',
-            seqs: JSON.parse(JSON.stringify(state.seqs)),
-            selectedRows: new Set(),
-            selectedColumns: new Set(state.selectedColumns)
-        });
+        pushUndo('delete');
         state.seqs.splice(index, 1);
         state.selectedRows.clear();
         renderAlignment();
@@ -3974,12 +4167,7 @@ function showContextMenu(e, index) {
             const save = () => {
                 const newName = input.value.trim();
                 if (newName && newName !== state.seqs[index].header) {
-                    state.deletedHistory.push({
-                        type: 'rename',
-                        seqs: JSON.parse(JSON.stringify(state.seqs)),
-                        selectedRows: new Set(),
-                        selectedColumns: new Set(state.selectedColumns)
-                    });
+                    pushUndo('rename');
                     state.seqs[index].header = newName;
                     state.seqs[index].fullHeader = newName;
                     renderAlignment();
@@ -4031,6 +4219,48 @@ function showContextMenu(e, index) {
         });
         contextMenu.appendChild(removeGapItem);
     }
+
+    // Separator before movement/edit items
+    const sepMovement = document.createElement('div');
+    sepMovement.style.borderTop = '1px solid #ccc';
+    sepMovement.style.margin = '4px 0';
+    contextMenu.appendChild(sepMovement);
+
+    // Move to Top
+    const moveTopItem = document.createElement('div');
+    moveTopItem.textContent = 'Move to Top';
+    moveTopItem.addEventListener('click', () => {
+        if (!state.selectedRows.has(index)) {
+            state.selectedRows.clear();
+            state.selectedRows.add(index);
+        }
+        moveSelectedToTop();
+        closeContextMenu();
+    });
+    contextMenu.appendChild(moveTopItem);
+
+    // Move to Bottom
+    const moveBottomItem = document.createElement('div');
+    moveBottomItem.textContent = 'Move to Bottom';
+    moveBottomItem.addEventListener('click', () => {
+        if (!state.selectedRows.has(index)) {
+            state.selectedRows.clear();
+            state.selectedRows.add(index);
+        }
+        moveSelectedToBottom();
+        closeContextMenu();
+    });
+    contextMenu.appendChild(moveBottomItem);
+
+    // Edit in Sequence Editor
+    const seqEditItem = document.createElement('div');
+    seqEditItem.textContent = '✏️ Edit Sequence…';
+    seqEditItem.addEventListener('click', () => {
+        openSeqEditor(index);
+        closeContextMenu();
+    });
+    contextMenu.appendChild(seqEditItem);
+
     document.body.appendChild(contextMenu);
     
     // Adjust position if menu would overflow viewport
@@ -4331,6 +4561,17 @@ function initializeAppUI() {
         'copyAlignmentButton': copyAlignment,
         'deleteSelectedButton': deleteSelected,
         'undoButton': undoDelete,
+        'redoButton': redoAction,
+        'seqEditButton': () => openSeqEditor(),
+        'seqEditCloseBtn': closeSeqEditor,
+        'seqEditCancelBtn': closeSeqEditor,
+        'seqEditApplyBtn': seqEditApply,
+        'seqEditDegap': seqEditDegap,
+        'seqEditReverse': seqEditReverse,
+        'seqEditComplement': seqEditComplement,
+        'seqEditRevComp': seqEditRevComp,
+        'seqEditUppercase': seqEditUppercase,
+        'seqEditLowercase': seqEditLowercase,
         'moveUpButton': moveSelectedUp,
         'moveDownButton': moveSelectedDown,
         'moveToTopButton': moveSelectedToTop,
@@ -4381,6 +4622,36 @@ function initializeAppUI() {
     if (addSeqModal) {
         addSeqModal.addEventListener('click', (e) => {
             if (e.target === addSeqModal) closeAddSequencesModal();
+        });
+    }
+
+    // Click outside to close SeqEdit modal
+    const seqEditModal = document.getElementById('seqEditModal');
+    if (seqEditModal) {
+        seqEditModal.addEventListener('click', (e) => {
+            if (e.target === seqEditModal) closeSeqEditor();
+        });
+    }
+
+    // SeqEdit textarea: update length on input
+    const seqEditTextarea = document.getElementById('seqEditTextarea');
+    if (seqEditTextarea) {
+        seqEditTextarea.addEventListener('input', _updateSeqEditLength);
+    }
+
+    // Undo/Redo dropdown buttons
+    const undoDropdownBtn = el('undoDropdownBtn');
+    if (undoDropdownBtn) {
+        undoDropdownBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showUndoRedoDropdown(undoDropdownBtn, state.deletedHistory, undoDelete, 'Undo');
+        });
+    }
+    const redoDropdownBtn = el('redoDropdownBtn');
+    if (redoDropdownBtn) {
+        redoDropdownBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showUndoRedoDropdown(redoDropdownBtn, state.redoHistory, redoAction, 'Redo');
         });
     }
     
@@ -4772,11 +5043,7 @@ function removeGapColumns() {
         showMessage("No gap-only columns to remove.", 2000);
         return;
     }
-    state.deletedHistory.push({
-        type: 'removeGaps',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        removedCols: colsToRemove
-    });
+    pushUndo('removeGaps');
     state.seqs.forEach(s => {
         let seqArr = s.seq.split('');
         colsToRemove.sort((a, b) => b - a).forEach(pos => seqArr.splice(pos, 1));
@@ -4792,12 +5059,7 @@ function insertGapColumn(all = true) {
         return;
     }
     const pos = Math.min(...state.selectedColumns);
-    state.deletedHistory.push({
-        type: 'insertGap',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        pos: pos,
-        all: all
-    });
+    pushUndo('insertGap');
     state.seqs.forEach((s, i) => {
         if (!all && state.selectedRows.has(i)) return; // Skip selected if not all
         s.seq = s.seq.slice(0, pos) + '-' + s.seq.slice(pos);
@@ -4809,12 +5071,7 @@ function insertGapColumn(all = true) {
 }
 function insertSingleGap(rowIndex, pos) {
     const s = state.seqs[rowIndex];
-    state.deletedHistory.push({
-        type: 'insertSingleGap',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        rowIndex: rowIndex,
-        pos: pos
-    });
+    pushUndo('insertSingleGap');
     s.seq = s.seq.slice(0, pos) + '-' + s.seq.slice(pos);
     s.gaplessPositions = calculateGaplessPositions(s.seq);
     renderAlignment();
@@ -4826,12 +5083,7 @@ function removeSingleGap(rowIndex, pos) {
         showMessage("Not a gap.", 2000);
         return;
     }
-    state.deletedHistory.push({
-        type: 'removeSingleGap',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        rowIndex: rowIndex,
-        pos: pos
-    });
+    pushUndo('removeSingleGap');
     s.seq = s.seq.slice(0, pos) + s.seq.slice(pos + 1);
     s.gaplessPositions = calculateGaplessPositions(s.seq);
     renderAlignment();
@@ -4939,12 +5191,7 @@ function getTrailingGaps(seq) {
 }
 function shiftSequence(index, amount) {
     const s = state.seqs[index];
-    state.deletedHistory.push({
-        type: 'shift',
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
-        index: index,
-        amount: amount
-    });
+    pushUndo('shift');
     if (amount > 0) { // right shift
         const maxShift = getTrailingGaps(s.seq);
         if (maxShift === 0) {
