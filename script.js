@@ -3515,7 +3515,8 @@ function getMafftExtraArgs() {
     if (!isNaN(gapOpen)) args.push('-f', String(-gapOpen));
     if (!isNaN(gapExt)) args.push('-h', String(-gapExt));
     if (!isNaN(cycles) && cycles >= 1) args.push('-C', String(cycles));
-    if (!isNaN(offset)) args.push('-e', String(-offset));
+    // Note: disttbfast's -e flag does not accept a numeric value (it's a boolean flag);
+    // passing '-e -0.123' causes illegal-option parse errors, so offset is omitted.
 
     return { args, seqType: seqType || '2' };
 }
