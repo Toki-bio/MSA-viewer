@@ -1712,7 +1712,11 @@ function handleKeyDown(e) {
     if (e.ctrlKey || e.metaKey) {
         switch (e.key.toLowerCase()) {
             case 'r':
-                reverseComplementSelected();
+                if (e.shiftKey) {
+                    realignSelectedBlock();
+                } else {
+                    reverseComplementSelected();
+                }
                 e.preventDefault();
                 break;
             case 'del':
@@ -3430,8 +3434,244 @@ function highlightCluster(clusterIdx) {
 }
 
 function realignSelectedBlock() {
-    // TODO: Implement block realignment or remove this action if not planned.
-    showMessage("Realign Block not implemented yet.", 3000);
+    if (state.seqs.length === 0) {
+        showMessage("No sequences loaded.", 2000);
+        return;
+    }
+    if (state.selectedColumns.size < 2) {
+        showMessage("Select at least 2 columns to realign.", 3000);
+        return;
+    }
+
+    const cols = Array.from(state.selectedColumns).sort((a, b) => a - b);
+    const minCol = cols[0];
+    const maxCol = cols[cols.length - 1];
+
+    // Save undo state
+    state.deletedHistory.push({
+        type: 'realign-block',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    });
+
+    // Extract block sub-sequences as FASTA
+    let blockFasta = '';
+    for (const s of state.seqs) {
+        const block = s.seq.substring(minCol, maxCol + 1);
+        blockFasta += `>${s.header}\n${block.replace(/[-.]/g, '')}\n`;
+    }
+
+    showMessage("Realigning block with MAFFT...", 0);
+    const mafft = new MafftWasm();
+    mafft.realignBlock(blockFasta).then(result => {
+        const aligned = parseMafftOutput(result);
+        if (aligned.length !== state.seqs.length) {
+            showMessage("Error: MAFFT returned different number of sequences.", 3000);
+            return;
+        }
+
+        // Find max length of realigned block
+        const maxLen = Math.max(...aligned.map(a => a.seq.length));
+
+        // Splice realigned block back into each sequence
+        for (let i = 0; i < state.seqs.length; i++) {
+            const match = aligned.find(a => a.name === state.seqs[i].header);
+            if (!match) continue;
+            const padded = match.seq.padEnd(maxLen, '-');
+            const left = state.seqs[i].seq.substring(0, minCol);
+            const right = state.seqs[i].seq.substring(maxCol + 1);
+            state.seqs[i].seq = left + padded + right;
+            state.seqs[i].gaplessPositions = calculateGaplessPositions(state.seqs[i].seq);
+        }
+
+        // Pad all sequences to same length
+        const totalMax = Math.max(...state.seqs.map(s => s.seq.length));
+        for (const s of state.seqs) {
+            s.seq = s.seq.padEnd(totalMax, '-');
+        }
+
+        state.selectedColumns.clear();
+        renderAlignment();
+        showMessage("Block realigned successfully!", 2000);
+    }).catch(err => {
+        showMessage("Realign block error: " + err.message, 4000);
+        console.error("Realign block error:", err);
+    });
+}
+
+/**
+ * Realign all loaded sequences using MAFFT WASM.
+ */
+function realignAll() {
+    if (state.seqs.length < 2) {
+        showMessage("Need at least 2 sequences to align.", 2000);
+        return;
+    }
+
+    // Save undo state
+    state.deletedHistory.push({
+        type: 'realign-all',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    });
+
+    // Build ungapped FASTA
+    let fasta = '';
+    for (const s of state.seqs) {
+        fasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
+    }
+
+    showMessage("Aligning all sequences with MAFFT...", 0);
+    const mafft = new MafftWasm();
+    mafft.align(fasta).then(result => {
+        const aligned = parseMafftOutput(result);
+        if (aligned.length === 0) {
+            showMessage("Error: MAFFT returned no sequences.", 3000);
+            return;
+        }
+
+        // Replace state.seqs with aligned versions, preserving order
+        const newSeqs = [];
+        for (const s of state.seqs) {
+            const match = aligned.find(a => a.name === s.header || a.name === s.fullHeader);
+            if (match) {
+                newSeqs.push({
+                    header: s.header,
+                    fullHeader: s.fullHeader,
+                    seq: match.seq,
+                    gaplessPositions: calculateGaplessPositions(match.seq)
+                });
+            }
+        }
+        // Add any sequences that didn't match by name (shouldn't happen but be safe)
+        if (newSeqs.length === 0) {
+            // Fallback: use aligned in MAFFT output order
+            for (const a of aligned) {
+                const name = a.name.split(/\s+/)[0];
+                newSeqs.push({
+                    header: name,
+                    fullHeader: a.name,
+                    seq: a.seq,
+                    gaplessPositions: calculateGaplessPositions(a.seq)
+                });
+            }
+        }
+
+        state.seqs = newSeqs;
+        state.selectedRows.clear();
+        state.selectedColumns.clear();
+        state.selectedNucs.clear();
+        renderAlignment();
+        showMessage(`Aligned ${state.seqs.length} sequences successfully!`, 2000);
+    }).catch(err => {
+        showMessage("MAFFT alignment error: " + err.message, 4000);
+        console.error("MAFFT alignment error:", err);
+    });
+}
+
+/**
+ * Open the Add Sequences modal.
+ */
+function openAddSequencesModal() {
+    const modal = document.getElementById('addSeqModal');
+    if (modal) {
+        document.getElementById('addSeqInput').value = '';
+        modal.style.display = 'block';
+    }
+}
+
+/**
+ * Close the Add Sequences modal.
+ */
+function closeAddSequencesModal() {
+    const modal = document.getElementById('addSeqModal');
+    if (modal) modal.style.display = 'none';
+}
+
+/**
+ * Add new sequences and realign with existing using MAFFT WASM.
+ */
+function addSequencesAndAlign() {
+    const newText = document.getElementById('addSeqInput')?.value?.trim();
+    if (!newText) {
+        showMessage("Please paste FASTA sequences to add.", 2000);
+        return;
+    }
+    if (state.seqs.length === 0) {
+        showMessage("Load an alignment first.", 2000);
+        return;
+    }
+
+    // Save undo state
+    state.deletedHistory.push({
+        type: 'add-and-align',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    });
+
+    // Build ungapped FASTA from existing sequences
+    let existingFasta = '';
+    for (const s of state.seqs) {
+        existingFasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
+    }
+
+    closeAddSequencesModal();
+    showMessage("Adding sequences and aligning with MAFFT...", 0);
+
+    const mafft = new MafftWasm();
+    mafft.addAndAlign(existingFasta, newText).then(result => {
+        const aligned = parseMafftOutput(result);
+        if (aligned.length === 0) {
+            showMessage("Error: MAFFT returned no sequences.", 3000);
+            return;
+        }
+
+        // Build new seqs array
+        const newSeqs = [];
+        for (const a of aligned) {
+            const name = a.name.split(/\s+/)[0];
+            newSeqs.push({
+                header: name,
+                fullHeader: a.name,
+                seq: a.seq,
+                gaplessPositions: calculateGaplessPositions(a.seq)
+            });
+        }
+
+        state.seqs = newSeqs;
+        state.selectedRows.clear();
+        state.selectedColumns.clear();
+        state.selectedNucs.clear();
+        renderAlignment();
+        showMessage(`Aligned ${state.seqs.length} sequences successfully!`, 2000);
+    }).catch(err => {
+        showMessage("MAFFT add & align error: " + err.message, 4000);
+        console.error("MAFFT add & align error:", err);
+    });
+}
+
+/**
+ * Parse MAFFT FASTA output into array of {name, seq} objects.
+ */
+function parseMafftOutput(fastaStr) {
+    const lines = fastaStr.split('\n');
+    const result = [];
+    let current = null;
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith('>')) {
+            if (current) result.push(current);
+            current = { name: trimmed.substring(1).trim(), seq: '' };
+        } else if (current) {
+            current.seq += trimmed.toUpperCase();
+        }
+    }
+    if (current) result.push(current);
+    return result;
 }
 function copySequences(gapped, isFasta, index) {
     let indices = Array.from(state.selectedRows).sort((a,b)=>a-b);
@@ -4007,6 +4247,10 @@ function initializeAppUI() {
         'copyColumnsButton': copySelectedColumns,
         'deleteColumnsButton': deleteSelectedColumns,
         'realignBlockButton': realignSelectedBlock,
+        'realignAllButton': realignAll,
+        'addSequencesButton': openAddSequencesModal,
+        'addSeqSubmitButton': addSequencesAndAlign,
+        'addSeqCancelButton': closeAddSequencesModal,
         'clusterSequencesButton': clusterSequences,
         'clusterNowButton': clusterSequences,
         'previewTrimButton': previewTrimming,
@@ -4034,6 +4278,14 @@ function initializeAppUI() {
 
     for (const id in buttonActions) {
         el(id)?.addEventListener('click', buttonActions[id]);
+    }
+
+    // Click outside to close Add Sequences modal
+    const addSeqModal = document.getElementById('addSeqModal');
+    if (addSeqModal) {
+        addSeqModal.addEventListener('click', (e) => {
+            if (e.target === addSeqModal) closeAddSequencesModal();
+        });
     }
     
     // Initialize clustering preset list

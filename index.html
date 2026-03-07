@@ -6,6 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Qwen MSA Viewer</title>
     <link rel="stylesheet" href="styles.css">
+    <!-- MAFFT WASM alignment (runs locally in browser) -->
+    <script src="disttbfast.js"></script>
+    <script src="mafft-wasm.js"></script>
 </head>
 <body>
     <div id="controls">
@@ -419,7 +422,9 @@
                     <div class="action-section">
                         <div class="action-section-label">🛠️ Tools</div>
                         <div class="button-group">
-                            <button id="realignBlockButton" title="Realign selected block (shortcut: Ctrl+Shift+R)">✨ Realign Block</button>
+                            <button id="realignBlockButton" title="Realign selected block using MAFFT (shortcut: Ctrl+Shift+R)">✨ Realign Block</button>
+                            <button id="realignAllButton" title="Realign all sequences using MAFFT WASM (local, no server)">🧬 Realign All (MAFFT)</button>
+                            <button id="addSequencesButton" title="Add new sequences and align with MAFFT">➕ Add Seqs & Align</button>
                             <button id="openInNewTabButton" title="Open selected in new tab (shortcut: Ctrl+T)">📖 New Tab</button>
                         </div>
                     </div>
@@ -511,6 +516,19 @@
         </div>
     </div>
     
+    <!-- MAFFT Add Sequences Modal -->
+    <div id="addSeqModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10001; overflow: auto;">
+        <div style="background: white; margin: 50px auto; padding: 20px; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+            <h2 style="margin-top: 0;">Add Sequences & Align (MAFFT)</h2>
+            <p style="font-size: 12px; color: #555;">Paste new sequences in FASTA format below. They will be combined with the current alignment and realigned using MAFFT (runs locally via WebAssembly — no server needed).</p>
+            <textarea id="addSeqInput" placeholder=">new_sequence_1&#10;ACGTACGTACGT...&#10;>new_sequence_2&#10;TGCATGCATGCA..." style="width: 100%; height: 200px; font-family: 'Courier New', monospace; font-size: 12px; resize: vertical; box-sizing: border-box;"></textarea>
+            <div style="margin-top: 8px; text-align: right;">
+                <button id="addSeqSubmitButton" style="padding: 4px 16px; font-size: 13px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">Add & Align</button>
+                <button id="addSeqCancelButton" style="padding: 4px 16px; font-size: 13px; margin-left: 8px;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <script src="cluster.js"></script>
     <script src="script.js"></script>
     <script>
