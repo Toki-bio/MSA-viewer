@@ -45,7 +45,8 @@ const state = {
         started: false
     },
     trimBoundaries: null,
-    trimBackup: null
+    trimBackup: null,
+    groupConsensusCount: 0
 };
 
 function handleDragStart(e) {
@@ -67,13 +68,64 @@ function handleDragEnd(e) {
     try {
         const nameEl = e.target?.closest('.seq-name');
         if (nameEl) nameEl.classList.remove('dragging');
+        _clearDragInsertPreview();
     } catch (err) {
         console.warn('dragend error', err);
     }
 }
+
+function _showDragInsertPreview(e, lineDiv) {
+    let indicator = document.getElementById('drag-insert-indicator');
+    if (!indicator) {
+        indicator = document.createElement('div');
+        indicator.id = 'drag-insert-indicator';
+        indicator.style.cssText = 'position:absolute;left:0;right:0;height:2px;background:#2196F3;pointer-events:none;z-index:9999;transition:top 0.05s;';
+        const label = document.createElement('span');
+        label.id = 'drag-insert-label';
+        label.style.cssText = 'position:absolute;left:4px;top:-14px;font-size:10px;color:#2196F3;background:white;padding:0 3px;white-space:nowrap;border-radius:2px;box-shadow:0 0 2px rgba(0,0,0,0.2);';
+        indicator.appendChild(label);
+    }
+    const rect = lineDiv.getBoundingClientRect();
+    const container = document.getElementById('alignmentContainer');
+    if (!container) return;
+    const containerRect = container.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const insertAbove = e.clientY < midY;
+
+    // Position in the container
+    if (!indicator.parentNode || indicator.parentNode !== container) {
+        container.style.position = 'relative';
+        container.appendChild(indicator);
+    }
+    const yPos = insertAbove
+        ? (rect.top - containerRect.top + container.scrollTop)
+        : (rect.bottom - containerRect.top + container.scrollTop);
+    indicator.style.top = `${yPos}px`;
+
+    // Build label text
+    const targetIdx = parseInt(lineDiv.dataset.seqIndex);
+    const label = document.getElementById('drag-insert-label');
+    if (label && !isNaN(targetIdx)) {
+        const aboveName = insertAbove
+            ? (targetIdx > 0 ? state.seqs[targetIdx - 1]?.header : '(top)')
+            : state.seqs[targetIdx]?.header;
+        const belowName = insertAbove
+            ? state.seqs[targetIdx]?.header
+            : (targetIdx + 1 < state.seqs.length ? state.seqs[targetIdx + 1]?.header : '(bottom)');
+        label.textContent = `↕ insert between: ${aboveName} ⟷ ${belowName}`;
+    }
+    indicator.style.display = 'block';
+}
+
+function _clearDragInsertPreview() {
+    const indicator = document.getElementById('drag-insert-indicator');
+    if (indicator) indicator.style.display = 'none';
+}
+
 window.handleDrop = function(e) {
     e.preventDefault();
     e.stopPropagation();
+    _clearDragInsertPreview();
     
     try {
         const draggedIndexStr = e.dataTransfer?.getData('draggedSequenceIndex');
@@ -986,7 +1038,7 @@ function updateSourceInfo() {
     const maxLength = Math.max(...gaplessLengths);
     const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
     const filename = state.currentFilename ? `<strong>${state.currentFilename}</strong>: ` : '';
-    infoEl.innerHTML = `${filename}${seqCount} sequences, ${aliLength} columns, ${lengthRange} bp/seq`;
+    infoEl.innerHTML = `${filename}<strong>${seqCount}</strong> sequences, <strong>${aliLength}</strong> columns, <strong>${lengthRange}</strong> bp/seq`;
 }
 
 function ensureSpanCacheRow(row) {
@@ -1089,7 +1141,15 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         };
         setTimeout(() => document.addEventListener('click', handleOutsideClick), 0);
     });
-    lineDiv.addEventListener('dragover', (e) => e.preventDefault());
+    lineDiv.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        // Show insertion preview indicator
+        _showDragInsertPreview(e, lineDiv);
+    });
+    lineDiv.addEventListener('dragleave', (e) => {
+        _clearDragInsertPreview();
+    });
     lineDiv.addEventListener('drop', handleDrop);
     lineDiv.appendChild(nameSpan);
     const dataSpan = document.createElement('div');
@@ -1359,6 +1419,7 @@ function parseAndRender(isFromDrop = false) {
         state.selectedNucs.clear();
         state.pendingNucStart = null;
         state.lastSelectedIndex = null;
+        state.groupConsensusCount = 0;
         
         // Update name length slider range based on loaded sequences
         // This will set the slider to maximum actual name length
@@ -1373,7 +1434,7 @@ function parseAndRender(isFromDrop = false) {
         const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
         
         const filename = state.currentFilename ? `<strong>${state.currentFilename}</strong>: ` : '';
-        el('sourceInfo').innerHTML = `${filename}${seqCount} sequences, ${aliLength} columns, ${lengthRange} bp/seq`;
+        el('sourceInfo').innerHTML = `${filename}<strong>${seqCount}</strong> sequences, <strong>${aliLength}</strong> columns, <strong>${lengthRange}</strong> bp/seq`;
         renderAlignment();
         setupHoverMenuReveal();
         showMessage("File loaded successfully!", 2000);
@@ -2267,14 +2328,16 @@ function insertGroupConsensus() {
         return;
     }
     pushUndo('insertConsensus');
+    state.groupConsensusCount++;
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
     const cons = computeConsensusForSequences(selectedSeqs);
-    const consObj = { header: 'Group_Consensus', fullHeader: 'Consensus of selected group', seq: cons, gaplessPositions: calculateGaplessPositions(cons) };
+    const groupName = `Grp${state.groupConsensusCount}Cons${indices.length}seq`;
+    const consObj = { header: groupName, fullHeader: `${groupName} consensus of ${indices.length} sequences`, seq: cons, gaplessPositions: calculateGaplessPositions(cons) };
     const insertPos = indices[indices.length - 1] + 1;
     state.seqs.splice(insertPos, 0, consObj);
     renderAlignment();
-    showMessage("Group consensus inserted!", 2000);
+    showMessage(`${groupName} inserted!`, 2000);
 }
 
 function replaceSelectedWithConsensus() {
@@ -3840,8 +3903,11 @@ function copySequences(gapped, isFasta, index) {
 
 function openSeqEditor(index) {
     if (index === undefined || index === null) {
-        // Use first selected row, or open freeform if none selected
-        if (state.selectedRows.size > 0) {
+        // Use selected rows, or open freeform if none selected
+        if (state.selectedRows.size > 1) {
+            // Multi-sequence mode
+            return openSeqEditorMulti();
+        } else if (state.selectedRows.size === 1) {
             index = Math.min(...state.selectedRows);
         } else {
             index = -1; // freeform mode
@@ -3854,6 +3920,11 @@ function openSeqEditor(index) {
     const textarea = document.getElementById('seqEditTextarea');
     const nameInput = document.getElementById('seqEditNameInput');
     const indexEl = document.getElementById('seqEditIndex');
+
+    // Show name input for single/freeform mode
+    if (nameInput) nameInput.style.display = '';
+    const nameLabel = nameInput?.previousElementSibling;
+    if (nameLabel) nameLabel.style.display = '';
 
     if (index === -1) {
         // Freeform mode: blank editor for new or arbitrary text
@@ -3872,16 +3943,56 @@ function openSeqEditor(index) {
     textarea.focus();
 }
 
+function openSeqEditorMulti() {
+    const modal = document.getElementById('seqEditModal');
+    if (!modal) return;
+    const textarea = document.getElementById('seqEditTextarea');
+    const nameInput = document.getElementById('seqEditNameInput');
+    const indexEl = document.getElementById('seqEditIndex');
+
+    // Hide name input for multi mode - names are in the textarea
+    if (nameInput) nameInput.style.display = 'none';
+    const nameLabel = nameInput?.previousElementSibling;
+    if (nameLabel) nameLabel.style.display = 'none';
+
+    // Store multi indices
+    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indexEl) indexEl.textContent = 'multi:' + indices.join(',');
+
+    // Build multi-FASTA
+    let text = '';
+    for (const i of indices) {
+        const s = state.seqs[i];
+        text += `>${s.fullHeader || s.header}\n${s.seq}\n`;
+    }
+    textarea.value = text.trimEnd();
+    _updateSeqEditLength();
+
+    modal.style.display = 'block';
+    textarea.focus();
+}
+
 function _updateSeqEditLength() {
     const textarea = document.getElementById('seqEditTextarea');
     if (!textarea) return;
     const lines = textarea.value.split('\n');
     let seqLen = 0;
+    let seqCount = 0;
     for (const line of lines) {
-        if (!line.startsWith('>')) seqLen += line.trim().length;
+        if (line.startsWith('>')) {
+            seqCount++;
+        } else {
+            seqLen += line.trim().length;
+        }
     }
     const lenSpan = document.getElementById('seqEditLength');
-    if (lenSpan) lenSpan.textContent = String(seqLen);
+    if (lenSpan) {
+        if (seqCount > 1) {
+            lenSpan.textContent = `${seqLen} (${seqCount} sequences)`;
+        } else {
+            lenSpan.textContent = String(seqLen);
+        }
+    }
 }
 
 function closeSeqEditor() {
@@ -3901,6 +4012,45 @@ function _getSeqEditSequence() {
     return seq;
 }
 
+/** Parse multi-FASTA from textarea into [{header, seq}, ...] */
+function _getSeqEditMultiFasta() {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return [];
+    const lines = textarea.value.split('\n');
+    const result = [];
+    let currentHeader = null;
+    let currentSeq = '';
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('>')) {
+            if (currentHeader !== null) {
+                result.push({ header: currentHeader, seq: currentSeq });
+            }
+            currentHeader = trimmed.substring(1).trim();
+            currentSeq = '';
+        } else {
+            currentSeq += trimmed;
+        }
+    }
+    if (currentHeader !== null) {
+        result.push({ header: currentHeader, seq: currentSeq });
+    }
+    return result;
+}
+
+/** Write multi-FASTA back to textarea */
+function _setSeqEditMultiFasta(entries) {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return;
+    textarea.value = entries.map(e => `>${e.header}\n${e.seq}`).join('\n');
+    _updateSeqEditLength();
+}
+
+function _isSeqEditMulti() {
+    const indexEl = document.getElementById('seqEditIndex');
+    return indexEl && indexEl.textContent.startsWith('multi:');
+}
+
 function _setSeqEditSequence(seq) {
     const textarea = document.getElementById('seqEditTextarea');
     if (!textarea) return;
@@ -3910,50 +4060,100 @@ function _setSeqEditSequence(seq) {
     _updateSeqEditLength();
 }
 
+const _complementMap = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.',
+    'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W',
+    'H':'D','B':'V','V':'B','D':'H',
+    'a':'t','t':'a','c':'g','g':'c','n':'n','u':'a',
+    'r':'y','y':'r','m':'k','k':'m','s':'s','w':'w',
+    'h':'d','b':'v','v':'b','d':'h' };
+
+function _seqEditTransform(fn) {
+    if (_isSeqEditMulti()) {
+        const entries = _getSeqEditMultiFasta();
+        for (const e of entries) e.seq = fn(e.seq);
+        _setSeqEditMultiFasta(entries);
+    } else {
+        _setSeqEditSequence(fn(_getSeqEditSequence()));
+    }
+}
+
 function seqEditDegap() {
-    const seq = _getSeqEditSequence();
-    _setSeqEditSequence(seq.replace(/[-.\s]/g, ''));
+    _seqEditTransform(seq => seq.replace(/[-.\s]/g, ''));
 }
 
 function seqEditReverse() {
-    const seq = _getSeqEditSequence();
-    _setSeqEditSequence(seq.split('').reverse().join(''));
+    _seqEditTransform(seq => seq.split('').reverse().join(''));
 }
 
 function seqEditComplement() {
-    const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.',
-        'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W',
-        'H':'D','B':'V','V':'B','D':'H',
-        'a':'t','t':'a','c':'g','g':'c','n':'n','u':'a',
-        'r':'y','y':'r','m':'k','k':'m','s':'s','w':'w',
-        'h':'d','b':'v','v':'b','d':'h' };
-    const seq = _getSeqEditSequence();
-    _setSeqEditSequence(seq.split('').map(b => complement[b] || b).join(''));
+    _seqEditTransform(seq => seq.split('').map(b => _complementMap[b] || b).join(''));
 }
 
 function seqEditRevComp() {
-    const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.',
-        'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W',
-        'H':'D','B':'V','V':'B','D':'H',
-        'a':'t','t':'a','c':'g','g':'c','n':'n','u':'a',
-        'r':'y','y':'r','m':'k','k':'m','s':'s','w':'w',
-        'h':'d','b':'v','v':'b','d':'h' };
-    const seq = _getSeqEditSequence();
-    _setSeqEditSequence(seq.split('').reverse().map(b => complement[b] || b).join(''));
+    _seqEditTransform(seq => seq.split('').reverse().map(b => _complementMap[b] || b).join(''));
 }
 
 function seqEditUppercase() {
-    const seq = _getSeqEditSequence();
-    _setSeqEditSequence(seq.toUpperCase());
+    _seqEditTransform(seq => seq.toUpperCase());
 }
 
 function seqEditLowercase() {
-    const seq = _getSeqEditSequence();
-    _setSeqEditSequence(seq.toLowerCase());
+    _seqEditTransform(seq => seq.toLowerCase());
 }
 
 function seqEditApply() {
     const indexStr = document.getElementById('seqEditIndex')?.textContent;
+
+    // Multi-sequence mode
+    if (indexStr && indexStr.startsWith('multi:')) {
+        const indices = indexStr.substring(6).split(',').map(Number);
+        const entries = _getSeqEditMultiFasta();
+        if (entries.length === 0) {
+            showMessage("No sequences found.", 2000);
+            return;
+        }
+
+        pushUndo('seqedit-multi');
+        const padCheckbox = document.getElementById('seqEditPadGaps');
+        const alignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+
+        // Update existing sequences (matched by index order)
+        const updateCount = Math.min(entries.length, indices.length);
+        for (let i = 0; i < updateCount; i++) {
+            const idx = indices[i];
+            if (idx < 0 || idx >= state.seqs.length) continue;
+            let seq = entries[i].seq;
+            if (padCheckbox && padCheckbox.checked && alignLen > 0) {
+                if (seq.length < alignLen) seq = seq.padEnd(alignLen, '-');
+                else if (seq.length > alignLen) seq = seq.substring(0, alignLen);
+            }
+            const fullH = entries[i].header;
+            state.seqs[idx].header = fullH.split(/\s+/)[0];
+            state.seqs[idx].fullHeader = fullH;
+            state.seqs[idx].seq = seq;
+            state.seqs[idx].gaplessPositions = calculateGaplessPositions(seq);
+        }
+        // If user added extra sequences in the textarea, append them
+        for (let i = updateCount; i < entries.length; i++) {
+            let seq = entries[i].seq;
+            if (padCheckbox && padCheckbox.checked && alignLen > 0) {
+                if (seq.length < alignLen) seq = seq.padEnd(alignLen, '-');
+                else if (seq.length > alignLen) seq = seq.substring(0, alignLen);
+            }
+            const fullH = entries[i].header;
+            state.seqs.push({
+                header: fullH.split(/\s+/)[0],
+                fullHeader: fullH,
+                seq: seq,
+                gaplessPositions: calculateGaplessPositions(seq)
+            });
+        }
+        closeSeqEditor();
+        renderAlignment();
+        showMessage(`${updateCount} sequence${updateCount > 1 ? 's' : ''} updated!`, 2000);
+        return;
+    }
+
     const index = parseInt(indexStr);
     const isFreeform = (index === -1);
 
@@ -3972,7 +4172,6 @@ function seqEditApply() {
     const nameInput = document.getElementById('seqEditNameInput');
     let newFullHeader = nameInput ? nameInput.value.trim() : '';
     if (!newFullHeader) {
-        // Fallback: read from textarea first line
         const textarea = document.getElementById('seqEditTextarea');
         const firstLine = textarea.value.split('\n')[0].trim();
         if (firstLine.startsWith('>')) {
@@ -3996,7 +4195,6 @@ function seqEditApply() {
     }
 
     if (isFreeform) {
-        // Add as a new sequence
         pushUndo('seqedit-add');
         const newSeq = {
             header: newHeader,
