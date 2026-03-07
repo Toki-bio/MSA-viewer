@@ -435,7 +435,12 @@
                             <button id="copySelectedButton" title="Copy selected sequences or nucleotides (shortcut: Ctrl+Shift+C)">📋 Copy Sel</button>
                             <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">📋 Copy Align</button>
                             <button id="deleteSelectedButton" title="Delete selected sequences (shortcut: Ctrl+Del)">❌ Delete Sel</button>
-                            <button id="undoButton" title="Undo last action (shortcut: Ctrl+Z)">↩️ Undo</button>
+                            <div class="undo-redo-group" style="display: inline-flex; gap: 1px; vertical-align: middle;">
+                                <button id="undoButton" title="Undo last action (Ctrl+Z)" style="padding: 2px 5px; font-size: 13px;">↩</button>
+                                <button id="undoDropdownBtn" title="Undo history" style="padding: 2px 2px; font-size: 9px; border-left: none;">▼</button>
+                                <button id="redoButton" title="Redo last undone action (Ctrl+Y)" style="padding: 2px 5px; font-size: 13px;">↪</button>
+                                <button id="redoDropdownBtn" title="Redo history" style="padding: 2px 2px; font-size: 9px; border-left: none;">▼</button>
+                            </div>
                         </div>
                     </div>
                     <div class="action-section">
@@ -469,6 +474,7 @@
                         <div class="action-section-label">🛠️ Tools</div>
                         <div class="button-group">
                             <button id="openInNewTabButton" title="Open selected in new tab (shortcut: Ctrl+T)">📖 New Tab</button>
+                            <button id="seqEditButton" title="Open selected sequence in text editor for editing">✏️ SeqEdit</button>
                         </div>
                     </div>
                     <div class="action-section">
@@ -559,6 +565,42 @@
         </div>
     </div>
     
+    <!-- Sequence Editor Modal -->
+    <div id="seqEditModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10002; overflow: auto;">
+        <div style="background: white; margin: 30px auto; padding: 20px; max-width: 700px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h2 style="margin: 0;">Sequence Editor</h2>
+                <button id="seqEditCloseBtn" style="background: none; border: none; font-size: 20px; cursor: pointer;" title="Close">✕</button>
+            </div>
+            <div style="font-size: 12px; color: #555; margin-bottom: 8px;">
+                Editing: <strong id="seqEditName">—</strong>
+                <span id="seqEditIndex" style="display:none;"></span>
+            </div>
+            <div style="margin-bottom: 8px; display: flex; gap: 4px; flex-wrap: wrap;">
+                <button id="seqEditDegap" title="Remove all gap characters (- and .)" style="font-size: 11px; padding: 3px 8px;">Degap</button>
+                <button id="seqEditReverse" title="Reverse the sequence (5'→3' becomes 3'→5')" style="font-size: 11px; padding: 3px 8px;">Reverse</button>
+                <button id="seqEditComplement" title="Complement bases (A↔T, C↔G)" style="font-size: 11px; padding: 3px 8px;">Complement</button>
+                <button id="seqEditRevComp" title="Reverse Complement" style="font-size: 11px; padding: 3px 8px;">Rev Comp</button>
+                <button id="seqEditUppercase" title="Convert to uppercase" style="font-size: 11px; padding: 3px 8px;">Uppercase</button>
+                <button id="seqEditLowercase" title="Convert to lowercase" style="font-size: 11px; padding: 3px 8px;">Lowercase</button>
+            </div>
+            <div style="margin-bottom: 4px; font-size: 11px; color: #888;">
+                Edit the sequence text below (standard text editing: select, delete, type, Ctrl+C/V/X).
+                Length: <span id="seqEditLength">0</span>
+            </div>
+            <textarea id="seqEditTextarea" style="width: 100%; height: 250px; font-family: 'Courier New', monospace; font-size: 12px; resize: vertical; box-sizing: border-box; white-space: pre-wrap; word-break: break-all;"></textarea>
+            <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+                <label style="font-size: 11px; color: #555;">
+                    <input type="checkbox" id="seqEditPadGaps" checked> Pad/trim to alignment length
+                </label>
+                <div>
+                    <button id="seqEditApplyBtn" style="padding: 4px 16px; font-size: 13px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">Apply to Alignment</button>
+                    <button id="seqEditCancelBtn" style="padding: 4px 16px; font-size: 13px; margin-left: 8px;">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- MAFFT Add Sequences Modal -->
     <div id="addSeqModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10001; overflow: auto;">
         <div style="background: white; margin: 50px auto; padding: 20px; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
