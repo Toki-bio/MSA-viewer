@@ -498,6 +498,9 @@
       background: #f0f0f0;
     }
   </style>
+  <!-- MAFFT WASM modules (local alignment - no server needed) -->
+  <script src="disttbfast.js"></script>
+  <script src="mafft-wasm.js"></script>
 </head>
 <body>
   <div id="controls">
@@ -666,6 +669,8 @@
         <button id="deleteColumnsButton" title="Delete selected columns (shortcut: Ctrl+Shift+D)">Delete Cols</button>
         <div class="button-spacer"></div>
         <button id="realignBlockButton" title="Realign selected block (shortcut: Ctrl+Shift+R)">Realign Block</button>
+        <button id="realignAllButton" title="Realign all sequences with MAFFT">Realign All (MAFFT)</button>
+        <button id="addSequencesButton" title="Add new sequences and align with MAFFT --add">Add Seqs & Align</button>
         <div class="button-spacer"></div>
         <button id="savePresetButton" title="Save current settings (shortcut: Ctrl+S)">Save Preset</button>
         <button id="loadPresetButton" title="Load saved settings (shortcut: Ctrl+O)">Load Preset</button>
@@ -692,6 +697,22 @@
   </div>
   <div id="minimizeBar" style="display: none;">Restore Menu</div>
   <div id="tooltip" class="tooltip"></div>
+  <!-- MAFFT Add Sequences Modal -->
+  <div id="addSeqModal" class="modal">
+    <div class="modal-content" style="max-width:600px;">
+      <span class="close" id="closeAddSeqModal">&times;</span>
+      <h2>Add Sequences & Align (MAFFT)</h2>
+      <p style="font-size:12px;color:#555;">Paste new sequences in FASTA format below. They will be combined with the current alignment and realigned using MAFFT (runs locally via WebAssembly — no server needed).</p>
+      <div style="margin:8px 0;">
+        <span style="font-size:12px;color:#888;">All sequences will be combined and aligned locally via WASM (no server).</span>
+      </div>
+      <textarea id="addSeqInput" placeholder=">new_sequence_1&#10;ACGTACGTACGT...&#10;>new_sequence_2&#10;TGCATGCATGCA..." style="width:100%;height:200px;font-family:'Courier New',monospace;font-size:12px;resize:vertical;"></textarea>
+      <div style="margin-top:8px;text-align:right;">
+        <button id="addSeqSubmitButton" style="padding:4px 16px;font-size:13px;background:#4CAF50;color:white;border:none;border-radius:4px;cursor:pointer;">Add & Align</button>
+        <button id="addSeqCancelButton" style="padding:4px 16px;font-size:13px;margin-left:8px;">Cancel</button>
+      </div>
+    </div>
+  </div>
   <div id="infoModal" class="modal">
     <div class="modal-content">
       <span class="close" onclick="closeInfoModal()">&times;</span>
@@ -713,6 +734,7 @@
         <li><strong>Insert Gap Column:</strong> Insert a gap column in all or all except selected sequences.</li>
         <li><strong>Insert/Remove Single Gap:</strong> Right-click on a position to insert or remove a single gap.</li>
         <li><strong>Slide Sequence:</strong> Right-click and drag the sequence data to shift left/right.</li>
+        <li><strong>MAFFT Integration:</strong> Realign all sequences, realign selected blocks, or add new sequences — runs locally in your browser via WebAssembly (no server needed).</li>
       </ul>
       <h3>Quick Tips</h3>
       <ul>
@@ -2190,8 +2212,151 @@
     function closeInfoModal() {
       infoModal.style.display = 'none';
     }
-    function realignSelectedBlock() {
-      showMessage("Realign Block not implemented yet.", 3000);
+    // ============ MAFFT INTEGRATION (LOCAL WASM) ============
+    const mafftWasm = new MafftWasm();
+
+    function seqsToFasta(seqArray) {
+      return seqArray.map(s => `>${s.fullHeader || s.header}\n${s.seq}`).join('\n');
+    }
+
+    function seqsToUngappedFasta(seqArray) {
+      return seqArray.map(s => `>${s.fullHeader || s.header}\n${s.seq.replace(/[-\.]/g, '')}`).join('\n');
+    }
+
+    async function realignAll() {
+      if (state.seqs.length < 2) {
+        showMessage('Need at least 2 sequences to align.', 3000);
+        return;
+      }
+      // Save undo state
+      state.deletedHistory.push({
+        type: 'mafftRealign',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+      });
+      // Send ungapped sequences for full realignment (runs locally in WASM)
+      const fasta = seqsToUngappedFasta(state.seqs);
+      showMessage('Running MAFFT alignment locally (WASM)... please wait.', 0);
+      try {
+        const result = await mafftWasm.align(fasta);
+        const parsed = parseFasta(result);
+        if (parsed && parsed.length > 0) {
+          state.seqs = parsed;
+          state.selectedRows.clear();
+          state.selectedColumns.clear();
+          state.selectedNucs.clear();
+          renderAlignment();
+          showMessage(`MAFFT alignment complete! ${parsed.length} sequences aligned.`, 3000);
+        } else {
+          showMessage('Failed to parse MAFFT output.', 5000);
+          state.deletedHistory.pop(); // Remove undo state
+        }
+      } catch (err) {
+        console.error('MAFFT error:', err);
+        showMessage(`MAFFT error: ${err.message}`, 5000);
+        state.deletedHistory.pop(); // Remove undo state on failure
+      }
+    }
+
+    async function addSequencesAndAlign() {
+      const addSeqInput = el('addSeqInput');
+      const newSeqText = addSeqInput.value.trim();
+      if (!newSeqText) {
+        showMessage('Paste new sequences in FASTA format first.', 3000);
+        return;
+      }
+      if (state.seqs.length === 0) {
+        showMessage('Load an alignment first before adding sequences.', 3000);
+        return;
+      }
+      // Save undo state
+      state.deletedHistory.push({
+        type: 'mafftAdd',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+      });
+      const addMode = document.querySelector('input[name="addMode"]:checked').value;
+      const existingFasta = seqsToFasta(state.seqs);
+      // With WASM, we combine all sequences and re-align (simpler than --add pipeline)
+      showMessage('Running MAFFT alignment locally (WASM)... adding sequences.', 0);
+      try {
+        const result = await mafftWasm.addAndAlign(existingFasta, newSeqText);
+        const parsed = parseFasta(result);
+        if (parsed && parsed.length > 0) {
+          state.seqs = parsed;
+          state.selectedRows.clear();
+          state.selectedColumns.clear();
+          state.selectedNucs.clear();
+          renderAlignment();
+          el('addSeqModal').style.display = 'none';
+          addSeqInput.value = '';
+          showMessage(`MAFFT complete! ${parsed.length} total sequences aligned.`, 3000);
+        } else {
+          showMessage('Failed to parse MAFFT output.', 5000);
+          state.deletedHistory.pop();
+        }
+      } catch (err) {
+        console.error('MAFFT error:', err);
+        showMessage(`MAFFT error: ${err.message}`, 5000);
+        state.deletedHistory.pop();
+      }
+    }
+
+    async function realignSelectedBlock() {
+      if (state.selectedColumns.size < 2) {
+        showMessage('Select at least 2 columns (Ctrl+Alt+click) to define a block to realign.', 4000);
+        return;
+      }
+      const cols = Array.from(state.selectedColumns).sort((a, b) => a - b);
+      const startCol = cols[0];
+      const endCol = cols[cols.length - 1];
+      // Save undo state
+      state.deletedHistory.push({
+        type: 'mafftBlock',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+      });
+      // Extract the block as ungapped sequences
+      const blockSeqs = state.seqs.map(s => {
+        const block = s.seq.slice(startCol, endCol + 1).replace(/[-\.]/g, '');
+        return `>${s.fullHeader || s.header}\n${block || 'N'}`;
+      }).join('\n');
+      showMessage('Running MAFFT block realignment locally (WASM)...', 0);
+      try {
+        const result = await mafftWasm.realignBlock(blockSeqs);
+        const parsed = parseFasta(result);
+        if (parsed && parsed.length === state.seqs.length) {
+          // Splice realigned block back into the full alignment
+          // Match by header order (MAFFT preserves input order)
+          for (let i = 0; i < state.seqs.length; i++) {
+            const before = state.seqs[i].seq.slice(0, startCol);
+            const after = state.seqs[i].seq.slice(endCol + 1);
+            // Find matching realigned block by name
+            const matchName = (state.seqs[i].fullHeader || state.seqs[i].header).split(' ')[0];
+            const realigned = parsed.find(p => (p.fullHeader || p.header).split(' ')[0] === matchName);
+            if (realigned) {
+              state.seqs[i].seq = before + realigned.seq + after;
+            } else {
+              // Fallback: use by index
+              state.seqs[i].seq = before + parsed[i].seq + after;
+            }
+            state.seqs[i].gaplessPositions = calculateGaplessPositions(state.seqs[i].seq);
+          }
+          state.selectedColumns.clear();
+          renderAlignment();
+          showMessage(`Block (columns ${startCol + 1}-${endCol + 1}) realigned with MAFFT!`, 3000);
+        } else {
+          showMessage('MAFFT block realignment returned unexpected number of sequences.', 5000);
+          state.deletedHistory.pop();
+        }
+      } catch (err) {
+        console.error('MAFFT error:', err);
+        showMessage(`MAFFT error: ${err.message}`, 5000);
+        state.deletedHistory.pop();
+      }
     }
     function copySequence(index, gapped = true) {
       const s = state.seqs[index];
@@ -2384,6 +2549,17 @@
       el('copyColumnsButton').addEventListener('click', copySelectedColumns);
       el('deleteColumnsButton').addEventListener('click', deleteSelectedColumns);
       el('realignBlockButton').addEventListener('click', realignSelectedBlock);
+      el('realignAllButton').addEventListener('click', realignAll);
+      el('addSequencesButton').addEventListener('click', () => {
+        el('addSeqModal').style.display = 'block';
+      });
+      el('addSeqSubmitButton').addEventListener('click', addSequencesAndAlign);
+      el('addSeqCancelButton').addEventListener('click', () => {
+        el('addSeqModal').style.display = 'none';
+      });
+      el('closeAddSeqModal').addEventListener('click', () => {
+        el('addSeqModal').style.display = 'none';
+      });
       el('savePresetButton').addEventListener('click', savePreset);
       el('loadPresetButton').addEventListener('click', loadPreset);
       el('infoButton').addEventListener('click', openInfoModal);
