@@ -2266,6 +2266,7 @@ function insertGroupConsensus() {
         showMessage("Select at least 2 sequences to compute group consensus.", 3000);
         return;
     }
+    pushUndo('insertConsensus');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
     const cons = computeConsensusForSequences(selectedSeqs);
@@ -3670,6 +3671,59 @@ function closeAddSequencesModal() {
 }
 
 /**
+ * Just add sequences (pad with gaps to alignment length, no realignment).
+ */
+function addSequencesJustAdd() {
+    const newText = document.getElementById('addSeqInput')?.value?.trim();
+    if (!newText) {
+        showMessage("Please paste FASTA sequences to add.", 2000);
+        return;
+    }
+
+    // Parse FASTA
+    const lines = newText.split('\n');
+    const newSeqs = [];
+    let currentHeader = null;
+    let currentSeq = '';
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('>')) {
+            if (currentHeader !== null) {
+                newSeqs.push({ header: currentHeader.split(/\s+/)[0], fullHeader: currentHeader, seq: currentSeq });
+            }
+            currentHeader = trimmed.substring(1).trim();
+            currentSeq = '';
+        } else if (trimmed) {
+            currentSeq += trimmed;
+        }
+    }
+    if (currentHeader !== null) {
+        newSeqs.push({ header: currentHeader.split(/\s+/)[0], fullHeader: currentHeader, seq: currentSeq });
+    }
+
+    if (newSeqs.length === 0) {
+        showMessage("No valid FASTA sequences found.", 2000);
+        return;
+    }
+
+    pushUndo('add-sequences');
+
+    // Pad to current alignment length if there are existing sequences
+    const alignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+    for (const ns of newSeqs) {
+        if (alignLen > 0 && ns.seq.length < alignLen) {
+            ns.seq = ns.seq.padEnd(alignLen, '-');
+        }
+        ns.gaplessPositions = calculateGaplessPositions(ns.seq);
+        state.seqs.push(ns);
+    }
+
+    closeAddSequencesModal();
+    renderAlignment();
+    showMessage(`Added ${newSeqs.length} sequence${newSeqs.length > 1 ? 's' : ''}!`, 2000);
+}
+
+/**
  * Add new sequences and realign with existing using MAFFT WASM.
  */
 function addSequencesAndAlign() {
@@ -3786,24 +3840,32 @@ function copySequences(gapped, isFasta, index) {
 
 function openSeqEditor(index) {
     if (index === undefined || index === null) {
-        // Use first selected row
-        if (state.selectedRows.size === 0) {
-            showMessage("Select a sequence first.", 2000);
-            return;
+        // Use first selected row, or open freeform if none selected
+        if (state.selectedRows.size > 0) {
+            index = Math.min(...state.selectedRows);
+        } else {
+            index = -1; // freeform mode
         }
-        index = Math.min(...state.selectedRows);
     }
-    if (index < 0 || index >= state.seqs.length) return;
+    if (index !== -1 && (index < 0 || index >= state.seqs.length)) return;
 
-    const s = state.seqs[index];
     const modal = document.getElementById('seqEditModal');
     if (!modal) return;
-
-    document.getElementById('seqEditName').textContent = s.fullHeader || s.header;
-    document.getElementById('seqEditIndex').textContent = String(index);
-
     const textarea = document.getElementById('seqEditTextarea');
-    textarea.value = `>${s.fullHeader || s.header}\n${s.seq}`;
+    const nameInput = document.getElementById('seqEditNameInput');
+    const indexEl = document.getElementById('seqEditIndex');
+
+    if (index === -1) {
+        // Freeform mode: blank editor for new or arbitrary text
+        if (nameInput) nameInput.value = 'new_sequence';
+        if (indexEl) indexEl.textContent = '-1';
+        textarea.value = '>new_sequence\n';
+    } else {
+        const s = state.seqs[index];
+        if (nameInput) nameInput.value = s.fullHeader || s.header;
+        if (indexEl) indexEl.textContent = String(index);
+        textarea.value = `>${s.fullHeader || s.header}\n${s.seq}`;
+    }
     _updateSeqEditLength();
 
     modal.style.display = 'block';
@@ -3842,8 +3904,8 @@ function _getSeqEditSequence() {
 function _setSeqEditSequence(seq) {
     const textarea = document.getElementById('seqEditTextarea');
     if (!textarea) return;
-    const nameEl = document.getElementById('seqEditName');
-    const name = nameEl ? nameEl.textContent : 'sequence';
+    const nameInput = document.getElementById('seqEditNameInput');
+    const name = nameInput ? nameInput.value : 'sequence';
     textarea.value = `>${name}\n${seq}`;
     _updateSeqEditLength();
 }
@@ -3893,7 +3955,9 @@ function seqEditLowercase() {
 function seqEditApply() {
     const indexStr = document.getElementById('seqEditIndex')?.textContent;
     const index = parseInt(indexStr);
-    if (isNaN(index) || index < 0 || index >= state.seqs.length) {
+    const isFreeform = (index === -1);
+
+    if (!isFreeform && (isNaN(index) || index < 0 || index >= state.seqs.length)) {
         showMessage("Invalid sequence index.", 3000);
         return;
     }
@@ -3904,40 +3968,56 @@ function seqEditApply() {
         return;
     }
 
-    // Get header from textarea (first line starting with >)
-    const textarea = document.getElementById('seqEditTextarea');
-    const firstLine = textarea.value.split('\n')[0].trim();
-    let newHeader = state.seqs[index].header;
-    let newFullHeader = state.seqs[index].fullHeader;
-    if (firstLine.startsWith('>')) {
-        const headerText = firstLine.substring(1).trim();
-        if (headerText) {
-            newHeader = headerText.split(/\s+/)[0];
-            newFullHeader = headerText;
+    // Get header from name input field (preferred) or textarea first line
+    const nameInput = document.getElementById('seqEditNameInput');
+    let newFullHeader = nameInput ? nameInput.value.trim() : '';
+    if (!newFullHeader) {
+        // Fallback: read from textarea first line
+        const textarea = document.getElementById('seqEditTextarea');
+        const firstLine = textarea.value.split('\n')[0].trim();
+        if (firstLine.startsWith('>')) {
+            newFullHeader = firstLine.substring(1).trim();
         }
     }
+    if (!newFullHeader) newFullHeader = 'sequence';
+    const newHeader = newFullHeader.split(/\s+/)[0];
 
     // Pad or trim if checkbox is checked
     const padCheckbox = document.getElementById('seqEditPadGaps');
-    if (padCheckbox && padCheckbox.checked && state.seqs.length > 1) {
+    if (padCheckbox && padCheckbox.checked && state.seqs.length > 0) {
         const alignLen = Math.max(...state.seqs.map(s => s.seq.length));
-        if (seq.length < alignLen) {
-            seq = seq.padEnd(alignLen, '-');
-        } else if (seq.length > alignLen) {
-            seq = seq.substring(0, alignLen);
+        if (alignLen > 0) {
+            if (seq.length < alignLen) {
+                seq = seq.padEnd(alignLen, '-');
+            } else if (seq.length > alignLen) {
+                seq = seq.substring(0, alignLen);
+            }
         }
     }
 
-    pushUndo('seqedit');
-
-    state.seqs[index].header = newHeader;
-    state.seqs[index].fullHeader = newFullHeader;
-    state.seqs[index].seq = seq;
-    state.seqs[index].gaplessPositions = calculateGaplessPositions(seq);
-
-    closeSeqEditor();
-    renderAlignment();
-    showMessage("Sequence updated!", 2000);
+    if (isFreeform) {
+        // Add as a new sequence
+        pushUndo('seqedit-add');
+        const newSeq = {
+            header: newHeader,
+            fullHeader: newFullHeader,
+            seq: seq,
+            gaplessPositions: calculateGaplessPositions(seq)
+        };
+        state.seqs.push(newSeq);
+        closeSeqEditor();
+        renderAlignment();
+        showMessage("New sequence added!", 2000);
+    } else {
+        pushUndo('seqedit');
+        state.seqs[index].header = newHeader;
+        state.seqs[index].fullHeader = newFullHeader;
+        state.seqs[index].seq = seq;
+        state.seqs[index].gaplessPositions = calculateGaplessPositions(seq);
+        closeSeqEditor();
+        renderAlignment();
+        showMessage("Sequence updated!", 2000);
+    }
 }
 
 // ============================================================
@@ -4130,6 +4210,14 @@ function showContextMenu(e, index) {
         });
         contextMenu.appendChild(replaceConsensusItem);
         
+        const addConsensusItem = document.createElement('div');
+        addConsensusItem.textContent = `Add consensus below (${state.selectedRows.size} selected)`;
+        addConsensusItem.addEventListener('click', () => {
+            insertGroupConsensus();
+            closeContextMenu();
+        });
+        contextMenu.appendChild(addConsensusItem);
+        
         // Add separator
         const separator = document.createElement('div');
         separator.style.borderTop = '1px solid #ccc';
@@ -4254,7 +4342,7 @@ function showContextMenu(e, index) {
 
     // Edit in Sequence Editor
     const seqEditItem = document.createElement('div');
-    seqEditItem.textContent = '✏️ Edit Sequence…';
+    seqEditItem.textContent = 'Edit Sequence…';
     seqEditItem.addEventListener('click', () => {
         openSeqEditor(index);
         closeContextMenu();
@@ -4586,6 +4674,8 @@ function initializeAppUI() {
         'realignAllButton': realignAll,
         'realignSelectedButton': realignSelected,
         'addSequencesButton': openAddSequencesModal,
+        'addSeqPlusButton': openAddSequencesModal,
+        'addSeqJustAddButton': addSequencesJustAdd,
         'addSeqSubmitButton': addSequencesAndAlign,
         'addSeqCancelButton': closeAddSequencesModal,
         'clusterSequencesButton': clusterSequences,

@@ -33,6 +33,14 @@
                 </div>
             </div>
 
+            <button id="addSeqPlusButton" title="Add sequence(s) to alignment" style="padding: 0 4px; font-size: 14px; font-weight: bold; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; border-radius: 3px; min-width: 18px;">+</button>
+            <div class="undo-redo-bar" style="display: inline-flex; gap: 1px; vertical-align: middle;">
+                <button id="undoButton" title="Undo (Ctrl+Z)" style="padding: 0 3px; font-size: 12px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; border-radius: 3px 0 0 3px; min-width: 18px;">↩</button>
+                <button id="undoDropdownBtn" title="Undo history" style="padding: 0 2px; font-size: 8px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; border-left: none; background: #f0f0f0; min-width: 10px;">▼</button>
+                <button id="redoButton" title="Redo (Ctrl+Y)" style="padding: 0 3px; font-size: 12px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; min-width: 18px;">↪</button>
+                <button id="redoDropdownBtn" title="Redo history" style="padding: 0 2px; font-size: 8px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; border-left: none; background: #f0f0f0; border-radius: 0 3px 3px 0; min-width: 10px;">▼</button>
+            </div>
+
             <div class="standard-menu-group">
                 <div class="menu-section">
                     <div class="section-header" title="Conservation shading controls" data-section="shade">
@@ -176,6 +184,9 @@
                         </div>
                         <div class="slider-container">
                             <button id="copySelectedConsensusButton" title="Copy consensus of selected sequences (shortcut: Ctrl+Shift+J)">Copy Sel Consensus</button>
+                        </div>
+                        <div class="slider-container">
+                            <button id="insertGroupConsensusButton" title="Insert consensus below selected sequences (shortcut: Ctrl+B)">+ Consensus Below</button>
                         </div>
                     </div>
                 </div>
@@ -429,61 +440,49 @@
                 </div>
                 <div class="control-group" id="actions-controls">
                     <div class="action-section">
-                        <div class="action-section-label">📋 Selection</div>
+                        <div class="action-section-label">Selection</div>
                         <div class="button-group">
-                            <button id="selectAllButton" title="Select/deselect all sequences (shortcut: Ctrl+A)">☑️ Select All</button>
-                            <button id="copySelectedButton" title="Copy selected sequences or nucleotides (shortcut: Ctrl+Shift+C)">📋 Copy Sel</button>
-                            <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">📋 Copy Align</button>
-                            <button id="deleteSelectedButton" title="Delete selected sequences (shortcut: Ctrl+Del)">❌ Delete Sel</button>
-                            <div class="undo-redo-group" style="display: inline-flex; gap: 1px; vertical-align: middle;">
-                                <button id="undoButton" title="Undo last action (Ctrl+Z)" style="padding: 2px 5px; font-size: 13px;">↩</button>
-                                <button id="undoDropdownBtn" title="Undo history" style="padding: 2px 2px; font-size: 9px; border-left: none;">▼</button>
-                                <button id="redoButton" title="Redo last undone action (Ctrl+Y)" style="padding: 2px 5px; font-size: 13px;">↪</button>
-                                <button id="redoDropdownBtn" title="Redo history" style="padding: 2px 2px; font-size: 9px; border-left: none;">▼</button>
-                            </div>
+                            <button id="selectAllButton" title="Select/deselect all sequences (Ctrl+A)">Select All</button>
+                            <button id="copySelectedButton" title="Copy selected sequences (Ctrl+Shift+C)">Copy Sel</button>
+                            <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">Copy Align</button>
+                            <button id="deleteSelectedButton" title="Delete selected sequences (Ctrl+Del)">Delete Sel</button>
                         </div>
                     </div>
                     <div class="action-section">
-                        <div class="action-section-label">↔️ Sequence Order</div>
+                        <div class="action-section-label">Order</div>
                         <div class="button-group">
-                            <button id="moveUpButton" title="Move selected up (shortcut: Ctrl+Up)">▲ Up</button>
-                            <button id="moveDownButton" title="Move selected down (shortcut: Ctrl+Down)">▼ Down</button>
-                            <button id="moveToTopButton" title="Move selected to top (shortcut: Ctrl+Home)">↖️ To Top</button>
-                            <button id="moveToBottomButton" title="Move selected to bottom (shortcut: Ctrl+End)">↘️ To Bottom</button>
+                            <button id="moveUpButton" title="Move selected up (Ctrl+Up)">Up</button>
+                            <button id="moveDownButton" title="Move selected down (Ctrl+Down)">Down</button>
+                            <button id="moveToTopButton" title="Move selected to top (Ctrl+Home)">To Top</button>
+                            <button id="moveToBottomButton" title="Move selected to bottom (Ctrl+End)">To Bottom</button>
                         </div>
                     </div>
                     <div class="action-section">
-                        <div class="action-section-label">✏️ Editing</div>
+                        <div class="action-section-label">Editing</div>
                         <div class="button-group">
-                            <button id="reverseComplementButton" title="Reverse complement selected sequences (shortcut: Ctrl+R)">🔂 RevComp</button>
-                            <button id="duplicateButton" title="Duplicate selected (shortcut: Ctrl+U)">🖨️ Duplicate</button>
-                            <button id="insertGroupConsensusButton" title="Insert consensus below selected (shortcut: Ctrl+B)">+ Consensus Below</button>
+                            <button id="reverseComplementButton" title="Reverse complement selected (Ctrl+R)">RevComp</button>
+                            <button id="duplicateButton" title="Duplicate selected (Ctrl+U)">Duplicate</button>
+                            <button id="seqEditButton" title="Open sequence in text editor">SeqEdit</button>
                         </div>
                     </div>
                     <div class="action-section">
-                        <div class="action-section-label">▦ Columns</div>
+                        <div class="action-section-label">Columns</div>
                         <div class="button-group">
-                            <button id="copyColumnsButton" title="Copy selected columns as FASTA (shortcut: Ctrl+Shift+V)">📋 Copy Cols</button>
-                            <button id="deleteColumnsButton" title="Delete selected columns (shortcut: Ctrl+Shift+D)">❌ Delete Cols</button>
-                            <button id="removeGapColumnsButton" title="Remove columns with only gaps">⌫ Remove Gap Cols</button>
-                            <button id="insertGapColumnAllButton" title="Insert gap column at selected position in all sequences">+ Gap Col (All)</button>
-                            <button id="insertGapColumnExceptButton" title="Insert gap column at selected position in all except selected sequences">+ Gap Col (Except)</button>
+                            <button id="copyColumnsButton" title="Copy selected columns as FASTA (Ctrl+Shift+V)">Copy Cols</button>
+                            <button id="deleteColumnsButton" title="Delete selected columns (Ctrl+Shift+D)">Delete Cols</button>
+                            <button id="removeGapColumnsButton" title="Remove gap-only columns">Rm Gap Cols</button>
+                            <button id="insertGapColumnAllButton" title="Insert gap column in all sequences">Gap Col All</button>
+                            <button id="insertGapColumnExceptButton" title="Insert gap column except selected">Gap Col Except</button>
                         </div>
                     </div>
                     <div class="action-section">
-                        <div class="action-section-label">🛠️ Tools</div>
+                        <div class="action-section-label">Tools</div>
                         <div class="button-group">
-                            <button id="openInNewTabButton" title="Open selected in new tab (shortcut: Ctrl+T)">📖 New Tab</button>
-                            <button id="seqEditButton" title="Open selected sequence in text editor for editing">✏️ SeqEdit</button>
-                        </div>
-                    </div>
-                    <div class="action-section">
-                        <div class="action-section-label">⚙️ Settings</div>
-                        <div class="button-group">
-                            <button id="savePresetButton" title="Save current settings (shortcut: Ctrl+S)">💾 Save Preset</button>
-                            <button id="loadPresetButton" title="Load saved settings (shortcut: Ctrl+O)">📁 Load Preset</button>
-                            <button id="infoButton" title="Show program info and shortcuts (shortcut: Ctrl+I)">ℹ️ Info</button>
-                            <button id="minimizeBtn" title="Hide menu (shortcut: Ctrl+H)">▲ Hide Menu</button>
+                            <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
+                            <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
+                            <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
+                            <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
+                            <button id="minimizeBtn" title="Hide menu (Ctrl+H)">Hide Menu</button>
                         </div>
                     </div>
                 </div>
@@ -521,6 +520,7 @@
                 <strong>Ctrl+Shift+C</strong><span>Copy selected sequences</span>
                 <strong>Ctrl+Del</strong><span>Delete selected</span>
                 <strong>Ctrl+Z</strong><span>Undo</span>
+                <strong>Ctrl+Y</strong><span>Redo</span>
                 <strong>Ctrl+R</strong><span>Reverse complement</span>
                 <strong>Ctrl+U</strong><span>Duplicate</span>
                 <strong>Ctrl+B</strong><span>Consensus below</span>
@@ -573,8 +573,10 @@
                 <button id="seqEditCloseBtn" style="background: none; border: none; font-size: 20px; cursor: pointer;" title="Close">✕</button>
             </div>
             <div style="font-size: 12px; color: #555; margin-bottom: 8px;">
-                Editing: <strong id="seqEditName">—</strong>
                 <span id="seqEditIndex" style="display:none;"></span>
+                <label style="font-size: 11px;">Name:</label>
+                <input type="text" id="seqEditNameInput" value="" style="width: 60%; font-size: 12px; padding: 2px 4px; border: 1px solid #ccc; border-radius: 3px;" title="Edit sequence name">
+                <span id="seqEditName" style="display:none;"></span>
             </div>
             <div style="margin-bottom: 8px; display: flex; gap: 4px; flex-wrap: wrap;">
                 <button id="seqEditDegap" title="Remove all gap characters (- and .)" style="font-size: 11px; padding: 3px 8px;">Degap</button>
@@ -604,11 +606,12 @@
     <!-- MAFFT Add Sequences Modal -->
     <div id="addSeqModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10001; overflow: auto;">
         <div style="background: white; margin: 50px auto; padding: 20px; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
-            <h2 style="margin-top: 0;">Add Sequences & Align (MAFFT)</h2>
-            <p style="font-size: 12px; color: #555;">Paste new sequences in FASTA format below. They will be combined with the current alignment and realigned using MAFFT (runs locally via WebAssembly — no server needed).</p>
+            <h2 style="margin-top: 0;">Add Sequences</h2>
+            <p style="font-size: 12px; color: #555;">Paste new sequences in FASTA format. "Just Add" appends them (padded with gaps). "Add & Align" realigns everything with MAFFT (runs locally via WebAssembly).</p>
             <textarea id="addSeqInput" placeholder=">new_sequence_1&#10;ACGTACGTACGT...&#10;>new_sequence_2&#10;TGCATGCATGCA..." style="width: 100%; height: 200px; font-family: 'Courier New', monospace; font-size: 12px; resize: vertical; box-sizing: border-box;"></textarea>
             <div style="margin-top: 8px; text-align: right;">
-                <button id="addSeqSubmitButton" style="padding: 4px 16px; font-size: 13px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">Add & Align</button>
+                <button id="addSeqJustAddButton" style="padding: 4px 16px; font-size: 13px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;">Just Add</button>
+                <button id="addSeqSubmitButton" style="padding: 4px 16px; font-size: 13px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 4px;">Add & Align</button>
                 <button id="addSeqCancelButton" style="padding: 4px 16px; font-size: 13px; margin-left: 8px;">Cancel</button>
             </div>
         </div>
