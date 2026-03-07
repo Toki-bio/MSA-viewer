@@ -1792,6 +1792,8 @@ function handleKeyDown(e) {
             case 'd':
                 if (e.shiftKey) {
                     deleteSelectedColumns();
+                } else {
+                    deleteSelectedColumns(true);
                 }
                 e.preventDefault();
                 break;
@@ -2115,12 +2117,12 @@ function copySelectedColumns() {
         showMessage("Failed to copy.", 5000);
     });
 }
-function deleteSelectedColumns() {
+function deleteSelectedColumns(skipConfirm) {
     if (state.selectedColumns.size === 0) {
         showMessage("No columns selected for deletion.", 3000);
         return;
     }
-    if (confirm(`Delete ${state.selectedColumns.size} column(s)?`)) {
+    if (skipConfirm || confirm(`Delete ${state.selectedColumns.size} column(s)?`)) {
         state.deletedHistory.push({
             type: 'deleteColumns',
             seqs: JSON.parse(JSON.stringify(state.seqs)),
@@ -3433,6 +3435,25 @@ function highlightCluster(clusterIdx) {
     showMessage(`Highlighted ${indicesToHighlight.length} sequence${indicesToHighlight.length !== 1 ? 's' : ''}`, 2000);
 }
 
+/**
+ * Read MAFFT advanced options from UI and build extra args array for disttbfast.
+ */
+function getMafftExtraArgs() {
+    const args = [];
+    const seqType = el('mafftSeqType')?.value;
+    const gapOpen = parseFloat(el('mafftGapOpen')?.value);
+    const gapExt = parseFloat(el('mafftGapExt')?.value);
+    const cycles = parseInt(el('mafftCycles')?.value);
+    const offset = parseFloat(el('mafftOffset')?.value);
+
+    if (!isNaN(gapOpen)) args.push('-f', String(-gapOpen));
+    if (!isNaN(gapExt)) args.push('-h', String(-gapExt));
+    if (!isNaN(cycles) && cycles >= 1) args.push('-C', String(cycles));
+    if (!isNaN(offset)) args.push('-e', String(-offset));
+
+    return { args, seqType: seqType || '2' };
+}
+
 function realignSelectedBlock() {
     if (state.seqs.length === 0) {
         showMessage("No sequences loaded.", 2000);
@@ -3462,9 +3483,12 @@ function realignSelectedBlock() {
         blockFasta += `>${s.header}\n${block.replace(/[-.]/g, '')}\n`;
     }
 
+    const { args: extraArgs, seqType } = getMafftExtraArgs();
+    if (seqType !== '2') extraArgs.push('-E', seqType);
+
     showMessage("Realigning block with MAFFT...", 0);
     const mafft = new MafftWasm();
-    mafft.realignBlock(blockFasta).then(result => {
+    mafft.realignBlock(blockFasta, extraArgs).then(result => {
         const aligned = parseMafftOutput(result);
         if (aligned.length !== state.seqs.length) {
             showMessage("Error: MAFFT returned different number of sequences.", 3000);
@@ -3523,9 +3547,12 @@ function realignAll() {
         fasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
     }
 
+    const { args: extraArgs, seqType } = getMafftExtraArgs();
+    if (seqType !== '2') extraArgs.push('-E', seqType);
+
     showMessage("Aligning all sequences with MAFFT...", 0);
     const mafft = new MafftWasm();
-    mafft.align(fasta).then(result => {
+    mafft.align(fasta, extraArgs).then(result => {
         const aligned = parseMafftOutput(result);
         if (aligned.length === 0) {
             showMessage("Error: MAFFT returned no sequences.", 3000);
@@ -3568,6 +3595,71 @@ function realignAll() {
     }).catch(err => {
         showMessage("MAFFT alignment error: " + err.message, 4000);
         console.error("MAFFT alignment error:", err);
+    });
+}
+
+/**
+ * Realign only the selected sequences using MAFFT WASM.
+ * Non-selected sequences stay unchanged. Selected sequences are realigned
+ * among themselves and padded/trimmed to fit back into the alignment.
+ */
+function realignSelected() {
+    if (state.selectedRows.size < 2) {
+        showMessage("Select at least 2 sequences to realign.", 2000);
+        return;
+    }
+
+    // Save undo state
+    state.deletedHistory.push({
+        type: 'realign-selected',
+        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    });
+
+    const selectedIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
+
+    // Build ungapped FASTA from selected sequences
+    let fasta = '';
+    for (const idx of selectedIndices) {
+        const s = state.seqs[idx];
+        fasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
+    }
+
+    const { args: extraArgs, seqType } = getMafftExtraArgs();
+    if (seqType !== '2') extraArgs.push('-E', seqType);
+
+    showMessage(`Realigning ${selectedIndices.length} selected sequences with MAFFT...`, 0);
+    const mafft = new MafftWasm();
+    mafft.align(fasta, extraArgs).then(result => {
+        const aligned = parseMafftOutput(result);
+        if (aligned.length === 0) {
+            showMessage("Error: MAFFT returned no sequences.", 3000);
+            return;
+        }
+
+        // Replace selected sequences with aligned versions
+        for (const idx of selectedIndices) {
+            const s = state.seqs[idx];
+            const match = aligned.find(a => a.name === s.header || a.name === s.fullHeader);
+            if (match) {
+                state.seqs[idx].seq = match.seq;
+                state.seqs[idx].gaplessPositions = calculateGaplessPositions(match.seq);
+            }
+        }
+
+        // Pad all sequences to the same length
+        const maxLen = Math.max(...state.seqs.map(s => s.seq.length));
+        for (const s of state.seqs) {
+            s.seq = s.seq.padEnd(maxLen, '-');
+        }
+
+        state.selectedColumns.clear();
+        renderAlignment();
+        showMessage(`Realigned ${selectedIndices.length} selected sequences!`, 2000);
+    }).catch(err => {
+        showMessage("Realign selected error: " + err.message, 4000);
+        console.error("Realign selected error:", err);
     });
 }
 
@@ -3618,11 +3710,14 @@ function addSequencesAndAlign() {
         existingFasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
     }
 
+    const { args: extraArgs, seqType } = getMafftExtraArgs();
+    if (seqType !== '2') extraArgs.push('-E', seqType);
+
     closeAddSequencesModal();
     showMessage("Adding sequences and aligning with MAFFT...", 0);
 
     const mafft = new MafftWasm();
-    mafft.addAndAlign(existingFasta, newText).then(result => {
+    mafft.addAndAlign(existingFasta, newText, extraArgs).then(result => {
         const aligned = parseMafftOutput(result);
         if (aligned.length === 0) {
             showMessage("Error: MAFFT returned no sequences.", 3000);
@@ -4248,6 +4343,7 @@ function initializeAppUI() {
         'deleteColumnsButton': deleteSelectedColumns,
         'realignBlockButton': realignSelectedBlock,
         'realignAllButton': realignAll,
+        'realignSelectedButton': realignSelected,
         'addSequencesButton': openAddSequencesModal,
         'addSeqSubmitButton': addSequencesAndAlign,
         'addSeqCancelButton': closeAddSequencesModal,

@@ -78,7 +78,12 @@ class MafftWasm {
     const mod = await this._createModule('disttbfast');
     mod.FS.writeFile('/input.fa', fastaInput);
 
-    const args = ['-i', '/input.fa', '-E', '2', ...extraArgs];
+    // Check if extraArgs override -E (sequence type)
+    const hasE = extraArgs.includes('-E');
+    const baseArgs = hasE
+      ? ['-i', '/input.fa']
+      : ['-i', '/input.fa', '-E', '2'];
+    const args = [...baseArgs, ...extraArgs];
     
     try {
       mod.callMain(args);
@@ -102,10 +107,10 @@ class MafftWasm {
    * @param {string} fastaStr — FASTA-formatted sequences (gaps will be stripped)
    * @returns {string} Aligned FASTA
    */
-  async align(fastaStr) {
+  async align(fastaStr, extraArgs = []) {
     // Strip gaps from input
     const ungapped = this._stripGaps(fastaStr);
-    const result = await this._runDisttbfast(ungapped);
+    const result = await this._runDisttbfast(ungapped, extraArgs);
     if (!result || !result.trim()) {
       throw new Error('MAFFT produced no output');
     }
@@ -117,8 +122,8 @@ class MafftWasm {
    * @param {string} fastaStr — FASTA with just the block residues (ungapped)
    * @returns {string} Realigned FASTA for the block
    */
-  async realignBlock(fastaStr) {
-    const result = await this._runDisttbfast(fastaStr);
+  async realignBlock(fastaStr, extraArgs = []) {
+    const result = await this._runDisttbfast(fastaStr, extraArgs);
     if (!result || !result.trim()) {
       throw new Error('MAFFT produced no output for block');
     }
@@ -134,9 +139,9 @@ class MafftWasm {
    * @param {string} newFasta — new sequences in FASTA format
    * @returns {string} Aligned FASTA with all sequences
    */
-  async addAndAlign(existingFasta, newFasta) {
+  async addAndAlign(existingFasta, newFasta, extraArgs = []) {
     const combined = this._stripGaps(existingFasta) + '\n' + this._stripGaps(newFasta);
-    const result = await this._runDisttbfast(combined);
+    const result = await this._runDisttbfast(combined, extraArgs);
     if (!result || !result.trim()) {
       throw new Error('MAFFT produced no output');
     }

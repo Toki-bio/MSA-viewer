@@ -374,6 +374,52 @@
                         </div>
                     </div>
                 </div>
+                <div class="menu-section">
+                    <div class="section-header" title="MAFFT alignment tools" data-section="alignment">
+                        <span>Alignment</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                    <div class="control-group" id="alignment-controls">
+                        <div class="action-section">
+                            <div class="action-section-label">🧬 Quick Align</div>
+                            <div class="button-group">
+                                <button id="realignAllButton" title="Realign all sequences with default settings">Realign All</button>
+                                <button id="realignSelectedButton" title="Realign only selected sequences (keeps others unchanged)">Realign Selected</button>
+                                <button id="realignBlockButton" title="Realign selected columns block (Ctrl+Shift+R)">Realign Block</button>
+                                <button id="addSequencesButton" title="Add new sequences and align with existing">Add Seqs & Align</button>
+                            </div>
+                        </div>
+                        <div class="action-section">
+                            <div class="action-section-label">⚙️ Advanced Options</div>
+                            <div style="padding: 4px 0;">
+                                <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 4px;">
+                                    <label style="font-size: 11px; min-width: 55px; text-align: right;">Seq Type:</label>
+                                    <select id="mafftSeqType" style="height: 20px; font-size: 11px;" title="Sequence type">
+                                        <option value="2" selected>Nucleotide</option>
+                                        <option value="1">Protein (BLOSUM62)</option>
+                                        <option value="0">Protein (JTT 200PAM)</option>
+                                    </select>
+                                </div>
+                                <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 4px;">
+                                    <label style="font-size: 11px; min-width: 55px; text-align: right;">Gap Open:</label>
+                                    <input type="number" id="mafftGapOpen" value="1.53" min="0" max="10" step="0.1" style="width: 55px; height: 20px; font-size: 11px;" title="Gap opening penalty (default: 1.53)">
+                                </div>
+                                <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 4px;">
+                                    <label style="font-size: 11px; min-width: 55px; text-align: right;">Gap Ext:</label>
+                                    <input type="number" id="mafftGapExt" value="0.0" min="0" max="5" step="0.05" style="width: 55px; height: 20px; font-size: 11px;" title="Gap extension penalty / offset (default: 0.0 for nucleotides)">
+                                </div>
+                                <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 4px;">
+                                    <label style="font-size: 11px; min-width: 55px; text-align: right;">Cycles:</label>
+                                    <input type="number" id="mafftCycles" value="2" min="1" max="10" step="1" style="width: 55px; height: 20px; font-size: 11px;" title="Number of tree-rebuild cycles (default: 2, more = slower but more accurate)">
+                                </div>
+                                <div style="display: flex; gap: 6px; align-items: center;">
+                                    <label style="font-size: 11px; min-width: 55px; text-align: right;">Offset:</label>
+                                    <input type="number" id="mafftOffset" value="0.123" min="0" max="1" step="0.01" style="width: 55px; height: 20px; font-size: 11px;" title="Score matrix offset (default: 0.123)">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="menu-section side-section" id="actions-section">
@@ -422,9 +468,6 @@
                     <div class="action-section">
                         <div class="action-section-label">🛠️ Tools</div>
                         <div class="button-group">
-                            <button id="realignBlockButton" title="Realign selected block using MAFFT (shortcut: Ctrl+Shift+R)">✨ Realign Block</button>
-                            <button id="realignAllButton" title="Realign all sequences using MAFFT WASM (local, no server)">🧬 Realign All (MAFFT)</button>
-                            <button id="addSequencesButton" title="Add new sequences and align with MAFFT">➕ Add Seqs & Align</button>
                             <button id="openInNewTabButton" title="Open selected in new tab (shortcut: Ctrl+T)">📖 New Tab</button>
                         </div>
                     </div>
