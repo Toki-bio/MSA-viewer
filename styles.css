@@ -693,7 +693,7 @@ input[type="number"] {
 
 .seq-length {
     display: inline-block;
-    margin-left: 2px;
+    margin-left: 6px;
     padding: 0 4px;
     background-color: #f0f0f0;
     border: 1px solid #ccc;
