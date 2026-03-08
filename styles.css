@@ -634,34 +634,12 @@ input[type="number"] {
     outline-offset: -1px;
 }
 
-/* Drag reorder: gap + black line between sequences */
+/* Drag reorder: solid border indicator between sequences (no layout shift) */
 .seq-line.drag-insert-above {
-    margin-top: 4px;
-}
-.seq-line.drag-insert-above::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: -3px;
-    height: 2px;
-    background: #000;
-    z-index: 100;
-    pointer-events: none;
+    border-top: 2px solid #1976D2 !important;
 }
 .seq-line.drag-insert-below {
-    margin-bottom: 4px;
-}
-.seq-line.drag-insert-below::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: -3px;
-    height: 2px;
-    background: #000;
-    z-index: 100;
-    pointer-events: none;
+    border-bottom: 2px solid #1976D2 !important;
 }
 .seq-name {
     flex: 0 0 auto;
