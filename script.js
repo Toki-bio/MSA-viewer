@@ -52,6 +52,40 @@ const state = {
 let _dragPreviewEl = null;
 let _dragPreviewClass = '';
 let _draggedSeqIndex = -1;
+let _dragPreviewInsertAbove = true;
+let _dragImageEl = null;
+
+function _getDragImageEl() {
+    if (_dragImageEl && _dragImageEl.isConnected) return _dragImageEl;
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;left:-1000px;top:-1000px;width:1px;height:1px;opacity:0;pointer-events:none;background:transparent;';
+    document.body.appendChild(el);
+    _dragImageEl = el;
+    return el;
+}
+
+function _getDragIndicatorEl() {
+    let indicator = document.getElementById('drag-name-indicator');
+    if (indicator) return indicator;
+    indicator = document.createElement('div');
+    indicator.id = 'drag-name-indicator';
+    indicator.style.cssText = 'position:absolute;left:0;right:0;height:2px;background:#1976D2;pointer-events:none;z-index:200;';
+    return indicator;
+}
+
+function _isPointInsideAlignmentContainer(clientX, clientY) {
+    const container = document.getElementById('alignmentContainer');
+    if (!container) return false;
+    const rect = container.getBoundingClientRect();
+    return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+}
+
+function _handleInternalDragEnterOver(e) {
+    if (_draggedSeqIndex < 0) return;
+    if (!_isPointInsideAlignmentContainer(e.clientX, e.clientY)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+}
 
 function handleDragStart(e) {
     try {
@@ -63,12 +97,7 @@ function handleDragStart(e) {
         _draggedSeqIndex = parseInt(seqIndex);
         e.dataTransfer.setData('text/plain', String(seqIndex));
         e.dataTransfer.effectAllowed = 'move';
-        // Fully transparent drag image via canvas
-        const c = document.createElement('canvas');
-        c.width = 1; c.height = 1;
-        const ctx = c.getContext('2d');
-        ctx.clearRect(0, 0, 1, 1);
-        e.dataTransfer.setDragImage(c, 0, 0);
+        e.dataTransfer.setDragImage(_getDragImageEl(), 0, 0);
         // Highlight dragged sequence(s)
         _highlightDragSources();
     } catch (err) {
@@ -100,6 +129,7 @@ function handleDragEnd(e) {
         _clearDragInsertPreview();
         _clearDragSources();
         _draggedSeqIndex = -1;
+        _dragPreviewInsertAbove = true;
     } catch (err) {
         console.warn('dragend error', err);
     }
@@ -137,18 +167,23 @@ function _showDragInsertPreview(e, container) {
     if (_dragPreviewEl === nameEl && _dragPreviewClass === cls) return;
     // Clear previous
     _clearDragInsertPreview();
-    // Apply to seq-name element only
-    nameEl.classList.add(cls);
+    // Apply a robust in-element indicator only in the names column
+    const indicator = _getDragIndicatorEl();
+    indicator.style.top = insertAbove ? '0' : 'auto';
+    indicator.style.bottom = insertAbove ? 'auto' : '0';
+    nameEl.appendChild(indicator);
     _dragPreviewEl = nameEl;
     _dragPreviewClass = cls;
+    _dragPreviewInsertAbove = insertAbove;
 }
 
 function _clearDragInsertPreview() {
     if (_dragPreviewEl) {
-        _dragPreviewEl.classList.remove('drag-insert-above', 'drag-insert-below');
         _dragPreviewEl = null;
         _dragPreviewClass = '';
     }
+    const indicator = document.getElementById('drag-name-indicator');
+    if (indicator) indicator.remove();
 }
 
 window.handleDrop = function(e) {
@@ -156,7 +191,7 @@ window.handleDrop = function(e) {
     e.stopPropagation();
     
     // Capture preview state before clearing
-    const insertAbove = _dragPreviewClass === 'drag-insert-above';
+    const insertAbove = _dragPreviewInsertAbove;
     const previewNameEl = _dragPreviewEl;
     _clearDragInsertPreview();
     _clearDragSources();
@@ -983,11 +1018,18 @@ function renderAlignment() {
     // Container-level drag handlers: allow drops anywhere, show preview
     // Remove old handlers first to avoid stacking
     if (!alignmentContainer._dragHandlersSet) {
+        document.addEventListener('dragenter', _handleInternalDragEnterOver, true);
+        document.addEventListener('dragover', _handleInternalDragEnterOver, true);
         alignmentContainer.addEventListener('dragover', (e) => {
             if (_draggedSeqIndex < 0) return;
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
             _showDragInsertPreview(e, alignmentContainer);
+        });
+        alignmentContainer.addEventListener('dragenter', (e) => {
+            if (_draggedSeqIndex < 0) return;
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
         });
         alignmentContainer.addEventListener('drop', handleDrop);
         alignmentContainer._dragHandlersSet = true;
