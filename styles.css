@@ -821,7 +821,7 @@ input[type="number"] {
     z-index: 1;
 }
 .seq-data span.seq-length {
-    margin-left: 8px;
+    margin-left: 8px !important;
 }
 .seq-data:active {
     cursor: grabbing;
