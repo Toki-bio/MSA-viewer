@@ -15,8 +15,9 @@
         <div class="control-row" style="justify-content: flex-start; align-items: center; gap: 2px; flex-wrap: wrap;">
             <!-- ACTUAL BUTTONS -->
             <div class="menu-section side-section" id="input-section">
-                <div class="section-header" title="File input and loading controls" data-section="input">
+                <div class="section-header" data-section="input">
                         <span>Input</span>
+                        <button id="addSeqPlusButton" onclick="event.stopPropagation()" title="Add sequence(s)" style="margin-left:4px;padding:0 5px;font-size:13px;font-weight:bold;height:17px;line-height:15px;cursor:pointer;border:1px solid #ccc;background:#f0f0f0;border-radius:3px;min-width:17px;">+</button>
                         <span class="toggle-icon">▼</span>
                     </div>
                 <div class="control-group" id="input-controls">
@@ -33,7 +34,6 @@
                 </div>
             </div>
 
-            <button id="addSeqPlusButton" title="Add sequence(s) to alignment" style="margin-left: 6px; padding: 0 6px; font-size: 14px; font-weight: bold; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; border-radius: 3px; min-width: 18px;">+</button>
             <div class="undo-redo-bar" style="display: inline-flex; gap: 1px; vertical-align: middle; margin-left: 10px;">
                 <button id="undoButton" title="Undo (Ctrl+Z)" style="padding: 0 3px; font-size: 12px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; border-radius: 3px 0 0 3px; min-width: 18px;">↩</button>
                 <button id="undoDropdownBtn" title="Undo history" style="padding: 0 2px; font-size: 8px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; border-left: none; background: #f0f0f0; min-width: 10px;">▼</button>
@@ -43,7 +43,7 @@
 
             <div class="standard-menu-group">
                 <div class="menu-section">
-                    <div class="section-header" title="Conservation shading controls" data-section="shade">
+                    <div class="section-header" data-section="shade">
                         <span>Shade</span>
                         <span class="toggle-icon">▼</span>
                     </div>
@@ -98,7 +98,7 @@
                     </div>
                 </div>
                 <div class="menu-section">
-                    <div class="section-header" title="Display and layout options" data-section="display">
+                    <div class="section-header" data-section="display">
                         <span>Display</span>
                         <span class="toggle-icon">▼</span>
                     </div>
@@ -135,7 +135,7 @@
                     </div>
                 </div>
                 <div class="menu-section">
-                    <div class="section-header" title="Consensus sequence settings" data-section="consensus">
+                    <div class="section-header" data-section="consensus">
                         <span>Consensus</span>
                         <span class="toggle-icon">▼</span>
                     </div>
@@ -192,7 +192,7 @@
                     </div>
                 </div>
                 <div class="menu-section">
-                    <div class="section-header" title="Sequence clustering and trimming tools" data-section="clustering">
+                    <div class="section-header" data-section="clustering">
                         <span>Clustering</span>
                         <span class="toggle-icon">▼</span>
                     </div>
@@ -292,7 +292,7 @@
                     </div>
                 </div>
                 <div class="menu-section">
-                    <div class="section-header" title="Search sequences and highlight matches" data-section="search">
+                    <div class="section-header" data-section="search">
                         <span>Search</span>
                         <span class="toggle-icon">▼</span>
                     </div>
@@ -322,7 +322,7 @@
                     </div>
                 </div>
                 <div class="menu-section">
-                    <div class="section-header" title="Color sequence names by pattern or similarity" data-section="colourseqs">
+                    <div class="section-header" data-section="colourseqs">
                         <span>Colour Names</span>
                         <span class="toggle-icon">▼</span>
                     </div>
@@ -387,7 +387,7 @@
                     </div>
                 </div>
                 <div class="menu-section">
-                    <div class="section-header" title="MAFFT alignment tools" data-section="alignment">
+                    <div class="section-header" data-section="alignment">
                         <span>Alignment</span>
                         <span class="toggle-icon">▼</span>
                     </div>
@@ -432,7 +432,7 @@
             </div>
 
             <div class="menu-section side-section" id="actions-section">
-                <div class="section-header" title="Sequence and column actions" data-section="actions">
+                <div class="section-header" data-section="actions">
                     <span>Actions</span>
                     <span class="toggle-icon">▼</span>
                 </div>
