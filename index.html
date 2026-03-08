@@ -31,6 +31,13 @@
                             <button id="clearButton" style="height: 24px; font-size: 12px;" title="Clear the sequence input">Clear</button>
                         </div>
                     </div>
+                    <div id="sshLoadRow" style="display: none; margin-top: 4px;">
+                        <div style="display: flex; gap: 4px; align-items: center;">
+                            <span style="font-size: 11px; color: #666; white-space: nowrap;" title="Paste a file path from your server">Server:</span>
+                            <input type="text" id="sshPathInput" placeholder="/home/copilot/results/file.fas" style="flex: 1; font-size: 11px; padding: 2px 4px; font-family: 'Courier New', monospace; border: 1px solid #ccc; border-radius: 3px;" title="Paste a file path from your Linux server and press Enter">
+                            <button id="sshLoadButton" style="height: 20px; font-size: 10px; white-space: nowrap;" title="Fetch file from server via SSH">Fetch</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 

@@ -82,6 +82,55 @@ function updateVersionIndicator() {
     elVersion.textContent = `commit ${APP_VERSION}`;
 }
 
+// ============ SSH FILE FETCH ============
+let _sshServerAvailable = false;
+
+async function checkSshServer() {
+    try {
+        const resp = await fetch('http://localhost:3000/api/databases', { signal: AbortSignal.timeout(2000) });
+        if (resp.ok) {
+            _sshServerAvailable = true;
+            const row = document.getElementById('sshLoadRow');
+            if (row) row.style.display = '';
+        }
+    } catch (_) {
+        // Server not running — hide SSH row (already hidden by default)
+    }
+}
+
+async function fetchFileFromServer(filePath) {
+    if (!filePath || !filePath.trim()) {
+        showMessage('Enter a file path', 2000);
+        return;
+    }
+    filePath = filePath.trim();
+    const btn = document.getElementById('sshLoadButton');
+    const input = document.getElementById('sshPathInput');
+    if (btn) btn.disabled = true;
+    if (input) input.disabled = true;
+    showMessage(`Fetching ${filePath} from server...`, 0);
+    try {
+        const resp = await fetch(`http://localhost:3000/api/ssh-cat?file=${encodeURIComponent(filePath)}`);
+        const data = await resp.json();
+        if (!resp.ok) {
+            throw new Error(data.error || 'SSH fetch failed');
+        }
+        // Put content into the textarea and parse
+        const fastaInput = document.getElementById('fastaInput');
+        fastaInput.value = data.content;
+        // Extract filename from path
+        const fname = filePath.split('/').pop() || filePath;
+        state.currentFilename = fname;
+        parseAndRender(true);
+        showMessage(`Loaded ${fname} from server`, 3000);
+    } catch (err) {
+        showMessage(`SSH fetch error: ${err.message}`, 5000);
+    } finally {
+        if (btn) btn.disabled = false;
+        if (input) input.disabled = false;
+    }
+}
+
 function _isPointInsideAlignmentContainer(clientX, clientY) {
     const container = document.getElementById('alignmentContainer');
     if (!container) return false;
@@ -5025,6 +5074,24 @@ function initializeAppUI() {
     // This function is called once the DOM is fully loaded.
     
     updateVersionIndicator();
+    checkSshServer();
+
+    // SSH fetch: Enter key and button
+    const sshPathInput = document.getElementById('sshPathInput');
+    const sshLoadButton = document.getElementById('sshLoadButton');
+    if (sshPathInput) {
+        sshPathInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                fetchFileFromServer(sshPathInput.value);
+            }
+        });
+    }
+    if (sshLoadButton) {
+        sshLoadButton.addEventListener('click', () => {
+            fetchFileFromServer(document.getElementById('sshPathInput')?.value);
+        });
+    }
 
     // Initialize source info
     el('sourceInfo').innerHTML = 'No file loaded';
