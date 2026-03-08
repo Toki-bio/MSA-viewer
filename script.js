@@ -72,7 +72,7 @@ function _getDragIndicatorEl() {
     if (indicator) return indicator;
     indicator = document.createElement('div');
     indicator.id = 'drag-name-indicator';
-    indicator.style.cssText = 'position:absolute;height:0;border-top:2px solid #1976D2;pointer-events:none;z-index:200;';
+    indicator.style.cssText = 'position:absolute;height:2px;background:#1976D2;border-radius:2px;pointer-events:none;z-index:200;';
     return indicator;
 }
 
@@ -125,65 +125,9 @@ function _findNearestSequenceLine(clientY) {
     return { line: bestLine, insertAbove };
 }
 
-function _findNearestInsertSlot(clientY) {
-    const container = document.getElementById('alignmentContainer');
-    if (!container) return null;
-    const lines = Array.from(container.querySelectorAll('.seq-line[data-seq-index]'));
-    if (!lines.length) return null;
-
-    const containerRect = container.getBoundingClientRect();
-    const firstNameEl = lines[0].querySelector('.seq-name');
-    if (!firstNameEl) return null;
-    const nameRect = firstNameEl.getBoundingClientRect();
-    const left = Math.round(nameRect.left - containerRect.left + container.scrollLeft + 6);
-    const width = Math.max(8, Math.round(nameRect.width) - 12);
-
-    const slots = [];
-    const firstRect = lines[0].getBoundingClientRect();
-    slots.push({
-        insertIndex: 0,
-        top: Math.round(firstRect.top - containerRect.top + container.scrollTop),
-        left,
-        width
-    });
-
-    for (let i = 1; i < lines.length; i++) {
-        const prevRect = lines[i - 1].getBoundingClientRect();
-        const currRect = lines[i].getBoundingClientRect();
-        slots.push({
-            insertIndex: i,
-            top: Math.round(((prevRect.bottom + currRect.top) / 2) - containerRect.top + container.scrollTop),
-            left,
-            width
-        });
-    }
-
-    const lastRect = lines[lines.length - 1].getBoundingClientRect();
-    slots.push({
-        insertIndex: lines.length,
-        top: Math.round(lastRect.bottom - containerRect.top + container.scrollTop),
-        left,
-        width
-    });
-
-    let bestSlot = slots[0];
-    let bestDist = Infinity;
-    for (const slot of slots) {
-        const screenY = slot.top - container.scrollTop + containerRect.top;
-        const dist = Math.abs(clientY - screenY);
-        if (dist < bestDist) {
-            bestDist = dist;
-            bestSlot = slot;
-        }
-    }
-    return bestSlot;
-}
-
-function _moveDraggedSequences(draggedIndex, insertIndex) {
+function _moveDraggedSequences(draggedIndex, targetIndex, insertAbove) {
     let draggedIndices = _getDraggedIndices(draggedIndex);
-    const firstDragged = draggedIndices[0];
-    const lastDragged = draggedIndices[draggedIndices.length - 1];
-    if (insertIndex >= firstDragged && insertIndex <= lastDragged + 1) return false;
+    if (draggedIndices.includes(targetIndex)) return false;
 
     pushUndo('reorder');
 
@@ -194,9 +138,11 @@ function _moveDraggedSequences(draggedIndex, insertIndex) {
 
     let removedBefore = 0;
     for (const di of draggedIndices) {
-        if (di < insertIndex) removedBefore++;
+        if (di < targetIndex) removedBefore++;
     }
-    const insertAt = insertIndex - removedBefore;
+    targetIndex -= removedBefore;
+
+    const insertAt = insertAbove ? targetIndex : targetIndex + 1;
     state.seqs.splice(insertAt, 0, ...seqsToMove);
 
     state.selectedRows.clear();
@@ -235,23 +181,29 @@ function _handleRowReorderMove(e) {
         _highlightDragSources();
         document.body.classList.add('row-reorder-active');
     }
-    const slot = _findNearestInsertSlot(e.clientY);
-    if (slot) {
-        const cls = `slot-${slot.insertIndex}`;
-        if (_dragPreviewClass !== cls) {
-            _clearDragInsertPreview();
-            const container = document.getElementById('alignmentContainer');
-            if (!container) return;
-            const indicator = _getDragIndicatorEl();
-            container.style.position = 'relative';
-            indicator.style.left = `${slot.left}px`;
-            indicator.style.width = `${slot.width}px`;
-            indicator.style.top = `${slot.top}px`;
-            indicator.style.bottom = 'auto';
-            container.appendChild(indicator);
-            _dragPreviewEl = container;
-            _dragPreviewClass = cls;
-            _dragPreviewInsertAbove = true;
+    const nearest = _findNearestSequenceLine(e.clientY);
+    if (nearest) {
+        const nameEl = nearest.line.querySelector('.seq-name');
+        if (nameEl) {
+            const cls = nearest.insertAbove ? 'drag-insert-above' : 'drag-insert-below';
+            if (_dragPreviewEl !== nameEl || _dragPreviewClass !== cls) {
+                _clearDragInsertPreview();
+                const container = document.getElementById('alignmentContainer');
+                if (!container) return;
+                const containerRect = container.getBoundingClientRect();
+                const nameRect = nameEl.getBoundingClientRect();
+                const lineRect = nearest.line.getBoundingClientRect();
+                const indicator = _getDragIndicatorEl();
+                container.style.position = 'relative';
+                indicator.style.left = `${Math.round(nameRect.left - containerRect.left + container.scrollLeft + 6)}px`;
+                indicator.style.width = `${Math.max(8, Math.round(nameRect.width) - 12)}px`;
+                indicator.style.top = `${Math.round((nearest.insertAbove ? lineRect.top : lineRect.bottom) - containerRect.top + container.scrollTop - 1)}px`;
+                indicator.style.bottom = 'auto';
+                container.appendChild(indicator);
+                _dragPreviewEl = nameEl;
+                _dragPreviewClass = cls;
+                _dragPreviewInsertAbove = nearest.insertAbove;
+            }
         }
     }
     e.preventDefault();
@@ -269,9 +221,12 @@ function _finishRowReorderDrag(e) {
         _draggedSeqIndex = -1;
         return;
     }
-    const slot = _findNearestInsertSlot(e.clientY);
-    if (slot) {
-        _moveDraggedSequences(drag.draggedIndex, slot.insertIndex);
+    const nearest = _findNearestSequenceLine(e.clientY);
+    if (nearest) {
+        const targetIndex = parseInt(nearest.line.dataset.seqIndex);
+        if (!isNaN(targetIndex)) {
+            _moveDraggedSequences(drag.draggedIndex, targetIndex, nearest.insertAbove);
+        }
     }
     _clearDragInsertPreview();
     _clearDragSources();
