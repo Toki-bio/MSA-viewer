@@ -70,7 +70,7 @@ function _getDragIndicatorEl() {
     if (indicator) return indicator;
     indicator = document.createElement('div');
     indicator.id = 'drag-name-indicator';
-    indicator.style.cssText = 'position:absolute;left:6px;right:6px;height:2px;background:#1976D2;border-radius:2px;pointer-events:none;z-index:200;';
+    indicator.style.cssText = 'position:absolute;height:2px;background:#1976D2;pointer-events:none;z-index:200;';
     return indicator;
 }
 
@@ -171,6 +171,7 @@ function _handleRowReorderMove(e) {
         _rowReorderDrag.started = true;
         _draggedSeqIndex = _rowReorderDrag.draggedIndex;
         _highlightDragSources();
+        document.body.classList.add('row-reorder-active');
     }
     const nearest = _findNearestSequenceLine(e.clientY);
     if (nearest) {
@@ -180,9 +181,11 @@ function _handleRowReorderMove(e) {
             if (_dragPreviewEl !== nameEl || _dragPreviewClass !== cls) {
                 _clearDragInsertPreview();
                 const indicator = _getDragIndicatorEl();
-                indicator.style.top = nearest.insertAbove ? '0' : 'auto';
-                indicator.style.bottom = nearest.insertAbove ? 'auto' : '0';
-                nameEl.appendChild(indicator);
+                indicator.style.left = `${nameEl.offsetLeft + 6}px`;
+                indicator.style.width = `${Math.max(8, nameEl.offsetWidth - 12)}px`;
+                indicator.style.top = nearest.insertAbove ? '0px' : 'auto';
+                indicator.style.bottom = nearest.insertAbove ? 'auto' : '0px';
+                nearest.line.appendChild(indicator);
                 _dragPreviewEl = nameEl;
                 _dragPreviewClass = cls;
                 _dragPreviewInsertAbove = nearest.insertAbove;
@@ -197,6 +200,7 @@ function _finishRowReorderDrag(e) {
     const drag = _rowReorderDrag;
     _rowReorderDrag = null;
     document.body.classList.remove('no-select');
+    document.body.classList.remove('row-reorder-active');
     if (!drag.started) {
         _clearDragInsertPreview();
         _clearDragSources();
@@ -259,6 +263,7 @@ function handleDragEnd(e) {
         _clearDragSources();
         _draggedSeqIndex = -1;
         _dragPreviewInsertAbove = true;
+        document.body.classList.remove('row-reorder-active');
     } catch (err) {
         console.warn('dragend error', err);
     }

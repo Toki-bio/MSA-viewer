@@ -679,6 +679,16 @@ input[type="number"] {
     background-color: #f0f0f0;
     color: #000;
 }
+
+body.row-reorder-active .seq-name:hover {
+    background-color: white;
+    color: #333;
+}
+
+body.row-reorder-active .seq-name.drag-source:hover {
+    background: #e3f2fd !important;
+    color: #1565C0 !important;
+}
 .seq-name.selected::before {
     content: '';
     position: absolute;
