@@ -80,10 +80,6 @@ function _showDragInsertPreview(e, lineDiv) {
         indicator = document.createElement('div');
         indicator.id = 'drag-insert-indicator';
         indicator.style.cssText = 'position:absolute;left:0;right:0;height:2px;background:#2196F3;pointer-events:none;z-index:9999;transition:top 0.05s;';
-        const label = document.createElement('span');
-        label.id = 'drag-insert-label';
-        label.style.cssText = 'position:absolute;left:4px;top:-14px;font-size:10px;color:#2196F3;background:white;padding:0 3px;white-space:nowrap;border-radius:2px;box-shadow:0 0 2px rgba(0,0,0,0.2);';
-        indicator.appendChild(label);
     }
     const rect = lineDiv.getBoundingClientRect();
     const container = document.getElementById('alignmentContainer');
@@ -102,18 +98,6 @@ function _showDragInsertPreview(e, lineDiv) {
         : (rect.bottom - containerRect.top + container.scrollTop);
     indicator.style.top = `${yPos}px`;
 
-    // Build label text
-    const targetIdx = parseInt(lineDiv.dataset.seqIndex);
-    const label = document.getElementById('drag-insert-label');
-    if (label && !isNaN(targetIdx)) {
-        const aboveName = insertAbove
-            ? (targetIdx > 0 ? state.seqs[targetIdx - 1]?.header : '(top)')
-            : state.seqs[targetIdx]?.header;
-        const belowName = insertAbove
-            ? state.seqs[targetIdx]?.header
-            : (targetIdx + 1 < state.seqs.length ? state.seqs[targetIdx + 1]?.header : '(bottom)');
-        label.textContent = `↕ insert between: ${aboveName} ⟷ ${belowName}`;
-    }
     indicator.style.display = 'block';
 }
 
@@ -1466,6 +1450,41 @@ function onModeChange() {
     }
     renderAlignment();
     setupHoverMenuReveal();
+}
+
+function setBlockSizeToScreen() {
+    // Estimate how many chars fit in the visible alignment area.
+    // Measure a single nucleotide span if one exists; otherwise approximate
+    // from the container width minus the name column width.
+    const container = document.getElementById('alignmentContainer');
+    if (!container) return;
+    // Try to measure an existing nucleotide span
+    let charPx = 0;
+    const sampleSpan = container.querySelector('.seq-data span[data-pos]');
+    if (sampleSpan) {
+        const r = sampleSpan.getBoundingClientRect();
+        charPx = r.width;
+    }
+    if (!charPx) {
+        // Fallback: use zoom-scaled monospace estimate (10px @ 100%)
+        const zoom = parseInt(el('zoomSlider')?.value || 100) / 100;
+        charPx = 10 * zoom;
+    }
+    // Available width = inner width of the container (excluding names)
+    // Names col is sticky — measure it from the first name span
+    let namePx = 0;
+    const nameSpan = container.querySelector('.seq-name');
+    if (nameSpan) {
+        namePx = nameSpan.getBoundingClientRect().width;
+    }
+    const available = container.clientWidth - namePx - 20; // 20px safety margin
+    const chars = Math.max(40, Math.min(300, Math.floor(available / charPx)));
+    // Update slider and input
+    const slider = el('blockSizeSlider');
+    const input = el('blockSizeInput');
+    if (slider) slider.value = chars;
+    if (input) input.value = chars;
+    renderAlignment();
 }
 function onShadeModeChange() {
     validateThresholds();
@@ -4874,6 +4893,7 @@ function initializeAppUI() {
         'realignSelectedButton': realignSelected,
         'addSequencesButton': openAddSequencesModal,
         'addSeqPlusButton': openAddSequencesModal,
+        'blockSizeScreenBtn': setBlockSizeToScreen,
         'addSeqJustAddButton': addSequencesJustAdd,
         'addSeqSubmitButton': addSequencesAndAlign,
         'addSeqCancelButton': closeAddSequencesModal,
