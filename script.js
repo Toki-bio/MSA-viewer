@@ -887,6 +887,11 @@ function renderAlignment() {
     }
     const coverageMin = clampMinCoverage(el('consensusMinCoverage')?.value) / 100;
     alignmentContainer.innerHTML = '';
+    // Allow drops anywhere in the container (prevents red no-drop cursor in gaps)
+    alignmentContainer.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    });
     state.spanCache = new Map();
     state.domSelectedNucs = new Map();
     state.domSelectedColumns = new Map();
@@ -1138,6 +1143,12 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         _showDragInsertPreview(e, lineDiv);
     });
     lineDiv.addEventListener('drop', handleDrop);
+    lineDiv.addEventListener('dragleave', (e) => {
+        // Only clear if actually leaving this line (not entering a child)
+        if (!lineDiv.contains(e.relatedTarget)) {
+            if (_dragPreviewLine === lineDiv) _clearDragInsertPreview();
+        }
+    });
     lineDiv.appendChild(nameSpan);
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
