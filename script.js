@@ -6,6 +6,8 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
+const APP_VERSION = '__VERSION__';
+
 const state = {
     seqs: [],
     selectedRows: new Set(),
@@ -70,8 +72,14 @@ function _getDragIndicatorEl() {
     if (indicator) return indicator;
     indicator = document.createElement('div');
     indicator.id = 'drag-name-indicator';
-    indicator.style.cssText = 'position:absolute;height:2px;background:#1976D2;pointer-events:none;z-index:200;';
+    indicator.style.cssText = 'position:absolute;height:2px;background:#1976D2;border-radius:2px;pointer-events:none;z-index:200;';
     return indicator;
+}
+
+function updateVersionIndicator() {
+    const elVersion = document.getElementById('versionIndicator');
+    if (!elVersion) return;
+    elVersion.textContent = `commit ${APP_VERSION}`;
 }
 
 function _isPointInsideAlignmentContainer(clientX, clientY) {
@@ -180,12 +188,18 @@ function _handleRowReorderMove(e) {
             const cls = nearest.insertAbove ? 'drag-insert-above' : 'drag-insert-below';
             if (_dragPreviewEl !== nameEl || _dragPreviewClass !== cls) {
                 _clearDragInsertPreview();
+                const container = document.getElementById('alignmentContainer');
+                if (!container) return;
+                const containerRect = container.getBoundingClientRect();
+                const nameRect = nameEl.getBoundingClientRect();
+                const lineRect = nearest.line.getBoundingClientRect();
                 const indicator = _getDragIndicatorEl();
-                indicator.style.left = `${nameEl.offsetLeft + 6}px`;
-                indicator.style.width = `${Math.max(8, nameEl.offsetWidth - 12)}px`;
-                indicator.style.top = nearest.insertAbove ? '0px' : 'auto';
-                indicator.style.bottom = nearest.insertAbove ? 'auto' : '0px';
-                nearest.line.appendChild(indicator);
+                container.style.position = 'relative';
+                indicator.style.left = `${Math.round(nameRect.left - containerRect.left + container.scrollLeft + 6)}px`;
+                indicator.style.width = `${Math.max(8, Math.round(nameRect.width) - 12)}px`;
+                indicator.style.top = `${Math.round((nearest.insertAbove ? lineRect.top : lineRect.bottom) - containerRect.top + container.scrollTop - 1)}px`;
+                indicator.style.bottom = 'auto';
+                container.appendChild(indicator);
                 _dragPreviewEl = nameEl;
                 _dragPreviewClass = cls;
                 _dragPreviewInsertAbove = nearest.insertAbove;
@@ -5016,6 +5030,8 @@ function scheduleNucSelectionRefresh() {
 function initializeAppUI() {
     // This function is called once the DOM is fully loaded.
     
+    updateVersionIndicator();
+
     // Initialize source info
     el('sourceInfo').innerHTML = 'No file loaded';
     
