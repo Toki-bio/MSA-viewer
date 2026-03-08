@@ -567,101 +567,126 @@ app.get('/api/databases', (req, res) => {
     res.json(status);
 });
 
-// ============ SSH FILE FETCH ============
-const SSH_CONFIG = {
-    host: '100.104.25.22',
-    user: 'copilot'
+// ============ SSH MULTI-SERVER FILE FETCH ============
+const SSH_SERVERS = {
+    'copilot':     { label: 'BioServer (copilot)', user: 'copilot', host: '100.104.25.22',         via: null },
+    'monsoon':     { label: 'Monsoon HPC',          user: 'sk4386',  host: 'monsoon.hpc.nau.edu',   via: 'copilot' },
+    'toki-server': { label: 'Toki Server',           user: 'toki',    host: '85.89.102.78',          via: 'copilot' }
 };
 
-app.get('/api/ssh-cat', (req, res) => {
-    const filePath = req.query.file;
-    if (!filePath) {
-        return res.status(400).json({ error: 'Missing "file" query parameter' });
-    }
-    // Basic path validation — block shell injection
-    if (/[;|&`$(){}\\]/.test(filePath)) {
-        return res.status(400).json({ error: 'Invalid characters in file path' });
-    }
+// Keep backwards compat for old ssh-cat calls without ?server=
+const SSH_CONFIG = SSH_SERVERS['copilot'];
 
-    const sshArgs = [
-        '-T',
-        '-o', 'StrictHostKeyChecking=accept-new',
-        '-o', 'ConnectTimeout=5',
-        '-o', 'BatchMode=yes',
-        `${SSH_CONFIG.user}@${SSH_CONFIG.host}`,
-        `cat "${filePath}"`
-    ];
+// Queue for push-to-load from MC on remote servers
+let _queuedFile = null; // { server, file, ts }
+
+// Build ssh arg array for a given server; routes through 'via' server when needed
+function buildSshCatArgs(serverKey, filePath) {
+    const srv = SSH_SERVERS[serverKey];
+    if (!srv) return null;
+    const escaped = filePath.replace(/"/g, '\\"');
+    if (!srv.via) {
+        return ['-T', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10',
+                '-o', 'BatchMode=yes', `${srv.user}@${srv.host}`, `cat "${escaped}"`];
+    }
+    // Route through jump server: local → via → target
+    const via = SSH_SERVERS[srv.via];
+    const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ${srv.user}@${srv.host} "cat \\"${escaped}\\""`;
+    return ['-T', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10',
+            '-o', 'BatchMode=yes', `${via.user}@${via.host}`, innerCmd];
+}
+
+function stripBanner(stdout) {
+    const fastaStart = stdout.indexOf('>');
+    const msfStart   = stdout.indexOf('!!');
+    if (fastaStart > 0 && (msfStart < 0 || fastaStart < msfStart)) return stdout.substring(fastaStart);
+    if (msfStart > 0) return stdout.substring(msfStart);
+    return stdout;
+}
+
+// List available servers
+app.get('/api/ssh-servers', (req, res) => {
+    const result = {};
+    for (const [key, srv] of Object.entries(SSH_SERVERS)) {
+        result[key] = { label: srv.label };
+    }
+    res.json(result);
+});
+
+// Queue a file to auto-load (called from MC via curl)
+app.get('/api/queue-file', (req, res) => {
+    const serverKey = req.query.server;
+    const filePath  = req.query.file;
+    if (!filePath)  return res.status(400).json({ error: 'Missing file' });
+    if (!serverKey || !SSH_SERVERS[serverKey]) return res.status(400).json({ error: 'Unknown server' });
+    if (/[;|&`$(){}\\]/.test(filePath)) return res.status(400).json({ error: 'Invalid path' });
+    _queuedFile = { server: serverKey, file: filePath, ts: Date.now() };
+    console.log(`Queued: [${serverKey}] ${filePath}`);
+    res.json({ ok: true });
+});
+
+// Viewer polls this; returns queued file and clears it
+app.get('/api/poll-file', (req, res) => {
+    if (!_queuedFile) return res.json({ queued: false });
+    const qf = _queuedFile;
+    _queuedFile = null;
+    res.json({ queued: true, server: qf.server, file: qf.file });
+});
+
+app.get('/api/ssh-cat', (req, res) => {
+    const filePath  = req.query.file;
+    const serverKey = req.query.server || 'copilot';
+    if (!filePath)  return res.status(400).json({ error: 'Missing "file" query parameter' });
+    if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
+    if (/[;|&`$(){}\\]/.test(filePath)) return res.status(400).json({ error: 'Invalid characters in file path' });
+
+    const sshArgs = buildSshCatArgs(serverKey, filePath);
+    if (!sshArgs) return res.status(400).json({ error: 'Bad server config' });
 
     const child = spawn('ssh', sshArgs, { timeout: 30000 });
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', (data) => { stdout += data.toString(); });
-    child.stderr.on('data', (data) => { stderr += data.toString(); });
-
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
     child.on('close', (code) => {
-        if (code !== 0) {
-            const msg = stderr.trim() || `SSH exited with code ${code}`;
-            return res.status(500).json({ error: msg });
-        }
-        if (!stdout.trim()) {
-            return res.status(404).json({ error: 'File is empty or not found' });
-        }
-        // Strip any MOTD/banner before the actual file content
-        // For FASTA: starts with >.  For MSF: starts with !! or PileUp or spaces.
-        let content = stdout;
-        const fastaStart = content.indexOf('>');
-        const msfStart = content.indexOf('!!');
-        if (fastaStart > 0 && (msfStart < 0 || fastaStart < msfStart)) {
-            content = content.substring(fastaStart);
-        } else if (msfStart > 0) {
-            content = content.substring(msfStart);
-        }
-        res.json({ content, file: filePath });
+        if (code !== 0) return res.status(500).json({ error: stderr.trim() || `SSH exited with code ${code}` });
+        if (!stdout.trim()) return res.status(404).json({ error: 'File is empty or not found' });
+        res.json({ content: stripBanner(stdout), file: filePath, server: serverKey });
     });
-
-    child.on('error', (err) => {
-        res.status(500).json({ error: `SSH failed: ${err.message}` });
-    });
+    child.on('error', (err) => res.status(500).json({ error: `SSH failed: ${err.message}` }));
 });
 
 // List remote directory
 app.get('/api/ssh-ls', (req, res) => {
-    const dirPath = req.query.dir || '~';
-    if (/[;|&`$(){}\\]/.test(dirPath)) {
-        return res.status(400).json({ error: 'Invalid characters in path' });
+    const dirPath   = req.query.dir || '~';
+    const serverKey = req.query.server || 'copilot';
+    if (/[;|&`$(){}\\]/.test(dirPath)) return res.status(400).json({ error: 'Invalid characters in path' });
+    if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
+
+    const escaped   = dirPath.replace(/"/g, '\\"');
+    const baseArgs  = ['-T', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes'];
+    const srv       = SSH_SERVERS[serverKey];
+    let sshArgs;
+    if (!srv.via) {
+        sshArgs = [...baseArgs, `${srv.user}@${srv.host}`, `ls -1p "${escaped}"`];
+    } else {
+        const via = SSH_SERVERS[srv.via];
+        const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${srv.user}@${srv.host} "ls -1p \\"${escaped}\\""`;
+        sshArgs = [...baseArgs, `${via.user}@${via.host}`, innerCmd];
     }
 
-    const sshArgs = [
-        '-T',
-        '-o', 'StrictHostKeyChecking=accept-new',
-        '-o', 'ConnectTimeout=5',
-        '-o', 'BatchMode=yes',
-        `${SSH_CONFIG.user}@${SSH_CONFIG.host}`,
-        `ls -1p "${dirPath}"`
-    ];
-
     const child = spawn('ssh', sshArgs, { timeout: 10000 });
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', (data) => { stdout += data.toString(); });
-    child.stderr.on('data', (data) => { stderr += data.toString(); });
-
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
     child.on('close', (code) => {
-        if (code !== 0) {
-            return res.status(500).json({ error: stderr.trim() || `ls failed with code ${code}` });
-        }
+        if (code !== 0) return res.status(500).json({ error: stderr.trim() || `ls failed` });
         const entries = stdout.trim().split('\n').filter(Boolean);
         res.json({ dir: dirPath, entries });
     });
-
-    child.on('error', (err) => {
-        res.status(500).json({ error: `SSH failed: ${err.message}` });
-    });
+    child.on('error', (err) => res.status(500).json({ error: `SSH failed: ${err.message}` }));
 });
 
-app.listen(PORT, () => {
-    console.log(`MSA Viewer BLAST Server running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`MSA Viewer server running on http://localhost:${PORT}  (also on Tailscale 100.78.77.10:${PORT})`);
     loadDbCache();
 });

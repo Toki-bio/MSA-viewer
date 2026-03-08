@@ -6,7 +6,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = 'ba7b8a9';
+const APP_VERSION = 'multi-srv';
 
 const state = {
     seqs: [],
@@ -84,6 +84,7 @@ function updateVersionIndicator() {
 
 // ============ SSH FILE FETCH ============
 let _sshServerAvailable = false;
+let _sshPollInterval = null;
 
 async function checkSshServer() {
     try {
@@ -92,37 +93,55 @@ async function checkSshServer() {
             _sshServerAvailable = true;
             const row = document.getElementById('sshLoadRow');
             if (row) row.style.display = '';
+            // Start polling for push-to-load from MC
+            if (!_sshPollInterval) {
+                _sshPollInterval = setInterval(_pollQueuedFile, 2000);
+            }
         }
     } catch (_) {
         // Server not running — hide SSH row (already hidden by default)
     }
 }
 
-async function fetchFileFromServer(filePath) {
+async function _pollQueuedFile() {
+    try {
+        const resp = await fetch('http://localhost:3000/api/poll-file', { signal: AbortSignal.timeout(1500) });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.queued) return;
+        // Switch the server selector to match
+        const sel = document.getElementById('sshServerSelect');
+        if (sel && data.server) sel.value = data.server;
+        // Load the file
+        await fetchFileFromServer(data.file, data.server);
+    } catch (_) { /* silently ignore poll errors */ }
+}
+
+async function fetchFileFromServer(filePath, serverKey) {
     if (!filePath || !filePath.trim()) {
         showMessage('Enter a file path', 2000);
         return;
     }
     filePath = filePath.trim();
+    serverKey = serverKey || document.getElementById('sshServerSelect')?.value || 'copilot';
     const btn = document.getElementById('sshLoadButton');
     const input = document.getElementById('sshPathInput');
     if (btn) btn.disabled = true;
     if (input) input.disabled = true;
-    showMessage(`Fetching ${filePath} from server...`, 0);
+    showMessage(`Fetching ${filePath.split('/').pop()} from ${serverKey}...`, 0);
     try {
-        const resp = await fetch(`http://localhost:3000/api/ssh-cat?file=${encodeURIComponent(filePath)}`);
+        const url = `http://localhost:3000/api/ssh-cat?file=${encodeURIComponent(filePath)}&server=${encodeURIComponent(serverKey)}`;
+        const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok) {
             throw new Error(data.error || 'SSH fetch failed');
         }
-        // Put content into the textarea and parse
-        const fastaInput = document.getElementById('fastaInput');
-        fastaInput.value = data.content;
-        // Extract filename from path
+        const fastaInputEl = document.getElementById('fastaInput');
+        fastaInputEl.value = data.content;
         const fname = filePath.split('/').pop() || filePath;
         state.currentFilename = fname;
         parseAndRender(true);
-        showMessage(`Loaded ${fname} from server`, 3000);
+        showMessage(`Loaded ${fname} from ${serverKey}`, 3000);
     } catch (err) {
         showMessage(`SSH fetch error: ${err.message}`, 5000);
     } finally {
@@ -5083,13 +5102,15 @@ function initializeAppUI() {
         sshPathInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                fetchFileFromServer(sshPathInput.value);
+                const serverKey = document.getElementById('sshServerSelect')?.value || 'copilot';
+                fetchFileFromServer(sshPathInput.value, serverKey);
             }
         });
     }
     if (sshLoadButton) {
         sshLoadButton.addEventListener('click', () => {
-            fetchFileFromServer(document.getElementById('sshPathInput')?.value);
+            const serverKey = document.getElementById('sshServerSelect')?.value || 'copilot';
+            fetchFileFromServer(document.getElementById('sshPathInput')?.value, serverKey);
         });
     }
 
