@@ -137,13 +137,13 @@
 
 /* Prevent side-section headers from stretching full width */
 .side-section .section-header {
-    display: inline-block;
+    display: inline-flex;
     width: auto;
 }
 
 /* Ensure all menu headers are inline so they don't stretch full width */
 .menu-section .section-header {
-    display: inline-block;
+    display: inline-flex;
     width: auto;
 }
 
@@ -632,6 +632,36 @@ input[type="number"] {
     background-color: rgba(255, 215, 0, 0.2);
     outline: 2px solid rgba(255, 215, 0, 0.5);
     outline-offset: -1px;
+}
+
+/* Drag reorder: gap + black line between sequences */
+.seq-line.drag-insert-above {
+    margin-top: 4px;
+}
+.seq-line.drag-insert-above::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -3px;
+    height: 2px;
+    background: #000;
+    z-index: 100;
+    pointer-events: none;
+}
+.seq-line.drag-insert-below {
+    margin-bottom: 4px;
+}
+.seq-line.drag-insert-below::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -3px;
+    height: 2px;
+    background: #000;
+    z-index: 100;
+    pointer-events: none;
 }
 .seq-name {
     flex: 0 0 auto;
