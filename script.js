@@ -58,7 +58,14 @@ function handleDragStart(e) {
         if (seqIndex === undefined || seqIndex === null) return;
         e.dataTransfer.setData('draggedSequenceIndex', String(seqIndex));
         e.dataTransfer.effectAllowed = 'move';
-        nameEl.classList.add('dragging');
+        // Create a clean drag ghost: small solid label, no transparency
+        const ghost = document.createElement('div');
+        ghost.textContent = state.seqs[parseInt(seqIndex)]?.header || 'seq';
+        ghost.style.cssText = 'position:absolute;top:-9999px;left:-9999px;padding:2px 8px;background:#2196F3;color:white;font:bold 11px monospace;border-radius:3px;white-space:nowrap;opacity:1;';
+        document.body.appendChild(ghost);
+        e.dataTransfer.setDragImage(ghost, 0, 0);
+        // Clean up the ghost element after a tick
+        setTimeout(() => document.body.removeChild(ghost), 0);
     } catch (err) {
         console.warn('dragstart error', err);
     }
@@ -66,8 +73,6 @@ function handleDragStart(e) {
 
 function handleDragEnd(e) {
     try {
-        const nameEl = e.target?.closest('.seq-name');
-        if (nameEl) nameEl.classList.remove('dragging');
         _clearDragInsertPreview();
     } catch (err) {
         console.warn('dragend error', err);
@@ -79,7 +84,7 @@ function _showDragInsertPreview(e, lineDiv) {
     if (!indicator) {
         indicator = document.createElement('div');
         indicator.id = 'drag-insert-indicator';
-        indicator.style.cssText = 'position:absolute;left:0;right:0;height:2px;background:#2196F3;pointer-events:none;z-index:9999;transition:top 0.05s;';
+        indicator.style.cssText = 'position:absolute;left:0;right:0;height:3px;background:#2196F3;pointer-events:none;z-index:9999;box-shadow:0 0 0 1px rgba(33,150,243,0.5);';
     }
     const rect = lineDiv.getBoundingClientRect();
     const container = document.getElementById('alignmentContainer');
@@ -88,16 +93,18 @@ function _showDragInsertPreview(e, lineDiv) {
     const midY = rect.top + rect.height / 2;
     const insertAbove = e.clientY < midY;
 
-    // Position in the container
     if (!indicator.parentNode || indicator.parentNode !== container) {
         container.style.position = 'relative';
         container.appendChild(indicator);
     }
+    // Snap to exact pixel boundary between lines
     const yPos = insertAbove
-        ? (rect.top - containerRect.top + container.scrollTop)
-        : (rect.bottom - containerRect.top + container.scrollTop);
+        ? Math.round(rect.top - containerRect.top + container.scrollTop - 1)
+        : Math.round(rect.bottom - containerRect.top + container.scrollTop - 1);
     indicator.style.top = `${yPos}px`;
-
+    // Store insertion info for handleDrop
+    indicator.dataset.insertAbove = insertAbove ? '1' : '0';
+    indicator.dataset.targetIndex = lineDiv.dataset.seqIndex;
     indicator.style.display = 'block';
 }
 
@@ -125,19 +132,26 @@ window.handleDrop = function(e) {
         const targetIndexStr = targetLine.dataset.seqIndex;
         if (!targetIndexStr) return;
         
-        const targetIndex = parseInt(targetIndexStr);
+        let targetIndex = parseInt(targetIndexStr);
         if (isNaN(targetIndex) || draggedIndex === targetIndex) return;
+
+        // Determine above/below from the indicator data or mouse position
+        const rect = targetLine.getBoundingClientRect();
+        const insertAbove = e.clientY < (rect.top + rect.height / 2);
         
         // Save undo BEFORE mutation
         pushUndo('reorder');
         
-        // Reorder the sequences
-        const seq = state.seqs[draggedIndex];
-        state.seqs.splice(draggedIndex, 1);
-        state.seqs.splice(targetIndex, 0, seq);
+        // Remove the dragged sequence
+        const seq = state.seqs.splice(draggedIndex, 1)[0];
+        // Adjust target index after removal
+        if (draggedIndex < targetIndex) targetIndex--;
+        // Insert at the correct position
+        const insertAt = insertAbove ? targetIndex : targetIndex + 1;
+        state.seqs.splice(insertAt, 0, seq);
         
         renderAlignment();
-        showMessage(`Sequence moved to position ${targetIndex + 1}!`, 2000);
+        showMessage(`Sequence moved to position ${insertAt + 1}!`, 2000);
     } catch (err) {
         console.warn('drop error', err);
     }
