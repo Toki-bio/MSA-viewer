@@ -51,7 +51,7 @@ const state = {
 
 let _dragPreviewEl = null;
 let _dragPreviewClass = '';
-let _dragLastY = -1;
+let _draggedSeqIndex = -1;
 
 function handleDragStart(e) {
     try {
@@ -60,37 +60,78 @@ function handleDragStart(e) {
         if (!nameEl) return;
         const seqIndex = nameEl.dataset.seqIndex;
         if (seqIndex === undefined || seqIndex === null) return;
-        e.dataTransfer.setData('draggedSequenceIndex', String(seqIndex));
+        _draggedSeqIndex = parseInt(seqIndex);
+        e.dataTransfer.setData('text/plain', String(seqIndex));
         e.dataTransfer.effectAllowed = 'move';
-        // Fully transparent 1x1 image — no ghost, no rectangle, no tooltip
-        const img = new Image();
-        img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-        e.dataTransfer.setDragImage(img, 0, 0);
-        _dragLastY = -1;
+        // Fully transparent drag image via canvas
+        const c = document.createElement('canvas');
+        c.width = 1; c.height = 1;
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0, 0, 1, 1);
+        e.dataTransfer.setDragImage(c, 0, 0);
+        // Highlight dragged sequence(s)
+        _highlightDragSources();
     } catch (err) {
         console.warn('dragstart error', err);
     }
 }
 
+function _highlightDragSources() {
+    // Determine which sequences are being dragged
+    const indices = (state.selectedRows.size > 1 && state.selectedRows.has(_draggedSeqIndex))
+        ? state.selectedRows
+        : new Set([_draggedSeqIndex]);
+    document.querySelectorAll('.seq-name').forEach(el => {
+        const idx = parseInt(el.dataset.seqIndex);
+        if (!isNaN(idx) && indices.has(idx)) {
+            el.classList.add('drag-source');
+        }
+    });
+}
+
+function _clearDragSources() {
+    document.querySelectorAll('.seq-name.drag-source').forEach(el => {
+        el.classList.remove('drag-source');
+    });
+}
+
 function handleDragEnd(e) {
     try {
         _clearDragInsertPreview();
-        _dragLastY = -1;
+        _clearDragSources();
+        _draggedSeqIndex = -1;
     } catch (err) {
         console.warn('dragend error', err);
     }
 }
 
-function _showDragInsertPreview(e, lineDiv) {
-    // Throttle: skip if cursor barely moved (within 2px)
-    if (Math.abs(e.clientY - _dragLastY) < 2) return;
-    _dragLastY = e.clientY;
-
-    const nameEl = lineDiv.querySelector('.seq-name');
+function _showDragInsertPreview(e, container) {
+    // Find the closest seq-line to the cursor
+    const lines = container.querySelectorAll('.seq-line[data-seq-index]');
+    if (!lines.length) return;
+    
+    let bestLine = null;
+    let bestDist = Infinity;
+    let insertAbove = true;
+    
+    for (const line of lines) {
+        const rect = line.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const dist = Math.abs(e.clientY - midY);
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestLine = line;
+            insertAbove = e.clientY < midY;
+        }
+    }
+    if (!bestLine) return;
+    
+    // Skip consensus lines and scale lines
+    if (bestLine.classList.contains('consensus-line') || bestLine.classList.contains('scale-ruler-line')) return;
+    
+    const nameEl = bestLine.querySelector('.seq-name');
     if (!nameEl) return;
-    const rect = lineDiv.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    const insertAbove = e.clientY < midY;
+    
     const cls = insertAbove ? 'drag-insert-above' : 'drag-insert-below';
     // Skip if same element + same side
     if (_dragPreviewEl === nameEl && _dragPreviewClass === cls) return;
@@ -118,19 +159,34 @@ window.handleDrop = function(e) {
     const insertAbove = _dragPreviewClass === 'drag-insert-above';
     const previewNameEl = _dragPreviewEl;
     _clearDragInsertPreview();
+    _clearDragSources();
     
     try {
-        const draggedIndexStr = e.dataTransfer?.getData('draggedSequenceIndex');
-        if (!draggedIndexStr) return;
+        const draggedIndex = _draggedSeqIndex;
+        _draggedSeqIndex = -1;
+        if (draggedIndex < 0) return;
         
-        const draggedIndex = parseInt(draggedIndexStr);
-        if (isNaN(draggedIndex) || draggedIndex < 0) return;
-        
-        // Find target line from the preview element or event
-        const targetLine = previewNameEl
+        // Find target line from last preview or nearest line
+        let targetLine = previewNameEl
             ? previewNameEl.closest('.seq-line')
             : e.target?.closest('.seq-line');
-        if (!targetLine || targetLine.classList.contains('consensus-line')) return;
+        
+        // If dropped on a non-seq area, find the nearest seq-line
+        if (!targetLine || targetLine.classList.contains('consensus-line') || targetLine.classList.contains('scale-ruler-line')) {
+            const container = document.getElementById('alignmentContainer');
+            if (!container) return;
+            const lines = container.querySelectorAll('.seq-line[data-seq-index]');
+            let bestLine = null;
+            let bestDist = Infinity;
+            for (const line of lines) {
+                const rect = line.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                const dist = Math.abs(e.clientY - midY);
+                if (dist < bestDist) { bestDist = dist; bestLine = line; }
+            }
+            targetLine = bestLine;
+        }
+        if (!targetLine) return;
         
         const targetIndexStr = targetLine.dataset.seqIndex;
         if (!targetIndexStr) return;
@@ -924,11 +980,18 @@ function renderAlignment() {
     }
     const coverageMin = clampMinCoverage(el('consensusMinCoverage')?.value) / 100;
     alignmentContainer.innerHTML = '';
-    // Allow drops anywhere in the container (prevents red no-drop cursor in gaps)
-    alignmentContainer.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-    });
+    // Container-level drag handlers: allow drops anywhere, show preview
+    // Remove old handlers first to avoid stacking
+    if (!alignmentContainer._dragHandlersSet) {
+        alignmentContainer.addEventListener('dragover', (e) => {
+            if (_draggedSeqIndex < 0) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            _showDragInsertPreview(e, alignmentContainer);
+        });
+        alignmentContainer.addEventListener('drop', handleDrop);
+        alignmentContainer._dragHandlersSet = true;
+    }
     state.spanCache = new Map();
     state.domSelectedNucs = new Map();
     state.domSelectedColumns = new Map();
@@ -1172,11 +1235,6 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
             }
         };
         setTimeout(() => document.addEventListener('click', handleOutsideClick), 0);
-    });
-    lineDiv.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        _showDragInsertPreview(e, lineDiv);
     });
     lineDiv.addEventListener('drop', handleDrop);
     lineDiv.appendChild(nameSpan);

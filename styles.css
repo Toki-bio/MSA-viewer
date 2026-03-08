@@ -641,6 +641,11 @@ input[type="number"] {
 .seq-name.drag-insert-below {
     box-shadow: 0 2px 0 0 #1976D2;
 }
+/* Highlight the sequence(s) being dragged */
+.seq-name.drag-source {
+    background: #e3f2fd !important;
+    color: #1565C0 !important;
+}
 .seq-name {
     flex: 0 0 auto;
     min-width: calc(var(--nameLen) * 1ch + 16px);
@@ -664,7 +669,7 @@ input[type="number"] {
     -moz-user-select: none;
     -webkit-user-select: none;
     -ms-user-select: none;
-    contain: layout;
+    contain: style;
     line-height: 1.0;
 }
 .seq-name.static {
