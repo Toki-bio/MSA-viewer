@@ -16,10 +16,7 @@
             <!-- ACTUAL BUTTONS -->
             <div class="menu-section side-section" id="input-section">
                 <div class="section-header" title="File input and loading controls" data-section="input">
-                        <span style="display:inline-flex; align-items:center; gap:6px;">
-                            <span>Input</span>
-                            <button id="addSeqPlusButton" title="Add sequence(s) to alignment" style="padding: 0 6px; font-size: 14px; font-weight: bold; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; border-radius: 3px; min-width: 18px;">+</button>
-                        </span>
+                        <span>Input</span>
                         <span class="toggle-icon">▼</span>
                     </div>
                 <div class="control-group" id="input-controls">
@@ -36,7 +33,7 @@
                 </div>
             </div>
 
-            <!-- '+' moved into Input header; placeholder removed -->
+            <button id="addSeqPlusButton" title="Add sequence(s) to alignment" style="margin-left: 6px; padding: 0 6px; font-size: 14px; font-weight: bold; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; border-radius: 3px; min-width: 18px;">+</button>
             <div class="undo-redo-bar" style="display: inline-flex; gap: 1px; vertical-align: middle; margin-left: 10px;">
                 <button id="undoButton" title="Undo (Ctrl+Z)" style="padding: 0 3px; font-size: 12px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; border-radius: 3px 0 0 3px; min-width: 18px;">↩</button>
                 <button id="undoDropdownBtn" title="Undo history" style="padding: 0 2px; font-size: 8px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; border-left: none; background: #f0f0f0; min-width: 10px;">▼</button>
@@ -487,13 +484,7 @@
                     </div>
                 </div>
             </div>
-        </div>
-        
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; font-size: 12px; color: #555;">
-            <div style="text-align: left; flex: 1;">
-                
-            </div>
-            <div id="sourceInfo" style="text-align: right; white-space: nowrap; font-size: 14px; color: #666; margin-left: 12px;">No file loaded</div>
+            <div id="sourceInfo" style="margin-left: auto; text-align: right; white-space: nowrap; font-size: 14px; color: #666; padding-right: 6px;">No file loaded</div>
         </div>
     </div>
     
