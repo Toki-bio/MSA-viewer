@@ -54,6 +54,7 @@ let _dragPreviewClass = '';
 let _draggedSeqIndex = -1;
 let _dragPreviewInsertAbove = true;
 let _dragImageEl = null;
+let _rowReorderDrag = null;
 
 function _getDragImageEl() {
     if (_dragImageEl && _dragImageEl.isConnected) return _dragImageEl;
@@ -69,7 +70,7 @@ function _getDragIndicatorEl() {
     if (indicator) return indicator;
     indicator = document.createElement('div');
     indicator.id = 'drag-name-indicator';
-    indicator.style.cssText = 'position:absolute;left:0;right:0;height:2px;background:#1976D2;pointer-events:none;z-index:200;';
+    indicator.style.cssText = 'position:absolute;left:6px;right:6px;height:2px;background:#1976D2;border-radius:2px;pointer-events:none;z-index:200;';
     return indicator;
 }
 
@@ -87,8 +88,136 @@ function _handleInternalDragEnterOver(e) {
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 }
 
+function _getDraggedIndices(draggedIndex) {
+    if (state.selectedRows.size > 1 && state.selectedRows.has(draggedIndex)) {
+        return Array.from(state.selectedRows).sort((a, b) => a - b);
+    }
+    return [draggedIndex];
+}
+
+function _findNearestSequenceLine(clientY) {
+    const container = document.getElementById('alignmentContainer');
+    if (!container) return null;
+    const lines = container.querySelectorAll('.seq-line[data-seq-index]');
+    if (!lines.length) return null;
+    let bestLine = null;
+    let bestDist = Infinity;
+    let insertAbove = true;
+    for (const line of lines) {
+        const rect = line.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const dist = Math.abs(clientY - midY);
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestLine = line;
+            insertAbove = clientY < midY;
+        }
+    }
+    if (!bestLine) return null;
+    return { line: bestLine, insertAbove };
+}
+
+function _moveDraggedSequences(draggedIndex, targetIndex, insertAbove) {
+    let draggedIndices = _getDraggedIndices(draggedIndex);
+    if (draggedIndices.includes(targetIndex)) return false;
+
+    pushUndo('reorder');
+
+    const seqsToMove = [];
+    for (let i = draggedIndices.length - 1; i >= 0; i--) {
+        seqsToMove.unshift(state.seqs.splice(draggedIndices[i], 1)[0]);
+    }
+
+    let removedBefore = 0;
+    for (const di of draggedIndices) {
+        if (di < targetIndex) removedBefore++;
+    }
+    targetIndex -= removedBefore;
+
+    const insertAt = insertAbove ? targetIndex : targetIndex + 1;
+    state.seqs.splice(insertAt, 0, ...seqsToMove);
+
+    state.selectedRows.clear();
+    for (let i = 0; i < seqsToMove.length; i++) {
+        state.selectedRows.add(insertAt + i);
+    }
+
+    renderAlignment();
+    updateRowSelections();
+    if (seqsToMove.length === 1) {
+        showMessage(`"${seqsToMove[0].header}" moved to position ${insertAt + 1}`, 2000);
+    } else {
+        showMessage(`${seqsToMove.length} sequences moved to position ${insertAt + 1}`, 2000);
+    }
+    return true;
+}
+
+function _startRowReorderDrag(e, index) {
+    _rowReorderDrag = {
+        startX: e.clientX,
+        startY: e.clientY,
+        draggedIndex: index,
+        started: false
+    };
+    document.body.classList.add('no-select');
+}
+
+function _handleRowReorderMove(e) {
+    if (!_rowReorderDrag) return;
+    const dx = e.clientX - _rowReorderDrag.startX;
+    const dy = e.clientY - _rowReorderDrag.startY;
+    if (!_rowReorderDrag.started) {
+        if ((dx * dx + dy * dy) < 16) return;
+        _rowReorderDrag.started = true;
+        _draggedSeqIndex = _rowReorderDrag.draggedIndex;
+        _highlightDragSources();
+    }
+    const nearest = _findNearestSequenceLine(e.clientY);
+    if (nearest) {
+        const nameEl = nearest.line.querySelector('.seq-name');
+        if (nameEl) {
+            const cls = nearest.insertAbove ? 'drag-insert-above' : 'drag-insert-below';
+            if (_dragPreviewEl !== nameEl || _dragPreviewClass !== cls) {
+                _clearDragInsertPreview();
+                const indicator = _getDragIndicatorEl();
+                indicator.style.top = nearest.insertAbove ? '0' : 'auto';
+                indicator.style.bottom = nearest.insertAbove ? 'auto' : '0';
+                nameEl.appendChild(indicator);
+                _dragPreviewEl = nameEl;
+                _dragPreviewClass = cls;
+                _dragPreviewInsertAbove = nearest.insertAbove;
+            }
+        }
+    }
+    e.preventDefault();
+}
+
+function _finishRowReorderDrag(e) {
+    if (!_rowReorderDrag) return;
+    const drag = _rowReorderDrag;
+    _rowReorderDrag = null;
+    document.body.classList.remove('no-select');
+    if (!drag.started) {
+        _clearDragInsertPreview();
+        _clearDragSources();
+        _draggedSeqIndex = -1;
+        return;
+    }
+    const nearest = _findNearestSequenceLine(e.clientY);
+    if (nearest) {
+        const targetIndex = parseInt(nearest.line.dataset.seqIndex);
+        if (!isNaN(targetIndex)) {
+            _moveDraggedSequences(drag.draggedIndex, targetIndex, nearest.insertAbove);
+        }
+    }
+    _clearDragInsertPreview();
+    _clearDragSources();
+    _draggedSeqIndex = -1;
+}
+
 function handleDragStart(e) {
     try {
+        e.preventDefault();
         if (!e || !e.dataTransfer) return;
         const nameEl = e.target?.closest('.seq-name');
         if (!nameEl) return;
@@ -229,49 +358,7 @@ window.handleDrop = function(e) {
         let targetIndex = parseInt(targetIndexStr);
         if (isNaN(targetIndex)) return;
 
-        // Determine which sequences to move:
-        // If multiple rows are selected AND the dragged seq is among them, move all selected.
-        // Otherwise just move the single dragged sequence.
-        let draggedIndices;
-        if (state.selectedRows.size > 1 && state.selectedRows.has(draggedIndex)) {
-            draggedIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
-        } else {
-            draggedIndices = [draggedIndex];
-        }
-        
-        // Don't drop onto one of the dragged sequences
-        if (draggedIndices.includes(targetIndex)) return;
-        
-        // Save undo BEFORE mutation
-        pushUndo('reorder');
-        
-        // Extract dragged sequences (from high index to low to preserve indices)
-        const seqsToMove = [];
-        for (let i = draggedIndices.length - 1; i >= 0; i--) {
-            seqsToMove.unshift(state.seqs.splice(draggedIndices[i], 1)[0]);
-        }
-        
-        // Find new target index (it may have shifted after removals)
-        // Count how many dragged items were before the original targetIndex
-        let removedBefore = 0;
-        for (const di of draggedIndices) {
-            if (di < targetIndex) removedBefore++;
-        }
-        targetIndex -= removedBefore;
-        
-        // Insert at the correct position
-        const insertAt = insertAbove ? targetIndex : targetIndex + 1;
-        state.seqs.splice(insertAt, 0, ...seqsToMove);
-        
-        // Clear row selection after move
-        state.selectedRows.clear();
-        
-        renderAlignment();
-        if (seqsToMove.length === 1) {
-            showMessage(`"${seqsToMove[0].header}" moved to position ${insertAt + 1}`, 2000);
-        } else {
-            showMessage(`${seqsToMove.length} sequences moved to position ${insertAt + 1}`, 2000);
-        }
+        _moveDraggedSequences(draggedIndex, targetIndex, insertAbove);
     } catch (err) {
         console.warn('drop error', err);
     }
@@ -1212,15 +1299,19 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         nameSpan.textContent = displayName;
         nameSpan.title = `${displayName} (length: ${state.seqs[index].seq.length})`;
     }
-    nameSpan.draggable = true;
-    nameSpan.addEventListener('dragstart', handleDragStart);
-    nameSpan.addEventListener('dragend', handleDragEnd);
+    nameSpan.draggable = false;
     // Extra reliability: direct ctrl/meta click handler for sequence selection.
     // Using mousedown to precede potential drag initiation; stops propagation so global handler won't double toggle.
     nameSpan.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
         if (e.ctrlKey || e.metaKey || state.ctrlPressed) {
             toggleRowSelection(index);
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+        if (!e.shiftKey && !e.altKey) {
+            _startRowReorderDrag(e, index);
             e.preventDefault();
             e.stopPropagation();
         }
@@ -5394,7 +5485,9 @@ function attachUIListeners() {
 
     document.addEventListener('mouseup', handleMouseUp);
     document.addEventListener('mouseup', handleAlignmentPanEnd);
+    document.addEventListener('mouseup', _finishRowReorderDrag);
     document.addEventListener('mousemove', handleAlignmentPanMove);
+    document.addEventListener('mousemove', _handleRowReorderMove);
     document.addEventListener('contextmenu', handleAlignmentPanContextMenu, true);
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
