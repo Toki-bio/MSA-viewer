@@ -49,6 +49,9 @@ const state = {
     groupConsensusCount: 0
 };
 
+let _dragPreviewLine = null;
+let _dragPreviewClass = '';
+
 function handleDragStart(e) {
     try {
         if (!e || !e.dataTransfer) return;
@@ -58,14 +61,11 @@ function handleDragStart(e) {
         if (seqIndex === undefined || seqIndex === null) return;
         e.dataTransfer.setData('draggedSequenceIndex', String(seqIndex));
         e.dataTransfer.effectAllowed = 'move';
-        // Create a clean drag ghost: small solid label, no transparency
-        const ghost = document.createElement('div');
-        ghost.textContent = state.seqs[parseInt(seqIndex)]?.header || 'seq';
-        ghost.style.cssText = 'position:absolute;top:-9999px;left:-9999px;padding:2px 8px;background:#2196F3;color:white;font:bold 11px monospace;border-radius:3px;white-space:nowrap;opacity:1;';
-        document.body.appendChild(ghost);
-        e.dataTransfer.setDragImage(ghost, 0, 0);
-        // Clean up the ghost element after a tick
-        setTimeout(() => document.body.removeChild(ghost), 0);
+        // Transparent 1x1 drag image: no ghost, no tooltip, no white gap
+        const canvas = document.createElement('canvas');
+        canvas.width = 1;
+        canvas.height = 1;
+        e.dataTransfer.setDragImage(canvas, 0, 0);
     } catch (err) {
         console.warn('dragstart error', err);
     }
@@ -80,42 +80,38 @@ function handleDragEnd(e) {
 }
 
 function _showDragInsertPreview(e, lineDiv) {
-    let indicator = document.getElementById('drag-insert-indicator');
-    if (!indicator) {
-        indicator = document.createElement('div');
-        indicator.id = 'drag-insert-indicator';
-        indicator.style.cssText = 'position:absolute;left:0;right:0;height:3px;background:#2196F3;pointer-events:none;z-index:9999;box-shadow:0 0 0 1px rgba(33,150,243,0.5);';
-    }
     const rect = lineDiv.getBoundingClientRect();
-    const container = document.getElementById('alignmentContainer');
-    if (!container) return;
-    const containerRect = container.getBoundingClientRect();
     const midY = rect.top + rect.height / 2;
     const insertAbove = e.clientY < midY;
-
-    if (!indicator.parentNode || indicator.parentNode !== container) {
-        container.style.position = 'relative';
-        container.appendChild(indicator);
-    }
-    // Snap to exact pixel boundary between lines
-    const yPos = insertAbove
-        ? Math.round(rect.top - containerRect.top + container.scrollTop - 1)
-        : Math.round(rect.bottom - containerRect.top + container.scrollTop - 1);
-    indicator.style.top = `${yPos}px`;
-    // Store insertion info for handleDrop
-    indicator.dataset.insertAbove = insertAbove ? '1' : '0';
-    indicator.dataset.targetIndex = lineDiv.dataset.seqIndex;
-    indicator.style.display = 'block';
+    const cls = insertAbove ? 'drag-insert-above' : 'drag-insert-below';
+    // Skip if same line + same side
+    if (_dragPreviewLine === lineDiv && _dragPreviewClass === cls) return;
+    // Clear previous
+    _clearDragInsertPreview();
+    // Apply gap class to target line
+    lineDiv.classList.add(cls);
+    _dragPreviewLine = lineDiv;
+    _dragPreviewClass = cls;
 }
 
 function _clearDragInsertPreview() {
-    const indicator = document.getElementById('drag-insert-indicator');
-    if (indicator) indicator.style.display = 'none';
+    if (_dragPreviewLine) {
+        _dragPreviewLine.classList.remove('drag-insert-above', 'drag-insert-below');
+        _dragPreviewLine = null;
+        _dragPreviewClass = '';
+    }
+    // Also remove old absolute indicator if it exists
+    const old = document.getElementById('drag-insert-indicator');
+    if (old) old.remove();
 }
 
 window.handleDrop = function(e) {
     e.preventDefault();
     e.stopPropagation();
+    
+    // Capture preview state before clearing
+    const insertAbove = _dragPreviewClass === 'drag-insert-above';
+    const previewLine = _dragPreviewLine;
     _clearDragInsertPreview();
     
     try {
@@ -125,8 +121,8 @@ window.handleDrop = function(e) {
         const draggedIndex = parseInt(draggedIndexStr);
         if (isNaN(draggedIndex) || draggedIndex < 0) return;
         
-        // Find the target sequence line
-        const targetLine = e.target?.closest('.seq-line');
+        // Use stored preview target, fall back to event target
+        const targetLine = previewLine || e.target?.closest('.seq-line');
         if (!targetLine || targetLine.classList.contains('consensus-line')) return;
         
         const targetIndexStr = targetLine.dataset.seqIndex;
@@ -134,10 +130,6 @@ window.handleDrop = function(e) {
         
         let targetIndex = parseInt(targetIndexStr);
         if (isNaN(targetIndex) || draggedIndex === targetIndex) return;
-
-        // Determine above/below from the indicator data or mouse position
-        const rect = targetLine.getBoundingClientRect();
-        const insertAbove = e.clientY < (rect.top + rect.height / 2);
         
         // Save undo BEFORE mutation
         pushUndo('reorder');
@@ -1144,9 +1136,6 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         e.dataTransfer.dropEffect = 'move';
         // Show insertion preview indicator
         _showDragInsertPreview(e, lineDiv);
-    });
-    lineDiv.addEventListener('dragleave', (e) => {
-        _clearDragInsertPreview();
     });
     lineDiv.addEventListener('drop', handleDrop);
     lineDiv.appendChild(nameSpan);
