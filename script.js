@@ -6,7 +6,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = '2c85018';
+const APP_VERSION = '3b2ecb2';
 
 const state = {
     seqs: [],
@@ -167,7 +167,6 @@ function _startRowReorderDrag(e, index) {
         draggedIndex: index,
         started: false
     };
-    document.body.classList.add('no-select');
 }
 
 function _handleRowReorderMove(e) {
@@ -178,6 +177,7 @@ function _handleRowReorderMove(e) {
         if ((dx * dx + dy * dy) < 16) return;
         _rowReorderDrag.started = true;
         _draggedSeqIndex = _rowReorderDrag.draggedIndex;
+        document.body.classList.add('no-select');
         _highlightDragSources();
         document.body.classList.add('row-reorder-active');
     }
@@ -191,8 +191,8 @@ function _handleRowReorderMove(e) {
                 const indicator = _getDragIndicatorEl();
                 indicator.style.left = `${nameEl.offsetLeft + 6}px`;
                 indicator.style.width = `${Math.max(8, nameEl.offsetWidth - 12)}px`;
-                indicator.style.top = nearest.insertAbove ? '0px' : 'auto';
-                indicator.style.bottom = nearest.insertAbove ? 'auto' : '0px';
+                indicator.style.top = nearest.insertAbove ? '-1px' : 'auto';
+                indicator.style.bottom = nearest.insertAbove ? 'auto' : '-1px';
                 nearest.line.appendChild(indicator);
                 _dragPreviewEl = nameEl;
                 _dragPreviewClass = cls;
