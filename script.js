@@ -49,8 +49,9 @@ const state = {
     groupConsensusCount: 0
 };
 
-let _dragPreviewLine = null;
+let _dragPreviewEl = null;
 let _dragPreviewClass = '';
+let _dragLastY = -1;
 
 function handleDragStart(e) {
     try {
@@ -61,11 +62,11 @@ function handleDragStart(e) {
         if (seqIndex === undefined || seqIndex === null) return;
         e.dataTransfer.setData('draggedSequenceIndex', String(seqIndex));
         e.dataTransfer.effectAllowed = 'move';
-        // Transparent 1x1 drag image: no ghost, no tooltip, no white gap
-        const canvas = document.createElement('canvas');
-        canvas.width = 1;
-        canvas.height = 1;
-        e.dataTransfer.setDragImage(canvas, 0, 0);
+        // Fully transparent 1x1 image — no ghost, no rectangle, no tooltip
+        const img = new Image();
+        img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        e.dataTransfer.setDragImage(img, 0, 0);
+        _dragLastY = -1;
     } catch (err) {
         console.warn('dragstart error', err);
     }
@@ -74,35 +75,39 @@ function handleDragStart(e) {
 function handleDragEnd(e) {
     try {
         _clearDragInsertPreview();
+        _dragLastY = -1;
     } catch (err) {
         console.warn('dragend error', err);
     }
 }
 
 function _showDragInsertPreview(e, lineDiv) {
+    // Throttle: skip if cursor barely moved (within 2px)
+    if (Math.abs(e.clientY - _dragLastY) < 2) return;
+    _dragLastY = e.clientY;
+
+    const nameEl = lineDiv.querySelector('.seq-name');
+    if (!nameEl) return;
     const rect = lineDiv.getBoundingClientRect();
     const midY = rect.top + rect.height / 2;
     const insertAbove = e.clientY < midY;
     const cls = insertAbove ? 'drag-insert-above' : 'drag-insert-below';
-    // Skip if same line + same side
-    if (_dragPreviewLine === lineDiv && _dragPreviewClass === cls) return;
+    // Skip if same element + same side
+    if (_dragPreviewEl === nameEl && _dragPreviewClass === cls) return;
     // Clear previous
     _clearDragInsertPreview();
-    // Apply gap class to target line
-    lineDiv.classList.add(cls);
-    _dragPreviewLine = lineDiv;
+    // Apply to seq-name element only
+    nameEl.classList.add(cls);
+    _dragPreviewEl = nameEl;
     _dragPreviewClass = cls;
 }
 
 function _clearDragInsertPreview() {
-    if (_dragPreviewLine) {
-        _dragPreviewLine.classList.remove('drag-insert-above', 'drag-insert-below');
-        _dragPreviewLine = null;
+    if (_dragPreviewEl) {
+        _dragPreviewEl.classList.remove('drag-insert-above', 'drag-insert-below');
+        _dragPreviewEl = null;
         _dragPreviewClass = '';
     }
-    // Also remove old absolute indicator if it exists
-    const old = document.getElementById('drag-insert-indicator');
-    if (old) old.remove();
 }
 
 window.handleDrop = function(e) {
@@ -111,7 +116,7 @@ window.handleDrop = function(e) {
     
     // Capture preview state before clearing
     const insertAbove = _dragPreviewClass === 'drag-insert-above';
-    const previewLine = _dragPreviewLine;
+    const previewNameEl = _dragPreviewEl;
     _clearDragInsertPreview();
     
     try {
@@ -121,29 +126,61 @@ window.handleDrop = function(e) {
         const draggedIndex = parseInt(draggedIndexStr);
         if (isNaN(draggedIndex) || draggedIndex < 0) return;
         
-        // Use stored preview target, fall back to event target
-        const targetLine = previewLine || e.target?.closest('.seq-line');
+        // Find target line from the preview element or event
+        const targetLine = previewNameEl
+            ? previewNameEl.closest('.seq-line')
+            : e.target?.closest('.seq-line');
         if (!targetLine || targetLine.classList.contains('consensus-line')) return;
         
         const targetIndexStr = targetLine.dataset.seqIndex;
         if (!targetIndexStr) return;
         
         let targetIndex = parseInt(targetIndexStr);
-        if (isNaN(targetIndex) || draggedIndex === targetIndex) return;
+        if (isNaN(targetIndex)) return;
+
+        // Determine which sequences to move:
+        // If multiple rows are selected AND the dragged seq is among them, move all selected.
+        // Otherwise just move the single dragged sequence.
+        let draggedIndices;
+        if (state.selectedRows.size > 1 && state.selectedRows.has(draggedIndex)) {
+            draggedIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
+        } else {
+            draggedIndices = [draggedIndex];
+        }
+        
+        // Don't drop onto one of the dragged sequences
+        if (draggedIndices.includes(targetIndex)) return;
         
         // Save undo BEFORE mutation
         pushUndo('reorder');
         
-        // Remove the dragged sequence
-        const seq = state.seqs.splice(draggedIndex, 1)[0];
-        // Adjust target index after removal
-        if (draggedIndex < targetIndex) targetIndex--;
+        // Extract dragged sequences (from high index to low to preserve indices)
+        const seqsToMove = [];
+        for (let i = draggedIndices.length - 1; i >= 0; i--) {
+            seqsToMove.unshift(state.seqs.splice(draggedIndices[i], 1)[0]);
+        }
+        
+        // Find new target index (it may have shifted after removals)
+        // Count how many dragged items were before the original targetIndex
+        let removedBefore = 0;
+        for (const di of draggedIndices) {
+            if (di < targetIndex) removedBefore++;
+        }
+        targetIndex -= removedBefore;
+        
         // Insert at the correct position
         const insertAt = insertAbove ? targetIndex : targetIndex + 1;
-        state.seqs.splice(insertAt, 0, seq);
+        state.seqs.splice(insertAt, 0, ...seqsToMove);
+        
+        // Clear row selection after move
+        state.selectedRows.clear();
         
         renderAlignment();
-        showMessage(`Sequence moved to position ${insertAt + 1}!`, 2000);
+        if (seqsToMove.length === 1) {
+            showMessage(`"${seqsToMove[0].header}" moved to position ${insertAt + 1}`, 2000);
+        } else {
+            showMessage(`${seqsToMove.length} sequences moved to position ${insertAt + 1}`, 2000);
+        }
     } catch (err) {
         console.warn('drop error', err);
     }
@@ -1139,16 +1176,9 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     lineDiv.addEventListener('dragover', (e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
-        // Show insertion preview indicator
         _showDragInsertPreview(e, lineDiv);
     });
     lineDiv.addEventListener('drop', handleDrop);
-    lineDiv.addEventListener('dragleave', (e) => {
-        // Only clear if actually leaving this line (not entering a child)
-        if (!lineDiv.contains(e.relatedTarget)) {
-            if (_dragPreviewLine === lineDiv) _clearDragInsertPreview();
-        }
-    });
     lineDiv.appendChild(nameSpan);
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
