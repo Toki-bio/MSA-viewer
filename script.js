@@ -188,18 +188,12 @@ function _handleRowReorderMove(e) {
             const cls = nearest.insertAbove ? 'drag-insert-above' : 'drag-insert-below';
             if (_dragPreviewEl !== nameEl || _dragPreviewClass !== cls) {
                 _clearDragInsertPreview();
-                const container = document.getElementById('alignmentContainer');
-                if (!container) return;
-                const containerRect = container.getBoundingClientRect();
-                const nameRect = nameEl.getBoundingClientRect();
-                const lineRect = nearest.line.getBoundingClientRect();
                 const indicator = _getDragIndicatorEl();
-                container.style.position = 'relative';
-                indicator.style.left = `${Math.round(nameRect.left - containerRect.left + container.scrollLeft + 6)}px`;
-                indicator.style.width = `${Math.max(8, Math.round(nameRect.width) - 12)}px`;
-                indicator.style.top = `${Math.round((nearest.insertAbove ? lineRect.top : lineRect.bottom) - containerRect.top + container.scrollTop - 1)}px`;
-                indicator.style.bottom = 'auto';
-                container.appendChild(indicator);
+                indicator.style.left = `${nameEl.offsetLeft + 6}px`;
+                indicator.style.width = `${Math.max(8, nameEl.offsetWidth - 12)}px`;
+                indicator.style.top = nearest.insertAbove ? '0px' : 'auto';
+                indicator.style.bottom = nearest.insertAbove ? 'auto' : '0px';
+                nearest.line.appendChild(indicator);
                 _dragPreviewEl = nameEl;
                 _dragPreviewClass = cls;
                 _dragPreviewInsertAbove = nearest.insertAbove;
