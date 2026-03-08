@@ -820,6 +820,9 @@ input[type="number"] {
     position: relative;
     z-index: 1;
 }
+.seq-data span.seq-length {
+    margin-left: 8px;
+}
 .seq-data:active {
     cursor: grabbing;
 }
