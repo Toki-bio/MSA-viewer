@@ -8,11 +8,16 @@ node_modules/
 server_out.txt
 server_err.txt
 
-# Sequence data / databases (large binary/text files)
-*.bnk
-*.fa
-*.fas
-*.fasta
+# Large database files (keep small BLAST fastas tracked)
+RepBase.bnk
+
+# Backup files
+*.bak
+
+# Test/temp files
+test.fasta
+todo
+snake_in_other_SINEs.fas
 
 # OS files
 Thumbs.db
