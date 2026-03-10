@@ -568,14 +568,22 @@ app.get('/api/databases', (req, res) => {
 });
 
 // ============ SSH MULTI-SERVER FILE FETCH ============
-const SSH_SERVERS = {
-    'copilot':     { label: 'BioServer (copilot)', user: 'copilot', host: '100.104.25.22',         via: null },
-    'monsoon':     { label: 'Monsoon HPC',          user: 'sk4386',  host: 'monsoon.hpc.nau.edu',   via: 'copilot' },
-    'toki-server': { label: 'Toki Server',           user: 'toki',    host: '85.89.102.78',          via: 'copilot' }
-};
+// Load server config from external file (not committed to git)
+let SSH_SERVERS = {};
+try {
+    const srvPath = path.join(__dirname, 'ssh-servers.json');
+    if (fs.existsSync(srvPath)) {
+        SSH_SERVERS = JSON.parse(fs.readFileSync(srvPath, 'utf8'));
+        console.log(`Loaded ${Object.keys(SSH_SERVERS).length} SSH server(s) from ssh-servers.json`);
+    } else {
+        console.log('No ssh-servers.json found — SSH features disabled. Copy ssh-servers.example.json to ssh-servers.json to configure.');
+    }
+} catch (err) {
+    console.error('Failed to load ssh-servers.json:', err.message);
+}
 
 // Keep backwards compat for old ssh-cat calls without ?server=
-const SSH_CONFIG = SSH_SERVERS['copilot'];
+const SSH_CONFIG = SSH_SERVERS[Object.keys(SSH_SERVERS)[0]] || null;
 
 // Queue for push-to-load from MC on remote servers
 let _queuedFile = null; // { server, file, ts }
@@ -585,9 +593,12 @@ function buildSshCatArgs(serverKey, filePath) {
     const srv = SSH_SERVERS[serverKey];
     if (!srv) return null;
     const escaped = filePath.replace(/"/g, '\\"');
+    const port = srv.port || 22;
     if (!srv.via) {
-        return ['-T', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10',
-                '-o', 'BatchMode=yes', `${srv.user}@${srv.host}`, `cat "${escaped}"`];
+        const args = ['-T', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes'];
+        if (port !== 22) args.push('-p', port.toString());
+        args.push(`${srv.user}@${srv.host}`, `cat "${escaped}"`);
+        return args;
     }
     // Route through jump server: local → via → target
     const via = SSH_SERVERS[srv.via];
@@ -608,7 +619,7 @@ function stripBanner(stdout) {
 app.get('/api/ssh-servers', (req, res) => {
     const result = {};
     for (const [key, srv] of Object.entries(SSH_SERVERS)) {
-        result[key] = { label: srv.label };
+        result[key] = { label: srv.label, pollable: !srv.via };
     }
     res.json(result);
 });
@@ -633,9 +644,71 @@ app.get('/api/poll-file', (req, res) => {
     res.json({ queued: true, server: qf.server, file: qf.file });
 });
 
+// Poll queue file from remote server (MC writes to ~/.msa_viewer_queue)
+app.get('/api/ssh-poll-file', (req, res) => {
+    const serverKey = req.query.server || 'copilot';
+    console.log(`[POLL] Checking queue for server: ${serverKey}`);
+    if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
+
+    const srv = SSH_SERVERS[serverKey];
+    const baseArgs = ['-T', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes'];
+    let sshArgs;
+
+    if (!srv.via) {
+        // Direct: read queue and clear it. Use /tmp so any user (root/copilot) can write.
+        // Queue file has 2 lines: line 1 = directory, line 2 = filename (from MC %d and %f)
+        // Or 1 line with full path (from MC %p)
+        const cmd = 'Q=/tmp/.msa_viewer_queue; if [ -s "$Q" ]; then echo "=START_QUEUE="; cat "$Q"; echo "=END_QUEUE="; cp /dev/null "$Q" 2>/dev/null || true; fi';
+        const port = srv.port || 22;
+        const args = [...baseArgs];
+        if (port !== 22) args.push('-p', port.toString());
+        args.push(`${srv.user}@${srv.host}`, cmd);
+        sshArgs = args;
+    } else {
+        // Via jump host
+        const via = SSH_SERVERS[srv.via];
+        const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${srv.user}@${srv.host} "if [ -f /tmp/.msa_viewer_queue ]; then cat /tmp/.msa_viewer_queue && rm /tmp/.msa_viewer_queue; fi"`;
+        sshArgs = [...baseArgs, `${via.user}@${via.host}`, innerCmd];
+    }
+
+    const child = spawn('ssh', sshArgs, { timeout: 10000 });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.on('close', (code) => {
+        // Extract content between markers to avoid MOTD pollution
+        const startMarker = '=START_QUEUE=';
+        const endMarker = '=END_QUEUE=';
+        
+        const startIdx = stdout.indexOf(startMarker);
+        const endIdx = stdout.indexOf(endMarker);
+        
+        let filePath = '';
+        if (startIdx >= 0 && endIdx > startIdx) {
+            const raw = stdout.substring(startIdx + startMarker.length, endIdx).trim();
+            // Queue may have 2 lines (dir + filename from MC %d/%f) or 1 line (full path from %p)
+            const lines = raw.split('\n').map(l => l.trim()).filter(l => l);
+            if (lines.length >= 2) {
+                // dir + filename
+                const dir = lines[0].replace(/\/+$/, '');
+                filePath = dir + '/' + lines[1];
+            } else if (lines.length === 1) {
+                filePath = lines[0];
+            }
+        }
+        
+        console.log(`[POLL] Queue check result: filePath="${filePath}", stdout length=${stdout.length}`);
+        if (!filePath) return res.json({ queued: false });
+        console.log(`[POLL] Returning queued file: ${filePath}`);
+        res.json({ queued: true, server: serverKey, file: filePath });
+    });
+    child.on('error', (err) => res.status(500).json({ error: `SSH failed: ${err.message}` }));
+});
+
 app.get('/api/ssh-cat', (req, res) => {
     const filePath  = req.query.file;
     const serverKey = req.query.server || 'copilot';
+    console.log(`[SSH-CAT] Fetching file: ${filePath} from ${serverKey}`);
     if (!filePath)  return res.status(400).json({ error: 'Missing "file" query parameter' });
     if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
     if (/[;|&`$(){}\\]/.test(filePath)) return res.status(400).json({ error: 'Invalid characters in file path' });

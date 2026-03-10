@@ -60,10 +60,10 @@
     left: 0;
     right: 0;
     background: var(--control-bg);
-    padding: 2px 4px;
+    padding: 1px 4px;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
     font-size: 12px;
     border-bottom: 1px solid #ddd;
     z-index: 100;
@@ -550,7 +550,7 @@ input[type="number"] {
 #alignmentContainer {
     position: static; /* flow in document under controls/status */
     margin: 0;
-    padding: 0.5rem 0.5rem 0 0.5rem;
+    padding: 2px 0.5rem 0 0.5rem;
     overflow-x: auto;
     overflow-y: auto;
     background: white;
