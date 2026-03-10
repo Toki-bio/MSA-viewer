@@ -20,7 +20,6 @@ const PORT = 3000;
 // Database configuration
 const DATABASES = {
     'SINEBase.nr95': path.join(__dirname, 'SINEBase.nr95.fa'),
-    'RepBase.bnk': path.join(__dirname, 'RepBase.bnk'),
     'RepBase_filtered': path.join(__dirname, 'RepBase_filtered.bnk'),
     'snake_gekko_SINEs': path.join(__dirname, 'snake_gekko_SINEs_cons.fas')
 };
