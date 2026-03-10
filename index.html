@@ -33,13 +33,12 @@
                     </div>
                     <div id="sshLoadRow" style="display: none; margin-top: 4px;">
                         <div style="display: flex; gap: 4px; align-items: center;">
-                            <select id="sshServerSelect" style="font-size: 11px; padding: 2px 3px; border: 1px solid #ccc; border-radius: 3px; max-width: 110px;" title="Select which server to fetch from">
-                                <option value="copilot">BioServer</option>
-                                <option value="monsoon">Monsoon</option>
-                                <option value="toki-server">Toki Server</option>
-                            </select>
-                            <input type="text" id="sshPathInput" placeholder="/home/copilot/results/file.fas" style="flex: 1; font-size: 11px; padding: 2px 4px; font-family: 'Courier New', monospace; border: 1px solid #ccc; border-radius: 3px;" title="Paste a file path from your Linux server and press Enter">
+                            <div id="sshServerBtnGroup" style="display: flex; flex-direction: column; gap: 0;">
+                                <!-- Populated dynamically from /api/ssh-servers -->
+                            </div>
+                            <input type="text" id="sshPathInput" placeholder="/path/to/file.fas" style="flex: 1; font-size: 11px; padding: 2px 4px; font-family: 'Courier New', monospace; border: 1px solid #ccc; border-radius: 3px;" title="Paste a file path from your Linux server and press Enter">
                             <button id="sshLoadButton" style="height: 20px; font-size: 10px; white-space: nowrap;" title="Fetch file from server via SSH">Fetch</button>
+                            <button id="checkQueueButton" style="height: 20px; font-size: 10px; white-space: nowrap;" title="Check if file queued from MC">Check Queue</button>
                         </div>
                     </div>
                 </div>
@@ -496,9 +495,9 @@
                     </div>
                 </div>
             </div>
-            <div style="margin-left: auto; text-align: right; white-space: nowrap; padding-right: 6px; display: flex; flex-direction: column; align-items: flex-end; gap: 1px;">
-                <div id="versionIndicator" style="font-size: 10px; color: #999; line-height: 1;">commit b8888ed</div>
-                <div id="sourceInfo" style="font-size: 14px; color: #666;">No file loaded</div>
+            <div style="margin-left: auto; text-align: right; white-space: normal; padding-right: 6px; display: flex; flex-direction: column; align-items: flex-end; gap: 0; min-width: 150px; max-width: 500px;">
+                <div id="sourceInfo" style="font-size: 11px; color: #555; line-height: 1.1;">No file loaded</div>
+                <div id="versionIndicator" style="font-size: 9px; color: #bbb; line-height: 1;">commit b8888ed</div>
             </div>
         </div>
     </div>
@@ -614,6 +613,10 @@
         <div style="background: white; margin: 50px auto; padding: 20px; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
             <h2 style="margin-top: 0;">Add Sequences</h2>
             <p style="font-size: 12px; color: #555;">Paste new sequences in FASTA format. "Just Add" appends them (padded with gaps). "Add & Align" realigns everything with MAFFT (runs locally via WebAssembly).</p>
+            <div style="margin-bottom: 6px; display: flex; gap: 12px; font-size: 12px;">
+                <label title="Where to insert new sequences"><input type="checkbox" id="addSeqAtTop" checked> Place at top</label>
+                <label title="Align new sequences against the consensus before adding"><input type="checkbox" id="addSeqAlignCons" checked> Align to consensus</label>
+            </div>
             <textarea id="addSeqInput" placeholder=">new_sequence_1&#10;ACGTACGTACGT...&#10;>new_sequence_2&#10;TGCATGCATGCA..." style="width: 100%; height: 200px; font-family: 'Courier New', monospace; font-size: 12px; resize: vertical; box-sizing: border-box;"></textarea>
             <div style="margin-top: 8px; text-align: right;">
                 <button id="addSeqJustAddButton" style="padding: 4px 16px; font-size: 13px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;">Just Add</button>
@@ -623,8 +626,75 @@
         </div>
     </div>
 
+    <!-- Dot-Plot Modal -->
+    <div id="dotPlotModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10002;overflow:auto;">
+        <div style="background:white;margin:30px auto;padding:16px;max-width:90vw;width:700px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);position:relative;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <h3 style="margin:0;" id="dotPlotTitle">Dot Plot</h3>
+                <button id="dotPlotCloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;padding:0 4px;">✕</button>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px;flex-wrap:wrap;">
+                <label>Window: <input type="number" id="dotPlotWindow" value="9" min="1" max="61" step="2" style="width:45px;"></label>
+                <label>Threshold: <input type="range" id="dotPlotThreshold" min="0" max="100" value="55" style="width:100px;vertical-align:middle;"><span id="dotPlotThreshVal">55%</span></label>
+                <label><input type="checkbox" id="dotPlotRevComp"> RevComp B</label>
+                <button id="dotPlotRecalc" style="font-size:11px;padding:2px 8px;">Recalculate</button>
+                <button id="dotPlotExport" style="font-size:11px;padding:2px 8px;">Export PNG</button>
+            </div>
+            <div id="dotPlotViewport" style="overflow:auto;max-height:70vh;border:1px solid #ccc;position:relative;cursor:crosshair;">
+                <canvas id="dotPlotCanvas" width="400" height="400"></canvas>
+                <canvas id="dotPlotOverlay" width="400" height="400" style="position:absolute;top:0;left:0;pointer-events:auto;"></canvas>
+            </div>
+            <div id="dotPlotStatus" style="font-size:11px;color:#666;margin-top:4px;"></div>
+            <div id="dotPlotHover" style="font-size:11px;color:#555;font-family:monospace;"></div>
+        </div>
+    </div>
+
+    <!-- Repeat/TSD Finder Modal -->
+    <div id="repeatFinderModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10002;overflow:auto;">
+        <div style="background:white;margin:30px auto;padding:16px;max-width:700px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <h3 style="margin:0;">Repeat &amp; TSD Finder</h3>
+                <button id="repeatFinderCloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button>
+            </div>
+            <div style="font-size:12px;margin-bottom:8px;">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
+                    <strong>Analysis:</strong>
+                    <label><input type="radio" name="repeatMode" value="tandem" checked> Tandem repeats</label>
+                    <label><input type="radio" name="repeatMode" value="direct"> Direct repeats</label>
+                    <label><input type="radio" name="repeatMode" value="inverted"> Inverted repeats</label>
+                    <label><input type="radio" name="repeatMode" value="tsd"> TSD finder</label>
+                </div>
+                <div id="repeatParamsGeneral" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
+                    <label>Min length: <input type="number" id="repeatMinLen" value="5" min="3" max="50" style="width:45px;"></label>
+                    <label>Max divergence: <input type="number" id="repeatMaxDiv" value="15" min="0" max="50" style="width:45px;">%</label>
+                </div>
+                <div id="tsdParams" style="display:none;margin-bottom:6px;">
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px;">
+                        <strong>TSD mode:</strong>
+                        <label><input type="radio" name="tsdMode" value="manual" checked> Specify flank columns</label>
+                        <label><input type="radio" name="tsdMode" value="topseq"> Use top sequence borders</label>
+                        <label><input type="radio" name="tsdMode" value="auto"> Auto-detect</label>
+                    </div>
+                    <div id="tsdManualParams" style="display:flex;gap:8px;align-items:center;">
+                        <label>Upstream cols: <input type="number" id="tsdUpStart" value="1" min="1" style="width:55px;">–<input type="number" id="tsdUpEnd" value="30" min="1" style="width:55px;"></label>
+                        <label>Downstream cols: <input type="number" id="tsdDownStart" value="" min="1" style="width:55px;" placeholder="auto">–<input type="number" id="tsdDownEnd" value="" min="1" style="width:55px;" placeholder="auto"></label>
+                    </div>
+                    <div style="margin-top:4px;">
+                        <label>TSD length: <input type="number" id="tsdMinLen" value="4" min="2" max="30" style="width:45px;"> – <input type="number" id="tsdMaxLen" value="20" min="2" max="50" style="width:45px;"> bp</label>
+                        <label style="margin-left:8px;">Max divergence: <input type="number" id="tsdMaxDiv" value="20" min="0" max="50" style="width:45px;">%</label>
+                        <label style="margin-left:8px;">Flank size: <input type="number" id="tsdFlankSize" value="30" min="5" max="100" style="width:45px;"> bp</label>
+                    </div>
+                </div>
+                <button id="repeatRunBtn" style="padding:4px 16px;font-size:13px;background:#4CAF50;color:white;border:none;border-radius:4px;cursor:pointer;">Run Analysis</button>
+            </div>
+            <div id="repeatResults" style="max-height:50vh;overflow:auto;font-family:monospace;font-size:11px;white-space:pre-wrap;border:1px solid #ddd;padding:8px;background:#fafafa;min-height:60px;">
+                Click "Run Analysis" to start.
+            </div>
+        </div>
+    </div>
+
     <script src="cluster.js"></script>
-    <script src="script.js"></script>
+    <script src="script.js?v=15"></script>
     <script>
 // All functionality moved to script.js
 </script>

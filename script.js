@@ -24,6 +24,7 @@ const state = {
     deletedHistory: [],
     redoHistory: [],
     currentFilename: '',
+    currentFilePath: '',
     searchHistory: [],
     isDragging: false,
     dragStartRow: null,
@@ -84,37 +85,159 @@ function updateVersionIndicator() {
 
 // ============ SSH FILE FETCH ============
 let _sshServerAvailable = false;
-let _sshPollInterval = null;
+let _sshPollRunning = false;
+let _pollableServers = [];  // Only servers with direct SSH (no jump host)
+
+// --- Server selector helpers (toggle button group) ---
+function getSelectedServer() {
+    const active = document.querySelector('#sshServerBtnGroup .srv-active');
+    return active ? active.dataset.server : (_pollableServers[0] || 'default');
+}
+function setSelectedServer(key) {
+    const btns = document.querySelectorAll('#sshServerBtnGroup .srv-btn');
+    btns.forEach(b => {
+        if (b.dataset.server === key) {
+            b.classList.add('srv-active');
+            b.style.background = '#4a90d9'; b.style.color = '#fff';
+        } else {
+            b.classList.remove('srv-active');
+            b.style.background = '#f0f0f0'; b.style.color = '#333';
+        }
+    });
+}
+function _buildServerButtons(servers) {
+    const group = document.getElementById('sshServerBtnGroup');
+    if (!group) return;
+    group.innerHTML = '';
+    const keys = Object.keys(servers);
+    keys.forEach((key, i) => {
+        const srv = servers[key];
+        const btn = document.createElement('button');
+        btn.className = 'srv-btn' + (i === 0 ? ' srv-active' : '');
+        btn.dataset.server = key;
+        btn.title = srv.label;
+        btn.textContent = srv.label.split(/[( ]/)[0]; // short name
+        btn.style.cssText = 'font-size:10px;padding:0 6px;height:17px;line-height:15px;border:1px solid #999;cursor:pointer;white-space:nowrap;'
+            + (i === 0 ? 'background:#4a90d9;color:#fff;border-radius:3px 3px 0 0;'
+            : (i === keys.length - 1 ? 'background:#f0f0f0;color:#333;border-top:none;border-radius:0 0 3px 3px;'
+            : 'background:#f0f0f0;color:#333;border-top:none;'));
+        if (keys.length === 1) btn.style.borderRadius = '3px';
+        btn.addEventListener('click', () => setSelectedServer(key));
+        group.appendChild(btn);
+    });
+}
 
 async function checkSshServer() {
     try {
-        const resp = await fetch('http://localhost:3000/api/databases', { signal: AbortSignal.timeout(2000) });
+        const resp = await fetch('/api/ssh-servers', { signal: AbortSignal.timeout(2000) });
         if (resp.ok) {
             _sshServerAvailable = true;
+            const servers = await resp.json();
+            _pollableServers = Object.keys(servers).filter(k => servers[k].pollable);
+            if (Object.keys(servers).length === 0) return; // no servers configured
+            console.log(`[POLL] Pollable servers: ${_pollableServers.join(', ')}`);
+            _buildServerButtons(servers);
             const row = document.getElementById('sshLoadRow');
             if (row) row.style.display = '';
-            // Start polling for push-to-load from MC
-            if (!_sshPollInterval) {
-                _sshPollInterval = setInterval(_pollQueuedFile, 2000);
-            }
+            // MANUAL CHECKING ONLY: User clicks "Check Queue" button to poll
+            // Auto-polling disabled to prevent IDS triggers from continuous SSH connections
         }
     } catch (_) {
         // Server not running — hide SSH row (already hidden by default)
     }
 }
 
+async function _pollLoop() {
+    while (_sshPollRunning) {
+        try {
+            await _pollQueuedFile();
+        } catch (e) {
+            console.log(`[POLL] Loop error: ${e.message}`);
+        }
+        await new Promise(r => setTimeout(r, 3000));
+    }
+}
+
+let _pollBusy = false;
 async function _pollQueuedFile() {
+    if (_pollBusy) return;
+    _pollBusy = true;
     try {
-        const resp = await fetch('http://localhost:3000/api/poll-file', { signal: AbortSignal.timeout(1500) });
-        if (!resp.ok) return;
-        const data = await resp.json();
-        if (!data.queued) return;
-        // Switch the server selector to match
-        const sel = document.getElementById('sshServerSelect');
-        if (sel && data.server) sel.value = data.server;
-        // Load the file
-        await fetchFileFromServer(data.file, data.server);
-    } catch (_) { /* silently ignore poll errors */ }
+        // First check local queue
+        const resp = await fetch('/api/poll-file', { signal: AbortSignal.timeout(8000) });
+        if (resp.ok) {
+            const data = await resp.json();
+            if (data.queued) {
+                console.log(`[POLL] Local queue detected: ${data.file}`);
+                if (data.server) setSelectedServer(data.server);
+                await fetchFileFromServer(data.file, data.server);
+                return;
+            }
+        }
+
+        // Check remote server queue (MC writes to ~/.msa_viewer_queue)
+        // Only poll servers without jump host (direct SSH) to avoid timeouts
+        const srvGroup = document.getElementById('sshServerBtnGroup');
+        if (!srvGroup) return;
+        for (const serverKey of _pollableServers) {
+            try {
+                const r = await fetch(`/api/ssh-poll-file?server=${encodeURIComponent(serverKey)}`, 
+                    { signal: AbortSignal.timeout(8000) });
+                if (!r.ok) continue;
+                const data = await r.json();
+                if (data.queued) {
+                    console.log(`[POLL] ${serverKey}: Queue detected: ${data.file}`);
+                    setSelectedServer(serverKey);
+                    await fetchFileFromServer(data.file, serverKey);
+                    return;
+                }
+            } catch (e) { 
+                console.log(`[POLL] ${serverKey}: ${e.message}`);
+            }
+        }
+    } catch (e) { 
+        console.log(`[POLL] Error: ${e.message}`);
+    } finally {
+        _pollBusy = false;
+    }
+}
+
+// Manual queue checking (user clicks button) with debounce to prevent hammering
+let _lastManualCheckTime = 0;
+async function checkMCQueueOnce() {
+    const now = Date.now();
+    if (now - _lastManualCheckTime < 2000) {
+        showMessage('Please wait 2 seconds before checking again', 2000);
+        return;
+    }
+    _lastManualCheckTime = now;
+    
+    const btn = document.getElementById('checkQueueButton');
+    if (btn) btn.disabled = true;
+    const serverKey = getSelectedServer();
+    showMessage(`Checking MC queue on ${serverKey}...`, 0);
+    
+    try {
+        // Check selected server's queue directly (not via _pollQueuedFile which checks ALL)
+        const r = await fetch(`/api/ssh-poll-file?server=${encodeURIComponent(serverKey)}`,
+            { signal: AbortSignal.timeout(12000) });
+        if (!r.ok) {
+            showMessage(`Queue check failed (HTTP ${r.status})`, 3000);
+            return;
+        }
+        const data = await r.json();
+        if (data.queued) {
+            console.log(`[POLL] ${serverKey}: Queue detected: ${data.file}`);
+            showMessage(`Loading ${data.file.split('/').pop()} from ${serverKey}...`, 0);
+            await fetchFileFromServer(data.file, serverKey);
+        } else {
+            showMessage(`No file queued on ${serverKey}`, 2000);
+        }
+    } catch (e) {
+        showMessage(`Queue check error: ${e.message}`, 3000);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 async function fetchFileFromServer(filePath, serverKey) {
@@ -123,14 +246,14 @@ async function fetchFileFromServer(filePath, serverKey) {
         return;
     }
     filePath = filePath.trim();
-    serverKey = serverKey || document.getElementById('sshServerSelect')?.value || 'copilot';
+    serverKey = serverKey || getSelectedServer();
     const btn = document.getElementById('sshLoadButton');
     const input = document.getElementById('sshPathInput');
     if (btn) btn.disabled = true;
     if (input) input.disabled = true;
     showMessage(`Fetching ${filePath.split('/').pop()} from ${serverKey}...`, 0);
     try {
-        const url = `http://localhost:3000/api/ssh-cat?file=${encodeURIComponent(filePath)}&server=${encodeURIComponent(serverKey)}`;
+        const url = `/api/ssh-cat?file=${encodeURIComponent(filePath)}&server=${encodeURIComponent(serverKey)}`;
         const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok) {
@@ -140,8 +263,28 @@ async function fetchFileFromServer(filePath, serverKey) {
         fastaInputEl.value = data.content;
         const fname = filePath.split('/').pop() || filePath;
         state.currentFilename = fname;
+        state.currentFilePath = filePath;
         parseAndRender(true);
         showMessage(`Loaded ${fname} from ${serverKey}`, 3000);
+        // Auto-focus browser window and bring to front
+        window.focus();
+        // Flash title bar to attract attention
+        const origTitle = document.title;
+        let flashCount = 0;
+        const flashInterval = setInterval(() => {
+            document.title = (flashCount % 2 === 0) ? `★ LOADED: ${fname}` : origTitle;
+            flashCount++;
+            if (flashCount > 8 || document.hasFocus()) {
+                document.title = origTitle;
+                clearInterval(flashInterval);
+            }
+        }, 500);
+        if (Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+        if (document.hidden && Notification.permission === 'granted') {
+            new Notification('MSA Viewer', { body: `Loaded ${fname}` });
+        }
     } catch (err) {
         showMessage(`SSH fetch error: ${err.message}`, 5000);
     } finally {
@@ -878,7 +1021,7 @@ function computeConsensusForSequences(seqArray) {
     const fallbackMode = (document.getElementById('consensusFallback')?.value) || 'gap';
     let out = '';
     for (let pos = 0; pos < len; pos++) {
-        const col = seqArray.map(s => s[pos] || '-');
+        const col = seqArray.map(s => (s[pos] || '-').toUpperCase());
         const nonGapCol = col.filter(b => b !== '-' && b !== '.');
         if (nonGapCol.length === 0) { out += '-'; continue; }
         const coverage = nonGapCol.length / seqArray.length;
@@ -1137,7 +1280,8 @@ function preCalculateConservation(seqs, len, shadeMode) {
         let nonGapCount = 0;
         
         for (let s = 0; s < seqCount; s++) {
-            const base = seqs[s].seq[pos] || '-';
+            const rawBase = seqs[s].seq[pos] || '-';
+            const base = rawBase.toUpperCase();
             if (base !== '-' && base !== '.') {
                 counts[base] = (counts[base] || 0) + 1;
                 nonGapCount++;
@@ -1220,8 +1364,8 @@ function renderAlignment() {
     const nameLen = parseInt(nameLengthSlider.value);
     // Update CSS variable for scale ruler padding
     document.documentElement.style.setProperty('--nameLen', nameLen);
-    const standard = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.']);
-    const ambiguous = new Set(['R','Y','M','K','S','W','H','B','V','D']);
+    const standard = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.', 'a', 'c', 'g', 't', 'u', 'n']);
+    const ambiguous = new Set(['R','Y','M','K','S','W','H','B','V','D','r','y','m','k','s','w','h','b','v','d']);
     const ambiguousMap = {
         'A,G': 'R', 'G,A': 'R', 'C,T': 'Y', 'T,C': 'Y', 'A,C': 'M', 'C,A': 'M',
         'G,T': 'K', 'T,G': 'K', 'C,G': 'S', 'G,C': 'S', 'A,T': 'W', 'T,A': 'W',
@@ -1343,7 +1487,8 @@ function updateSourceInfo() {
     const maxLength = Math.max(...gaplessLengths);
     const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
     const filename = state.currentFilename ? `<strong>${state.currentFilename}</strong>: ` : '';
-    infoEl.innerHTML = `${filename}<strong>${seqCount}</strong> sequences, <strong>${aliLength}</strong> columns, <strong>${lengthRange}</strong> bp/seq`;
+    const pathHtml = state.currentFilePath ? `<br><span style="font-size:10px;color:#999;font-family:monospace;">${state.currentFilePath}</span>` : '';
+    infoEl.innerHTML = `${filename}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> bp${pathHtml}`;
 }
 
 function ensureSpanCacheRow(row) {
@@ -1468,6 +1613,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     
     for (let pos = start; pos < end; pos++) {
         const base = seq[pos] || '-';
+        const baseUp = base.toUpperCase();
         let cls = 'other';
         let baseClass = '';
         
@@ -1479,14 +1625,14 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         
         const posData = conservationData[pos];
         if (posData.hasData && posData.hasValidCoverage) {
-            if (base !== '-' && base !== '.' && posData.consensusBases.has(base)) {
+            if (baseUp !== '-' && baseUp !== '.' && posData.consensusBases.has(baseUp)) {
                 if (enableBlack && posData.conservation >= blackThresh) cls = 'black';
                 else if (enableDark && posData.conservation >= darkThresh) cls = 'dark';
                 else if (enableLight && posData.conservation >= lightThresh) cls = 'light';
-            } else if (base === '-' || base === '.') {
+            } else if (baseUp === '-' || baseUp === '.') {
                 cls = 'gap';
             }
-        } else if (base === '-' || base === '.') {
+        } else if (baseUp === '-' || baseUp === '.') {
             cls = 'gap';
         }
         
@@ -1537,43 +1683,23 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
     
     for (let pos = start; pos < end; pos++) {
         const base = pos < consensus.length ? consensus[pos] : '-';
+        const baseUp = base.toUpperCase();
         let baseClass = '';
-        if (!['A','C','G','T','U','N','-','.'].includes(base)) baseClass = 'artifact';
-        else if (['R','Y','M','K','S','W','H','B','V','D'].includes(base)) baseClass = 'ambiguous';
-        
-        // Calculate conservation for case sensitivity
-        const col = state.seqs.map(s => s.seq[pos] || '-');
-        const nonGapCol = col.filter(b => b !== '-' && b !== '.');
+        if (!['A','C','G','T','U','N','-','.'].includes(baseUp)) baseClass = 'artifact';
+        if (['R','Y','M','K','S','W','H','B','V','D'].includes(baseUp)) baseClass = 'ambiguous';
+
+        // Determine display case from column conservation (consensus STRING stays uppercase)
         let displayBase = base;
-        if (nonGapCol.length > 0) {
-            const counts = {};
-            nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
-            const maxCount = Math.max(...Object.values(counts), 0);
-            const consensusBases = new Set(Object.keys(counts).filter(b => counts[b] === maxCount));
-            const denominator = document.querySelector('input[name="shadeMode"]:checked').value === 'all' ? state.seqs.length : nonGapCol.length;
-            const conservation = maxCount / denominator;
-            
-            // Apply case based on shading: uppercase for black (highly conserved), lowercase for light (less conserved)
-            let matchesTop = false;
-            if (base !== '-' && base !== '.') {
-                const bUp = base.toUpperCase();
-                if (consensusBases.has(bUp)) {
-                    matchesTop = true;
-                } else {
-                    const iBases = iupacToBases(bUp);
-                    if (iBases.length > 0) {
-                        matchesTop = iBases.some(x => consensusBases.has(x));
-                    }
-                }
-            }
-            if (matchesTop) {
-                if (enableBlack && conservation >= blackThresh) {
-                    displayBase = base.toUpperCase(); // Black shading = uppercase
-                } else if (enableLight && conservation >= lightThresh) {
-                    displayBase = base.toLowerCase(); // Light shading = lowercase
-                } else {
-                    displayBase = base.toUpperCase(); // Default to uppercase
-                }
+        if (base !== '-' && base !== '.') {
+            const col = state.seqs.map(s => (s.seq[pos] || '-').toUpperCase());
+            const nonGapCol = col.filter(b => b !== '-' && b !== '.');
+            if (nonGapCol.length > 0) {
+                const counts = {};
+                nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+                const maxCount = Math.max(...Object.values(counts));
+                const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
+                const freq = maxCount / col.length;
+                displayBase = freq >= threshold ? baseUp : baseUp.toLowerCase();
             }
         }
         
@@ -1712,6 +1838,7 @@ function parseAndRender(isFromDrop = false) {
     // MOVE THIS LINE UP: Set filename BEFORE any parsing that might fail.
         if (!isFromDrop) {
             state.currentFilename = 'Clipboard';
+            state.currentFilePath = '';
         }
         state.seqs = parsed;
         state.selectedRows.clear();
@@ -1734,8 +1861,11 @@ function parseAndRender(isFromDrop = false) {
         const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
         
         const filename = state.currentFilename ? `<strong>${state.currentFilename}</strong>: ` : '';
-        el('sourceInfo').innerHTML = `${filename}<strong>${seqCount}</strong> sequences, <strong>${aliLength}</strong> columns, <strong>${lengthRange}</strong> bp/seq`;
+        const pathHtml = state.currentFilePath ? `<br><span style="font-size:10px;color:#999;font-family:monospace;">${state.currentFilePath}</span>` : '';
+        el('sourceInfo').innerHTML = `${filename}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> bp${pathHtml}`;
         renderAlignment();
+        // Auto-fit block size to screen width on every load
+        setBlockSizeToScreen();
         setupHoverMenuReveal();
         showMessage("File loaded successfully!", 2000);
 
@@ -1756,6 +1886,7 @@ function parseAndRender(isFromDrop = false) {
         showMessage(`Error: ${e.message}`, 5000);
     // Reset filename on error to avoid poisoning future loads
         state.currentFilename = '';
+        state.currentFilePath = '';
         el('sourceInfo').innerHTML = 'No file loaded';
     }
 }
@@ -4071,6 +4202,7 @@ function closeAddSequencesModal() {
 
 /**
  * Just add sequences (pad with gaps to alignment length, no realignment).
+ * Respects "Place at top" and "Align to consensus" checkboxes.
  */
 function addSequencesJustAdd() {
     const newText = document.getElementById('addSeqInput')?.value?.trim();
@@ -4105,21 +4237,71 @@ function addSequencesJustAdd() {
         return;
     }
 
+    const atTop = document.getElementById('addSeqAtTop')?.checked;
+    const alignToCons = document.getElementById('addSeqAlignCons')?.checked;
+
     pushUndo('add-sequences');
 
-    // Pad to current alignment length if there are existing sequences
-    const alignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
-    for (const ns of newSeqs) {
-        if (alignLen > 0 && ns.seq.length < alignLen) {
-            ns.seq = ns.seq.padEnd(alignLen, '-');
+    // If align-to-consensus, do pairwise alignment of each new seq against consensus
+    if (alignToCons && state.seqs.length > 0 && state.consensusSeq) {
+        const alignLen = Math.max(...state.seqs.map(s => s.seq.length));
+        // Build a gapped consensus (same length as alignment) to use as profile
+        const gappedCons = computeConsensusForSequences(state.seqs.map(s => s.seq));
+        for (const ns of newSeqs) {
+            ns.seq = alignSeqToProfile(ns.seq.replace(/[-. ]/g, ''), gappedCons);
+            ns.gaplessPositions = calculateGaplessPositions(ns.seq);
         }
-        ns.gaplessPositions = calculateGaplessPositions(ns.seq);
-        state.seqs.push(ns);
+    } else {
+        // Pad to current alignment length
+        const alignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+        for (const ns of newSeqs) {
+            if (alignLen > 0 && ns.seq.length < alignLen) {
+                ns.seq = ns.seq.padEnd(alignLen, '-');
+            }
+            ns.gaplessPositions = calculateGaplessPositions(ns.seq);
+        }
+    }
+
+    if (atTop) {
+        state.seqs.unshift(...newSeqs);
+    } else {
+        state.seqs.push(...newSeqs);
     }
 
     closeAddSequencesModal();
     renderAlignment();
-    showMessage(`Added ${newSeqs.length} sequence${newSeqs.length > 1 ? 's' : ''}!`, 2000);
+    showMessage(`Added ${newSeqs.length} sequence${newSeqs.length > 1 ? 's' : ''} at ${atTop ? 'top' : 'bottom'}!`, 2000);
+}
+
+/**
+ * Align a single ungapped sequence to a gapped profile (consensus) using simple NW.
+ * Maps characters from seq into the gap structure of the profile.
+ */
+function alignSeqToProfile(seq, profile) {
+    // Simple approach: walk through profile columns.
+    // For each profile position that has a non-gap, consume a character from seq.
+    // If profile has a gap, insert a gap in the result.
+    // After profile is exhausted, append remaining seq chars.
+    const result = [];
+    let si = 0;
+    for (let pi = 0; pi < profile.length; pi++) {
+        if (profile[pi] === '-' || profile[pi] === '.') {
+            result.push('-');
+        } else {
+            if (si < seq.length) {
+                result.push(seq[si]);
+                si++;
+            } else {
+                result.push('-');
+            }
+        }
+    }
+    // If seq has remaining characters, append them (shouldn't normally happen)
+    while (si < seq.length) {
+        result.push(seq[si]);
+        si++;
+    }
+    return result.join('');
 }
 
 /**
@@ -4732,6 +4914,54 @@ function showContextMenu(e, index) {
             closeContextMenu();
         });
         contextMenu.appendChild(blastItem);
+
+        // Re-align against consensus
+        const realignItem = document.createElement('div');
+        realignItem.textContent = 'Re-align against consensus';
+        realignItem.addEventListener('click', () => {
+            realignSequenceAgainstConsensus(index);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(realignItem);
+
+        // Dot-plot self
+        const dotSelfItem = document.createElement('div');
+        dotSelfItem.textContent = 'Dot-plot (self)';
+        dotSelfItem.addEventListener('click', () => {
+            const s = state.seqs[index];
+            const ungapped = s.seq.replace(/[-. ]/g, '');
+            openDotPlot(ungapped, ungapped, s.header, s.header);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(dotSelfItem);
+
+        // Repeat/TSD finder
+        const repeatItem = document.createElement('div');
+        repeatItem.textContent = 'Find repeats / TSD';
+        repeatItem.addEventListener('click', () => {
+            openRepeatFinder(index);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(repeatItem);
+    }
+
+    // Dot-plot between two selected sequences
+    if (state.selectedRows.size === 2) {
+        const sep2 = document.createElement('div');
+        sep2.style.borderTop = '1px solid #ccc';
+        sep2.style.margin = '4px 0';
+        contextMenu.appendChild(sep2);
+
+        const dotPairItem = document.createElement('div');
+        const selIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
+        dotPairItem.textContent = `Dot-plot (${state.seqs[selIndices[0]].header} vs ${state.seqs[selIndices[1]].header})`;
+        dotPairItem.addEventListener('click', () => {
+            const sA = state.seqs[selIndices[0]];
+            const sB = state.seqs[selIndices[1]];
+            openDotPlot(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(dotPairItem);
     }
     
     // Add "Replace with Consensus" option if multiple sequences selected
@@ -5098,19 +5328,25 @@ function initializeAppUI() {
     // SSH fetch: Enter key and button
     const sshPathInput = document.getElementById('sshPathInput');
     const sshLoadButton = document.getElementById('sshLoadButton');
+    const checkQueueButton = document.getElementById('checkQueueButton');
     if (sshPathInput) {
         sshPathInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                const serverKey = document.getElementById('sshServerSelect')?.value || 'copilot';
+                const serverKey = getSelectedServer();
                 fetchFileFromServer(sshPathInput.value, serverKey);
             }
         });
     }
     if (sshLoadButton) {
         sshLoadButton.addEventListener('click', () => {
-            const serverKey = document.getElementById('sshServerSelect')?.value || 'copilot';
+            const serverKey = getSelectedServer();
             fetchFileFromServer(document.getElementById('sshPathInput')?.value, serverKey);
+        });
+    }
+    if (checkQueueButton) {
+        checkQueueButton.addEventListener('click', () => {
+            checkMCQueueOnce();
         });
     }
 
@@ -5155,6 +5391,7 @@ function initializeAppUI() {
             const file = e.dataTransfer.files[0];
             if (!file) return;
             state.currentFilename = file.name;
+            state.currentFilePath = '';
             const reader = new FileReader();
             reader.onload = function(e) {
                 fastaInput.value = e.target.result;
@@ -5178,6 +5415,7 @@ function initializeAppUI() {
         const file = e.target.files[0];
         if (!file) return;
         state.currentFilename = file.name;
+        state.currentFilePath = '';
         const reader = new FileReader();
         reader.onload = function(evt) {
             fastaInput.value = evt.target.result;
@@ -5392,6 +5630,10 @@ function initializeAppUI() {
     
     // Initialize colour seqs feature
     initColourSeqs();
+
+    // Initialize Dot Plot & Repeat Finder modals
+    _initDotPlotEvents();
+    _initRepeatFinderEvents();
 
     // ── URL parameter auto-loading ──────────────────────────────────────
     // Supports:
@@ -6922,5 +7164,737 @@ function displayBlastResults(queryName, queryLen, results) {
 
     overlay.addEventListener('click', e => {
         if (e.target === overlay) { overlay.remove(); blastResultsModal = null; }
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RE-ALIGN AGAINST CONSENSUS
+// ═══════════════════════════════════════════════════════════════════
+
+function realignSequenceAgainstConsensus(index) {
+    if (!state.seqs || state.seqs.length < 2) {
+        showMessage('Need at least 2 sequences for consensus', 2000);
+        return;
+    }
+    const gappedCons = computeConsensusForSequences(state.seqs.map(s => s.seq));
+    if (!gappedCons) {
+        showMessage('Could not compute consensus', 2000);
+        return;
+    }
+    pushUndo('realign-to-consensus');
+    const s = state.seqs[index];
+    const ungapped = s.seq.replace(/[-. ]/g, '');
+    s.seq = alignSeqToProfile(ungapped, gappedCons);
+    s.gaplessPositions = calculateGaplessPositions(s.seq);
+    renderAlignment();
+    showMessage(`Re-aligned "${s.header}" against consensus`, 2000);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DOT-PLOT (integrated from Doter)
+// ═══════════════════════════════════════════════════════════════════
+
+let _dotPlotWorker = null;
+let _dotPlotState = {
+    seqA: '', seqB: '', nameA: '', nameB: '',
+    scores: null, rows: 0, cols: 0,
+    scoreMin: 0, scoreMax: 1,
+    threshold: 0.55, windowSize: 9, zoom: 1,
+    dotImage: null, computing: false,
+    lastRow: -1, lastCol: -1
+};
+const DOT_AXIS_PAD = 50;
+
+function _getDotWorker() {
+    if (!_dotPlotWorker) _dotPlotWorker = new Worker('doter-worker.js');
+    return _dotPlotWorker;
+}
+
+function _dotCompute(seqA, seqB, windowSize, mode) {
+    return new Promise((res, rej) => {
+        const w = _getDotWorker();
+        const ok = (e) => { w.removeEventListener('message', ok); w.removeEventListener('error', no);
+            if (e.data.error) { rej(new Error(e.data.error)); return; } res(e.data); };
+        const no = (e) => { w.removeEventListener('message', ok); w.removeEventListener('error', no); rej(e); };
+        w.addEventListener('message', ok);
+        w.addEventListener('error', no);
+        w.postMessage({ seqA, seqB, windowSize, mode });
+    });
+}
+
+function _dotBuildImage() {
+    const S = _dotPlotState;
+    if (!S.scores) return;
+    const img = new ImageData(S.cols, S.rows);
+    const d = img.data;
+    const range = S.scoreMax - S.scoreMin || 1;
+    const thr = S.threshold;
+    for (let i = 0, j = 0; i < S.rows * S.cols; i++, j += 4) {
+        const n = (S.scores[i] - S.scoreMin) / range;
+        const v = n >= thr ? Math.round((1 - n) * 255) : 255;
+        d[j] = v; d[j + 1] = v; d[j + 2] = v; d[j + 3] = 255;
+    }
+    S.dotImage = img;
+}
+
+function _dotNiceStep(seqLen, maxTicks) {
+    const raw = seqLen / maxTicks;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    let step;
+    if (norm <= 1) step = 1;
+    else if (norm <= 2) step = 2;
+    else if (norm <= 5) step = 5;
+    else step = 10;
+    return Math.max(1, step * mag);
+}
+
+function _dotRender() {
+    const S = _dotPlotState;
+    if (!S.dotImage) return;
+    const canvas = document.getElementById('dotPlotCanvas');
+    const overlay = document.getElementById('dotPlotOverlay');
+    if (!canvas || !overlay) return;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const z = S.zoom;
+    const plotW = Math.round(S.cols * z);
+    const plotH = Math.round(S.rows * z);
+    const totalW = DOT_AXIS_PAD + plotW + 1;
+    const totalH = DOT_AXIS_PAD + plotH + 1;
+    canvas.width = totalW; canvas.height = totalH;
+    overlay.width = totalW; overlay.height = totalH;
+
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, totalW, totalH);
+
+    const tmp = document.createElement('canvas');
+    tmp.width = S.cols; tmp.height = S.rows;
+    tmp.getContext('2d').putImageData(S.dotImage, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tmp, DOT_AXIS_PAD, DOT_AXIS_PAD, plotW, plotH);
+
+    // Axes
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+    ctx.strokeRect(DOT_AXIS_PAD + 0.5, DOT_AXIS_PAD + 0.5, plotW, plotH);
+
+    const maxTicksX = Math.max(2, Math.floor(plotW / 50));
+    const maxTicksY = Math.max(2, Math.floor(plotH / 40));
+    const stepX = _dotNiceStep(S.cols, maxTicksX);
+    const stepY = _dotNiceStep(S.rows, maxTicksY);
+
+    ctx.fillStyle = '#555'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    for (let pos = stepX; pos <= S.cols; pos += stepX) {
+        const x = DOT_AXIS_PAD + Math.round(pos * z) + 0.5;
+        ctx.beginPath(); ctx.moveTo(x, DOT_AXIS_PAD); ctx.lineTo(x, DOT_AXIS_PAD - 5); ctx.stroke();
+        ctx.fillText(String(pos), x, DOT_AXIS_PAD - 6);
+    }
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let pos = stepY; pos <= S.rows; pos += stepY) {
+        const y = DOT_AXIS_PAD + Math.round(pos * z) + 0.5;
+        ctx.beginPath(); ctx.moveTo(DOT_AXIS_PAD, y); ctx.lineTo(DOT_AXIS_PAD - 5, y); ctx.stroke();
+        ctx.fillText(String(pos), DOT_AXIS_PAD - 7, y);
+    }
+
+    // Axis titles
+    ctx.fillStyle = '#333'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    const nameB = S.nameB.length > 30 ? S.nameB.substring(0, 30) + '…' : S.nameB;
+    const nameA = S.nameA.length > 30 ? S.nameA.substring(0, 30) + '…' : S.nameA;
+    ctx.fillText(nameB, DOT_AXIS_PAD + plotW / 2, 2);
+    ctx.save(); ctx.translate(12, DOT_AXIS_PAD + plotH / 2); ctx.rotate(-Math.PI / 2);
+    ctx.fillText(nameA, 0, 0); ctx.restore();
+}
+
+function _dotFitView() {
+    const S = _dotPlotState;
+    if (!S.scores) return;
+    const vp = document.getElementById('dotPlotViewport');
+    if (!vp) return;
+    const vw = (vp.clientWidth || 600) - DOT_AXIS_PAD - 20;
+    const vh = (vp.clientHeight || 400) - DOT_AXIS_PAD - 20;
+    if (S.cols === 0 || S.rows === 0) return;
+    const z = Math.min(vw / S.cols, vh / S.rows, 24);
+    S.zoom = Math.max(0.5, Math.round(z * 10) / 10);
+    _dotRender();
+}
+
+function _dotDrawOverlay(row, col) {
+    const S = _dotPlotState;
+    const overlay = document.getElementById('dotPlotOverlay');
+    if (!overlay) return;
+    const oCtx = overlay.getContext('2d');
+    const w = overlay.width, h = overlay.height;
+    oCtx.clearRect(0, 0, w, h);
+    if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
+    const z = S.zoom;
+    const plotW = S.cols * z, plotH = S.rows * z;
+    const cx = DOT_AXIS_PAD + (col + 0.5) * z;
+    const cy = DOT_AXIS_PAD + (row + 0.5) * z;
+    oCtx.strokeStyle = 'rgba(80,160,255,0.7)'; oCtx.lineWidth = 1;
+    oCtx.beginPath();
+    oCtx.moveTo(DOT_AXIS_PAD, cy); oCtx.lineTo(DOT_AXIS_PAD + plotW, cy);
+    oCtx.moveTo(cx, DOT_AXIS_PAD); oCtx.lineTo(cx, DOT_AXIS_PAD + plotH);
+    oCtx.stroke();
+    // Diagonal trace
+    const range = S.scoreMax - S.scoreMin || 1;
+    oCtx.fillStyle = 'rgba(100,230,160,0.85)';
+    const pxSz = Math.max(1, Math.round(z));
+    let r = row, c = col;
+    while (r >= 0 && c >= 0) {
+        const n = (S.scores[r * S.cols + c] - S.scoreMin) / range;
+        if (n < S.threshold) break;
+        oCtx.fillRect(DOT_AXIS_PAD + c * z, DOT_AXIS_PAD + r * z, pxSz, pxSz);
+        r--; c--;
+    }
+    r = row + 1; c = col + 1;
+    while (r < S.rows && c < S.cols) {
+        const n = (S.scores[r * S.cols + c] - S.scoreMin) / range;
+        if (n < S.threshold) break;
+        oCtx.fillRect(DOT_AXIS_PAD + c * z, DOT_AXIS_PAD + r * z, pxSz, pxSz);
+        r++; c++;
+    }
+    // Position labels
+    oCtx.fillStyle = 'rgba(80,160,255,0.95)'; oCtx.font = 'bold 11px system-ui';
+    oCtx.textAlign = 'center'; oCtx.textBaseline = 'bottom';
+    oCtx.fillText(String(col + 1), cx, DOT_AXIS_PAD - 1);
+    oCtx.textAlign = 'right'; oCtx.textBaseline = 'middle';
+    oCtx.fillText(String(row + 1), DOT_AXIS_PAD - 2, cy);
+}
+
+async function openDotPlot(seqA, seqB, nameA, nameB) {
+    const S = _dotPlotState;
+    S.seqA = seqA.toUpperCase(); S.seqB = seqB.toUpperCase();
+    S.nameA = nameA; S.nameB = nameB;
+    S.windowSize = parseInt(document.getElementById('dotPlotWindow')?.value) || 9;
+    S.threshold = (parseInt(document.getElementById('dotPlotThreshold')?.value) || 55) / 100;
+
+    const revComp = document.getElementById('dotPlotRevComp')?.checked;
+    if (revComp) {
+        const m = { A: 'T', C: 'G', G: 'C', T: 'A', U: 'A', N: 'N' };
+        S.seqB = [...S.seqB].reverse().map(b => m[b] ?? 'N').join('');
+        S.nameB = nameB + ' (RevComp)';
+    }
+
+    const modal = document.getElementById('dotPlotModal');
+    if (modal) modal.style.display = 'block';
+    const titleEl = document.getElementById('dotPlotTitle');
+    if (titleEl) titleEl.textContent = `Dot Plot: ${nameA} vs ${nameB}${revComp ? ' (rc)' : ''}`;
+    const statusEl = document.getElementById('dotPlotStatus');
+    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} × ${S.seqB.length}…`;
+
+    S.computing = true;
+    const t0 = performance.now();
+    try {
+        const result = await _dotCompute(S.seqA, S.seqB, S.windowSize, 'identity');
+        S.scores = new Int16Array(result.scores);
+        S.rows = result.rows; S.cols = result.cols;
+        S.scoreMin = result.min; S.scoreMax = result.max;
+    } catch (err) {
+        if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+        S.computing = false; return;
+    }
+    const ms = performance.now() - t0;
+    S.computing = false;
+    _dotBuildImage();
+    _dotFitView();
+    S.lastRow = S.lastCol = -1;
+    if (statusEl) statusEl.textContent = `${S.seqA.length} × ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
+}
+
+function _initDotPlotEvents() {
+    const overlay = document.getElementById('dotPlotOverlay');
+    const threshSlider = document.getElementById('dotPlotThreshold');
+    const threshVal = document.getElementById('dotPlotThreshVal');
+    const recalcBtn = document.getElementById('dotPlotRecalc');
+    const exportBtn = document.getElementById('dotPlotExport');
+    const closeBtn = document.getElementById('dotPlotCloseBtn');
+
+    if (overlay) {
+        let hoverRaf = 0;
+        overlay.addEventListener('mousemove', (e) => {
+            const S = _dotPlotState;
+            if (!S.scores || hoverRaf) return;
+            hoverRaf = requestAnimationFrame(() => {
+                hoverRaf = 0;
+                const rect = overlay.getBoundingClientRect();
+                const col = Math.floor((e.clientX - rect.left - DOT_AXIS_PAD) / S.zoom);
+                const row = Math.floor((e.clientY - rect.top - DOT_AXIS_PAD) / S.zoom);
+                if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
+                if (row === S.lastRow && col === S.lastCol) return;
+                S.lastRow = row; S.lastCol = col;
+                _dotDrawOverlay(row, col);
+                const range = S.scoreMax - S.scoreMin || 1;
+                const n = (S.scores[row * S.cols + col] - S.scoreMin) / range;
+                const hoverEl = document.getElementById('dotPlotHover');
+                if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  score=${n.toFixed(3)}`;
+            });
+        });
+        overlay.addEventListener('mouseleave', () => {
+            if (hoverRaf) { cancelAnimationFrame(hoverRaf); hoverRaf = 0; }
+            const oCtx = overlay.getContext('2d');
+            oCtx.clearRect(0, 0, overlay.width, overlay.height);
+            _dotPlotState.lastRow = _dotPlotState.lastCol = -1;
+            const hoverEl = document.getElementById('dotPlotHover');
+            if (hoverEl) hoverEl.textContent = '';
+        });
+        // Mouse wheel zoom
+        const viewport = document.getElementById('dotPlotViewport');
+        if (viewport) {
+            viewport.addEventListener('wheel', (e) => {
+                const S = _dotPlotState;
+                if (!S.scores) return;
+                e.preventDefault();
+                const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+                S.zoom = Math.max(0.5, Math.min(24, Math.round(S.zoom * factor * 10) / 10));
+                _dotBuildImage();
+                _dotRender();
+                if (S.lastRow >= 0) _dotDrawOverlay(S.lastRow, S.lastCol);
+            }, { passive: false });
+        }
+    }
+    if (threshSlider) {
+        threshSlider.addEventListener('input', () => {
+            const v = parseInt(threshSlider.value);
+            if (threshVal) threshVal.textContent = v + '%';
+            _dotPlotState.threshold = v / 100;
+            if (_dotPlotState.scores) { _dotBuildImage(); _dotRender(); }
+        });
+    }
+    if (recalcBtn) {
+        recalcBtn.addEventListener('click', () => {
+            const S = _dotPlotState;
+            if (S.seqA && S.seqB) openDotPlot(S.seqA, S.seqB, S.nameA, S.nameB);
+        });
+    }
+    if (exportBtn) {
+        exportBtn.addEventListener('click', () => {
+            const canvas = document.getElementById('dotPlotCanvas');
+            const olay = document.getElementById('dotPlotOverlay');
+            if (!canvas) return;
+            const c = document.createElement('canvas');
+            c.width = canvas.width; c.height = canvas.height;
+            const cx = c.getContext('2d');
+            cx.drawImage(canvas, 0, 0);
+            if (olay) cx.drawImage(olay, 0, 0);
+            const a = document.createElement('a');
+            a.href = c.toDataURL('image/png');
+            a.download = `dotplot_${_dotPlotState.nameA}_vs_${_dotPlotState.nameB}.png`;
+            a.click();
+        });
+    }
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            const modal = document.getElementById('dotPlotModal');
+            if (modal) modal.style.display = 'none';
+        });
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// REPEAT FINDER (Direct, Inverted, Tandem) & TSD FINDER
+// ═══════════════════════════════════════════════════════════════════
+
+let _repeatFinderSeqIndex = -1;
+
+function openRepeatFinder(seqIndex) {
+    _repeatFinderSeqIndex = seqIndex;
+    const modal = document.getElementById('repeatFinderModal');
+    if (modal) modal.style.display = 'block';
+    document.getElementById('repeatResults').textContent = 'Click "Run Analysis" to start.';
+}
+
+function _revComp(seq) {
+    const m = { A: 'T', C: 'G', G: 'C', T: 'A', U: 'A', N: 'N' };
+    return [...seq].reverse().map(b => m[b.toUpperCase()] ?? 'N').join('');
+}
+
+/**
+ * Find all k-mer repeat matches in a sequence with allowed divergence.
+ */
+function _findRepeats(seq, minLen, maxDivPct, type) {
+    const results = [];
+    const seqU = seq.toUpperCase();
+    const n = seqU.length;
+    if (n < minLen * 2) return results;
+
+    // For tandem: look for repeated units adjacent to each other
+    if (type === 'tandem') {
+        return _findTandemRepeats(seqU, minLen, maxDivPct);
+    }
+
+    // For direct/inverted: find matches between different positions
+    const maxDiv = maxDivPct / 100;
+    const stepLen = Math.max(1, Math.floor(minLen / 2));
+
+    for (let i = 0; i < n - minLen; i += 1) {
+        const startJ = type === 'direct' ? i + minLen : 0;
+        const endJ = type === 'direct' ? n : i;
+        for (let j = startJ; j <= n - minLen; j += 1) {
+            if (type === 'direct' && j <= i) continue;
+            // Try to extend match
+            let matchLen = 0;
+            let mismatches = 0;
+            const seqI = seqU.substring(i);
+            const seqJ = type === 'inverted' ? _revComp(seqU.substring(j)) : seqU.substring(j);
+            const maxExtend = Math.min(seqI.length, seqJ.length);
+            for (let k = 0; k < maxExtend; k++) {
+                if (seqI[k] !== seqJ[k]) mismatches++;
+                matchLen++;
+                if (mismatches / matchLen > maxDiv && matchLen > minLen) break;
+            }
+            const finalDiv = mismatches / matchLen;
+            if (matchLen >= minLen && finalDiv <= maxDiv) {
+                // Check if this overlaps an existing result
+                const overlaps = results.some(r =>
+                    Math.abs(r.posA - i) < minLen / 2 && Math.abs(r.posB - j) < minLen / 2);
+                if (!overlaps) {
+                    results.push({
+                        posA: i, posB: j,
+                        length: matchLen,
+                        divergence: (finalDiv * 100).toFixed(1),
+                        seqA: seqI.substring(0, matchLen),
+                        seqB: seqJ.substring(0, matchLen)
+                    });
+                }
+            }
+            // Skip ahead if no match at minimum length
+            if (matchLen < minLen) {
+                // jump
+            }
+        }
+        if (results.length > 200) break; // safety limit
+    }
+    results.sort((a, b) => b.length - a.length);
+    return results.slice(0, 100);
+}
+
+/**
+ * Find tandem repeats using simplified TRF-like logic.
+ */
+function _findTandemRepeats(seq, minUnitLen, maxDivPct) {
+    const results = [];
+    const n = seq.length;
+    const maxDiv = maxDivPct / 100;
+    const maxUnitLen = Math.min(Math.floor(n / 2), 200);
+
+    for (let unitLen = minUnitLen; unitLen <= maxUnitLen; unitLen++) {
+        for (let start = 0; start <= n - unitLen * 2; start++) {
+            const unit = seq.substring(start, start + unitLen);
+            // Count how many tandem copies
+            let copies = 1;
+            let totalMismatches = 0;
+            let pos = start + unitLen;
+            while (pos + unitLen <= n) {
+                const next = seq.substring(pos, pos + unitLen);
+                let mm = 0;
+                for (let k = 0; k < unitLen; k++) {
+                    if (unit[k] !== next[k]) mm++;
+                }
+                if (mm / unitLen <= maxDiv) {
+                    copies++;
+                    totalMismatches += mm;
+                    pos += unitLen;
+                } else {
+                    break;
+                }
+            }
+            if (copies >= 2) {
+                const totalLen = copies * unitLen;
+                const avgDiv = (totalMismatches / ((copies - 1) * unitLen) * 100).toFixed(1);
+                const overlaps = results.some(r =>
+                    Math.abs(r.start - start) < unitLen && Math.abs(r.unitLen - unitLen) < 3);
+                if (!overlaps) {
+                    results.push({
+                        start, end: start + totalLen,
+                        unitLen, copies,
+                        unit, divergence: avgDiv,
+                        region: seq.substring(start, start + totalLen)
+                    });
+                }
+            }
+        }
+        if (results.length > 100) break;
+    }
+    results.sort((a, b) => b.copies * b.unitLen - a.copies * a.unitLen);
+    return results.slice(0, 50);
+}
+
+/**
+ * TSD Finder — find Target Site Duplications at SINE/TE insertion boundaries.
+ * Three modes: manual (user specifies columns), topseq (use top seq), auto (conservation-based).
+ */
+function _findTSD(seqs, mode, params) {
+    const results = [];
+    const aliLen = Math.max(...seqs.map(s => s.seq.length));
+    const minTsdLen = params.minLen || 4;
+    const maxTsdLen = params.maxLen || 20;
+    const maxDiv = (params.maxDiv || 20) / 100;
+    const flankSize = params.flankSize || 30;
+
+    // Determine upstream and downstream flank columns for each sequence
+    for (let si = 0; si < seqs.length; si++) {
+        const seq = seqs[si].seq;
+        let upStart, upEnd, downStart, downEnd;
+
+        if (mode === 'manual') {
+            upStart = (params.upStart || 1) - 1;
+            upEnd = (params.upEnd || 30) - 1;
+            downStart = params.downStart ? params.downStart - 1 : aliLen - 30;
+            downEnd = params.downEnd ? params.downEnd - 1 : aliLen - 1;
+        } else if (mode === 'topseq') {
+            // Use top sequence (index 0) to find element boundaries
+            const topSeq = seqs[0].seq;
+            let firstNonGap = -1, lastNonGap = -1;
+            for (let i = 0; i < topSeq.length; i++) {
+                if (topSeq[i] !== '-' && topSeq[i] !== '.') {
+                    if (firstNonGap < 0) firstNonGap = i;
+                    lastNonGap = i;
+                }
+            }
+            if (firstNonGap < 0) continue;
+            upStart = Math.max(0, firstNonGap - flankSize);
+            upEnd = firstNonGap - 1;
+            downStart = lastNonGap + 1;
+            downEnd = Math.min(aliLen - 1, lastNonGap + flankSize);
+        } else {
+            // Auto mode: find where conservation drops (element boundary)
+            const consScores = [];
+            for (let col = 0; col < aliLen; col++) {
+                let matches = 0, total = 0;
+                for (let s2 = 0; s2 < seqs.length; s2++) {
+                    const b = seqs[s2].seq[col];
+                    if (b && b !== '-' && b !== '.') {
+                        total++;
+                        if (b.toUpperCase() === seq[col]?.toUpperCase()) matches++;
+                    }
+                }
+                consScores.push(total > 0 ? matches / total : 0);
+            }
+            // Find transition points (high cons flanks → low cons element interior)
+            let leftBound = 0, rightBound = aliLen - 1;
+            // Scan from left to find where conservation drops
+            for (let i = 10; i < aliLen - 10; i++) {
+                const leftAvg = consScores.slice(Math.max(0, i - 10), i).reduce((a, b) => a + b, 0) / 10;
+                const rightAvg = consScores.slice(i, Math.min(aliLen, i + 10)).reduce((a, b) => a + b, 0) / 10;
+                if (leftAvg > 0.6 && rightAvg < 0.4) { leftBound = i; break; }
+            }
+            for (let i = aliLen - 11; i > 10; i--) {
+                const leftAvg = consScores.slice(Math.max(0, i - 10), i).reduce((a, b) => a + b, 0) / 10;
+                const rightAvg = consScores.slice(i, Math.min(aliLen, i + 10)).reduce((a, b) => a + b, 0) / 10;
+                if (rightAvg > 0.6 && leftAvg < 0.4) { rightBound = i; break; }
+            }
+            upStart = Math.max(0, leftBound - flankSize);
+            upEnd = leftBound - 1;
+            downStart = rightBound + 1;
+            downEnd = Math.min(aliLen - 1, rightBound + flankSize);
+        }
+
+        if (upEnd < upStart || downEnd < downStart) continue;
+
+        // Extract ungapped flank sequences
+        const upFlank = [];
+        for (let c = upStart; c <= upEnd; c++) {
+            const b = seq[c];
+            if (b && b !== '-' && b !== '.') upFlank.push(b.toUpperCase());
+        }
+        const downFlank = [];
+        for (let c = downStart; c <= downEnd; c++) {
+            const b = seq[c];
+            if (b && b !== '-' && b !== '.') downFlank.push(b.toUpperCase());
+        }
+
+        if (upFlank.length < minTsdLen || downFlank.length < minTsdLen) continue;
+
+        // Search for matching subsequences between flanks
+        const upStr = upFlank.join('');
+        const downStr = downFlank.join('');
+
+        let bestTsd = null;
+        for (let tsdLen = maxTsdLen; tsdLen >= minTsdLen; tsdLen--) {
+            // Check end of upstream vs start of downstream
+            for (let ui = Math.max(0, upStr.length - tsdLen - 5); ui <= upStr.length - tsdLen; ui++) {
+                const upSub = upStr.substring(ui, ui + tsdLen);
+                for (let di = 0; di <= Math.min(5, downStr.length - tsdLen); di++) {
+                    const downSub = downStr.substring(di, di + tsdLen);
+                    let mm = 0;
+                    for (let k = 0; k < tsdLen; k++) {
+                        if (upSub[k] !== downSub[k]) mm++;
+                    }
+                    const div = mm / tsdLen;
+                    if (div <= maxDiv) {
+                        if (!bestTsd || tsdLen > bestTsd.length || (tsdLen === bestTsd.length && div < bestTsd.div)) {
+                            bestTsd = {
+                                length: tsdLen, div,
+                                upSeq: upSub, downSeq: downSub,
+                                upPos: ui, downPos: di,
+                                mismatches: mm
+                            };
+                        }
+                    }
+                }
+            }
+            if (bestTsd && bestTsd.length === tsdLen) break; // Found at this length, don't check shorter
+        }
+
+        if (bestTsd) {
+            results.push({
+                seqName: seqs[si].header,
+                seqIndex: si,
+                tsdLen: bestTsd.length,
+                upTSD: bestTsd.upSeq,
+                downTSD: bestTsd.downSeq,
+                divergence: (bestTsd.div * 100).toFixed(1),
+                mismatches: bestTsd.mismatches,
+                upCols: `${upStart + 1}-${upEnd + 1}`,
+                downCols: `${downStart + 1}-${downEnd + 1}`
+            });
+        }
+    }
+    return results;
+}
+
+function runRepeatAnalysis() {
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage('No sequences loaded', 2000);
+        return;
+    }
+    const resultsEl = document.getElementById('repeatResults');
+    if (!resultsEl) return;
+    const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
+
+    if (mode === 'tsd') {
+        // TSD analysis uses ALL sequences
+        const tsdMode = document.querySelector('input[name="tsdMode"]:checked')?.value || 'manual';
+        const params = {
+            minLen: parseInt(document.getElementById('tsdMinLen')?.value) || 4,
+            maxLen: parseInt(document.getElementById('tsdMaxLen')?.value) || 20,
+            maxDiv: parseInt(document.getElementById('tsdMaxDiv')?.value) || 20,
+            flankSize: parseInt(document.getElementById('tsdFlankSize')?.value) || 30,
+        };
+        if (tsdMode === 'manual') {
+            params.upStart = parseInt(document.getElementById('tsdUpStart')?.value) || 1;
+            params.upEnd = parseInt(document.getElementById('tsdUpEnd')?.value) || 30;
+            const ds = document.getElementById('tsdDownStart')?.value;
+            const de = document.getElementById('tsdDownEnd')?.value;
+            if (ds) params.downStart = parseInt(ds);
+            if (de) params.downEnd = parseInt(de);
+        }
+        resultsEl.textContent = 'Running TSD analysis…';
+        setTimeout(() => {
+            try {
+                const results = _findTSD(state.seqs, tsdMode, params);
+                if (results.length === 0) {
+                    resultsEl.textContent = 'No TSDs found with current parameters.';
+                    return;
+                }
+                let out = `TSD Analysis (mode: ${tsdMode}) — ${results.length} sequences with TSD\n`;
+                out += '─'.repeat(80) + '\n';
+                out += 'Sequence'.padEnd(25) + 'TSD Len'.padEnd(10) + 'Div%'.padEnd(8) + 'Upstream TSD'.padEnd(25) + 'Downstream TSD\n';
+                out += '─'.repeat(80) + '\n';
+                for (const r of results) {
+                    const name = r.seqName.length > 23 ? r.seqName.substring(0, 23) + '..' : r.seqName;
+                    out += name.padEnd(25) + String(r.tsdLen).padEnd(10) + (r.divergence + '%').padEnd(8) + r.upTSD.padEnd(25) + r.downTSD + '\n';
+                }
+                // Consensus TSD
+                if (results.length >= 2) {
+                    out += '\n─ Consensus TSD ─\n';
+                    const maxLen = Math.max(...results.map(r => r.tsdLen));
+                    for (let pos = 0; pos < maxLen; pos++) {
+                        const counts = {};
+                        results.forEach(r => {
+                            const b = r.upTSD[pos];
+                            if (b) counts[b] = (counts[b] || 0) + 1;
+                        });
+                        const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+                        out += top ? top[0] : '-';
+                    }
+                    out += ' (from upstream TSDs)\n';
+                }
+                resultsEl.textContent = out;
+            } catch (e) {
+                resultsEl.textContent = `Error: ${e.message}`;
+            }
+        }, 50);
+        return;
+    }
+
+    // Regular repeat analysis — use a specific sequence
+    const seqIndex = _repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0;
+    const seq = state.seqs[seqIndex]?.seq.replace(/[-. ]/g, '');
+    if (!seq) {
+        resultsEl.textContent = 'No sequence available.';
+        return;
+    }
+    const minLen = parseInt(document.getElementById('repeatMinLen')?.value) || 5;
+    const maxDiv = parseInt(document.getElementById('repeatMaxDiv')?.value) || 15;
+    const seqName = state.seqs[seqIndex].header;
+
+    resultsEl.textContent = `Searching ${mode} repeats in ${seqName} (${seq.length} bp)…`;
+    setTimeout(() => {
+        try {
+            const results = _findRepeats(seq, minLen, maxDiv, mode);
+            if (results.length === 0) {
+                resultsEl.textContent = `No ${mode} repeats found (min ${minLen}bp, max ${maxDiv}% divergence).`;
+                return;
+            }
+            let out = `${mode.charAt(0).toUpperCase() + mode.slice(1)} repeats in ${seqName} (${seq.length} bp)\n`;
+            out += `Min length: ${minLen}, Max divergence: ${maxDiv}%\n`;
+            out += '─'.repeat(80) + '\n';
+
+            if (mode === 'tandem') {
+                out += '#'.padEnd(5) + 'Start'.padEnd(8) + 'End'.padEnd(8) + 'Unit'.padEnd(8) + 'Copies'.padEnd(8) + 'Div%'.padEnd(8) + 'Repeat unit\n';
+                out += '─'.repeat(80) + '\n';
+                results.forEach((r, i) => {
+                    out += String(i + 1).padEnd(5) + String(r.start + 1).padEnd(8) + String(r.end).padEnd(8)
+                        + String(r.unitLen + 'bp').padEnd(8) + String(r.copies + '×').padEnd(8)
+                        + (r.divergence + '%').padEnd(8) + r.unit + '\n';
+                });
+            } else {
+                out += '#'.padEnd(5) + 'PosA'.padEnd(8) + 'PosB'.padEnd(8) + 'Len'.padEnd(8) + 'Div%'.padEnd(8) + 'SequenceA\n';
+                out += '─'.repeat(80) + '\n';
+                results.forEach((r, i) => {
+                    out += String(i + 1).padEnd(5) + String(r.posA + 1).padEnd(8) + String(r.posB + 1).padEnd(8)
+                        + String(r.length).padEnd(8) + (r.divergence + '%').padEnd(8)
+                        + (r.seqA.length > 50 ? r.seqA.substring(0, 50) + '…' : r.seqA) + '\n';
+                });
+            }
+            out += `\nTotal: ${results.length} ${mode} repeat(s) found.`;
+            resultsEl.textContent = out;
+        } catch (e) {
+            resultsEl.textContent = `Error: ${e.message}`;
+        }
+    }, 50);
+}
+
+function _initRepeatFinderEvents() {
+    const closeBtn = document.getElementById('repeatFinderCloseBtn');
+    if (closeBtn) closeBtn.addEventListener('click', () => {
+        const modal = document.getElementById('repeatFinderModal');
+        if (modal) modal.style.display = 'none';
+    });
+    const runBtn = document.getElementById('repeatRunBtn');
+    if (runBtn) runBtn.addEventListener('click', runRepeatAnalysis);
+
+    // Toggle TSD params visibility
+    document.querySelectorAll('input[name="repeatMode"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            const tsdParams = document.getElementById('tsdParams');
+            const generalParams = document.getElementById('repeatParamsGeneral');
+            if (radio.value === 'tsd') {
+                if (tsdParams) tsdParams.style.display = '';
+                if (generalParams) generalParams.style.display = 'none';
+            } else {
+                if (tsdParams) tsdParams.style.display = 'none';
+                if (generalParams) generalParams.style.display = '';
+            }
+        });
+    });
+    // Toggle TSD mode params
+    document.querySelectorAll('input[name="tsdMode"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            const manualP = document.getElementById('tsdManualParams');
+            if (manualP) manualP.style.display = radio.value === 'manual' ? '' : 'none';
+        });
     });
 }

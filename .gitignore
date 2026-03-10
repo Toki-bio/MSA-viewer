@@ -1,0 +1,24 @@
+# Private server configuration (contains usernames, hostnames, ports)
+ssh-servers.json
+
+# Node modules
+node_modules/
+
+# Server logs
+server_out.txt
+server_err.txt
+
+# Sequence data / databases (large binary/text files)
+*.bnk
+*.fa
+*.fas
+*.fasta
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Editor
+.vscode/
+*.swp
+*.swo

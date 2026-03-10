@@ -1,0 +1,4 @@
+{
+    "myserver":  { "label": "My Server",   "user": "username", "host": "server.example.com", "port": 22,   "via": null },
+    "localvm":   { "label": "Local VM",    "user": "user",     "host": "localhost",          "port": 2222, "via": null }
+}
