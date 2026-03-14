@@ -3984,7 +3984,190 @@ function getMafftExtraArgs() {
     // Note: disttbfast's -e flag does not accept a numeric value (it's a boolean flag);
     // passing '-e -0.123' causes illegal-option parse errors, so offset is omitted.
 
-    return { args, seqType: seqType || '2' };
+    const adjustDir = !!el('mafftAdjustDir')?.checked;
+    const reorder = !!el('mafftReorder')?.checked;
+
+    return { args, seqType: seqType || '2', adjustDir, reorder };
+}
+
+/**
+ * Reverse-complement a nucleotide sequence.
+ */
+function _reverseComplement(seq) {
+    const comp = { A:'T', T:'A', C:'G', G:'C', a:'t', t:'a', c:'g', g:'c',
+                   R:'Y', Y:'R', S:'S', W:'W', K:'M', M:'K', B:'V', V:'B', D:'H', H:'D',
+                   r:'y', y:'r', s:'s', w:'w', k:'m', m:'k', b:'v', v:'b', d:'h', h:'d',
+                   N:'N', n:'n', '-':'-', '.':'.' };
+    return seq.split('').reverse().map(c => comp[c] || c).join('');
+}
+
+/**
+ * Adjust direction of sequences: detect and reverse-complement sequences
+ * that are in the wrong orientation relative to the majority.
+ * Uses 6-mer frequency voting against the first sequence.
+ * Returns { fasta, flipped } where flipped is a Set of header names that were RC'd.
+ */
+function _adjustDirection(fasta) {
+    const seqs = [];
+    let cur = null;
+    for (const line of fasta.split('\n')) {
+        if (line.startsWith('>')) {
+            if (cur) seqs.push(cur);
+            cur = { header: line.substring(1).trim(), seq: '' };
+        } else if (cur) {
+            cur.seq += line.trim();
+        }
+    }
+    if (cur) seqs.push(cur);
+    if (seqs.length < 2) return { fasta, flipped: new Set() };
+
+    // Build k-mer set from first sequence (reference)
+    const K = 6;
+    const refSeq = seqs[0].seq.toUpperCase().replace(/[^ACGT]/g, '');
+    const refKmers = new Set();
+    for (let i = 0; i <= refSeq.length - K; i++) {
+        refKmers.add(refSeq.substring(i, i + K));
+    }
+
+    const flipped = new Set();
+    const result = [`>${seqs[0].header}\n${seqs[0].seq}`];
+
+    for (let i = 1; i < seqs.length; i++) {
+        const s = seqs[i];
+        const clean = s.seq.toUpperCase().replace(/[^ACGT]/g, '');
+        const rc = _reverseComplement(clean);
+
+        let fwdScore = 0, rcScore = 0;
+        for (let j = 0; j <= clean.length - K; j++) {
+            if (refKmers.has(clean.substring(j, j + K))) fwdScore++;
+            if (refKmers.has(rc.substring(j, j + K))) rcScore++;
+        }
+
+        if (rcScore > fwdScore) {
+            result.push(`>${s.header}\n${_reverseComplement(s.seq)}`);
+            flipped.add(s.header);
+        } else {
+            result.push(`>${s.header}\n${s.seq}`);
+        }
+    }
+
+    return { fasta: result.join('\n'), flipped };
+}
+
+/**
+ * Reorder sequences by guide-tree order using 6-mer distance (like MAFFT --reorder).
+ * Operates on ungapped sequences (pre-alignment), matching MAFFT's approach.
+ * Input: FASTA string (ungapped).
+ * Returns: reordered FASTA string + the ordered headers list.
+ */
+function _reorderByGuideTree(fasta) {
+    const seqs = [];
+    let cur = null;
+    for (const line of fasta.split('\n')) {
+        if (line.startsWith('>')) {
+            if (cur) seqs.push(cur);
+            cur = { header: line.substring(1).trim(), seq: '', fullLine: line };
+        } else if (cur) {
+            cur.seq += line.trim();
+        }
+    }
+    if (cur) seqs.push(cur);
+    if (seqs.length <= 2) return { fasta, order: seqs.map(s => s.header) };
+
+    const n = seqs.length;
+    const K = 6;
+
+    // Build k-mer frequency vectors for each sequence
+    const kmerVecs = [];
+    for (const s of seqs) {
+        const clean = s.seq.toUpperCase().replace(/[^ACGT]/g, '');
+        const counts = new Map();
+        for (let i = 0; i <= clean.length - K; i++) {
+            const kmer = clean.substring(i, i + K);
+            counts.set(kmer, (counts.get(kmer) || 0) + 1);
+        }
+        kmerVecs.push(counts);
+    }
+
+    // Compute pairwise distances using shared k-mer fraction (1 - jaccard-like)
+    const dist = Array.from({ length: n }, () => new Float32Array(n));
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const a = kmerVecs[i], b = kmerVecs[j];
+            let shared = 0, total = 0;
+            const allKmers = new Set([...a.keys(), ...b.keys()]);
+            for (const km of allKmers) {
+                const ca = a.get(km) || 0, cb = b.get(km) || 0;
+                shared += Math.min(ca, cb);
+                total += Math.max(ca, cb);
+            }
+            const d = total > 0 ? 1 - shared / total : 1;
+            dist[i][j] = d;
+            dist[j][i] = d;
+        }
+    }
+
+    // UPGMA guide tree construction → extract leaf order
+    // Represent clusters as arrays of leaf indices; merge closest pair
+    const clusters = seqs.map((_, i) => [i]);
+    const clusterDist = dist.map(row => new Float32Array(row)); // copy
+    const active = new Uint8Array(n).fill(1);
+
+    for (let step = 0; step < n - 1; step++) {
+        // Find closest pair of active clusters
+        let minD = Infinity, ci = -1, cj = -1;
+        for (let i = 0; i < n; i++) {
+            if (!active[i]) continue;
+            for (let j = i + 1; j < n; j++) {
+                if (!active[j]) continue;
+                if (clusterDist[i][j] < minD) {
+                    minD = clusterDist[i][j];
+                    ci = i; cj = j;
+                }
+            }
+        }
+        if (ci < 0) break;
+
+        // Optimal leaf ordering at junction: try all 4 orientations of the two
+        // clusters and pick the one where the junction elements are closest.
+        // A=[...aL, aR] B=[...bL, bR] → try (A+B), (A+B'), (A'+B), (A'+B')
+        // where A' = reversed A, B' = reversed B
+        const cA = clusters[ci], cB = clusters[cj];
+        const aFirst = cA[0], aLast = cA[cA.length - 1];
+        const bFirst = cB[0], bLast = cB[cB.length - 1];
+        // Junction distances for each orientation:
+        const opts = [
+            { d: dist[aLast][bFirst],  revA: false, revB: false }, // A + B
+            { d: dist[aLast][bLast],   revA: false, revB: true  }, // A + B'
+            { d: dist[aFirst][bFirst], revA: true,  revB: false }, // A' + B
+            { d: dist[aFirst][bLast],  revA: true,  revB: true  }, // A' + B'
+        ];
+        opts.sort((a, b) => a.d - b.d);
+        const best = opts[0];
+        const orderedA = best.revA ? [...cA].reverse() : cA;
+        const orderedB = best.revB ? [...cB].reverse() : cB;
+        clusters[ci] = orderedA.concat(orderedB);
+        active[cj] = 0;
+
+        // Update distances (average linkage / UPGMA)
+        const sizeI = orderedA.length, sizeJ = orderedB.length;
+        for (let k = 0; k < n; k++) {
+            if (!active[k] || k === ci) continue;
+            const newD = (clusterDist[ci][k] * sizeI + clusterDist[cj][k] * sizeJ) / (sizeI + sizeJ);
+            clusterDist[ci][k] = newD;
+            clusterDist[k][ci] = newD;
+        }
+    }
+
+    // Find the last active cluster — its leaf order is the guide tree order
+    const finalCluster = clusters.find((_, i) => active[i]) || clusters[0];
+    const order = finalCluster;
+
+    // Build reordered FASTA
+    const reordered = order.map(i => `${seqs[i].fullLine}\n${seqs[i].seq}`).join('\n');
+    const orderedHeaders = order.map(i => seqs[i].header);
+
+    return { fasta: reordered, order: orderedHeaders };
 }
 
 function realignSelectedBlock() {
@@ -4070,8 +4253,27 @@ function realignAll() {
         fasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
     }
 
-    const { args: extraArgs, seqType } = getMafftExtraArgs();
+    const { args: extraArgs, seqType, adjustDir, reorder } = getMafftExtraArgs();
     if (seqType !== '2') extraArgs.push('-E', seqType);
+
+    // Pre-alignment: adjust direction if requested
+    let flippedNames = new Set();
+    if (adjustDir && seqType === '2') {
+        const adj = _adjustDirection(fasta);
+        fasta = adj.fasta;
+        flippedNames = adj.flipped;
+        if (flippedNames.size > 0) {
+            console.log('Adjust direction: reverse-complemented', [...flippedNames]);
+        }
+    }
+
+    // Pre-alignment: reorder by guide tree (6-mer distances) like MAFFT --reorder
+    let guideOrder = null;
+    if (reorder) {
+        const reordered = _reorderByGuideTree(fasta);
+        fasta = reordered.fasta;
+        guideOrder = reordered.order;
+    }
 
     showMessage("Aligning all sequences with MAFFT...", 0);
     const mafft = new MafftWasm();
@@ -4082,22 +4284,24 @@ function realignAll() {
             return;
         }
 
-        // Replace state.seqs with aligned versions, preserving order
+        // Build new seqs array
         const newSeqs = [];
-        for (const s of state.seqs) {
-            const match = aligned.find(a => a.name === s.header || a.name === s.fullHeader);
-            if (match) {
+        // Determine output order: guide tree order or original input order
+        const outputOrder = guideOrder || state.seqs.map(s => s.fullHeader || s.header);
+        for (const hdr of outputOrder) {
+            const a = aligned.find(x => x.name === hdr || x.name === hdr.split(/\s+/)[0]);
+            const orig = state.seqs.find(s => s.header === hdr || s.fullHeader === hdr);
+            if (a) {
                 newSeqs.push({
-                    header: s.header,
-                    fullHeader: s.fullHeader,
-                    seq: match.seq,
-                    gaplessPositions: calculateGaplessPositions(match.seq)
+                    header: orig ? orig.header : a.name.split(/\s+/)[0],
+                    fullHeader: orig ? orig.fullHeader : a.name,
+                    seq: a.seq,
+                    gaplessPositions: calculateGaplessPositions(a.seq)
                 });
             }
         }
-        // Add any sequences that didn't match by name (shouldn't happen but be safe)
+        // Fallback: use aligned in MAFFT output order
         if (newSeqs.length === 0) {
-            // Fallback: use aligned in MAFFT output order
             for (const a of aligned) {
                 const name = a.name.split(/\s+/)[0];
                 newSeqs.push({
@@ -4114,7 +4318,9 @@ function realignAll() {
         state.selectedColumns.clear();
         state.selectedNucs.clear();
         renderAlignment();
-        showMessage(`Aligned ${state.seqs.length} sequences successfully!`, 2000);
+        const msgs = [`Aligned ${state.seqs.length} sequences successfully!`];
+        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].join(', ')}`);
+        showMessage(msgs.join(' '), flippedNames.size > 0 ? 5000 : 2000);
     }).catch(err => {
         showMessage("MAFFT alignment error: " + err.message, 4000);
         console.error("MAFFT alignment error:", err);
@@ -4144,8 +4350,17 @@ function realignSelected() {
         fasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
     }
 
-    const { args: extraArgs, seqType } = getMafftExtraArgs();
+    const { args: extraArgs, seqType, adjustDir } = getMafftExtraArgs();
     if (seqType !== '2') extraArgs.push('-E', seqType);
+
+    // Pre-alignment: adjust direction if requested
+    if (adjustDir && seqType === '2') {
+        const adj = _adjustDirection(fasta);
+        fasta = adj.fasta;
+        if (adj.flipped.size > 0) {
+            console.log('Adjust direction (selected): reverse-complemented', [...adj.flipped]);
+        }
+    }
 
     showMessage(`Realigning ${selectedIndices.length} selected sequences with MAFFT...`, 0);
     const mafft = new MafftWasm();
@@ -4327,22 +4542,46 @@ function addSequencesAndAlign() {
         existingFasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
     }
 
-    const { args: extraArgs, seqType } = getMafftExtraArgs();
+    const { args: extraArgs, seqType, adjustDir, reorder } = getMafftExtraArgs();
     if (seqType !== '2') extraArgs.push('-E', seqType);
+
+    // Pre-alignment: adjust direction on new sequences if requested
+    let adjustedNewText = newText;
+    if (adjustDir && seqType === '2') {
+        // Use first existing sequence as reference orientation
+        const refFasta = `>${state.seqs[0].header}\n${state.seqs[0].seq.replace(/[-.]/g, '')}\n${newText}`;
+        const adj = _adjustDirection(refFasta);
+        // Extract only the new sequences (skip the reference we prepended)
+        const adjLines = adj.fasta.split('\n');
+        let skip = true;
+        const newLines = [];
+        let count = 0;
+        for (const line of adjLines) {
+            if (line.startsWith('>')) {
+                count++;
+                if (count > 1) skip = false;
+            }
+            if (!skip) newLines.push(line);
+        }
+        adjustedNewText = newLines.join('\n');
+        if (adj.flipped.size > 0) {
+            console.log('Adjust direction (add&align): reverse-complemented', [...adj.flipped]);
+        }
+    }
 
     closeAddSequencesModal();
     showMessage("Adding sequences and aligning with MAFFT...", 0);
 
     const mafft = new MafftWasm();
-    mafft.addAndAlign(existingFasta, newText, extraArgs).then(result => {
+    mafft.addAndAlign(existingFasta, adjustedNewText, extraArgs).then(result => {
         const aligned = parseMafftOutput(result);
         if (aligned.length === 0) {
             showMessage("Error: MAFFT returned no sequences.", 3000);
             return;
         }
 
-        // Build new seqs array
-        const newSeqs = [];
+        // Build new seqs array; if reorder requested, sort by guide tree
+        let newSeqs = [];
         for (const a of aligned) {
             const name = a.name.split(/\s+/)[0];
             newSeqs.push({
@@ -4350,6 +4589,18 @@ function addSequencesAndAlign() {
                 fullHeader: a.name,
                 seq: a.seq,
                 gaplessPositions: calculateGaplessPositions(a.seq)
+            });
+        }
+
+        if (reorder) {
+            // Re-derive guide tree order from the combined ungapped sequences
+            const combinedFasta = newSeqs.map(s => `>${s.fullHeader || s.header}\n${s.seq.replace(/[-. ]/g, '')}`).join('\n');
+            const reordered = _reorderByGuideTree(combinedFasta);
+            const orderMap = new Map(reordered.order.map((h, i) => [h, i]));
+            newSeqs.sort((a, b) => {
+                const ia = orderMap.get(a.fullHeader) ?? orderMap.get(a.header) ?? 9999;
+                const ib = orderMap.get(b.fullHeader) ?? orderMap.get(b.header) ?? 9999;
+                return ia - ib;
             });
         }
 
