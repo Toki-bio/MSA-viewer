@@ -7764,10 +7764,16 @@ function _revComp(seq) {
  * Find all k-mer repeat matches in a sequence with allowed divergence.
  */
 function _findRepeats(seq, minLen, maxDivPct, type) {
-    const results = [];
+    const candidates = [];
     const seqU = seq.toUpperCase();
     const n = seqU.length;
-    if (n < minLen * 2) return results;
+    if (n < minLen * 2) return [];
+
+    const intervalOverlap = (a1, a2, b1, b2) => {
+        const left = Math.max(a1, b1);
+        const right = Math.min(a2, b2);
+        return Math.max(0, right - left + 1);
+    };
 
     // For tandem: look for repeated units adjacent to each other
     if (type === 'tandem') {
@@ -7796,28 +7802,59 @@ function _findRepeats(seq, minLen, maxDivPct, type) {
             }
             const finalDiv = mismatches / matchLen;
             if (matchLen >= minLen && finalDiv <= maxDiv) {
-                // Check if this overlaps an existing result
-                const overlaps = results.some(r =>
-                    Math.abs(r.posA - i) < minLen / 2 && Math.abs(r.posB - j) < minLen / 2);
-                if (!overlaps) {
-                    results.push({
-                        posA: i, posB: j,
-                        length: matchLen,
-                        divergence: (finalDiv * 100).toFixed(1),
-                        seqA: seqI.substring(0, matchLen),
-                        seqB: seqJ.substring(0, matchLen)
-                    });
+                // For direct repeats in the same strand, reject self-overlapping pairs
+                // to avoid trivial shifted-suffix artifacts.
+                if (type === 'direct') {
+                    const aEnd = i + matchLen - 1;
+                    const bEnd = j + matchLen - 1;
+                    const disjoint = aEnd < j || bEnd < i;
+                    if (!disjoint) continue;
                 }
+
+                candidates.push({
+                    posA: i,
+                    posB: j,
+                    length: matchLen,
+                    divergence: (finalDiv * 100).toFixed(1),
+                    seqA: seqI.substring(0, matchLen),
+                    seqB: seqJ.substring(0, matchLen)
+                });
             }
             // Skip ahead if no match at minimum length
             if (matchLen < minLen) {
                 // jump
             }
         }
-        if (results.length > 200) break; // safety limit
+        if (candidates.length > 500) break; // safety limit
     }
-    results.sort((a, b) => b.length - a.length);
-    return results.slice(0, 100);
+
+    // Deduplicate highly overlapping shifted hits from the same repeat pair.
+    candidates.sort((a, b) => {
+        if (b.length !== a.length) return b.length - a.length;
+        return parseFloat(a.divergence) - parseFloat(b.divergence);
+    });
+
+    const results = [];
+    for (const cand of candidates) {
+        const isDuplicate = results.some(r => {
+            const candA2 = cand.posA + cand.length - 1;
+            const candB2 = cand.posB + cand.length - 1;
+            const rA2 = r.posA + r.length - 1;
+            const rB2 = r.posB + r.length - 1;
+
+            const ovA = intervalOverlap(cand.posA, candA2, r.posA, rA2);
+            const ovB = intervalOverlap(cand.posB, candB2, r.posB, rB2);
+            const denom = Math.max(1, Math.min(cand.length, r.length));
+
+            return (ovA / denom) >= 0.7 && (ovB / denom) >= 0.7;
+        });
+        if (!isDuplicate) {
+            results.push(cand);
+            if (results.length >= 100) break;
+        }
+    }
+
+    return results;
 }
 
 /**
