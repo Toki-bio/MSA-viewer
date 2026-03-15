@@ -5181,7 +5181,12 @@ function showContextMenu(e, index) {
         dotSelfItem.addEventListener('click', () => {
             const s = state.seqs[index];
             const ungapped = s.seq.replace(/[-. ]/g, '');
-            openDotPlot(ungapped, ungapped, s.header, s.header);
+            openDotPlot(ungapped, ungapped, s.header, s.header, {
+                rowIndexA: index,
+                rowIndexB: index,
+                alignedSeqA: s.seq,
+                alignedSeqB: s.seq
+            });
             closeContextMenu();
         });
         contextMenu.appendChild(dotSelfItem);
@@ -5209,7 +5214,12 @@ function showContextMenu(e, index) {
         dotPairItem.addEventListener('click', () => {
             const sA = state.seqs[selIndices[0]];
             const sB = state.seqs[selIndices[1]];
-            openDotPlot(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header);
+            openDotPlot(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header, {
+                rowIndexA: selIndices[0],
+                rowIndexB: selIndices[1],
+                alignedSeqA: sA.seq,
+                alignedSeqB: sB.seq
+            });
             closeContextMenu();
         });
         contextMenu.appendChild(dotPairItem);
@@ -7452,9 +7462,34 @@ let _dotPlotState = {
     scoreMin: 0, scoreMax: 1,
     threshold: 0.55, windowSize: 9, zoom: 1,
     dotImage: null, computing: false,
-    lastRow: -1, lastCol: -1
+    lastRow: -1, lastCol: -1,
+    meta: null,
+    alignMapA: null,
+    alignMapB: null,
+    rowIndexA: -1,
+    rowIndexB: -1
 };
 const DOT_AXIS_PAD = 50;
+
+function _buildUngappedToAlignMap(alignedSeq) {
+    if (!alignedSeq) return null;
+    const map = [];
+    for (let i = 0; i < alignedSeq.length; i++) {
+        const ch = alignedSeq[i];
+        if (ch !== '-' && ch !== '.') map.push(i + 1);
+    }
+    return map;
+}
+
+function _dotSeqContext(seq, pos0, radius = 8) {
+    if (!seq || pos0 < 0 || pos0 >= seq.length) return '';
+    const start = Math.max(0, pos0 - radius);
+    const end = Math.min(seq.length, pos0 + radius + 1);
+    const left = seq.substring(start, pos0);
+    const center = seq[pos0] || 'N';
+    const right = seq.substring(pos0 + 1, end);
+    return `${left}[${center}]${right}`;
+}
 
 function _getDotWorker() {
     if (!_dotPlotWorker) _dotPlotWorker = new Worker('doter-worker.js');
@@ -7613,10 +7648,16 @@ function _dotDrawOverlay(row, col) {
     oCtx.fillText(String(row + 1), DOT_AXIS_PAD - 2, cy);
 }
 
-async function openDotPlot(seqA, seqB, nameA, nameB) {
+async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     const S = _dotPlotState;
     S.seqA = seqA.toUpperCase(); S.seqB = seqB.toUpperCase();
     S.nameA = nameA; S.nameB = nameB;
+    S.meta = meta || S.meta || null;
+    const m = S.meta || {};
+    S.rowIndexA = Number.isInteger(m.rowIndexA) ? m.rowIndexA : -1;
+    S.rowIndexB = Number.isInteger(m.rowIndexB) ? m.rowIndexB : -1;
+    S.alignMapA = m.alignMapA || _buildUngappedToAlignMap(m.alignedSeqA);
+    S.alignMapB = m.alignMapB || _buildUngappedToAlignMap(m.alignedSeqB);
     S.windowSize = parseInt(document.getElementById('dotPlotWindow')?.value) || 9;
     S.threshold = (parseInt(document.getElementById('dotPlotThreshold')?.value) || 55) / 100;
 
@@ -7625,6 +7666,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB) {
         const m = { A: 'T', C: 'G', G: 'C', T: 'A', U: 'A', N: 'N' };
         S.seqB = [...S.seqB].reverse().map(b => m[b] ?? 'N').join('');
         S.nameB = nameB + ' (RevComp)';
+        if (S.alignMapB) S.alignMapB = [...S.alignMapB].reverse();
     }
 
     const modal = document.getElementById('dotPlotModal');
@@ -7678,7 +7720,21 @@ function _initDotPlotEvents() {
                 const range = S.scoreMax - S.scoreMin || 1;
                 const n = (S.scores[row * S.cols + col] - S.scoreMin) / range;
                 const hoverEl = document.getElementById('dotPlotHover');
-                if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  score=${n.toFixed(3)}`;
+                if (hoverEl) {
+                    const baseA = S.seqA[row] || 'N';
+                    const baseB = S.seqB[col] || 'N';
+                    const ctxA = _dotSeqContext(S.seqA, row);
+                    const ctxB = _dotSeqContext(S.seqB, col);
+                    const alignColA = S.alignMapA?.[row] ?? null;
+                    const alignColB = S.alignMapB?.[col] ?? null;
+                    const rowLabelA = S.rowIndexA >= 0 ? `${S.rowIndexA + 1}` : 'n/a';
+                    const rowLabelB = S.rowIndexB >= 0 ? `${S.rowIndexB + 1}` : 'n/a';
+                    const posLine = `Dot: A ${row + 1}/${S.rows} (${baseA}) | B ${col + 1}/${S.cols} (${baseB}) | score=${n.toFixed(3)}`;
+                    const alignLine = `Alignment: rowA=${rowLabelA} colA=${alignColA ?? 'n/a'} | rowB=${rowLabelB} colB=${alignColB ?? 'n/a'}`;
+                    const ctxLineA = `A ctx: ${ctxA}`;
+                    const ctxLineB = `B ctx: ${ctxB}`;
+                    hoverEl.textContent = `${posLine}\n${alignLine}\n${ctxLineA}\n${ctxLineB}`;
+                }
             });
         });
         overlay.addEventListener('mouseleave', () => {
@@ -7715,7 +7771,7 @@ function _initDotPlotEvents() {
     if (recalcBtn) {
         recalcBtn.addEventListener('click', () => {
             const S = _dotPlotState;
-            if (S.seqA && S.seqB) openDotPlot(S.seqA, S.seqB, S.nameA, S.nameB);
+            if (S.seqA && S.seqB) openDotPlot(S.seqA, S.seqB, S.nameA, S.nameB, S.meta);
         });
     }
     if (exportBtn) {
