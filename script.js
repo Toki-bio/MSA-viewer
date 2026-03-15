@@ -7491,6 +7491,58 @@ function _dotSeqContext(seq, pos0, radius = 8) {
     return `${left}[${center}]${right}`;
 }
 
+function _dotNormAt(row, col) {
+    const S = _dotPlotState;
+    const range = S.scoreMax - S.scoreMin || 1;
+    return (S.scores[row * S.cols + col] - S.scoreMin) / range;
+}
+
+function _dotUpdateHoverInfo(row, col) {
+    const S = _dotPlotState;
+    const hoverEl = document.getElementById('dotPlotHover');
+    const metaEl = document.getElementById('dotPlotAlignMeta');
+    const panelEl = document.getElementById('dotPlotAlignPanel');
+
+    const norm = _dotNormAt(row, col);
+    if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  score=${norm.toFixed(3)}`;
+
+    const alignColA = S.alignMapA?.[row] ?? null;
+    const alignColB = S.alignMapB?.[col] ?? null;
+    const rowLabelA = S.rowIndexA >= 0 ? `${S.rowIndexA + 1}` : 'n/a';
+    const rowLabelB = S.rowIndexB >= 0 ? `${S.rowIndexB + 1}` : 'n/a';
+    if (metaEl) {
+        metaEl.textContent = `Alignment ref: rowA=${rowLabelA} colA=${alignColA ?? 'n/a'} (${S.seqA[row] || 'N'})  |  rowB=${rowLabelB} colB=${alignColB ?? 'n/a'} (${S.seqB[col] || 'N'})`;
+    }
+
+    if (panelEl) {
+        const radius = 20;
+        const aStart = Math.max(0, row - radius);
+        const aEnd = Math.min(S.seqA.length, row + radius + 1);
+        const bStart = Math.max(0, col - radius);
+        const bEnd = Math.min(S.seqB.length, col + radius + 1);
+
+        const aSlice = S.seqA.slice(aStart, aEnd);
+        const bSlice = S.seqB.slice(bStart, bEnd);
+        const len = Math.min(aSlice.length, bSlice.length);
+        const guide = [];
+        for (let i = 0; i < len; i++) guide.push(aSlice[i] === bSlice[i] ? '|' : ' ');
+
+        panelEl.textContent =
+            `A ${String(aStart + 1).padStart(5)}  ${aSlice}\n` +
+            `          ${guide.join('')}\n` +
+            `B ${String(bStart + 1).padStart(5)}  ${bSlice}`;
+    }
+}
+
+function _dotClearHoverInfo() {
+    const hoverEl = document.getElementById('dotPlotHover');
+    const metaEl = document.getElementById('dotPlotAlignMeta');
+    const panelEl = document.getElementById('dotPlotAlignPanel');
+    if (hoverEl) hoverEl.textContent = '';
+    if (metaEl) metaEl.textContent = '';
+    if (panelEl) panelEl.textContent = 'A: —\n   \nB: —';
+}
+
 function _getDotWorker() {
     if (!_dotPlotWorker) _dotPlotWorker = new Worker('doter-worker.js');
     return _dotPlotWorker;
@@ -7675,6 +7727,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     if (titleEl) titleEl.textContent = `Dot Plot: ${nameA} vs ${nameB}${revComp ? ' (rc)' : ''}`;
     const statusEl = document.getElementById('dotPlotStatus');
     if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} × ${S.seqB.length}…`;
+    _dotClearHoverInfo();
 
     S.computing = true;
     const t0 = performance.now();
@@ -7717,24 +7770,7 @@ function _initDotPlotEvents() {
                 if (row === S.lastRow && col === S.lastCol) return;
                 S.lastRow = row; S.lastCol = col;
                 _dotDrawOverlay(row, col);
-                const range = S.scoreMax - S.scoreMin || 1;
-                const n = (S.scores[row * S.cols + col] - S.scoreMin) / range;
-                const hoverEl = document.getElementById('dotPlotHover');
-                if (hoverEl) {
-                    const baseA = S.seqA[row] || 'N';
-                    const baseB = S.seqB[col] || 'N';
-                    const ctxA = _dotSeqContext(S.seqA, row);
-                    const ctxB = _dotSeqContext(S.seqB, col);
-                    const alignColA = S.alignMapA?.[row] ?? null;
-                    const alignColB = S.alignMapB?.[col] ?? null;
-                    const rowLabelA = S.rowIndexA >= 0 ? `${S.rowIndexA + 1}` : 'n/a';
-                    const rowLabelB = S.rowIndexB >= 0 ? `${S.rowIndexB + 1}` : 'n/a';
-                    const posLine = `Dot: A ${row + 1}/${S.rows} (${baseA}) | B ${col + 1}/${S.cols} (${baseB}) | score=${n.toFixed(3)}`;
-                    const alignLine = `Alignment: rowA=${rowLabelA} colA=${alignColA ?? 'n/a'} | rowB=${rowLabelB} colB=${alignColB ?? 'n/a'}`;
-                    const ctxLineA = `A ctx: ${ctxA}`;
-                    const ctxLineB = `B ctx: ${ctxB}`;
-                    hoverEl.textContent = `${posLine}\n${alignLine}\n${ctxLineA}\n${ctxLineB}`;
-                }
+                _dotUpdateHoverInfo(row, col);
             });
         });
         overlay.addEventListener('mouseleave', () => {
@@ -7742,8 +7778,7 @@ function _initDotPlotEvents() {
             const oCtx = overlay.getContext('2d');
             oCtx.clearRect(0, 0, overlay.width, overlay.height);
             _dotPlotState.lastRow = _dotPlotState.lastCol = -1;
-            const hoverEl = document.getElementById('dotPlotHover');
-            if (hoverEl) hoverEl.textContent = '';
+            _dotClearHoverInfo();
         });
         // Mouse wheel zoom
         const viewport = document.getElementById('dotPlotViewport');
@@ -7756,7 +7791,10 @@ function _initDotPlotEvents() {
                 S.zoom = Math.max(0.5, Math.min(24, Math.round(S.zoom * factor * 10) / 10));
                 _dotBuildImage();
                 _dotRender();
-                if (S.lastRow >= 0) _dotDrawOverlay(S.lastRow, S.lastCol);
+                if (S.lastRow >= 0) {
+                    _dotDrawOverlay(S.lastRow, S.lastCol);
+                    _dotUpdateHoverInfo(S.lastRow, S.lastCol);
+                }
             }, { passive: false });
         }
     }
@@ -7765,7 +7803,14 @@ function _initDotPlotEvents() {
             const v = parseInt(threshSlider.value);
             if (threshVal) threshVal.textContent = v + '%';
             _dotPlotState.threshold = v / 100;
-            if (_dotPlotState.scores) { _dotBuildImage(); _dotRender(); }
+            if (_dotPlotState.scores) {
+                _dotBuildImage();
+                _dotRender();
+                if (_dotPlotState.lastRow >= 0) {
+                    _dotDrawOverlay(_dotPlotState.lastRow, _dotPlotState.lastCol);
+                    _dotUpdateHoverInfo(_dotPlotState.lastRow, _dotPlotState.lastCol);
+                }
+            }
         });
     }
     if (recalcBtn) {
