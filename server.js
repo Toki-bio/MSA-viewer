@@ -21,7 +21,8 @@ const PORT = 3000;
 const DATABASES = {
     'SINEBase.nr95': path.join(__dirname, 'SINEBase.nr95.fa'),
     'RepBase_filtered': path.join(__dirname, 'RepBase_filtered.bnk'),
-    'snake_gekko_SINEs': path.join(__dirname, 'snake_gekko_SINEs_cons.fas')
+    'snake_gekko_SINEs': path.join(__dirname, 'snake_gekko_SINEs_cons.fas'),
+    'tua_DL_ASuh_JGrau_repeat': path.join(__dirname, 'tua_DL_ASuh_JGrau_repeat.fa')
 };
 
 // Format a FASTA database for BLAST
@@ -564,6 +565,32 @@ app.get('/api/databases', (req, res) => {
         };
     }
     res.json(status);
+});
+
+// List local snapshot JSON files for Input menu snapshot picker
+app.get('/api/snapshots', (req, res) => {
+    const snapDir = path.join(__dirname, 'snapshots');
+    if (!fs.existsSync(snapDir)) {
+        return res.json({ files: [] });
+    }
+    try {
+        const files = fs.readdirSync(snapDir)
+            .filter(name => name.toLowerCase().endsWith('.json'))
+            .map(name => {
+                const fullPath = path.join(snapDir, name);
+                const st = fs.statSync(fullPath);
+                return {
+                    name,
+                    path: `snapshots/${name}`,
+                    size: st.size,
+                    mtime: st.mtime.toISOString()
+                };
+            })
+            .sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+        res.json({ files });
+    } catch (err) {
+        res.status(500).json({ error: err.message, files: [] });
+    }
 });
 
 // ============ SSH MULTI-SERVER FILE FETCH ============
