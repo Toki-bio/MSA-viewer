@@ -798,6 +798,24 @@ body.row-reorder-active .seq-name.drag-source:hover {
     white-space: nowrap !important;
 }
 
+#sourceInfo {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#sourceInfo .source-path {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    color: #999;
+    font-family: 'Courier New', monospace;
+}
+
 .section-header:hover {
     background: #e0f0ff;
 }

@@ -1480,17 +1480,46 @@ function updateSourceInfo() {
     if (!infoEl) return;
     if (!state.seqs || state.seqs.length === 0) {
         infoEl.innerHTML = 'No file loaded';
+        infoEl.title = '';
         return;
     }
+
+    const truncateMiddle = (text, maxLen = 48) => {
+        const raw = String(text || '');
+        if (raw.length <= maxLen) return raw;
+        const keepLeft = Math.floor((maxLen - 1) / 2);
+        const keepRight = Math.max(1, maxLen - keepLeft - 1);
+        return `${raw.slice(0, keepLeft)}…${raw.slice(raw.length - keepRight)}`;
+    };
+
+    const escapeHtml = (text) => String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
     const seqCount = state.seqs.length;
     const aliLength = Math.max(...state.seqs.map(s => s.seq.length));
     const gaplessLengths = state.seqs.map(seq => seq.gaplessPositions[seq.gaplessPositions.length - 1] || 0);
     const minLength = Math.min(...gaplessLengths);
     const maxLength = Math.max(...gaplessLengths);
     const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
-    const filename = state.currentFilename ? `<strong>${state.currentFilename}</strong>: ` : '';
-    const pathHtml = state.currentFilePath ? `<br><span style="font-size:10px;color:#999;font-family:monospace;">${state.currentFilePath}</span>` : '';
-    infoEl.innerHTML = `${filename}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> bp${pathHtml}`;
+
+    const fullFilename = state.currentFilename || '';
+    const shortFilename = fullFilename ? truncateMiddle(fullFilename, 32) : '';
+    const filenameHtml = shortFilename ? `<strong>${escapeHtml(shortFilename)}</strong>: ` : '';
+
+    const fullPath = state.currentFilePath || '';
+    const shortPath = fullPath ? truncateMiddle(fullPath, 64) : '';
+    const pathHtml = shortPath ? `<br><span class="source-path">${escapeHtml(shortPath)}</span>` : '';
+
+    infoEl.innerHTML = `${filenameHtml}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> bp${pathHtml}`;
+    const titleParts = [];
+    if (fullFilename) titleParts.push(fullFilename);
+    if (fullPath) titleParts.push(fullPath);
+    titleParts.push(`${seqCount} seq, ${aliLength} col, ${lengthRange} bp`);
+    infoEl.title = titleParts.join('\n');
 }
 
 function ensureSpanCacheRow(row) {
@@ -1855,16 +1884,7 @@ function parseAndRender(isFromDrop = false) {
         updateNameLengthSliderRange();
         
         // Update source info with comprehensive statistics
-        const seqCount = state.seqs.length;
-        const aliLength = state.seqs[0]?.seq.length || 0;
-        const gaplessLengths = state.seqs.map(seq => seq.gaplessPositions[seq.gaplessPositions.length - 1] || 0);
-        const minLength = Math.min(...gaplessLengths);
-        const maxLength = Math.max(...gaplessLengths);
-        const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
-        
-        const filename = state.currentFilename ? `<strong>${state.currentFilename}</strong>: ` : '';
-        const pathHtml = state.currentFilePath ? `<br><span style="font-size:10px;color:#999;font-family:monospace;">${state.currentFilePath}</span>` : '';
-        el('sourceInfo').innerHTML = `${filename}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> bp${pathHtml}`;
+        updateSourceInfo();
         renderAlignment();
         // Auto-fit block size to screen width on every load
         setBlockSizeToScreen();
