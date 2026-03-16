@@ -807,6 +807,10 @@ body.row-reorder-active .seq-name.drag-source:hover {
     pointer-events: none;
 }
 
+#actions-section {
+    margin-right: clamp(220px, 26vw, 360px);
+}
+
 #sourceInfo {
     max-width: 100%;
     overflow: hidden;
