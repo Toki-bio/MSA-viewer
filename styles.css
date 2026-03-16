@@ -119,9 +119,9 @@
 .side-section {
     display: inline-block;
     vertical-align: middle;
-    flex: 0 0 28%; /* reserve ~28% for left/right side sections */
-    max-width: 36%;
-    min-width: 180px;
+    flex: 0 0 auto;
+    max-width: none;
+    min-width: 0;
     box-sizing: border-box;
     overflow: visible; /* allow dropdowns to overflow outside the side section */
 }
@@ -784,6 +784,18 @@ body.row-reorder-active .seq-name.drag-source:hover {
     height: 14px;
     line-height: 14px;
     transition: background-color 0.2s;
+    white-space: nowrap;
+}
+
+.section-header span {
+    white-space: nowrap;
+}
+
+#controls .control-row > div[style*="margin-left: auto"] {
+    flex: 0 0 auto;
+    min-width: 220px;
+    max-width: 320px;
+    white-space: nowrap !important;
 }
 
 .section-header:hover {
