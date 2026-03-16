@@ -3386,7 +3386,7 @@ function _isTransparentCssColor(color) {
     return c === 'transparent' || c === 'rgba(0, 0, 0, 0)' || c === 'rgba(0,0,0,0)';
 }
 
-function exportVisibleViewportAsSvg() {
+function _exportAlignmentAsSvg(mode = 'viewport') {
     if (!alignmentContainer) {
         showMessage('Alignment container not found.', 3000);
         return;
@@ -3397,10 +3397,11 @@ function exportVisibleViewportAsSvg() {
     }
 
     const containerRect = alignmentContainer.getBoundingClientRect();
-    const width = Math.max(1, Math.round(alignmentContainer.clientWidth));
-    const height = Math.max(1, Math.round(alignmentContainer.clientHeight));
-    const viewRight = containerRect.left + width;
-    const viewBottom = containerRect.top + height;
+    const fullMode = mode === 'full';
+    const width = Math.max(1, Math.round(fullMode ? alignmentContainer.scrollWidth : alignmentContainer.clientWidth));
+    const height = Math.max(1, Math.round(fullMode ? alignmentContainer.scrollHeight : alignmentContainer.clientHeight));
+    const viewRight = containerRect.left + (fullMode ? alignmentContainer.scrollWidth : alignmentContainer.clientWidth);
+    const viewBottom = containerRect.top + (fullMode ? alignmentContainer.scrollHeight : alignmentContainer.clientHeight);
 
     const spanNodes = Array.from(alignmentContainer.querySelectorAll('.seq-line span, .scale-ruler-line span'));
     if (spanNodes.length === 0) {
@@ -3418,8 +3419,8 @@ function exportVisibleViewportAsSvg() {
         const r = span.getBoundingClientRect();
         if (r.right <= containerRect.left || r.left >= viewRight || r.bottom <= containerRect.top || r.top >= viewBottom) return;
 
-        const x = Math.max(0, r.left - containerRect.left);
-        const y = Math.max(0, r.top - containerRect.top);
+        const x = Math.max(0, r.left - containerRect.left + (fullMode ? alignmentContainer.scrollLeft : 0));
+        const y = Math.max(0, r.top - containerRect.top + (fullMode ? alignmentContainer.scrollTop : 0));
         const w = Math.min(width - x, r.width);
         const h = Math.min(height - y, r.height);
         if (w <= 0 || h <= 0) return;
@@ -3447,10 +3448,11 @@ function exportVisibleViewportAsSvg() {
     }
 
     const title = _escapeXmlText(state.currentFilename || 'alignment');
+    const label = fullMode ? 'full alignment export' : 'viewport export';
     const svg = [
         `<?xml version="1.0" encoding="UTF-8"?>`,
         `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
-        `<title>${title} viewport export</title>`,
+        `<title>${title} ${label}</title>`,
         `<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff" />`,
         ...bgRects,
         ...textNodes,
@@ -3462,12 +3464,20 @@ function exportVisibleViewportAsSvg() {
     const a = document.createElement('a');
     const safeBaseName = (state.currentFilename || 'alignment').replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '');
     a.href = dlUrl;
-    a.download = `${safeBaseName || 'alignment'}_viewport.svg`;
+    a.download = `${safeBaseName || 'alignment'}_${fullMode ? 'full' : 'viewport'}.svg`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(dlUrl), 2000);
-    showMessage('Visible viewport exported as SVG.', 2500);
+    showMessage(fullMode ? 'Full alignment exported as SVG.' : 'Visible viewport exported as SVG.', 2500);
+}
+
+function exportVisibleViewportAsSvg() {
+    _exportAlignmentAsSvg('viewport');
+}
+
+function exportFullAlignmentAsSvg() {
+    _exportAlignmentAsSvg('full');
 }
 
 function minimizeMenu() {
@@ -6295,6 +6305,7 @@ function initializeAppUI() {
         'snapshotButton': createSnapshot,
         'snapshotCreateTopButton': createSnapshot,
         'exportSvgTopButton': exportVisibleViewportAsSvg,
+        'exportSvgFullTopButton': exportFullAlignmentAsSvg,
         'snapshotRefreshButton': refreshSnapshotList,
         'snapshotOpenButton': openSelectedSnapshotFromInputMenu,
         'snapshotPathOpenButton': openSnapshotFromManualPath,
