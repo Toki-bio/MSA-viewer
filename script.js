@@ -3404,8 +3404,31 @@ function degapSelectedBlock(direction = 'left') {
         seqObj.gaplessPositions = calculateGaplessPositions(seqObj.seq);
     });
 
+    // Remove gap-only columns generated within this selected block
+    const colsToRemove = [];
+    for (let col = range.maxCol; col >= range.minCol; col--) {
+        const allGap = state.seqs.every(seqObj => {
+            const ch = seqObj.seq[col];
+            return ch === '-' || ch === '.';
+        });
+        if (allGap) colsToRemove.push(col);
+    }
+
+    if (colsToRemove.length > 0) {
+        state.seqs.forEach(seqObj => {
+            const chars = seqObj.seq.split('');
+            colsToRemove.forEach(col => {
+                if (col >= 0 && col < chars.length) chars.splice(col, 1);
+            });
+            seqObj.seq = chars.join('');
+            seqObj.gaplessPositions = calculateGaplessPositions(seqObj.seq);
+        });
+    }
+
+    state.selectedColumns.clear();
+
     renderAlignment();
-    showMessage(`Block degapped and compacted to ${alignLeft ? 'left' : 'right'}.`, 2500);
+    showMessage(`Block degapped to ${alignLeft ? 'left' : 'right'}; removed ${colsToRemove.length} gap-only col(s).`, 2600);
 }
 
 function _escapeXmlText(value) {
