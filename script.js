@@ -3239,6 +3239,138 @@ async function createSnapshot() {
     }
 }
 
+async function openSnapshotFromPath(snapshotPath) {
+    const normalizedPath = String(snapshotPath || '').trim();
+    if (!normalizedPath) {
+        showMessage('Select or enter a snapshot path first.', 3000);
+        return;
+    }
+    try {
+        showMessage('Loading snapshot...', 0);
+        const resp = await fetch(normalizedPath, { signal: AbortSignal.timeout(10000) });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+        const payload = await resp.json();
+        _loadSnapshotPayload(payload);
+        const pathInput = el('snapshotPathInput');
+        if (pathInput) pathInput.value = normalizedPath;
+        showMessage(`Snapshot loaded from ${normalizedPath}`, 2500);
+    } catch (err) {
+        console.error('Snapshot open failed:', err);
+        showMessage(`Failed to open snapshot: ${err.message}`, 5000);
+    }
+}
+
+function _renderSnapshotSelect(files) {
+    const select = el('snapshotListSelect');
+    if (!select) return;
+    select.innerHTML = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = '-- snapshots/*.json --';
+    select.appendChild(defaultOption);
+
+    files.forEach(file => {
+        const opt = document.createElement('option');
+        opt.value = file.path;
+        opt.textContent = file.name;
+        select.appendChild(opt);
+    });
+}
+
+async function refreshSnapshotList() {
+    const refreshBtn = el('snapshotRefreshButton');
+    if (refreshBtn) refreshBtn.disabled = true;
+
+    try {
+        // Local server mode: dynamic directory listing
+        const apiResp = await fetch('/api/snapshots', { signal: AbortSignal.timeout(4000) });
+        if (apiResp.ok) {
+            const data = await apiResp.json();
+            const files = Array.isArray(data.files) ? data.files : [];
+            _renderSnapshotSelect(files);
+            showMessage(`Snapshot list refreshed (${files.length} file${files.length === 1 ? '' : 's'})`, 2000);
+            return;
+        }
+        throw new Error(`HTTP ${apiResp.status}`);
+    } catch (_) {
+        // Static mode fallback: optional manifest at snapshots/index.json
+        try {
+            const manifestResp = await fetch('./snapshots/index.json', { signal: AbortSignal.timeout(4000) });
+            if (!manifestResp.ok) throw new Error(`HTTP ${manifestResp.status}`);
+            const data = await manifestResp.json();
+            const entries = Array.isArray(data.files) ? data.files : [];
+            const files = entries.map(v => {
+                const path = String(v.path || v).trim();
+                const parts = path.split('/');
+                return { path, name: String(v.name || parts[parts.length - 1] || path) };
+            }).filter(v => v.path);
+            _renderSnapshotSelect(files);
+            showMessage(`Snapshot list refreshed (${files.length} via manifest)`, 2500);
+            return;
+        } catch (err2) {
+            _renderSnapshotSelect([]);
+            showMessage('No snapshot list API/manifest. Use manual snapshot path input.', 3500);
+        }
+    } finally {
+        if (refreshBtn) refreshBtn.disabled = false;
+    }
+}
+
+function openSelectedSnapshotFromInputMenu() {
+    const selectedPath = el('snapshotListSelect')?.value || '';
+    if (!selectedPath) {
+        showMessage('Pick a snapshot from the list first.', 2500);
+        return;
+    }
+    openSnapshotFromPath(selectedPath);
+}
+
+function openSnapshotFromManualPath() {
+    const pathValue = el('snapshotPathInput')?.value || '';
+    openSnapshotFromPath(pathValue);
+}
+
+function _getContinuousSelectedColumnRange() {
+    if (state.selectedColumns.size === 0) return null;
+    const cols = Array.from(state.selectedColumns).sort((a, b) => a - b);
+    for (let i = 1; i < cols.length; i++) {
+        if (cols[i] !== cols[i - 1] + 1) return null;
+    }
+    return { minCol: cols[0], maxCol: cols[cols.length - 1], count: cols.length };
+}
+
+function degapSelectedBlock(direction = 'left') {
+    if (!state.seqs.length) {
+        showMessage('No sequences loaded.', 2000);
+        return;
+    }
+
+    const range = _getContinuousSelectedColumnRange();
+    if (!range || range.count < 1) {
+        showMessage('Select a continuous column block first (Ctrl+Alt+drag).', 3500);
+        return;
+    }
+
+    const alignLeft = direction !== 'right';
+    pushUndo(alignLeft ? 'degap-block-left' : 'degap-block-right');
+
+    const blockWidth = range.maxCol - range.minCol + 1;
+    state.seqs.forEach(seqObj => {
+        const leftPart = seqObj.seq.slice(0, range.minCol);
+        const blockPart = seqObj.seq.slice(range.minCol, range.maxCol + 1);
+        const rightPart = seqObj.seq.slice(range.maxCol + 1);
+        const residues = blockPart.replace(/[-.\s]/g, '');
+        const compacted = alignLeft
+            ? residues.padEnd(blockWidth, '-')
+            : residues.padStart(blockWidth, '-');
+        seqObj.seq = leftPart + compacted + rightPart;
+        seqObj.gaplessPositions = calculateGaplessPositions(seqObj.seq);
+    });
+
+    renderAlignment();
+    showMessage(`Block degapped and compacted to ${alignLeft ? 'left' : 'right'}.`, 2500);
+}
+
 function minimizeMenu() {
     const controls = el('controls');
     controls.style.display = 'none';
@@ -5916,6 +6048,17 @@ function initializeAppUI() {
         });
     }
 
+    const snapshotPathInput = document.getElementById('snapshotPathInput');
+    if (snapshotPathInput) {
+        snapshotPathInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                openSnapshotFromManualPath();
+            }
+        });
+    }
+    refreshSnapshotList();
+
     // Initialize source info
     el('sourceInfo').innerHTML = 'No file loaded';
     
@@ -6051,6 +6194,10 @@ function initializeAppUI() {
         'savePresetButton': savePreset,
         'loadPresetButton': loadPreset,
         'snapshotButton': createSnapshot,
+        'snapshotCreateTopButton': createSnapshot,
+        'snapshotRefreshButton': refreshSnapshotList,
+        'snapshotOpenButton': openSelectedSnapshotFromInputMenu,
+        'snapshotPathOpenButton': openSnapshotFromManualPath,
         'infoButton': openInfoModal,
         'minimizeBtn': minimizeMenu,
         'zoomInButton': () => adjustZoom(10),
@@ -6061,6 +6208,8 @@ function initializeAppUI() {
         'copyConsensusButton': copyConsensus,
         'copySelectedConsensusButton': copySelectedConsensus,
         'removeGapColumnsButton': removeGapColumns,
+        'degapBlockLeftButton': () => degapSelectedBlock('left'),
+        'degapBlockRightButton': () => degapSelectedBlock('right'),
         'insertGapColumnAllButton': () => insertGapColumn(true),
         'insertGapColumnExceptButton': () => insertGapColumn(false)
     };

@@ -41,6 +41,20 @@
                             <button id="checkQueueButton" style="height: 20px; font-size: 10px; white-space: nowrap;" title="Check if file queued from MC">Check Queue</button>
                         </div>
                     </div>
+                    <div id="snapshotLoadRow" style="margin-top: 6px; border-top: 1px solid #ddd; padding-top: 6px;">
+                        <div style="font-size: 10px; color: #666; margin-bottom: 3px;">Snapshots</div>
+                        <div style="display: flex; gap: 4px; align-items: center;">
+                            <select id="snapshotListSelect" style="flex: 1; font-size: 11px; height: 22px;" title="Select a saved snapshot JSON from snapshots folder">
+                                <option value="">-- snapshots/*.json --</option>
+                            </select>
+                            <button id="snapshotRefreshButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Refresh snapshot list">Refresh</button>
+                            <button id="snapshotOpenButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Open selected snapshot">Open</button>
+                        </div>
+                        <div style="display: flex; gap: 4px; align-items: center; margin-top: 4px;">
+                            <input type="text" id="snapshotPathInput" placeholder="snapshots/my_snapshot.json" style="flex: 1; font-size: 11px; padding: 2px 4px; font-family: 'Courier New', monospace; border: 1px solid #ccc; border-radius: 3px;" title="Manual snapshot path for ?snapshotFile mode">
+                            <button id="snapshotPathOpenButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Open snapshot by path">Open Path</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -50,6 +64,7 @@
                 <button id="redoButton" title="Redo (Ctrl+Y)" style="padding: 0 3px; font-size: 12px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; min-width: 18px;">↪</button>
                 <button id="redoDropdownBtn" title="Redo history" style="padding: 0 2px; font-size: 8px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; border-left: none; background: #f0f0f0; border-radius: 0 3px 3px 0; min-width: 10px;">▼</button>
             </div>
+            <button id="snapshotCreateTopButton" title="Create shareable snapshot (link + JSON + HTML)" style="padding: 0 8px; font-size: 11px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #999; background: #f0f0f0; border-radius: 3px; margin-left: 4px;">Create Snapshot</button>
 
             <div class="standard-menu-group">
                 <div class="menu-section">
@@ -409,6 +424,8 @@
                                 <button id="realignSelectedButton" title="Realign only selected sequences (keeps others unchanged)">Realign Selected</button>
                                 <button id="realignBlockButton" title="Realign selected columns block (Ctrl+Shift+R)">Realign Block</button>
                                 <button id="addSequencesButton" title="Add new sequences and align with existing">Add Seqs & Align</button>
+                                <button id="degapBlockLeftButton" title="Degap selected continuous column block and compact residues to LEFT">Degap Block ←</button>
+                                <button id="degapBlockRightButton" title="Degap selected continuous column block and compact residues to RIGHT">Degap Block →</button>
                             </div>
                         </div>
                         <div class="action-section">
@@ -501,7 +518,6 @@
                             <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
                             <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
                             <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
-                            <button id="snapshotButton" title="Create shareable snapshot link and download snapshot HTML">Snapshot</button>
                             <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
                             <button id="minimizeBtn" title="Hide menu (Ctrl+H)">Hide Menu</button>
                         </div>
@@ -711,7 +727,7 @@ B: —</pre>
     </div>
 
     <script src="cluster.js"></script>
-    <script src="script.js?v=18"></script>
+    <script src="script.js?v=19"></script>
     <script>
 // All functionality moved to script.js
 </script>
