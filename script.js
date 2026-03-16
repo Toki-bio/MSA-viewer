@@ -3371,6 +3371,105 @@ function degapSelectedBlock(direction = 'left') {
     showMessage(`Block degapped and compacted to ${alignLeft ? 'left' : 'right'}.`, 2500);
 }
 
+function _escapeXmlText(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
+function _isTransparentCssColor(color) {
+    if (!color) return true;
+    const c = color.trim().toLowerCase();
+    return c === 'transparent' || c === 'rgba(0, 0, 0, 0)' || c === 'rgba(0,0,0,0)';
+}
+
+function exportVisibleViewportAsSvg() {
+    if (!alignmentContainer) {
+        showMessage('Alignment container not found.', 3000);
+        return;
+    }
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage('Load an alignment first.', 3000);
+        return;
+    }
+
+    const containerRect = alignmentContainer.getBoundingClientRect();
+    const width = Math.max(1, Math.round(alignmentContainer.clientWidth));
+    const height = Math.max(1, Math.round(alignmentContainer.clientHeight));
+    const viewRight = containerRect.left + width;
+    const viewBottom = containerRect.top + height;
+
+    const spanNodes = Array.from(alignmentContainer.querySelectorAll('.seq-line span, .scale-ruler-line span'));
+    if (spanNodes.length === 0) {
+        showMessage('Nothing visible to export.', 2500);
+        return;
+    }
+
+    const bgRects = [];
+    const textNodes = [];
+
+    spanNodes.forEach(span => {
+        const rawText = span.textContent || '';
+        if (!rawText) return;
+
+        const r = span.getBoundingClientRect();
+        if (r.right <= containerRect.left || r.left >= viewRight || r.bottom <= containerRect.top || r.top >= viewBottom) return;
+
+        const x = Math.max(0, r.left - containerRect.left);
+        const y = Math.max(0, r.top - containerRect.top);
+        const w = Math.min(width - x, r.width);
+        const h = Math.min(height - y, r.height);
+        if (w <= 0 || h <= 0) return;
+
+        const style = window.getComputedStyle(span);
+        const bg = style.backgroundColor;
+        const color = style.color || '#000';
+        const fontSize = parseFloat(style.fontSize || '12') || 12;
+        const fontFamily = style.fontFamily || 'monospace';
+        const fontWeight = style.fontWeight || '400';
+        const fontStyle = style.fontStyle || 'normal';
+        const textY = y + h - Math.max(1, h * 0.18);
+
+        if (!_isTransparentCssColor(bg)) {
+            bgRects.push(`<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" fill="${_escapeXmlText(bg)}" />`);
+        }
+
+        const escaped = _escapeXmlText(rawText);
+        textNodes.push(`<text x="${x.toFixed(2)}" y="${textY.toFixed(2)}" fill="${_escapeXmlText(color)}" font-family="${_escapeXmlText(fontFamily)}" font-size="${fontSize.toFixed(2)}px" font-weight="${_escapeXmlText(fontWeight)}" font-style="${_escapeXmlText(fontStyle)}" xml:space="preserve">${escaped}</text>`);
+    });
+
+    if (textNodes.length === 0) {
+        showMessage('Nothing visible to export.', 2500);
+        return;
+    }
+
+    const title = _escapeXmlText(state.currentFilename || 'alignment');
+    const svg = [
+        `<?xml version="1.0" encoding="UTF-8"?>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+        `<title>${title} viewport export</title>`,
+        `<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff" />`,
+        ...bgRects,
+        ...textNodes,
+        `</svg>`
+    ].join('\n');
+
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const dlUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeBaseName = (state.currentFilename || 'alignment').replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '');
+    a.href = dlUrl;
+    a.download = `${safeBaseName || 'alignment'}_viewport.svg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(dlUrl), 2000);
+    showMessage('Visible viewport exported as SVG.', 2500);
+}
+
 function minimizeMenu() {
     const controls = el('controls');
     controls.style.display = 'none';
@@ -6195,6 +6294,7 @@ function initializeAppUI() {
         'loadPresetButton': loadPreset,
         'snapshotButton': createSnapshot,
         'snapshotCreateTopButton': createSnapshot,
+        'exportSvgTopButton': exportVisibleViewportAsSvg,
         'snapshotRefreshButton': refreshSnapshotList,
         'snapshotOpenButton': openSelectedSnapshotFromInputMenu,
         'snapshotPathOpenButton': openSnapshotFromManualPath,
