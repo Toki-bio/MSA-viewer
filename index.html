@@ -12,7 +12,7 @@
 </head>
 <body>
     <div id="controls">
-        <div class="control-row" style="justify-content: flex-start; align-items: center; gap: 2px; flex-wrap: wrap;">
+        <div class="control-row" style="justify-content: flex-start; align-items: center; gap: 2px; flex-wrap: nowrap;">
             <!-- ACTUAL BUTTONS -->
             <div class="menu-section side-section" id="input-section">
                 <div class="section-header" data-section="input">
@@ -64,9 +64,20 @@
                 <button id="redoButton" title="Redo (Ctrl+Y)" style="padding: 0 3px; font-size: 12px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; min-width: 18px;">↪</button>
                 <button id="redoDropdownBtn" title="Redo history" style="padding: 0 2px; font-size: 8px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; border-left: none; background: #f0f0f0; border-radius: 0 3px 3px 0; min-width: 10px;">▼</button>
             </div>
-            <button id="snapshotCreateTopButton" title="Create shareable snapshot (link + JSON + HTML)" style="padding: 0 8px; font-size: 11px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #999; background: #f0f0f0; border-radius: 3px; margin-left: 4px;">Create Snapshot</button>
-            <button id="exportSvgTopButton" title="Export current visible viewport as SVG (vector)" style="padding: 0 8px; font-size: 11px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #999; background: #f0f0f0; border-radius: 3px; margin-left: 4px;">Export SVG</button>
-            <button id="exportSvgFullTopButton" title="Export full alignment as SVG (vector)" style="padding: 0 8px; font-size: 11px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #999; background: #f0f0f0; border-radius: 3px; margin-left: 4px;">Export Full SVG</button>
+
+            <div class="menu-section" id="snapshot-section" style="margin-left: 4px;">
+                <div class="section-header" data-section="snapshot">
+                    <span>Snapshot</span>
+                    <span class="toggle-icon">▼</span>
+                </div>
+                <div class="control-group" id="snapshot-controls" style="min-width: 170px;">
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <button id="snapshotCreateTopButton" title="Create shareable snapshot (link + JSON + HTML)" style="height: 24px; font-size: 11px;">Create</button>
+                        <button id="exportSvgTopButton" title="Export current visible viewport as SVG (vector)" style="height: 24px; font-size: 11px;">Export SVG</button>
+                        <button id="exportSvgFullTopButton" title="Export full alignment as SVG (vector)" style="height: 24px; font-size: 11px;">Export Full SVG</button>
+                    </div>
+                </div>
+            </div>
 
             <div class="standard-menu-group">
                 <div class="menu-section">
