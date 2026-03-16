@@ -3323,7 +3323,7 @@ function _renderSnapshotSelect(files) {
     });
 }
 
-async function refreshSnapshotList() {
+async function refreshSnapshotList(silent = false) {
     const refreshBtn = el('snapshotRefreshButton');
     if (refreshBtn) refreshBtn.disabled = true;
 
@@ -3334,7 +3334,7 @@ async function refreshSnapshotList() {
             const data = await apiResp.json();
             const files = Array.isArray(data.files) ? data.files : [];
             _renderSnapshotSelect(files);
-            showMessage(`Snapshot list refreshed (${files.length} file${files.length === 1 ? '' : 's'})`, 2000);
+            if (!silent) showMessage(`Snapshot list refreshed (${files.length} file${files.length === 1 ? '' : 's'})`, 2000);
             return;
         }
         throw new Error(`HTTP ${apiResp.status}`);
@@ -3351,11 +3351,11 @@ async function refreshSnapshotList() {
                 return { path, name: String(v.name || parts[parts.length - 1] || path) };
             }).filter(v => v.path);
             _renderSnapshotSelect(files);
-            showMessage(`Snapshot list refreshed (${files.length} via manifest)`, 2500);
+            if (!silent) showMessage(`Snapshot list refreshed (${files.length} via manifest)`, 2500);
             return;
         } catch (err2) {
             _renderSnapshotSelect([]);
-            showMessage('No snapshot list API/manifest. Use manual snapshot path input.', 3500);
+            if (!silent) showMessage('No snapshot list API/manifest. Use manual snapshot path input.', 3500);
         }
     } finally {
         if (refreshBtn) refreshBtn.disabled = false;
@@ -6212,7 +6212,7 @@ function initializeAppUI() {
             }
         });
     }
-    refreshSnapshotList();
+    refreshSnapshotList(true);
 
     // Initialize source info
     el('sourceInfo').innerHTML = 'No file loaded';
