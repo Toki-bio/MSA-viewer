@@ -12,6 +12,7 @@ A fast, interactive HTML-based MSA viewer for FASTA/MSF/NEXUS alignments, with l
 - **Drag-and-Drop Reordering**: Rearrange sequences in alignment
 - **MSA Tools**: Multiple alignment, consensus extraction (with threshold control)
 - **SINE Detection**: Identify and extract SINE-family sequences
+- **Shareable Snapshots**: Export full-view state and reopen exact alignment view via URL
 
 ## Quick Start
 
@@ -71,7 +72,22 @@ Includes sample SINE sequences:
 - **RepBase.bnk**: ~49K SINE elements
 - **RepBase_filtered.bnk**: Filtered high-confidence elements
 - **SINEBase.nr95**: Non-redundant collection
+- **tua_DL_ASuh_JGrau_repeat.fa**: Custom repeat FASTA
 - Custom Anolis sequences
+
+## Snapshot Storage (GitHub Pages)
+
+The `Snapshot` button exports:
+- a direct encoded snapshot URL (`?snapshot=...`)
+- a JSON snapshot file (for short-link hosting)
+- an HTML launcher file
+
+For short, stable links on GitHub Pages:
+1. Export snapshot JSON from the app.
+2. Commit the JSON file into [snapshots/README.md](snapshots/README.md) folder (`snapshots/`).
+3. Open using:
+
+`?snapshotFile=snapshots/<snapshot_file>.json`
 
 ## Security Notes
 

@@ -6,7 +6,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = '4febdc3';
+const APP_VERSION = 'snapshot-v1';
 
 const state = {
     seqs: [],
@@ -51,6 +51,8 @@ const state = {
     trimBackup: null,
     groupConsensusCount: 0
 };
+
+const SNAPSHOT_SCHEMA_VERSION = 1;
 
 let _dragPreviewEl = null;
 let _dragPreviewClass = '';
@@ -2959,6 +2961,284 @@ function loadPreset() {
     renderAlignment();
     showMessage("Preset loaded!", 2000);
 }
+
+function _toBase64Utf8(text) {
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, i + chunkSize);
+        binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+}
+
+function _fromBase64Utf8(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+}
+
+function _buildSnapshotPayload() {
+    const fasta = state.seqs.map(s => `>${s.fullHeader || s.header}\n${s.seq}`).join('\n');
+    const consensusTypeEl = document.querySelector('input[name="consensusType"]:checked');
+    const shadeModeEl = document.querySelector('input[name="shadeMode"]:checked');
+    const consensusPosEl = document.querySelector('input[name="consensusPosition"]:checked');
+    return {
+        schema: SNAPSHOT_SCHEMA_VERSION,
+        appVersion: APP_VERSION,
+        createdAt: new Date().toISOString(),
+        sourceTitle: state.currentFilename || 'Alignment snapshot',
+        fasta,
+        view: {
+            black: el('blackSlider')?.value,
+            dark: el('darkSlider')?.value,
+            light: el('lightSlider')?.value,
+            zoom: el('zoomSlider')?.value,
+            mode: el('modeBlocks')?.checked ? 'blocks' : 'single',
+            blockSize: el('blockSizeSlider')?.value,
+            nameLen: el('nameLengthSlider')?.value,
+            consensusThreshold: el('consensusThreshold')?.value,
+            groupConsensusThreshold: el('groupConsensusThreshold')?.value,
+            consensusMinCoverage: el('consensusMinCoverage')?.value,
+            consensusType: consensusTypeEl ? consensusTypeEl.value : 'normal',
+            showConsensus: !!el('showConsensus')?.checked,
+            consensusFallback: el('consensusFallback')?.value,
+            consensusPosition: consensusPosEl ? consensusPosEl.value : 'top',
+            shadeMode: shadeModeEl ? shadeModeEl.value : 'nongap',
+            enableBlack: !!el('enableBlack')?.checked,
+            enableDark: !!el('enableDark')?.checked,
+            enableLight: !!el('enableLight')?.checked,
+            stickyNames: !!el('stickyNames')?.checked,
+            selectedRows: Array.from(state.selectedRows).sort((a, b) => a - b),
+            scrollLeft: alignmentContainer?.scrollLeft || 0,
+            scrollTop: alignmentContainer?.scrollTop || 0
+        }
+    };
+}
+
+function _applySnapshotView(view) {
+    if (!view || typeof view !== 'object') return;
+
+    const applySliderPair = (key, sliderId, inputId, onSet = null) => {
+        if (view[key] === undefined || view[key] === null) return;
+        if (onSet) {
+            onSet(view[key]);
+            return;
+        }
+        const sliderEl = el(sliderId);
+        const inputEl = el(inputId);
+        if (sliderEl) {
+            sliderEl.value = view[key];
+            updateSliderBackground(sliderEl);
+        }
+        if (inputEl) inputEl.value = view[key];
+    };
+
+    applySliderPair('black', 'blackSlider', 'blackInput');
+    applySliderPair('dark', 'darkSlider', 'darkInput');
+    applySliderPair('light', 'lightSlider', 'lightInput');
+    applySliderPair('zoom', 'zoomSlider', null, (v) => {
+        const n = parseInt(v, 10);
+        if (!Number.isNaN(n)) {
+            const sliderEl = el('zoomSlider');
+            if (sliderEl) {
+                sliderEl.value = n;
+                updateSliderBackground(sliderEl);
+            }
+            setZoom(n);
+        }
+    });
+    applySliderPair('blockSize', 'blockSizeSlider', 'blockSizeInput');
+    applySliderPair('nameLen', 'nameLengthSlider', 'nameLengthInput', (v) => setNameLengthUI(v));
+    applySliderPair('consensusThreshold', 'consensusThreshold', 'consensusThresholdInput', (v) => setConsensusThresholdUI(v));
+    applySliderPair('groupConsensusThreshold', 'groupConsensusThreshold', 'groupConsensusThresholdInput', (v) => setGroupConsensusThresholdUI(v));
+    applySliderPair('consensusMinCoverage', 'consensusMinCoverage', 'consensusMinCoverageInput', (v) => {
+        const clamped = clampMinCoverage(v ?? DEFAULTS.minCoverage);
+        const sliderEl = el('consensusMinCoverage');
+        const inputEl = el('consensusMinCoverageInput');
+        if (sliderEl) {
+            sliderEl.value = clamped;
+            updateSliderBackground(sliderEl);
+        }
+        if (inputEl) inputEl.value = clamped;
+    });
+
+    if (view.mode === 'single' || view.mode === 'blocks') {
+        el('modeBlocks').checked = view.mode === 'blocks';
+        el('modeSingle').checked = view.mode === 'single';
+        onModeChange();
+    }
+
+    if (view.stickyNames !== undefined) {
+        el('stickyNames').checked = !!view.stickyNames;
+        toggleStickyNames();
+    }
+
+    if (view.consensusType) {
+        const consensusTypeRadio = document.querySelector(`input[name="consensusType"][value="${view.consensusType}"]`);
+        if (consensusTypeRadio) consensusTypeRadio.checked = true;
+    }
+    if (view.consensusPosition) {
+        const consensusPosRadio = document.querySelector(`input[name="consensusPosition"][value="${view.consensusPosition}"]`);
+        if (consensusPosRadio && !consensusPosRadio.disabled) consensusPosRadio.checked = true;
+    }
+    if (view.showConsensus !== undefined) {
+        el('showConsensus').checked = !!view.showConsensus;
+    }
+    if (view.consensusFallback && el('consensusFallback')) {
+        el('consensusFallback').value = view.consensusFallback;
+    }
+    if (view.shadeMode) {
+        const shadeModeRadio = document.querySelector(`input[name="shadeMode"][value="${view.shadeMode}"]`);
+        if (shadeModeRadio) shadeModeRadio.checked = true;
+    }
+
+    if (view.enableBlack !== undefined) el('enableBlack').checked = !!view.enableBlack;
+    if (view.enableDark !== undefined) el('enableDark').checked = !!view.enableDark;
+    if (view.enableLight !== undefined) el('enableLight').checked = !!view.enableLight;
+
+    state.selectedRows.clear();
+    if (Array.isArray(view.selectedRows)) {
+        view.selectedRows.forEach(index => {
+            if (Number.isInteger(index) && index >= 0 && index < state.seqs.length) {
+                state.selectedRows.add(index);
+            }
+        });
+    }
+
+    renderAlignment();
+
+    const scrollLeft = Number(view.scrollLeft || 0);
+    const scrollTop = Number(view.scrollTop || 0);
+    if (alignmentContainer) {
+        requestAnimationFrame(() => {
+            alignmentContainer.scrollLeft = scrollLeft;
+            alignmentContainer.scrollTop = scrollTop;
+        });
+    }
+}
+
+function _loadSnapshotPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+        throw new Error('Invalid snapshot payload');
+    }
+    if (!payload.fasta || typeof payload.fasta !== 'string') {
+        throw new Error('Snapshot has no alignment data');
+    }
+
+    const fastaInputEl = el('fastaInput');
+    if (fastaInputEl) fastaInputEl.value = payload.fasta;
+
+    state.currentFilename = payload.sourceTitle || payload.title || 'Snapshot';
+    state.currentFilePath = '';
+    parseAndRender(true);
+    _applySnapshotView(payload.view || {});
+}
+
+function _sanitizeSnapshotFileBaseName(sourceTitle) {
+    const base = String(sourceTitle || 'alignment_snapshot')
+        .trim()
+        .replace(/[^a-z0-9._-]+/gi, '_')
+        .replace(/^_+|_+$/g, '')
+        .toLowerCase();
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    return `${base || 'alignment_snapshot'}_${stamp}`;
+}
+
+function downloadSnapshotJson(payload, fileBaseName) {
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const dlUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = dlUrl;
+    a.download = `${fileBaseName}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(dlUrl), 2000);
+}
+
+function downloadSnapshotHtml(snapshotUrl, sourceTitle) {
+    const escapedTitle = String(sourceTitle || 'Alignment snapshot').replace(/[<>"']/g, '_').trim() || 'Alignment snapshot';
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapedTitle}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; line-height: 1.5; }
+    .box { max-width: 780px; border: 1px solid #ddd; border-radius: 8px; padding: 16px; }
+    a { word-break: break-all; }
+    .small { color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2 style="margin-top:0">Alignment Snapshot</h2>
+    <p>This file points to a stateful snapshot of your current MSA view.</p>
+    <p><a id="snapshotLink" href="${snapshotUrl}">Open snapshot in MSA Viewer</a></p>
+    <p class="small">If auto-redirect is blocked, click the link above.</p>
+  </div>
+  <script>
+    setTimeout(function () { window.location.href = ${JSON.stringify(snapshotUrl)}; }, 80);
+  </script>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const dlUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeBaseName = escapedTitle.replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '');
+    a.href = dlUrl;
+    a.download = `${safeBaseName || 'alignment_snapshot'}_snapshot.html`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(dlUrl), 2000);
+}
+
+async function createSnapshot() {
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage('Load an alignment first, then create snapshot.', 3000);
+        return;
+    }
+
+    try {
+        const payload = _buildSnapshotPayload();
+        const encodedPayload = _toBase64Utf8(JSON.stringify(payload));
+        const snapshotUrl = `${window.location.origin}${window.location.pathname}?snapshot=${encodeURIComponent(encodedPayload)}`;
+        const fileBaseName = _sanitizeSnapshotFileBaseName(payload.sourceTitle || state.currentFilename || 'alignment_snapshot');
+        const githubRelativePath = `snapshots/${fileBaseName}.json`;
+        const githubSnapshotUrl = `${window.location.origin}${window.location.pathname}?snapshotFile=${encodeURIComponent(githubRelativePath)}`;
+
+        let copied = false;
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(snapshotUrl);
+            copied = true;
+        }
+
+        downloadSnapshotJson(payload, fileBaseName);
+        downloadSnapshotHtml(snapshotUrl, payload.sourceTitle || state.currentFilename || 'alignment');
+
+        const sizeKb = (snapshotUrl.length / 1024).toFixed(1);
+        if (copied) {
+            showMessage(`Snapshot copied; JSON+HTML downloaded (${sizeKb} KB URL). Upload JSON to /${githubRelativePath} for short link mode.`, 5200);
+        } else {
+            showMessage(`Snapshot JSON+HTML downloaded (${sizeKb} KB URL). Upload JSON to /${githubRelativePath} for short link mode.`, 5200);
+        }
+
+        console.log('GitHub snapshot URL (after uploading JSON file):', githubSnapshotUrl);
+    } catch (err) {
+        console.error('Snapshot creation failed:', err);
+        showMessage(`Snapshot failed: ${err.message}`, 5000);
+    }
+}
+
 function minimizeMenu() {
     const controls = el('controls');
     controls.style.display = 'none';
@@ -4543,6 +4823,7 @@ function addSequencesAndAlign() {
     }
 
     const { args: extraArgs, seqType, adjustDir, reorder } = getMafftExtraArgs();
+    const atTop = !!document.getElementById('addSeqAtTop')?.checked;
     if (seqType !== '2') extraArgs.push('-E', seqType);
 
     // Pre-alignment: adjust direction on new sequences if requested
@@ -4568,6 +4849,14 @@ function addSequencesAndAlign() {
             console.log('Adjust direction (add&align): reverse-complemented', [...adj.flipped]);
         }
     }
+
+    const addedFullHeaders = new Set();
+    adjustedNewText.split('\n').forEach(line => {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('>')) {
+            addedFullHeaders.add(trimmed.substring(1).trim());
+        }
+    });
 
     closeAddSequencesModal();
     showMessage("Adding sequences and aligning with MAFFT...", 0);
@@ -4602,6 +4891,22 @@ function addSequencesAndAlign() {
                 const ib = orderMap.get(b.fullHeader) ?? orderMap.get(b.header) ?? 9999;
                 return ia - ib;
             });
+        }
+
+        // Respect "Place at top" after Add & Align
+        if (addedFullHeaders.size > 0) {
+            const added = [];
+            const existing = [];
+            for (const seqObj of newSeqs) {
+                if (addedFullHeaders.has(seqObj.fullHeader || seqObj.header)) {
+                    added.push(seqObj);
+                } else {
+                    existing.push(seqObj);
+                }
+            }
+            if (added.length > 0) {
+                newSeqs = atTop ? [...added, ...existing] : [...existing, ...added];
+            }
         }
 
         state.seqs = newSeqs;
@@ -5745,6 +6050,7 @@ function initializeAppUI() {
         'clusteringOptimalPresetButton': createOptimalPreset,
         'savePresetButton': savePreset,
         'loadPresetButton': loadPreset,
+        'snapshotButton': createSnapshot,
         'infoButton': openInfoModal,
         'minimizeBtn': minimizeMenu,
         'zoomInButton': () => adjustZoom(10),
@@ -5902,11 +6208,38 @@ function initializeAppUI() {
     //   ?data=<base64_encoded_text>        — decode inline data
     //   ?title=<text>                      — optional display title
     const urlParams = new URLSearchParams(window.location.search);
+    const autoSnapshot = urlParams.get('snapshot');
+    const autoSnapshotFile = urlParams.get('snapshotFile');
     const autoUrl   = urlParams.get('url');
     const autoData  = urlParams.get('data');
     const autoTitle = urlParams.get('title');
 
-    if (autoUrl) {
+    if (autoSnapshotFile) {
+        showMessage('Loading snapshot file...', 0);
+        fetch(autoSnapshotFile)
+            .then(resp => {
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+                return resp.json();
+            })
+            .then(payload => {
+                _loadSnapshotPayload(payload);
+                showMessage('Snapshot file loaded', 2200);
+            })
+            .catch(err => {
+                console.error('Snapshot file load failed:', err);
+                showMessage(`Failed to load snapshot file: ${err.message}`, 5000);
+            });
+    } else if (autoSnapshot) {
+        try {
+            const snapshotText = _fromBase64Utf8(autoSnapshot);
+            const payload = JSON.parse(snapshotText);
+            _loadSnapshotPayload(payload);
+            showMessage('Snapshot loaded', 2200);
+        } catch (err) {
+            console.error('Snapshot load failed:', err);
+            showMessage(`Failed to load snapshot: ${err.message}`, 5000);
+        }
+    } else if (autoUrl) {
         showMessage('Loading alignment from URL...', 0);
         fetch(autoUrl)
             .then(resp => {
@@ -7068,6 +7401,7 @@ function showBlastDialog(sequenceHeader, sequenceSeq) {
         { name: 'RepBase_filtered', url: './RepBase_filtered.bnk',        label: 'RepBase (filtered: SINE/LINE/mammal/reptile)',        checked: true  },
         { name: 'RepBase.bnk',      url: './RepBase.bnk',                 label: 'RepBase (full, 49k seqs \u2014 slow)',               checked: false },
         { name: 'snake_gekko_SINEs',url: './snake_gekko_SINEs_cons.fas',  label: 'snake_gekko_SINEs',                                 checked: true  },
+        { name: 'tua_DL_ASuh_JGrau_repeat', url: './tua_DL_ASuh_JGrau_repeat.fa', label: 'tua_DL_ASuh_JGrau_repeat',                     checked: true  },
     ];
     
     const dbCheckboxes = {};
