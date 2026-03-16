@@ -7283,7 +7283,8 @@ function levenshteinDistance(a, b) {
 function clusterByName(seqNames, maxChars = 10, threshold = 3) {
     const names = seqNames.map(name => ({
         name,
-        key: normalizeName(name, maxChars, false)
+        key: normalizeName(name, maxChars, false),
+        prefix: getCanonicalPrefix(name, maxChars)
     }));
 
     // If first-N chars collapse everything into one bucket, fallback to richer keys.
@@ -7292,20 +7293,31 @@ function clusterByName(seqNames, maxChars = 10, threshold = 3) {
         const richerLen = Math.max(maxChars, 48);
         names.forEach(v => {
             v.key = normalizeName(v.name, richerLen, false);
+            v.prefix = getCanonicalPrefix(v.name, richerLen);
         });
     }
 
     names.sort((a, b) => a.key.localeCompare(b.key));
 
-    const clusters = []; // [{ repKey, names }]
+    const clusters = []; // [{ repKey, prefix, names }]
     const maxDist = Math.max(0, threshold | 0);
+
+    const allowedDistance = (lenA, lenB) => {
+        const lenBase = Math.max(lenA, lenB, 1);
+        // Use length-normalized tolerance so accession-like IDs remain discriminative.
+        // threshold 0..10 maps roughly from exact-match to ~35% edit-distance tolerance.
+        const scaled = Math.floor((maxDist / 10) * (lenBase * 0.35));
+        return Math.max(0, Math.min(8, scaled));
+    };
 
     for (const item of names) {
         let bestCluster = -1;
         let bestDist = Number.POSITIVE_INFINITY;
         for (let i = 0; i < clusters.length; i++) {
+            if (clusters[i].prefix !== item.prefix) continue;
             const dist = levenshteinDistance(item.key, clusters[i].repKey);
-            if (dist <= maxDist && dist < bestDist) {
+            const maxAllowed = allowedDistance(item.key.length, clusters[i].repKey.length);
+            if (dist <= maxAllowed && dist < bestDist) {
                 bestDist = dist;
                 bestCluster = i;
             }
@@ -7314,7 +7326,7 @@ function clusterByName(seqNames, maxChars = 10, threshold = 3) {
         if (bestCluster >= 0) {
             clusters[bestCluster].names.push(item.name);
         } else {
-            clusters.push({ repKey: item.key, names: [item.name] });
+            clusters.push({ repKey: item.key, prefix: item.prefix, names: [item.name] });
         }
     }
 

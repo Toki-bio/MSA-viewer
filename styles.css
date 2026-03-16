@@ -802,9 +802,11 @@ body.row-reorder-active .seq-name.drag-source:hover {
 #headerInfoPanel {
     position: absolute;
     right: 6px;
-    top: -12px;
+    top: -15px;
     z-index: 2;
     pointer-events: none;
+    padding-top: 2px;
+    padding-bottom: 2px;
 }
 
 #actions-section {
