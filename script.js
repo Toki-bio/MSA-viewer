@@ -1477,10 +1477,15 @@ function renderAlignment() {
 // Unified source info updater so counts stay accurate after deletions/insertions
 function updateSourceInfo() {
     const infoEl = el('sourceInfo');
+    const pathEl = el('sourcePathLine');
     if (!infoEl) return;
     if (!state.seqs || state.seqs.length === 0) {
         infoEl.innerHTML = 'No file loaded';
         infoEl.title = '';
+        if (pathEl) {
+            pathEl.textContent = '—';
+            pathEl.title = '';
+        }
         return;
     }
 
@@ -1511,15 +1516,30 @@ function updateSourceInfo() {
     const filenameHtml = shortFilename ? `<strong>${escapeHtml(shortFilename)}</strong>: ` : '';
 
     const fullPath = state.currentFilePath || '';
-    const shortPath = fullPath ? truncateMiddle(fullPath, 64) : '';
-    const pathHtml = shortPath ? `<br><span class="source-path">${escapeHtml(shortPath)}</span>` : '';
-
-    infoEl.innerHTML = `${filenameHtml}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> bp${pathHtml}`;
+    infoEl.innerHTML = `${filenameHtml}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> bp`;
     const titleParts = [];
     if (fullFilename) titleParts.push(fullFilename);
     if (fullPath) titleParts.push(fullPath);
     titleParts.push(`${seqCount} seq, ${aliLength} col, ${lengthRange} bp`);
     infoEl.title = titleParts.join('\n');
+
+    if (pathEl) {
+        pathEl.textContent = fullPath || '—';
+        pathEl.title = fullPath || '';
+    }
+}
+
+function closeAllMenusViaEsc() {
+    document.querySelectorAll('.menu-section.menu-open').forEach(section => section.classList.remove('menu-open'));
+    document.body.classList.add('suppress-menu-hover');
+    const clearSuppress = () => {
+        document.body.classList.remove('suppress-menu-hover');
+        window.removeEventListener('mousemove', clearSuppress);
+    };
+    window.addEventListener('mousemove', clearSuppress, { once: true });
+    if (document.activeElement && typeof document.activeElement.blur === 'function') {
+        document.activeElement.blur();
+    }
 }
 
 function ensureSpanCacheRow(row) {
@@ -2239,6 +2259,12 @@ function handleMouseUp() {
     state.dragMode = null;
 }
 function handleKeyDown(e) {
+    if (e.key === 'Escape') {
+        closeAllMenusViaEsc();
+        e.preventDefault();
+        return;
+    }
+
     // If focus is in an input/textarea/contenteditable, do not interfere with standard shortcuts
     const activeEl = document.activeElement;
     if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
@@ -6190,6 +6216,22 @@ function initializeAppUI() {
 
     // Initialize source info
     el('sourceInfo').innerHTML = 'No file loaded';
+    const sourcePathEl = el('sourcePathLine');
+    if (sourcePathEl) {
+        sourcePathEl.textContent = '—';
+        sourcePathEl.addEventListener('click', async () => {
+            const value = sourcePathEl.textContent || '';
+            if (!value || value === '—') return;
+            if (navigator.clipboard?.writeText) {
+                try {
+                    await navigator.clipboard.writeText(value);
+                    showMessage('Path copied to clipboard.', 1500);
+                } catch (_) {
+                    // ignore clipboard errors; text remains selectable manually
+                }
+            }
+        });
+    }
     
     // Initialize collapsible sections
     try {
