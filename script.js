@@ -7238,43 +7238,93 @@ let colourState = {
 };
 
 // Normalize name for grouping: lowercase, normalize separators, strip trailing numbers
-function normalizeName(name, maxChars = 10) {
+function normalizeName(name, maxChars = 10, stripTrailingNumbers = false) {
     let n = name.substring(0, maxChars).toLowerCase();
     // Normalize all separators (hyphen, underscore, dot, space) to underscore
     n = n.replace(/[-_.\s]/g, '_');
-    // Remove trailing numbers and surrounding underscores so "name_001_", "name_002" all → "name"
-    n = n.replace(/[_\d]+$/, '');
+    if (stripTrailingNumbers) {
+        n = n.replace(/[_\d]+$/, '');
+    }
     return n;
 }
 
 // Get a canonical prefix for color assignment (used for sorting similar groups together)
 function getCanonicalPrefix(name, maxChars = 10) {
-    let n = normalizeName(name, maxChars);
+    let n = normalizeName(name, maxChars, true);
     // Extract just alphabetic prefix for broader grouping
     const match = n.match(/^([a-z]+)/);
     return match ? match[1] : n;
 }
 
+function levenshteinDistance(a, b) {
+    if (a === b) return 0;
+    if (!a.length) return b.length;
+    if (!b.length) return a.length;
+    const dp = new Array(b.length + 1);
+    for (let j = 0; j <= b.length; j++) dp[j] = j;
+    for (let i = 1; i <= a.length; i++) {
+        let prev = dp[0];
+        dp[0] = i;
+        for (let j = 1; j <= b.length; j++) {
+            const tmp = dp[j];
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            dp[j] = Math.min(
+                dp[j] + 1,
+                dp[j - 1] + 1,
+                prev + cost
+            );
+            prev = tmp;
+        }
+    }
+    return dp[b.length];
+}
+
 // Cluster sequences by normalized prefix
 function clusterByName(seqNames, maxChars = 10, threshold = 3) {
-    const clusters = new Map(); // normalizedPrefix -> [names]
-    
-    for (const name of seqNames) {
-        const prefix = normalizeName(name, maxChars);
-        if (!clusters.has(prefix)) {
-            clusters.set(prefix, []);
-        }
-        clusters.get(prefix).push(name);
+    const names = seqNames.map(name => ({
+        name,
+        key: normalizeName(name, maxChars, false)
+    }));
+
+    // If first-N chars collapse everything into one bucket, fallback to richer keys.
+    const uniqueShortKeys = new Set(names.map(v => v.key));
+    if (uniqueShortKeys.size <= 1 && names.length > 1) {
+        const richerLen = Math.max(maxChars, 48);
+        names.forEach(v => {
+            v.key = normalizeName(v.name, richerLen, false);
+        });
     }
-    
-    // Sort clusters by canonical prefix so similar names get adjacent colors
-    const sortedEntries = Array.from(clusters.entries()).sort((a, b) => {
-        const prefixA = getCanonicalPrefix(a[1][0], maxChars);
-        const prefixB = getCanonicalPrefix(b[1][0], maxChars);
+
+    names.sort((a, b) => a.key.localeCompare(b.key));
+
+    const clusters = []; // [{ repKey, names }]
+    const maxDist = Math.max(0, threshold | 0);
+
+    for (const item of names) {
+        let bestCluster = -1;
+        let bestDist = Number.POSITIVE_INFINITY;
+        for (let i = 0; i < clusters.length; i++) {
+            const dist = levenshteinDistance(item.key, clusters[i].repKey);
+            if (dist <= maxDist && dist < bestDist) {
+                bestDist = dist;
+                bestCluster = i;
+            }
+        }
+
+        if (bestCluster >= 0) {
+            clusters[bestCluster].names.push(item.name);
+        } else {
+            clusters.push({ repKey: item.key, names: [item.name] });
+        }
+    }
+
+    clusters.sort((a, b) => {
+        const prefixA = getCanonicalPrefix(a.names[0], maxChars);
+        const prefixB = getCanonicalPrefix(b.names[0], maxChars);
         return prefixA.localeCompare(prefixB);
     });
-    
-    return sortedEntries.map(([prefix, names]) => names);
+
+    return clusters.map(c => c.names);
 }
 
 // Apply color to sequence name elements
