@@ -808,10 +808,11 @@ body.row-reorder-active .seq-name.drag-source:hover {
 #sourcePathLine {
     display: block;
     max-width: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
-    white-space: nowrap;
-    font-size: 10px;
+    overflow: visible;
+    white-space: normal;
+    word-break: break-all;
+    line-height: 1.05;
+    font-size: 8px;
     color: #999;
     font-family: 'Courier New', monospace;
     user-select: text;
