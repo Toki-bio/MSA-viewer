@@ -1,4 +1,5 @@
 :root {
+    --controls-offset: 0px;
     --nameLen: 25;
     --slider-value: 0%;
     --slider-fill: #888;
@@ -55,7 +56,7 @@
     background: var(--dropzone-hover-bg);
 }
 #controls {
-    position: sticky;
+    position: fixed;
     top: 0;
     left: 0;
     right: 0;
@@ -65,7 +66,7 @@
     flex-direction: column;
     gap: 1px;
     font-size: 12px;
-    border-bottom: 1px solid #ddd;
+    border-bottom: 0;
     z-index: 100;
 }
 .status-row {
@@ -82,6 +83,12 @@
     min-height: 18px;
 }
 
+.header-info-row {
+    justify-content: flex-end;
+    padding-top: 1px;
+    padding-bottom: 2px;
+}
+
 .control-row {
     display: flex;
     gap: 3px;
@@ -89,6 +96,7 @@
     width: 100%;
     flex-wrap: nowrap;
     position: relative;
+    padding-top: 5px;
 }
 
 .control-row.justify-center {
@@ -222,6 +230,10 @@
     max-height: 85vh; /* Increased to prevent scrollbar for typical menus */
     overflow-y: auto; /* Only vertical scrolling when truly needed */
     overflow-x: visible; /* Allow horizontal content to be visible */
+    will-change: display;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    -webkit-font-smoothing: antialiased;
 }
 
 /* Reduce padding for shade controls to fit without scrollbar */
@@ -265,6 +277,8 @@
     right: -20px;
     height: 80px; /* Cover entire autocomplete popup area */
     z-index: 9998;
+    pointer-events: auto; /* Allow interaction through bridge */
+    background: transparent;
 }
 
 /* Keep bridge visible for open menus */
@@ -559,6 +573,7 @@ input[type="number"] {
     line-height: 1.0;
     white-space: pre;
     border: 1px solid #ddd;
+    border-top: 0;
     font-size: 13px;
     transition: font-size 0.1s;
     user-select: none;
@@ -596,24 +611,22 @@ input[type="number"] {
     width: 100%;
     height: 14px; /* Tiny persistent scrollbar */
     background: transparent; /* Remove yellow coloring to avoid visual glitch */
-    border-top: 1px solid #ddd;
+    border-top: 0;
     overflow-x: auto;
     overflow-y: hidden;
     position: sticky;
     bottom: 0;
     z-index: 50;
-    /* Easier to grab without affecting layout height */
-    position: sticky;
     box-sizing: content-box;
     cursor: grab;
     user-select: none;
     touch-action: pan-x;
 }
+
 .horizontal-scrollbar-thumb { height: 1px; }
 .horizontal-scrollbar.grabbing { cursor: grabbing; }
 
 /* Invisible larger hit area around the tiny bar */
-.horizontal-scrollbar { position: sticky; }
 .horizontal-scrollbar::before {
     content: '';
     position: absolute;
@@ -628,7 +641,12 @@ input[type="number"] {
 .no-select { user-select: none !important; }
 
 /* Optional: ensure container stacks alignment and bar vertically */
-#viewer-container { display: flex; flex-direction: column; gap: 0; }
+#viewer-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin-top: var(--controls-offset);
+}
 .seq-line.context-menu-highlight {
     background-color: rgba(255, 215, 0, 0.2);
     outline: 2px solid rgba(255, 215, 0, 0.5);
@@ -800,30 +818,79 @@ body.row-reorder-active .seq-name.drag-source:hover {
 }
 
 #headerInfoPanel {
-    position: absolute;
-    right: 6px;
-    top: -15px;
-    z-index: 2;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: min(44vw, 780px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 1px;
+    padding-right: 8px;
+    padding-left: 14px;
     pointer-events: none;
-    padding-top: 2px;
-    padding-bottom: 2px;
 }
 
 #actions-section {
-    margin-right: clamp(220px, 26vw, 360px);
+    flex: 0 0 auto;
 }
 
 #sourceInfo {
+    flex: 0 0 auto;
+    min-width: 0;
     max-width: 100%;
+    line-height: 1.1;
+    pointer-events: auto;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-align: right;
+    font-size: 11px;
+    color: #555;
 }
 
+.header-info-row {
+    justify-content: flex-end;
+    padding-top: 0;
+    padding-bottom: 2px;
+    min-height: 16px;
+}
+
+#sourcePathLine {
+    max-width: min(72vw, 1200px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    font-size: 10px;
+    color: #999;
+    font-family: 'Courier New', monospace;
+    pointer-events: auto;
+}
+
+#sourceInfo .source-file-name,
 #sourceInfo .source-inline-path {
     font-size: 10px;
     color: #999;
     font-family: 'Courier New', monospace;
+    pointer-events: auto;
+    cursor: copy;
+}
+
+#sourceInfo .source-file-name {
+    font-size: 11px;
+    color: #555;
+    font-family: inherit;
+}
+
+#versionIndicator {
+    font-size: 9px;
+    color: #bbb;
+    line-height: 1;
+    text-align: right;
+    white-space: nowrap;
+    flex: 0 0 auto;
 }
 
 body.suppress-menu-hover .menu-section:hover .control-group,
