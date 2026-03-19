@@ -85,6 +85,17 @@ function updateVersionIndicator() {
     elVersion.textContent = `commit ${APP_VERSION}`;
 }
 
+function updateControlsOffset() {
+    const controls = document.getElementById('controls');
+    const rootStyle = document.documentElement.style;
+    if (!controls) {
+        rootStyle.setProperty('--controls-offset', '0px');
+        return;
+    }
+    const height = Math.ceil(controls.getBoundingClientRect().height);
+    rootStyle.setProperty('--controls-offset', `${Math.max(0, height)}px`);
+}
+
 // ============ SSH FILE FETCH ============
 let _sshServerAvailable = false;
 let _sshPollRunning = false;
@@ -1477,20 +1488,22 @@ function renderAlignment() {
 // Unified source info updater so counts stay accurate after deletions/insertions
 function updateSourceInfo() {
     const infoEl = el('sourceInfo');
+    const pathLineEl = el('sourcePathLine');
+    const headerRowEl = pathLineEl?.closest('.header-info-row') || null;
     if (!infoEl) return;
     if (!state.seqs || state.seqs.length === 0) {
         infoEl.innerHTML = 'No file loaded';
         infoEl.title = '';
+        infoEl.dataset.fullFilename = '';
+        infoEl.dataset.fullPath = '';
+        if (pathLineEl) {
+            pathLineEl.innerHTML = '';
+            pathLineEl.title = '';
+            pathLineEl.dataset.fullPath = '';
+        }
+        if (headerRowEl) headerRowEl.style.display = 'none';
         return;
     }
-
-    const truncateMiddle = (text, maxLen = 48) => {
-        const raw = String(text || '');
-        if (raw.length <= maxLen) return raw;
-        const keepLeft = Math.floor((maxLen - 1) / 2);
-        const keepRight = Math.max(1, maxLen - keepLeft - 1);
-        return `${raw.slice(0, keepLeft)}…${raw.slice(raw.length - keepRight)}`;
-    };
 
     const escapeHtml = (text) => String(text || '')
         .replace(/&/g, '&amp;')
@@ -1507,17 +1520,72 @@ function updateSourceInfo() {
     const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
 
     const fullFilename = state.currentFilename || '';
-    const shortFilename = fullFilename ? truncateMiddle(fullFilename, 32) : '';
-    const filenameHtml = shortFilename ? `<strong>${escapeHtml(shortFilename)}</strong>: ` : '';
+    const filenameHtml = fullFilename
+        ? `<strong><span class="source-file-name">${escapeHtml(fullFilename)}</span></strong>: `
+        : '';
 
     const fullPath = state.currentFilePath || '';
-    const pathHtml = fullPath ? `<span class="source-inline-path"> ${escapeHtml(fullPath)}</span>` : '';
-    infoEl.innerHTML = `${filenameHtml}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> bp${pathHtml}`;
+    const summaryHtml = `${filenameHtml}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> bp`;
+    infoEl.innerHTML = summaryHtml;
+    infoEl.dataset.fullFilename = fullFilename;
+    infoEl.dataset.fullPath = fullPath;
+    if (pathLineEl) {
+        pathLineEl.innerHTML = fullPath ? `<span class="source-inline-path">${escapeHtml(fullPath)}</span>` : '';
+        pathLineEl.dataset.fullPath = fullPath;
+    }
+    if (headerRowEl) headerRowEl.style.display = fullPath ? '' : 'none';
     const titleParts = [];
     if (fullFilename) titleParts.push(fullFilename);
     if (fullPath) titleParts.push(fullPath);
     titleParts.push(`${seqCount} seq, ${aliLength} col, ${lengthRange} bp`);
     infoEl.title = titleParts.join('\n');
+
+    const fileNameEl = infoEl.querySelector('.source-file-name');
+    if (fileNameEl) {
+        fileNameEl.dataset.fullFilename = fullFilename;
+        fileNameEl.title = fullFilename;
+    }
+
+    const pathEl = pathLineEl?.querySelector('.source-inline-path');
+    if (pathEl) {
+        pathEl.dataset.fullPath = fullPath;
+        requestAnimationFrame(() => {
+            const isTruncated = pathEl.scrollWidth > pathEl.clientWidth + 1;
+            pathEl.title = isTruncated ? fullPath : '';
+            pathEl.dataset.truncated = isTruncated ? '1' : '0';
+        });
+    }
+}
+
+function initSourceInfoInteractions() {
+    const infoEl = el('sourceInfo');
+    const pathLineEl = el('sourcePathLine');
+    if (!infoEl || infoEl.dataset.copyBound === '1') return;
+    infoEl.dataset.copyBound = '1';
+
+    infoEl.addEventListener('dblclick', (event) => {
+        const target = event.target;
+        const fileNameEl = target?.closest?.('.source-file-name');
+        if (fileNameEl) {
+            const filename = fileNameEl.dataset.fullFilename || infoEl.dataset.fullFilename || '';
+            if (!filename) return;
+            navigator.clipboard.writeText(filename)
+                .then(() => showMessage('Filename copied', 1600))
+                .catch(() => showMessage('Failed to copy filename', 2500));
+        }
+    });
+
+    if (pathLineEl && pathLineEl.dataset.copyBound !== '1') {
+        pathLineEl.dataset.copyBound = '1';
+        pathLineEl.addEventListener('dblclick', (event) => {
+            const pathEl = event.target?.closest?.('.source-inline-path');
+            const path = pathEl?.dataset.fullPath || pathLineEl.dataset.fullPath || infoEl.dataset.fullPath || '';
+            if (!path) return;
+            navigator.clipboard.writeText(path)
+                .then(() => showMessage('Path copied', 1600))
+                .catch(() => showMessage('Failed to copy path', 2500));
+        });
+    }
 }
 
 function closeAllMenusViaEsc() {
@@ -5000,7 +5068,7 @@ function closeAddSequencesModal() {
  * Just add sequences (pad with gaps to alignment length, no realignment).
  * Respects "Place at top" and "Align to consensus" checkboxes.
  */
-function addSequencesJustAdd() {
+async function addSequencesJustAdd() {
     const newText = document.getElementById('addSeqInput')?.value?.trim();
     if (!newText) {
         showMessage("Please paste FASTA sequences to add.", 2000);
@@ -5040,12 +5108,42 @@ function addSequencesJustAdd() {
 
     // If align-to-consensus, do pairwise alignment of each new seq against consensus
     if (alignToCons && state.seqs.length > 0 && state.consensusSeq) {
-        const alignLen = Math.max(...state.seqs.map(s => s.seq.length));
-        // Build a gapped consensus (same length as alignment) to use as profile
-        const gappedCons = computeConsensusForSequences(state.seqs.map(s => s.seq));
-        for (const ns of newSeqs) {
-            ns.seq = alignSeqToProfile(ns.seq.replace(/[-. ]/g, ''), gappedCons);
-            ns.gaplessPositions = calculateGaplessPositions(ns.seq);
+        try {
+            const { args: extraArgs, seqType } = getMafftExtraArgs();
+            const consensusArgs = [...extraArgs];
+            if (seqType !== '2') consensusArgs.push('-E', seqType);
+
+            let workingSeqs = state.seqs.map(seqObj => ({ ...seqObj }));
+            const alignedNewSeqs = [];
+            for (const ns of newSeqs) {
+                const currentConsensus = computeConsensusForSequences(workingSeqs.map(seqObj => seqObj.seq));
+                const alignedProfile = await alignSequenceToConsensusProfile(ns.seq, currentConsensus, consensusArgs);
+
+                workingSeqs = workingSeqs.map(seqObj => {
+                    const nextSeq = _rebuildSequenceWithInsertedProfileColumns(seqObj.seq, alignedProfile.layout, alignedProfile.extraColumnsPerSlot);
+                    return {
+                        ...seqObj,
+                        seq: nextSeq,
+                        gaplessPositions: calculateGaplessPositions(nextSeq)
+                    };
+                });
+
+                ns.seq = alignedProfile.seq;
+                ns.gaplessPositions = calculateGaplessPositions(ns.seq);
+                alignedNewSeqs.push({ ...ns });
+                workingSeqs.push({ ...ns });
+            }
+
+            const existingCount = workingSeqs.length - alignedNewSeqs.length;
+            if (atTop) {
+                state.seqs = [...alignedNewSeqs, ...workingSeqs.slice(0, existingCount)];
+            } else {
+                state.seqs = workingSeqs;
+            }
+        } catch (err) {
+            console.error('Add-to-consensus alignment failed:', err);
+            showMessage(`Add-to-consensus alignment failed: ${err.message}`, 4000);
+            return;
         }
     } else {
         // Pad to current alignment length
@@ -5058,10 +5156,12 @@ function addSequencesJustAdd() {
         }
     }
 
-    if (atTop) {
-        state.seqs.unshift(...newSeqs);
-    } else {
-        state.seqs.push(...newSeqs);
+    if (!(alignToCons && state.seqs.length > 0 && state.consensusSeq)) {
+        if (atTop) {
+            state.seqs.unshift(...newSeqs);
+        } else {
+            state.seqs.push(...newSeqs);
+        }
     }
 
     closeAddSequencesModal();
@@ -5069,35 +5169,136 @@ function addSequencesJustAdd() {
     showMessage(`Added ${newSeqs.length} sequence${newSeqs.length > 1 ? 's' : ''} at ${atTop ? 'top' : 'bottom'}!`, 2000);
 }
 
-/**
- * Align a single ungapped sequence to a gapped profile (consensus) using simple NW.
- * Maps characters from seq into the gap structure of the profile.
- */
-function alignSeqToProfile(seq, profile) {
-    // Simple approach: walk through profile columns.
-    // For each profile position that has a non-gap, consume a character from seq.
-    // If profile has a gap, insert a gap in the result.
-    // After profile is exhausted, append remaining seq chars.
-    const result = [];
-    let si = 0;
-    for (let pi = 0; pi < profile.length; pi++) {
-        if (profile[pi] === '-' || profile[pi] === '.') {
-            result.push('-');
-        } else {
-            if (si < seq.length) {
-                result.push(seq[si]);
-                si++;
-            } else {
-                result.push('-');
-            }
+function _isGapChar(ch) {
+    return ch === '-' || ch === '.' || ch === ' ';
+}
+
+function _buildProfileColumnLayout(profile) {
+    const slots = [[]];
+    const residueColumns = [];
+    let residueCount = 0;
+
+    for (let col = 0; col < profile.length; col++) {
+        if (_isGapChar(profile[col])) {
+            slots[residueCount].push(col);
+            continue;
+        }
+
+        residueColumns.push(col);
+        residueCount++;
+        slots[residueCount] = slots[residueCount] || [];
+    }
+
+    return { slots, residueColumns, residueCount };
+}
+
+function _mapPairwiseAlignmentToProfile(alignedConsensus, alignedSeq, residueCount) {
+    const slotInsertions = Array.from({ length: residueCount + 1 }, () => []);
+    const residueChars = new Array(residueCount).fill('-');
+    let residueIndex = 0;
+
+    for (let i = 0; i < alignedConsensus.length; i++) {
+        const consChar = alignedConsensus[i];
+        const seqChar = alignedSeq[i] || '-';
+        if (_isGapChar(consChar)) {
+            slotInsertions[residueIndex].push(seqChar);
+            continue;
+        }
+
+        if (residueIndex < residueCount) {
+            residueChars[residueIndex] = seqChar;
+        }
+        residueIndex++;
+    }
+
+    return { slotInsertions, residueChars };
+}
+
+function _mergeSequenceIntoConsensusProfile(profile, alignedConsensus, alignedSeq) {
+    const layout = _buildProfileColumnLayout(profile);
+    const mapped = _mapPairwiseAlignmentToProfile(alignedConsensus, alignedSeq, layout.residueCount);
+    const extraColumnsPerSlot = mapped.slotInsertions.map((chars, slotIndex) => {
+        const existingSlots = layout.slots[slotIndex] || [];
+        return Math.max(0, chars.length - existingSlots.length);
+    });
+
+    const rebuilt = [];
+    for (let slotIndex = 0; slotIndex < layout.slots.length; slotIndex++) {
+        const existingSlotCols = layout.slots[slotIndex] || [];
+        const insertedChars = mapped.slotInsertions[slotIndex] || [];
+
+        for (let i = 0; i < existingSlotCols.length; i++) {
+            rebuilt.push(insertedChars[i] || '-');
+        }
+
+        const extraCount = extraColumnsPerSlot[slotIndex] || 0;
+        for (let i = 0; i < extraCount; i++) {
+            rebuilt.push(insertedChars[existingSlotCols.length + i] || '-');
+        }
+
+        if (slotIndex < layout.residueCount) {
+            rebuilt.push(mapped.residueChars[slotIndex] || '-');
         }
     }
-    // If seq has remaining characters, append them (shouldn't normally happen)
-    while (si < seq.length) {
-        result.push(seq[si]);
-        si++;
+
+    return {
+        seq: rebuilt.join(''),
+        extraColumnsPerSlot,
+        layout
+    };
+}
+
+function _rebuildSequenceWithInsertedProfileColumns(seq, layout, extraColumnsPerSlot) {
+    const rebuilt = [];
+
+    for (let slotIndex = 0; slotIndex < layout.slots.length; slotIndex++) {
+        const existingSlotCols = layout.slots[slotIndex] || [];
+        for (const col of existingSlotCols) {
+            rebuilt.push(seq[col] || '-');
+        }
+
+        const extraCount = extraColumnsPerSlot[slotIndex] || 0;
+        for (let i = 0; i < extraCount; i++) {
+            rebuilt.push('-');
+        }
+
+        if (slotIndex < layout.residueCount) {
+            rebuilt.push(seq[layout.residueColumns[slotIndex]] || '-');
+        }
     }
-    return result.join('');
+
+    return rebuilt.join('');
+}
+
+async function alignSequenceToConsensusProfile(seq, profile, extraArgs = []) {
+    const ungappedSeq = String(seq || '').replace(/[-.\s]/g, '');
+    const ungappedProfile = String(profile || '').replace(/[-.\s]/g, '');
+    const layout = _buildProfileColumnLayout(profile || '');
+
+    if (!profile) {
+        throw new Error('Consensus profile is empty');
+    }
+    if (!ungappedProfile) {
+        throw new Error('Consensus has no residues');
+    }
+    if (!ungappedSeq) {
+        return {
+            seq: profile.replace(/[^-.\s]/g, '-'),
+            extraColumnsPerSlot: new Array(layout.slots.length).fill(0),
+            layout
+        };
+    }
+
+    const pairwiseFasta = `>consensus\n${ungappedProfile}\n>query\n${ungappedSeq}\n`;
+    const mafft = new MafftWasm();
+    const result = await mafft.align(pairwiseFasta, extraArgs);
+    const aligned = parseMafftOutput(result);
+
+    if (aligned.length < 2) {
+        throw new Error('MAFFT pairwise alignment returned incomplete output');
+    }
+
+    return _mergeSequenceIntoConsensusProfile(profile, aligned[0].seq || '', aligned[1].seq || '');
 }
 
 /**
@@ -6230,6 +6431,7 @@ function initializeAppUI() {
 
     // Initialize source info
     el('sourceInfo').innerHTML = 'No file loaded';
+    initSourceInfoInteractions();
 
     // Initialize collapsible sections
     try {
@@ -6493,16 +6695,16 @@ function initializeAppUI() {
     // Trigger initial render/setup based on defaults
     onModeChange();
     toggleStickyNames();
-    
-    // Initialize menu height and positioning
+
+    updateControlsOffset();
     const controls = el('controls');
-    let menuHeight = 0;
-    setTimeout(() => {
-        if (controls) {
-            menuHeight = controls.offsetHeight;
-            if (alignmentContainer) alignmentContainer.style.top = menuHeight + 'px';
-        }
-    }, 100);
+    if (controls && typeof ResizeObserver !== 'undefined') {
+        const controlsResizeObserver = new ResizeObserver(() => {
+            window.requestAnimationFrame(updateControlsOffset);
+        });
+        controlsResizeObserver.observe(controls);
+    }
+    window.addEventListener('resize', () => window.requestAnimationFrame(updateControlsOffset));
     
     // Initialize slider backgrounds
     ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(id => {
@@ -7239,7 +7441,7 @@ let colourState = {
 
 // Normalize name for grouping: lowercase, normalize separators, strip trailing numbers
 function normalizeName(name, maxChars = 10, stripTrailingNumbers = false) {
-    let n = name.substring(0, maxChars).toLowerCase();
+    let n = String(name || '').substring(0, maxChars).toLowerCase();
     // Normalize all separators (hyphen, underscore, dot, space) to underscore
     n = n.replace(/[-_.\s]/g, '_');
     if (stripTrailingNumbers) {
@@ -7281,62 +7483,60 @@ function levenshteinDistance(a, b) {
 
 // Cluster sequences by normalized prefix
 function clusterByName(seqNames, maxChars = 10, threshold = 3) {
-    const names = seqNames.map(name => ({
-        name,
-        key: normalizeName(name, maxChars, false),
-        prefix: getCanonicalPrefix(name, maxChars)
-    }));
+    const nChars = Math.max(1, parseInt(maxChars, 10) || 10);
+    const sensitivity = Math.max(0, Math.min(10, parseInt(threshold, 10) || 0));
 
-    // If first-N chars collapse everything into one bucket, fallback to richer keys.
-    const uniqueShortKeys = new Set(names.map(v => v.key));
-    if (uniqueShortKeys.size <= 1 && names.length > 1) {
-        const richerLen = Math.max(maxChars, 48);
-        names.forEach(v => {
-            v.key = normalizeName(v.name, richerLen, false);
-            v.prefix = getCanonicalPrefix(v.name, richerLen);
-        });
+    // 1) Hard guarantee: identical normalized first-N keys always share the same color key bucket.
+    const keyToNames = new Map();
+    for (const rawName of seqNames) {
+        const key = normalizeName(rawName, nChars, false);
+        if (!keyToNames.has(key)) keyToNames.set(key, []);
+        keyToNames.get(key).push(rawName);
     }
 
-    names.sort((a, b) => a.key.localeCompare(b.key));
+    const uniqueKeys = Array.from(keyToNames.keys()).sort((a, b) => a.localeCompare(b));
 
-    const clusters = []; // [{ repKey, prefix, names }]
-    const maxDist = Math.max(0, threshold | 0);
+    // 2) Sensitivity controls optional merge between near keys (never splitting identical keys).
+    //    threshold 0 = permissive (up to half of selected length), threshold 10 = strict (no merge).
+    const mergeCap = Math.floor(((10 - sensitivity) / 10) * Math.max(1, nChars) * 0.5);
 
-    const allowedDistance = (lenA, lenB) => {
-        const lenBase = Math.max(lenA, lenB, 1);
-        // Use length-normalized tolerance so accession-like IDs remain discriminative.
-        // threshold 0..10 maps roughly from exact-match to ~35% edit-distance tolerance.
-        const scaled = Math.floor((maxDist / 10) * (lenBase * 0.35));
-        return Math.max(0, Math.min(8, scaled));
-    };
+    const clusters = []; // [{ repKey, keys: [] }]
+    for (const key of uniqueKeys) {
+        if (mergeCap <= 0) {
+            clusters.push({ repKey: key, keys: [key] });
+            continue;
+        }
 
-    for (const item of names) {
         let bestCluster = -1;
         let bestDist = Number.POSITIVE_INFINITY;
         for (let i = 0; i < clusters.length; i++) {
-            if (clusters[i].prefix !== item.prefix) continue;
-            const dist = levenshteinDistance(item.key, clusters[i].repKey);
-            const maxAllowed = allowedDistance(item.key.length, clusters[i].repKey.length);
-            if (dist <= maxAllowed && dist < bestDist) {
+            const dist = levenshteinDistance(key, clusters[i].repKey);
+            if (dist <= mergeCap && dist < bestDist) {
                 bestDist = dist;
                 bestCluster = i;
             }
         }
 
         if (bestCluster >= 0) {
-            clusters[bestCluster].names.push(item.name);
+            clusters[bestCluster].keys.push(key);
         } else {
-            clusters.push({ repKey: item.key, prefix: item.prefix, names: [item.name] });
+            clusters.push({ repKey: key, keys: [key] });
         }
     }
 
-    clusters.sort((a, b) => {
-        const prefixA = getCanonicalPrefix(a.names[0], maxChars);
-        const prefixB = getCanonicalPrefix(b.names[0], maxChars);
-        return prefixA.localeCompare(prefixB);
-    });
+    clusters.sort((a, b) => a.repKey.localeCompare(b.repKey));
 
-    return clusters.map(c => c.names);
+    const out = [];
+    for (const cluster of clusters) {
+        const names = [];
+        for (const key of cluster.keys) {
+            const groupNames = keyToNames.get(key);
+            if (groupNames && groupNames.length) names.push(...groupNames);
+        }
+        names.sort((a, b) => String(a).localeCompare(String(b)));
+        out.push(names);
+    }
+    return out;
 }
 
 // Apply color to sequence name elements
@@ -7425,6 +7625,9 @@ function autoColourBySimilarity() {
     
     // Cluster sequences
     const clusters = clusterByName(seqNames, maxChars, threshold);
+
+    // Reset current color mapping first so stale names do not affect sorting/grouping behavior.
+    colourState.mappings.clear();
     
     // Assign colors based on mode
     // Use maximally distinct colors for better visual separation
@@ -7471,12 +7674,26 @@ function autoColourBySimilarity() {
                 recordColorHistory(name, colour, 'Auto-Similarity');
             });
         } else {
-            // Gradient mode - create shades within each cluster
-            cluster.forEach((name, nameIdx) => {
-                const lightness = 55 + (nameIdx * 25 / Math.max(cluster.length, 1));
+            // Gradient mode - shade by normalized key, so identical first-N groups keep identical color.
+            const keyToNames = new Map();
+            cluster.forEach(name => {
+                const key = normalizeName(name, maxChars, false);
+                if (!keyToNames.has(key)) keyToNames.set(key, []);
+                keyToNames.get(key).push(name);
+            });
+            const sortedKeys = Array.from(keyToNames.keys()).sort((a, b) => a.localeCompare(b));
+            const keyCount = Math.max(1, sortedKeys.length);
+
+            sortedKeys.forEach((key, keyIdx) => {
+                const lightness = keyCount === 1
+                    ? 65
+                    : 55 + (keyIdx * 25 / (keyCount - 1));
                 const colour = `hsl(${Math.round(hue)}, 70%, ${Math.min(lightness, 85)}%)`;
-                colourState.mappings.set(name, colour);
-                recordColorHistory(name, colour, 'Auto-Similarity');
+                const namesForKey = keyToNames.get(key) || [];
+                namesForKey.forEach(name => {
+                    colourState.mappings.set(name, colour);
+                    recordColorHistory(name, colour, 'Auto-Similarity');
+                });
             });
         }
     });
@@ -8148,7 +8365,7 @@ function displayBlastResults(queryName, queryLen, results) {
 // RE-ALIGN AGAINST CONSENSUS
 // ═══════════════════════════════════════════════════════════════════
 
-function realignSequenceAgainstConsensus(index) {
+async function realignSequenceAgainstConsensus(index) {
     if (!state.seqs || state.seqs.length < 2) {
         showMessage('Need at least 2 sequences for consensus', 2000);
         return;
@@ -8158,13 +8375,32 @@ function realignSequenceAgainstConsensus(index) {
         showMessage('Could not compute consensus', 2000);
         return;
     }
-    pushUndo('realign-to-consensus');
-    const s = state.seqs[index];
-    const ungapped = s.seq.replace(/[-. ]/g, '');
-    s.seq = alignSeqToProfile(ungapped, gappedCons);
-    s.gaplessPositions = calculateGaplessPositions(s.seq);
-    renderAlignment();
-    showMessage(`Re-aligned "${s.header}" against consensus`, 2000);
+    try {
+        const { args: extraArgs, seqType } = getMafftExtraArgs();
+        const consensusArgs = [...extraArgs];
+        if (seqType !== '2') consensusArgs.push('-E', seqType);
+
+        showMessage('Re-aligning sequence against consensus...', 0);
+        const alignedProfile = await alignSequenceToConsensusProfile(state.seqs[index].seq, gappedCons, consensusArgs);
+
+        pushUndo('realign-to-consensus');
+        state.seqs = state.seqs.map((seqObj, seqIndex) => {
+            const nextSeq = seqIndex === index
+                ? alignedProfile.seq
+                : _rebuildSequenceWithInsertedProfileColumns(seqObj.seq, alignedProfile.layout, alignedProfile.extraColumnsPerSlot);
+            return {
+                ...seqObj,
+                seq: nextSeq,
+                gaplessPositions: calculateGaplessPositions(nextSeq)
+            };
+        });
+
+        renderAlignment();
+        showMessage(`Re-aligned "${state.seqs[index].header}" against consensus`, 2200);
+    } catch (err) {
+        console.error('Consensus realign failed:', err);
+        showMessage(`Consensus realign failed: ${err.message}`, 4000);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
