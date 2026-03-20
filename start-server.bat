@@ -27,12 +27,25 @@ if errorlevel 1 (
     blastn -version
 )
 
+REM Check if already running
+netstat -ano | findstr ":3000.*LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo Server is already running on port 3000.
+    echo Run stop-server.bat first to restart it.
+    pause
+    exit /b 0
+)
+
 echo.
 echo Installing Node.js dependencies...
 call npm install
 
 echo.
-echo Starting MSA Viewer BLAST Server...
-echo Server will run on http://localhost:3000
+echo Starting MSA Viewer Server in background window...
+start "MSA Viewer Server" /min cmd /k "cd /d "%~dp0" && node server.js"
+
 echo.
-call node server.js
+echo Server started. It runs in its own window independent of this terminal.
+echo   URL : http://localhost:3000
+echo   Stop: run stop-server.bat (or close the MSA Viewer Server window)
+echo.
