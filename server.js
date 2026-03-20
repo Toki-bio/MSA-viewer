@@ -595,6 +595,7 @@ app.get('/api/snapshots', (req, res) => {
 
 // ============ SSH MULTI-SERVER FILE FETCH ============
 // Load server config from external file (not committed to git)
+const PPK = 'C:\\Users\\toki\\.ssh\\id_ed25519.ppk';
 let SSH_SERVERS = {};
 try {
     const srvPath = path.join(__dirname, 'ssh-servers.json');
@@ -614,6 +615,12 @@ const SSH_CONFIG = SSH_SERVERS[Object.keys(SSH_SERVERS)[0]] || null;
 // Queue for push-to-load from MC on remote servers
 let _queuedFile = null; // { server, file, ts }
 
+function getPlinkBaseArgs(server) {
+    const args = ['-batch', '-i', PPK];
+    if (server?.hostKey) args.push('-hostkey', server.hostKey);
+    return args;
+}
+
 // Build ssh arg array for a given server; routes through 'via' server when needed
 function buildSshCatArgs(serverKey, filePath) {
     const srv = SSH_SERVERS[serverKey];
@@ -621,16 +628,16 @@ function buildSshCatArgs(serverKey, filePath) {
     const escaped = filePath.replace(/"/g, '\\"');
     const port = srv.port || 22;
     if (!srv.via) {
-        const args = ['-T', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes'];
-        if (port !== 22) args.push('-p', port.toString());
+        const args = getPlinkBaseArgs(srv);
+        if (port !== 22) args.push('-P', port.toString());
         args.push(`${srv.user}@${srv.host}`, `cat "${escaped}"`);
         return args;
     }
     // Route through jump server: local → via → target
     const via = SSH_SERVERS[srv.via];
-    const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ${srv.user}@${srv.host} "cat \\"${escaped}\\""`;
-    return ['-T', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10',
-            '-o', 'BatchMode=yes', `${via.user}@${via.host}`, innerCmd];
+    const innerPortArgs = port !== 22 ? ` -p ${port}` : '';
+    const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new${innerPortArgs} ${srv.user}@${srv.host} "cat \\"${escaped}\\""`;
+    return [...getPlinkBaseArgs(via), `${via.user}@${via.host}`, innerCmd];
 }
 
 function stripBanner(stdout) {
@@ -677,7 +684,7 @@ app.get('/api/ssh-poll-file', (req, res) => {
     if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
 
     const srv = SSH_SERVERS[serverKey];
-    const baseArgs = ['-T', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes'];
+    const baseArgs = getPlinkBaseArgs(srv);
     let sshArgs;
 
     if (!srv.via) {
@@ -687,21 +694,28 @@ app.get('/api/ssh-poll-file', (req, res) => {
         const cmd = 'Q=/tmp/.msa_viewer_queue; if [ -s "$Q" ]; then echo "=START_QUEUE="; cat "$Q"; echo "=END_QUEUE="; cp /dev/null "$Q" 2>/dev/null || true; fi';
         const port = srv.port || 22;
         const args = [...baseArgs];
-        if (port !== 22) args.push('-p', port.toString());
+        if (port !== 22) args.push('-P', port.toString());
         args.push(`${srv.user}@${srv.host}`, cmd);
         sshArgs = args;
     } else {
         // Via jump host
         const via = SSH_SERVERS[srv.via];
-        const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${srv.user}@${srv.host} "if [ -f /tmp/.msa_viewer_queue ]; then cat /tmp/.msa_viewer_queue && rm /tmp/.msa_viewer_queue; fi"`;
-        sshArgs = [...baseArgs, `${via.user}@${via.host}`, innerCmd];
+        const port = srv.port || 22;
+        const innerPortArgs = port !== 22 ? ` -p ${port}` : '';
+        const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new${innerPortArgs} ${srv.user}@${srv.host} "if [ -f /tmp/.msa_viewer_queue ]; then cat /tmp/.msa_viewer_queue && rm /tmp/.msa_viewer_queue; fi"`;
+        sshArgs = [...getPlinkBaseArgs(via), `${via.user}@${via.host}`, innerCmd];
     }
 
-    const child = spawn('ssh', sshArgs, { timeout: 10000 });
+    const child = spawn('plink', sshArgs, { timeout: 10000 });
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.stderr.on('data', (d) => { stderr += d.toString(); });
     child.on('close', (code) => {
+        if (code !== 0) {
+            const message = stderr.trim() || `plink exited with code ${code}`;
+            console.error(`[POLL] ${serverKey} failed: ${message}`);
+            return res.status(500).json({ error: message });
+        }
         // Extract content between markers to avoid MOTD pollution
         const startMarker = '=START_QUEUE=';
         const endMarker = '=END_QUEUE=';
@@ -742,7 +756,7 @@ app.get('/api/ssh-cat', (req, res) => {
     const sshArgs = buildSshCatArgs(serverKey, filePath);
     if (!sshArgs) return res.status(400).json({ error: 'Bad server config' });
 
-    const child = spawn('ssh', sshArgs, { timeout: 30000 });
+    const child = spawn('plink', sshArgs, { timeout: 30000 });
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.stderr.on('data', (d) => { stderr += d.toString(); });
@@ -762,18 +776,23 @@ app.get('/api/ssh-ls', (req, res) => {
     if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
 
     const escaped   = dirPath.replace(/"/g, '\\"');
-    const baseArgs  = ['-T', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes'];
     const srv       = SSH_SERVERS[serverKey];
+    const baseArgs  = getPlinkBaseArgs(srv);
     let sshArgs;
     if (!srv.via) {
-        sshArgs = [...baseArgs, `${srv.user}@${srv.host}`, `ls -1p "${escaped}"`];
+        const port = srv.port || 22;
+        sshArgs = [...baseArgs];
+        if (port !== 22) sshArgs.push('-P', port.toString());
+        sshArgs.push(`${srv.user}@${srv.host}`, `ls -1p "${escaped}"`);
     } else {
         const via = SSH_SERVERS[srv.via];
-        const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${srv.user}@${srv.host} "ls -1p \\"${escaped}\\""`;
-        sshArgs = [...baseArgs, `${via.user}@${via.host}`, innerCmd];
+        const port = srv.port || 22;
+        const innerPortArgs = port !== 22 ? ` -p ${port}` : '';
+        const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new${innerPortArgs} ${srv.user}@${srv.host} "ls -1p \\"${escaped}\\""`;
+        sshArgs = [...getPlinkBaseArgs(via), `${via.user}@${via.host}`, innerCmd];
     }
 
-    const child = spawn('ssh', sshArgs, { timeout: 10000 });
+    const child = spawn('plink', sshArgs, { timeout: 10000 });
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.stderr.on('data', (d) => { stderr += d.toString(); });

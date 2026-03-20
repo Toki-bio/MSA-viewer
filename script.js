@@ -196,7 +196,15 @@ async function _pollQueuedFile() {
             try {
                 const r = await fetch(`/api/ssh-poll-file?server=${encodeURIComponent(serverKey)}`, 
                     { signal: AbortSignal.timeout(8000) });
-                if (!r.ok) continue;
+                if (!r.ok) {
+                    let detail = `HTTP ${r.status}`;
+                    try {
+                        const err = await r.json();
+                        if (err?.error) detail = err.error;
+                    } catch {}
+                    console.log(`[POLL] ${serverKey}: ${detail}`);
+                    continue;
+                }
                 const data = await r.json();
                 if (data.queued) {
                     console.log(`[POLL] ${serverKey}: Queue detected: ${data.file}`);
@@ -228,26 +236,36 @@ async function checkMCQueueOnce() {
     const btn = document.getElementById('checkQueueButton');
     if (btn) btn.disabled = true;
     const serverKey = getSelectedServer();
-    showMessage(`Checking MC queue on ${serverKey}...`, 0);
+    _sshOpen('SSH – Queue Check');
+    _sshLog(`Checking ${serverKey}…`);
     
     try {
         // Check selected server's queue directly (not via _pollQueuedFile which checks ALL)
         const r = await fetch(`/api/ssh-poll-file?server=${encodeURIComponent(serverKey)}`,
             { signal: AbortSignal.timeout(12000) });
         if (!r.ok) {
-            showMessage(`Queue check failed (HTTP ${r.status})`, 3000);
+            let detail = `HTTP ${r.status}`;
+            try {
+                const err = await r.json();
+                if (err?.error) detail = err.error;
+            } catch {}
+            _sshError(detail);
             return;
         }
         const data = await r.json();
         if (data.queued) {
             console.log(`[POLL] ${serverKey}: Queue detected: ${data.file}`);
-            showMessage(`Loading ${data.file.split('/').pop()} from ${serverKey}...`, 0);
+            _sshLog(`Found: ${data.file.split('/').pop()} — fetching…`, 'info');
             await fetchFileFromServer(data.file, serverKey);
         } else {
-            showMessage(`No file queued on ${serverKey}`, 2000);
+            _sshLog(`No file queued on ${serverKey}`);
+            _sshConsoleCloseTimer = setTimeout(() => {
+                const c = document.getElementById('sshConsole');
+                if (c) c.style.display = 'none';
+            }, 2000);
         }
     } catch (e) {
-        showMessage(`Queue check error: ${e.message}`, 3000);
+        _sshError(`Queue check error: ${e.message}`);
     } finally {
         if (btn) btn.disabled = false;
     }
@@ -264,7 +282,7 @@ async function fetchFileFromServer(filePath, serverKey) {
     const input = document.getElementById('sshPathInput');
     if (btn) btn.disabled = true;
     if (input) input.disabled = true;
-    showMessage(`Fetching ${filePath.split('/').pop()} from ${serverKey}...`, 0);
+    _sshLog(`Fetching ${filePath.split('/').pop()} from ${serverKey}…`);
     try {
         const url = `/api/ssh-cat?file=${encodeURIComponent(filePath)}&server=${encodeURIComponent(serverKey)}`;
         const resp = await fetch(url);
@@ -278,7 +296,7 @@ async function fetchFileFromServer(filePath, serverKey) {
         state.currentFilename = fname;
         state.currentFilePath = filePath;
         parseAndRender(true);
-        showMessage(`Loaded ${fname} from ${serverKey}`, 3000);
+        _sshSuccess(`${fname} · ${state.seqs.length} seq${state.seqs.length !== 1 ? 's' : ''} · ${serverKey}`);
         // Auto-focus browser window and bring to front
         window.focus();
         // Flash title bar to attract attention
@@ -299,7 +317,7 @@ async function fetchFileFromServer(filePath, serverKey) {
             new Notification('MSA Viewer', { body: `Loaded ${fname}` });
         }
     } catch (err) {
-        showMessage(`SSH fetch error: ${err.message}`, 5000);
+        _sshError(err.message);
     } finally {
         if (btn) btn.disabled = false;
         if (input) input.disabled = false;
@@ -632,8 +650,41 @@ if (!fastaInput || !alignmentContainer || !statusMessage) {
 function showMessage(msg, duration = 2000) {
     statusMessage.textContent = msg;
     statusMessage.style.display = 'block';
-    setTimeout(() => { statusMessage.style.display = 'none'; }, duration);
+    if (duration > 0) setTimeout(() => { statusMessage.style.display = 'none'; }, duration);
 }
+
+// SSH mini-console helpers
+let _sshConsoleCloseTimer = null;
+function _sshOpen(title) {
+    const cons = document.getElementById('sshConsole');
+    const body = document.getElementById('sshConsoleBody');
+    const titleEl = document.getElementById('sshConsoleTitle');
+    if (!cons) return;
+    if (_sshConsoleCloseTimer) { clearTimeout(_sshConsoleCloseTimer); _sshConsoleCloseTimer = null; }
+    if (body) body.innerHTML = '';
+    if (titleEl && title) titleEl.textContent = title;
+    cons.style.display = 'block';
+}
+function _sshLog(msg, type = 'plain') {
+    const body = document.getElementById('sshConsoleBody');
+    const cons = document.getElementById('sshConsole');
+    if (!body || !cons) return;
+    if (cons.style.display === 'none') { body.innerHTML = ''; cons.style.display = 'block'; }
+    if (_sshConsoleCloseTimer) { clearTimeout(_sshConsoleCloseTimer); _sshConsoleCloseTimer = null; }
+    const line = document.createElement('div');
+    line.className = `ssh-line ssh-line-${type}`;
+    line.textContent = msg;
+    body.appendChild(line);
+    body.scrollTop = body.scrollHeight;
+}
+function _sshSuccess(msg) {
+    _sshLog('✓ ' + msg, 'ok');
+    _sshConsoleCloseTimer = setTimeout(() => {
+        const cons = document.getElementById('sshConsole');
+        if (cons) cons.style.display = 'none';
+    }, 2500);
+}
+function _sshError(msg) { _sshLog('✗ ' + msg, 'err'); }
 
 // Tooltip helper functions with viewport-aware positioning
 function showTooltipAt(content, target, options = {}) {

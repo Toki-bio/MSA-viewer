@@ -559,6 +559,15 @@
     </div>
     <div id="statusMessage"></div>
     <div id="tooltip" class="tooltip"></div>
+
+    <!-- SSH mini-console: shows fetch progress, auto-closes on success -->
+    <div id="sshConsole">
+        <div id="sshConsoleHeader">
+            <span id="sshConsoleTitle">SSH</span>
+            <button onclick="document.getElementById('sshConsole').style.display='none'" title="Close">×</button>
+        </div>
+        <div id="sshConsoleBody"></div>
+    </div>
     
     <div id="infoModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10001; overflow: auto;">
         <div style="background: white; margin: 50px auto; padding: 20px; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
@@ -743,7 +752,7 @@ B: —</pre>
     </div>
 
     <script src="cluster.js"></script>
-    <script src="script.js?v=22"></script>
+    <script src="script.js?v=24"></script>
     <script>
 // All functionality moved to script.js
 </script>

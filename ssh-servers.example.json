@@ -1,4 +1,10 @@
 {
     "myserver":  { "label": "My Server",   "user": "username", "host": "server.example.com", "port": 22,   "via": null },
-    "localvm":   { "label": "Local VM",    "user": "user",     "host": "localhost",          "port": 2222, "via": null }
+    "localvm":   { "label": "Local VM",    "user": "user",     "host": "localhost",          "port": 2222, "via": null },
+
+    "_NOTE_hostKey": "Optional: pin the server's SSH host key fingerprint for plink batch mode.",
+    "_NOTE_hostKey2": "Run: plink -batch -i key.ppk -P PORT user@host to see the fingerprint plink reports.",
+    "_NOTE_hostKey3": "Format: 'ssh-ed25519 255 SHA256:xxxx...' or 'rsa2 2048 SHA256:xxxx...'  (copy exactly from plink output)",
+    "example-with-hostkey": { "label": "Example (pinned key)", "user": "user", "host": "localhost", "port": 2222, "via": null,
+                               "hostKey": "ssh-ed25519 255 SHA256:REPLACE_WITH_ACTUAL_FINGERPRINT" }
 }
