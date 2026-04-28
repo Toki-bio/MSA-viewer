@@ -35,7 +35,12 @@ const state = {
     lastAction: null,
     draggingGroup: null,
     slideDragStartX: null,
-    slideDragStartPos: null,
+    slideAnchorPos: null,
+    slideApplied: 0,
+    slideCharWidth: 10,
+    slideUndoPushed: false,
+    slideMoved: false,
+    slideRenderPending: false,
     slideSeqIndex: null,
     nameLength: DEFAULTS.nameLength,
     uiListenersAttached: false,
@@ -1522,10 +1527,6 @@ function renderAlignment() {
     updateColumnSelections();
     scheduleNucSelectionRefresh();
     recalculateCollapsibleHeights();
-    // DISABLED: Sequence shifting removed
-    // document.querySelectorAll('.seq-data').forEach(dataSpan => {
-    //     dataSpan.addEventListener('mousedown', handleSlideStart);
-    // });
     // Update sequence/source statistics after any rendering change
     if (typeof updateSourceInfo === 'function') {
         updateSourceInfo();
@@ -1765,6 +1766,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         if (e.ctrlKey || e.metaKey) return; // handled by mousedown
         // Do nothing on single click — no copy, no selection
     });
+    dataSpan.addEventListener('mousedown', handleSlideStart);
     
     // *** PERFORMANCE: Pre-cache references and build HTML string ***
     const seq = state.seqs[index].seq;
@@ -7149,32 +7151,141 @@ function removeSingleGap(rowIndex, pos) {
 }
 // Slide by dragging seq-data
 function handleSlideStart(e) {
-    if (e.button !== 2) return; // Right click only
+    if (e.button !== 0) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (state.panning.active) return;
-    e.preventDefault(); // Prevent context menu
-    const dataSpan = e.target.closest('.seq-data');
-    if (!dataSpan) return;
-    const seqIndex = parseInt(dataSpan.parentNode.dataset.seqIndex);
+    const span = e.target.closest('.seq-data span[data-pos]');
+    if (!span || span.classList.contains('seq-length')) return;
+    const dataSpan = span.closest('.seq-data');
+    const row = dataSpan?.closest('.seq-line');
+    if (!row || row.classList.contains('consensus-line')) return;
+    const seqIndex = parseInt(row.dataset.seqIndex);
+    const anchorPos = parseInt(span.dataset.pos);
+    if (isNaN(seqIndex) || isNaN(anchorPos)) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
     state.slideSeqIndex = seqIndex;
     state.slideDragStartX = e.clientX;
+    state.slideAnchorPos = anchorPos;
+    state.slideApplied = 0;
+    state.slideCharWidth = getSlideCharWidth(span);
+    state.slideUndoPushed = false;
+    state.slideMoved = false;
+    document.body.classList.add('seq-slide-active');
     document.addEventListener('mousemove', handleSlideMove);
     document.addEventListener('mouseup', handleSlideEnd);
 }
 function handleSlideMove(e) {
-    const deltaX = e.clientX - state.slideDragStartX;
-    const shift = Math.sign(deltaX) * Math.floor(Math.abs(deltaX) / 20); // Shift every 20px
-    if (shift !== 0) {
-        shiftSequence(state.slideSeqIndex, shift);
-        state.slideDragStartX = e.clientX; // Reset start for next shift
+    if (state.slideSeqIndex === null) return;
+    if (e.buttons !== undefined && (e.buttons & 1) === 0) {
+        handleSlideEnd();
+        return;
     }
+    const charWidth = Math.max(1, state.slideCharWidth || 10);
+    const targetApplied = Math.trunc((e.clientX - state.slideDragStartX) / charWidth);
+    const delta = targetApplied - state.slideApplied;
+    if (delta !== 0) {
+        const moved = slideSequenceAtAnchor(state.slideSeqIndex, state.slideAnchorPos + state.slideApplied, delta);
+        if (moved !== 0) {
+            state.slideApplied += moved;
+            state.slideMoved = true;
+            scheduleSlideRender();
+        }
+    }
+    e.preventDefault();
 }
 function handleSlideEnd() {
     document.removeEventListener('mousemove', handleSlideMove);
     document.removeEventListener('mouseup', handleSlideEnd);
-    if (state.slideSeqIndex !== null) {
-        renderAlignment(); // Re-render to update DOM and reapply sticky
+    document.body.classList.remove('seq-slide-active');
+    if (state.slideSeqIndex !== null && state.slideMoved) {
+        if (!state.slideRenderPending) {
+            renderAlignment();
+        }
+        showMessage(`Sequence slid by ${state.slideApplied} column${Math.abs(state.slideApplied) === 1 ? '' : 's'}.`, 2000);
     }
     state.slideSeqIndex = null;
+    state.slideAnchorPos = null;
+    state.slideApplied = 0;
+    state.slideUndoPushed = false;
+    state.slideMoved = false;
+}
+
+function getSlideCharWidth(span) {
+    const rect = span?.getBoundingClientRect?.();
+    if (rect && rect.width > 0) return rect.width;
+    const sample = alignmentContainer?.querySelector('.seq-data span[data-pos]');
+    const sampleRect = sample?.getBoundingClientRect?.();
+    return (sampleRect && sampleRect.width > 0) ? sampleRect.width : 10;
+}
+
+function scheduleSlideRender() {
+    if (state.slideRenderPending) return;
+    state.slideRenderPending = true;
+    requestAnimationFrame(() => {
+        state.slideRenderPending = false;
+        renderAlignment();
+    });
+}
+
+function isGapChar(char) {
+    return char === '-' || char === '.';
+}
+
+function countGapsBefore(seq, pos) {
+    let count = 0;
+    for (let i = Math.min(pos, seq.length) - 1; i >= 0; i--) {
+        if (!isGapChar(seq[i])) break;
+        count++;
+    }
+    return count;
+}
+
+function appendGapsToOtherSequences(seqIndex, count) {
+    if (count <= 0) return;
+    state.seqs.forEach((seq, index) => {
+        if (index === seqIndex) return;
+        seq.seq += '-'.repeat(count);
+        seq.gaplessPositions = calculateGaplessPositions(seq.seq);
+    });
+}
+
+function slideSequenceAtAnchor(index, pos, amount) {
+    const s = state.seqs[index];
+    if (!s || amount === 0) return 0;
+    pos = Math.max(0, Math.min(pos, s.seq.length));
+    let moved = 0;
+    let nextSeq = s.seq;
+    let expanded = 0;
+
+    if (amount > 0) {
+        const trailingGaps = getTrailingGaps(s.seq);
+        expanded = Math.max(0, amount - trailingGaps);
+        nextSeq = s.seq.slice(0, pos) + '-'.repeat(amount) + s.seq.slice(pos);
+        if (trailingGaps > 0) {
+            nextSeq = nextSeq.slice(0, nextSeq.length - Math.min(amount, trailingGaps));
+        }
+        moved = amount;
+    } else {
+        const requested = -amount;
+        if (pos >= s.seq.length || isGapChar(s.seq[pos])) return 0;
+        const consumed = Math.min(requested, countGapsBefore(s.seq, pos));
+        if (consumed <= 0) return 0;
+        nextSeq = s.seq.slice(0, pos - consumed) + s.seq.slice(pos) + '-'.repeat(consumed);
+        moved = -consumed;
+    }
+
+    if (moved === 0 || nextSeq === s.seq) return 0;
+    if (!state.slideUndoPushed) {
+        pushUndo('slideSequence');
+        state.slideUndoPushed = true;
+    }
+    s.seq = nextSeq;
+    s.gaplessPositions = calculateGaplessPositions(s.seq);
+    appendGapsToOtherSequences(index, expanded);
+    return moved;
 }
 
 function handleAlignmentPanStart(e) {
@@ -7249,28 +7360,18 @@ function getTrailingGaps(seq) {
 }
 function shiftSequence(index, amount) {
     const s = state.seqs[index];
-    pushUndo('shift');
-    if (amount > 0) { // right shift
-        const maxShift = getTrailingGaps(s.seq);
-        if (maxShift === 0) {
-            showMessage("Cannot shift right: no trailing gaps.", 2000);
-            return;
-        }
-        amount = Math.min(amount, maxShift);
-        s.seq = '-'.repeat(amount) + s.seq.slice(0, -amount);
-    } else if (amount < 0) { // left shift
-        amount = -amount;
-        const maxShift = getLeadingGaps(s.seq);
-        if (maxShift === 0) {
-            showMessage("Cannot shift left: no leading gaps.", 2000);
-            return;
-        }
-        amount = Math.min(amount, maxShift);
-        s.seq = s.seq.slice(amount) + '-'.repeat(amount);
+    if (!s || amount === 0) return;
+    const firstResidue = s.seq.search(/[^-.]/);
+    const anchor = firstResidue >= 0 ? firstResidue : 0;
+    state.slideUndoPushed = false;
+    const moved = slideSequenceAtAnchor(index, anchor, amount);
+    state.slideUndoPushed = false;
+    if (moved === 0) {
+        showMessage("Sequence cannot slide further in that direction.", 2000);
+        return;
     }
-    s.gaplessPositions = calculateGaplessPositions(s.seq);
     renderAlignment();
-    showMessage(`Sequence shifted by ${amount}!`, 2000);
+    showMessage(`Sequence slid by ${moved}!`, 2000);
 }
 
 // Prevent Ctrl+A from selecting nucleotides in alignment when fastaInput is focused.
