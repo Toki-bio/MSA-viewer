@@ -7151,7 +7151,7 @@ function removeSingleGap(rowIndex, pos) {
 }
 // Slide by dragging seq-data
 function handleSlideStart(e) {
-    if (e.button !== 0) return; // Only left-drag slides sequence text; other buttons propagate normally.
+    if (e.button !== 0) return; // Early return leaves non-left buttons to normal event propagation.
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (state.panning.active) return;
     const span = e.target.closest('.seq-data span[data-pos]');
@@ -7204,7 +7204,7 @@ function handleSlideEnd() {
         if (!state.slideRenderPending) {
             renderAlignment();
         }
-        showMessage(`Sequence slid by ${state.slideColumnDelta} column${Math.abs(state.slideColumnDelta) === 1 ? '' : 's'}.`, 2000);
+        showMessage(`Sequence slid by ${formatColumnCount(state.slideColumnDelta)}.`, 2000);
     }
     state.slideSeqIndex = null;
     state.slideAnchorPos = null;
@@ -7232,6 +7232,10 @@ function scheduleSlideRender() {
 
 function isGapChar(char) {
     return char === '-' || char === '.';
+}
+
+function formatColumnCount(count) {
+    return `${count} column${Math.abs(count) === 1 ? '' : 's'}`;
 }
 
 function countGapsBefore(seq, pos) {
@@ -7271,7 +7275,7 @@ function slideSequenceAtAnchor(index, pos, amount, shareDragUndo = true) {
         moved = amount;
     } else {
         const requested = -amount;
-        // GeneDoc-style left slides move a residue block across gaps immediately before the anchor.
+        // GeneDoc-style left slides need a residue anchor to move across immediately preceding gaps.
         if (pos >= s.seq.length || isGapChar(s.seq[pos])) return 0;
         const consumed = Math.min(requested, countGapsBefore(s.seq, pos));
         if (consumed <= 0) return 0;
@@ -7365,7 +7369,13 @@ function getTrailingGaps(seq) {
 function shiftSequence(index, amount) {
     const s = state.seqs[index];
     if (!s || amount === 0) return;
-    const firstResidue = s.seq.search(/[^-.]/);
+    let firstResidue = -1;
+    for (let i = 0; i < s.seq.length; i++) {
+        if (!isGapChar(s.seq[i])) {
+            firstResidue = i;
+            break;
+        }
+    }
     const anchor = firstResidue >= 0 ? firstResidue : 0;
     const moved = slideSequenceAtAnchor(index, anchor, amount, false);
     if (moved === 0) {
@@ -7373,7 +7383,7 @@ function shiftSequence(index, amount) {
         return;
     }
     renderAlignment();
-    showMessage(`Sequence slid by ${moved}!`, 2000);
+    showMessage(`Sequence slid by ${formatColumnCount(moved)}!`, 2000);
 }
 
 // Prevent Ctrl+A from selecting nucleotides in alignment when fastaInput is focused.
