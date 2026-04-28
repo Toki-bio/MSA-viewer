@@ -35,14 +35,12 @@ const state = {
     lastAction: null,
     draggingGroup: null,
     slideDragStartX: null,
-    slideAnchorPos: null,
-    slideColumnDelta: 0,
-    slideCharWidth: 10,
-    slideUndoPushed: false,
-    slideMoved: false,
-    slideBlockedReason: null,
-    slideRenderPending: false,
+    slideDragStartPos: null,
     slideSeqIndex: null,
+    editModeActive: false,
+    editTool: 'moveNoGaps',
+    editDrag: null,
+    editCell: null,
     nameLength: DEFAULTS.nameLength,
     uiListenersAttached: false,
     panning: {
@@ -1527,7 +1525,9 @@ function renderAlignment() {
     updateRowSelections();
     updateColumnSelections();
     scheduleNucSelectionRefresh();
+    updateEditActiveCell();
     recalculateCollapsibleHeights();
+    // GeneDoc edit dragging is handled by delegated alignmentContainer events.
     // Update sequence/source statistics after any rendering change
     if (typeof updateSourceInfo === 'function') {
         updateSourceInfo();
@@ -1767,7 +1767,6 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         if (e.ctrlKey || e.metaKey) return; // handled by mousedown
         // Do nothing on single click — no copy, no selection
     });
-    dataSpan.addEventListener('mousedown', handleSlideStart);
     
     // *** PERFORMANCE: Pre-cache references and build HTML string ***
     const seq = state.seqs[index].seq;
@@ -2381,6 +2380,9 @@ function handleKeyDown(e) {
     // If focus is in an input/textarea/contenteditable, do not interfere with standard shortcuts
     const activeEl = document.activeElement;
     if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
+        return;
+    }
+    if (handleGeneDocResidueKey(e)) {
         return;
     }
     if (e.ctrlKey || e.metaKey) {
@@ -6645,6 +6647,8 @@ function initializeAppUI() {
         el(id)?.addEventListener('click', buttonActions[id]);
     }
 
+    initializeGeneDocEditToolbar();
+
     // Click outside to close Add Sequences modal
     const addSeqModal = document.getElementById('addSeqModal');
     if (addSeqModal) {
@@ -6956,6 +6960,7 @@ function attachUIListeners() {
     // Alignment container events
     const controls = el('controls');
     if (alignmentContainer) {
+        alignmentContainer.addEventListener('mousedown', handleGeneDocEditMouseDown);
         alignmentContainer.addEventListener('mousedown', handleMouseDown);
         alignmentContainer.addEventListener('mousemove', handleMouseMove);
         alignmentContainer.addEventListener('mousedown', handleAlignmentPanStart);
@@ -7091,12 +7096,421 @@ function setupMenuScrollBehavior() {
 //setupMenuScrollBehavior();  // Disabled - using setupHoverMenuReveal() instead
 setupHoverMenuReveal();
 // NEW EDITING FUNCTIONS
+const GENEDOC_FILLER = '-';
+const GENEDOC_MOVE_TOOLS = new Set(['moveNoGaps', 'slideKeepGaps']);
+const GENEDOC_GAP_TOOLS = new Set([
+    'insertGapSeq', 'deleteGapSeq',
+    'insertGapOther', 'deleteGapOther',
+    'insertGapAll', 'deleteGapAll'
+]);
+
+function initializeGeneDocEditToolbar() {
+    const panel = el('editToolPanel');
+    if (panel?.dataset.bound === '1') {
+        updateGeneDocEditUI();
+        return;
+    }
+    if (panel) panel.dataset.bound = '1';
+
+    el('editToggleButton')?.addEventListener('click', () => {
+        setGeneDocEditMode(!state.editModeActive);
+    });
+
+    document.querySelectorAll('#editToolPanel [data-edit-tool]').forEach(button => {
+        button.addEventListener('click', () => setGeneDocEditTool(button.dataset.editTool));
+    });
+
+    el('editDeleteColumnsButton')?.addEventListener('click', () => deleteSelectedColumns());
+    el('editClearGapColumnsButton')?.addEventListener('click', removeGapColumns);
+    el('editSeqEditorButton')?.addEventListener('click', () => openSeqEditor());
+
+    updateGeneDocEditUI();
+}
+
+function setGeneDocEditMode(active) {
+    state.editModeActive = !!active;
+    if (state.editModeActive && !GENEDOC_MOVE_TOOLS.has(state.editTool) && !GENEDOC_GAP_TOOLS.has(state.editTool) && state.editTool !== 'residue' && state.editTool !== 'selectColumn') {
+        state.editTool = 'moveNoGaps';
+    }
+    if (!state.editModeActive) {
+        clearGeneDocEditDrag();
+        state.editCell = null;
+    }
+    updateGeneDocEditUI();
+    updateEditActiveCell();
+    requestAnimationFrame(() => updateControlsOffset());
+}
+
+function setGeneDocEditTool(tool) {
+    if (!GENEDOC_MOVE_TOOLS.has(tool) && !GENEDOC_GAP_TOOLS.has(tool) && tool !== 'residue' && tool !== 'selectColumn') return;
+    state.editTool = tool;
+    state.editModeActive = true;
+    clearGeneDocEditDrag();
+    if (tool !== 'residue') state.editCell = null;
+    updateGeneDocEditUI();
+    updateEditActiveCell();
+    requestAnimationFrame(() => updateControlsOffset());
+}
+
+function updateGeneDocEditUI() {
+    const toggle = el('editToggleButton');
+    const panel = el('editToolPanel');
+    if (toggle) {
+        toggle.classList.toggle('active', state.editModeActive);
+        toggle.setAttribute('aria-pressed', state.editModeActive ? 'true' : 'false');
+    }
+    if (panel) {
+        panel.hidden = !state.editModeActive;
+        panel.querySelectorAll('[data-edit-tool]').forEach(button => {
+            const active = state.editModeActive && button.dataset.editTool === state.editTool;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+    }
+    document.body.classList.toggle('edit-mode-active', state.editModeActive);
+    if (state.editModeActive) {
+        document.body.dataset.editTool = state.editTool;
+    } else {
+        delete document.body.dataset.editTool;
+    }
+}
+
+function updateEditActiveCell() {
+    document.querySelectorAll('.edit-active-cell').forEach(span => span.classList.remove('edit-active-cell'));
+    if (!state.editModeActive || state.editTool !== 'residue' || !state.editCell) return;
+    const span = getCachedSpan(state.editCell.row, state.editCell.pos);
+    if (span) span.classList.add('edit-active-cell');
+}
+
+function isGeneDocResidueChar(char) {
+    return typeof char === 'string' && /^[A-Za-z]$/.test(char.charAt(0));
+}
+
+function isGeneDocGapChar(char) {
+    return !isGeneDocResidueChar(char);
+}
+
+function normalizeAlignmentLengths() {
+    if (!state.seqs.length) return 0;
+    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    state.seqs.forEach(s => {
+        if (s.seq.length < len) s.seq = s.seq.padEnd(len, GENEDOC_FILLER);
+    });
+    return len;
+}
+
+function refreshAllGaplessPositions() {
+    state.seqs.forEach(s => {
+        s.gaplessPositions = calculateGaplessPositions(s.seq);
+    });
+}
+
+function finalizeGeneDocEdit(message, duration = 1800) {
+    normalizeAlignmentLengths();
+    refreshAllGaplessPositions();
+    renderAlignment();
+    if (message) showMessage(message, duration);
+}
+
+function countTrailingGeneDocFillers(chars) {
+    let count = 0;
+    for (let i = chars.length - 1; i >= 0; i--) {
+        if (!isGeneDocGapChar(chars[i])) break;
+        count++;
+    }
+    return count;
+}
+
+function geneDocInsertDashString(seq, pos) {
+    const chars = seq.split('');
+    if (pos < 0 || pos >= chars.length) return { seq, changed: false };
+    const trailingFillers = countTrailingGeneDocFillers(chars);
+    chars.splice(pos, 0, GENEDOC_FILLER);
+    if (trailingFillers > 0) chars.pop();
+    return { seq: chars.join(''), changed: true };
+}
+
+function geneDocDeleteDashString(seq, pos) {
+    const chars = seq.split('');
+    if (pos < 0 || pos >= chars.length || !isGeneDocGapChar(chars[pos])) {
+        return { seq, changed: false };
+    }
+    chars.splice(pos, 1);
+    chars.push(GENEDOC_FILLER);
+    return { seq: chars.join(''), changed: true };
+}
+
+function geneDocSlideStepString(seq, pos, direction) {
+    const chars = seq.split('');
+    if (pos < 0 || pos >= chars.length || !isGeneDocResidueChar(chars[pos])) return { seq, moved: 0 };
+    if (direction > 0) {
+        const result = geneDocInsertDashString(seq, pos);
+        return { seq: result.seq, moved: result.changed ? 1 : 0 };
+    }
+    if (pos === 0 || !isGeneDocGapChar(chars[pos - 1])) return { seq, moved: 0 };
+    chars.splice(pos - 1, 1);
+    chars.push(GENEDOC_FILLER);
+    return { seq: chars.join(''), moved: -1 };
+}
+
+function geneDocMoveStepString(seq, pos, direction) {
+    const chars = seq.split('');
+    if (pos < 0 || pos >= chars.length || !isGeneDocResidueChar(chars[pos])) return { seq, moved: 0 };
+    if (direction > 0) {
+        let runEnd = pos;
+        while (runEnd < chars.length && isGeneDocResidueChar(chars[runEnd])) runEnd++;
+        if (runEnd < chars.length) {
+            for (let i = runEnd; i > pos; i--) {
+                chars[i] = chars[i - 1];
+            }
+            chars[pos] = GENEDOC_FILLER;
+        } else {
+            chars.splice(pos, 0, GENEDOC_FILLER);
+        }
+        return { seq: chars.join(''), moved: 1 };
+    }
+    if (pos === 0 || !isGeneDocGapChar(chars[pos - 1])) return { seq, moved: 0 };
+    let target = pos - 1;
+    for (let source = pos; source < chars.length; source++) {
+        if (isGeneDocResidueChar(chars[source])) {
+            chars[target++] = chars[source];
+        }
+    }
+    while (target < chars.length) {
+        chars[target++] = GENEDOC_FILLER;
+    }
+    return { seq: chars.join(''), moved: -1 };
+}
+
+function canGeneDocMove(rowIndex, pos, direction, tool) {
+    const seq = state.seqs[rowIndex]?.seq || '';
+    if (pos < 0 || pos >= seq.length || !isGeneDocResidueChar(seq[pos])) return false;
+    if (direction > 0) return true;
+    return pos > 0 && isGeneDocGapChar(seq[pos - 1]);
+}
+
+function applyGeneDocMoveStep(rowIndex, pos, direction, tool) {
+    const s = state.seqs[rowIndex];
+    if (!s) return 0;
+    const result = tool === 'slideKeepGaps'
+        ? geneDocSlideStepString(s.seq, pos, direction)
+        : geneDocMoveStepString(s.seq, pos, direction);
+    if (result.moved) s.seq = result.seq;
+    return result.moved;
+}
+
+function getGeneDocCharWidth(span) {
+    const rect = span.getBoundingClientRect();
+    if (rect.width > 0) return rect.width;
+    const fontSize = parseFloat(getComputedStyle(span).fontSize) || 13;
+    return Math.max(6, fontSize * 0.62);
+}
+
+function handleGeneDocEditMouseDown(e) {
+    if (!state.editModeActive || e.button !== 0) return;
+    const span = e.target.closest?.('.seq-data > span[data-pos]');
+    if (!span) return;
+    const seqLine = span.closest('.seq-line');
+    if (!seqLine || seqLine.classList.contains('consensus-line') || seqLine.classList.contains('scale-ruler-line')) return;
+    const rowIndex = parseInt(seqLine.dataset.seqIndex, 10);
+    const pos = parseInt(span.dataset.pos, 10);
+    if (!Number.isInteger(rowIndex) || !Number.isInteger(pos) || !state.seqs[rowIndex]) return;
+
+    const tool = state.editTool;
+    if (!GENEDOC_MOVE_TOOLS.has(tool) && !GENEDOC_GAP_TOOLS.has(tool) && tool !== 'residue' && tool !== 'selectColumn') return;
+
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    hideTooltip();
+
+    if (GENEDOC_MOVE_TOOLS.has(tool)) {
+        startGeneDocMoveDrag(e, rowIndex, pos, tool, span);
+    } else if (GENEDOC_GAP_TOOLS.has(tool)) {
+        handleGeneDocGapToolClick(rowIndex, pos, tool);
+    } else if (tool === 'residue') {
+        state.editCell = { row: rowIndex, pos };
+        updateEditActiveCell();
+    } else if (tool === 'selectColumn') {
+        startGeneDocColumnDrag(pos);
+    }
+}
+
+function startGeneDocMoveDrag(e, rowIndex, pos, tool, span) {
+    if (!isGeneDocResidueChar(state.seqs[rowIndex].seq[pos])) {
+        showMessage('Start a GeneDoc drag on a residue.', 1800);
+        return;
+    }
+    clearGeneDocEditDrag();
+    state.editDrag = {
+        type: 'move',
+        rowIndex,
+        anchorPos: pos,
+        tool,
+        lastClientX: e.clientX,
+        charWidth: getGeneDocCharWidth(span),
+        undoPushed: false,
+        moved: 0
+    };
+    state.editCell = { row: rowIndex, pos };
+    updateEditActiveCell();
+    document.body.classList.add('edit-dragging');
+    document.addEventListener('mousemove', handleGeneDocEditDragMove);
+    document.addEventListener('mouseup', handleGeneDocEditDragEnd);
+}
+
+function startGeneDocColumnDrag(pos) {
+    clearGeneDocEditDrag();
+    state.editDrag = {
+        type: 'selectColumn',
+        startPos: pos,
+        lastPos: pos
+    };
+    setGeneDocColumnRange(pos, pos);
+    document.body.classList.add('edit-dragging');
+    document.addEventListener('mousemove', handleGeneDocEditDragMove);
+    document.addEventListener('mouseup', handleGeneDocEditDragEnd);
+}
+
+function setGeneDocColumnRange(startPos, endPos) {
+    const start = Math.min(startPos, endPos);
+    const end = Math.max(startPos, endPos);
+    state.selectedColumns.clear();
+    for (let pos = start; pos <= end; pos++) {
+        state.selectedColumns.add(pos);
+    }
+    updateColumnSelections();
+}
+
+function handleGeneDocEditDragMove(e) {
+    const drag = state.editDrag;
+    if (!drag) return;
+    e.preventDefault();
+
+    if (drag.type === 'selectColumn') {
+        const target = document.elementFromPoint(e.clientX, e.clientY);
+        const span = target?.closest?.('.seq-data > span[data-pos]');
+        if (!span) return;
+        const pos = parseInt(span.dataset.pos, 10);
+        if (!Number.isInteger(pos) || pos === drag.lastPos) return;
+        drag.lastPos = pos;
+        setGeneDocColumnRange(drag.startPos, pos);
+        return;
+    }
+
+    if (drag.type !== 'move') return;
+    const rawSteps = Math.trunc((e.clientX - drag.lastClientX) / drag.charWidth);
+    if (rawSteps === 0) return;
+    const direction = Math.sign(rawSteps);
+    const steps = Math.min(Math.abs(rawSteps), 50);
+    let totalMoved = 0;
+
+    for (let step = 0; step < steps; step++) {
+        if (!canGeneDocMove(drag.rowIndex, drag.anchorPos, direction, drag.tool)) break;
+        if (!drag.undoPushed) {
+            pushUndo(drag.tool === 'slideKeepGaps' ? 'geneDocSlideText' : 'geneDocMoveText');
+            drag.undoPushed = true;
+        }
+        const moved = applyGeneDocMoveStep(drag.rowIndex, drag.anchorPos, direction, drag.tool);
+        if (!moved) break;
+        drag.anchorPos += moved;
+        totalMoved += moved;
+    }
+
+    if (totalMoved !== 0) {
+        normalizeAlignmentLengths();
+        refreshAllGaplessPositions();
+        state.editCell = { row: drag.rowIndex, pos: drag.anchorPos };
+        renderAlignment();
+        drag.lastClientX += totalMoved * drag.charWidth;
+        drag.moved += totalMoved;
+    } else {
+        drag.lastClientX = e.clientX;
+    }
+}
+
+function handleGeneDocEditDragEnd() {
+    const drag = state.editDrag;
+    clearGeneDocEditDrag();
+    if (drag?.type === 'move' && drag.moved !== 0) {
+        const label = drag.tool === 'slideKeepGaps' ? 'SlideText' : 'MoveText';
+        showMessage(`${label} moved ${Math.abs(drag.moved)} column(s).`, 1400);
+    }
+}
+
+function clearGeneDocEditDrag() {
+    document.removeEventListener('mousemove', handleGeneDocEditDragMove);
+    document.removeEventListener('mouseup', handleGeneDocEditDragEnd);
+    document.body.classList.remove('edit-dragging');
+    state.editDrag = null;
+}
+
+function getGeneDocGapTargets(rowIndex, tool) {
+    if (tool.endsWith('Seq')) return [rowIndex];
+    if (tool.endsWith('Other')) return state.seqs.map((_, i) => i).filter(i => i !== rowIndex);
+    return state.seqs.map((_, i) => i);
+}
+
+function handleGeneDocGapToolClick(rowIndex, pos, tool) {
+    const targets = getGeneDocGapTargets(rowIndex, tool);
+    if (!targets.length) {
+        showMessage('No target sequences for this GeneDoc edit.', 1800);
+        return;
+    }
+    const deleting = tool.startsWith('delete');
+    if (deleting) {
+        const blocked = targets.find(i => isGeneDocResidueChar(state.seqs[i].seq[pos] || GENEDOC_FILLER));
+        if (blocked !== undefined) {
+            showMessage('Delete Gap targets must be gaps.', 2200);
+            return;
+        }
+    }
+
+    pushUndo(`geneDoc-${tool}`);
+    normalizeAlignmentLengths();
+    let changed = false;
+    targets.forEach(i => {
+        const s = state.seqs[i];
+        const result = deleting
+            ? geneDocDeleteDashString(s.seq, pos)
+            : geneDocInsertDashString(s.seq, pos);
+        if (result.changed) {
+            s.seq = result.seq;
+            changed = true;
+        }
+    });
+    if (!changed) {
+        showMessage('No GeneDoc edit was applied.', 1800);
+        return;
+    }
+    const label = deleting ? 'gap deleted' : 'gap inserted';
+    finalizeGeneDocEdit(`${targets.length} sequence(s): ${label}.`, 1600);
+}
+
+function handleGeneDocResidueKey(e) {
+    if (!state.editModeActive || state.editTool !== 'residue' || !state.editCell) return false;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return false;
+    if (!/^[A-Za-z.-]$/.test(e.key)) return false;
+    const { row, pos } = state.editCell;
+    if (!state.seqs[row]) return false;
+    pushUndo('geneDocResidueEdit');
+    normalizeAlignmentLengths();
+    const chars = state.seqs[row].seq.split('');
+    if (pos < 0 || pos >= chars.length) return false;
+    chars[pos] = e.key === '.' ? '.' : e.key.toUpperCase();
+    state.seqs[row].seq = chars.join('');
+    const nextPos = Math.min(pos + 1, chars.length - 1);
+    state.editCell = { row, pos: nextPos };
+    finalizeGeneDocEdit('', 0);
+    e.preventDefault();
+    return true;
+}
+
 function removeGapColumns() {
     if (state.seqs.length === 0) return;
-    const len = state.seqs[0].seq.length;
+    const len = Math.max(...state.seqs.map(s => s.seq.length));
     const colsToRemove = [];
     for (let pos = 0; pos < len; pos++) {
-        if (state.seqs.every(s => s.seq[pos] === '-' || s.seq[pos] === '.')) {
+        if (state.seqs.every(s => isGeneDocGapChar(s.seq[pos] || GENEDOC_FILLER))) {
             colsToRemove.push(pos);
         }
     }
@@ -7105,15 +7519,18 @@ function removeGapColumns() {
         return;
     }
     pushUndo('removeGaps');
+    normalizeAlignmentLengths();
     state.seqs.forEach(s => {
         let seqArr = s.seq.split('');
         colsToRemove.sort((a, b) => b - a).forEach(pos => seqArr.splice(pos, 1));
         s.seq = seqArr.join('');
-        s.gaplessPositions = calculateGaplessPositions(s.seq);
     });
+    state.selectedColumns.clear();
+    refreshAllGaplessPositions();
     renderAlignment();
     showMessage(`${colsToRemove.length} gap columns removed!`, 2000);
 }
+
 function insertGapColumn(all = true) {
     if (state.selectedColumns.size === 0) {
         showMessage("Select a column position by Ctrl+Alt+click on a nucleotide to insert gap there.", 5000);
@@ -7121,192 +7538,48 @@ function insertGapColumn(all = true) {
     }
     const pos = Math.min(...state.selectedColumns);
     pushUndo('insertGap');
+    normalizeAlignmentLengths();
     state.seqs.forEach((s, i) => {
         if (!all && state.selectedRows.has(i)) return; // Skip selected if not all
         s.seq = s.seq.slice(0, pos) + '-' + s.seq.slice(pos);
-        s.gaplessPositions = calculateGaplessPositions(s.seq);
     });
+    normalizeAlignmentLengths();
+    refreshAllGaplessPositions();
     state.selectedColumns.clear();
     renderAlignment();
     showMessage("Gap column inserted!", 2000);
 }
+
 function insertSingleGap(rowIndex, pos) {
     const s = state.seqs[rowIndex];
+    if (!s) return;
     pushUndo('insertSingleGap');
-    s.seq = s.seq.slice(0, pos) + '-' + s.seq.slice(pos);
-    s.gaplessPositions = calculateGaplessPositions(s.seq);
-    renderAlignment();
-    showMessage("Single gap inserted!", 2000);
+    normalizeAlignmentLengths();
+    const result = geneDocInsertDashString(s.seq, pos);
+    if (!result.changed) {
+        showMessage('No gap inserted.', 1800);
+        return;
+    }
+    s.seq = result.seq;
+    finalizeGeneDocEdit('Single GeneDoc gap inserted.', 1800);
 }
+
 function removeSingleGap(rowIndex, pos) {
     const s = state.seqs[rowIndex];
-    if (s.seq[pos] !== '-' && s.seq[pos] !== '.') {
+    if (!s) return;
+    if (!isGeneDocGapChar(s.seq[pos] || GENEDOC_FILLER)) {
         showMessage("Not a gap.", 2000);
         return;
     }
     pushUndo('removeSingleGap');
-    s.seq = s.seq.slice(0, pos) + s.seq.slice(pos + 1);
-    s.gaplessPositions = calculateGaplessPositions(s.seq);
-    renderAlignment();
-    showMessage("Single gap removed!", 2000);
-}
-// Slide by dragging seq-data
-function handleSlideStart(e) {
-    if (e.button !== 0) return; // Early return leaves non-left buttons to normal event propagation.
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (state.panning.active) return;
-    const span = e.target.closest('.seq-data span[data-pos]');
-    if (!span || span.classList.contains('seq-length')) return;
-    const dataSpan = span.closest('.seq-data');
-    const row = dataSpan?.closest('.seq-line');
-    if (!row || row.classList.contains('consensus-line')) return;
-    const seqIndex = parseInt(row.dataset.seqIndex);
-    const anchorPos = parseInt(span.dataset.pos);
-    if (isNaN(seqIndex) || isNaN(anchorPos)) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    state.slideSeqIndex = seqIndex;
-    state.slideDragStartX = e.clientX;
-    state.slideAnchorPos = anchorPos;
-    state.slideColumnDelta = 0;
-    state.slideCharWidth = getSlideCharWidth(span);
-    state.slideUndoPushed = false;
-    state.slideMoved = false;
-    state.slideBlockedReason = null;
-    document.body.classList.add('seq-slide-active');
-    document.addEventListener('mousemove', handleSlideMove);
-    document.addEventListener('mouseup', handleSlideEnd);
-}
-function handleSlideMove(e) {
-    if (state.slideSeqIndex === null) return;
-    if (e.buttons !== undefined && (e.buttons & 1) === 0) {
-        handleSlideEnd();
+    normalizeAlignmentLengths();
+    const result = geneDocDeleteDashString(s.seq, pos);
+    if (!result.changed) {
+        showMessage('No gap removed.', 1800);
         return;
     }
-    const charWidth = Math.max(1, state.slideCharWidth || 10);
-    const targetColumnDelta = Math.trunc((e.clientX - state.slideDragStartX) / charWidth);
-    const delta = targetColumnDelta - state.slideColumnDelta;
-    if (delta !== 0) {
-        const moved = slideSequenceAtAnchor(state.slideSeqIndex, state.slideAnchorPos + state.slideColumnDelta, delta);
-        if (moved !== 0) {
-            state.slideColumnDelta += moved;
-            state.slideMoved = true;
-            scheduleSlideRender();
-        }
-    }
-    e.preventDefault();
-}
-function handleSlideEnd() {
-    document.removeEventListener('mousemove', handleSlideMove);
-    document.removeEventListener('mouseup', handleSlideEnd);
-    document.body.classList.remove('seq-slide-active');
-    if (state.slideSeqIndex !== null) {
-        if (state.slideMoved) {
-            if (!state.slideRenderPending) {
-                renderAlignment();
-            }
-            showMessage(`Sequence slid by ${pluralizeColumns(state.slideColumnDelta)}.`, 2000);
-        } else if (state.slideBlockedReason) {
-            showMessage(state.slideBlockedReason, 2000);
-        }
-    }
-    state.slideSeqIndex = null;
-    state.slideAnchorPos = null;
-    state.slideColumnDelta = 0;
-    state.slideUndoPushed = false;
-    state.slideMoved = false;
-    state.slideBlockedReason = null;
-}
-
-function getSlideCharWidth(span) {
-    const rect = span?.getBoundingClientRect?.();
-    if (rect && rect.width > 0) return rect.width;
-    const sample = alignmentContainer?.querySelector('.seq-data span[data-pos]');
-    const sampleRect = sample?.getBoundingClientRect?.();
-    return (sampleRect && sampleRect.width > 0) ? sampleRect.width : 10;
-}
-
-function scheduleSlideRender() {
-    if (state.slideRenderPending) return;
-    state.slideRenderPending = true;
-    requestAnimationFrame(() => {
-        state.slideRenderPending = false;
-        renderAlignment();
-    });
-}
-
-function isGapChar(char) {
-    return char === '-' || char === '.';
-}
-
-function pluralizeColumns(count) {
-    return `${count} column${Math.abs(count) === 1 ? '' : 's'}`;
-}
-
-function countGapsBefore(seq, pos) {
-    if (pos <= 0) return 0;
-    let count = 0;
-    for (let i = pos - 1; i >= 0; i--) {
-        if (!isGapChar(seq[i])) break;
-        count++;
-    }
-    return count;
-}
-
-function appendGapsToOtherSequences(seqIndex, count) {
-    if (count <= 0) return;
-    state.seqs.forEach((seq, index) => {
-        if (index === seqIndex) return;
-        seq.seq += '-'.repeat(count);
-        seq.gaplessPositions = calculateGaplessPositions(seq.seq);
-    });
-}
-
-function slideSequenceAtAnchor(index, pos, amount, groupUndoOperations = true) {
-    const s = state.seqs[index];
-    if (!s || amount === 0) return 0;
-    pos = Math.max(0, Math.min(pos, s.seq.length));
-    let moved = 0;
-    let nextSeq = s.seq;
-    let expanded = 0;
-
-    if (amount > 0) {
-        const trailingGaps = getTrailingGaps(s.seq);
-        expanded = Math.max(0, amount - trailingGaps);
-        nextSeq = s.seq.slice(0, pos) + '-'.repeat(amount) + s.seq.slice(pos);
-        if (trailingGaps > 0) {
-            nextSeq = nextSeq.slice(0, nextSeq.length - Math.min(amount, trailingGaps));
-        }
-        moved = amount;
-    } else {
-        const requested = -amount;
-        // GeneDoc-style left slides need a residue anchor to move across immediately preceding gaps.
-        if (pos >= s.seq.length || isGapChar(s.seq[pos])) {
-            state.slideBlockedReason = "Slide left from a residue, not a gap.";
-            return 0;
-        }
-        const consumed = Math.min(requested, countGapsBefore(s.seq, pos));
-        if (consumed <= 0) {
-            state.slideBlockedReason = "No preceding gaps to consume.";
-            return 0;
-        }
-        nextSeq = s.seq.slice(0, pos - consumed) + s.seq.slice(pos) + '-'.repeat(consumed);
-        moved = -consumed;
-    }
-
-    if (moved === 0 || nextSeq === s.seq) return 0;
-    if (!groupUndoOperations || !state.slideUndoPushed) {
-        pushUndo('slideSequence');
-        if (groupUndoOperations) {
-            state.slideUndoPushed = true;
-        }
-    }
-    s.seq = nextSeq;
-    s.gaplessPositions = calculateGaplessPositions(s.seq);
-    appendGapsToOtherSequences(index, expanded);
-    return moved;
+    s.seq = result.seq;
+    finalizeGeneDocEdit('Single GeneDoc gap removed.', 1800);
 }
 
 function handleAlignmentPanStart(e) {
@@ -7361,43 +7634,6 @@ function handleAlignmentPanContextMenu(e) {
     if (state.panning.started) {
         e.preventDefault();
     }
-}
-
-function getLeadingGaps(seq) {
-    let count = 0;
-    for (let char of seq) {
-        if (char === '-' || char === '.') count++;
-        else break;
-    }
-    return count;
-}
-function getTrailingGaps(seq) {
-    let count = 0;
-    for (let i = seq.length - 1; i >= 0; i--) {
-        if (seq[i] === '-' || seq[i] === '.') count++;
-        else break;
-    }
-    return count;
-}
-function shiftSequence(index, amount) {
-    const s = state.seqs[index];
-    if (!s || amount === 0) return;
-    let firstResidue = -1;
-    for (let i = 0; i < s.seq.length; i++) {
-        if (!isGapChar(s.seq[i])) {
-            firstResidue = i;
-            break;
-        }
-    }
-    const anchor = firstResidue >= 0 ? firstResidue : 0;
-    const moved = slideSequenceAtAnchor(index, anchor, amount, false);
-    if (moved === 0) {
-        showMessage(state.slideBlockedReason || "Sequence cannot slide further in that direction.", 2000);
-        state.slideBlockedReason = null;
-        return;
-    }
-    renderAlignment();
-    showMessage(`Sequence slid by ${pluralizeColumns(moved)}!`, 2000);
 }
 
 // Prevent Ctrl+A from selecting nucleotides in alignment when fastaInput is focused.
