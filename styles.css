@@ -725,7 +725,7 @@ body.row-reorder-active .seq-name.drag-source:hover {
     margin: 0;
     padding: 0;
     line-height: 1.0;
-    cursor: default;
+    cursor: ew-resize;
     user-select: none;
     -moz-user-select: none;
     -webkit-user-select: none;
@@ -961,11 +961,11 @@ body.suppress-menu-hover .menu-section.menu-open .control-group {
     margin-left: 8px !important;
 }
 .seq-data:active {
-    cursor: grabbing;
+    cursor: ew-resize;
 }
 
 .seq-data span:not(.nuc-selected):hover {
-    cursor: default;
+    cursor: ew-resize;
 }
 .black {
     background-color: var(--blackShading, #000) !important;
