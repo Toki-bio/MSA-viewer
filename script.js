@@ -7151,7 +7151,7 @@ function removeSingleGap(rowIndex, pos) {
 }
 // Slide by dragging seq-data
 function handleSlideStart(e) {
-    if (e.button !== 0) return; // Left-drag slides sequence text; right-click remains available for menus.
+    if (e.button !== 0) return; // Only left-drag slides sequence text; other buttons propagate normally.
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (state.panning.active) return;
     const span = e.target.closest('.seq-data span[data-pos]');
@@ -7235,6 +7235,7 @@ function isGapChar(char) {
 }
 
 function countGapsBefore(seq, pos) {
+    if (pos <= 0) return 0;
     let count = 0;
     for (let i = Math.min(pos, seq.length) - 1; i >= 0; i--) {
         if (!isGapChar(seq[i])) break;
@@ -7270,6 +7271,7 @@ function slideSequenceAtAnchor(index, pos, amount, shareDragUndo = true) {
         moved = amount;
     } else {
         const requested = -amount;
+        // GeneDoc-style left slides move a residue block across gaps immediately before the anchor.
         if (pos >= s.seq.length || isGapChar(s.seq[pos])) return 0;
         const consumed = Math.min(requested, countGapsBefore(s.seq, pos));
         if (consumed <= 0) return 0;
