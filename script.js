@@ -40,6 +40,7 @@ const state = {
     slideCharWidth: 10,
     slideUndoPushed: false,
     slideMoved: false,
+    slideBlockedReason: null,
     slideRenderPending: false,
     slideSeqIndex: null,
     nameLength: DEFAULTS.nameLength,
@@ -7173,6 +7174,7 @@ function handleSlideStart(e) {
     state.slideCharWidth = getSlideCharWidth(span);
     state.slideUndoPushed = false;
     state.slideMoved = false;
+    state.slideBlockedReason = null;
     document.body.classList.add('seq-slide-active');
     document.addEventListener('mousemove', handleSlideMove);
     document.addEventListener('mouseup', handleSlideEnd);
@@ -7200,17 +7202,22 @@ function handleSlideEnd() {
     document.removeEventListener('mousemove', handleSlideMove);
     document.removeEventListener('mouseup', handleSlideEnd);
     document.body.classList.remove('seq-slide-active');
-    if (state.slideSeqIndex !== null && state.slideMoved) {
-        if (!state.slideRenderPending) {
-            renderAlignment();
+    if (state.slideSeqIndex !== null) {
+        if (state.slideMoved) {
+            if (!state.slideRenderPending) {
+                renderAlignment();
+            }
+            showMessage(`Sequence slid by ${pluralizeColumns(state.slideColumnDelta)}.`, 2000);
+        } else if (state.slideBlockedReason) {
+            showMessage(state.slideBlockedReason, 2000);
         }
-        showMessage(`Sequence slid by ${formatColumnCount(state.slideColumnDelta)}.`, 2000);
     }
     state.slideSeqIndex = null;
     state.slideAnchorPos = null;
     state.slideColumnDelta = 0;
     state.slideUndoPushed = false;
     state.slideMoved = false;
+    state.slideBlockedReason = null;
 }
 
 function getSlideCharWidth(span) {
@@ -7234,14 +7241,14 @@ function isGapChar(char) {
     return char === '-' || char === '.';
 }
 
-function formatColumnCount(count) {
+function pluralizeColumns(count) {
     return `${count} column${Math.abs(count) === 1 ? '' : 's'}`;
 }
 
 function countGapsBefore(seq, pos) {
     if (pos <= 0) return 0;
     let count = 0;
-    for (let i = Math.min(pos, seq.length) - 1; i >= 0; i--) {
+    for (let i = pos - 1; i >= 0; i--) {
         if (!isGapChar(seq[i])) break;
         count++;
     }
@@ -7257,7 +7264,7 @@ function appendGapsToOtherSequences(seqIndex, count) {
     });
 }
 
-function slideSequenceAtAnchor(index, pos, amount, shareDragUndo = true) {
+function slideSequenceAtAnchor(index, pos, amount, groupUndoOperations = true) {
     const s = state.seqs[index];
     if (!s || amount === 0) return 0;
     pos = Math.max(0, Math.min(pos, s.seq.length));
@@ -7276,17 +7283,23 @@ function slideSequenceAtAnchor(index, pos, amount, shareDragUndo = true) {
     } else {
         const requested = -amount;
         // GeneDoc-style left slides need a residue anchor to move across immediately preceding gaps.
-        if (pos >= s.seq.length || isGapChar(s.seq[pos])) return 0;
+        if (pos >= s.seq.length || isGapChar(s.seq[pos])) {
+            state.slideBlockedReason = "Slide left from a residue, not a gap.";
+            return 0;
+        }
         const consumed = Math.min(requested, countGapsBefore(s.seq, pos));
-        if (consumed <= 0) return 0;
+        if (consumed <= 0) {
+            state.slideBlockedReason = "No preceding gaps to consume.";
+            return 0;
+        }
         nextSeq = s.seq.slice(0, pos - consumed) + s.seq.slice(pos) + '-'.repeat(consumed);
         moved = -consumed;
     }
 
     if (moved === 0 || nextSeq === s.seq) return 0;
-    if (!shareDragUndo || !state.slideUndoPushed) {
+    if (!groupUndoOperations || !state.slideUndoPushed) {
         pushUndo('slideSequence');
-        if (shareDragUndo) {
+        if (groupUndoOperations) {
             state.slideUndoPushed = true;
         }
     }
@@ -7379,11 +7392,12 @@ function shiftSequence(index, amount) {
     const anchor = firstResidue >= 0 ? firstResidue : 0;
     const moved = slideSequenceAtAnchor(index, anchor, amount, false);
     if (moved === 0) {
-        showMessage("Sequence cannot slide further in that direction.", 2000);
+        showMessage(state.slideBlockedReason || "Sequence cannot slide further in that direction.", 2000);
+        state.slideBlockedReason = null;
         return;
     }
     renderAlignment();
-    showMessage(`Sequence slid by ${formatColumnCount(moved)}!`, 2000);
+    showMessage(`Sequence slid by ${pluralizeColumns(moved)}!`, 2000);
 }
 
 // Prevent Ctrl+A from selecting nucleotides in alignment when fastaInput is focused.
