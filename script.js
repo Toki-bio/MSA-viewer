@@ -21,6 +21,8 @@ const state = {
     lastSelectedIndex: null,
     lastSelectedColumn: null,
     consensusSeq: '',
+    consensusCache: null,
+    conservationDataCache: null,
     deletedHistory: [],
     redoHistory: [],
     currentFilename: '',
@@ -1388,7 +1390,21 @@ function preCalculateConservation(seqs, len, shadeMode) {
     return conservationData;
 }
 
-function renderAlignment() {
+function getDeferredConservationData(len, shadeMode) {
+    const cached = state.conservationDataCache;
+    if (!cached || cached.shadeMode !== shadeMode || !cached.data) return null;
+    if (cached.len === len) return cached.data;
+    return Array.from({ length: len }, (_, pos) => cached.data[pos] || { hasData: false, hasValidCoverage: false });
+}
+
+function getDeferredConsensus(len) {
+    const cached = state.consensusCache;
+    if (!cached || !cached.values) return null;
+    if (cached.len === len) return cached.values.slice();
+    return Array.from({ length: len }, (_, pos) => cached.values[pos] || '-');
+}
+
+function renderAlignment(options = {}) {
     if (!state.seqs || state.seqs.length === 0) {
         alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
         return;
@@ -1452,15 +1468,25 @@ function renderAlignment() {
     
     let consensus = [];
     if (showConsensus) {
-        // Use unified helper for consensus computation
-        consensus = computeConsensusForSequences(state.seqs.map(s => s.seq)).split('');
+        const deferredConsensus = options.deferConservation ? getDeferredConsensus(len) : null;
+        if (deferredConsensus) {
+            consensus = deferredConsensus;
+        } else {
+            // Use unified helper for consensus computation
+            consensus = computeConsensusForSequences(state.seqs.map(s => s.seq)).split('');
+            state.consensusCache = { len, values: consensus.slice() };
+        }
     }
     state.consensusSeq = consensus.join('').replace(/-/g, '');
     const shouldRenderConsensus = showConsensus;
     
     // *** NEW: Pre-calculate conservation for ALL columns ONCE ***
     const shadeMode = document.querySelector('input[name="shadeMode"]:checked').value;
-    const conservationData = preCalculateConservation(state.seqs, len, shadeMode);
+    const conservationData = (options.deferConservation && getDeferredConservationData(len, shadeMode))
+        || preCalculateConservation(state.seqs, len, shadeMode);
+    if (!options.deferConservation) {
+        state.conservationDataCache = { len, shadeMode, data: conservationData };
+    }
     
     if (useBlocks) {
         for (let start = 0; start < len; start += blockWidth) {
@@ -1485,7 +1511,7 @@ function renderAlignment() {
             const isLastBlock = (start + blockWidth >= len);
             
             if (shouldRenderConsensus) {
-                addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'top');
+                addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'top', options);
             }
             for (let i = 0; i < state.seqs.length; i++) {
                 // *** PASS conservationData to createSequenceLine ***
@@ -1510,7 +1536,7 @@ function renderAlignment() {
         alignmentContainer.appendChild(scaleDiv);
         
         if (shouldRenderConsensus) {
-            addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'top');
+            addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'top', options);
         }
         for (let i = 0; i < state.seqs.length; i++) {
             // *** PASS conservationData to createSequenceLine ***
@@ -1786,7 +1812,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
             baseClass = 'ambiguous';
         }
         
-        const posData = conservationData[pos];
+        const posData = conservationData[pos] || { hasData: false, hasValidCoverage: false };
         if (posData.hasData && posData.hasValidCoverage) {
             if (baseUp !== '-' && baseUp !== '.' && posData.consensusBases.has(baseUp)) {
                 if (enableBlack && posData.conservation >= blackThresh) cls = 'black';
@@ -1829,7 +1855,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     }
     return lineDiv;
 }
-function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false, position = 'bottom') {
+function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false, position = 'bottom', options = {}) {
     const consLine = document.createElement('div');
     consLine.className = `seq-line consensus-line consensus-${position}`;
     const consName = document.createElement('div');
@@ -1853,7 +1879,7 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
 
         // Determine display case from column conservation (consensus STRING stays uppercase)
         let displayBase = base;
-        if (base !== '-' && base !== '.') {
+        if (!options.deferConservation && base !== '-' && base !== '.') {
             const col = state.seqs.map(s => (s.seq[pos] || '-').toUpperCase());
             const nonGapCol = col.filter(b => b !== '-' && b !== '.');
             if (nonGapCol.length > 0) {
@@ -7282,19 +7308,92 @@ function geneDocMoveStepString(seq, pos, direction) {
     return { seq: chars.join(''), moved: -1 };
 }
 
+function geneDocMoveLeftString(seq, pos, amount) {
+    const chars = seq.split('');
+    if (amount <= 0 || pos < 0 || pos >= chars.length || !isGeneDocResidueChar(chars[pos])) {
+        return { seq, moved: 0 };
+    }
+
+    let remaining = amount;
+    let moved = 0;
+    let start = pos;
+    for (let scan = pos - 1; scan >= 0 && remaining > 0; scan--) {
+        if (isGeneDocGapChar(chars[scan])) {
+            remaining--;
+            moved++;
+            start = scan;
+        }
+    }
+    if (moved === 0) return { seq, moved: 0 };
+
+    const residues = [];
+    for (let i = start; i <= pos; i++) {
+        if (isGeneDocResidueChar(chars[i])) residues.push(chars[i]);
+    }
+
+    let write = start;
+    residues.forEach(char => {
+        chars[write++] = char;
+    });
+    while (write <= pos) {
+        chars[write++] = GENEDOC_FILLER;
+    }
+
+    return { seq: chars.join(''), moved: -moved };
+}
+
+function geneDocMoveTextString(seq, pos, amount) {
+    if (amount === 0) return { seq, moved: 0 };
+    if (amount < 0) return geneDocMoveLeftString(seq, pos, -amount);
+
+    let currentSeq = seq;
+    let currentPos = pos;
+    let movedTotal = 0;
+    for (let i = 0; i < amount; i++) {
+        const result = geneDocMoveStepString(currentSeq, currentPos, 1);
+        if (!result.moved) break;
+        currentSeq = result.seq;
+        currentPos += result.moved;
+        movedTotal += result.moved;
+    }
+    return { seq: currentSeq, moved: movedTotal };
+}
+
+function geneDocSlideTextString(seq, pos, amount) {
+    if (amount === 0) return { seq, moved: 0 };
+    const direction = Math.sign(amount);
+    let currentSeq = seq;
+    let currentPos = pos;
+    let movedTotal = 0;
+    for (let i = 0; i < Math.abs(amount); i++) {
+        const result = geneDocSlideStepString(currentSeq, currentPos, direction);
+        if (!result.moved) break;
+        currentSeq = result.seq;
+        currentPos += result.moved;
+        movedTotal += result.moved;
+    }
+    return { seq: currentSeq, moved: movedTotal };
+}
+
 function canGeneDocMove(rowIndex, pos, direction, tool) {
     const seq = state.seqs[rowIndex]?.seq || '';
     if (pos < 0 || pos >= seq.length || !isGeneDocResidueChar(seq[pos])) return false;
     if (direction > 0) return true;
+    if (tool === 'moveNoGaps') {
+        for (let scan = pos - 1; scan >= 0; scan--) {
+            if (isGeneDocGapChar(seq[scan])) return true;
+        }
+        return false;
+    }
     return pos > 0 && isGeneDocGapChar(seq[pos - 1]);
 }
 
-function applyGeneDocMoveStep(rowIndex, pos, direction, tool) {
+function applyGeneDocMoveAmount(rowIndex, pos, amount, tool) {
     const s = state.seqs[rowIndex];
     if (!s) return 0;
     const result = tool === 'slideKeepGaps'
-        ? geneDocSlideStepString(s.seq, pos, direction)
-        : geneDocMoveStepString(s.seq, pos, direction);
+        ? geneDocSlideTextString(s.seq, pos, amount)
+        : geneDocMoveTextString(s.seq, pos, amount);
     if (result.moved) s.seq = result.seq;
     return result.moved;
 }
@@ -7400,27 +7499,24 @@ function handleGeneDocEditDragMove(e) {
     if (drag.type !== 'move') return;
     const rawSteps = Math.trunc((e.clientX - drag.lastClientX) / drag.charWidth);
     if (rawSteps === 0) return;
-    const direction = Math.sign(rawSteps);
-    const steps = Math.min(Math.abs(rawSteps), 50);
+    const amount = Math.max(-50, Math.min(50, rawSteps));
+    const direction = Math.sign(amount);
     let totalMoved = 0;
 
-    for (let step = 0; step < steps; step++) {
-        if (!canGeneDocMove(drag.rowIndex, drag.anchorPos, direction, drag.tool)) break;
+    if (canGeneDocMove(drag.rowIndex, drag.anchorPos, direction, drag.tool)) {
         if (!drag.undoPushed) {
             pushUndo(drag.tool === 'slideKeepGaps' ? 'geneDocSlideText' : 'geneDocMoveText');
             drag.undoPushed = true;
         }
-        const moved = applyGeneDocMoveStep(drag.rowIndex, drag.anchorPos, direction, drag.tool);
-        if (!moved) break;
-        drag.anchorPos += moved;
-        totalMoved += moved;
+        totalMoved = applyGeneDocMoveAmount(drag.rowIndex, drag.anchorPos, amount, drag.tool);
     }
 
     if (totalMoved !== 0) {
         normalizeAlignmentLengths();
         refreshAllGaplessPositions();
+        drag.anchorPos += totalMoved;
         state.editCell = { row: drag.rowIndex, pos: drag.anchorPos };
-        renderAlignment();
+        renderAlignment({ deferConservation: true });
         drag.lastClientX += totalMoved * drag.charWidth;
         drag.moved += totalMoved;
     } else {
@@ -7432,6 +7528,10 @@ function handleGeneDocEditDragEnd() {
     const drag = state.editDrag;
     clearGeneDocEditDrag();
     if (drag?.type === 'move' && drag.moved !== 0) {
+        normalizeAlignmentLengths();
+        refreshAllGaplessPositions();
+        state.editCell = { row: drag.rowIndex, pos: drag.anchorPos };
+        renderAlignment();
         const label = drag.tool === 'slideKeepGaps' ? 'SlideText' : 'MoveText';
         showMessage(`${label} moved ${Math.abs(drag.moved)} column(s).`, 1400);
     }

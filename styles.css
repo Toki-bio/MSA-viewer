@@ -1031,7 +1031,7 @@ body.edit-mode-active[data-edit-tool="moveNoGaps"] .seq-data,
 body.edit-mode-active[data-edit-tool="slideKeepGaps"] .seq-data,
 body.edit-mode-active[data-edit-tool="moveNoGaps"] .seq-data span:not(.seq-length),
 body.edit-mode-active[data-edit-tool="slideKeepGaps"] .seq-data span:not(.seq-length) {
-    cursor: grab;
+    cursor: default;
 }
 
 body.edit-mode-active[data-edit-tool="insertGapSeq"] .seq-data span:not(.seq-length),
@@ -1051,7 +1051,7 @@ body.edit-mode-active[data-edit-tool="residue"] .seq-data span:not(.seq-length) 
 body.edit-dragging,
 body.edit-dragging .seq-data,
 body.edit-dragging .seq-data span:not(.seq-length) {
-    cursor: grabbing !important;
+    cursor: default !important;
 }
 
 .seq-data span.edit-active-cell {
