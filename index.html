@@ -547,6 +547,10 @@
         <div id="editToolPanel" class="edit-tool-panel" hidden>
             <button id="editMoveNoGapsButton" class="edit-tool-button" data-edit-tool="moveNoGaps" title="GeneDoc Arrange / MoveText: drag residues without keeping intervening gaps">Move NoGaps</button>
             <button id="editSlideKeepGapsButton" class="edit-tool-button" data-edit-tool="slideKeepGaps" title="GeneDoc Move / SlideText: drag a segment while keeping its gaps">Slide KeepGaps</button>
+            <label class="edit-live-conservation" title="Update conservation shading during Move/Slide dragging">
+                <input id="editLiveConservationToggle" type="checkbox">
+                Live conservation
+            </label>
             <span class="edit-tool-separator"></span>
             <button id="editInsertGapButton" class="edit-tool-button" data-edit-tool="insertGapSeq" title="GeneDoc Insert Dash: click a sequence position">Ins Gap Seq</button>
             <button id="editDeleteGapButton" class="edit-tool-button" data-edit-tool="deleteGapSeq" title="GeneDoc Delete Dash: click a gap in one sequence">Del Gap Seq</button>

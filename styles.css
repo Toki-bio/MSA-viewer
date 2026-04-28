@@ -433,6 +433,24 @@ button:hover {
     box-shadow: inset 0 0 0 1px rgba(47, 115, 183, 0.25);
 }
 
+.edit-live-conservation {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 20px;
+    margin: 0 1px 0 3px;
+    font-size: 11px;
+    line-height: 16px;
+    color: #31485c;
+    white-space: nowrap;
+}
+
+.edit-live-conservation input {
+    width: 13px;
+    height: 13px;
+    margin: 0;
+}
+
 .edit-tool-separator {
     width: 1px;
     height: 16px;

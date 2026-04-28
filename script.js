@@ -41,6 +41,7 @@ const state = {
     slideSeqIndex: null,
     editModeActive: false,
     editTool: 'moveNoGaps',
+    editLiveConservation: false,
     editDrag: null,
     editCell: null,
     nameLength: DEFAULTS.nameLength,
@@ -7146,6 +7147,10 @@ function initializeGeneDocEditToolbar() {
         button.addEventListener('click', () => setGeneDocEditTool(button.dataset.editTool));
     });
 
+    el('editLiveConservationToggle')?.addEventListener('change', (event) => {
+        state.editLiveConservation = !!event.target.checked;
+    });
+
     el('editDeleteColumnsButton')?.addEventListener('click', () => deleteSelectedColumns());
     el('editClearGapColumnsButton')?.addEventListener('click', removeGapColumns);
     el('editSeqEditorButton')?.addEventListener('click', () => openSeqEditor());
@@ -7192,6 +7197,10 @@ function updateGeneDocEditUI() {
             button.classList.toggle('active', active);
             button.setAttribute('aria-pressed', active ? 'true' : 'false');
         });
+    }
+    const liveConservationToggle = el('editLiveConservationToggle');
+    if (liveConservationToggle) {
+        liveConservationToggle.checked = !!state.editLiveConservation;
     }
     document.body.classList.toggle('edit-mode-active', state.editModeActive);
     if (state.editModeActive) {
@@ -7516,7 +7525,7 @@ function handleGeneDocEditDragMove(e) {
         refreshAllGaplessPositions();
         drag.anchorPos += totalMoved;
         state.editCell = { row: drag.rowIndex, pos: drag.anchorPos };
-        renderAlignment({ deferConservation: true });
+        renderAlignment({ deferConservation: !state.editLiveConservation });
         drag.lastClientX += totalMoved * drag.charWidth;
         drag.moved += totalMoved;
     } else {
