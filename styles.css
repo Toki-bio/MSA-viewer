@@ -121,7 +121,7 @@
 
 .standard-menu-group {
     display: flex;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 3px;
 }
 
@@ -136,9 +136,9 @@
 }
 
 .standard-menu-group {
-    flex: 1 1 auto; /* center group grows and shrinks as needed */
+    flex: 1 1 auto;
     display: flex;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 10px;
     align-items: center;
     min-width: 220px;
@@ -379,6 +379,65 @@ button {
 
 button:hover {
     background: var(--button-hover-bg);
+}
+
+.edit-toggle-button {
+    height: 18px;
+    line-height: 16px;
+    padding: 0 8px;
+    margin-left: 4px;
+    font-size: 11px;
+    font-weight: bold;
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    background: #f7f7f7;
+    color: #333;
+}
+
+.edit-toggle-button.active {
+    background: #d8ecff;
+    border-color: #2f73b7;
+    color: #123f66;
+}
+
+.edit-tool-panel {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px 3px 6px;
+    border-top: 1px solid #d8e4ef;
+    background: #f8fbfd;
+    min-height: 24px;
+    box-sizing: border-box;
+}
+
+.edit-tool-panel[hidden] {
+    display: none !important;
+}
+
+.edit-tool-button,
+.edit-command-button {
+    height: 20px;
+    padding: 1px 6px;
+    margin: 0;
+    font-size: 11px;
+    line-height: 16px;
+    white-space: nowrap;
+}
+
+.edit-tool-button.active {
+    background: #cce5ff;
+    border-color: #2f73b7;
+    color: #103f66;
+    box-shadow: inset 0 0 0 1px rgba(47, 115, 183, 0.25);
+}
+
+.edit-tool-separator {
+    width: 1px;
+    height: 16px;
+    background: #c5d2df;
+    margin: 0 3px;
 }
 .slider-container {
     margin: 1px 0;
@@ -725,7 +784,7 @@ body.row-reorder-active .seq-name.drag-source:hover {
     margin: 0;
     padding: 0;
     line-height: 1.0;
-    cursor: ew-resize;
+    cursor: default;
     user-select: none;
     -moz-user-select: none;
     -webkit-user-select: none;
@@ -961,11 +1020,45 @@ body.suppress-menu-hover .menu-section.menu-open .control-group {
     margin-left: 8px !important;
 }
 .seq-data:active {
-    cursor: ew-resize;
+    cursor: default;
 }
 
 .seq-data span:not(.nuc-selected):hover {
-    cursor: ew-resize;
+    cursor: default;
+}
+
+body.edit-mode-active[data-edit-tool="moveNoGaps"] .seq-data,
+body.edit-mode-active[data-edit-tool="slideKeepGaps"] .seq-data,
+body.edit-mode-active[data-edit-tool="moveNoGaps"] .seq-data span:not(.seq-length),
+body.edit-mode-active[data-edit-tool="slideKeepGaps"] .seq-data span:not(.seq-length) {
+    cursor: grab;
+}
+
+body.edit-mode-active[data-edit-tool="insertGapSeq"] .seq-data span:not(.seq-length),
+body.edit-mode-active[data-edit-tool="deleteGapSeq"] .seq-data span:not(.seq-length),
+body.edit-mode-active[data-edit-tool="insertGapOther"] .seq-data span:not(.seq-length),
+body.edit-mode-active[data-edit-tool="deleteGapOther"] .seq-data span:not(.seq-length),
+body.edit-mode-active[data-edit-tool="insertGapAll"] .seq-data span:not(.seq-length),
+body.edit-mode-active[data-edit-tool="deleteGapAll"] .seq-data span:not(.seq-length),
+body.edit-mode-active[data-edit-tool="selectColumn"] .seq-data span:not(.seq-length) {
+    cursor: crosshair;
+}
+
+body.edit-mode-active[data-edit-tool="residue"] .seq-data span:not(.seq-length) {
+    cursor: text;
+}
+
+body.edit-dragging,
+body.edit-dragging .seq-data,
+body.edit-dragging .seq-data span:not(.seq-length) {
+    cursor: grabbing !important;
+}
+
+.seq-data span.edit-active-cell {
+    outline: 1px solid #1976d2;
+    outline-offset: -1px;
+    background-color: #e3f2fd !important;
+    color: #111 !important;
 }
 .black {
     background-color: var(--blackShading, #000) !important;

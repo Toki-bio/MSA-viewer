@@ -65,6 +65,8 @@
                 <button id="redoDropdownBtn" title="Redo history" style="padding: 0 2px; font-size: 8px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; border-left: none; background: #f0f0f0; border-radius: 0 3px 3px 0; min-width: 10px;">▼</button>
             </div>
 
+            <button id="editToggleButton" class="edit-toggle-button" aria-pressed="false" title="Toggle GeneDoc-style sequence editing tools">Edit</button>
+
             <div class="menu-section" id="snapshot-section" style="margin-left: 4px;">
                 <div class="section-header" data-section="snapshot">
                     <span>Snapshot</span>
@@ -541,6 +543,23 @@
                 <div id="versionIndicator">commit b8888ed</div>
                 <div id="sourceInfo">No file loaded</div>
             </div>
+        </div>
+        <div id="editToolPanel" class="edit-tool-panel" hidden>
+            <button id="editMoveNoGapsButton" class="edit-tool-button" data-edit-tool="moveNoGaps" title="GeneDoc Arrange / MoveText: drag residues without keeping intervening gaps">Move NoGaps</button>
+            <button id="editSlideKeepGapsButton" class="edit-tool-button" data-edit-tool="slideKeepGaps" title="GeneDoc Move / SlideText: drag a segment while keeping its gaps">Slide KeepGaps</button>
+            <span class="edit-tool-separator"></span>
+            <button id="editInsertGapButton" class="edit-tool-button" data-edit-tool="insertGapSeq" title="GeneDoc Insert Dash: click a sequence position">Ins Gap Seq</button>
+            <button id="editDeleteGapButton" class="edit-tool-button" data-edit-tool="deleteGapSeq" title="GeneDoc Delete Dash: click a gap in one sequence">Del Gap Seq</button>
+            <button id="editInsertGapOtherButton" class="edit-tool-button" data-edit-tool="insertGapOther" title="GeneDoc Insert Other: insert a gap in every other sequence">Ins Gap Other</button>
+            <button id="editDeleteGapOtherButton" class="edit-tool-button" data-edit-tool="deleteGapOther" title="GeneDoc Delete Other: delete a gap from every other sequence">Del Gap Other</button>
+            <button id="editInsertGapAllButton" class="edit-tool-button" data-edit-tool="insertGapAll" title="GeneDoc Insert One: insert a gap in all sequences">Ins Gap All</button>
+            <button id="editDeleteGapAllButton" class="edit-tool-button" data-edit-tool="deleteGapAll" title="GeneDoc Delete One: delete a gap from all sequences">Del Gap All</button>
+            <span class="edit-tool-separator"></span>
+            <button id="editResidueButton" class="edit-tool-button" data-edit-tool="residue" title="GeneDoc Edit Mode: click a cell, then type a residue or gap">Type</button>
+            <button id="editSelectColumnButton" class="edit-tool-button" data-edit-tool="selectColumn" title="GeneDoc Select Column: click or drag columns">Select Col</button>
+            <button id="editDeleteColumnsButton" class="edit-command-button" title="GeneDoc Delete Columns: remove selected columns">Delete Cols</button>
+            <button id="editClearGapColumnsButton" class="edit-command-button" title="GeneDoc Clear Gap Columns: remove gap-only columns">Clear Gap Cols</button>
+            <button id="editSeqEditorButton" class="edit-command-button" title="Open the sequence text editor">SeqEdit</button>
         </div>
         <div class="status-row header-info-row">
             <div id="sourcePathLine"></div>
