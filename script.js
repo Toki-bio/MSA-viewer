@@ -36,7 +36,7 @@ const state = {
     draggingGroup: null,
     slideDragStartX: null,
     slideAnchorPos: null,
-    slideApplied: 0,
+    slideColumnDelta: 0,
     slideCharWidth: 10,
     slideUndoPushed: false,
     slideMoved: false,
@@ -7151,7 +7151,7 @@ function removeSingleGap(rowIndex, pos) {
 }
 // Slide by dragging seq-data
 function handleSlideStart(e) {
-    if (e.button !== 0) return;
+    if (e.button !== 0) return; // Left-drag slides sequence text; right-click remains available for menus.
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (state.panning.active) return;
     const span = e.target.closest('.seq-data span[data-pos]');
@@ -7169,7 +7169,7 @@ function handleSlideStart(e) {
     state.slideSeqIndex = seqIndex;
     state.slideDragStartX = e.clientX;
     state.slideAnchorPos = anchorPos;
-    state.slideApplied = 0;
+    state.slideColumnDelta = 0;
     state.slideCharWidth = getSlideCharWidth(span);
     state.slideUndoPushed = false;
     state.slideMoved = false;
@@ -7184,12 +7184,12 @@ function handleSlideMove(e) {
         return;
     }
     const charWidth = Math.max(1, state.slideCharWidth || 10);
-    const targetApplied = Math.trunc((e.clientX - state.slideDragStartX) / charWidth);
-    const delta = targetApplied - state.slideApplied;
+    const targetColumnDelta = Math.trunc((e.clientX - state.slideDragStartX) / charWidth);
+    const delta = targetColumnDelta - state.slideColumnDelta;
     if (delta !== 0) {
-        const moved = slideSequenceAtAnchor(state.slideSeqIndex, state.slideAnchorPos + state.slideApplied, delta);
+        const moved = slideSequenceAtAnchor(state.slideSeqIndex, state.slideAnchorPos + state.slideColumnDelta, delta);
         if (moved !== 0) {
-            state.slideApplied += moved;
+            state.slideColumnDelta += moved;
             state.slideMoved = true;
             scheduleSlideRender();
         }
@@ -7204,11 +7204,11 @@ function handleSlideEnd() {
         if (!state.slideRenderPending) {
             renderAlignment();
         }
-        showMessage(`Sequence slid by ${state.slideApplied} column${Math.abs(state.slideApplied) === 1 ? '' : 's'}.`, 2000);
+        showMessage(`Sequence slid by ${state.slideColumnDelta} column${Math.abs(state.slideColumnDelta) === 1 ? '' : 's'}.`, 2000);
     }
     state.slideSeqIndex = null;
     state.slideAnchorPos = null;
-    state.slideApplied = 0;
+    state.slideColumnDelta = 0;
     state.slideUndoPushed = false;
     state.slideMoved = false;
 }
@@ -7252,7 +7252,7 @@ function appendGapsToOtherSequences(seqIndex, count) {
     });
 }
 
-function slideSequenceAtAnchor(index, pos, amount) {
+function slideSequenceAtAnchor(index, pos, amount, shareDragUndo = true) {
     const s = state.seqs[index];
     if (!s || amount === 0) return 0;
     pos = Math.max(0, Math.min(pos, s.seq.length));
@@ -7278,9 +7278,11 @@ function slideSequenceAtAnchor(index, pos, amount) {
     }
 
     if (moved === 0 || nextSeq === s.seq) return 0;
-    if (!state.slideUndoPushed) {
+    if (!shareDragUndo || !state.slideUndoPushed) {
         pushUndo('slideSequence');
-        state.slideUndoPushed = true;
+        if (shareDragUndo) {
+            state.slideUndoPushed = true;
+        }
     }
     s.seq = nextSeq;
     s.gaplessPositions = calculateGaplessPositions(s.seq);
@@ -7363,9 +7365,7 @@ function shiftSequence(index, amount) {
     if (!s || amount === 0) return;
     const firstResidue = s.seq.search(/[^-.]/);
     const anchor = firstResidue >= 0 ? firstResidue : 0;
-    state.slideUndoPushed = false;
-    const moved = slideSequenceAtAnchor(index, anchor, amount);
-    state.slideUndoPushed = false;
+    const moved = slideSequenceAtAnchor(index, anchor, amount, false);
     if (moved === 0) {
         showMessage("Sequence cannot slide further in that direction.", 2000);
         return;
