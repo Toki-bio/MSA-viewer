@@ -6,7 +6,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = 'snapshot-v1';
+const APP_VERSION = 'edit-speed-tsd-v2';
 
 const state = {
     seqs: [],
@@ -44,6 +44,10 @@ const state = {
     editLiveConservation: false,
     editDrag: null,
     editCell: null,
+    tsdMarks: new Map(),
+    tsdMarkStyle: 'color',
+    tsdMarkColor: '#ffd54f',
+    tsdMarkUndo: null,
     nameLength: DEFAULTS.nameLength,
     uiListenersAttached: false,
     panning: {
@@ -1698,6 +1702,104 @@ function getCachedSpan(row, pos) {
     return state.spanCache.get(row)?.get(pos) || null;
 }
 
+const RENDER_STANDARD_BASES = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.', 'a', 'c', 'g', 't', 'u', 'n']);
+const RENDER_AMBIGUOUS_BASES = new Set(['R','Y','M','K','S','W','H','B','V','D','r','y','m','k','s','w','h','b','v','d']);
+
+function getSequenceRenderConfig() {
+    return {
+        blackThresh: parseInt(el('blackSlider')?.value || '100', 10) / 100,
+        darkThresh: parseInt(el('darkSlider')?.value || '80', 10) / 100,
+        lightThresh: parseInt(el('lightSlider')?.value || '60', 10) / 100,
+        enableBlack: !!el('enableBlack')?.checked,
+        enableDark: !!el('enableDark')?.checked,
+        enableLight: !!el('enableLight')?.checked,
+        shadeMode: document.querySelector('input[name="shadeMode"]:checked')?.value || 'nongap'
+    };
+}
+
+function getSequenceBaseRenderClass(base, pos, config, conservationData) {
+    const baseUp = (base || '-').toUpperCase();
+    let cls = 'other';
+    let baseClass = '';
+
+    if (!RENDER_STANDARD_BASES.has(base) && !RENDER_AMBIGUOUS_BASES.has(base)) {
+        baseClass = 'artifact';
+    } else if (RENDER_AMBIGUOUS_BASES.has(base)) {
+        baseClass = 'ambiguous';
+    }
+
+    const posData = conservationData?.[pos] || { hasData: false, hasValidCoverage: false };
+    if (posData.hasData && posData.hasValidCoverage) {
+        if (baseUp !== '-' && baseUp !== '.' && posData.consensusBases?.has(baseUp)) {
+            if (config.enableBlack && posData.conservation >= config.blackThresh) cls = 'black';
+            else if (config.enableDark && posData.conservation >= config.darkThresh) cls = 'dark';
+            else if (config.enableLight && posData.conservation >= config.lightThresh) cls = 'light';
+        } else if (baseUp === '-' || baseUp === '.') {
+            cls = 'gap';
+        }
+    } else if (baseUp === '-' || baseUp === '.') {
+        cls = 'gap';
+    }
+
+    if (state.selectedColumns.has(pos)) cls += ' column-selected';
+    if (baseClass) cls += ` ${baseClass}`;
+    return cls;
+}
+
+function getTsdMarkDisplay(rowIndex, pos) {
+    const rowMarks = state.tsdMarks?.get(rowIndex);
+    if (!rowMarks || !rowMarks.has(pos)) return { className: '', style: '' };
+    if (state.tsdMarkStyle === 'bold') return { className: ' tsd-mark tsd-mark-bold', style: '' };
+    if (state.tsdMarkStyle === 'color') {
+        const color = /^#[0-9A-Fa-f]{6}$/.test(state.tsdMarkColor || '') ? state.tsdMarkColor : '#ffd54f';
+        return { className: ' tsd-mark tsd-mark-color', style: ` style="background-color:${color};color:#111;font-weight:bold;"` };
+    }
+    return { className: ' tsd-mark', style: '' };
+}
+
+function setSpanTsdMarkDisplay(span, rowIndex, pos) {
+    span.classList.remove('tsd-mark', 'tsd-mark-bold', 'tsd-mark-color');
+    span.style.backgroundColor = '';
+    span.style.color = '';
+    span.style.fontWeight = '';
+    const rowMarks = state.tsdMarks?.get(rowIndex);
+    if (!rowMarks || !rowMarks.has(pos)) return;
+    span.classList.add('tsd-mark');
+    if (state.tsdMarkStyle === 'bold') {
+        span.classList.add('tsd-mark-bold');
+    } else if (state.tsdMarkStyle === 'color') {
+        const color = /^#[0-9A-Fa-f]{6}$/.test(state.tsdMarkColor || '') ? state.tsdMarkColor : '#ffd54f';
+        span.classList.add('tsd-mark-color');
+        span.style.backgroundColor = color;
+        span.style.color = '#111';
+        span.style.fontWeight = 'bold';
+    }
+}
+
+function refreshSequenceRowDom(rowIndex) {
+    const seqObj = state.seqs[rowIndex];
+    if (!seqObj || !alignmentContainer) return false;
+    const rowCache = state.spanCache?.get(rowIndex);
+    if (!rowCache || rowCache.size === 0) return false;
+
+    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const config = getSequenceRenderConfig();
+    const conservationData = getDeferredConservationData(len, config.shadeMode)
+        || state.conservationDataCache?.data
+        || [];
+
+    rowCache.forEach((span, pos) => {
+        const base = seqObj.seq[pos] || GENEDOC_FILLER;
+        span.textContent = base;
+        span.className = getSequenceBaseRenderClass(base, pos, config, conservationData);
+        setSpanTsdMarkDisplay(span, rowIndex, pos);
+    });
+
+    if (state.selectedNucs.size) scheduleNucSelectionRefresh();
+    updateEditActiveCell();
+    return true;
+}
+
 function createSequenceLine(index, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false, conservationData) {
     const lineDiv = document.createElement('div');
     lineDiv.className = 'seq-line';
@@ -1827,8 +1929,9 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         }
         
         const colSelected = selectedCols.has(pos) ? ' column-selected' : '';
-        const finalClass = `${cls}${baseClass ? ' ' + baseClass : ''}${colSelected}`;
-        htmlParts.push(`<span class="${finalClass}" data-pos="${pos}">${base}</span>`);
+        const tsdDisplay = getTsdMarkDisplay(index, pos);
+        const finalClass = `${cls}${baseClass ? ' ' + baseClass : ''}${colSelected}${tsdDisplay.className}`;
+        htmlParts.push(`<span class="${finalClass}" data-pos="${pos}"${tsdDisplay.style}>${base}</span>`);
     }
     
     // Add sequence length at the end (only for last block)
@@ -2638,9 +2741,50 @@ function pushUndo(type) {
     state.redoHistory = [];
 }
 
+function pushUndoRowPatch(type, rowIndex, beforeSeq, afterSeq) {
+    if (!state.seqs[rowIndex] || beforeSeq === afterSeq) return;
+    state.deletedHistory.push({
+        type,
+        patchType: 'row-seq',
+        rowIndex,
+        beforeSeq,
+        afterSeq,
+        selectedRows: new Set(state.selectedRows),
+        selectedColumns: new Set(state.selectedColumns)
+    });
+    state.redoHistory = [];
+}
+
+function applyRowSeqPatch(entry, useAfter) {
+    const rowIndex = entry?.rowIndex;
+    if (!Number.isInteger(rowIndex) || !state.seqs[rowIndex]) return false;
+    const nextSeq = useAfter ? entry.afterSeq : entry.beforeSeq;
+    if (typeof nextSeq !== 'string') return false;
+    state.seqs[rowIndex] = {
+        ...state.seqs[rowIndex],
+        seq: nextSeq,
+        gaplessPositions: calculateGaplessPositions(nextSeq)
+    };
+    state.selectedRows = entry.selectedRows || new Set();
+    state.selectedColumns = entry.selectedColumns || new Set();
+    state.selectedNucs.clear();
+    normalizeAlignmentLengths();
+    renderAlignment();
+    return true;
+}
+
 function undoDelete() {
     if (state.deletedHistory.length === 0) {
         showMessage("Nothing to undo.", 3000);
+        return;
+    }
+    const last = state.deletedHistory.pop();
+    if (last.patchType === 'row-seq') {
+        state.redoHistory.push(last);
+        if (applyRowSeqPatch(last, false)) {
+            state.lastAction = null;
+            showMessage(`Undo: ${last.type}`, 2000);
+        }
         return;
     }
     // Save current state to redo stack before restoring
@@ -2650,7 +2794,6 @@ function undoDelete() {
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
     });
-    const last = state.deletedHistory.pop();
     state.seqs = last.seqs;
     state.selectedRows = last.selectedRows || new Set();
     state.selectedColumns = last.selectedColumns || new Set();
@@ -2665,6 +2808,15 @@ function redoAction() {
         showMessage("Nothing to redo.", 3000);
         return;
     }
+    const next = state.redoHistory.pop();
+    if (next.patchType === 'row-seq') {
+        state.deletedHistory.push(next);
+        if (applyRowSeqPatch(next, true)) {
+            state.lastAction = null;
+            showMessage("Redo completed!", 2000);
+        }
+        return;
+    }
     // Save current state to undo stack before redo
     state.deletedHistory.push({
         type: 'before-redo',
@@ -2672,7 +2824,6 @@ function redoAction() {
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
     });
-    const next = state.redoHistory.pop();
     state.seqs = next.seqs;
     state.selectedRows = next.selectedRows || new Set();
     state.selectedColumns = next.selectedColumns || new Set();
@@ -4902,6 +5053,213 @@ function _reorderByGuideTree(fasta) {
     return { fasta: reordered, order: orderedHeaders };
 }
 
+function _treeIsBase(char) {
+    return /^[ACGTU]$/i.test(char || '');
+}
+
+function _alignmentPairDistance(seqOne, seqTwo) {
+    const maxLen = Math.max(seqOne.length, seqTwo.length);
+    let compared = 0;
+    let mismatches = 0;
+    for (let position = 0; position < maxLen; position++) {
+        const baseOne = (seqOne[position] || '-').toUpperCase().replace('U', 'T');
+        const baseTwo = (seqTwo[position] || '-').toUpperCase().replace('U', 'T');
+        if (!_treeIsBase(baseOne) || !_treeIsBase(baseTwo)) continue;
+        compared++;
+        if (baseOne !== baseTwo) mismatches++;
+    }
+    return compared > 0 ? mismatches / compared : 1;
+}
+
+function _newickName(name) {
+    const cleaned = String(name || 'seq').replace(/\s+/g, '_');
+    if (/^[A-Za-z0-9_.:-]+$/.test(cleaned)) return cleaned;
+    return `'${cleaned.replace(/'/g, "''")}'`;
+}
+
+function _branchLength(value) {
+    return Math.max(0, value || 0).toFixed(6).replace(/0+$/, '').replace(/\.$/, '.0');
+}
+
+function _treeNodeToNewick(node, isRoot = false) {
+    if (!node.left && !node.right) {
+        const label = _newickName(node.name);
+        return isRoot ? `${label};` : `${label}:${_branchLength(node.branchLength)}`;
+    }
+    const leftNewick = _treeNodeToNewick(node.left, false);
+    const rightNewick = _treeNodeToNewick(node.right, false);
+    const branch = isRoot ? ';' : `:${_branchLength(node.branchLength)}`;
+    return `(${leftNewick},${rightNewick})${branch}`;
+}
+
+function _treeNodeToText(node, indent = '', isRoot = true) {
+    const branch = isRoot ? '' : `:${_branchLength(node.branchLength)}`;
+    if (!node.left && !node.right) return `${indent}${node.name}${branch}\n`;
+    let text = `${indent}${isRoot ? 'root' : 'node'}${branch}\n`;
+    text += _treeNodeToText(node.left, `${indent}  `, false);
+    text += _treeNodeToText(node.right, `${indent}  `, false);
+    return text;
+}
+
+function buildUPGMATreeFromAlignment(seqObjects) {
+    const sequenceCount = seqObjects.length;
+    const baseDistances = Array.from({ length: sequenceCount }, () => new Array(sequenceCount).fill(0));
+    let distanceTotal = 0;
+    let distancePairs = 0;
+    let distanceMin = Infinity;
+    let distanceMax = 0;
+
+    for (let firstIndex = 0; firstIndex < sequenceCount; firstIndex++) {
+        for (let secondIndex = firstIndex + 1; secondIndex < sequenceCount; secondIndex++) {
+            const distance = _alignmentPairDistance(seqObjects[firstIndex].seq, seqObjects[secondIndex].seq);
+            baseDistances[firstIndex][secondIndex] = distance;
+            baseDistances[secondIndex][firstIndex] = distance;
+            distanceTotal += distance;
+            distancePairs++;
+            distanceMin = Math.min(distanceMin, distance);
+            distanceMax = Math.max(distanceMax, distance);
+        }
+    }
+
+    const clusters = seqObjects.map((seqObj, index) => ({
+        name: seqObj.header || `seq_${index + 1}`,
+        size: 1,
+        height: 0,
+        branchLength: 0,
+        left: null,
+        right: null
+    }));
+    const distances = baseDistances.map(row => row.slice());
+
+    while (clusters.length > 1) {
+        let closestFirst = 0;
+        let closestSecond = 1;
+        let closestDistance = distances[0][1];
+        for (let firstIndex = 0; firstIndex < clusters.length; firstIndex++) {
+            for (let secondIndex = firstIndex + 1; secondIndex < clusters.length; secondIndex++) {
+                if (distances[firstIndex][secondIndex] < closestDistance) {
+                    closestDistance = distances[firstIndex][secondIndex];
+                    closestFirst = firstIndex;
+                    closestSecond = secondIndex;
+                }
+            }
+        }
+
+        const firstCluster = clusters[closestFirst];
+        const secondCluster = clusters[closestSecond];
+        const mergedHeight = closestDistance / 2;
+        firstCluster.branchLength = Math.max(0, mergedHeight - firstCluster.height);
+        secondCluster.branchLength = Math.max(0, mergedHeight - secondCluster.height);
+
+        const remainingOldIndices = [];
+        const mergedDistances = [];
+        for (let oldIndex = 0; oldIndex < clusters.length; oldIndex++) {
+            if (oldIndex === closestFirst || oldIndex === closestSecond) continue;
+            const weightedDistance = (
+                distances[closestFirst][oldIndex] * firstCluster.size +
+                distances[closestSecond][oldIndex] * secondCluster.size
+            ) / (firstCluster.size + secondCluster.size);
+            remainingOldIndices.push(oldIndex);
+            mergedDistances.push(weightedDistance);
+        }
+
+        for (const removeIndex of [closestSecond, closestFirst]) {
+            clusters.splice(removeIndex, 1);
+            distances.splice(removeIndex, 1);
+            distances.forEach(row => row.splice(removeIndex, 1));
+        }
+
+        const mergedCluster = {
+            name: '',
+            size: firstCluster.size + secondCluster.size,
+            height: mergedHeight,
+            branchLength: 0,
+            left: firstCluster,
+            right: secondCluster
+        };
+
+        distances.forEach((row, remainingIndex) => {
+            row.push(mergedDistances[remainingIndex] ?? 0);
+        });
+        distances.push([...mergedDistances, 0]);
+        clusters.push(mergedCluster);
+    }
+
+    const root = clusters[0];
+    return {
+        newick: _treeNodeToNewick(root, true),
+        text: _treeNodeToText(root).trimEnd(),
+        stats: {
+            count: sequenceCount,
+            averageDistance: distancePairs ? distanceTotal / distancePairs : 0,
+            minDistance: distanceMin === Infinity ? 0 : distanceMin,
+            maxDistance: distanceMax
+        }
+    };
+}
+
+function getTreeInputSequences() {
+    if (!state.seqs || state.seqs.length < 2) return [];
+    const selected = Array.from(state.selectedRows).filter(index => state.seqs[index]);
+    const indices = selected.length >= 2 ? selected.sort((firstIndex, secondIndex) => firstIndex - secondIndex) : state.seqs.map((seqObj, index) => index);
+    return indices.map(index => state.seqs[index]);
+}
+
+function openTreeBuilder() {
+    const seqObjects = getTreeInputSequences();
+    if (seqObjects.length < 2) {
+        showMessage('Need at least two sequences to build a tree.', 2200);
+        return;
+    }
+    showMessage('Building alignment tree...', 0);
+    setTimeout(() => {
+        try {
+            const result = buildUPGMATreeFromAlignment(seqObjects);
+            const modal = document.getElementById('treeBuilderModal');
+            const summary = document.getElementById('treeBuilderSummary');
+            const newickOutput = document.getElementById('treeNewickOutput');
+            const textOutput = document.getElementById('treeTextOutput');
+            const scope = state.selectedRows.size >= 2 ? 'selected sequences' : 'all sequences';
+            if (summary) {
+                summary.textContent = `${result.stats.count} ${scope} · alignment p-distance · UPGMA · avg ${result.stats.averageDistance.toFixed(4)} · range ${result.stats.minDistance.toFixed(4)}-${result.stats.maxDistance.toFixed(4)}`;
+            }
+            if (newickOutput) newickOutput.value = result.newick;
+            if (textOutput) textOutput.textContent = result.text;
+            if (modal) modal.style.display = 'block';
+            showMessage('Tree built.', 1200);
+        } catch (err) {
+            console.error('Tree build failed:', err);
+            showMessage(`Tree build failed: ${err.message}`, 4000);
+        }
+    }, 10);
+}
+
+function closeTreeBuilder() {
+    const modal = document.getElementById('treeBuilderModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function copyTreeNewick() {
+    const newick = document.getElementById('treeNewickOutput')?.value || '';
+    if (!newick) return;
+    navigator.clipboard.writeText(newick)
+        .then(() => showMessage('Newick copied.', 1400))
+        .catch(() => showMessage('Failed to copy Newick.', 2200));
+}
+
+function downloadTreeNewick() {
+    const newick = document.getElementById('treeNewickOutput')?.value || '';
+    if (!newick) return;
+    const blob = new Blob([newick + '\n'], { type: 'text/plain' });
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const base = (state.currentFilename || 'alignment').replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/_+$/, '') || 'alignment';
+    link.href = downloadUrl;
+    link.download = `${base}.upgma.nwk`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 500);
+}
+
 function realignSelectedBlock() {
     if (state.seqs.length === 0) {
         showMessage("No sequences loaded.", 2000);
@@ -6624,6 +6982,11 @@ function initializeAppUI() {
         'insertGroupConsensusButton': insertGroupConsensus,
         'duplicateButton': duplicateSelected,
         'openInNewTabButton': openSelectedInNewTab,
+        'tsdFinderButton': openTsdFinder,
+        'buildTreeButton': openTreeBuilder,
+        'treeBuilderCloseBtn': closeTreeBuilder,
+        'treeCopyNewickBtn': copyTreeNewick,
+        'treeDownloadNewickBtn': downloadTreeNewick,
         'selectAllButton': selectAllSequences,
         'copyColumnsButton': copySelectedColumns,
         'deleteColumnsButton': deleteSelectedColumns,
@@ -6681,6 +7044,13 @@ function initializeAppUI() {
     if (addSeqModal) {
         addSeqModal.addEventListener('click', (e) => {
             if (e.target === addSeqModal) closeAddSequencesModal();
+        });
+    }
+
+    const treeBuilderModal = document.getElementById('treeBuilderModal');
+    if (treeBuilderModal) {
+        treeBuilderModal.addEventListener('click', (e) => {
+            if (e.target === treeBuilderModal) closeTreeBuilder();
         });
     }
 
@@ -7211,10 +7581,16 @@ function updateGeneDocEditUI() {
 }
 
 function updateEditActiveCell() {
-    document.querySelectorAll('.edit-active-cell').forEach(span => span.classList.remove('edit-active-cell'));
+    if (state.editActiveSpan) {
+        state.editActiveSpan.classList.remove('edit-active-cell');
+        state.editActiveSpan = null;
+    }
     if (!state.editModeActive || state.editTool !== 'residue' || !state.editCell) return;
     const span = getCachedSpan(state.editCell.row, state.editCell.pos);
-    if (span) span.classList.add('edit-active-cell');
+    if (span) {
+        span.classList.add('edit-active-cell');
+        state.editActiveSpan = span;
+    }
 }
 
 function isGeneDocResidueChar(char) {
@@ -7456,12 +7832,13 @@ function startGeneDocMoveDrag(e, rowIndex, pos, tool, span) {
         tool,
         lastClientX: e.clientX,
         charWidth: getGeneDocCharWidth(span),
-        undoPushed: false,
+        originalSeq: state.seqs[rowIndex].seq,
+        originalAlignmentLength: Math.max(...state.seqs.map(seqObj => seqObj.seq.length)),
         moved: 0
     };
     state.editCell = { row: rowIndex, pos };
     updateEditActiveCell();
-    document.body.classList.add('edit-dragging');
+    document.body.style.cursor = 'default';
     document.addEventListener('mousemove', handleGeneDocEditDragMove);
     document.addEventListener('mouseup', handleGeneDocEditDragEnd);
 }
@@ -7474,7 +7851,7 @@ function startGeneDocColumnDrag(pos) {
         lastPos: pos
     };
     setGeneDocColumnRange(pos, pos);
-    document.body.classList.add('edit-dragging');
+    document.body.style.cursor = 'default';
     document.addEventListener('mousemove', handleGeneDocEditDragMove);
     document.addEventListener('mouseup', handleGeneDocEditDragEnd);
 }
@@ -7513,19 +7890,17 @@ function handleGeneDocEditDragMove(e) {
     let totalMoved = 0;
 
     if (canGeneDocMove(drag.rowIndex, drag.anchorPos, direction, drag.tool)) {
-        if (!drag.undoPushed) {
-            pushUndo(drag.tool === 'slideKeepGaps' ? 'geneDocSlideText' : 'geneDocMoveText');
-            drag.undoPushed = true;
-        }
         totalMoved = applyGeneDocMoveAmount(drag.rowIndex, drag.anchorPos, amount, drag.tool);
     }
 
     if (totalMoved !== 0) {
         normalizeAlignmentLengths();
-        refreshAllGaplessPositions();
+        state.seqs[drag.rowIndex].gaplessPositions = calculateGaplessPositions(state.seqs[drag.rowIndex].seq);
         drag.anchorPos += totalMoved;
         state.editCell = { row: drag.rowIndex, pos: drag.anchorPos };
-        renderAlignment({ deferConservation: !state.editLiveConservation });
+        if (state.editLiveConservation || !refreshSequenceRowDom(drag.rowIndex)) {
+            renderAlignment({ deferConservation: !state.editLiveConservation });
+        }
         drag.lastClientX += totalMoved * drag.charWidth;
         drag.moved += totalMoved;
     } else {
@@ -7537,10 +7912,22 @@ function handleGeneDocEditDragEnd() {
     const drag = state.editDrag;
     clearGeneDocEditDrag();
     if (drag?.type === 'move' && drag.moved !== 0) {
+        pushUndoRowPatch(
+            drag.tool === 'slideKeepGaps' ? 'geneDocSlideText' : 'geneDocMoveText',
+            drag.rowIndex,
+            drag.originalSeq,
+            state.seqs[drag.rowIndex].seq
+        );
         normalizeAlignmentLengths();
         refreshAllGaplessPositions();
         state.editCell = { row: drag.rowIndex, pos: drag.anchorPos };
-        renderAlignment();
+        const nextAlignmentLength = Math.max(...state.seqs.map(seqObj => seqObj.seq.length));
+        if (state.editLiveConservation || nextAlignmentLength !== drag.originalAlignmentLength) {
+            renderAlignment({ deferConservation: !state.editLiveConservation });
+        } else {
+            refreshSequenceRowDom(drag.rowIndex);
+            if (typeof updateSourceInfo === 'function') updateSourceInfo();
+        }
         const label = drag.tool === 'slideKeepGaps' ? 'SlideText' : 'MoveText';
         showMessage(`${label} moved ${Math.abs(drag.moved)} column(s).`, 1400);
     }
@@ -7549,7 +7936,7 @@ function handleGeneDocEditDragEnd() {
 function clearGeneDocEditDrag() {
     document.removeEventListener('mousemove', handleGeneDocEditDragMove);
     document.removeEventListener('mouseup', handleGeneDocEditDragEnd);
-    document.body.classList.remove('edit-dragging');
+    document.body.style.cursor = '';
     state.editDrag = null;
 }
 
@@ -9323,12 +9710,132 @@ function _initDotPlotEvents() {
 // ═══════════════════════════════════════════════════════════════════
 
 let _repeatFinderSeqIndex = -1;
+let _lastTsdResults = [];
 
-function openRepeatFinder(seqIndex) {
+function _syncRepeatFinderModeUI() {
+    const selectedMode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
+    const selectedTsdMode = document.querySelector('input[name="tsdMode"]:checked')?.value || 'manual';
+    const tsdParams = document.getElementById('tsdParams');
+    const generalParams = document.getElementById('repeatParamsGeneral');
+    const manualParams = document.getElementById('tsdManualParams');
+    if (tsdParams) tsdParams.style.display = selectedMode === 'tsd' ? '' : 'none';
+    if (generalParams) generalParams.style.display = selectedMode === 'tsd' ? 'none' : '';
+    if (manualParams) manualParams.style.display = selectedMode === 'tsd' && selectedTsdMode === 'manual' ? '' : 'none';
+}
+
+function openRepeatFinder(seqIndex, preferredMode = null) {
     _repeatFinderSeqIndex = seqIndex;
+    if (preferredMode) {
+        const modeRadio = document.querySelector(`input[name="repeatMode"][value="${preferredMode}"]`);
+        if (modeRadio) modeRadio.checked = true;
+    }
+    _syncRepeatFinderModeUI();
     const modal = document.getElementById('repeatFinderModal');
     if (modal) modal.style.display = 'block';
     document.getElementById('repeatResults').textContent = 'Click "Run Analysis" to start.';
+}
+
+function openTsdFinder() {
+    const autoMode = document.querySelector('input[name="tsdMode"][value="auto"]');
+    if (autoMode) autoMode.checked = true;
+    const flankInput = document.getElementById('tsdFlankSize');
+    if (flankInput && !flankInput.value) flankInput.value = '30';
+    openRepeatFinder(-1, 'tsd');
+}
+
+function cloneTsdMarks(markMap = state.tsdMarks) {
+    const cloned = new Map();
+    markMap?.forEach((posSet, rowIndex) => cloned.set(rowIndex, new Set(posSet)));
+    return cloned;
+}
+
+function rowsForTsdResults(results) {
+    const rowMap = new Map();
+    results.forEach(result => {
+        if (!Number.isInteger(result.seqIndex) || !state.seqs[result.seqIndex]) return;
+        const positions = new Set([...(result.upPositions || []), ...(result.downPositions || [])]
+            .filter(position => Number.isInteger(position) && position >= 0));
+        if (!positions.size) return;
+        const existing = rowMap.get(result.seqIndex) || new Set();
+        positions.forEach(position => existing.add(position));
+        rowMap.set(result.seqIndex, existing);
+    });
+    return rowMap;
+}
+
+function applyTsdMarking() {
+    const results = _lastTsdResults || [];
+    if (!results.length) {
+        showMessage('Run TSD analysis first.', 2200);
+        return;
+    }
+    const rowMarks = rowsForTsdResults(results);
+    if (!rowMarks.size) {
+        showMessage('No TSD positions available to mark.', 2200);
+        return;
+    }
+
+    const style = document.getElementById('tsdMarkStyle')?.value || 'color';
+    const color = document.getElementById('tsdMarkColor')?.value || '#ffd54f';
+    const backupRows = [];
+    const previousMarks = cloneTsdMarks();
+    const previousStyle = state.tsdMarkStyle;
+    const previousColor = state.tsdMarkColor;
+
+    if (style === 'lowercase') {
+        pushUndo('tsd-mark-lowercase');
+        state.seqs = state.seqs.map((seqObj, rowIndex) => {
+            const markPositions = rowMarks.get(rowIndex);
+            const chars = seqObj.seq.toUpperCase().split('');
+            markPositions?.forEach(position => {
+                if (chars[position] && /[A-Z]/.test(chars[position])) chars[position] = chars[position].toLowerCase();
+            });
+            const nextSeq = chars.join('');
+            if (nextSeq !== seqObj.seq) backupRows.push({ rowIndex, seq: seqObj.seq });
+            return { ...seqObj, seq: nextSeq, gaplessPositions: calculateGaplessPositions(nextSeq) };
+        });
+        state.tsdMarks = new Map();
+        state.tsdMarkStyle = style;
+    } else {
+        state.tsdMarks = rowMarks;
+        state.tsdMarkStyle = style;
+        state.tsdMarkColor = color;
+    }
+
+    state.tsdMarkUndo = { style, previousMarks, previousStyle, previousColor, rows: backupRows };
+    renderAlignment({ deferConservation: true });
+    showMessage(`Marked TSDs in ${rowMarks.size} sequence(s).`, 1800);
+}
+
+function undoTsdMarking() {
+    const backup = state.tsdMarkUndo;
+    if (!backup) {
+        if (state.tsdMarks?.size) {
+            state.tsdMarks = new Map();
+            renderAlignment({ deferConservation: true });
+            showMessage('TSD marks cleared.', 1600);
+            return;
+        }
+        showMessage('No TSD marking to undo.', 1800);
+        return;
+    }
+
+    if (backup.style === 'lowercase') {
+        backup.rows.forEach(rowBackup => {
+            if (!state.seqs[rowBackup.rowIndex]) return;
+            state.seqs[rowBackup.rowIndex] = {
+                ...state.seqs[rowBackup.rowIndex],
+                seq: rowBackup.seq,
+                gaplessPositions: calculateGaplessPositions(rowBackup.seq)
+            };
+        });
+    }
+    state.tsdMarks = backup.previousMarks || new Map();
+    state.tsdMarkStyle = backup.previousStyle || 'color';
+    state.tsdMarkColor = backup.previousColor || '#ffd54f';
+    state.tsdMarkUndo = null;
+    renderAlignment({ deferConservation: true });
+    showMessage('TSD marking undone.', 1600);
 }
 
 function _revComp(seq) {
@@ -9484,136 +9991,236 @@ function _findTandemRepeats(seq, minUnitLen, maxDivPct) {
     return results.slice(0, 50);
 }
 
+function _tsdBase(char) {
+    const base = (char || '').toUpperCase().replace('U', 'T');
+    return /^[ACGTN]$/.test(base) ? base : '';
+}
+
+function _collectUngappedBasesWithColumns(seq, startCol, endCol) {
+    const bases = [];
+    const columns = [];
+    const start = Math.max(0, Math.min(startCol, endCol));
+    const end = Math.min(seq.length - 1, Math.max(startCol, endCol));
+    for (let column = start; column <= end; column++) {
+        const base = _tsdBase(seq[column]);
+        if (!base) continue;
+        bases.push(base);
+        columns.push(column);
+    }
+    return { bases, columns };
+}
+
+function _sliceCollectedWindow(collected, startIndex, length) {
+    return {
+        bases: collected.bases.slice(startIndex, startIndex + length),
+        columns: collected.columns.slice(startIndex, startIndex + length)
+    };
+}
+
+function _tsdMismatchCount(firstSeq, secondSeq) {
+    let mismatches = 0;
+    for (let position = 0; position < firstSeq.length; position++) {
+        const firstBase = firstSeq[position];
+        const secondBase = secondSeq[position];
+        if (firstBase === 'N' || secondBase === 'N') {
+            mismatches += 0.5;
+        } else if (firstBase !== secondBase) {
+            mismatches += 1;
+        }
+    }
+    return mismatches;
+}
+
+function _columnConservationScores(seqs, aliLen) {
+    const scores = new Array(aliLen).fill(0);
+    for (let column = 0; column < aliLen; column++) {
+        const counts = {};
+        let validCount = 0;
+        for (const seqObj of seqs) {
+            const base = _tsdBase(seqObj.seq[column]);
+            if (!base || base === 'N') continue;
+            counts[base] = (counts[base] || 0) + 1;
+            validCount++;
+        }
+        if (validCount === 0) continue;
+        const topCount = Math.max(...Object.values(counts));
+        const identity = topCount / validCount;
+        const coverage = validCount / Math.max(1, seqs.length);
+        scores[column] = identity * coverage;
+    }
+    return scores;
+}
+
+function _windowMean(values, start, width) {
+    const safeStart = Math.max(0, Math.min(values.length - 1, start));
+    const safeEnd = Math.min(values.length, safeStart + width);
+    if (safeEnd <= safeStart) return 0;
+    let total = 0;
+    for (let index = safeStart; index < safeEnd; index++) total += values[index];
+    return total / (safeEnd - safeStart);
+}
+
+function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
+    const flankSize = params.flankSize || 30;
+    if (mode === 'manual') {
+        return {
+            leftBoundary: Math.max(0, (params.upEnd || flankSize) - 1) + 1,
+            rightBoundary: Math.max(0, (params.downStart || (aliLen - flankSize + 1)) - 1) - 1,
+            upStart: Math.max(0, (params.upStart || 1) - 1),
+            upEnd: Math.max(0, (params.upEnd || flankSize) - 1),
+            downStart: params.downStart ? Math.max(0, params.downStart - 1) : Math.max(0, aliLen - flankSize),
+            downEnd: params.downEnd ? Math.min(aliLen - 1, params.downEnd - 1) : aliLen - 1,
+            label: 'manual'
+        };
+    }
+
+    if (mode === 'topseq') {
+        const topSeq = seqs[0]?.seq || '';
+        let firstNonGap = -1;
+        let lastNonGap = -1;
+        for (let column = 0; column < topSeq.length; column++) {
+            if (_tsdBase(topSeq[column])) {
+                if (firstNonGap < 0) firstNonGap = column;
+                lastNonGap = column;
+            }
+        }
+        if (firstNonGap < 0) firstNonGap = flankSize;
+        if (lastNonGap < 0) lastNonGap = Math.max(firstNonGap, aliLen - flankSize - 1);
+        return {
+            leftBoundary: firstNonGap,
+            rightBoundary: lastNonGap,
+            upStart: Math.max(0, firstNonGap - flankSize),
+            upEnd: Math.max(0, firstNonGap - 1),
+            downStart: Math.min(aliLen - 1, lastNonGap + 1),
+            downEnd: Math.min(aliLen - 1, lastNonGap + flankSize),
+            label: 'top sequence'
+        };
+    }
+
+    const scores = _columnConservationScores(seqs, aliLen);
+    const windowWidth = Math.max(6, Math.min(14, Math.floor(aliLen / 20) || 6));
+    const threshold = seqs.length < 8 ? 0.62 : 0.54;
+    let leftBoundary = 0;
+    let rightBoundary = aliLen - 1;
+
+    for (let start = 0; start <= aliLen - windowWidth; start++) {
+        if (_windowMean(scores, start, windowWidth) >= threshold) {
+            leftBoundary = start;
+            break;
+        }
+    }
+    for (let start = aliLen - windowWidth; start >= 0; start--) {
+        if (_windowMean(scores, start, windowWidth) >= threshold) {
+            rightBoundary = start + windowWidth - 1;
+            break;
+        }
+    }
+
+    return {
+        leftBoundary,
+        rightBoundary,
+        upStart: Math.max(0, leftBoundary - flankSize),
+        upEnd: Math.max(0, leftBoundary - 1),
+        downStart: Math.min(aliLen - 1, rightBoundary + 1),
+        downEnd: Math.min(aliLen - 1, rightBoundary + flankSize),
+        label: `auto ${leftBoundary + 1}/${rightBoundary + 1}`
+    };
+}
+
+function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, minTsdLen, maxTsdLen, maxDiv) {
+    let bestTsd = null;
+    const maxUpstreamOffset = 6;
+    for (let tsdLen = minTsdLen; tsdLen <= maxTsdLen; tsdLen++) {
+        if (upstreamWindow.bases.length < tsdLen || downstreamWindow.bases.length < tsdLen) continue;
+        const closestUpstreamStart = upstreamWindow.bases.length - tsdLen;
+        for (let upstreamOffset = 0; upstreamOffset <= Math.min(maxUpstreamOffset, closestUpstreamStart); upstreamOffset++) {
+            const upstreamStart = closestUpstreamStart - upstreamOffset;
+            const upstreamCandidate = _sliceCollectedWindow(upstreamWindow, upstreamStart, tsdLen);
+            const upstreamSeq = upstreamCandidate.bases.join('');
+            for (let downstreamStart = 0; downstreamStart <= downstreamWindow.bases.length - tsdLen; downstreamStart++) {
+                const downstreamCandidate = _sliceCollectedWindow(downstreamWindow, downstreamStart, tsdLen);
+                const downstreamSeq = downstreamCandidate.bases.join('');
+                const mismatches = _tsdMismatchCount(upstreamSeq, downstreamSeq);
+                const divergence = mismatches / tsdLen;
+                if (divergence > maxDiv) continue;
+                const downstreamColumn = downstreamCandidate.columns[0] ?? rightBoundary + 1;
+                const boundaryDistance = Math.abs(downstreamColumn - (rightBoundary + 1));
+                const score = (1 - divergence) * Math.sqrt(tsdLen) - upstreamOffset * 0.025 - boundaryDistance * 0.002;
+                if (!bestTsd || score > bestTsd.score || (score === bestTsd.score && tsdLen > bestTsd.length)) {
+                    bestTsd = {
+                        score,
+                        length: tsdLen,
+                        divergence,
+                        mismatches,
+                        upSeq: upstreamSeq,
+                        downSeq: downstreamSeq,
+                        upCols: upstreamCandidate.columns,
+                        downCols: downstreamCandidate.columns,
+                        upstreamOffset,
+                        boundaryDistance
+                    };
+                }
+            }
+        }
+    }
+    return bestTsd;
+}
+
 /**
- * TSD Finder — find Target Site Duplications at SINE/TE insertion boundaries.
- * Three modes: manual (user specifies columns), topseq (use top seq), auto (conservation-based).
+ * TSD Finder - find Target Site Duplications at SINE/TE insertion boundaries.
+ * Auto mode anchors on the conserved 5-prime SINE boundary and fuzzily scans a
+ * broader 3-prime region, because the 3-prime tail/end is often less crisp.
  */
 function _findTSD(seqs, mode, params) {
     const results = [];
-    const aliLen = Math.max(...seqs.map(s => s.seq.length));
+    const aliLen = Math.max(...seqs.map(seqObj => seqObj.seq.length));
     const minTsdLen = params.minLen || 4;
     const maxTsdLen = params.maxLen || 20;
     const maxDiv = (params.maxDiv || 20) / 100;
     const flankSize = params.flankSize || 30;
+    const boundaries = _findSineBoundaryColumns(seqs, mode, params, aliLen);
+    const searchSlack = Math.max(flankSize, maxTsdLen + 12);
 
-    // Determine upstream and downstream flank columns for each sequence
-    for (let si = 0; si < seqs.length; si++) {
-        const seq = seqs[si].seq;
-        let upStart, upEnd, downStart, downEnd;
+    for (let seqIndex = 0; seqIndex < seqs.length; seqIndex++) {
+        const seq = seqs[seqIndex].seq;
+        let upstreamWindow;
+        let downstreamWindow;
 
         if (mode === 'manual') {
-            upStart = (params.upStart || 1) - 1;
-            upEnd = (params.upEnd || 30) - 1;
-            downStart = params.downStart ? params.downStart - 1 : aliLen - 30;
-            downEnd = params.downEnd ? params.downEnd - 1 : aliLen - 1;
-        } else if (mode === 'topseq') {
-            // Use top sequence (index 0) to find element boundaries
-            const topSeq = seqs[0].seq;
-            let firstNonGap = -1, lastNonGap = -1;
-            for (let i = 0; i < topSeq.length; i++) {
-                if (topSeq[i] !== '-' && topSeq[i] !== '.') {
-                    if (firstNonGap < 0) firstNonGap = i;
-                    lastNonGap = i;
-                }
-            }
-            if (firstNonGap < 0) continue;
-            upStart = Math.max(0, firstNonGap - flankSize);
-            upEnd = firstNonGap - 1;
-            downStart = lastNonGap + 1;
-            downEnd = Math.min(aliLen - 1, lastNonGap + flankSize);
+            upstreamWindow = _collectUngappedBasesWithColumns(seq, boundaries.upStart, boundaries.upEnd);
+            downstreamWindow = _collectUngappedBasesWithColumns(seq, boundaries.downStart, boundaries.downEnd);
         } else {
-            // Auto mode: find where conservation drops (element boundary)
-            const consScores = [];
-            for (let col = 0; col < aliLen; col++) {
-                let matches = 0, total = 0;
-                for (let s2 = 0; s2 < seqs.length; s2++) {
-                    const b = seqs[s2].seq[col];
-                    if (b && b !== '-' && b !== '.') {
-                        total++;
-                        if (b.toUpperCase() === seq[col]?.toUpperCase()) matches++;
-                    }
-                }
-                consScores.push(total > 0 ? matches / total : 0);
-            }
-            // Find transition points (high cons flanks → low cons element interior)
-            let leftBound = 0, rightBound = aliLen - 1;
-            // Scan from left to find where conservation drops
-            for (let i = 10; i < aliLen - 10; i++) {
-                const leftAvg = consScores.slice(Math.max(0, i - 10), i).reduce((a, b) => a + b, 0) / 10;
-                const rightAvg = consScores.slice(i, Math.min(aliLen, i + 10)).reduce((a, b) => a + b, 0) / 10;
-                if (leftAvg > 0.6 && rightAvg < 0.4) { leftBound = i; break; }
-            }
-            for (let i = aliLen - 11; i > 10; i--) {
-                const leftAvg = consScores.slice(Math.max(0, i - 10), i).reduce((a, b) => a + b, 0) / 10;
-                const rightAvg = consScores.slice(i, Math.min(aliLen, i + 10)).reduce((a, b) => a + b, 0) / 10;
-                if (rightAvg > 0.6 && leftAvg < 0.4) { rightBound = i; break; }
-            }
-            upStart = Math.max(0, leftBound - flankSize);
-            upEnd = leftBound - 1;
-            downStart = rightBound + 1;
-            downEnd = Math.min(aliLen - 1, rightBound + flankSize);
+            const upstreamCollected = _collectUngappedBasesWithColumns(seq, Math.max(0, boundaries.leftBoundary - flankSize - maxTsdLen - 10), boundaries.leftBoundary - 1);
+            const upstreamStart = Math.max(0, upstreamCollected.bases.length - flankSize);
+            upstreamWindow = _sliceCollectedWindow(upstreamCollected, upstreamStart, upstreamCollected.bases.length - upstreamStart);
+            const downstreamStartCol = Math.max(0, boundaries.rightBoundary - searchSlack);
+            const downstreamEndCol = Math.min(aliLen - 1, boundaries.rightBoundary + flankSize + maxTsdLen + 12);
+            downstreamWindow = _collectUngappedBasesWithColumns(seq, downstreamStartCol, downstreamEndCol);
         }
 
-        if (upEnd < upStart || downEnd < downStart) continue;
+        if (upstreamWindow.bases.length < minTsdLen || downstreamWindow.bases.length < minTsdLen) continue;
+        const bestTsd = _findBestTsdInFlanks(upstreamWindow, downstreamWindow, boundaries.rightBoundary, minTsdLen, maxTsdLen, maxDiv);
+        if (!bestTsd) continue;
 
-        // Extract ungapped flank sequences
-        const upFlank = [];
-        for (let c = upStart; c <= upEnd; c++) {
-            const b = seq[c];
-            if (b && b !== '-' && b !== '.') upFlank.push(b.toUpperCase());
-        }
-        const downFlank = [];
-        for (let c = downStart; c <= downEnd; c++) {
-            const b = seq[c];
-            if (b && b !== '-' && b !== '.') downFlank.push(b.toUpperCase());
-        }
-
-        if (upFlank.length < minTsdLen || downFlank.length < minTsdLen) continue;
-
-        // Search for matching subsequences between flanks
-        const upStr = upFlank.join('');
-        const downStr = downFlank.join('');
-
-        let bestTsd = null;
-        for (let tsdLen = maxTsdLen; tsdLen >= minTsdLen; tsdLen--) {
-            // Check end of upstream vs start of downstream
-            for (let ui = Math.max(0, upStr.length - tsdLen - 5); ui <= upStr.length - tsdLen; ui++) {
-                const upSub = upStr.substring(ui, ui + tsdLen);
-                for (let di = 0; di <= Math.min(5, downStr.length - tsdLen); di++) {
-                    const downSub = downStr.substring(di, di + tsdLen);
-                    let mm = 0;
-                    for (let k = 0; k < tsdLen; k++) {
-                        if (upSub[k] !== downSub[k]) mm++;
-                    }
-                    const div = mm / tsdLen;
-                    if (div <= maxDiv) {
-                        if (!bestTsd || tsdLen > bestTsd.length || (tsdLen === bestTsd.length && div < bestTsd.div)) {
-                            bestTsd = {
-                                length: tsdLen, div,
-                                upSeq: upSub, downSeq: downSub,
-                                upPos: ui, downPos: di,
-                                mismatches: mm
-                            };
-                        }
-                    }
-                }
-            }
-            if (bestTsd && bestTsd.length === tsdLen) break; // Found at this length, don't check shorter
-        }
-
-        if (bestTsd) {
-            results.push({
-                seqName: seqs[si].header,
-                seqIndex: si,
-                tsdLen: bestTsd.length,
-                upTSD: bestTsd.upSeq,
-                downTSD: bestTsd.downSeq,
-                divergence: (bestTsd.div * 100).toFixed(1),
-                mismatches: bestTsd.mismatches,
-                upCols: `${upStart + 1}-${upEnd + 1}`,
-                downCols: `${downStart + 1}-${downEnd + 1}`
-            });
-        }
+        const upFirst = bestTsd.upCols[0] ?? boundaries.upStart;
+        const upLast = bestTsd.upCols[bestTsd.upCols.length - 1] ?? boundaries.upEnd;
+        const downFirst = bestTsd.downCols[0] ?? boundaries.downStart;
+        const downLast = bestTsd.downCols[bestTsd.downCols.length - 1] ?? boundaries.downEnd;
+        results.push({
+            seqName: seqs[seqIndex].header,
+            seqIndex,
+            tsdLen: bestTsd.length,
+            upTSD: bestTsd.upSeq,
+            downTSD: bestTsd.downSeq,
+            divergence: (bestTsd.divergence * 100).toFixed(1),
+            mismatches: bestTsd.mismatches,
+            upCols: `${upFirst + 1}-${upLast + 1}`,
+            downCols: `${downFirst + 1}-${downLast + 1}`,
+            upPositions: bestTsd.upCols.slice(),
+            downPositions: bestTsd.downCols.slice(),
+            boundary: boundaries.label,
+            downstreamOffset: downFirst - (boundaries.rightBoundary + 1)
+        });
     }
     return results;
 }
@@ -9648,21 +10255,24 @@ function runRepeatAnalysis() {
         setTimeout(() => {
             try {
                 const results = _findTSD(state.seqs, tsdMode, params);
+                _lastTsdResults = results;
                 if (results.length === 0) {
                     resultsEl.textContent = 'No TSDs found with current parameters.';
                     return;
                 }
-                let out = `TSD Analysis (mode: ${tsdMode}) — ${results.length} sequences with TSD\n`;
+                let out = `TSD Analysis (mode: ${tsdMode}) - ${results.length} sequences with TSD\n`;
                 out += '─'.repeat(80) + '\n';
-                out += 'Sequence'.padEnd(25) + 'TSD Len'.padEnd(10) + 'Div%'.padEnd(8) + 'Upstream TSD'.padEnd(25) + 'Downstream TSD\n';
+                out += 'Sequence'.padEnd(25) + 'Len'.padEnd(6) + 'Div%'.padEnd(8) + 'Up TSD'.padEnd(22) + 'Down TSD'.padEnd(22) + 'Cols / offset\n';
                 out += '─'.repeat(80) + '\n';
                 for (const r of results) {
                     const name = r.seqName.length > 23 ? r.seqName.substring(0, 23) + '..' : r.seqName;
-                    out += name.padEnd(25) + String(r.tsdLen).padEnd(10) + (r.divergence + '%').padEnd(8) + r.upTSD.padEnd(25) + r.downTSD + '\n';
+                    const colInfo = `${r.upCols} / ${r.downCols} (${r.downstreamOffset >= 0 ? '+' : ''}${r.downstreamOffset})`;
+                    out += name.padEnd(25) + String(r.tsdLen).padEnd(6) + (r.divergence + '%').padEnd(8) + r.upTSD.padEnd(22) + r.downTSD.padEnd(22) + colInfo + '\n';
                 }
+                if (results[0]?.boundary) out += `\nBoundary: ${results[0].boundary}\n`;
                 // Consensus TSD
                 if (results.length >= 2) {
-                    out += '\n─ Consensus TSD ─\n';
+                    out += '\n- Consensus TSD -\n';
                     const maxLen = Math.max(...results.map(r => r.tsdLen));
                     for (let pos = 0; pos < maxLen; pos++) {
                         const counts = {};
@@ -9739,26 +10349,28 @@ function _initRepeatFinderEvents() {
     });
     const runBtn = document.getElementById('repeatRunBtn');
     if (runBtn) runBtn.addEventListener('click', runRepeatAnalysis);
+    const markBtn = document.getElementById('tsdMarkButton');
+    if (markBtn) markBtn.addEventListener('click', applyTsdMarking);
+    const undoMarkBtn = document.getElementById('tsdUndoMarkButton');
+    if (undoMarkBtn) undoMarkBtn.addEventListener('click', undoTsdMarking);
+    const markColor = document.getElementById('tsdMarkColor');
+    if (markColor) markColor.addEventListener('input', event => {
+        state.tsdMarkColor = event.target.value;
+        if (state.tsdMarks?.size && state.tsdMarkStyle === 'color') renderAlignment({ deferConservation: true });
+    });
+    const markStyle = document.getElementById('tsdMarkStyle');
+    if (markStyle) markStyle.addEventListener('change', event => {
+        state.tsdMarkStyle = event.target.value;
+        if (state.tsdMarks?.size) renderAlignment({ deferConservation: true });
+    });
 
     // Toggle TSD params visibility
     document.querySelectorAll('input[name="repeatMode"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            const tsdParams = document.getElementById('tsdParams');
-            const generalParams = document.getElementById('repeatParamsGeneral');
-            if (radio.value === 'tsd') {
-                if (tsdParams) tsdParams.style.display = '';
-                if (generalParams) generalParams.style.display = 'none';
-            } else {
-                if (tsdParams) tsdParams.style.display = 'none';
-                if (generalParams) generalParams.style.display = '';
-            }
-        });
+        radio.addEventListener('change', _syncRepeatFinderModeUI);
     });
     // Toggle TSD mode params
     document.querySelectorAll('input[name="tsdMode"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            const manualP = document.getElementById('tsdManualParams');
-            if (manualP) manualP.style.display = radio.value === 'manual' ? '' : 'none';
-        });
+        radio.addEventListener('change', _syncRepeatFinderModeUI);
     });
+    _syncRepeatFinderModeUI();
 }

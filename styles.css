@@ -1041,34 +1041,31 @@ body.suppress-menu-hover .menu-section.menu-open .control-group {
     cursor: default;
 }
 
-.seq-data span:not(.nuc-selected):hover {
+.seq-data:hover {
     cursor: default;
 }
 
 body.edit-mode-active[data-edit-tool="moveNoGaps"] .seq-data,
-body.edit-mode-active[data-edit-tool="slideKeepGaps"] .seq-data,
-body.edit-mode-active[data-edit-tool="moveNoGaps"] .seq-data span:not(.seq-length),
-body.edit-mode-active[data-edit-tool="slideKeepGaps"] .seq-data span:not(.seq-length) {
+body.edit-mode-active[data-edit-tool="slideKeepGaps"] .seq-data {
     cursor: default;
 }
 
-body.edit-mode-active[data-edit-tool="insertGapSeq"] .seq-data span:not(.seq-length),
-body.edit-mode-active[data-edit-tool="deleteGapSeq"] .seq-data span:not(.seq-length),
-body.edit-mode-active[data-edit-tool="insertGapOther"] .seq-data span:not(.seq-length),
-body.edit-mode-active[data-edit-tool="deleteGapOther"] .seq-data span:not(.seq-length),
-body.edit-mode-active[data-edit-tool="insertGapAll"] .seq-data span:not(.seq-length),
-body.edit-mode-active[data-edit-tool="deleteGapAll"] .seq-data span:not(.seq-length),
-body.edit-mode-active[data-edit-tool="selectColumn"] .seq-data span:not(.seq-length) {
+body.edit-mode-active[data-edit-tool="insertGapSeq"] .seq-data,
+body.edit-mode-active[data-edit-tool="deleteGapSeq"] .seq-data,
+body.edit-mode-active[data-edit-tool="insertGapOther"] .seq-data,
+body.edit-mode-active[data-edit-tool="deleteGapOther"] .seq-data,
+body.edit-mode-active[data-edit-tool="insertGapAll"] .seq-data,
+body.edit-mode-active[data-edit-tool="deleteGapAll"] .seq-data,
+body.edit-mode-active[data-edit-tool="selectColumn"] .seq-data {
     cursor: crosshair;
 }
 
-body.edit-mode-active[data-edit-tool="residue"] .seq-data span:not(.seq-length) {
+body.edit-mode-active[data-edit-tool="residue"] .seq-data {
     cursor: text;
 }
 
 body.edit-dragging,
-body.edit-dragging .seq-data,
-body.edit-dragging .seq-data span:not(.seq-length) {
+body.edit-dragging .seq-data {
     cursor: default !important;
 }
 
@@ -1527,6 +1524,101 @@ body {
 span.diagnostic-mutation {
     font-weight: bold !important;
     cursor: help;
+}
+
+.seq-data span.tsd-mark-bold {
+    font-weight: 700 !important;
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 1px;
+}
+
+.seq-data span.tsd-mark-color {
+    border-radius: 2px;
+}
+
+@media (max-width: 700px) {
+    #controls {
+        padding: 1px 3px;
+    }
+
+    .control-row {
+        flex-wrap: wrap !important;
+        align-items: flex-start;
+        gap: 2px;
+        padding-top: 2px;
+    }
+
+    .undo-redo-bar {
+        margin-left: 0 !important;
+    }
+
+    #snapshot-section {
+        margin-left: 0 !important;
+    }
+
+    .standard-menu-group {
+        order: 10;
+        flex: 1 1 100% !important;
+        min-width: 0 !important;
+        width: 100% !important;
+        flex-wrap: wrap !important;
+        gap: 3px;
+    }
+
+    #actions-section {
+        order: 11;
+        flex: 0 0 auto !important;
+        margin-left: 0 !important;
+    }
+
+    #headerInfoPanel {
+        order: 12;
+        flex: 1 1 100%;
+        max-width: 100%;
+        align-items: flex-start;
+        padding: 0;
+    }
+
+    #sourceInfo,
+    #sourcePathLine {
+        max-width: 100%;
+        text-align: left;
+    }
+
+    .control-group,
+    .menu-section.side-section#input-section .control-group,
+    #actions-section .control-group {
+        position: fixed !important;
+        left: 4px !important;
+        right: 4px !important;
+        top: 86px !important;
+        width: auto !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        box-sizing: border-box;
+        padding: 8px;
+        max-height: calc(100vh - 96px);
+    }
+
+    #actions-section .control-group {
+        max-height: calc(100vh - 96px);
+    }
+
+    .button-group {
+        flex-wrap: wrap;
+        width: auto;
+        max-width: calc(100vw - 32px);
+    }
+
+    .action-section {
+        padding: 6px 0;
+    }
+
+    #editToolPanel {
+        flex-wrap: wrap;
+        gap: 3px;
+    }
 }
 /* ============ BLAST UI STYLES ============ */
 
