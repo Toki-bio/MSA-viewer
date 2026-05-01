@@ -521,16 +521,14 @@
                         <div class="action-section-label">Columns</div>
                         <div class="button-group">
                             <button id="copyColumnsButton" title="Copy selected columns as FASTA (Ctrl+Shift+V)">Copy Cols</button>
-                            <button id="deleteColumnsButton" title="Delete selected columns (Ctrl+Shift+D)">Delete Cols</button>
-                            <button id="removeGapColumnsButton" title="Remove gap-only columns">Rm Gap Cols</button>
-                            <button id="insertGapColumnAllButton" title="Insert gap column in all sequences">Gap Col All</button>
-                            <button id="insertGapColumnExceptButton" title="Insert gap column except selected">Gap Col Except</button>
                         </div>
                     </div>
                     <div class="action-section">
                         <div class="action-section-label">Tools</div>
                         <div class="button-group">
                             <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
+                            <button id="tsdFinderButton" title="Find target site duplications around SINE insertion boundaries">TSD Finder</button>
+                            <button id="buildTreeButton" title="Build a UPGMA tree from selected sequences, or all sequences if none are selected">Tree</button>
                             <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
                             <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
                             <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
@@ -765,12 +763,40 @@ B: —</pre>
                         <label style="margin-left:8px;">Max divergence: <input type="number" id="tsdMaxDiv" value="20" min="0" max="50" style="width:45px;">%</label>
                         <label style="margin-left:8px;">Flank size: <input type="number" id="tsdFlankSize" value="30" min="5" max="100" style="width:45px;"> bp</label>
                     </div>
+                    <div id="tsdMarkControls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;padding-top:6px;border-top:1px solid #ddd;">
+                        <strong>Mark:</strong>
+                        <select id="tsdMarkStyle" style="height:22px;font-size:11px;">
+                            <option value="lowercase">TSD lowercase, others uppercase</option>
+                            <option value="bold">Bold/underline TSD</option>
+                            <option value="color" selected>Color TSD</option>
+                        </select>
+                        <input type="color" id="tsdMarkColor" value="#ffd54f" title="TSD mark color" style="width:34px;height:22px;padding:0;">
+                        <button id="tsdMarkButton" style="padding:3px 10px;font-size:12px;">Mark Found TSDs</button>
+                        <button id="tsdUndoMarkButton" style="padding:3px 10px;font-size:12px;">Undo TSD Marking</button>
+                    </div>
                 </div>
                 <button id="repeatRunBtn" style="padding:4px 16px;font-size:13px;background:#4CAF50;color:white;border:none;border-radius:4px;cursor:pointer;">Run Analysis</button>
             </div>
             <div id="repeatResults" style="max-height:50vh;overflow:auto;font-family:monospace;font-size:11px;white-space:pre-wrap;border:1px solid #ddd;padding:8px;background:#fafafa;min-height:60px;">
                 Click "Run Analysis" to start.
             </div>
+        </div>
+    </div>
+
+    <!-- Alignment Tree Modal -->
+    <div id="treeBuilderModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10002;overflow:auto;">
+        <div style="background:white;margin:30px auto;padding:16px;max-width:760px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <h3 style="margin:0;">Alignment Tree</h3>
+                <button id="treeBuilderCloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button>
+            </div>
+            <div id="treeBuilderSummary" style="font-size:12px;color:#555;margin-bottom:8px;"></div>
+            <textarea id="treeNewickOutput" readonly style="width:100%;height:130px;box-sizing:border-box;font-family:'Courier New',monospace;font-size:11px;white-space:pre;resize:vertical;"></textarea>
+            <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;margin:8px 0;">
+                <button id="treeCopyNewickBtn" style="padding:4px 12px;font-size:12px;">Copy Newick</button>
+                <button id="treeDownloadNewickBtn" style="padding:4px 12px;font-size:12px;">Download .nwk</button>
+            </div>
+            <pre id="treeTextOutput" style="max-height:42vh;overflow:auto;font-family:'Courier New',monospace;font-size:11px;white-space:pre;border:1px solid #ddd;padding:8px;background:#fafafa;min-height:70px;margin:0;"></pre>
         </div>
     </div>
 

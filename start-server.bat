@@ -5,6 +5,14 @@ cd /d "%~dp0"
 echo Checking Node.js installation...
 node --version >nul 2>&1
 if errorlevel 1 (
+    REM Try common locations if node is not in PATH
+    if exist "%USERPROFILE%\miniconda3\node.exe" (
+        set "PATH=%USERPROFILE%\miniconda3;%USERPROFILE%\miniconda3\Library\bin;%PATH%"
+        echo Found Node.js in miniconda3, added to PATH
+    )
+)
+node --version >nul 2>&1
+if errorlevel 1 (
     echo ERROR: Node.js is not installed or not in PATH
     echo Please install Node.js from https://nodejs.org/
     pause
