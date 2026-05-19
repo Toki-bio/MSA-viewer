@@ -9,7 +9,7 @@ A fast, interactive HTML-based MSA viewer for FASTA/MSF/NEXUS alignments, with l
 - **Remote File Loading**: SSH to multiple servers (direct or via jump hosts)
   - Manual: Paste file path and click "Fetch"
   - Via Midnight Commander: Press `F2 → v` in MC, then click "Check Queue" to load
-- **Drag-and-Drop Reordering**: Rearrange sequences in alignment
+- **Guide-Tree Ordering**: Build a UPGMA tree from the Tree tool, then place or remove a compact left tree column on the alignment
 - **MSA Tools**: Multiple alignment, consensus extraction (with threshold control)
 - **SINE Detection**: Identify and extract SINE-family sequences
 - **Shareable Snapshots**: Export full-view state and reopen exact alignment view via URL

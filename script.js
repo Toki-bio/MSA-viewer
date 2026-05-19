@@ -60,7 +60,15 @@ const state = {
     },
     trimBoundaries: null,
     trimBackup: null,
-    groupConsensusCount: 0
+    groupConsensusCount: 0,
+    alignmentGuideTreeActive: false,
+    alignmentGuideTreeRoot: null,
+    lastTreeBuild: null,
+    guideTreeBranchWidth: 72,
+    guideTreeRows: [],
+    guideTreeLayout: null,
+    guideTreeSignature: '',
+    guideTreeWidth: 0
 };
 
 const SNAPSHOT_SCHEMA_VERSION = 1;
@@ -113,22 +121,6 @@ let _sshPollRunning = false;
 let _pollableServers = [];  // Only servers with direct SSH (no jump host)
 
 // --- Server selector helpers (toggle button group) ---
-function getSelectedServer() {
-    const active = document.querySelector('#sshServerBtnGroup .srv-active');
-    return active ? active.dataset.server : (_pollableServers[0] || 'default');
-}
-function setSelectedServer(key) {
-    const btns = document.querySelectorAll('#sshServerBtnGroup .srv-btn');
-    btns.forEach(b => {
-        if (b.dataset.server === key) {
-            b.classList.add('srv-active');
-            b.style.background = '#4a90d9'; b.style.color = '#fff';
-        } else {
-            b.classList.remove('srv-active');
-            b.style.background = '#f0f0f0'; b.style.color = '#333';
-        }
-    });
-}
 function _buildServerButtons(servers) {
     const group = document.getElementById('sshServerBtnGroup');
     if (!group) return;
@@ -1411,30 +1403,22 @@ function getDeferredConsensus(len) {
 
 function renderAlignment(options = {}) {
     if (!state.seqs || state.seqs.length === 0) {
+        state.guideTreeRows = [];
+        state.guideTreeLayout = null;
+        state.alignmentGuideTreeActive = false;
+        state.alignmentGuideTreeRoot = null;
+        state.guideTreeSignature = '';
+        state.guideTreeWidth = 0;
+        document.documentElement.style.setProperty('--guideTreeWidth', '0px');
+        alignmentContainer.classList.remove('has-guide-tree');
         alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
         return;
     }
+    syncPlacedGuideTreeWithAlignment();
     const coverageMin = clampMinCoverage(el('consensusMinCoverage')?.value) / 100;
     alignmentContainer.innerHTML = '';
-    // Container-level drag handlers: allow drops anywhere, show preview
-    // Remove old handlers first to avoid stacking
-    if (!alignmentContainer._dragHandlersSet) {
-        document.addEventListener('dragenter', _handleInternalDragEnterOver, true);
-        document.addEventListener('dragover', _handleInternalDragEnterOver, true);
-        alignmentContainer.addEventListener('dragover', (e) => {
-            if (_draggedSeqIndex < 0) return;
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            _showDragInsertPreview(e, alignmentContainer);
-        });
-        alignmentContainer.addEventListener('dragenter', (e) => {
-            if (_draggedSeqIndex < 0) return;
-            e.preventDefault();
-            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-        });
-        alignmentContainer.addEventListener('drop', handleDrop);
-        alignmentContainer._dragHandlersSet = true;
-    }
+    const hasGuideTree = state.alignmentGuideTreeActive && state.guideTreeRows.length === state.seqs.length && state.seqs.length > 1;
+    alignmentContainer.classList.toggle('has-guide-tree', hasGuideTree);
     state.spanCache = new Map();
     state.domSelectedNucs = new Map();
     state.domSelectedColumns = new Map();
@@ -1510,6 +1494,7 @@ function renderAlignment(options = {}) {
             scaleDataDiv.className = 'seq-data';
             const scaleText = generateScale(blockLen, 10, start);
             scaleDataDiv.textContent = scaleText;
+            scaleDiv.appendChild(createGuideTreeSpacer(stickyNames));
             scaleDiv.appendChild(scaleNameDiv);
             scaleDiv.appendChild(scaleDataDiv);
             blockDiv.appendChild(scaleDiv);
@@ -1524,6 +1509,7 @@ function renderAlignment(options = {}) {
                 blockDiv.appendChild(lineDiv);
             }
             alignmentContainer.appendChild(blockDiv);
+            renderGuideTreeOverlay(blockDiv, stickyNames);
         }
     } else {
         // Add scale/ruler at the top for full mode
@@ -1536,6 +1522,7 @@ function renderAlignment(options = {}) {
         scaleDataDiv.className = 'seq-data';
         const scaleText = generateScale(len);
         scaleDataDiv.textContent = scaleText;
+        scaleDiv.appendChild(createGuideTreeSpacer(stickyNames));
         scaleDiv.appendChild(scaleNameDiv);
         scaleDiv.appendChild(scaleDataDiv);
         alignmentContainer.appendChild(scaleDiv);
@@ -1548,6 +1535,7 @@ function renderAlignment(options = {}) {
             const lineDiv = createSequenceLine(i, 0, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, conservationData);
             alignmentContainer.appendChild(lineDiv);
         }
+        renderGuideTreeOverlay(alignmentContainer, stickyNames);
     }
     setTimeout(() => toggleStickyNames(), 0);
     ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold'].forEach(id => {
@@ -1828,11 +1816,6 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
             e.stopPropagation();
             return;
         }
-        if (!e.shiftKey && !e.altKey) {
-            _startRowReorderDrag(e, index);
-            e.preventDefault();
-            e.stopPropagation();
-        }
     });
     // Tooltip: show truncated full header on hover (avoid OS tooltip delay)
     nameSpan.addEventListener('mouseover', () => {
@@ -1887,7 +1870,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         };
         setTimeout(() => document.addEventListener('click', handleOutsideClick), 0);
     });
-    lineDiv.addEventListener('drop', handleDrop);
+    lineDiv.appendChild(createGuideTreeCell(index, stickyNames));
     lineDiv.appendChild(nameSpan);
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
@@ -1965,6 +1948,7 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
     const consName = document.createElement('div');
     consName.className = `seq-name ${stickyNames ? '' : 'static'}`;
     consName.textContent = 'Consensus';
+    consLine.appendChild(createGuideTreeSpacer(stickyNames));
     consLine.appendChild(consName);
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
@@ -2134,6 +2118,7 @@ function parseAndRender(isFromDrop = false) {
             state.currentFilePath = '';
         }
         state.seqs = parsed;
+        resetAlignmentGuideTreeState();
         state.selectedRows.clear();
         state.selectedColumns.clear();
         state.selectedNucs.clear();
@@ -2638,22 +2623,6 @@ function handleKeyDown(e) {
                 break;
         }
     }
-    if (e.ctrlKey || e.metaKey) {
-        if (e.key === 'ArrowUp') {
-            moveSelectedUp();
-            e.preventDefault();
-        } else if (e.key === 'ArrowDown') {
-            moveSelectedDown();
-            e.preventDefault();
-        } else if (e.key === 'Home') {
-            moveSelectedToTop();
-            e.preventDefault();
-        } else if (e.key === 'End') {
-            moveSelectedToBottom();
-            e.preventDefault();
-        }
-    }
-    
     // Navigation shortcuts (non-Ctrl)
     if (e.key === 'F3') {
         if (e.shiftKey) {
@@ -3052,82 +3021,22 @@ function selectAllSequences() {
     }
     updateRowSelections();
 }
+
+function showGuideTreeOrderMessage() {
+    showMessage('Sequence order follows the guide tree.', 2000);
+}
+
 function moveSelectedUp() {
-    if (state.selectedRows.size === 0) return;
-    pushUndo('order');
-    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices[0] === 0) return;
-    const newSeqs = [...state.seqs];
-    const group = indices.map(i => newSeqs[i]);
-    for (let j = indices.length - 1; j >= 0; j--) {
-        newSeqs.splice(indices[j], 1);
-    }
-    const insertPos = indices[0] - 1;
-    newSeqs.splice(insertPos, 0, ...group);
-    state.seqs = newSeqs;
-    state.selectedRows.clear();
-    for (let k = 0; k < indices.length; k++) {
-        state.selectedRows.add(insertPos + k);
-    }
-    renderAlignment();
-    showMessage("Sequences moved up!", 2000);
+    showGuideTreeOrderMessage();
 }
 function moveSelectedDown() {
-    if (state.selectedRows.size === 0) return;
-    pushUndo('order');
-    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices[indices.length - 1] === state.seqs.length - 1) return;
-    const newSeqs = [...state.seqs];
-    const group = indices.map(i => newSeqs[i]);
-    for (let j = indices.length - 1; j >= 0; j--) {
-        newSeqs.splice(indices[j], 1);
-    }
-    const insertPos = indices[indices.length - 1] - indices.length + 2;
-    newSeqs.splice(insertPos, 0, ...group);
-    state.seqs = newSeqs;
-    state.selectedRows.clear();
-    for (let k = 0; k < indices.length; k++) {
-        state.selectedRows.add(insertPos + k);
-    }
-    renderAlignment();
-    showMessage("Sequences moved down!", 2000);
+    showGuideTreeOrderMessage();
 }
 function moveSelectedToTop() {
-    if (state.selectedRows.size === 0) return;
-    pushUndo('order');
-    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    const newSeqs = [...state.seqs];
-    const group = indices.map(i => newSeqs[i]);
-    for (let j = indices.length - 1; j >= 0; j--) {
-        newSeqs.splice(indices[j], 1);
-    }
-    newSeqs.unshift(...group);
-    state.seqs = newSeqs;
-    state.selectedRows.clear();
-    for (let k = 0; k < group.length; k++) {
-        state.selectedRows.add(k);
-    }
-    renderAlignment();
-    showMessage("Sequences moved to top!", 2000);
+    showGuideTreeOrderMessage();
 }
 function moveSelectedToBottom() {
-    if (state.selectedRows.size === 0) return;
-    pushUndo('order');
-    const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    const newSeqs = [...state.seqs];
-    const group = indices.map(i => newSeqs[i]);
-    for (let j = indices.length - 1; j >= 0; j--) {
-        newSeqs.splice(indices[j], 1);
-    }
-    newSeqs.push(...group);
-    state.seqs = newSeqs;
-    state.selectedRows.clear();
-    const newLen = state.seqs.length;
-    for (let k = 0; k < group.length; k++) {
-        state.selectedRows.add(newLen - group.length + k);
-    }
-    renderAlignment();
-    showMessage("Sequences moved to bottom!", 2000);
+    showGuideTreeOrderMessage();
 }
 function insertGroupConsensus() {
     if (state.selectedRows.size < 2) {
@@ -5123,6 +5032,7 @@ function buildUPGMATreeFromAlignment(seqObjects) {
 
     const clusters = seqObjects.map((seqObj, index) => ({
         name: seqObj.header || `seq_${index + 1}`,
+        seqIndex: index,
         size: 1,
         height: 0,
         branchLength: 0,
@@ -5171,6 +5081,7 @@ function buildUPGMATreeFromAlignment(seqObjects) {
 
         const mergedCluster = {
             name: '',
+            seqIndex: null,
             size: firstCluster.size + secondCluster.size,
             height: mergedHeight,
             branchLength: 0,
@@ -5187,6 +5098,7 @@ function buildUPGMATreeFromAlignment(seqObjects) {
 
     const root = clusters[0];
     return {
+        root,
         newick: _treeNodeToNewick(root, true),
         text: _treeNodeToText(root).trimEnd(),
         stats: {
@@ -5196,6 +5108,298 @@ function buildUPGMATreeFromAlignment(seqObjects) {
             maxDistance: distanceMax
         }
     };
+}
+
+function _guideTreeSignature(seqObjects) {
+    return (seqObjects || [])
+        .map(seqObj => `${seqObj.header || ''}\n${seqObj.seq || ''}`)
+        .join('\n>\n');
+}
+
+function _collectGuideTreeLeafOrder(node, order = []) {
+    if (!node) return order;
+    if (!node.left && !node.right) {
+        if (Number.isInteger(node.seqIndex)) order.push(node.seqIndex);
+        return order;
+    }
+    _collectGuideTreeLeafOrder(node.left, order);
+    _collectGuideTreeLeafOrder(node.right, order);
+    return order;
+}
+
+function clampGuideTreeBranchWidth(value) {
+    const parsed = parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return 72;
+    return Math.min(140, Math.max(40, parsed));
+}
+
+function updateTreePlacementControls() {
+    const width = clampGuideTreeBranchWidth(state.guideTreeBranchWidth);
+    const slider = document.getElementById('treeBranchWidthSlider');
+    const label = document.getElementById('treeBranchWidthValue');
+    const placeButton = document.getElementById('treePlaceAlignmentBtn');
+    const removeButton = document.getElementById('treeRemoveAlignmentBtn');
+    if (slider) slider.value = String(width);
+    if (label) label.textContent = `${width}px`;
+    const canPlace = treeBuildMatchesCurrentAlignment(state.lastTreeBuild);
+    if (placeButton) {
+        placeButton.disabled = !canPlace;
+        placeButton.title = canPlace
+            ? 'Place this tree on the alignment and order rows by topology'
+            : 'Build a tree for all current sequences before placing it on the alignment';
+    }
+    if (removeButton) removeButton.disabled = !state.alignmentGuideTreeActive;
+}
+
+function _guideTreeSeqObjectSignature(seqObj) {
+    return `${seqObj?.header || ''}\n${seqObj?.seq || ''}`;
+}
+
+function treeBuildMatchesCurrentAlignment(treeBuild) {
+    if (!treeBuild || !state.seqs || treeBuild.seqCount !== state.seqs.length) return false;
+    const currentSeqObjects = new Set(state.seqs);
+    return treeBuild.seqObjects.every(seqObj => (
+        currentSeqObjects.has(seqObj)
+        && treeBuild.seqSignatures.get(seqObj) === _guideTreeSeqObjectSignature(seqObj)
+    ));
+}
+
+function _buildGuideTreeRows(root, branchWidth = state.guideTreeBranchWidth) {
+    const leaves = [];
+    let maxDepth = 0;
+
+    const annotate = (node, depth) => {
+        node.depth = depth;
+        maxDepth = Math.max(maxDepth, depth);
+        if (!node.left && !node.right) {
+            node.row = leaves.length;
+            leaves.push(node);
+            return;
+        }
+        annotate(node.left, depth + 1);
+        annotate(node.right, depth + 1);
+        node.row = (node.left.row + node.right.row) / 2;
+    };
+
+    annotate(root, 0);
+
+    const padding = 6;
+    const width = leaves.length > 1 ? clampGuideTreeBranchWidth(branchWidth) : 0;
+    const leafX = Math.max(padding + 20, width - padding);
+    const rootHeight = Math.max(0, root.height || 0);
+    const segments = [];
+
+    const xForNode = node => {
+        if (!node.left && !node.right) return leafX;
+        if (rootHeight > 0) {
+            const distanceFromRoot = Math.max(0, rootHeight - (node.height || 0));
+            return padding + (distanceFromRoot / rootHeight) * (leafX - padding);
+        }
+        return padding + (node.depth / Math.max(1, maxDepth)) * (leafX - padding);
+    };
+
+    const collectSegments = node => {
+        if (!node.left && !node.right) return;
+        const parentX = xForNode(node);
+        const leftY = node.left.row;
+        const rightY = node.right.row;
+        segments.push({ type: 'vertical', x: parentX, y1: leftY, y2: rightY });
+        [node.left, node.right].forEach(child => {
+            segments.push({ type: 'horizontal', x1: parentX, x2: xForNode(child), y: child.row });
+            collectSegments(child);
+        });
+    };
+
+    collectSegments(root);
+
+    return {
+        leafOrder: _collectGuideTreeLeafOrder(root),
+        rows: leaves.map(() => ({})),
+        segments,
+        width,
+        leafX
+    };
+}
+
+function applyGuideTreeOrdering() {
+    placeTreeOnAlignment();
+}
+
+function resetAlignmentGuideTreeState() {
+    state.alignmentGuideTreeActive = false;
+    state.alignmentGuideTreeRoot = null;
+    state.lastTreeBuild = null;
+    state.guideTreeRows = [];
+    state.guideTreeLayout = null;
+    state.guideTreeSignature = '';
+    state.guideTreeWidth = 0;
+    document.documentElement.style.setProperty('--guideTreeWidth', '0px');
+    updateTreePlacementControls();
+}
+
+function syncPlacedGuideTreeWithAlignment() {
+    if (!state.alignmentGuideTreeActive) {
+        state.guideTreeRows = [];
+        state.guideTreeLayout = null;
+        state.guideTreeWidth = 0;
+        document.documentElement.style.setProperty('--guideTreeWidth', '0px');
+        updateTreePlacementControls();
+        return;
+    }
+
+    const currentSignature = _guideTreeSignature(state.seqs);
+    if (state.guideTreeSignature === currentSignature && state.guideTreeRows.length === state.seqs.length) {
+        updateTreePlacementControls();
+        return;
+    }
+
+    state.alignmentGuideTreeActive = false;
+    state.alignmentGuideTreeRoot = null;
+    state.guideTreeRows = [];
+    state.guideTreeLayout = null;
+    state.guideTreeSignature = '';
+    state.guideTreeWidth = 0;
+    document.documentElement.style.setProperty('--guideTreeWidth', '0px');
+    updateTreePlacementControls();
+}
+
+function placeTreeOnAlignment() {
+    const treeBuild = state.lastTreeBuild;
+    if (!treeBuild) {
+        showMessage('Build a tree before placing it on the alignment.', 2200);
+        return;
+    }
+    if (!treeBuildMatchesCurrentAlignment(treeBuild)) {
+        showMessage('Rebuild the tree for all current sequences before placing it.', 3000);
+        updateTreePlacementControls();
+        return;
+    }
+
+    try {
+        const selectedSeqObjects = new Set(Array.from(state.selectedRows).map(index => state.seqs[index]).filter(Boolean));
+        const sourceSeqs = treeBuild.seqObjects;
+        const layout = _buildGuideTreeRows(treeBuild.result.root);
+        if (layout.leafOrder.length !== sourceSeqs.length) throw new Error('Guide tree leaf count mismatch');
+        state.seqs = layout.leafOrder.map(index => sourceSeqs[index]);
+        state.selectedRows.clear();
+        state.seqs.forEach((seqObj, index) => {
+            if (selectedSeqObjects.has(seqObj)) state.selectedRows.add(index);
+        });
+        state.alignmentGuideTreeActive = true;
+        state.alignmentGuideTreeRoot = treeBuild.result.root;
+        state.guideTreeRows = layout.rows;
+        state.guideTreeLayout = layout;
+        state.guideTreeWidth = layout.width;
+        document.documentElement.style.setProperty('--guideTreeWidth', `${layout.width}px`);
+        state.guideTreeSignature = _guideTreeSignature(state.seqs);
+        renderAlignment();
+        updateTreePlacementControls();
+        showMessage('Tree placed on alignment.', 1600);
+    } catch (err) {
+        console.warn('Guide-tree ordering failed:', err);
+        state.alignmentGuideTreeActive = false;
+        state.alignmentGuideTreeRoot = null;
+        state.guideTreeRows = [];
+        state.guideTreeLayout = null;
+        state.guideTreeWidth = 0;
+        state.guideTreeSignature = '';
+        document.documentElement.style.setProperty('--guideTreeWidth', '0px');
+        updateTreePlacementControls();
+        showMessage(`Could not place tree: ${err.message}`, 3200);
+    }
+}
+
+function removeTreeFromAlignment() {
+    state.alignmentGuideTreeActive = false;
+    state.alignmentGuideTreeRoot = null;
+    state.guideTreeRows = [];
+    state.guideTreeLayout = null;
+    state.guideTreeSignature = '';
+    state.guideTreeWidth = 0;
+    document.documentElement.style.setProperty('--guideTreeWidth', '0px');
+    renderAlignment();
+    updateTreePlacementControls();
+    showMessage('Tree removed from alignment.', 1600);
+}
+
+function setTreeBranchWidth(value) {
+    state.guideTreeBranchWidth = clampGuideTreeBranchWidth(value);
+    if (state.alignmentGuideTreeActive && state.alignmentGuideTreeRoot) {
+        const layout = _buildGuideTreeRows(state.alignmentGuideTreeRoot);
+        state.guideTreeRows = layout.rows;
+        state.guideTreeLayout = layout;
+        state.guideTreeWidth = layout.width;
+        document.documentElement.style.setProperty('--guideTreeWidth', `${layout.width}px`);
+        renderAlignment();
+    }
+    updateTreePlacementControls();
+}
+
+function createGuideTreeSpacer(stickyNames) {
+    const cell = document.createElement('div');
+    cell.className = `guide-tree-cell guide-tree-spacer ${stickyNames ? '' : 'static'}`;
+    cell.setAttribute('aria-hidden', 'true');
+    return cell;
+}
+
+function createGuideTreeCell(rowIndex, stickyNames) {
+    const cell = createGuideTreeSpacer(stickyNames);
+    cell.classList.remove('guide-tree-spacer');
+    cell.title = 'Guide tree topology';
+    return cell;
+}
+
+function renderGuideTreeOverlay(parent, stickyNames) {
+    parent.querySelectorAll(':scope > .guide-tree-overlay').forEach(overlay => overlay.remove());
+    const layout = state.guideTreeLayout;
+    if (!layout || !layout.segments?.length || state.seqs.length < 2) return;
+
+    const sequenceLines = Array.from(parent.querySelectorAll(':scope > .seq-line[data-seq-index]'));
+    if (sequenceLines.length !== state.seqs.length) return;
+
+    const rowCenters = [];
+    sequenceLines.forEach(line => {
+        const index = parseInt(line.dataset.seqIndex, 10);
+        if (!Number.isNaN(index)) rowCenters[index] = line.offsetTop + (line.offsetHeight / 2);
+    });
+    if (rowCenters.length !== state.seqs.length || rowCenters.some(value => typeof value !== 'number')) return;
+    const yForTreeRow = row => {
+        if (Number.isInteger(row)) return rowCenters[row];
+        const lower = Math.floor(row);
+        const upper = Math.ceil(row);
+        const fraction = row - lower;
+        return rowCenters[lower] + ((rowCenters[upper] - rowCenters[lower]) * fraction);
+    };
+
+    const overlay = document.createElement('div');
+    overlay.className = `guide-tree-overlay ${stickyNames ? '' : 'static'}`;
+    overlay.setAttribute('aria-hidden', 'true');
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.classList.add('guide-tree-svg');
+    svg.setAttribute('width', String(state.guideTreeWidth));
+    svg.setAttribute('height', String(Math.max(parent.scrollHeight, parent.offsetHeight)));
+    svg.setAttribute('viewBox', `0 0 ${state.guideTreeWidth} ${Math.max(parent.scrollHeight, parent.offsetHeight)}`);
+    svg.setAttribute('focusable', 'false');
+
+    layout.segments.forEach(segment => {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        if (segment.type === 'vertical') {
+            line.setAttribute('x1', segment.x);
+            line.setAttribute('x2', segment.x);
+            line.setAttribute('y1', yForTreeRow(segment.y1));
+            line.setAttribute('y2', yForTreeRow(segment.y2));
+        } else {
+            line.setAttribute('x1', segment.x1);
+            line.setAttribute('x2', segment.x2);
+            line.setAttribute('y1', yForTreeRow(segment.y));
+            line.setAttribute('y2', yForTreeRow(segment.y));
+        }
+        svg.appendChild(line);
+    });
+
+    overlay.appendChild(svg);
+    parent.insertBefore(overlay, parent.firstChild);
 }
 
 function getTreeInputSequences() {
@@ -5220,11 +5424,20 @@ function openTreeBuilder() {
             const newickOutput = document.getElementById('treeNewickOutput');
             const textOutput = document.getElementById('treeTextOutput');
             const scope = state.selectedRows.size >= 2 ? 'selected sequences' : 'all sequences';
+            state.lastTreeBuild = {
+                result,
+                signature: _guideTreeSignature(seqObjects),
+                seqObjects: seqObjects.slice(),
+                seqSignatures: new Map(seqObjects.map(seqObj => [seqObj, _guideTreeSeqObjectSignature(seqObj)])),
+                seqCount: seqObjects.length,
+                scope
+            };
             if (summary) {
                 summary.textContent = `${result.stats.count} ${scope} · alignment p-distance · UPGMA · avg ${result.stats.averageDistance.toFixed(4)} · range ${result.stats.minDistance.toFixed(4)}-${result.stats.maxDistance.toFixed(4)}`;
             }
             if (newickOutput) newickOutput.value = result.newick;
             if (textOutput) textOutput.textContent = result.text;
+            updateTreePlacementControls();
             if (modal) modal.style.display = 'block';
             showMessage('Tree built.', 1200);
         } catch (err) {
@@ -6581,37 +6794,11 @@ function showContextMenu(e, index) {
         contextMenu.appendChild(removeGapItem);
     }
 
-    // Separator before movement/edit items
+    // Separator before edit items
     const sepMovement = document.createElement('div');
     sepMovement.style.borderTop = '1px solid #ccc';
     sepMovement.style.margin = '4px 0';
     contextMenu.appendChild(sepMovement);
-
-    // Move to Top
-    const moveTopItem = document.createElement('div');
-    moveTopItem.textContent = 'Move to Top';
-    moveTopItem.addEventListener('click', () => {
-        if (!state.selectedRows.has(index)) {
-            state.selectedRows.clear();
-            state.selectedRows.add(index);
-        }
-        moveSelectedToTop();
-        closeContextMenu();
-    });
-    contextMenu.appendChild(moveTopItem);
-
-    // Move to Bottom
-    const moveBottomItem = document.createElement('div');
-    moveBottomItem.textContent = 'Move to Bottom';
-    moveBottomItem.addEventListener('click', () => {
-        if (!state.selectedRows.has(index)) {
-            state.selectedRows.clear();
-            state.selectedRows.add(index);
-        }
-        moveSelectedToBottom();
-        closeContextMenu();
-    });
-    contextMenu.appendChild(moveBottomItem);
 
     // Edit in Sequence Editor
     const seqEditItem = document.createElement('div');
@@ -6985,6 +7172,8 @@ function initializeAppUI() {
         'tsdFinderButton': openTsdFinder,
         'buildTreeButton': openTreeBuilder,
         'treeBuilderCloseBtn': closeTreeBuilder,
+        'treePlaceAlignmentBtn': placeTreeOnAlignment,
+        'treeRemoveAlignmentBtn': removeTreeFromAlignment,
         'treeCopyNewickBtn': copyTreeNewick,
         'treeDownloadNewickBtn': downloadTreeNewick,
         'selectAllButton': selectAllSequences,
@@ -7052,6 +7241,10 @@ function initializeAppUI() {
         treeBuilderModal.addEventListener('click', (e) => {
             if (e.target === treeBuilderModal) closeTreeBuilder();
         });
+    }
+    const treeBranchWidthSlider = document.getElementById('treeBranchWidthSlider');
+    if (treeBranchWidthSlider) {
+        treeBranchWidthSlider.addEventListener('input', (event) => setTreeBranchWidth(event.target.value));
     }
 
     // Click outside to close SeqEdit modal
@@ -8287,53 +8480,12 @@ function copySequencesByColor(colour, ungapped = false, asFasta = true) {
 
 // Sort sequences by their assigned color
 function sortSequencesByColor() {
-    const colorOrder = new Map();
-    let colorIndex = 0;
-    
-    // First pass: assign order to each color
-    state.seqs.forEach((seq) => {
-        const color = colourState.mappings.get(seq.header);
-        if (color && !colorOrder.has(color)) {
-            colorOrder.set(color, colorIndex++);
-        }
-    });
-    
-    // Sort: colored seqs first (by color), then uncolored
-    const sortedSeqs = [...state.seqs].sort((a, b) => {
-        const colorA = colourState.mappings.get(a.header);
-        const colorB = colourState.mappings.get(b.header);
-        
-        const orderA = colorA ? colorOrder.get(colorA) : Infinity;
-        const orderB = colorB ? colorOrder.get(colorB) : Infinity;
-        
-        return orderA - orderB;
-    });
-    
-    // Update state and re-render
-    state.seqs = sortedSeqs;
-    state.selectedRows.clear();
-    renderAlignment();
-    showMessage('Sequences sorted by color', 2000);
+    showGuideTreeOrderMessage();
 }
 
 // Group colored sequences at top
 function groupColoredSequencesAtTop() {
-    const coloredSeqs = [];
-    const ungroupedSeqs = [];
-    
-    state.seqs.forEach((seq) => {
-        if (colourState.mappings.has(seq.header)) {
-            coloredSeqs.push(seq);
-        } else {
-            ungroupedSeqs.push(seq);
-        }
-    });
-    
-    // Combine: colored at top, then ungrouped
-    state.seqs = [...coloredSeqs, ...ungroupedSeqs];
-    state.selectedRows.clear();
-    renderAlignment();
-    showMessage(`Moved ${coloredSeqs.length} colored sequence(s) to top`, 2000);
+    showGuideTreeOrderMessage();
 }
 
 // 10-color discrete palette

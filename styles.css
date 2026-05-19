@@ -27,6 +27,8 @@
     --darkShading: #555;
     --lightShading: #ccc;
     --blackText: white;
+    --guideTreeWidth: 0px;
+    --guideTreeLineColor: #637083;
 }
 #dropZone {
     border: 2px dashed var(--dropzone-border);
@@ -629,6 +631,7 @@ input[type="number"] {
 }
 .block-block {
     margin-bottom: 24px;
+    position: relative;
 }
 .block-sep {
     font-weight: bold;
@@ -640,7 +643,7 @@ input[type="number"] {
     border-radius: 3px;
 }
 #alignmentContainer {
-    position: static; /* flow in document under controls/status */
+    position: relative; /* flow in document under controls/status */
     margin: 0;
     padding: 2px 0.5rem 0 0.5rem;
     overflow-x: auto;
@@ -682,7 +685,6 @@ input[type="number"] {
     min-width: max-content;
     height: 1em;
 }
-
 /* Persistent tiny scrollbar area below the alignment */
 .horizontal-scrollbar {
     width: 100%;
@@ -759,7 +761,7 @@ input[type="number"] {
     background: white;
     cursor: default;
     position: sticky;
-    left: -15px;
+    left: calc(var(--guideTreeWidth) - 15px);
     z-index: 50;
     user-select: none;
     -moz-user-select: none;
@@ -767,6 +769,54 @@ input[type="number"] {
     -ms-user-select: none;
     contain: style;
     line-height: 1.0;
+}
+.guide-tree-cell {
+    flex: 0 0 var(--guideTreeWidth);
+    width: var(--guideTreeWidth);
+    min-width: var(--guideTreeWidth);
+    height: 1em;
+    position: sticky;
+    left: -15px;
+    z-index: 51;
+    background: white;
+    pointer-events: none;
+    overflow: hidden;
+    contain: strict;
+}
+.guide-tree-overlay {
+    position: sticky;
+    left: -15px;
+    top: 0;
+    width: var(--guideTreeWidth);
+    height: 0;
+    z-index: 52;
+    pointer-events: none;
+    overflow: visible;
+}
+.guide-tree-overlay.static {
+    position: absolute;
+    left: 0;
+}
+.guide-tree-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    overflow: visible;
+}
+.guide-tree-svg line {
+    stroke: var(--guideTreeLineColor);
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+    shape-rendering: crispEdges;
+}
+.guide-tree-cell.static {
+    position: static;
+}
+#alignmentContainer:not(.has-guide-tree) .guide-tree-cell {
+    display: none;
+}
+#alignmentContainer:not(.has-guide-tree) .guide-tree-overlay {
+    display: none;
 }
 .seq-name.static {
     position: static;

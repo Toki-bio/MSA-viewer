@@ -416,10 +416,6 @@
                         <!-- Actions Section -->
                         <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
                             <div style="font-weight: bold; font-size: 11px; margin-bottom: 4px;">Actions</div>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 4px;">
-                                <button id="colourSortButton" style="height: 24px; font-size: 11px;">Sort by Color</button>
-                                <button id="colourGroupButton" style="height: 24px; font-size: 11px;">Group at Top</button>
-                            </div>
                             <div style="display: flex;">
                                 <button id="colourInspectButton" style="flex: 1; height: 24px; font-size: 11px;" title="View color assignment history">Inspect Colors</button>
                             </div>
@@ -498,15 +494,6 @@
                             <button id="copySelectedButton" title="Copy selected sequences (Ctrl+Shift+C)">Copy Sel</button>
                             <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">Copy Align</button>
                             <button id="deleteSelectedButton" title="Delete selected sequences (Ctrl+Del)">Delete Sel</button>
-                        </div>
-                    </div>
-                    <div class="action-section">
-                        <div class="action-section-label">Order</div>
-                        <div class="button-group">
-                            <button id="moveUpButton" title="Move selected up (Ctrl+Up)">Up</button>
-                            <button id="moveDownButton" title="Move selected down (Ctrl+Down)">Down</button>
-                            <button id="moveToTopButton" title="Move selected to top (Ctrl+Home)">To Top</button>
-                            <button id="moveToBottomButton" title="Move selected to bottom (Ctrl+End)">To Bottom</button>
                         </div>
                     </div>
                     <div class="action-section">
@@ -604,10 +591,6 @@
                 <strong>Ctrl+R</strong><span>Reverse complement</span>
                 <strong>Ctrl+U</strong><span>Duplicate</span>
                 <strong>Ctrl+B</strong><span>Consensus below</span>
-                <strong>Ctrl+Up</strong><span>Move selected up</span>
-                <strong>Ctrl+Down</strong><span>Move selected down</span>
-                <strong>Ctrl+Home</strong><span>Move to top</span>
-                <strong>Ctrl+End</strong><span>Move to bottom</span>
                 <strong>Ctrl+Shift+V</strong><span>Copy columns</span>
                 <strong>Ctrl+Shift+D</strong><span>Delete columns</span>
                 <strong>Ctrl+Shift+R</strong><span>Realign block</span>
@@ -792,6 +775,17 @@ B: —</pre>
             </div>
             <div id="treeBuilderSummary" style="font-size:12px;color:#555;margin-bottom:8px;"></div>
             <textarea id="treeNewickOutput" readonly style="width:100%;height:130px;box-sizing:border-box;font-family:'Courier New',monospace;font-size:11px;white-space:pre;resize:vertical;"></textarea>
+            <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:8px 0;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap;" title="Width of horizontal branches when the tree is placed on the alignment">
+                    Branch length
+                    <input id="treeBranchWidthSlider" type="range" min="40" max="140" step="4" value="72" style="width:130px;">
+                    <span id="treeBranchWidthValue" style="min-width:36px;text-align:right;">72px</span>
+                </label>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+                    <button id="treePlaceAlignmentBtn" style="padding:4px 12px;font-size:12px;" title="Place this tree on the alignment and order rows by topology">Place on Alignment</button>
+                    <button id="treeRemoveAlignmentBtn" style="padding:4px 12px;font-size:12px;" title="Remove the tree from the alignment view">Remove from Alignment</button>
+                </div>
+            </div>
             <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;margin:8px 0;">
                 <button id="treeCopyNewickBtn" style="padding:4px 12px;font-size:12px;">Copy Newick</button>
                 <button id="treeDownloadNewickBtn" style="padding:4px 12px;font-size:12px;">Download .nwk</button>
