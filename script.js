@@ -121,6 +121,24 @@ let _sshPollRunning = false;
 let _pollableServers = [];  // Only servers with direct SSH (no jump host)
 
 // --- Server selector helpers (toggle button group) ---
+function setSelectedServer(key) {
+    const btns = document.querySelectorAll('#sshServerBtnGroup .srv-btn');
+    btns.forEach(b => {
+        if (b.dataset.server === key) {
+            b.classList.add('srv-active');
+            b.style.background = '#4a90d9'; b.style.color = '#fff';
+        } else {
+            b.classList.remove('srv-active');
+            b.style.background = '#f0f0f0'; b.style.color = '#333';
+        }
+    });
+}
+
+function getSelectedServer() {
+    const active = document.querySelector('#sshServerBtnGroup .srv-active');
+    return active ? active.dataset.server : (_pollableServers[0] || 'default');
+}
+
 function _buildServerButtons(servers) {
     const group = document.getElementById('sshServerBtnGroup');
     if (!group) return;
