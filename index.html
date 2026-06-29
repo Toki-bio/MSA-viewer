@@ -564,6 +564,7 @@
                             <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
                             <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
                             <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
+                            <button id="manualButton" title="Open comprehensive manual in new tab" onclick="window.open('manual.html','_blank')">📖 Manual</button>
                             <button id="minimizeBtn" title="Hide menu (Ctrl+H)">Hide Menu</button>
                         </div>
                     </div>
@@ -650,6 +651,7 @@
                 <strong>Ctrl+I</strong><span>Show this info</span>
             </div>
             <div style="margin-top: 20px; text-align: right;">
+                <button onclick="window.open('manual.html','_blank')" style="padding: 8px 16px; cursor: pointer; margin-right: 8px;">📖 Full Manual</button>
                 <button onclick="document.getElementById('infoModal').style.display='none'" style="padding: 8px 16px; cursor: pointer;">Close</button>
             </div>
         </div>
