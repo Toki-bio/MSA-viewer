@@ -1481,6 +1481,165 @@ function _computeCodonAnalysis(seqs, len) {
     return { phase, stops, frameShifts, synNonSyn, aaSeq, refIdx };
 }
 
+// =====================================================================
+// CANVAS-BASED RENDERER — for large alignments
+// Draws only visible area, no per-residue DOM nodes
+// =====================================================================
+const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen: 0 };
+
+function _initCanvasMetrics(ctx) {
+    if (_canvasState.metrics) return _canvasState.metrics;
+    ctx.font = '12px "Courier New", monospace';
+    const m = ctx.measureText('X');
+    _canvasState.metrics = { charW: m.width, charH: m.fontBoundingBoxAscent + m.fontBoundingBoxDescent || 14 };
+    return _canvasState.metrics;
+}
+
+function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
+                                  enableBlack, enableDark, enableLight, nameLen, stickyNames) {
+    alignmentContainer.innerHTML = '';
+    alignmentContainer.style.overflow = 'hidden';
+    alignmentContainer.style.position = 'relative';
+
+    const canvas = document.createElement('canvas');
+    canvas.id = 'alignmentCanvas';
+    canvas.style.display = 'block';
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    alignmentContainer.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d');
+    const m = _initCanvasMetrics(ctx);
+    const CHAR_W = m.charW;
+    const CHAR_H = m.charH;
+    const NAME_W = nameLen * CHAR_W + 8;
+    const nSeqs = state.seqs.length;
+    const totalContentW = NAME_W + len * CHAR_W + 4;
+    const totalContentH = nSeqs * CHAR_H + 4;
+
+    // Resize canvas to viewport
+    function resize() {
+        const rect = alignmentContainer.getBoundingClientRect();
+        canvas.width = rect.width * (window.devicePixelRatio || 1);
+        canvas.height = rect.height * (window.devicePixelRatio || 1);
+        canvas.style.width = rect.width + 'px';
+        canvas.style.height = rect.height + 'px';
+        ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
+    }
+    resize();
+    window.addEventListener('resize', () => { resize(); draw(); });
+
+    // Clamp offsets
+    function clampOffsets() {
+        const w = parseInt(canvas.style.width) || 800;
+        const h = parseInt(canvas.style.height) || 600;
+        _canvasState.offsetX = Math.max(0, Math.min(_canvasState.offsetX, totalContentW - w));
+        _canvasState.offsetY = Math.max(0, Math.min(_canvasState.offsetY, totalContentH - h));
+    }
+
+    // Draw
+    function draw() {
+        clampOffsets();
+        const w = parseInt(canvas.style.width) || 800;
+        const h = parseInt(canvas.style.height) || 600;
+        const ox = _canvasState.offsetX;
+        const oy = _canvasState.offsetY;
+        const firstCol = Math.max(0, Math.floor((ox - NAME_W) / CHAR_W));
+        const lastCol = Math.min(len - 1, Math.ceil((ox - NAME_W + w) / CHAR_W));
+        const firstRow = Math.max(0, Math.floor(oy / CHAR_H));
+        const lastRow = Math.min(nSeqs - 1, Math.ceil((oy + h) / CHAR_H));
+
+        ctx.clearRect(0, 0, w, h);
+        ctx.font = '12px "Courier New", monospace';
+        ctx.textBaseline = 'top';
+
+        for (let i = firstRow; i <= lastRow; i++) {
+            const y = i * CHAR_H - oy;
+            const seq = state.seqs[i].seq;
+            const consPos = conservationData;
+
+            // Sequence name
+            if (ox < NAME_W) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(0, y, NAME_W, CHAR_H);
+                ctx.clip();
+                ctx.fillStyle = '#555';
+                const name = state.seqs[i].header || ('Seq' + (i + 1));
+                const displayName = name.length > nameLen ? name.substring(0, nameLen) + '\u2026' : name;
+                ctx.fillText(displayName, 4 - ox, y);
+                ctx.restore();
+            }
+
+            // Residues
+            for (let p = firstCol; p <= lastCol; p++) {
+                const x = NAME_W + p * CHAR_W - ox;
+                const base = seq[p] || '-';
+                const baseUp = base.toUpperCase();
+                const pd = consPos[p];
+                let fill = '#333';
+
+                if (pd && pd.hasData && pd.hasValidCoverage) {
+                    if (baseUp !== '-' && baseUp !== '.' && pd.consensusBases && pd.consensusBases.has(baseUp)) {
+                        if (enableBlack && pd.conservation >= blackThresh) fill = '#000';
+                        else if (enableDark && pd.conservation >= darkThresh) fill = '#444';
+                        else if (enableLight && pd.conservation >= lightThresh) fill = '#888';
+                    } else if (baseUp === '-' || baseUp === '.') {
+                        fill = '#ccc';
+                    }
+                } else if (baseUp === '-' || baseUp === '.') {
+                    fill = '#ccc';
+                }
+
+                ctx.fillStyle = fill;
+                ctx.fillText(base, x, y);
+            }
+
+            // Row separator
+            ctx.fillStyle = '#eee';
+            ctx.fillRect(0, y + CHAR_H - 1, totalContentW - ox, 1);
+        }
+
+        // Name column separator
+        ctx.fillStyle = '#ddd';
+        ctx.fillRect(NAME_W - ox - 2, 0, 1, totalContentH - oy);
+    }
+
+    // Scroll handling
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        _canvasState.offsetX += e.deltaX;
+        _canvasState.offsetY += e.deltaY;
+        draw();
+    }, { passive: false });
+
+    // Touch/drag pan
+    let dragging = false, dragStartX, dragStartY, dragOx, dragOy;
+    canvas.addEventListener('mousedown', (e) => {
+        if (e.button === 0) { // left button only for pan
+            dragging = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dragOx = _canvasState.offsetX;
+            dragOy = _canvasState.offsetY;
+            canvas.style.cursor = 'grabbing';
+        }
+    });
+    window.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        _canvasState.offsetX = dragOx - (e.clientX - dragStartX);
+        _canvasState.offsetY = dragOy - (e.clientY - dragStartY);
+        draw();
+    });
+    window.addEventListener('mouseup', () => {
+        dragging = false;
+        canvas.style.cursor = 'default';
+    });
+
+    draw();
+}
+
 function parseFasta(text) {
     const lines = text.trim().split(/\r?\n/);
     const seqs = [];
@@ -2186,6 +2345,13 @@ function renderAlignment(options = {}) {
         renderCompactAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
             enableBlack, enableDark, enableLight, nameLen, stickyNames, standard, ambiguous, ambiguousMap,
             showConsensus, consType, threshold, fallbackMode, coverageMin);
+        return;
+    }
+    
+    const useCanvas = document.getElementById('modeCanvas')?.checked;
+    if (useCanvas) {
+        _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
+            enableBlack, enableDark, enableLight, nameLen, stickyNames);
         return;
     }
 
