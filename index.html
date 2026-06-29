@@ -168,6 +168,12 @@
                             <label for="modeSingle">Full</label>
                             <input type="radio" id="modeCompact" name="mode" value="compact" title="IGV-style compact read packing">
                         <label for="modeCompact">Compact</label>
+                        <label style="margin-left:8px;font-size:11px;" title="In compact mode: show only positions differing from reference">
+                            <input type="checkbox" id="compactDiffOnly"> Diffs only
+                        </label>
+                        <label style="font-size:11px;" title="Show connecting lines between paired reads">
+                            <input type="checkbox" id="compactPairs"> Pairs
+                        </label>
                         <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Display alignment in blocks for better readability">
                             <label for="modeBlocks">Block</label>
                         </div>
