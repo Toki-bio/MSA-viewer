@@ -3939,6 +3939,138 @@ function exportFullAlignmentAsSvg() {
     _exportAlignmentAsSvg('full');
 }
 
+// GeneDoc-style RTF export with per-residue conservation shading
+function exportAlignmentAsRtf() {
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage('Load an alignment first.', 3000);
+        return;
+    }
+
+    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const shadeMode = document.querySelector('input[name="shadeMode"]:checked')?.value || 'nongap';
+    const conservation = preCalculateConservation(state.seqs, len, shadeMode);
+    const blackThresh = parseInt(el('blackSlider')?.value || 90) / 100;
+    const darkThresh = parseInt(el('darkSlider')?.value || 70) / 100;
+    const lightThresh = parseInt(el('lightSlider')?.value || 50) / 100;
+    const enableBlack = el('enableBlack')?.checked !== false;
+    const enableDark = el('enableDark')?.checked !== false;
+    const enableLight = el('enableLight')?.checked !== false;
+
+    // Collect unique colors from rendered spans for accurate RTF color table
+    const colorMap = new Map();
+    const seqColors = [];
+    const consColors = [];
+    const defaultColor = '#ffffff';
+    colorMap.set(defaultColor, 0); // index 0 = white
+
+    const getColorIdx = (hex) => {
+        const k = (hex || defaultColor).toLowerCase();
+        if (!colorMap.has(k)) colorMap.set(k, colorMap.size);
+        return colorMap.get(k);
+    };
+
+    // Pre-compute colors for each position in each sequence
+    for (let i = 0; i < state.seqs.length; i++) {
+        const rowColors = [];
+        for (let pos = 0; pos < len; pos++) {
+            const cons = conservation[pos];
+            const base = state.seqs[i].seq[pos] || '-';
+            let color = defaultColor;
+            if (cons && cons.count > 0) {
+                const bestCount = cons.best ? cons.best.count : 0;
+                const count = (cons.baseCounts || {})[base.toUpperCase()] || 0;
+                const pct = cons.count > 0 ? count / cons.count : 0;
+                if (enableBlack && pct >= blackThresh) color = el('blackColorPicker')?.value || '#000000';
+                else if (enableDark && pct >= darkThresh) color = el('darkColorPicker')?.value || '#555555';
+                else if (enableLight && pct >= lightThresh) color = el('lightColorPicker')?.value || '#cccccc';
+            }
+            rowColors.push(getColorIdx(color));
+        }
+        seqColors.push(rowColors);
+    }
+
+    // Consensus colors
+    const showConsensus = el('showConsensus')?.checked;
+    if (showConsensus) {
+        const consSeq = computeConsensusForSequences(state.seqs.map(s => s.seq));
+        for (let pos = 0; pos < len; pos++) {
+            consColors.push(getColorIdx('#e8e8e8')); // light gray for consensus
+        }
+    }
+
+    // Build RTF
+    const rtfParts = [];
+    rtfParts.push('{\\rtf1\\ansi\\deff0');
+    rtfParts.push('{\\fonttbl{\\f0\\fmodern\\fprq1 Courier New;}}');
+
+    // Color table
+    rtfParts.push('{\\colortbl;');
+    const sortedColors = [...colorMap.entries()].sort((a, b) => a[1] - b[1]);
+    for (const [hex] of sortedColors) {
+        if (hex === defaultColor) continue; // already added as ;
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        rtfParts.push(`\\red${r}\\green${g}\\blue${b};`);
+    }
+    rtfParts.push('}');
+
+    rtfParts.push('\\f0\\fs18'); // Courier New, 9pt
+
+    // Scale ruler
+    const rulerParts = [];
+    for (let pos = 1; pos <= len; pos++) {
+        if (pos % 10 === 0) {
+            const s = String(pos);
+            rulerParts.push(s);
+        } else if (pos % 10 === 1) {
+            rulerParts.push(' ');
+        }
+    }
+    const ruler = rulerParts.join('');
+    rtfParts.push(`\\b ${ruler}\\b0\\line`);
+
+    // Consensus line
+    if (showConsensus) {
+        let consLine = '';
+        for (let pos = 0; pos < len; pos++) {
+            const ci = consColors[pos] || 0;
+            const ch = computeConsensusForSequences(state.seqs.map(s => s.seq))[pos] || '-';
+            consLine += `{\\highlight${ci} ${ch}}`;
+        }
+        rtfParts.push(`\\b Consensus\\b0\\line`);
+        rtfParts.push(`${consLine}\\line`);
+    }
+
+    // Sequences
+    const nameLen = parseInt(el('nameLengthSlider')?.value || 25);
+    for (let i = 0; i < state.seqs.length; i++) {
+        const name = (state.seqs[i].header || `Seq${i + 1}`).padEnd(nameLen).substring(0, nameLen);
+        let seqLine = '';
+        for (let pos = 0; pos < len; pos++) {
+            const ci = seqColors[i][pos] || 0;
+            const ch = state.seqs[i].seq[pos] || '-';
+            seqLine += `{\\highlight${ci} ${ch}}`;
+        }
+        rtfParts.push(`${name} ${seqLine}\\line`);
+    }
+
+    rtfParts.push('}');
+    const rtf = rtfParts.join('\n');
+
+    const blob = new Blob([rtf], { type: 'application/rtf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeName = (state.currentFilename || 'alignment').replace(/[^a-z0-9._-]+/gi, '_');
+    a.href = url;
+    a.download = `${safeName || 'alignment'}.rtf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    showMessage('Alignment exported as RTF (open in Word)!', 2500);
+}
+
 function minimizeMenu() {
     const controls = el('controls');
     controls.style.display = 'none';
@@ -7125,6 +7257,7 @@ function initializeAppUI() {
         'snapshotButton': createSnapshot,
         'snapshotCreateTopButton': createSnapshot,
         'exportSvgTopButton': exportVisibleViewportAsSvg,
+        'exportRtfButton': exportAlignmentAsRtf,
         'exportSvgFullTopButton': exportFullAlignmentAsSvg,
         'snapshotRefreshButton': refreshSnapshotList,
         'snapshotOpenButton': openSelectedSnapshotFromInputMenu,
