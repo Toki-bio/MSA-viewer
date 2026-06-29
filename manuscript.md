@@ -1,4 +1,4 @@
-# MSA Viewer: a browser-based platform for multiple sequence alignment visualization, editing, and analysis
+# ViewAlign: a browser-based platform for multiple sequence alignment visualization, editing, and analysis
 
 ## Target
 **Bioinformatics (Oxford) — Application Note**
@@ -9,7 +9,7 @@
 
 ## Summary
 
-MSA Viewer is a browser-based platform for interactive visualization, editing, and analysis of multiple sequence alignments. It supports DNA, RNA, protein, and coding-sequence data across five interchangeable view modes, including a Canvas-based renderer with automatic viewport-culling activation for large alignments and an IGV-style compact read-packing mode. Eight input formats are supported — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, and BAM/CRAM — with automatic format detection. Built-in analysis tools include codon-aware frame detection with 17 selectable genetic codes, synonymous/non-synonymous mutation classification, a position-pattern-based sequence clustering algorithm with fuzzy merging and configurable quality thresholds, dot-plot self-comparison with region detection, tandem repeat and target-site duplication finding, UPGMA tree reconstruction, and regular-expression motif search. Sequences can be individually colour-labelled, sorted by name, length, or similarity, and edited through a GeneDoc-style residue editor with full undo history. The viewer exports publication-quality SVG vector graphics and Word-compatible RTF with per-residue conservation shading. A snapshot system saves and restores complete viewer states including colour assignments, search highlights, and column selections. A recent-files history with localStorage persistence tracks opened files and clipboard pastes. An optional Node.js server provides MAFFT realignment, BLAST search, SSH remote file loading, and BAM-to-SAM conversion. The viewer runs entirely in modern browsers with no installation and is freely available at https://toki-bio.github.io/MSA-viewer/ under the MIT license.
+ViewAlign is a browser-based platform for interactive visualization, editing, and analysis of multiple sequence alignments. It supports DNA, RNA, protein, and coding-sequence data across five interchangeable view modes, including a Canvas-based renderer with automatic viewport-culling activation for large alignments and an IGV-style compact read-packing mode. Eight input formats are supported — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, and BAM/CRAM — with automatic format detection. Built-in analysis tools include codon-aware frame detection with 17 selectable genetic codes, synonymous/non-synonymous mutation classification, a position-pattern-based sequence clustering algorithm with fuzzy merging and configurable quality thresholds, dot-plot self-comparison with region detection, tandem repeat and target-site duplication finding, UPGMA tree reconstruction, and regular-expression motif search. Sequences can be individually colour-labelled, sorted by name, length, or similarity, and edited through a GeneDoc-style residue editor with full undo history. The viewer exports publication-quality SVG vector graphics and Word-compatible RTF with per-residue conservation shading. A snapshot system saves and restores complete viewer states including colour assignments, search highlights, and column selections. A recent-files history with localStorage persistence tracks opened files and clipboard pastes. An optional Node.js server provides MAFFT realignment, BLAST search, SSH remote file loading, and BAM-to-SAM conversion. The viewer runs entirely in modern browsers with no installation and is freely available at https://toki-bio.github.io/MSA-viewer/ under the MIT license.
 
 **Availability:** https://toki-bio.github.io/MSA-viewer/ — source code, comprehensive manual, and example data at https://github.com/Toki-bio/MSA-viewer
 **Contact:** [email]
@@ -23,7 +23,7 @@ Multiple sequence alignment (MSA) is a foundational technique in computational b
 
 Desktop viewers such as Jalview (Waterhouse et al., 2009), AliView (Larsson, 2014), and SeaView (Gouy et al., 2010) provide rich feature sets but are tied to Java or native binaries. The browser-based MSAViewer (Yachdav et al., 2016) demonstrated JavaScript-based MSA visualization but is limited to display without editing or analysis. IGV (Robinson et al., 2011) excels at read-level visualization but lacks codon-level analysis or traditional MSA editing. Furthermore, no existing tool accepts the full range of alignment formats — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, and BAM/CRAM — in a single interface, compelling users to pre-convert between formats.
 
-Here we present MSA Viewer, a self-contained browser application that bridges these gaps. It combines automatic format detection, interactive editing, NGS read alignment viewing, coding-sequence analysis, and publication-quality export in a zero-installation package with no framework dependencies.
+Here we present ViewAlign, a self-contained browser application that bridges these gaps. It combines automatic format detection, interactive editing, NGS read alignment viewing, coding-sequence analysis, and publication-quality export in a zero-installation package with no framework dependencies.
 
 ---
 
@@ -31,7 +31,7 @@ Here we present MSA Viewer, a self-contained browser application that bridges th
 
 ### 2.1 Architecture
 
-MSA Viewer is a single-page web application in vanilla JavaScript (~12,000 lines) with standard HTML and CSS. It has no framework dependencies, build step, or required installation. The client is hosted on GitHub Pages; an optional Node.js Express server (`server.js`) provides backend services (MAFFT, BLAST, samtools). The server is not required for core functionality.
+ViewAlign is a single-page web application in vanilla JavaScript (~12,000 lines) with standard HTML and CSS. It has no framework dependencies, build step, or required installation. The client is hosted on GitHub Pages; an optional Node.js Express server (`server.js`) provides backend services (MAFFT, BLAST, samtools). The server is not required for core functionality.
 
 ### 2.2 Data Loading and Format Support
 
@@ -104,11 +104,11 @@ Export options: FASTA (full alignment or selected sequences), MSF, RTF (Word-com
 
 ## 3. Discussion and Conclusion
 
-MSA Viewer addresses the gap between desktop alignment tools and modern web-based bioinformatics workflows. By combining automatic format detection across eight input types, a Canvas rendering mode with auto-activation thresholds, interactive editing with full undo history, coding-sequence analysis, and publication-quality export in a zero-installation browser application, it eliminates the format-conversion and installation barriers that fragment current MSA workflows.
+ViewAlign addresses the gap between desktop alignment tools and modern web-based bioinformatics workflows. By combining automatic format detection across eight input types, a Canvas rendering mode with auto-activation thresholds, interactive editing with full undo history, coding-sequence analysis, and publication-quality export in a zero-installation browser application, it eliminates the format-conversion and installation barriers that fragment current MSA workflows.
 
 The Canvas renderer's viewport-culling approach matches the strategy used by MSAViewer (Yachdav et al., 2016) and IGV.js (Robinson et al., 2011), while CSS optimizations — `content-visibility: auto`, `contain: layout style`, and GPU-composited scrolling — deliver responsive DOM-based interaction for alignments up to approximately 200 sequences × 5,000 columns. The 17 selectable genetic codes and frameshift detection extend the MACSE paradigm (Ranwez et al., 2011) to a browser environment for the first time. The customizable multi-threshold shading system and per-sequence colour labelling provide visualization flexibility absent from most web-based viewers, while the position-pattern clustering algorithm enables subfamily-level annotation of repetitive elements directly within the viewer.
 
-Limitations include the absence of protein-level analyses (BLOSUM-based dot plots, structural feature annotation) and deeper phylogenetic integration. A WebAssembly-based MAFFT module is planned to eliminate the server dependency for realignment. MSA Viewer is freely available, runs without installation, and includes a comprehensive 9-section manual.
+Limitations include the absence of protein-level analyses (BLOSUM-based dot plots, structural feature annotation) and deeper phylogenetic integration. A WebAssembly-based MAFFT module is planned to eliminate the server dependency for realignment. ViewAlign is freely available, runs without installation, and includes a comprehensive 9-section manual.
 
 ---
 

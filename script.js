@@ -1,23 +1,23 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// MSA Viewer — browser-based multiple sequence alignment viewer & editor
+// ViewAlign — browser-based multiple sequence alignment viewer & editor
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // EXTERNAL CODE & ATTRIBUTION
 // ===========================
-// • MAFFT — alignment engine compiled to WebAssembly (disttbfast.js, mafft-wasm.js).
+// • MAFFT - alignment engine compiled to WebAssembly (disttbfast.js, mafft-wasm.js).
 //   Katoh K, Standley DM (2013) Mol Biol Evol 30:772-780. BSD license.
-// • GeneDoc — editing tools (Move NoGaps, Slide KeepGaps, RTF export) modeled after
+// • GeneDoc - editing tools (Move NoGaps, Slide KeepGaps, RTF export) modeled after
 //   GeneDoc's Arrange/MoveText and SlideText operations.
 //   Nicholas KB et al. (1997) EMBNEW.NEWS 4:14.
-// • IGV — Compact read-packing view inspired by the Integrative Genomics Viewer.
+// • IGV - Compact read-packing view inspired by the Integrative Genomics Viewer.
 //   Robinson JT et al. (2011) Nat Biotechnol 29:24-26.
-// • MACSE — Codon-aware visualization inspired by MACSE's approach.
+// • MACSE - Codon-aware visualization inspired by MACSE's approach.
 //   Ranwez V et al. (2011) PLoS ONE 6:e22594.
-// • Clustal — Clustal shading scheme and .aln format parser.
+// • Clustal - Clustal shading scheme and .aln format parser.
 //   Sievers F et al. (2011) Mol Syst Biol 7:539.
-// • BLOSUM62 — similarity matrix for amino acid grouping.
+// • BLOSUM62 - similarity matrix for amino acid grouping.
 //   Henikoff S, Henikoff JG (1992) PNAS 89:10915-10919.
-// • samtools — BAM/CRAM conversion (server-side).
+// • samtools - BAM/CRAM conversion (server-side).
 //   Li H et al. (2009) Bioinformatics 25:2078-2079.
 //
 // All external code is used under its original open-source license.
@@ -35,7 +35,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = '728b3ac';
+const APP_VERSION = '087ecd7';
 
 const state = {
     seqs: [],
@@ -459,7 +459,7 @@ async function fetchFileFromServer(filePath, serverKey) {
             Notification.requestPermission();
         }
         if (document.hidden && Notification.permission === 'granted') {
-            new Notification('MSA Viewer', { body: `Loaded ${fname}` });
+            new Notification('ViewAlign', { body: `Loaded ${fname}` });
         }
     } catch (err) {
         _sshError(err.message);
@@ -3482,7 +3482,7 @@ function parseAndRender(isFromDrop = false) {
     }
 }
 function onModeChange() {
-    // Keep block size row visible but gray it out when not in Block mode — prevents layout jump
+    // Keep block size row visible but gray it out when not in Block mode - prevents layout jump
     const container = el('blockSizeContainer');
     const isBlocks = el('modeBlocks')?.checked;
     if (container) {
@@ -5031,7 +5031,7 @@ function downloadSnapshotHtml(snapshotUrl, sourceTitle) {
   <div class="box">
     <h2 style="margin-top:0">Alignment Snapshot</h2>
     <p>This file points to a stateful snapshot of your current MSA view.</p>
-    <p><a id="snapshotLink" href="${snapshotUrl}">Open snapshot in MSA Viewer</a></p>
+    <p><a id="snapshotLink" href="${snapshotUrl}">Open snapshot in ViewAlign</a></p>
     <p class="small">If auto-redirect is blocked, click the link above.</p>
   </div>
   <script>
@@ -10652,7 +10652,7 @@ function showBlastDialog(sequenceHeader, sequenceSeq) {
     const dbCheckboxes = {};
     const dbContainer = document.createElement('div');
     dbContainer.style.marginBottom = '16px';
-    
+
     // Loading indicator
     const dbLoading = document.createElement('div');
     dbLoading.textContent = 'Loading databases...';
@@ -10660,9 +10660,9 @@ function showBlastDialog(sequenceHeader, sequenceSeq) {
     dbLoading.style.color = '#888';
     dbLoading.style.marginBottom = '8px';
     dbContainer.appendChild(dbLoading);
-    
+
     let databases = [];
-    
+
     fetchDatabases().then(dbs => {
         databases = dbs;
         dbLoading.remove();
@@ -10700,9 +10700,9 @@ function showBlastDialog(sequenceHeader, sequenceSeq) {
             dbContainer.appendChild(label);
         }
     }).catch(() => {
-        dbLoading.textContent = 'Server not available — no BLAST databases';
+        dbLoading.textContent = 'Server not available - no BLAST databases';
     });
-    
+
     // Manage databases button
     const manageBtn = document.createElement('button');
     manageBtn.textContent = '+ Manage Databases';
@@ -10717,7 +10717,7 @@ function showBlastDialog(sequenceHeader, sequenceSeq) {
         showDbManagementModal();
     });
     dbContainer.appendChild(manageBtn);
-    
+
     content.appendChild(dbContainer);
 
     // E-value setting
