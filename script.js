@@ -1987,6 +1987,23 @@ function renderAlignment(options = {}) {
         return;
     }
 
+    // Highlight-diffs: mark fully-conserved columns for CSS dimming
+    const highlightDiffs = document.getElementById('highlightDiffs')?.checked;
+    if (highlightDiffs && state.seqs.length > 1) {
+        const conservedCols = new Set();
+        for (let pos = 0; pos < len; pos++) {
+            const cons = conservationData[pos];
+            if (cons && cons.best && cons.best.count === cons.count && cons.count === state.seqs.length) {
+                conservedCols.add(pos);
+            }
+        }
+        state._conservedColumns = conservedCols;
+        document.body.classList.add('highlight-diffs');
+    } else {
+        state._conservedColumns = null;
+        document.body.classList.remove('highlight-diffs');
+    }
+
     if (useBlocks) {
         for (let start = 0; start < len; start += blockWidth) {
             const end = Math.min(start + blockWidth, len);
@@ -2060,6 +2077,17 @@ function renderAlignment(options = {}) {
     // Re-apply sequence name colours if any mappings exist
     if (typeof applyColourToSeqNames === 'function' && colourState && colourState.mappings.size > 0) {
         applyColourToSeqNames(colourState.mappings);
+    }
+
+    // Post-process: apply diff-highlight dimming to fully-conserved columns
+    if (state._conservedColumns && state._conservedColumns.size > 0) {
+        const allSpans = alignmentContainer.querySelectorAll('.seq-data > span[data-pos]');
+        allSpans.forEach(span => {
+            const pos = parseInt(span.dataset.pos);
+            if (state._conservedColumns.has(pos)) {
+                span.classList.add('diff-conserved');
+            }
+        });
     }
 }
 
@@ -8088,10 +8116,15 @@ function attachUIListeners() {
 
     // Set up checkbox listeners
     const checkboxes = ['enableBlack', 'enableDark', 'enableLight', 'showConsensus',
-                        'compactDiffOnly', 'compactPairs'];
+                        'compactDiffOnly', 'compactPairs', 'highlightDiffs'];
     checkboxes.forEach(id => {
         const elRef = el(id);
-        if (elRef) elRef.addEventListener('change', debounceRender);
+        if (elRef) elRef.addEventListener('change', () => {
+            if (id === 'highlightDiffs') {
+                document.body.classList.toggle('highlight-diffs', elRef.checked);
+            }
+            debounceRender();
+        });
     });
 
     const sticky = el('stickyNames');
