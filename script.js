@@ -2295,6 +2295,26 @@ function renderAlignment(options = {}) {
     const enableLight = el('enableLight').checked;
     const stickyNames = el('stickyNames').checked;
     const useBlocks = el('modeBlocks').checked;
+    const useSingle = el('modeSingle').checked;
+    
+    // ── Auto-detect: Canvas for large alignments ──
+    const TOTAL_RESIDUES = state.seqs.length * len;
+    const CANVAS_AUTO_THRESHOLD = 150000; // ~100 seq × 1500 col
+    const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
+    const userPickedDom = document.getElementById('modeAutoCanvasDismissed')?.checked; // hidden flag
+    
+    if (!userWantsCanvas && !userPickedDom && TOTAL_RESIDUES > CANVAS_AUTO_THRESHOLD) {
+        const canvasRadio = document.getElementById('modeCanvas');
+        if (canvasRadio) canvasRadio.checked = true;
+        showMessage(
+            `Auto-switched to Canvas mode for ${TOTAL_RESIDUES.toLocaleString()} residues. ` +
+            `Switch back to Block/Full for editing.`,
+            6000
+        );
+        // Re-read to pick up the new checked state
+        // Canvas dispatch is handled below
+    }
+    
     const blockWidth = parseInt(el('blockSizeSlider').value);
     const nameLen = parseInt(nameLengthSlider.value);
     // Update CSS variable for scale ruler padding
