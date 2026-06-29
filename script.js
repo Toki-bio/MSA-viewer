@@ -8986,6 +8986,7 @@ function attachUIListeners() {
     if (zoomSlider) {
         zoomSlider.addEventListener('input', debounce(() => {
             setZoomFromSlider();
+            updateSliderBackground(zoomSlider);
         }, 50));
     }
 
