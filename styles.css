@@ -1352,6 +1352,15 @@ span.column-selected {
     gap: 2px;
     flex-wrap: wrap;
     row-gap: 2px;
+    height: auto;
+    min-height: 22px;
+}
+.mode-container input[type="checkbox"] {
+    vertical-align: middle;
+    margin: 0 2px 0 0;
+}
+.mode-container .slider-label {
+    align-self: center;
 }
 
 /* Display menu: need more width for mode controls */
