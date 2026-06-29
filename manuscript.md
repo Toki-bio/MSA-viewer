@@ -66,7 +66,7 @@ Conservation shading supports four modes (Identity, Similarity, Clustal, Zappo) 
 
 ### 2.5 Editing and Sequence Management
 
-Rows are selected by clicking or Ctrl+Clicking names, and reordered by drag-and-drop. The colour system supports manual assignment (per-sequence colour pickers), automatic colouring by name similarity (Levenshtein-clustered header prefixes with configurable sensitivity and discrete/gradient modes), regex-pattern matching on sequence names, and cluster-membership colouring — all tracked in a colour history inspector. Colour assignments function as selection metadata: sequences can be copied, grouped, or sorted by colour in one click.
+Rows are selected by clicking or Ctrl+Clicking names, and reordered by drag-and-drop. Three sort functions (A→Z, length descending, similarity to first) reorder all sequences at once. Sequence order can be exported as a portable JSON file and reimported later, decoupling ordering from the alignment file. The colour system supports manual assignment (per-sequence colour pickers), automatic colouring by name similarity (Levenshtein-clustered header prefixes with configurable sensitivity and discrete/gradient modes), regex-pattern matching on sequence names, and cluster-membership colouring — all tracked in a colour history inspector. Colour assignments function as selection metadata: sequences can be copied, grouped, or sorted by colour in one click.
 
 Edit Mode provides GeneDoc-style residue-level editing: type individual residues, insert or delete gap columns, and select column ranges. All operations are tracked in a random-access undo/redo stack with a visual dropdown history. A dedicated sequence text editor (SeqEdit) offers bulk transformations: degap, reverse, complement, reverse-complement, uppercase, and lowercase conversion with optional automatic length normalization. Selected column blocks can be de-gapped (with automatic all-gap column removal) or realigned in isolation via Ctrl+Shift+R, which extracts the block, de-gaps, runs MAFFT, and splices the result back without disturbing adjacent regions. Rows are reorderable by drag-and-drop, three sort criteria (name, length, similarity), or a k-mer UPGMA guide tree with optimal leaf ordering. Selected sequences can be replaced with their majority-rule consensus in a single operation, reducing alignment size while preserving subfamily signal. New sequences can be appended with gap-padding or realigned against the existing alignment via MAFFT in add-keep-length mode with automatic insertion-column propagation.
 
@@ -93,6 +93,8 @@ Clusters are displayed with diagnostic-feature tables, and sequences can be colo
 **UPGMA Tree.** Constructed from pairwise identity distances. Outputs Newick format with branch lengths (downloadable as `.nwk`) and a text-based tree visualization.
 
 **Snapshot system.** Saves and restores complete viewer states as JSON files: current alignment, colour assignments, search highlights, column selections, view mode, zoom level, and custom colours. Supports URL-based snapshot loading (`?snapshotFile=`).
+
+**BLAST search.** Right-clicking any sequence opens a BLAST dialog listing all configured databases, fetched dynamically from the server. A "+ Manage Databases" button opens a modal for uploading new FASTA databases (with automatic `makeblastdb` indexing) or deleting existing ones, including all index files.
 
 ### 2.9 Export
 

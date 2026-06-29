@@ -283,6 +283,8 @@ kbd {
     <tr><td>Reverse complement</td><td><kbd>Ctrl+R</kbd></td><td>Reverse and complement selected sequences (DNA)</td></tr>
     <tr><td>Move up/down</td><td><kbd>Ctrl+↑</kbd>/<kbd>↓</kbd></td><td>Reorder selected sequences</td></tr>
     <tr><td>Move to top/bottom</td><td><kbd>Ctrl+Home</kbd>/<kbd>End</kbd></td><td>Send selected to extremes</td></tr>
+    <tr><td>Sort A→Z / Len↓ / Sim↓</td><td>—</td><td>Sort all sequences by name, length (descending), or similarity to the first sequence</td></tr>
+    <tr><td>Exp / Imp</td><td>—</td><td>Export current sequence order as JSON; import and apply a saved order</td></tr>
     <tr><td>Undo / Redo</td><td><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd></td><td>Full undo history for all edit operations</td></tr>
   </table>
   <p>Click sequence names to select individual rows. <strong>Ctrl+Click</strong> for multi-select.
@@ -509,14 +511,33 @@ kbd {
 
   <h3>7.2 BLAST Search</h3>
   <p>
-    Run BLAST directly from the viewer. Search selected sequences against NCBI databases
-    or custom local BLAST databases. Results are displayed inline and can be used to
-    retrieve and align matching sequences.
+    Run BLAST directly from the viewer. Right-click a sequence name and select
+    <strong>BLAST</strong> or use the Actions menu. Results are displayed inline
+    with alignment previews and one-click retrieval.
   </p>
   <ul>
     <li><strong>NCBI BLAST</strong> — requires <code>BLAST_API_KEY</code> env var</li>
     <li><strong>Local BLAST</strong> — requires <code>blastn</code> / <code>blastp</code> in PATH and indexed databases</li>
   </ul>
+
+  <h4>7.2.1 BLAST Database Management</h4>
+  <p>
+    The BLAST dialog now fetches the database list dynamically from the server.
+    Click <strong>+ Manage Databases</strong> to open a management modal where you can:
+  </p>
+  <ul>
+    <li><strong>List databases</strong> — view all configured databases with availability status</li>
+    <li><strong>Add database</strong> — upload a FASTA file, set a name and description;
+      the server runs <code>makeblastdb</code> to index it automatically</li>
+    <li><strong>Delete database</strong> — remove a database and its BLAST index files
+      (<code>.nhr</code>, <code>.nin</code>, <code>.nsq</code>, etc.)</li>
+  </ul>
+  <p>
+    Database metadata is stored in <code>blast_dbs.json</code> in the server directory.
+    FASTA files and indexes reside in the <code>blast_dbs/</code> subdirectory.
+    Unavailable databases (missing files or unformatted) are shown greyed out with
+    checkboxes disabled.
+  </p>
 
   <h3>7.3 SSH Remote Loading</h3>
   <p>
