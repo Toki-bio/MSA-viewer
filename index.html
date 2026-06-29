@@ -162,44 +162,44 @@
                             <span class="slider-label" title="Toggle display mode">Mode</span>
                             <input type="radio" id="modeSingle" name="mode" value="single" title="Display full alignment in a single line">
                             <label for="modeSingle">Full</label>
-                            <input type="radio" id="modeCompact" name="mode" value="compact" title="IGV-style compact read packing">
-                        <label for="modeCompact">Compact</label>
-                            <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas-based fast renderer for large alignments — only draws visible area">
-                        <label for="modeCanvas">Canvas</label>
-                        <label style="margin-left:8px;font-size:11px;display:none;" class="compact-only" title="In compact mode: show only positions differing from reference">
-                            <input type="checkbox" id="compactDiffOnly"> Diffs only
-                        </label>
-                        <label style="font-size:11px;display:none;" class="compact-only compact-pairs-only" title="Show connecting lines between paired reads">
-                            <input type="checkbox" id="compactPairs"> Pairs
-                        </label>
-                        <label style="font-size:11px;margin-left:4px;" title="Dim fully conserved columns across all modes">
-                            <input type="checkbox" id="highlightDiffs"> Highlight diffs
-                        </label>
-                        <label style="font-size:11px;" title="Show only columns with variation (hide fully-conserved positions)">
-                            <input type="checkbox" id="varSitesOnly"> Var sites only
-                        </label>
-                        <label style="font-size:11px;" title="Codon-aware: frame detection, stop codons, syn/non-syn, AA translation. Requires CDS alignment (len multiple of 3).">
-                            <input type="checkbox" id="codonAnalysis"> Codons
-                        </label>
-                        <select id="codonCode" style="font-size:10px;margin-left:2px;padding:1px 2px;" title="Genetic code variant">
-                            <option value="1">Standard</option>
-                            <option value="2">Vert Mito</option>
-                            <option value="3">Yeast Mito</option>
-                            <option value="4">Mold Mito</option>
-                            <option value="5">Invert Mito</option>
-                            <option value="6">Ciliate</option>
-                            <option value="9">Echino Mito</option>
-                            <option value="10">Euplotid</option>
-                            <option value="11">Bacteria</option>
-                            <option value="12">Alt Yeast</option>
-                            <option value="13">Ascidian Mito</option>
-                            <option value="14">Flatworm Mito</option>
-                            <option value="16">Chlorophyc Mito</option>
-                            <option value="21">Trematode Mito</option>
-                            <option value="22">Scenedesmus</option>
-                        </select>
-                        <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Display alignment in blocks for better readability">
+                            <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Display alignment in blocks for better readability">
                             <label for="modeBlocks">Block</label>
+                            <input type="radio" id="modeCompact" name="mode" value="compact" title="IGV-style compact read packing">
+                            <label for="modeCompact">Compact</label>
+                            <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas-based fast renderer for large alignments — only draws visible area">
+                            <label for="modeCanvas">Canvas</label>
+                            <label style="margin-left:8px;font-size:11px;display:none;" class="compact-only" title="In compact mode: show only positions differing from reference">
+                                <input type="checkbox" id="compactDiffOnly"> Diffs only
+                            </label>
+                            <label style="font-size:11px;display:none;" class="compact-only compact-pairs-only" title="Show connecting lines between paired reads">
+                                <input type="checkbox" id="compactPairs"> Pairs
+                            </label>
+                            <label style="font-size:11px;margin-left:4px;" title="Dim fully conserved columns across all modes">
+                                <input type="checkbox" id="highlightDiffs"> Highlight diffs
+                            </label>
+                            <label style="font-size:11px;" title="Show only columns with variation (hide fully-conserved positions)">
+                                <input type="checkbox" id="varSitesOnly"> Var sites only
+                            </label>
+                            <label style="font-size:11px;" title="Codon-aware: frame detection, stop codons, syn/non-syn, AA translation. Requires CDS alignment (len multiple of 3).">
+                                <input type="checkbox" id="codonAnalysis"> Codons
+                            </label>
+                            <select id="codonCode" style="font-size:10px;margin-left:2px;padding:1px 2px;" title="Genetic code variant">
+                                <option value="1">Standard</option>
+                                <option value="2">Vert Mito</option>
+                                <option value="3">Yeast Mito</option>
+                                <option value="4">Mold Mito</option>
+                                <option value="5">Invert Mito</option>
+                                <option value="6">Ciliate</option>
+                                <option value="9">Echino Mito</option>
+                                <option value="10">Euplotid</option>
+                                <option value="11">Bacteria</option>
+                                <option value="12">Alt Yeast</option>
+                                <option value="13">Ascidian Mito</option>
+                                <option value="14">Flatworm Mito</option>
+                                <option value="16">Chlorophyc Mito</option>
+                                <option value="21">Trematode Mito</option>
+                                <option value="22">Scenedesmus</option>
+                            </select>
                         </div>
                         <div class="slider-container">
                             <input type="checkbox" id="stickyNames" checked title="Keep sequence names sticky when scrolling horizontally">
