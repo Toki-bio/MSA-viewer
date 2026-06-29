@@ -1,157 +1,293 @@
 # MSA Viewer — Expanded Feature Inventory
 
 > Supplementary material for the Bioinformatics Application Note.  
-> Each feature includes its novelty relative to existing browser-based MSA viewers.
+> Each feature describes **what it does** mechanically, not what it's called.  
+> "Why it's novel" explains the gap in existing tools.
 
 ---
 
 ## 📥 Input & Format Support
 
-| Feature | What it does | Why it's novel |
-|---------|-------------|----------------|
-| **8 input formats** | FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, BAM/CRAM | No other browser-based viewer accepts SAM/BAM/CRAM as input. Most desktop tools require pre-conversion. |
-| **Automatic format detection** | Detects format from content, not filename extension | Eliminates a common user friction point. SAM is distinguished from FASTA by CIGAR and `@HD` headers. |
-| **SAM CIGAR expansion** | All 11 CIGAR operations (M, I, D, N, S, H, P, =, X, B, soft-clip variants) expanded to gapped alignment | Full BAM/SAM specification support — not just M/I/D. |
-| **Pileup consensus** | When loading SAM, a majority-rule consensus is computed from mapped reads as the reference | Enables immediate visual comparison of reads against the consensus without a separate reference file. |
-| **BAM/CRAM server pipeline** | POST `/api/bam2sam` runs `samtools view` with path-traversal guards | Converts BAM directly in-browser via the optional server — no CLI needed. |
-| **SSH remote loading** | Load alignments directly from a remote server via SSH | Unique among web-based viewers — useful for HPC users. |
-| **Recent files history** | localStorage-backed history with metadata, adjustable size (1–50), one-click reload | Full text stored (100 KB cap per entry) — no need to re-read files across sessions. |
-| **URL parameter loading** | `?file=URL` and `?snapshotFile=URL` auto-load | Enables direct sharing of alignments with a single link. |
+### 8-format automatic detection
+Load any of FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, or BAM/CRAM. Detection inspects content — `@HD`/`@SQ` headers for SAM, `CLUSTAL`/`MUSCLE` keywords for Clustal, `# STOCKHOLM 1.0` for Stockholm, `#NEXUS` for NEXUS, `MSF:` block for MSF, `nSeqs length` first-line pattern for PHYLIP. No file extension guessing.
+
+**Why novel:** No other browser-based viewer accepts SAM, BAM/CRAM, Stockholm, or NEXUS. No desktop viewer auto-detects all 8 from content.
+
+### Full CIGAR expansion for SAM
+All 11 CIGAR operations (M, I, D, N, S, H, P, =, X, B, soft-clip) expanded to gapped nucleotide alignment. Pileup majority-rule consensus computed from mapped reads as the reference sequence. Secondary alignments (flag 0x100) and unmapped reads (flag 0x4) automatically filtered.
+
+**Why novel:** Full SAM specification support — not just M/I/D approximation. Pileup consensus eliminates need for a separate reference file.
+
+### BAM/CRAM via server pipeline
+POST `/api/bam2sam` runs `samtools view` server-side with path-traversal guards. BAM→SAM conversion happens transparently; the viewer receives SAM text.
+
+**Why novel:** NGS file inspection without CLI. Unique among web viewers.
+
+### Recent files history
+localStorage-backed panel. Stores metadata + full alignment text (100 KB cap per entry). Adjustable size 1–50. One-click reload of any past file, including clipboard pastes. Survives browser restarts.
+
+**Why novel:** Alignments persist across sessions without a server or database. Most viewers forget everything on tab close.
+
+### URL parameter loading
+`?file=https://...` auto-loads remote alignments. `?snapshotFile=https://...` auto-restores a full viewer state. Shareable links encode both data and display.
+
+**Why novel:** Direct sharing of an alignment + its exact visual configuration with one URL. No other MSA viewer supports state-serialized URL loading.
 
 ---
 
 ## 🖥️ Visualization & Rendering
 
-| Feature | What it does | Why it's novel |
-|---------|-------------|----------------|
-| **5 interchangeable view modes** | Full, Block, Canvas, Compact, Variable Sites Only | Most viewers offer 1–2 modes. Five modes cover every workflow from editing to publication to NGS. |
-| **Canvas renderer with viewport culling** | GPU-composited 2D canvas; draws only visible rows/columns per frame | Auto-activates at 150,000 total residues. Handles alignments that crash DOM-based viewers. No framework — pure Canvas API. |
-| **Auto-detection threshold** | Canvas mode kicks in automatically for large alignments with a toast notification | User doesn't need to know about performance limits — the tool adapts. |
-| **CSS performance layer** | `content-visibility: auto`, `contain: layout style`, `will-change: scroll-position` | DOM mode stays responsive past 200 sequences × 5,000 columns without a virtual DOM library. |
-| **Compact mode (IGV-style)** | SVG-based read packing with greedy track assignment, coverage histogram, mismatch markers | Brings IGV-style NGS visualization into a general MSA tool — not a separate application. |
-| **Compact: Diffs only** | Hairlines (4 px) showing only variant positions | Reduces visual noise to the minimum — hundreds of reads collapse to a single-column-width signal. |
-| **Compact: Pairs** | Dashed connections between paired-end reads from SAM flags 0x1/0x40/0x80 | Visualizes insert-size relationships directly in the alignment — no separate pair plot needed. |
-| **4 conservation shading modes** | Identity, Similarity, Clustal, Zappo | Standard set, equal to desktop tools. |
-| **Customizable shading thresholds** | Black, Dark, Light thresholds with independently adjustable highlight colours via colour pickers | Most viewers have fixed thresholds. MSA Viewer lets you adjust both threshold values and highlight colours. |
-| **Consensus sequence** | Plurity/majority consensus above or below alignment, with configurable threshold and minimum coverage | Standard, but the threshold customization is more flexible than most. |
-| **Per-sequence colour labelling** | Assign custom background colours to individual sequences or groups; colour inspector panel tracks assignments | Sequences can be coloured by taxonomy, cluster membership, or any user criteria. Colours persist through edits. |
-| **Sticky sequence names** | Locked in place during horizontal scrolling | Eliminates the "scrolled-right, lost the names" problem without a separate panel. |
-| **Inline name editing** | Double-click a sequence name to rename it | No dialog box — direct inline edit. |
-| **Adjustable name length** | Slider truncates names to configurable width | Essential for datasets with long FASTA headers. |
-| **Zoom 50%–500%** | Residues and text scale continuously | Wider range than most viewers. |
-| **Sequence sorting** | Sort by name (A→Z), length (gapless, desc), or pairwise similarity to the first sequence | Three sort criteria — most viewers offer none or one. |
-| **Cross-mode Highlight Diffs** | Fully-conserved columns dimmed to 25% opacity across all view modes | Computes conserved-column set once, reuses for Variable Sites Only mode. | 
-| **Variable Sites Only** | Hides fully-conserved columns entirely | Collapses invariant regions — alignment stays meaningful even at extreme zoom-out. |
+### 5 interchangeable view modes
+**Full** (continuous scroll), **Block** (configurable-width wrapped blocks with repeating labels), **Canvas** (GPU-composited 2D with viewport culling), **Compact** (IGV-style read packing), **Variable Sites Only** (conserved columns hidden). Switch modes without reloading or reformatting.
+
+**Why novel:** Most viewers offer 1–2 modes. Five modes serve distinct workflows — editing (Full), publication inspection (Block), NGS reads (Compact), large alignments (Canvas), and variant scanning (Variable Sites).
+
+### Canvas renderer with automatic activation
+GPU-composited Canvas 2D context. Draws only rows and columns visible in the viewport per frame — no per-residue DOM nodes. Activates automatically when the alignment exceeds 150,000 total residues (≈100 sequences × 1,500 columns) with a toast notification and user override option. Mouse wheel + click-drag panning.
+
+**Why novel:** Handles alignments that crash pure-DOM viewers. Auto-activation removes the performance decision from the user — the tool adapts.
+
+### Compact mode (IGV-style read packing)
+SVG-based greedy track assignment. Each read is a horizontal bar. Mismatch positions colored red. Coverage histogram above reads. Two optional overlays:
+- **Diffs only:** 4-pixel hairlines — only variant positions visible. Hundreds of reads collapse to a single-column-width signal.
+- **Pairs:** Dashed lines connecting paired-end reads using SAM flags 0x1/0x40/0x80 at computed mate positions.
+
+**Why novel:** NGS read visualization inside a general MSA tool — not a separate application. Paired-end connection lines have no equivalent in any other MSA viewer.
+
+### Cross-mode Highlight Diffs + Variable Sites Only
+Conserved-column set computed once from the alignment. Highlight Diffs dims fully-conserved columns to 25% opacity across all view modes. Variable Sites Only hides them entirely. Both consume the same computation.
+
+**Why novel:** Two cross-mode overlays sharing one conserved-set computation. Most viewers either lack this or implement it independently per mode.
 
 ---
 
-## ✏️ Editing & Sequence Management
+## 🎨 Sequence Colouring System
 
-| Feature | What it does | Why it's novel |
-|---------|-------------|----------------|
-| **GeneDoc-style residue editor** | Type individual residues, insert/delete gap columns, select column ranges | Browser-based MSA editing is rare. MSAViewer (Yachdav 2016) has no editing mode. |
-| **Full undo/redo stack** | All operations tracked with visual dropdown history | Undo dropdown lets you jump to any previous state — not just linear undo. |
-| **Drag-and-drop row reordering** | Click-drag sequence names to reorder | Intuitive and immediate. |
-| **3 sort operations** | Alphabetical, by length, by similarity | Batch reordering without manual dragging. |
-| **Row operations** | Delete, duplicate, reverse-complement selected sequences | Standard editing operations, tracked in undo. |
-| **Column operations** | Delete column, insert gap column, select column range | Gap insertion with alignLen adjustment — correctly updates all internal state. |
-| **SeqEdit bulk editor** | Degap, reverse, complement, reverse-complement, uppercase, lowercase with optional length normalization | Six bulk transformations unavailable in any other browser viewer. |
-| **Add & Align** | Append a new sequence, then realign it against the existing alignment via MAFFT in add-keep-length mode | Preserves existing alignment structure while integrating new sequences. |
-| **Block realignment** | Select a column range and press Ctrl+Shift+R to realign only that region | Fixes local misalignments without disturbing correctly-aligned regions. |
-| **Edit mode with live conservation** | Conservation shading updates in real time as you type residues | Feedback loop is immediate — no need to exit edit mode to re-check conservation. |
+This is not a single feature — it's a complete colour assignment infrastructure with multiple entry points, all tracked and reversible.
+
+### Manual colour assignment
+Assign custom background colours to individual sequences via colour picker. Colours apply to sequence name backgrounds and persist through all editing operations. Colour inspector panel shows live assignments.
+
+### Auto-colour by name similarity
+`clusterByName()` normalizes sequence headers to first N configurable characters. Groups identical normalized keys into guaranteed-same-colour buckets. Optionally merges near-identical keys via Levenshtein distance with configurable sensitivity (0 = permissive, 10 = strict). Two rendering modes:
+- **Discrete:** maximally-separated ColorBrewer/Tablaeu palette with golden-ratio hue distribution for >12 clusters. Every cluster gets a distinct colour.
+- **Gradient:** HSL shading within clusters — identical normalized names get identical hue, then brightness varies.
+
+**Why novel:** Guarantees identical-prefix sequences always share the same colour. The sensitivity slider bridges exact-match grouping and fuzzy taxonomic grouping. No other viewer has this.
+
+### Pattern-based colouring
+Colour sequences whose names match a regular expression. `applyPatternColour()` tests each sequence header against a user-supplied regex. All matching names assigned the colour in one operation. Tagged "Pattern" in colour history.
+
+**Why novel:** Regex-based group assignment — colour all "Homo_sapiens" green, "Mus_musculus" blue, etc. in one step. Complements the name-similarity clustering for explicit taxonomic grouping.
+
+### Cluster-based colouring
+After running SINEClusterer, assign persistent colours to sequences by cluster membership. Hovering a cluster row in the results panel highlights all member sequences with glow effect. Colour survives all edits.
+
+**Why novel:** Visual validation of algorithmic clustering — outliers are immediately obvious against colour-uniform groups.
+
+### Colour history inspector
+`recordColorHistory()` logs every assignment with timestamp and method tag (Manual, Auto-Similarity, Pattern, Cluster). `showColorHistory()` renders an interactive panel showing who got what colour and how. Not a cosmetic feature — it's an audit trail for reproducible figure preparation.
+
+**Why novel:** Colouring decisions become traceable. No other viewer tracks the provenance of colour assignments.
+
+### Copy by colour
+`copySequencesByColor(colour, ungapped, asFasta)` — one click exports all sequences sharing a colour. Gapped or ungapped. Pipeline: colour taxonomic groups → copy one group to clipboard → paste into downstream tool.
+
+**Why novel:** Colour becomes a selection mechanism, not just decoration. Transforms the colouring system into a data export pipeline.
+
+### Group/sort by colour
+- **Group coloured at top:** `groupColoredSequencesAtTop()` — all coloured sequences move above uncoloured ones. One-click visual organization.
+- **Sort by colour:** `sortSequencesByColor()` — orders by colour group, maintaining within-group order. Coloured sequences first, uncoloured at bottom.
+
+**Why novel:** Colour assignments become physical row-ordering directives. No drag-and-drop needed for batch reorganization.
+
+---
+
+## ✂️ Editing Operations
+
+### GeneDoc-style residue editor
+Edit mode toggles per-residue keyboard input. Click a residue, type the replacement. Typing `-` inserts a gap column — the alignment length adjusts correctly and all gapless position caches update. Conservation shading recomputes live as you type.
+
+**Why novel:** Browser-based MSA editing is rare. MSAViewer (Yachdav 2016) has no editing mode. Live conservation feedback during editing has no equivalent.
+
+### Full undo/redo with visual dropdown
+Every operation — row deletion, duplication, reverse-complement, column deletion, gap insertion, residue typing, block realignment, TSD marking, degapping, replace-with-consensus — pushes to an undo stack. The dropdown shows operation names in chronological order; click any to jump to that state. Not linear — random-access undo.
+
+**Why novel:** Random-access undo stack with named operations. Most viewers offer Ctrl+Z only. The dropdown makes complex editing explorable.
+
+### Drag-and-drop row reordering
+Click-drag sequence names to reorder. Visual insertion indicator during drag. Works with Ctrl+Click multi-selection — drag moves all selected rows as a group.
+
+### Three sort operations
+- **Name (A→Z):** alphabetical by sequence header
+- **Length (descending):** by gapless residue count
+- **Similarity to first:** pairwise identity against the first sequence, descending
+
+**Why novel:** Three sort criteria in one dropdown. Most viewers offer none or one.
+
+### Replace selected with consensus
+Select N sequences → one click computes their majority-rule consensus → deletes the N sequences → inserts a single consensus row named `cons_seqX-Y` at the position of the first selected sequence. Reduces alignment size while preserving subfamily signal. Tracked in undo — reversible.
+
+**Why novel:** Select→compress→insert in one operation. This directly supports the clustering workflow: identify a subfamily → replace its members with the subfamily consensus for cleaner downstream analysis. No other viewer offers this.
+
+### Insert group consensus
+Same consensus computation as replace, but inserts the consensus row above or below the selected group without deleting the originals. Configure threshold and minimum coverage separately.
+
+**Why novel:** Consensus as an annotation layer over the original sequences — not a replacement. The threshold is independently adjustable per operation (separate from the global consensus threshold).
+
+### Block degapping (two directions)
+Select a continuous column block → `degapSelectedBlock('left'|'right')` removes gaps from the block, aligns residues to the left or right, then **removes columns that became entirely gap**. Gap-padding direction is configurable. Tracked in undo.
+
+**Why novel:** Two operations in one — degap + column cleanup. The "remove all-gap columns" step is critical: without it, degapping a block leaves a trail of empty columns. No other editor handles this automatically.
+
+### Block realignment (Ctrl+Shift+R)
+Select a column range → the viewer extracts the block from all sequences, de-gaps each, sends to MAFFT for realignment, splices the re-aligned block back into each sequence at the exact original position. Adjacent regions untouched. If MAFFT introduces gaps, all sequences padded to the same new block width.
+
+**Why novel:** Fixes local misalignments without global realignment. The block extraction→reinsertion mechanism preserves the rest of the alignment byte-for-byte.
+
+### SeqEdit bulk transformations
+Six operations on selected sequences: degap, reverse, complement, reverse-complement, uppercase, lowercase. Optional length normalization pads all outputs to the same length. All tracked in undo.
+
+**Why novel:** Bulk sequence-level transformations in a viewer — otherwise you'd write a script.
+
+### Add & Align with consensus profile merging
+Append a new sequence to the alignment, then realign it against the existing alignment's consensus via MAFFT in add-keep-length mode. The alignment grows dynamically — new insertion columns are inserted at the correct positions in all existing sequences. `_mergeSequenceIntoConsensusProfile()` tracks insertion slots per consensus position and rebuilds the profile with dynamically added columns.
+
+**Why novel:** Grow an alignment without rebuilding it from scratch. The slot-tracking profile merging is a non-trivial algorithm — it preserves the consensus coordinate space while accommodating new insertions.
+
+### Reorder by guide tree
+`_reorderByGuideTree()` builds 6-mer frequency vectors for each sequence, computes pairwise k-mer Jaccard distances, constructs a UPGMA tree, and extracts a leaf ordering. At each UPGMA junction, tries **all 4 orientations** of the two subtrees (A+B, A+B', A'+B, A'+B') and picks the one with minimum adjacent-leaf distance.
+
+**Why novel:** Optimal leaf ordering, not just a tree traversal. The orientation search at each junction ensures sequences that are close in k-mer space appear adjacent in the display.
 
 ---
 
 ## 🔬 Analysis Tools
 
-| Feature | What it does | Why it's novel |
-|---------|-------------|----------------|
-| **Codon analysis** | Nucleotide colour-coding by codon position (blue/green/orange), stop codon detection, frameshift marking, syn/non-syn classification, amino acid translation track | First browser-based MACSE-inspired codon viewer. 17 selectable genetic codes. |
-| **17 genetic codes** | NCBI tables 1–6, 9–14, 16, 21, 22 including vertebrate/invertebrate/yeast/ascidian mitochondrial and ciliate/euplotid nuclear | Covers all commonly-used alternative codes. Only differences from Standard stored; full table built by merge. |
-| **Frameshift detection** | Wavy red underlines at indel positions that break the reading frame | Critical for pseudogene and TE annotation — unique among browser viewers. |
-| **Synonymous/non-synonymous classification** | Green underline (silent) vs. double red underline (amino acid-changing) per codon | Directly interpretable selection signal in the alignment view. |
-| **Position-pattern clustering (SINEClusterer)** | Groups sequences by shared diagnostic nucleotide positions with fuzzy merging, quality scoring, outlier pruning, and progressive threshold relaxation | Novel algorithm purpose-built for TE subfamily detection. 400-line implementation with no external dependency. Only comparable tool is command-line `SubFam`. |
-| **Cluster quality tiers** | Small (≤10 seqs, 85% quality), medium (11–20, 75%), large (>20, 65%) with configurable breakpoints | Adaptive quality thresholds prevent over-clustering of divergent copies while maintaining stringency for tight families. |
-| **Colour by cluster** | Persistent background colours on sequence names by cluster assignment; hover highlights all members | Makes subfamily membership visually undeniable — no need to cross-reference tables. |
-| **Cluster presets** | Save/restore parameter configurations as named presets | Reproducible analysis across different TE families and publications. |
-| **Group consensus** | Compute and insert consensus row for any selected set of sequences with adjustable threshold | Complements clustering: cluster → inspect → extract subfamily consensus. |
-| **Dot plot** | Self-comparison or pairwise, adjustable window (1–61), identity threshold (0–100%), context radius (5–100 bp), RevComp axis B | Standard features, but region detector + sidebar navigation is unique. |
-| **Dot plot: Region detector** | Finds top 30 diagonal runs, displays in navigable sidebar; click to scroll alignment | Bridges dot plot exploration and alignment inspection — no other viewer does this. |
-| **Dot plot: Copy Region** | Export hovered region directly as FASTA | Extracts candidate motifs/TEs from dot plot hits. |
-| **Dot plot: SVG/PNG export** | Publication-quality export of the dot plot | Directly usable in figures. |
-| **Repeat & TSD Finder** | Tandem repeat detection + target-site duplication finder with configurable parameters | TSD detection specifically for TE annotation — uncommon in general MSA tools. |
-| **TSD Mark** | Highlight found TSD pairs with colour/bold/lowercase styling; undo support | Non-destructive annotation — can mark, inspect, then revert. |
-| **UPGMA tree** | Pairwise identity distances → Newick output with branch lengths, .nwk download, text tree visualization | Lightweight phylogenetic context without external software. |
-| **Regex motif search** | Interpret search query as JavaScript RegExp; `.*` checkbox toggle; match-length-aware highlighting | More powerful than exact-match search in most viewers. |
-| **Ctrl+Click instant search** | Click any residue to search for that base across the alignment | Saves ~5 keystrokes per search — adds up on large alignments. |
+### Codon analysis (MACSE-inspired)
+Activates on nucleotide alignments with length divisible by 3. N nucleotides colour-coded by codon position: blue=1st, green=2nd, orange=3rd. In-frame stop codons: red background, white bold text. Frameshift-inducing indels: wavy red underline. Substitutions classified relative to a reference sequence: synonymous (green underline) vs. non-synonymous (double red underline). Translated amino acid track displayed below each sequence.
+
+**Why novel:** First browser-based MACSE-style codon viewer. 17 genetic codes (NCBI tables 1–6, 9–14, 16, 21, 22) — vertebrate/invertebrate/yeast/ascidian mitochondrial, ciliate/euplotid nuclear, and 10 others. Only differences from Standard stored; full table built by merge. Dynamic switching recalculates stop codons, syn/non-syn labels, and AA translations.
+
+### Position-pattern clustering (SINEClusterer)
+400-line algorithm for subfamily detection. At each alignment column, groups sequences by shared nucleotide. Collects candidate groups meeting size and quality thresholds. Fuzzy-merges near-identical groups (Jaccard ≥ 90%, size difference ≤ 5). Scores by feature quality: perfect-unique (all members share the base, zero outside) = 3, near-perfect (≥80% match) = 2, majority = 1.5, imperfect (passes quality threshold) = 1. Prunes outliers matching <50% of cluster features. Iterates with progressive threshold relaxation (minimum perfect features decay from 4 to 1 over 20 iterations). Gap characters and monomorphic columns (>80% one base) filtered at the pattern collection stage. Bounding region trimming via sliding-window gap analysis excludes ragged ends. Configurable quality tiers (small ≤10 seqs at 85%, medium 11–20 at 75%, large >20 at 65%) with adjustable breakpoints. Upper bound prevents degenerate mega-clusters (cap at 15% of dataset).
+
+**Why novel:** Purpose-built for TE subfamily annotation. The only comparable tool is command-line SubFam. No other web or desktop viewer offers this workflow. The combination of gap filtering, monomorphic-column skipping, fuzzy merging, outlier pruning, and progressive relaxation is a complete subfamily detection pipeline, not just a clustering library.
+
+### Cluster presets + colour by cluster
+Save/restore parameter configurations as named presets. After clustering, assign persistent colours to sequences by cluster membership. Hover a cluster row to highlight all members in the alignment. Diagnostic mutation tables show perfect vs. imperfect features per cluster.
+
+**Why novel:** Reproducible clustering across TE families. Colour-as-validation makes cluster quality instantly visual.
+
+### Dot plot with region detection
+Self-comparison or pairwise. Adjustable window (1–61, odd), identity threshold (0–100%), context radius (5–100 bp), RevComp axis B for inverted repeats. Region detector finds top 30 diagonal runs and presents them in a navigable sidebar. Click any region to scroll the alignment to that position. Hover shows aligned sequence context with mismatch highlighting. Copy Region exports the hovered region as FASTA. Export as PNG or SVG.
+
+**Why novel:** Region detector + sidebar navigation bridges dot plot exploration and alignment inspection. No other viewer connects these — you see a dot, you click it, you're looking at the aligned sequences. Copy Region turns exploratory browsing into data extraction.
+
+### Repeat & TSD Finder with undo marking
+Tandem repeat detection with configurable minimum length, copy number, mismatch tolerance. TSD detection with flanking window, minimum length, maximum mismatches. Found TSD pairs can be **marked** in the alignment using colour, bold, or lowercase residue styles. Marking is tracked in undo — inspect, mark, revert if wrong. Separate from the repeat search results.
+
+**Why novel:** Non-destructive TSD annotation with undo. Mark→inspect→undo workflow lets you try different parameter settings without polluting the alignment.
+
+### UPGMA tree with optimal leaf ordering
+Pairwise identity distances → UPGMA clustering with orientation-optimized leaf ordering → Newick output with branch lengths → .nwk download → text tree visualization.
+
+### Multi-mode consensus engine
+Two modes: **Plurity** (strict nucleotide — normal bases only, A/C/G/T priority, U→T normalization) and **Ambiguous** (IUPAC codes for multi-base positions). Independent **threshold** (frequency of majority base) and **coverage minimum** (fraction of non-gap sequences required). **Fallback mode**: gap or keep-best when no base meets threshold. Used by the consensus line, group consensus, replace-with-consensus, and SAM pileup consensus — all sharing the same engine with per-use configurable parameters.
+
+**Why novel:** Independent threshold + coverage minimum is not standard. Most tools have a single "consensus threshold." The coverage minimum prevents calling a consensus base from 2 sequences out of 100. The IUPAC ambiguous mode preserves positional uncertainty information that plurality mode discards.
+
+### Regex motif search
+Search bar accepts exact motifs (with configurable 0–10 mismatches) or JavaScript regular expressions via `.*` checkbox toggle. Regex matches evaluated against degapped sequences. Match-length-aware highlighting (longer matches get wider highlights). Ctrl+Click any residue to instantly search for that base.
+
+**Why novel:** Regex mode with the `.*` toggle is a single-checkbox conversion from exact to pattern search. Match-length-aware highlighting is rare.
 
 ---
 
 ## 📤 Export & Publishing
 
-| Feature | What it does | Why it's novel |
-|---------|-------------|----------------|
-| **RTF export with conservation shading** | Word-compatible document: Courier New 9pt, per-residue background colours, scale ruler, consensus line | GeneDoc-style output — the gold standard for publication alignment figures, now from a browser. |
-| **SVG export (viewport + full alignment)** | Vector graphics of the current view or the entire alignment | Publication-quality. Editable in Inkscape/Illustrator. |
-| **FASTA/MSF export** | Full alignment or selected sequences/columns only | Standard. |
-| **Open in new tab** | Ctrl+T opens the alignment as standalone HTML | Quick sharing or printing. |
-| **Snapshot system** | Save/restore complete viewer state: alignment, colours, search highlights, column selections, view mode, zoom, custom colours | Reproducible figure preparation. URL-loadable (`?snapshotFile=`). |
+### RTF export with per-residue conservation shading
+Word-compatible document. Courier New 9pt monospace. Each residue's background colour matches the active conservation shading scheme. Scale ruler every 10 positions. Consensus line at bottom. Sequence names left-aligned. Opens directly in Microsoft Word.
 
----
+**Why novel:** GeneDoc-style publication-quality alignment figures from a browser. No desktop software needed for the final figure.
 
-## ⚙️ Server Features (Optional)
+### Two-mode SVG export
+**Export view as SVG:** exactly what's visible on screen. **Export full alignment as SVG:** all columns as a single vector graphic. Both preserve colours, shading, and labels.
 
-| Feature | What it does | Why it's novel |
-|---------|-------------|----------------|
-| **MAFFT integration** | Realign sequences via server-side MAFFT | Not novel per se, but the add-keep-length and block-realign modes are unique. |
-| **BLAST search** | Submit selected sequences to NCBI BLAST | Alternative to copy-paste workflow. |
-| **SSH remote file loading** | Load alignments directly from a remote server | HPC integration without SCP. |
-| **BAM→SAM pipeline** | Server-side `samtools view` conversion | No CLI needed for BAM inspection. |
-| **Security hardening** | CORS origin whitelist, path traversal guards, BLAST parameter sanitization, SSH key path configurable via env var | Production-ready for public deployment. |
+### Snapshot system with URL loading
+Save complete viewer state as JSON: alignment data, colour assignments, search highlight history, column selections, view mode, zoom level, custom colours. Load via file picker or URL parameter (`?snapshotFile=`). Two download formats: `.json` (reloadable) and `.html` (standalone printable view).
+
+**Why novel:** State serialization includes colour, search, and selection — not just the alignment. URL-loadable snapshots are shareable links to exact viewer states.
+
+### Copy variants
+- **Copy selected as FASTA** (gapped or ungapped)
+- **Copy selected columns as FASTA** — exports a column range across all sequences
+- **Copy alignment** — full alignment as plain text
+- **Copy consensus** — consensus sequence as plain text
+- **Copy by colour** — all sequences with a specific colour, gapped or ungapped
+- **Copy tree Newick** — UPGMA output to clipboard
+
+**Why novel:** Copy selected **columns** has no equivalent in any other viewer. It exports a structural element (column range) rather than a sequence element.
 
 ---
 
 ## 🆕 What's New to Bioinformatics (Novelty Spotlight)
 
-1. **First browser-based codon viewer with 17 genetic codes** — extends the MACSE paradigm (Ranwez et al., 2011) to the web. Synonymous/non-synonymous classification, frameshift detection, and stop codon highlighting with dynamic genetic code switching.
+1. **First browser-based MACSE-inspired codon viewer with 17 genetic codes** — syn/non-syn classification, frameshift detection, and stop codon highlighting respond to genetic code switching in real time.
 
-2. **First browser-based SAM/BAM/CRAM reader with full CIGAR expansion** — all 11 CIGAR operations, pileup consensus, compact read-packing mode. Bridges NGS and traditional MSA in one tool.
+2. **First browser-based SAM/BAM/CRAM reader with full CIGAR expansion** — all 11 CIGAR operations, pileup consensus reference, compact paired-end read visualization. Bridges the NGS–MSA gap.
 
-3. **First position-pattern-based subfamily clustering in a web viewer** — SINEClusterer fills the gap between desktop TE annotation pipelines and interactive exploration. No other viewer (desktop or web) offers this workflow.
+3. **First position-pattern subfamily clustering in any viewer** — SINEClusterer provides TE annotation in a visual environment. Gap filtering, monomorphic-column skipping, fuzzy merging, outlier pruning, progressive relaxation, and configurable quality tiers. No command line, no separate tool.
 
-4. **Canvas renderer with automatic viewport culling** — handles alignments 10× larger than DOM-based viewers can manage, with seamless fallback. Threshold-based auto-activation removes the performance burden from the user.
+4. **Select→compress→insert consensus pipeline** — select N sequences → replace with their consensus in one click. Directly supports the clustering→consensus workflow for subfamily annotation. Reversible (undo). No other viewer offers this.
 
-5. **IGV-style compact read packing in a general MSA tool** — read alignment visualization with coverage histogram, paired-end connections, and diffs-only mode, all within the same interface as traditional MSA editing.
+5. **Auto-colour by name similarity with Levenshtein clustering** — guaranteed same-colour assignment for identical-prefix sequences. Configurable sensitivity for fuzzy taxonomic grouping. Two rendering modes (discrete + gradient). Colour history inspector tracks every assignment's provenance.
 
-6. **Customizable multi-threshold conservation shading** — independently adjustable Black/Dark/Light threshold values AND colours via colour pickers. No other viewer offers this level of control over conservation visualization.
+6. **Colour-as-selection-metadata** — copy by colour, group by colour, sort by colour. Colour assignments become a data organization and export pipeline, not just decoration.
 
-7. **GeneDoc-style RTF export from a browser** — per-residue conservation shading in a Word-compatible format with scale ruler and consensus line. Eliminates the need to install desktop software for publication-quality alignment figures.
+7. **Canvas renderer with automatic threshold activation** — handles alignments 10× larger than DOM-based viewers. User doesn't configure performance — the tool detects and adapts.
 
-8. **Comprehensive snapshot system with URL sharing** — saves not just the alignment but colour assignments, search highlights, column selections, and view settings. URL-loadable for direct sharing.
+8. **IGV-style compact read packing in a general MSA tool** — paired-end connection lines, diffs-only mode, coverage histogram. NGS visualization without leaving the alignment viewer.
 
-9. **8-format automatic detection with format chaining** — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, BAM/CRAM all detected from content. More formats than any other browser-based viewer.
+9. **Block realignment with in-place splicing** — fix a locally misaligned region without touching the rest. Block degapping with automatic column cleanup. Both tracked in undo.
 
-10. **Zero-dependency architecture** — 12,000 lines of vanilla JavaScript, HTML, and CSS. No framework, no build step, no installation. Runs from a static GitHub Pages deployment or any web server.
+10. **Guide tree reordering with optimal leaf ordering** — tries all 4 subtree orientations at each UPGMA junction to minimize adjacent-leaf distance. k-mer frequency vectors for fast distance computation.
+
+11. **GeneDoc-style RTF export from a browser** — per-residue conservation shading in Word-compatible format. No desktop software for publication figures.
+
+12. **Snapshot system with search + colour state** — URL-loadable saved states include colour assignments and search highlights, not just alignment data. Shareable links to exact viewer configurations.
+
+13. **8-format automatic content detection** — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, BAM/CRAM. No file extension guessing. More formats than any browser viewer.
+
+14. **Zero-dependency vanilla JavaScript architecture** — 12,000 lines. No framework, no build step, no installation. Runs from GitHub Pages.
 
 ---
 
 ## 📊 Comparison: Browser-Based MSA Viewers
 
-| Feature | MSA Viewer | MSAViewer (Yachdav) | JalviewJS | AliView | IGV.js |
-|---------|-----------|---------------------|-----------|---------|--------|
-| Formats | 8 | 1 (FASTA) | 5+ | 5+ | SAM/BAM |
-| View modes | 5 | 1 | 2 | 2 | 1 (reads) |
-| Editing | ✅ GeneDoc-style | ❌ | ❌ | ✅ desktop | ❌ |
-| Codon analysis | ✅ 17 codes | ❌ | ❌ | ❌ (desktop only) | ❌ |
-| Clustering | ✅ SINEClusterer | ❌ | ❌ | ❌ | ❌ |
-| Compact/reads | ✅ IGV-style | ❌ | ❌ | ❌ | ✅ |
-| Canvas large-align | ✅ auto | ✅ fixed | ❌ | ✅ (desktop) | ✅ |
-| Dot plot | ✅ region nav | ❌ | ❌ | ❌ | ❌ |
-| RTF export | ✅ GeneDoc | ❌ | ❌ | ❌ | ❌ |
-| Snapshots | ✅ full state | ❌ | ❌ | ❌ | ❌ |
-| Regex search | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Server | MAFFT+BLAST+BAM | ❌ | ❌ | ❌ | ❌ |
-| Frameworks | None (vanilla) | BioJS | BioJS | Java | JS module |
+| Feature | MSA Viewer | MSAViewer (Yachdav) | JalviewJS | AliView* | IGV.js |
+|---------|-----------|---------------------|-----------|----------|--------|
+| **Formats** | 8 (auto-detect) | 1 (FASTA) | 5+ | 5+ | SAM/BAM |
+| **View modes** | 5 | 1 | 2 | 2 | 1 |
+| **Residue editing** | ✅ GeneDoc-style | ❌ | ❌ | ✅ | ❌ |
+| **Codon analysis** | ✅ 17 codes | ❌ | ❌ | ❌ | ❌ |
+| **Sequence clustering** | ✅ SINEClusterer | ❌ | ❌ | ❌ | ❌ |
+| **Replace with consensus** | ✅ select→compress | ❌ | ❌ | ❌ | ❌ |
+| **Auto-colour by name** | ✅ Levenshtein | ❌ | ❌ | ❌ | ❌ |
+| **Copy by colour** | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Compact reads** | ✅ IGV-style | ❌ | ❌ | ❌ | ✅ |
+| **Canvas large-align** | ✅ auto threshold | ✅ fixed | ❌ | ✅ | ✅ |
+| **Block realignment** | ✅ Ctrl+Shift+R | ❌ | ❌ | ❌ | ❌ |
+| **Block degapping** | ✅ + column cleanup | ❌ | ❌ | ❌ | ❌ |
+| **Guide tree reorder** | ✅ optimal leaf | ❌ | ❌ | ❌ | ❌ |
+| **Dot plot** | ✅ region nav + copy | ❌ | ❌ | ❌ | ❌ |
+| **RTF export** | ✅ GeneDoc-style | ❌ | ❌ | ❌ | ❌ |
+| **Snapshot state** | ✅ colours + search | ❌ | ❌ | ❌ | ❌ |
+| **Regex search** | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Server** | MAFFT+BLAST+BAM | ❌ | ❌ | ❌ | ❌ |
+| **Dependencies** | None (vanilla JS) | BioJS | BioJS | Java app | JS module |
+
+*\*AliView is a desktop Java application; its JS version is limited.*
 
 ---
 
