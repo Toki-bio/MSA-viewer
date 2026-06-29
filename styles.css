@@ -1773,3 +1773,9 @@ span.diagnostic-mutation {
 .blast-hit-stats .stat-strand-plus  { color:#1a6b1a; font-weight:bold; }
 .blast-hit-stats .stat-strand-minus { color:#8b0000; font-weight:bold; }
 .blast-alignment-block { background:#f6f8f6; border:1px solid #ddd; border-radius:3px; padding:8px 12px; margin:0 0 8px; font-family:'Courier New',monospace; font-size:12px; line-height:1.5; white-space:pre; overflow-x:auto; }
+
+/* Highlight-diffs mode: dim fully-conserved columns */
+body.highlight-diffs .seq-data > span.diff-conserved {
+  opacity: 0.25;
+  font-size: 0.7em;
+}
