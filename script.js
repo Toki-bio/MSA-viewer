@@ -70,7 +70,7 @@ const state = {
 const _historyManager = {
     maxItems: 10,
     items: [],
-    
+
     load() {
         try {
             const raw = localStorage.getItem('msaviewer_history');
@@ -145,7 +145,7 @@ const _historyManager = {
                 onchange="_historyManager.setMax(parseInt(this.value)||10);_historyManager.renderDropdown();"></span>
         </div>`;
         menu.innerHTML = html;
-        
+
         // Click handlers
         menu.querySelectorAll('.recent-item').forEach(el => {
             el.addEventListener('click', () => {
@@ -158,7 +158,7 @@ const _historyManager = {
                     state.currentFilePath = entry.source || '';
                     parseAndRender(false);
                 } else {
-                    showMessage('Original file not available — re-open the file to load it.', 3000);
+                    showMessage('Original file not available - re-open the file to load it.', 3000);
                 }
                 document.getElementById('recentDropdown').style.display = 'none';
             });
@@ -275,7 +275,7 @@ async function checkSshServer() {
             // Auto-polling disabled to prevent IDS triggers from continuous SSH connections
         }
     } catch (_) {
-        // Server not running — hide SSH row (already hidden by default)
+        // Server not running - hide SSH row (already hidden by default)
     }
 }
 
@@ -313,7 +313,7 @@ async function _pollQueuedFile() {
         if (!srvGroup) return;
         for (const serverKey of _pollableServers) {
             try {
-                const r = await fetch(`/api/ssh-poll-file?server=${encodeURIComponent(serverKey)}`, 
+                const r = await fetch(`/api/ssh-poll-file?server=${encodeURIComponent(serverKey)}`,
                     { signal: AbortSignal.timeout(8000) });
                 if (!r.ok) {
                     let detail = `HTTP ${r.status}`;
@@ -331,11 +331,11 @@ async function _pollQueuedFile() {
                     await fetchFileFromServer(data.file, serverKey);
                     return;
                 }
-            } catch (e) { 
+            } catch (e) {
                 debugLog(`[POLL] ${serverKey}: ${e.message}`);
             }
         }
-    } catch (e) { 
+    } catch (e) {
         debugLog(`[POLL] Error: ${e.message}`);
     } finally {
         _pollBusy = false;
@@ -351,13 +351,13 @@ async function checkMCQueueOnce() {
         return;
     }
     _lastManualCheckTime = now;
-    
+
     const btn = document.getElementById('checkQueueButton');
     if (btn) btn.disabled = true;
     const serverKey = getSelectedServer();
-    _sshOpen('SSH – Queue Check');
-    _sshLog(`Checking ${serverKey}…`);
-    
+    _sshOpen('SSH - Queue Check');
+    _sshLog(`Checking ${serverKey}...`);
+
     try {
         // Check selected server's queue directly (not via _pollQueuedFile which checks ALL)
         const r = await fetch(`/api/ssh-poll-file?server=${encodeURIComponent(serverKey)}`,
@@ -374,7 +374,7 @@ async function checkMCQueueOnce() {
         const data = await r.json();
         if (data.queued) {
             debugLog(`[POLL] ${serverKey}: Queue detected: ${data.file}`);
-            _sshLog(`Found: ${data.file.split('/').pop()} — fetching…`, 'info');
+            _sshLog(`Found: ${data.file.split('/').pop()} - fetching...`, 'info');
             await fetchFileFromServer(data.file, serverKey);
         } else {
             _sshLog(`No file queued on ${serverKey}`);
@@ -401,7 +401,7 @@ async function fetchFileFromServer(filePath, serverKey) {
     const input = document.getElementById('sshPathInput');
     if (btn) btn.disabled = true;
     if (input) input.disabled = true;
-    _sshLog(`Fetching ${filePath.split('/').pop()} from ${serverKey}…`);
+    _sshLog(`Fetching ${filePath.split('/').pop()} from ${serverKey}...`);
     try {
         const url = `/api/ssh-cat?file=${encodeURIComponent(filePath)}&server=${encodeURIComponent(serverKey)}`;
         const resp = await fetch(url);
@@ -642,11 +642,11 @@ function _showDragInsertPreview(e, container) {
     // Find the closest seq-line to the cursor
     const lines = container.querySelectorAll('.seq-line[data-seq-index]');
     if (!lines.length) return;
-    
+
     let bestLine = null;
     let bestDist = Infinity;
     let insertAbove = true;
-    
+
     for (const line of lines) {
         const rect = line.getBoundingClientRect();
         const midY = rect.top + rect.height / 2;
@@ -658,13 +658,13 @@ function _showDragInsertPreview(e, container) {
         }
     }
     if (!bestLine) return;
-    
+
     // Skip consensus lines and scale lines
     if (bestLine.classList.contains('consensus-line') || bestLine.classList.contains('scale-ruler-line')) return;
-    
+
     const nameEl = bestLine.querySelector('.seq-name');
     if (!nameEl) return;
-    
+
     const cls = insertAbove ? 'drag-insert-above' : 'drag-insert-below';
     // Skip if same element + same side
     if (_dragPreviewEl === nameEl && _dragPreviewClass === cls) return;
@@ -692,23 +692,23 @@ function _clearDragInsertPreview() {
 window.handleDrop = function(e) {
     e.preventDefault();
     e.stopPropagation();
-    
+
     // Capture preview state before clearing
     const insertAbove = _dragPreviewInsertAbove;
     const previewNameEl = _dragPreviewEl;
     _clearDragInsertPreview();
     _clearDragSources();
-    
+
     try {
         const draggedIndex = _draggedSeqIndex;
         _draggedSeqIndex = -1;
         if (draggedIndex < 0) return;
-        
+
         // Find target line from last preview or nearest line
         let targetLine = previewNameEl
             ? previewNameEl.closest('.seq-line')
             : e.target?.closest('.seq-line');
-        
+
         // If dropped on a non-seq area, find the nearest seq-line
         if (!targetLine || targetLine.classList.contains('consensus-line') || targetLine.classList.contains('scale-ruler-line')) {
             const container = document.getElementById('alignmentContainer');
@@ -725,10 +725,10 @@ window.handleDrop = function(e) {
             targetLine = bestLine;
         }
         if (!targetLine) return;
-        
+
         const targetIndexStr = targetLine.dataset.seqIndex;
         if (!targetIndexStr) return;
-        
+
         let targetIndex = parseInt(targetIndexStr);
         if (isNaN(targetIndex)) return;
 
@@ -819,22 +819,22 @@ function showTooltipAt(content, target, options = {}) {
         tooltip.textContent = content;
     }
     tooltip.style.display = 'block';
-    
+
     // Force a reflow to get accurate dimensions after content is set
     const tooltipWidth = tooltip.offsetWidth || 150;
     const tooltipHeight = tooltip.offsetHeight || 30;
     const gapSize = 8;
-    
+
     // Get target position
     const rect = target.getBoundingClientRect();
     const scrollX = window.scrollX || window.pageXOffset;
     const scrollY = window.scrollY || window.pageYOffset;
-    
+
     // Try to center horizontally above the target
     let left = rect.left + rect.width / 2 - tooltipWidth / 2;
     let top = rect.top - tooltipHeight - gapSize;
     let useTransform = false;
-    
+
     // Clamp horizontal position to keep tooltip on screen
     const padding = 5;
     if (left < padding) {
@@ -842,12 +842,12 @@ function showTooltipAt(content, target, options = {}) {
     } else if (left + tooltipWidth > window.innerWidth - padding) {
         left = window.innerWidth - tooltipWidth - padding;
     }
-    
+
     // If tooltip goes above viewport, position it below instead
     if (top < padding) {
         top = rect.bottom + gapSize;
     }
-    
+
     // Add scroll offset for absolute positioning
     tooltip.style.position = 'fixed';
     tooltip.style.left = left + 'px';
@@ -869,7 +869,7 @@ function setupMenuStability() {
     const menuSections = document.querySelectorAll('.menu-section');
     menuSections.forEach(section => {
         const controlGroup = section.querySelector('.control-group');
-        
+
         section.addEventListener('mouseenter', () => {
             // Clear any pending close timeout for this menu
             if (menuCloseDelays.has(section)) {
@@ -878,16 +878,16 @@ function setupMenuStability() {
             }
             section.classList.add('menu-open');
         });
-        
+
         section.addEventListener('mouseleave', () => {
             // Check if any input in this menu is focused (autocomplete might be open)
             const hasFocusedInput = controlGroup?.querySelector('input:focus') !== null;
-            
+
             if (hasFocusedInput) {
                 // Don't close if input is focused - let blur event handle it
                 return;
             }
-            
+
             // Delay closing the menu to avoid flickering on brief mouse movements
             const timeoutId = setTimeout(() => {
                 section.classList.remove('menu-open');
@@ -895,7 +895,7 @@ function setupMenuStability() {
             }, MENU_CLOSE_DELAY);
             menuCloseDelays.set(section, timeoutId);
         });
-        
+
         // Keep menu open when hovering over control-group
         if (controlGroup) {
             controlGroup.addEventListener('mouseenter', () => {
@@ -905,7 +905,7 @@ function setupMenuStability() {
                 }
                 section.classList.add('menu-open');
             });
-            
+
             // Close menu when blur happens and mouse is not hovering
             controlGroup.querySelectorAll('input').forEach(input => {
                 input.addEventListener('blur', () => {
@@ -931,46 +931,46 @@ function updateSliderBackground(slider) {
 
 function updateNameLengthSliderRange() {
     if (state.seqs.length === 0) return;
-    
+
     // Use the display header (first token) only to size the name column,
     // so long descriptions in fullHeader don't blow up spacing.
     const maxNameLength = Math.max(...state.seqs.map(s => s.header.length));
-    
+
     const slider = el('nameLengthSlider');
     const input = el('nameLengthInput');
-    
+
     if (slider && input) {
         // Set range from 3 to maximum name length + 2 buffer (with minimum of 12 for reasonable display)
         // The +2 buffer ensures that when slider is set to max name length, the full display name is visible
         const newMax = Math.max(maxNameLength + 2, 12);
-        
+
         // Update slider attributes
         slider.min = 3;
         slider.max = newMax;
-        
+
         // Update input attributes
         input.min = 3;
         input.max = newMax;
-        
+
     // Set slider to maximum display length when loading new file
     slider.value = newMax;
     input.value = newMax;
-        
+
         // Update the state to reflect the new value
         state.nameLength = newMax;
-        
+
         // If current value is below new min, adjust it
         if (parseInt(slider.value) < 3) {
             slider.value = 3;
             input.value = 3;
         }
-        
+
         // Update slider background
         updateSliderBackground(slider);
-        
+
         // Update title to reflect new range
         slider.title = `Adjust sequence name display length (3-${newMax} characters)`;
-        
+
     }
 }
 
@@ -1240,7 +1240,7 @@ function computeConsensusForSequences(seqArray) {
 }
 // PARSING FUNCTIONS
 
-// SAM/BAM detection — detects @HD/@SQ headers or tab-separated CIGAR lines
+// SAM/BAM detection - detects @HD/@SQ headers or tab-separated CIGAR lines
 function _isSamInput(text) {
     const lines = text.split('\n').filter(l => l.trim());
     if (lines.length < 2) return false;
@@ -1310,7 +1310,7 @@ function _cigarRefSpan(cigar) {
 function parseSamToAlignment(samText) {
     const lines = samText.split('\n').filter(l => l.trim() && !l.startsWith('@'));
     if (lines.length === 0) return null;
-    
+
     const records = [];
     for (const line of lines) {
         const f = line.split('\t');
@@ -1322,7 +1322,7 @@ function parseSamToAlignment(samText) {
             mpos: f[7] !== '=' && f[7] !== '*' ? parseInt(f[7]) - 1 : -1, tlen: parseInt(f[8]) || 0 });
     }
     if (records.length === 0) return null;
-    
+
     // Determine coordinate range
     let minPos = Infinity, maxPos = 0;
     for (const r of records) {
@@ -1331,7 +1331,7 @@ function parseSamToAlignment(samText) {
         maxPos = Math.max(maxPos, r.pos + span);
     }
     const refLen = maxPos - minPos;
-    
+
     // Build pileup consensus reference
     const pileup = new Array(refLen).fill(null).map(() => ({}));
     for (const r of records) {
@@ -1351,14 +1351,14 @@ function parseSamToAlignment(samText) {
             else if (t === 'D' || t === 'N') { refp += len; }
         }
     }
-    
+
     let refSeq = '';
     for (const counts of pileup) {
         let best = 'N', bestN = 0;
         for (const [b, n] of Object.entries(counts)) { if (n > bestN) { bestN = n; best = b; } }
         refSeq += best;
     }
-    
+
     // Build output sequences: reference first, then reads
     const seqs = [{
         header: 'REF',
@@ -1366,7 +1366,7 @@ function parseSamToAlignment(samText) {
         seq: refSeq,
         gaplessPositions: calculateGaplessPositions(refSeq)
     }];
-    
+
     for (const r of records) {
         const { alignedRead } = _expandCigar(r.seq, r.cigar, refSeq, r.pos - minPos);
         const leftPad = Math.max(0, r.pos - minPos);
@@ -1380,13 +1380,13 @@ function parseSamToAlignment(samText) {
             _samPair: (r.flag & 0x1) ? { flag: r.flag, mpos: r.mpos, tlen: r.tlen } : null
         });
     }
-    
+
     return seqs;
 }
 
 // =====================================================================
 // CODON ANALYSIS (MACSE-inspired)
-// Genetic code — Standard (NCBI table 1)
+// Genetic code - Standard (NCBI table 1)
 // =====================================================================
 const _GENETIC_CODE = {
     'TTT':'F','TTC':'F','TTA':'L','TTG':'L','TCT':'S','TCC':'S','TCA':'S','TCG':'S',
@@ -1399,7 +1399,7 @@ const _GENETIC_CODE = {
     'GAT':'D','GAC':'D','GAA':'E','GAG':'E','GGT':'G','GGC':'G','GGA':'G','GGG':'G'
 };
 
-// Genetic code variants — only differences from Standard
+// Genetic code variants - only differences from Standard
 const _CODE_VARIANTS = {
     '2': { // Vertebrate Mitochondrial
         'AGA':'*','AGG':'*','ATA':'M','TGA':'W'
@@ -1554,10 +1554,10 @@ function _computeCodonAnalysis(seqs, len) {
                         const refCodon = codonCols.map(c => (refSeq[c] || '-').toUpperCase()).join('');
                         const refAA = activeCode[refCodon] || 'X';
                         if (aa === refAA && codon !== refCodon) {
-                            // Synonymous — all 3 positions get 'syn'
+                            // Synonymous - all 3 positions get 'syn'
                             for (const c of codonCols) synNonSyn[i][c] = 'syn';
                         } else if (aa !== refAA) {
-                            // Non-synonymous — find which position(s) cause the change
+                            // Non-synonymous - find which position(s) cause the change
                             for (let k = 0; k < 3; k++) {
                                 const mutCodon = refCodon.substring(0,k) + codon[k] + refCodon.substring(k+1);
                                 const mutAA = activeCode[mutCodon] || 'X';
@@ -1587,7 +1587,7 @@ function _computeCodonAnalysis(seqs, len) {
 }
 
 // =====================================================================
-// CANVAS-BASED RENDERER — for large alignments
+// CANVAS-BASED RENDERER - for large alignments
 // Draws only visible area, no per-residue DOM nodes
 // =====================================================================
 const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen: 0 };
@@ -2010,7 +2010,7 @@ function initializeCollapsibleSections() {
         group.style.maxHeight = ''; // Clear inline styles
         group.style.display = ''; // Clear inline display - let CSS handle it
     });
-    
+
     // Remove click handlers - menus now work on hover via CSS
     document.querySelectorAll('.section-header[data-section]').forEach(header => {
         header.classList.remove('collapsed');
@@ -2041,12 +2041,12 @@ function recalculateCollapsibleHeights() {
 
 function generateScale(maxLength, interval = 10, startPos = 0) {
     const scaleArray = new Array(maxLength).fill(' ');
-    
+
     // Find the first multiple of interval in this block's range
     const startAbs = startPos + 1;
     const endAbs = startPos + maxLength;
     const firstMultiple = Math.ceil(startAbs / interval) * interval;
-    
+
     // Show position markers at multiples of interval within this block
     for (let absPos = firstMultiple; absPos < endAbs; absPos += interval) {
         let label;
@@ -2056,10 +2056,10 @@ function generateScale(maxLength, interval = 10, startPos = 0) {
         } else {
             label = '*';
         }
-        
+
         const relIdx = absPos - startPos - 1; // 0-based index for the target position
         const startIdx = relIdx - (label.length - 1); // Right-align: last digit at relIdx
-        
+
         // Only place the label if it fits completely within the block
         if (startIdx >= 0 && startIdx + label.length <= maxLength) {
             for (let i = 0; i < label.length; i++) {
@@ -2067,7 +2067,7 @@ function generateScale(maxLength, interval = 10, startPos = 0) {
             }
         }
     }
-    
+
     return scaleArray.join('');
 }
 
@@ -2075,12 +2075,12 @@ function preCalculateConservation(seqs, len, shadeMode) {
     const conservationData = new Array(len);
     const minCoverage = 0.3; // Require at least 30% non-gap sequences for coloring
     const seqCount = seqs.length;
-    
+
     for (let pos = 0; pos < len; pos++) {
         // Count bases directly without creating intermediate arrays
         const counts = {};
         let nonGapCount = 0;
-        
+
         for (let s = 0; s < seqCount; s++) {
             const rawBase = seqs[s].seq[pos] || '-';
             const base = rawBase.toUpperCase();
@@ -2089,25 +2089,25 @@ function preCalculateConservation(seqs, len, shadeMode) {
                 nonGapCount++;
             }
         }
-        
+
         if (nonGapCount > 0) {
             // Find max count
             let maxCount = 0;
             for (const count of Object.values(counts)) {
                 if (count > maxCount) maxCount = count;
             }
-            
+
             // Get all bases with max count
             const consensusBases = new Set();
             for (const [base, count] of Object.entries(counts)) {
                 if (count === maxCount) consensusBases.add(base);
             }
-            
+
             const denominator = shadeMode === 'all' ? seqCount : nonGapCount;
             const conservation = maxCount / denominator;
             const coverage = nonGapCount / seqCount;
             const hasValidCoverage = coverage >= minCoverage;
-            
+
             conservationData[pos] = {
                 consensusBases,
                 conservation,
@@ -2118,7 +2118,7 @@ function preCalculateConservation(seqs, len, shadeMode) {
             conservationData[pos] = { hasData: false, hasValidCoverage: false };
         }
     }
-    
+
     return conservationData;
 }
 
@@ -2298,7 +2298,7 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
     const diffOnly = document.getElementById('compactDiffOnly')?.checked;
     const showPairs = document.getElementById('compactPairs')?.checked;
     const pairLines = []; // collect pair connections to draw after all tracks
-    
+
     // Build pair map: qname -> [read1, read2]
     const pairMap = new Map();
     if (showPairs) {
@@ -2319,7 +2319,7 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
             const rh = diffOnly ? 4 : TRACK_H - 2;
 
             if (diffOnly) {
-                // Thin line mode — just a hairline with mismatch ticks
+                // Thin line mode - just a hairline with mismatch ticks
                 const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                 line.setAttribute('x1', rx);
                 line.setAttribute('y1', ry + 2);
@@ -2503,7 +2503,7 @@ function renderAlignment(options = {}) {
     state.domSelectedNucs = new Map();
     state.domSelectedColumns = new Map();
     state.domPendingNuc = null;
-    
+
     const nameLengthSlider = el('nameLengthSlider');
     const blackThresh = parseInt(el('blackSlider').value) / 100;
     const darkThresh = parseInt(el('darkSlider').value) / 100;
@@ -2514,13 +2514,13 @@ function renderAlignment(options = {}) {
     const stickyNames = el('stickyNames').checked;
     const useBlocks = el('modeBlocks').checked;
     const useSingle = el('modeSingle').checked;
-    
+
     // ── Auto-detect: Canvas for large alignments ──
     const TOTAL_RESIDUES = state.seqs.length * len;
     const CANVAS_AUTO_THRESHOLD = 150000; // ~100 seq × 1500 col
     const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
     const userPickedDom = document.getElementById('modeAutoCanvasDismissed')?.checked; // hidden flag
-    
+
     if (!userWantsCanvas && !userPickedDom && TOTAL_RESIDUES > CANVAS_AUTO_THRESHOLD) {
         const canvasRadio = document.getElementById('modeCanvas');
         if (canvasRadio) canvasRadio.checked = true;
@@ -2532,7 +2532,7 @@ function renderAlignment(options = {}) {
         // Re-read to pick up the new checked state
         // Canvas dispatch is handled below
     }
-    
+
     const blockWidth = parseInt(el('blockSizeSlider').value);
     const nameLen = parseInt(nameLengthSlider.value);
     // Update CSS variable for scale ruler padding
@@ -2551,10 +2551,10 @@ function renderAlignment(options = {}) {
     const consType = document.querySelector('input[name="consensusType"]:checked').value;
     const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
     const fallbackMode = (document.getElementById('consensusFallback')?.value) || 'gap';
-    
+
     // Calculate sequence length for consensus and scale
     const len = Math.max(...state.seqs.map(s => s.seq.length));
-    
+
     let consensus = [];
     if (showConsensus) {
         const deferredConsensus = options.deferConservation ? getDeferredConsensus(len) : null;
@@ -2568,7 +2568,7 @@ function renderAlignment(options = {}) {
     }
     state.consensusSeq = consensus.join('').replace(/-/g, '');
     const shouldRenderConsensus = showConsensus;
-    
+
     // *** NEW: Pre-calculate conservation for ALL columns ONCE ***
     const shadeMode = document.querySelector('input[name="shadeMode"]:checked').value;
     const conservationData = (options.deferConservation && getDeferredConservationData(len, shadeMode))
@@ -2576,8 +2576,8 @@ function renderAlignment(options = {}) {
     if (!options.deferConservation) {
         state.conservationDataCache = { len, shadeMode, data: conservationData };
     }
-    
-    
+
+
     const useCompact = document.getElementById('modeCompact')?.checked;
     if (useCompact) {
         renderCompactAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
@@ -2585,7 +2585,7 @@ function renderAlignment(options = {}) {
             showConsensus, consType, threshold, fallbackMode, coverageMin);
         return;
     }
-    
+
     const useCanvas = document.getElementById('modeCanvas')?.checked;
     if (useCanvas) {
         _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
@@ -2634,7 +2634,7 @@ function renderAlignment(options = {}) {
             const blockLen = end - start;
             const blockDiv = document.createElement('div');
             blockDiv.className = 'block-block';
-            
+
             // Add scale/ruler above each block (replaces separator)
             const scaleDiv = document.createElement('div');
             scaleDiv.className = 'seq-line scale-ruler-line';
@@ -2649,7 +2649,7 @@ function renderAlignment(options = {}) {
             scaleDiv.appendChild(scaleDataDiv);
             blockDiv.appendChild(scaleDiv);
             const isLastBlock = (start + blockWidth >= len);
-            
+
             if (shouldRenderConsensus) {
                 addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'top', options);
             }
@@ -2674,7 +2674,7 @@ function renderAlignment(options = {}) {
         scaleDiv.appendChild(scaleNameDiv);
         scaleDiv.appendChild(scaleDataDiv);
         alignmentContainer.appendChild(scaleDiv);
-        
+
         if (shouldRenderConsensus) {
             addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'top', options);
         }
@@ -3019,7 +3019,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     let displayName = state.seqs[index].header;
     let nameLenInt = parseInt(nameLen, 10);
     if (displayName.length > nameLenInt) {
-        nameSpan.textContent = displayName.slice(0, nameLenInt) + '…';
+        nameSpan.textContent = displayName.slice(0, nameLenInt) + '...';
         nameSpan.title = `${displayName} (length: ${state.seqs[index].seq.length})`;
     } else {
         nameSpan.textContent = displayName;
@@ -3046,7 +3046,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     nameSpan.addEventListener('mouseover', () => {
         const full = state.seqs[index].fullHeader || state.seqs[index].header;
         const maxLen = 120;
-        const text = (full.length > maxLen) ? (full.slice(0, maxLen - 1) + '…') : full;
+        const text = (full.length > maxLen) ? (full.slice(0, maxLen - 1) + '...') : full;
         showTooltipAt(text, nameSpan);
     });
     nameSpan.addEventListener('mouseout', () => {
@@ -3099,30 +3099,30 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     lineDiv.appendChild(nameSpan);
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
-    // NO ACTION on plain click — only Ctrl+Click for selection
+    // NO ACTION on plain click - only Ctrl+Click for selection
     dataSpan.addEventListener('click', (e) => {
         if (e.ctrlKey || e.metaKey) return; // handled by mousedown
-        // Do nothing on single click — no copy, no selection
+        // Do nothing on single click - no copy, no selection
     });
-    
+
     // *** PERFORMANCE: Pre-cache references and build HTML string ***
     const seq = state.seqs[index].seq;
     const gaplessPositions = state.seqs[index].gaplessPositions;
     const selectedCols = state.selectedColumns;
     const htmlParts = [];
-    
+
     for (let pos = start; pos < end; pos++) {
         const base = seq[pos] || '-';
         const baseUp = base.toUpperCase();
         let cls = 'other';
         let baseClass = '';
-        
+
         if (!standard.has(base) && !ambiguous.has(base)) {
             baseClass = 'artifact';
         } else if (ambiguous.has(base)) {
             baseClass = 'ambiguous';
         }
-        
+
         const posData = conservationData[pos] || { hasData: false, hasValidCoverage: false };
         if (posData.hasData && posData.hasValidCoverage) {
             if (baseUp !== '-' && baseUp !== '.' && posData.consensusBases.has(baseUp)) {
@@ -3135,22 +3135,22 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         } else if (baseUp === '-' || baseUp === '.') {
             cls = 'gap';
         }
-        
+
         const colSelected = selectedCols.has(pos) ? ' column-selected' : '';
         const tsdDisplay = getTsdMarkDisplay(index, pos);
         const finalClass = `${cls}${baseClass ? ' ' + baseClass : ''}${colSelected}${tsdDisplay.className}`;
         htmlParts.push(`<span class="${finalClass}" data-pos="${pos}"${tsdDisplay.style}>${base}</span>`);
     }
-    
+
     // Add sequence length at the end (only for last block)
     if (showLength) {
         const gaplessLength = gaplessPositions[gaplessPositions.length - 1] || 0;
         htmlParts.push(`<span class="seq-length" title="Sequence length: ${gaplessLength} (gapless)">${gaplessLength}</span>`);
     }
-    
+
     // *** PERFORMANCE: Set innerHTML once instead of many appendChild calls ***
     dataSpan.innerHTML = htmlParts.join('');
-    
+
     // Register spans in cache for selection features
     const spans = dataSpan.children;
     for (let i = 0; i < spans.length; i++) {
@@ -3160,7 +3160,7 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
             registerSpanInCache(index, parseInt(pos), span);
         }
     }
-    
+
     lineDiv.appendChild(dataSpan);
     if (state.selectedRows.has(index)) {
         lineDiv.classList.add('selected');
@@ -3176,12 +3176,12 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
     consLine.appendChild(consName);
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
-    
+
     // Get trim boundaries if available
     const trimBounds = state.trimBoundaries || {};
     const leftTrimEnd = trimBounds.leftTrimEnd !== undefined ? trimBounds.leftTrimEnd : -1;
     const rightTrimStart = trimBounds.rightTrimStart !== undefined ? trimBounds.rightTrimStart : Infinity;
-    
+
     for (let pos = start; pos < end; pos++) {
         const base = pos < consensus.length ? consensus[pos] : '-';
         const baseUp = base.toUpperCase();
@@ -3203,11 +3203,11 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
                 displayBase = freq >= threshold ? baseUp : baseUp.toLowerCase();
             }
         }
-        
+
         const span = document.createElement('span');
         span.className = baseClass;
         span.textContent = displayBase;
-        
+
         // Apply trim region coloring (using ABSOLUTE position indices, not relative to block)
         if (pos <= leftTrimEnd) {
             span.classList.add('trim-left');
@@ -3216,7 +3216,7 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
             span.classList.add('trim-right');
             span.title = 'Trimmed (right)';
         }
-        
+
         // Tooltip on hover: show coverage and per-nucleotide percentages for this column
         span.addEventListener('mouseover', () => {
             const totalSeqs = state.seqs.length || 1;
@@ -3271,10 +3271,10 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
 function setupHoverMenuReveal() {
     const controls = el('controls');
     if (!controls || !alignmentContainer) return;
-    
+
     // Menu stays visible via CSS sticky positioning
     // This JavaScript just handles closing overlapping menu sections
-    
+
     controls.addEventListener('click', (e) => {
         const header = e.target.closest('.section-header');
         if (header) {
@@ -3325,10 +3325,10 @@ function parseAndRender(isFromDrop = false) {
         const isMsfContent = (inputText.includes('MSF:') && inputText.includes('Check:')) ||
                              inputText.includes('!!AA_MULTIPLE_ALIGNMENT') ||
                              inputText.includes('!!NA_MULTIPLE_ALIGNMENT');
-        
+
         if (isSamContent) {
             parsed = parseSamToAlignment(inputText);
-            if (!parsed) throw new Error('SAM parsing failed — check format');
+            if (!parsed) throw new Error('SAM parsing failed - check format');
             state.currentFilename = state.currentFilename || 'SAM_import';
         } else if (inputText.match(/^(CLUSTAL|MUSCLE\s)/m)) {
             parsed = parseClustal(inputText);
@@ -3375,11 +3375,11 @@ function parseAndRender(isFromDrop = false) {
         state.pendingNucStart = null;
         state.lastSelectedIndex = null;
         state.groupConsensusCount = 0;
-        
+
         // Update name length slider range based on loaded sequences
         // This will set the slider to maximum actual name length
         updateNameLengthSliderRange();
-        
+
         // Update source info with comprehensive statistics
         updateSourceInfo();
         renderAlignment();
@@ -3453,7 +3453,7 @@ function setBlockSizeToScreen() {
         charPx = 10 * zoom;
     }
     // Available width = inner width of the container (excluding names)
-    // Names col is sticky — measure it from the first name span
+    // Names col is sticky - measure it from the first name span
     let namePx = 0;
     const nameSpan = container.querySelector('.seq-name');
     if (nameSpan) {
@@ -3530,24 +3530,24 @@ function onShadeModeChange() {
     const resetButton = document.getElementById(shade + 'Reset');
     const picker = document.getElementById(shade + 'ColorPicker');
     const slider = document.getElementById(shade + 'Slider');
-    
+
     if (resetButton && picker) {
         resetButton.addEventListener('click', function() {
             // Reset to default colors
             const defaultColors = {
                 'black': '#000000',
-                'dark': '#555555', 
+                'dark': '#555555',
                 'light': '#cccccc'
             };
-            
+
             const defaultColor = defaultColors[shade];
             picker.value = defaultColor;
-            
+
             // Update CSS variable for slider fill
             slider.style.setProperty('--slider-fill', defaultColor);
             // Update the corresponding CSS variable for alignment shading
             document.documentElement.style.setProperty('--' + shade + 'Shading', defaultColor);
-            
+
             // Compute readable text color
             try {
                 const hex = (defaultColor || '#000').replace('#', '');
@@ -3560,7 +3560,7 @@ function onShadeModeChange() {
             } catch (err) {
                 // ignore
             }
-            
+
             // Update slider background and re-render
             updateSliderBackground(slider);
             if (typeof renderAlignment === 'function') {
@@ -3594,31 +3594,31 @@ function handleMouseDown(e) {
             updateRowSelections();
             e.preventDefault();
         }
-    // No else clause — click without Ctrl/Shift copies name (handled in nameSpan.click)
+    // No else clause - click without Ctrl/Shift copies name (handled in nameSpan.click)
     } else if (span && (e.ctrlKey || e.metaKey) && !e.altKey) {
         const pos = parseInt(span.dataset.pos);
         if (isNaN(pos)) return;
-        
+
         // Check if this is a simple click (not a drag)
         // We'll determine this in mouseup - for now, prepare for both possibilities
-        
+
         // Two-click system: Check if we have a pending start
         if (state.pendingNucStart === null) {
             // First click - set pending start and also prepare for potential drag
             state.selectedNucs.clear();
             state.pendingNucStart = {row: index, pos: pos};
-            
+
             // Also set up drag state in case user drags
             state.isDragging = true;
             state.dragStartRow = index;
             state.dragStartCol = pos;
             state.dragMode = 'nuc';
-            
+
             // Set initial selection to just this nucleotide
             let rowSet = new Set();
             rowSet.add(pos);
             state.selectedNucs.set(index, rowSet);
-            
+
             scheduleNucSelectionRefresh();
         } else if (state.pendingNucStart.row === index) {
             // Second click on same row - complete the two-click selection
@@ -3635,20 +3635,20 @@ function handleMouseDown(e) {
             // Click on different row - clear pending and start fresh
             state.selectedNucs.clear();
             state.pendingNucStart = {row: index, pos: pos};
-            
+
             // Also set up drag state
             state.isDragging = true;
             state.dragStartRow = index;
             state.dragStartCol = pos;
             state.dragMode = 'nuc';
-            
+
             let rowSet = new Set();
             rowSet.add(pos);
             state.selectedNucs.set(index, rowSet);
-            
+
             scheduleNucSelectionRefresh();
         }
-        
+
         e.preventDefault();
     } else if (span && (e.ctrlKey || e.metaKey) && e.altKey) {
         const pos = parseInt(span.dataset.pos);
@@ -3656,7 +3656,7 @@ function handleMouseDown(e) {
         state.isDragging = true;
         state.dragStartCol = pos;
         state.dragMode = 'col';
-        
+
         if (e.shiftKey && state.lastSelectedColumn !== null) {
             // Shift+Ctrl+Alt+Click: Select range from last selected column
             const start = Math.min(state.lastSelectedColumn, pos);
@@ -3672,12 +3672,12 @@ function handleMouseDown(e) {
                 state.selectedColumns.add(pos);
             }
         }
-        
+
         state.lastSelectedColumn = pos;
         updateColumnSelections();
         e.preventDefault();
     }
-    // No handler for plain click on span — do nothing
+    // No handler for plain click on span - do nothing
 }
 // Selection helper consolidating toggle behavior
 function toggleRowSelection(index) {
@@ -3726,7 +3726,7 @@ function handleMouseMove(e) {
             if (currentIndex === state.dragStartRow) {
                 const startPos = Math.min(state.dragStartCol, pos);
                 const endPos = Math.max(state.dragStartCol, pos);
-                
+
                 // Clear existing selection and create new range
                 state.selectedNucs.clear();
                 let rowSet = new Set();
@@ -3904,19 +3904,19 @@ function handleKeyDown(e) {
             e.preventDefault();
         }
     }
-    
+
     // Navigation shortcuts (non-Ctrl)
     if (e.key === 'F3') {
         if (e.shiftKey) {
             // Previous search result (placeholder for future implementation)
             showMessage("Previous search result (not implemented)", 2000);
         } else {
-            // Next search result (placeholder for future implementation) 
+            // Next search result (placeholder for future implementation)
             showMessage("Next search result (not implemented)", 2000);
         }
         e.preventDefault();
     }
-    
+
     // Page navigation for large alignments
     if (e.key === 'PageUp' || e.key === 'PageDown') {
         const container = alignmentContainer;
@@ -3991,6 +3991,61 @@ function sortBySimilarity() {
     state.lastAction = 'sort';
     renderAlignment();
     showMessage('Sorted by similarity to first sequence', 2000);
+}
+
+// ── Save / Load sequence order ──
+function exportOrder() {
+    if (!state.seqs.length) { showMessage('No sequences loaded', 2000); return; }
+    const order = state.seqs.map(s => s.header);
+    const json = JSON.stringify({ version: 1, exported: new Date().toISOString(), count: order.length, order }, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = _sanitizeSnapshotFileBaseName('msa_order') + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showMessage('Order exported (' + order.length + ' sequences)', 2000);
+}
+
+function importOrder() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = () => {
+        const file = input.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const data = JSON.parse(reader.result);
+                if (!data.order || !Array.isArray(data.order)) throw new Error('Invalid order file');
+                const orderMap = new Map(data.order.map((h, i) => [h, i]));
+                const currentHeaders = new Set(state.seqs.map(s => s.header));
+                // Keep only headers present in the current alignment
+                const reordered = [];
+                const unmatched = [];
+                for (const s of state.seqs) {
+                    if (orderMap.has(s.header)) reordered.push(s);
+                    else unmatched.push(s);
+                }
+                reordered.sort((a, b) => orderMap.get(a.header) - orderMap.get(b.header));
+                const extra = data.order.filter(h => !currentHeaders.has(h));
+                pushUndo();
+                state.seqs = [...reordered, ...unmatched];
+                state.lastAction = 'sort';
+                renderAlignment();
+                let msg = 'Order loaded (' + reordered.length + ' matched';
+                if (unmatched.length) msg += ', ' + unmatched.length + ' new';
+                if (extra.length) msg += ', ' + extra.length + ' missing';
+                msg += ')';
+                showMessage(msg, 2500);
+            } catch (e) {
+                showMessage('Invalid order file: ' + e.message, 4000);
+            }
+        };
+        reader.readAsText(file);
+    };
+    input.click();
 }
 
 function deleteSelected() {
@@ -4147,7 +4202,7 @@ function copySelected() {
     const trimmedNucText = nucText.trim();
     if (trimmedNucText) {
         const previewSource = trimmedNucText.replace(/\s+/g, ' ');
-    const preview = previewSource.length > 50 ? previewSource.slice(0, 50) + '…' : previewSource;
+    const preview = previewSource.length > 50 ? previewSource.slice(0, 50) + '...' : previewSource;
         const baseCount = trimmedNucText.replace(/\s+/g, '').length;
         navigator.clipboard.writeText(trimmedNucText).then(() => {
             showMessage(`Copied ${baseCount} bp: ${preview}`, 4000);
@@ -4157,7 +4212,7 @@ function copySelected() {
         });
         return;
     }
-    // Removed "No sequence selected" message — silent if nothing to copy
+    // Removed "No sequence selected" message - silent if nothing to copy
     if (state.selectedRows.size === 0) {
         return;
     }
@@ -4442,39 +4497,39 @@ function replaceSelectedWithConsensus() {
         showMessage("Select at least 2 sequences to create consensus.", 3000);
         return;
     }
-    
+
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
     const len = Math.max(...selectedSeqs.map(s => s.length));
-    
+
     // Generate consensus sequence
     const cons = computeConsensusForSequences(selectedSeqs);
-    
+
     // Create consensus name based on selected sequence indices
     const firstIdx = indices[0] + 1; // 1-based for display
     const lastIdx = indices[indices.length - 1] + 1;
     const consName = `cons_seq${firstIdx}-${lastIdx}`;
-    
+
     // Save to history
     pushUndo('replaceWithConsensus');
-    
+
     // Remove selected sequences (from end to start to preserve indices)
     for (let i = indices.length - 1; i >= 0; i--) {
         state.seqs.splice(indices[i], 1);
     }
-    
+
     // Insert consensus at the position of the first selected sequence
-    const consObj = { 
-        header: consName, 
-        fullHeader: `Consensus of sequences ${firstIdx}-${lastIdx}`, 
-        seq: cons, 
-        gaplessPositions: calculateGaplessPositions(cons) 
+    const consObj = {
+        header: consName,
+        fullHeader: `Consensus of sequences ${firstIdx}-${lastIdx}`,
+        seq: cons,
+        gaplessPositions: calculateGaplessPositions(cons)
     };
     state.seqs.splice(indices[0], 0, consObj);
-    
+
     // Clear selection
     state.selectedRows.clear();
-    
+
     renderAlignment();
     showMessage(`Replaced ${indices.length} sequences with consensus: ${consName}`, 3000);
 }
@@ -4791,9 +4846,9 @@ function _loadSnapshotPayload(payload) {
 
     state.currentFilename = payload.sourceTitle || payload.title || 'Snapshot';
     state.currentFilePath = '';
-    
+
     // Parse and render first, THEN apply view settings
-    
+
     parseAndRender(true).then(() => {
         _applySnapshotView(payload.view || {});
         if (payload.colourState) {
@@ -5567,27 +5622,27 @@ function searchMotif() {
 function updateActiveSearchesPanel() {
     const panel = el('activeSearches');
     const list = el('searchList');
-    
+
     if (state.searchHistory.length === 0) {
         panel.style.display = 'none';
         return;
     }
-    
+
     panel.style.display = 'block';
     list.innerHTML = '';
-    
+
     state.searchHistory.forEach((search, index) => {
         const item = document.createElement('div');
         item.className = 'search-item';
-        
+
         const swatch = document.createElement('div');
         swatch.className = 'search-swatch';
         swatch.style.backgroundColor = search.color;
-        
+
     const text = document.createElement('span');
     const label = search.label || search.motif;
     text.textContent = `${label} (${search.matchCount || 0})`;
-        
+
         const remove = document.createElement('button');
         remove.className = 'search-remove';
     remove.innerHTML = '×';
@@ -5599,7 +5654,7 @@ function updateActiveSearchesPanel() {
             state.searchHistory.splice(index, 1);
             updateActiveSearchesPanel();
         });
-        
+
         item.appendChild(swatch);
         item.appendChild(text);
         item.appendChild(remove);
@@ -5660,23 +5715,23 @@ function previewTrimming() {
         showMessage("No sequences loaded.", 3000);
         return;
     }
-    
+
     updateClusteringStatus('Analyzing trim boundaries...');
-    
+
     const sequences = state.seqs.map((seq, idx) => ({
         id: seq.header || `Seq${idx+1}`,
         seq: seq.seq
     }));
-    
+
     const params = getTrimParameters();
     const trimBounds = getTrimBoundaries(sequences, params);
-    
+
     state.trimBoundaries = trimBounds;
-    
+
     const leftRemove = trimBounds.leftTrimEnd + 1;
     const rightRemove = state.seqs[0].seq.length - trimBounds.rightTrimStart;
     const status = `Preview: ${leftRemove} left + ${rightRemove} right would be removed`;
-    
+
     updateClusteringStatus(status);
     debounceRender();
     showMessage(status, 3000);
@@ -5687,12 +5742,12 @@ function executeTrimming() {
         showMessage("No sequences loaded.", 3000);
         return;
     }
-    
+
     if (!state.trimBoundaries) {
         showMessage("Run Preview first to set trim boundaries.", 3000);
         return;
     }
-    
+
     // Backup original sequences before trimming
     state.trimBackup = state.seqs.map(seq => ({
         header: seq.header,
@@ -5700,14 +5755,14 @@ function executeTrimming() {
         seq: seq.seq,
         gaplessPositions: seq.gaplessPositions
     }));
-    
+
     const leftTrimEnd = state.trimBoundaries.leftTrimEnd;
     const rightTrimStart = state.trimBoundaries.rightTrimStart;
-    
+
     const trimStart = leftTrimEnd + 1;
     const trimEnd = rightTrimStart;
     const alnLen = state.seqs[0].seq.length;
-    
+
     // Trim each sequence
     for (let i = 0; i < state.seqs.length; i++) {
         const seq = state.seqs[i].seq;
@@ -5715,15 +5770,15 @@ function executeTrimming() {
         // Recalculate gapless positions
         state.seqs[i].gaplessPositions = calculateGaplessPositions(state.seqs[i].seq);
     }
-    
+
     const leftRemoved = trimStart;
     const rightRemoved = alnLen - trimEnd;
     const newLen = trimEnd - trimStart;
-    
+
     const status = `✓ Trimmed: ${leftRemoved}L + ${rightRemoved}R = ${leftRemoved + rightRemoved} cols. New length: ${newLen}`;
     updateClusteringStatus(status);
     showMessage(status, 3000);
-    
+
     // Clear visual trim indicators
     state.trimBoundaries = null;
     debounceRender();
@@ -5734,11 +5789,11 @@ function undoTrimming() {
         showMessage("No trimming to undo.", 3000);
         return;
     }
-    
+
     state.seqs = state.trimBackup.map(seq => ({...seq}));
     state.trimBackup = null;
     state.trimBoundaries = null;
-    
+
     updateClusteringStatus('✓ Trimming reverted');
     showMessage('Trimming reverted - original alignment restored', 3000);
     debounceRender();
@@ -5749,18 +5804,18 @@ function clusterSequences() {
         showMessage("Need at least 3 sequences to cluster.", 3000);
         return;
     }
-    
+
     updateClusteringStatus('Running clustering algorithm...');
-    
+
     // Prepare sequences for clustering
     const seqsForClustering = state.seqs.map(seq => ({
         id: seq.header || seq.name || 'unnamed',
         seq: seq.seq
     }));
-    
+
     // Get clustering parameters from UI
     const clusterParams = getClusteringParameters();
-    
+
     // Run clustering
     const clusterer = new SINEClusterer(seqsForClustering);
     const clusterResults = clusterer.cluster({
@@ -5774,10 +5829,10 @@ function clusterSequences() {
         sizeMediumLarge: clusterParams.sizeMediumLarge,
         minOccurrences: clusterParams.minOccurrences
     });
-    
+
     // Store results in state
     state.clusterResults = clusterResults;
-    
+
     // Log to console
     console.log('=== CLUSTERING RESULTS ===');
     debugLog(`Parameters: minSize=${clusterParams.minSize}, minPerfect=${clusterParams.minPerfect}, maxIterations=${clusterParams.maxIterations}`);
@@ -5789,12 +5844,12 @@ function clusterSequences() {
     debugLog(`Assigned: ${clusterResults.summary.nAssigned}`);
     debugLog(`Unassigned: ${clusterResults.summary.nUnassigned}`);
     console.log('');
-    
+
     const colors = SINEClusterer.getClusterColors();
-    
+
     // Create cluster name map
     state.clusterMap = {};
-    
+
     clusterResults.clusters.forEach((cluster, idx) => {
         const color = colors[idx % colors.length];
         debugLog(`\n--- CLUSTER ${idx + 1} ---`);
@@ -5805,7 +5860,7 @@ function clusterSequences() {
         }
         debugLog(`Color: ${color}`);
         console.log('Sequences:');
-        
+
         cluster.sequences.forEach(seq => {
             debugLog(`  • ${seq.id} (index ${seq.index})`);
             state.clusterMap[seq.index] = {
@@ -5814,14 +5869,14 @@ function clusterSequences() {
                 name: `Cluster ${idx + 1}`
             };
         });
-        
+
         if (cluster.perfectFeatures.length > 0) {
             debugLog(`Perfect features (${cluster.perfectFeatures.length} reliable):`);
             cluster.perfectFeatures.slice(0, 5).forEach(f => {
                 debugLog(`  Pos ${f.pos}: ${f.char}`);
             });
         }
-        
+
         if (cluster.imperfectFeatures && cluster.imperfectFeatures.length > 0) {
             debugLog(`Imperfect features (${cluster.imperfectFeatures.length} reliable):`);
             cluster.imperfectFeatures.slice(0, 5).forEach(f => {
@@ -5829,7 +5884,7 @@ function clusterSequences() {
             });
         }
     });
-    
+
     if (clusterResults.unassigned.length > 0) {
         debugLog(`\n--- UNASSIGNED (${clusterResults.unassigned.length} sequences) ---`);
         clusterResults.unassigned.forEach(seq => {
@@ -5841,12 +5896,12 @@ function clusterSequences() {
             };
         });
     }
-    
+
     console.log('\n=== END CLUSTERING ===\n');
-    
+
     // Color the sequence names in UI
     colorSequencesByCluster();
-    
+
     updateClusteringStatus(`Clustering complete: ${clusterResults.summary.nClusters} clusters found`);
 }
 
@@ -5854,18 +5909,18 @@ function colorSequencesByCluster() {
     if (!state.clusterMap) {
         return;
     }
-    
+
     // First, re-render to make sure we have fresh DOM elements
     renderAlignment();
-    
+
     // Then find all sequence name elements and color them
     setTimeout(() => {
         const seqNameElements = document.querySelectorAll('.seq-name');
-        
+
         seqNameElements.forEach((el) => {
             // Get the sequence index from data-seq-index attribute
             const seqIdx = parseInt(el.dataset.seqIndex);
-            
+
             if (state.clusterMap[seqIdx] !== undefined) {
                 const {color, name} = state.clusterMap[seqIdx];
                 // Remove the default white background by using setProperty with important
@@ -5877,7 +5932,7 @@ function colorSequencesByCluster() {
                 el.classList.add('cluster-colored');
             }
         });
-        
+
         // Now highlight diagnostic mutations
         highlightDiagnosticMutations();
     }, 50);
@@ -5885,26 +5940,26 @@ function colorSequencesByCluster() {
 
 function highlightDiagnosticMutations() {
     if (!state.clusterResults) return;
-    
+
     // Create a map: position -> [{clusterIdx, color, char, seqIndices, isPerfect}, ...]
     // seqIndices are the sequences that have this diagnostic feature
     const diagnosticMap = {};
-    
+
     state.clusterResults.clusters.forEach((cluster, clusterIdx) => {
         const colors = SINEClusterer.getClusterColors();
         const color = colors[clusterIdx % colors.length];
-        
+
         // Option: Paint ALL found features (not just validated ones)
         // This helps diagnose if the algorithm is missing features
         if (cluster.allFoundFeatures && cluster.allFoundFeatures.length > 0) {
             cluster.allFoundFeatures.forEach(feature => {
                 const pos = feature.pos; // Already 0-based from cluster.js
                 const char = feature.char;
-                
+
                 if (!diagnosticMap[pos]) {
                     diagnosticMap[pos] = [];
                 }
-                
+
                 // Calculate inter-cluster leakage for this feature
                 let leakageCount = 0;
                 let totalOtherClusterSeqs = 0;
@@ -5919,9 +5974,9 @@ function highlightDiagnosticMutations() {
                         });
                     }
                 });
-                
+
                 const leakagePercent = totalOtherClusterSeqs > 0 ? Math.round((leakageCount / totalOtherClusterSeqs) * 100) : 0;
-                
+
                 // Mark as "all-found" to differentiate from validated features
                 diagnosticMap[pos].push({
                     clusterIdx,
@@ -5943,11 +5998,11 @@ function highlightDiagnosticMutations() {
             // Perfect features (full saturation)
             cluster.perfectFeatures.forEach(feature => {
                 const pos = feature.pos - 1; // Convert to 0-based index
-                
+
                 if (!diagnosticMap[pos]) {
                     diagnosticMap[pos] = [];
                 }
-                
+
                 // Calculate inter-cluster leakage for this feature
                 let leakageCount = 0;
                 let totalOtherClusterSeqs = 0;
@@ -5962,9 +6017,9 @@ function highlightDiagnosticMutations() {
                         });
                     }
                 });
-                
+
                 const leakagePercent = totalOtherClusterSeqs > 0 ? Math.round((leakageCount / totalOtherClusterSeqs) * 100) : 0;
-                
+
                 diagnosticMap[pos].push({
                     clusterIdx,
                     color,
@@ -5979,16 +6034,16 @@ function highlightDiagnosticMutations() {
                     }
                 });
             });
-            
+
             // Imperfect features (faint/reduced opacity)
             if (cluster.imperfectFeatures) {
                 cluster.imperfectFeatures.forEach(feature => {
                     const pos = feature.pos - 1; // Convert to 0-based index
-                    
+
                     if (!diagnosticMap[pos]) {
                         diagnosticMap[pos] = [];
                     }
-                    
+
                     // Calculate inter-cluster leakage for this feature
                     let leakageCount = 0;
                     let totalOtherClusterSeqs = 0;
@@ -6003,9 +6058,9 @@ function highlightDiagnosticMutations() {
                             });
                         }
                     });
-                    
+
                     const leakagePercent = totalOtherClusterSeqs > 0 ? Math.round((leakageCount / totalOtherClusterSeqs) * 100) : 0;
-                    
+
                     diagnosticMap[pos].push({
                         clusterIdx,
                         color,
@@ -6024,56 +6079,56 @@ function highlightDiagnosticMutations() {
             }
         }
     });
-    
+
     console.log('[Clustering] Found', Object.keys(diagnosticMap).length, 'diagnostic positions');
-    
+
     // Find all seq-line rows and highlight diagnostic positions
     const seqLines = document.querySelectorAll('.seq-line');
-    
+
     seqLines.forEach(seqLine => {
         // Get the sequence index for this row
         const seqIdx = parseInt(seqLine.dataset.seqIndex);
         if (isNaN(seqIdx)) return;
-        
+
         const seqDataDiv = seqLine.querySelector('.seq-data');
         if (!seqDataDiv) return;
-        
+
         const spans = seqDataDiv.querySelectorAll('span');
-        
+
         spans.forEach(span => {
             // Get the alignment position
             const pos = parseInt(span.dataset.pos);
             if (isNaN(pos)) return;
-            
+
             // Check if this position has diagnostics
             if (diagnosticMap[pos]) {
                 // Find diagnostics relevant to this sequence's cluster
                 // Prefer perfect features over imperfect
-                const relevantDiags = diagnosticMap[pos].filter(diag => 
+                const relevantDiags = diagnosticMap[pos].filter(diag =>
                     diag.seqIndices.has(seqIdx)
                 );
-                
+
                 if (relevantDiags.length > 0) {
                     // Prioritize perfect features
                     const diag = relevantDiags.find(d => d.isPerfect) || relevantDiags[0];
-                    
+
                     // Only highlight if the base matches the diagnostic character
                     const baseChar = span.textContent;
                     if (baseChar === diag.char) {
                         const alpha = diag.isPerfect ? 1.0 : 0.4; // Perfect = full opacity, Imperfect = 40% opacity
-                        
+
                         // Convert hex color to RGB with alpha
                         const rgb = hexToRgb(diag.color);
                         const bgColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
                         const textColor = diag.isPerfect ? 'white' : '#333';
-                        
+
                         span.style.setProperty('background-color', bgColor, 'important');
                         span.style.setProperty('color', textColor, 'important');
                         span.style.setProperty('font-weight', diag.isPerfect ? 'bold' : 'normal', 'important');
-                        
+
                         // Create enhanced tooltip showing inter-cluster leakage
                         let title = `${diag.clusterName}: ${diag.isPerfect ? 'diagnostic' : 'partial'} ${diag.char}`;
-                        
+
                         // If this feature has inter-cluster leakage info, show it
                         if (diag.interClusterLeakage) {
                             title += ` [leaks to ${diag.interClusterLeakage.count}/${diag.interClusterLeakage.total} in other clusters (${diag.interClusterLeakage.percent}%)]`;
@@ -6108,16 +6163,16 @@ function getClusteringParameters() {
         minSize: parseInt(el('clusterMinSizeInput')?.value) || 3,
         minPerfect: parseInt(el('clusterMinPerfectInput')?.value) || 5,
         maxIterations: parseInt(el('clusterMaxIterationsInput')?.value) || 10,
-        
+
         // Quality thresholds for imperfect features (based on cluster size)
         qualitySmall: parseInt(el('qualitySmallInput')?.value) || 90,      // < 11 sequences
         qualityMedium: parseInt(el('qualityMediumInput')?.value) || 80,    // 11-19 sequences
         qualityLarge: parseInt(el('qualityLargeInput')?.value) || 70,      // >= 20 sequences
-        
+
         // Size breakpoints
         sizeSmallMedium: parseInt(el('sizeSmallMediumInput')?.value) || 11,
         sizeMediumLarge: parseInt(el('sizeMediumLargeInput')?.value) || 20,
-        
+
         // Feature occurrence threshold
         minOccurrences: parseInt(el('minOccurrencesInput')?.value) || 5
     };
@@ -6129,22 +6184,22 @@ function saveClusteringPreset() {
         showMessage("Please enter a preset name", 2000);
         return;
     }
-    
+
     const preset = {
         name: presetName,
         trimming: getTrimParameters(),
         clustering: getClusteringParameters(),
         timestamp: new Date().toISOString()
     };
-    
+
     // Store in localStorage
     let presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
     presets[presetName] = preset;
     localStorage.setItem('clusteringPresets', JSON.stringify(presets));
-    
+
     // Update preset list
     updateClusteringPresetList();
-    
+
     el('presetNameInput').value = '';
     showMessage(`Preset "${presetName}" saved!`, 2000);
     console.log('[Clustering] Saved preset:', presetName, preset);
@@ -6155,10 +6210,10 @@ function createOptimalPreset(silent = false) {
     // The problem is NOT parameter relaxation - the problem is the INITIAL values
     // "two" preset works because it starts with minOccurrences=2 (LOW!)
     // "three" preset fails because it starts with minOccurrences=10 (HIGH!)
-    // 
+    //
     // Solution: Create preset with LOW initial minOccurrences (3-4)
     // This allows final clusters to form without over-relaxation complexity
-    
+
     const optimalPreset = {
         name: 'optimal',
         trimming: {
@@ -6179,12 +6234,12 @@ function createOptimalPreset(silent = false) {
         },
         timestamp: new Date().toISOString()
     };
-    
+
     // Store in localStorage
     let presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
     presets['optimal'] = optimalPreset;
     localStorage.setItem('clusteringPresets', JSON.stringify(presets));
-    
+
     // Update preset list and select it
     updateClusteringPresetList();
     const presetSelect = el('clusteringPresetList');
@@ -6193,7 +6248,7 @@ function createOptimalPreset(silent = false) {
         // Immediately load it so user can see the parameters
         loadClusteringPreset(true);
     }
-    
+
     if (!silent) {
         showMessage('Created "optimal" preset (minOccurrences=3) - now run clustering!', 3000);
     }
@@ -6203,42 +6258,42 @@ function createOptimalPreset(silent = false) {
 function loadClusteringPreset(silent = false) {
     const presetSelect = el('clusteringPresetList');
     const presetName = presetSelect?.value;
-    
+
     if (!presetName) {
         showMessage("Please select a preset", 2000);
         return;
     }
-    
+
     let presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
     const preset = presets[presetName];
-    
+
     if (!preset) {
         showMessage("Preset not found", 2000);
         return;
     }
-    
+
     // Apply trimming parameters
     el('leftGapInput').value = preset.trimming.leftGapThresh * 100;
     el('rightGapInput').value = preset.trimming.rightGapThresh * 100;
     el('edgeWindowInput').value = preset.trimming.edgeWindow;
-    
+
     // Apply clustering parameters
     el('clusterMinSizeInput').value = preset.clustering.minSize;
     el('clusterMinPerfectInput').value = preset.clustering.minPerfect;
     el('clusterMaxIterationsInput').value = preset.clustering.maxIterations;
-    
+
     // Apply quality thresholds (with fallback to defaults for older presets)
     el('qualitySmallInput').value = preset.clustering.qualitySmall || 90;
     el('qualityMediumInput').value = preset.clustering.qualityMedium || 80;
     el('qualityLargeInput').value = preset.clustering.qualityLarge || 70;
-    
+
     // Apply size breakpoints (with fallback to defaults for older presets)
     el('sizeSmallMediumInput').value = preset.clustering.sizeSmallMedium || 11;
     el('sizeMediumLargeInput').value = preset.clustering.sizeMediumLarge || 20;
-    
+
     // Apply min occurrences (with fallback to default for older presets)
     el('minOccurrencesInput').value = preset.clustering.minOccurrences || 5;
-    
+
     const shouldSilent = silent || presetName === 'optimal';
     if (!shouldSilent) {
         showMessage(`Preset "${presetName}" loaded!`, 2000);
@@ -6249,40 +6304,40 @@ function loadClusteringPreset(silent = false) {
 function updateClusteringPresetList() {
     const presetSelect = el('clusteringPresetList');
     if (!presetSelect) return;
-    
+
     let presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
     const presetNames = Object.keys(presets).sort();
-    
+
     // Clear and rebuild options
     presetSelect.innerHTML = '<option value="">-- Select preset --</option>';
-    
+
     presetNames.forEach(name => {
         const option = document.createElement('option');
         option.value = name;
         option.textContent = `${name} (${new Date(presets[name].timestamp).toLocaleDateString()})`;
         presetSelect.appendChild(option);
     });
-    
+
     console.log('[Clustering] Preset list updated:', presetNames.length, 'presets');
 }
 
 function deleteClusteringPreset() {
     const presetSelect = el('clusteringPresetList');
     const presetName = presetSelect?.value;
-    
+
     if (!presetName) {
         showMessage("Please select a preset to delete", 2000);
         return;
     }
-    
+
     if (!confirm(`Delete preset "${presetName}"?`)) {
         return;
     }
-    
+
     let presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
     delete presets[presetName];
     localStorage.setItem('clusteringPresets', JSON.stringify(presets));
-    
+
     updateClusteringPresetList();
     showMessage(`Preset "${presetName}" deleted`, 2000);
 }
@@ -6290,18 +6345,18 @@ function deleteClusteringPreset() {
 function displayClusteringResults(results) {
     const modal = el('clusteringModal');
     const content = el('clusteringContent');
-    
+
     if (!modal || !content) return;
-    
+
     const colors = SINEClusterer.getClusterColors();
-    
+
     let html = `
         <div style="margin-bottom: 16px; padding: 8px; background: #e8f4f8; border-radius: 4px;">
-            <strong>Summary:</strong> ${results.summary.nClusters} cluster${results.summary.nClusters !== 1 ? 's' : ''} | 
+            <strong>Summary:</strong> ${results.summary.nClusters} cluster${results.summary.nClusters !== 1 ? 's' : ''} |
             ${results.summary.nAssigned} sequences assigned | ${results.summary.nUnassigned} unassigned
         </div>
     `;
-    
+
     // Display each cluster
     results.clusters.forEach((cluster, idx) => {
         const color = colors[idx % colors.length];
@@ -6328,7 +6383,7 @@ function displayClusteringResults(results) {
             </div>
         `;
     });
-    
+
     // Display unassigned
     if (results.unassigned.length > 0) {
         html += `
@@ -6345,25 +6400,25 @@ function displayClusteringResults(results) {
             </div>
         `;
     }
-    
+
     content.innerHTML = html;
     modal.style.display = 'block';
 }
 
 function highlightCluster(clusterIdx) {
     if (!state.clusteringResults) return;
-    
+
     const results = state.clusteringResults;
     const colors = SINEClusterer.getClusterColors();
-    
+
     // Clear previous cluster highlighting
     document.querySelectorAll('[data-cluster-highlight]').forEach(el => {
         el.removeAttribute('data-cluster-highlight');
         el.style.backgroundColor = '';
     });
-    
+
     let indicesToHighlight = [];
-    
+
     if (clusterIdx === -1) {
         // Highlight unassigned
         indicesToHighlight = results.unassigned.map(s => s.index);
@@ -6371,9 +6426,9 @@ function highlightCluster(clusterIdx) {
         // Highlight specific cluster
         indicesToHighlight = results.clusters[clusterIdx].sequences.map(s => s.index);
     }
-    
+
     const color = clusterIdx === -1 ? '#999999' : colors[clusterIdx % colors.length];
-    
+
     // Apply highlights
     indicesToHighlight.forEach(idx => {
         document.querySelectorAll(`.seq-line[data-seq-index="${idx}"]`).forEach(line => {
@@ -6381,7 +6436,7 @@ function highlightCluster(clusterIdx) {
             line.style.backgroundColor = color + '33'; // 33 = 20% opacity
         });
     });
-    
+
     showMessage(`Highlighted ${indicesToHighlight.length} sequence${indicesToHighlight.length !== 1 ? 's' : ''}`, 2000);
 }
 
@@ -6577,7 +6632,7 @@ function _reorderByGuideTree(fasta) {
         }
     }
 
-    // Find the last active cluster — its leaf order is the guide tree order
+    // Find the last active cluster - its leaf order is the guide tree order
     const finalCluster = clusters.find((_, i) => active[i]) || clusters[0];
     const order = finalCluster;
 
@@ -7871,15 +7926,15 @@ function closeContextMenu() {
 
 function showContextMenu(e, index) {
     closeContextMenu();
-    
+
     // Highlight the sequence this menu is for
     contextMenuHighlightedRow = index;
     document.querySelectorAll(`.seq-line[data-seq-index="${index}"]`)
         .forEach(line => line.classList.add('context-menu-highlight'));
-    
+
     contextMenu = document.createElement('div');
     contextMenu.className = 'context-menu';
-    
+
     // Temporarily position off-screen to measure height
     contextMenu.style.visibility = 'hidden';
     contextMenu.style.left = `${e.pageX}px`;
@@ -7912,7 +7967,7 @@ function showContextMenu(e, index) {
     contextMenu.appendChild(copyFastaUngapped);
     contextMenu.appendChild(copyPlainGapped);
     contextMenu.appendChild(copyPlainUngapped);
-    
+
     // Add color-specific copy options if this sequence has a color
     const seqName = state.seqs[index].header;
     if (colourState.mappings.has(seqName)) {
@@ -7920,7 +7975,7 @@ function showContextMenu(e, index) {
         separator1.style.borderTop = '1px solid #ccc';
         separator1.style.margin = '4px 0';
         contextMenu.appendChild(separator1);
-        
+
         const colour = colourState.mappings.get(seqName);
         const colorLabel = document.createElement('div');
         colorLabel.textContent = `Color: ${colour}`;
@@ -7928,32 +7983,32 @@ function showContextMenu(e, index) {
         colorLabel.style.color = '#666';
         colorLabel.style.padding = '2px 0';
         contextMenu.appendChild(colorLabel);
-        
+
         const copySameColorGapped = document.createElement('div');
         copySameColorGapped.textContent = 'Copy this color (gapped)';
         copySameColorGapped.addEventListener('click', () => {
             copySequencesByColor(colour, true, true);
             closeContextMenu();
         });
-        
+
         const copySameColorUngapped = document.createElement('div');
         copySameColorUngapped.textContent = 'Copy this color (ungapped)';
         copySameColorUngapped.addEventListener('click', () => {
             copySequencesByColor(colour, false, true);
             closeContextMenu();
         });
-        
+
         contextMenu.appendChild(copySameColorGapped);
         contextMenu.appendChild(copySameColorUngapped);
     }
-    
+
     // Add BLAST search option
     if (state.selectedRows.size <= 1) {
         const sep = document.createElement('div');
         sep.style.borderTop = '1px solid #ccc';
         sep.style.margin = '4px 0';
         contextMenu.appendChild(sep);
-        
+
         const blastItem = document.createElement('div');
         blastItem.textContent = 'BLAST Search';
         blastItem.addEventListener('click', () => {
@@ -8022,7 +8077,7 @@ function showContextMenu(e, index) {
         });
         contextMenu.appendChild(dotPairItem);
     }
-    
+
     // Add "Replace with Consensus" option if multiple sequences selected
     if (state.selectedRows.size >= 2) {
         const replaceConsensusItem = document.createElement('div');
@@ -8032,7 +8087,7 @@ function showContextMenu(e, index) {
             closeContextMenu();
         });
         contextMenu.appendChild(replaceConsensusItem);
-        
+
         const addConsensusItem = document.createElement('div');
         addConsensusItem.textContent = `Add consensus below (${state.selectedRows.size} selected)`;
         addConsensusItem.addEventListener('click', () => {
@@ -8040,14 +8095,14 @@ function showContextMenu(e, index) {
             closeContextMenu();
         });
         contextMenu.appendChild(addConsensusItem);
-        
+
         // Add separator
         const separator = document.createElement('div');
         separator.style.borderTop = '1px solid #ccc';
         separator.style.margin = '4px 0';
         contextMenu.appendChild(separator);
     }
-    
+
     const deleteItem = document.createElement('div');
     deleteItem.textContent = state.selectedRows.size > 1 ? 'Delete selected' : 'Delete sequence';
     deleteItem.addEventListener('click', () => {
@@ -8165,7 +8220,7 @@ function showContextMenu(e, index) {
 
     // Edit in Sequence Editor
     const seqEditItem = document.createElement('div');
-    seqEditItem.textContent = 'Edit Sequence…';
+    seqEditItem.textContent = 'Edit Sequence...';
     seqEditItem.addEventListener('click', () => {
         openSeqEditor(index);
         closeContextMenu();
@@ -8173,29 +8228,29 @@ function showContextMenu(e, index) {
     contextMenu.appendChild(seqEditItem);
 
     document.body.appendChild(contextMenu);
-    
+
     // Adjust position if menu would overflow viewport
     const menuRect = contextMenu.getBoundingClientRect();
     const viewportHeight = window.innerHeight;
     const viewportWidth = window.innerWidth;
-    
+
     // Check vertical overflow
     if (menuRect.bottom > viewportHeight) {
         // Position above the cursor instead
         const newTop = e.pageY - menuRect.height;
         contextMenu.style.top = `${Math.max(0, newTop)}px`;
     }
-    
+
     // Check horizontal overflow
     if (menuRect.right > viewportWidth) {
         // Position to the left of the cursor instead
         const newLeft = e.pageX - menuRect.width;
         contextMenu.style.left = `${Math.max(0, newLeft)}px`;
     }
-    
+
     // Make visible after positioning
     contextMenu.style.visibility = 'visible';
-    
+
     // Close menu when clicking outside
     const closeOnClickOutside = (event) => {
         if (contextMenu && !contextMenu.contains(event.target)) {
@@ -8380,7 +8435,7 @@ function scheduleNucSelectionRefresh() {
 // EVENT LISTENERS
 function initializeAppUI() {
     // This function is called once the DOM is fully loaded.
-    
+
     updateVersionIndicator();
     checkSshServer();
 
@@ -8444,7 +8499,7 @@ function initializeAppUI() {
             console.warn('Failed to clear menu styles', err);
         }
     }, 50);
-    
+
     // Use existing global DOM element references
     let contextMenu = null;
 
@@ -8481,7 +8536,7 @@ function initializeAppUI() {
             fileInput.click();
         });
     }
-    
+
     el('fileInput')?.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -8498,13 +8553,13 @@ function initializeAppUI() {
         };
         reader.readAsText(file);
     });
-    
+
     fastaInput?.addEventListener('paste', () => {
         setTimeout(() => {
             parseAndRender(false);
         }, 100);
     });
-    
+
     // Attach listeners to all buttons
     const buttonActions = {
         'clearButton': () => fastaInput.value = '',
@@ -8634,10 +8689,10 @@ function initializeAppUI() {
             showUndoRedoDropdown(redoDropdownBtn, state.redoHistory, redoAction, 'Redo');
         });
     }
-    
+
     // Initialize clustering preset list
     updateClusteringPresetList();
-    
+
     // Auto-create and load "optimal" preset as default if not already present
     setTimeout(() => {
         const presets = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
@@ -8672,10 +8727,10 @@ function initializeAppUI() {
             searchInputEl.value = reverseComplement(motif);
         });
     }
-    
+
     minimizeBar?.addEventListener('click', expandMenu);
     el('expandButton')?.addEventListener('click', expandMenu);
-    
+
     // UI listener wiring
     attachUIListeners();
 
@@ -8697,7 +8752,7 @@ function initializeAppUI() {
         bottomConsensusRadio.disabled = true;
         bottomConsensusRadio.closest('label')?.classList.add('disabled-option');
     }
-    
+
     // Trigger initial render/setup based on defaults
     onModeChange();
     toggleStickyNames();
@@ -8711,7 +8766,7 @@ function initializeAppUI() {
         controlsResizeObserver.observe(controls);
     }
     window.addEventListener('resize', () => window.requestAnimationFrame(updateControlsOffset));
-    
+
     // Initialize slider backgrounds
     ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(id => {
         const slider = el(id);
@@ -8719,10 +8774,10 @@ function initializeAppUI() {
             updateSliderBackground(slider);
         }
     });
-    
+
     // Setup menu stability to prevent flickering on mouse movement
     setupMenuStability();
-    
+
     // Initialize colour seqs feature
     initColourSeqs();
 
@@ -8732,7 +8787,7 @@ function initializeAppUI() {
 
     // ── URL parameter auto-loading ──────────────────────────────────────
     // ...
-    
+
     // Click-outside to close recent dropdown
     document.addEventListener('click', (e) => {
         const dd = document.getElementById('recentDropdown');
@@ -8742,9 +8797,9 @@ function initializeAppUI() {
         }
     });
     // Supports:
-    //   ?url=<relative_or_absolute_url>   — fetch FASTA/MSF from URL
-    //   ?data=<base64_encoded_text>        — decode inline data
-    //   ?title=<text>                      — optional display title
+    //   ?url=<relative_or_absolute_url>   - fetch FASTA/MSF from URL
+    //   ?data=<base64_encoded_text>        - decode inline data
+    //   ?title=<text>                      - optional display title
     const urlParams = new URLSearchParams(window.location.search);
     const autoSnapshot = urlParams.get('snapshot');
     const autoSnapshotFile = urlParams.get('snapshotFile');
@@ -8819,7 +8874,7 @@ function attachUIListeners() {
     // Set up slider/input pairs manually to avoid function reference issues
     const sliderPairs = [
         ['blackSlider', 'blackInput'],
-        ['darkSlider', 'darkInput'], 
+        ['darkSlider', 'darkInput'],
         ['lightSlider', 'lightInput'],
         ['nameLengthSlider', 'nameLengthInput'],
         ['blockSizeSlider', 'blockSizeInput'],
@@ -8899,7 +8954,7 @@ function attachUIListeners() {
     const radioGroups = ['shadeMode', 'mode', 'consensusType'];
     radioGroups.forEach(group => {
         document.querySelectorAll(`input[name="${group}"]`).forEach(radio => {
-            const handler = group === 'shadeMode' ? onShadeModeChange : 
+            const handler = group === 'shadeMode' ? onShadeModeChange :
                            group === 'mode' ? onModeChange : debounceRender;
             radio.addEventListener('change', handler);
         });
@@ -8931,7 +8986,7 @@ function attachUIListeners() {
         alignmentContainer.addEventListener('mousedown', handleMouseDown);
         alignmentContainer.addEventListener('mousemove', handleMouseMove);
         alignmentContainer.addEventListener('mousedown', handleAlignmentPanStart);
-        
+
         // *** PERFORMANCE: Event delegation for nucleotide tooltips ***
         alignmentContainer.addEventListener('mouseover', (e) => {
             const span = e.target.closest('.seq-data > span[data-pos]');
@@ -8955,7 +9010,7 @@ function attachUIListeners() {
                 hideTooltip();
             }
         });
-        
+
         alignmentContainer.addEventListener('click', () => {
             // If menu is shown as overlay, hide it when clicking on alignment
             if (controls && controls.style.position === 'fixed' && controls.style.transform !== 'translateY(-100%)') {
@@ -8978,7 +9033,7 @@ function attachUIListeners() {
     document.addEventListener('contextmenu', handleAlignmentPanContextMenu, true);
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
-    
+
     // Use existing global infoModal reference
     document.addEventListener('click', (event) => {
         if (event.target === infoModal) {
@@ -9031,12 +9086,12 @@ function setupMenuScrollBehavior() {
             name.offsetHeight;
             name.style.display = '';
         });
-        
+
         if (menuHeight === 0) menuHeight = controls.offsetHeight;
-        
+
         const scrollTop = alignmentContainer.scrollTop;
         const wasHidden = controls.style.transform === 'translateY(-100%)';
-        
+
         if (scrollTop > lastScrollTop && scrollTop > 100) {
             controls.style.transform = 'translateY(-100%)';
             Object.assign(controls.style, { position: '', top: '', left: '', right: '', zIndex: '', boxShadow: '' });
@@ -9044,12 +9099,12 @@ function setupMenuScrollBehavior() {
             controls.style.transform = 'translateY(0)';
             Object.assign(controls.style, { position: '', top: '', left: '', right: '', zIndex: '', boxShadow: '' });
         }
-        
+
         const isHidden = controls.style.transform === 'translateY(-100%)';
         if (wasHidden !== isHidden) {
             updateMenuVisibility();
         }
-        
+
         lastScrollTop = scrollTop;
     });
 
@@ -9656,7 +9711,7 @@ function handleAlignmentPanStart(e) {
     const nameTarget = e.target.closest('.seq-name');
     if (dataTarget || nameTarget) return;
 
-    // Don't preventDefault here — let the contextmenu handler decide
+    // Don't preventDefault here - let the contextmenu handler decide
     // (context menu is only suppressed after actual pan movement)
     state.panning.active = true;
     state.panning.started = false;
@@ -9668,16 +9723,16 @@ function handleAlignmentPanStart(e) {
 
 function handleAlignmentPanMove(e) {
     if (!state.panning.active || !alignmentContainer) return;
-    
+
     // Check if right button is still held
     if (e.buttons !== undefined && (e.buttons & 2) === 0) {
         handleAlignmentPanEnd();
         return;
     }
-    
+
     const deltaX = state.panning.startX - e.clientX;
     const deltaY = state.panning.startY - e.clientY;
-    
+
     // Small threshold before activating pan
     if (!state.panning.started) {
         if (Math.abs(deltaX) < 3 && Math.abs(deltaY) < 3) {
@@ -9685,7 +9740,7 @@ function handleAlignmentPanMove(e) {
         }
         state.panning.started = true;
     }
-    
+
     e.preventDefault();
     alignmentContainer.scrollLeft = state.panning.scrollLeft + deltaX;
     alignmentContainer.scrollTop = state.panning.scrollTop + deltaY;
@@ -9765,23 +9820,23 @@ fastaInput.addEventListener('keydown', function(e) {
         if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             e.preventDefault();
             e.stopPropagation();
-            
+
             dragCounter = 0;
             dragOverlay.classList.remove('active');
             dragOverlay.classList.add('hidden');
-            
+
             const file = e.dataTransfer.files[0];
-            
+
             // Validate file type
             const validExtensions = ['.fasta', '.fa', '.msf', '.aln', '.clustal', '.txt'];
             const fileName = file.name.toLowerCase();
             const isValid = validExtensions.some(ext => fileName.endsWith(ext));
-            
+
             if (!isValid) {
                 showMessage('Please upload a valid alignment file (FASTA, MSF, Clustal, .txt)', 4000);
                 return;
             }
-            
+
             // Process the file
             state.currentFilename = file.name;
             const reader = new FileReader();
@@ -9804,7 +9859,7 @@ fastaInput.addEventListener('keydown', function(e) {
 window.addEventListener('load', () => {
     if (!alignmentContainer) return;
     let scrolling = false, sx = 0, sl = 0;
-    
+
     alignmentContainer.addEventListener('mousedown', (e) => {
         if (e.button !== 2) return;
         if (e.target.closest('.seq-data, .seq-name')) return;
@@ -9812,13 +9867,13 @@ window.addEventListener('load', () => {
         sx = e.clientX;
         sl = alignmentContainer.scrollLeft;
     });
-    
+
     document.addEventListener('mousemove', (e) => {
         if (scrolling) alignmentContainer.scrollLeft = sl - (e.clientX - sx);
     });
-    
+
     document.addEventListener('mouseup', () => { scrolling = false; });
-    
+
     alignmentContainer.addEventListener('contextmenu', (e) => {
         if (!e.target.closest('.seq-data, .seq-name')) e.preventDefault();
     });
@@ -9831,7 +9886,7 @@ window.addEventListener('load', () => {
 // Copy all sequences with a specific color
 function copySequencesByColor(colour, ungapped = false, asFasta = true) {
     const matchingSeqs = [];
-    
+
     state.seqs.forEach((seq, idx) => {
         if (colourState.mappings.get(seq.header) === colour) {
             const seqData = ungapped ? seq.seq.replace(/-/g, '') : seq.seq;
@@ -9842,12 +9897,12 @@ function copySequencesByColor(colour, ungapped = false, asFasta = true) {
             }
         }
     });
-    
+
     if (matchingSeqs.length === 0) {
         showMessage('No sequences with this color', 2000);
         return;
     }
-    
+
     const text = matchingSeqs.join('\n');
     navigator.clipboard.writeText(text).then(() => {
         showMessage(`Copied ${matchingSeqs.length} sequence(s) with this color`, 2000);
@@ -9860,7 +9915,7 @@ function copySequencesByColor(colour, ungapped = false, asFasta = true) {
 function sortSequencesByColor() {
     const colorOrder = new Map();
     let colorIndex = 0;
-    
+
     // First pass: assign order to each color
     state.seqs.forEach((seq) => {
         const color = colourState.mappings.get(seq.header);
@@ -9868,18 +9923,18 @@ function sortSequencesByColor() {
             colorOrder.set(color, colorIndex++);
         }
     });
-    
+
     // Sort: colored seqs first (by color), then uncolored
     const sortedSeqs = [...state.seqs].sort((a, b) => {
         const colorA = colourState.mappings.get(a.header);
         const colorB = colourState.mappings.get(b.header);
-        
+
         const orderA = colorA ? colorOrder.get(colorA) : Infinity;
         const orderB = colorB ? colorOrder.get(colorB) : Infinity;
-        
+
         return orderA - orderB;
     });
-    
+
     // Update state and re-render
     state.seqs = sortedSeqs;
     state.selectedRows.clear();
@@ -9891,7 +9946,7 @@ function sortSequencesByColor() {
 function groupColoredSequencesAtTop() {
     const coloredSeqs = [];
     const ungroupedSeqs = [];
-    
+
     state.seqs.forEach((seq) => {
         if (colourState.mappings.has(seq.header)) {
             coloredSeqs.push(seq);
@@ -9899,7 +9954,7 @@ function groupColoredSequencesAtTop() {
             ungroupedSeqs.push(seq);
         }
     });
-    
+
     // Combine: colored at top, then ungrouped
     state.seqs = [...coloredSeqs, ...ungroupedSeqs];
     state.selectedRows.clear();
@@ -10053,16 +10108,16 @@ function recordColorHistory(seqName, color, method) {
 function applyPatternColour() {
     const patternInput = el('colourPatternInput');
     const colourInput = el('colourPatternColor');
-    
+
     if (!patternInput.value.trim()) {
         showMessage('Please enter a pattern', 2000);
         return;
     }
-    
+
     const pattern = patternInput.value.trim();
     const colour = colourInput.value;
     let matchedNames = new Set();
-    
+
     try {
         const regex = new RegExp(pattern, 'i');
         const seqNameElements = document.querySelectorAll('.seq-name');
@@ -10075,10 +10130,10 @@ function applyPatternColour() {
                 recordColorHistory(header, colour, 'Pattern');
             }
         });
-        
+
         applyColourToSeqNames(colourState.mappings);
     showMessage(`Applied to ${matchedNames.size} unique sequence(s)`, 2000);
-        
+
     } catch (e) {
         showMessage(`Invalid regex: ${e.message}`, 3000);
     }
@@ -10089,31 +10144,31 @@ function autoColourBySimilarity() {
     const maxChars = parseInt(el('colourSimilarityChars').value) || 10;
     const threshold = parseInt(el('colourSimilarityThreshold').value) || 3;
     const mode = document.querySelector('input[name="colourMode"]:checked').value;
-    
+
     // Use actual sequence headers from state, not truncated display text
     if (!state.seqs || state.seqs.length === 0) {
         showMessage('No sequences loaded', 2000);
         return;
     }
-    
+
     // Get unique sequence names from state (full headers, not truncated)
     const seqNames = state.seqs.map(s => s.header);
-    
+
     if (seqNames.length === 0) {
         showMessage('No sequences loaded', 2000);
         return;
     }
-    
+
     // Cluster sequences
     const clusters = clusterByName(seqNames, maxChars, threshold);
 
     // Reset current color mapping first so stale names do not affect sorting/grouping behavior.
     colourState.mappings.clear();
-    
+
     // Assign colors based on mode
     // Use maximally distinct colors for better visual separation
     const nClusters = clusters.length;
-    
+
     // High-contrast discrete palette (ColorBrewer/Tableau-inspired)
     const distinctColors = [
         '#e41a1c', // red
@@ -10129,12 +10184,12 @@ function autoColourBySimilarity() {
         '#66c2a5', // teal
         '#e6ab02'  // gold
     ];
-    
+
     // Predefined hues for gradient mode (maximally separated)
     const distinctHues = [
         0, 210, 120, 30, 270, 180, 60, 300, 90, 240, 15, 165
     ];
-    
+
     clusters.forEach((cluster, clusterIdx) => {
         let hue;
         if (nClusters <= distinctHues.length) {
@@ -10145,7 +10200,7 @@ function autoColourBySimilarity() {
             const goldenRatio = 0.618033988749895;
             hue = ((clusterIdx * goldenRatio) % 1) * 360;
         }
-        
+
         if (mode === 'discrete') {
             const colour = (nClusters <= distinctColors.length)
                 ? distinctColors[clusterIdx]
@@ -10178,7 +10233,7 @@ function autoColourBySimilarity() {
             });
         }
     });
-    
+
     applyColourToSeqNames(colourState.mappings);
     showMessage(`Colored ${seqNames.length} sequences in ${clusters.length} cluster(s)`, 2000);
 }
@@ -10186,20 +10241,20 @@ function autoColourBySimilarity() {
 // Save preset
 function saveColourPreset() {
     const presetName = el('colourPresetName').value.trim();
-    
+
     if (!presetName) {
         showMessage('Please enter a preset name', 2000);
         return;
     }
-    
+
     if (colourState.mappings.size === 0) {
         showMessage('No colors to save', 2000);
         return;
     }
-    
+
     colourState.presets[presetName] = Array.from(colourState.mappings.entries());
     localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets));
-    
+
     el('colourPresetName').value = '';
     updateColourPresetList();
     showMessage(`Preset '${presetName}' saved`, 2000);
@@ -10211,10 +10266,10 @@ function loadColourPreset() {
         showMessage('No saved presets', 2000);
         return;
     }
-    
+
     const presetNames = Object.keys(colourState.presets);
     const presetName = presetNames[0]; // TODO: could add dialog to select
-    
+
     colourState.mappings = new Map(colourState.presets[presetName]);
     applyColourToSeqNames(colourState.mappings);
     showMessage(`Loaded preset '${presetName}'`, 2000);
@@ -10237,18 +10292,18 @@ function updateColourPresetList() {
     const presetList = el('colourPresetList');
     const presetItems = el('presetItems');
     const presets = colourState.presets;
-    
+
     if (Object.keys(presets).length === 0) {
         presetList.style.display = 'none';
         return;
     }
-    
+
     presetList.style.display = 'block';
-    presetItems.innerHTML = Object.keys(presets).map(name => 
-        `<div style="cursor: pointer; padding: 2px; border-radius: 2px; margin: 2px 0; background: #f0f0f0;" 
-              onclick="(function() { 
-                colourState.mappings = new Map(colourState.presets['${name}']); 
-                applyColourToSeqNames(colourState.mappings); 
+    presetItems.innerHTML = Object.keys(presets).map(name =>
+        `<div style="cursor: pointer; padding: 2px; border-radius: 2px; margin: 2px 0; background: #f0f0f0;"
+              onclick="(function() {
+                colourState.mappings = new Map(colourState.presets['${name}']);
+                applyColourToSeqNames(colourState.mappings);
                 showMessage('Loaded ${name}', 2000);
               })()">
             ${name} <span style="float: right; cursor: pointer; color: #888;" onclick="(function(e) { e.stopPropagation(); delete colourState.presets['${name}']; localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets)); updateColourPresetList(); })(event)">✕</span>
@@ -10261,27 +10316,27 @@ function updateColourPresetList() {
 function showColorHistory() {
     const modal = el('colourInspectorModal');
     const content = el('colourHistoryContent');
-    
+
     if (colourState.history.size === 0) {
         content.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No colors assigned yet</div>';
         modal.style.display = 'block';
         return;
     }
-    
+
     // Group by sequence name
     let html = '';
     const sortedNames = Array.from(colourState.history.keys()).sort();
-    
+
     sortedNames.forEach(seqName => {
         const history = colourState.history.get(seqName);
         const currentColor = colourState.mappings.get(seqName);
-        
+
         html += `<div style="margin-bottom: 12px; padding: 8px; background: #f9f9f9; border-radius: 3px; border-left: 3px solid ${currentColor};">`;
         html += `<div style="font-weight: bold; margin-bottom: 4px; word-break: break-all;">${seqName}</div>`;
         html += `<div style="font-size: 10px; color: #666; margin-bottom: 6px;">Current: <span style="display: inline-block; width: 12px; height: 12px; background: ${currentColor}; border: 1px solid #ccc; vertical-align: middle;"></span> ${currentColor}</div>`;
         html += `<div style="font-size: 10px;">History:</div>`;
         html += `<div style="margin-left: 8px;">`;
-        
+
         history.forEach((entry, idx) => {
             html += `<div style="margin: 2px 0; display: flex; align-items: center; gap: 6px;">`;
             html += `<span style="color: #999; min-width: 20px;">${idx + 1}.</span>`;
@@ -10291,10 +10346,10 @@ function showColorHistory() {
             html += `<span style="color: #999; font-size: 9px;">${entry.timestamp}</span>`;
             html += `</div>`;
         });
-        
+
         html += `</div></div>`;
     });
-    
+
     content.innerHTML = html;
     modal.style.display = 'block';
 }
@@ -10310,7 +10365,7 @@ function initColourSeqs() {
     const inspectBtn = el('colourInspectButton');
     const thresholdSlider = el('colourSimilarityThreshold');
     const patternInput = el('colourPatternInput');
-    
+
     if (patternBtn) patternBtn.addEventListener('click', applyPatternColour);
     if (autoBtn) autoBtn.addEventListener('click', autoColourBySimilarity);
     if (saveBtn) saveBtn.addEventListener('click', saveColourPreset);
@@ -10319,7 +10374,7 @@ function initColourSeqs() {
     if (sortBtn) sortBtn.addEventListener('click', sortSequencesByColor);
     if (groupBtn) groupBtn.addEventListener('click', groupColoredSequencesAtTop);
     if (inspectBtn) inspectBtn.addEventListener('click', showColorHistory);
-    
+
     // Keep menu open when interacting with pattern input
     if (patternInput) {
         patternInput.addEventListener('focus', () => {
@@ -10336,14 +10391,14 @@ function initColourSeqs() {
             }, 100);
         });
     }
-    
+
     // Update threshold display
     if (thresholdSlider) {
         thresholdSlider.addEventListener('input', (e) => {
             el('colourThresholdValue').textContent = e.target.value;
         });
     }
-    
+
     // Load initial presets list
     updateColourPresetList();
 }
@@ -10392,7 +10447,7 @@ function initColourSeqs() {
     // Only watch for actual content changes, NOT style changes (which would be triggered by zoom)
     const mo = new MutationObserver(() => window.requestAnimationFrame(syncSizes));
     mo.observe(alignment, { childList: true, subtree: true, characterData: false, attributes: false });
-    
+
     // Drag-to-pan with Pointer Events and capture for robustness
     let isDown = false, startX = 0, startScroll = 0;
     let dragRaf = null, lastDx = 0;
@@ -10452,72 +10507,108 @@ function showBlastDialog(sequenceHeader, sequenceSeq) {
     // Create modal for database selection
     const modal = document.createElement('div');
     modal.className = 'blast-modal-backdrop';
-    
+
     const dialog = document.createElement('div');
     dialog.className = 'blast-dialog';
-    
+
     const title = document.createElement('div');
     title.className = 'blast-dialog-title';
     title.textContent = 'BLAST Search';
-    
+
     const content = document.createElement('div');
     content.className = 'blast-dialog-content';
-    
+
     const seqLabel = document.createElement('div');
     seqLabel.innerHTML = `<strong>Sequence:</strong> ${sequenceHeader}`;
     seqLabel.style.marginBottom = '12px';
     seqLabel.style.fontSize = '12px';
     seqLabel.style.wordBreak = 'break-word';
     content.appendChild(seqLabel);
-    
+
     const dbLabel = document.createElement('div');
     dbLabel.innerHTML = '<strong>Search databases:</strong>';
     dbLabel.style.marginBottom = '8px';
     content.appendChild(dbLabel);
-    
-    // Database checkboxes
-    const databases = [
-        { name: 'SINEBase.nr95',    url: './SINEBase.nr95.fa',           label: 'SINEBase.nr95',                                     checked: true  },
-        { name: 'RepBase_filtered', url: './RepBase_filtered.bnk',        label: 'RepBase (filtered: SINE/LINE/mammal/reptile)',        checked: true  },
-        { name: 'RepBase.bnk',      url: './RepBase.bnk',                 label: 'RepBase (full, 49k seqs \u2014 slow)',               checked: false },
-        { name: 'snake_gekko_SINEs',url: './snake_gekko_SINEs_cons.fas',  label: 'snake_gekko_SINEs',                                 checked: true  },
-        { name: 'tua_DL_ASuh_JGrau_repeat', url: './tua_DL_ASuh_JGrau_repeat.fa', label: 'tua_DL_ASuh_JGrau_repeat',                     checked: true  },
-    ];
-    
+
+    // Database checkboxes (fetched from server)
     const dbCheckboxes = {};
     const dbContainer = document.createElement('div');
     dbContainer.style.marginBottom = '16px';
     
-    for (const db of databases) {
-        const label = document.createElement('label');
-        label.style.display = 'flex';
-        label.style.alignItems = 'center';
-        label.style.marginBottom = '6px';
-        label.style.cursor = 'pointer';
-        
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = db.checked;
-        checkbox.style.marginRight = '8px';
-        dbCheckboxes[db.name] = checkbox;
-        
-        const span = document.createElement('span');
-        span.textContent = db.label || db.name;
-        span.style.fontSize = '12px';
-        
-        label.appendChild(checkbox);
-        label.appendChild(span);
-        dbContainer.appendChild(label);
-    }
-    content.appendChild(dbContainer);
+    // Loading indicator
+    const dbLoading = document.createElement('div');
+    dbLoading.textContent = 'Loading databases...';
+    dbLoading.style.fontSize = '11px';
+    dbLoading.style.color = '#888';
+    dbLoading.style.marginBottom = '8px';
+    dbContainer.appendChild(dbLoading);
     
+    let databases = [];
+    
+    fetchDatabases().then(dbs => {
+        databases = dbs;
+        dbLoading.remove();
+        if (dbs.length === 0) {
+            const empty = document.createElement('div');
+            empty.textContent = 'No databases configured. Add one below.';
+            empty.style.fontSize = '11px';
+            empty.style.color = '#888';
+            empty.style.marginBottom = '8px';
+            dbContainer.prepend(empty);
+            return;
+        }
+        for (const db of dbs) {
+            const label = document.createElement('label');
+            label.style.display = 'flex';
+            label.style.alignItems = 'center';
+            label.style.marginBottom = '6px';
+            label.style.cursor = 'pointer';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = db.checked !== false;
+            checkbox.style.marginRight = '8px';
+            dbCheckboxes[db.name] = checkbox;
+            const span = document.createElement('span');
+            span.textContent = db.label || db.name;
+            span.title = db.description || '';
+            span.style.fontSize = '12px';
+            if (!db.available) {
+                span.style.color = '#999';
+                checkbox.disabled = true;
+                span.textContent += ' (unavailable)';
+            }
+            label.appendChild(checkbox);
+            label.appendChild(span);
+            dbContainer.appendChild(label);
+        }
+    }).catch(() => {
+        dbLoading.textContent = 'Server not available — no BLAST databases';
+    });
+    
+    // Manage databases button
+    const manageBtn = document.createElement('button');
+    manageBtn.textContent = '+ Manage Databases';
+    manageBtn.style.padding = '3px 10px';
+    manageBtn.style.fontSize = '10px';
+    manageBtn.style.marginTop = '4px';
+    manageBtn.style.marginBottom = '8px';
+    manageBtn.style.cursor = 'pointer';
+    manageBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        modal.remove();
+        showDbManagementModal();
+    });
+    dbContainer.appendChild(manageBtn);
+    
+    content.appendChild(dbContainer);
+
     // E-value setting
     const evalueLabel = document.createElement('div');
     evalueLabel.innerHTML = '<strong>E-value threshold:</strong>';
     evalueLabel.style.marginBottom = '6px';
     evalueLabel.style.fontSize = '12px';
     content.appendChild(evalueLabel);
-    
+
     const evalueInput = document.createElement('input');
     evalueInput.type = 'text';
     evalueInput.value = '1e-5';
@@ -10526,13 +10617,13 @@ function showBlastDialog(sequenceHeader, sequenceSeq) {
     evalueInput.style.marginBottom = '16px';
     evalueInput.style.fontSize = '12px';
     content.appendChild(evalueInput);
-    
+
     // Buttons
     const buttonContainer = document.createElement('div');
     buttonContainer.style.display = 'flex';
     buttonContainer.style.gap = '8px';
     buttonContainer.style.justifyContent = 'flex-end';
-    
+
     const cancelBtn = document.createElement('button');
     cancelBtn.textContent = 'Cancel';
     cancelBtn.style.padding = '6px 16px';
@@ -10541,7 +10632,7 @@ function showBlastDialog(sequenceHeader, sequenceSeq) {
     cancelBtn.addEventListener('click', () => {
         modal.remove();
     });
-    
+
     const searchBtn = document.createElement('button');
     searchBtn.textContent = 'Search';
     searchBtn.style.padding = '6px 16px';
@@ -10556,30 +10647,239 @@ function showBlastDialog(sequenceHeader, sequenceSeq) {
         for (const db of databases) {
             if (dbCheckboxes[db.name].checked) selectedDbs.push({ name: db.name, url: db.url });
         }
-        
+
         if (selectedDbs.length === 0) {
             alert('Please select at least one database');
             return;
         }
-        
+
         modal.remove();
         await runBlastSearch(sequenceHeader, sequenceSeq, selectedDbs, evalueInput.value);
     });
-    
+
     buttonContainer.appendChild(cancelBtn);
     buttonContainer.appendChild(searchBtn);
     content.appendChild(buttonContainer);
-    
+
     dialog.appendChild(title);
     dialog.appendChild(content);
     modal.appendChild(dialog);
     document.body.appendChild(modal);
-    
+
     // Close on backdrop click
     modal.addEventListener('click', (e) => {
         if (e.target === modal) {
             modal.remove();
         }
+    });
+}
+
+// Dynamic BLAST database helpers
+async function fetchDatabases() {
+    try {
+        const resp = await fetch('/api/blast-db');
+        if (!resp.ok) throw new Error('Server returned ' + resp.status);
+        const data = await resp.json();
+        const dbs = [];
+        for (const [name, info] of Object.entries(data.databases || {})) {
+            dbs.push({
+                name,
+                label: info.description || name,
+                description: info.description || '',
+                checked: true,
+                available: info.exists && info.formatted
+            });
+        }
+        dbs.sort((a, b) => a.label.localeCompare(b.label));
+        return dbs;
+    } catch (e) {
+        console.warn('Failed to fetch BLAST databases:', e.message);
+        return [];
+    }
+}
+
+function showDbManagementModal() {
+    const overlay = document.createElement('div');
+    overlay.className = 'blast-results-modal-backdrop';
+    overlay.style.zIndex = '10001';
+    const dialog = document.createElement('div');
+    dialog.className = 'blast-results-dialog-text';
+    dialog.style.maxWidth = '640px';
+    const titleBar = document.createElement('div');
+    titleBar.className = 'blast-text-title-bar';
+    titleBar.innerHTML = '<span>Manage BLAST Databases</span>';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'blast-close-btn';
+    closeBtn.textContent = 'X';
+    closeBtn.onclick = () => overlay.remove();
+    titleBar.appendChild(closeBtn);
+    dialog.appendChild(titleBar);
+    // Database list
+    const listSection = document.createElement('div');
+    listSection.style.padding = '16px';
+    listSection.style.maxHeight = '40vh';
+    listSection.style.overflowY = 'auto';
+    listSection.style.borderBottom = '1px solid #ddd';
+    const listTitle = document.createElement('div');
+    listTitle.textContent = 'Current databases:';
+    listTitle.style.fontWeight = 'bold';
+    listTitle.style.marginBottom = '8px';
+    listTitle.style.fontSize = '13px';
+    listSection.appendChild(listTitle);
+    const refreshDbList = () => {
+        listSection.querySelectorAll('.db-row').forEach(r => r.remove());
+        fetchDatabases().then(dbs => {
+            if (dbs.length === 0) {
+                const empty = document.createElement('div');
+                empty.textContent = 'No databases configured.';
+                empty.style.color = '#888';
+                empty.style.fontSize = '12px';
+                empty.className = 'db-row';
+                listSection.appendChild(empty);
+                return;
+            }
+            for (const db of dbs) {
+                const row = document.createElement('div');
+                row.className = 'db-row';
+                row.style.display = 'flex';
+                row.style.alignItems = 'center';
+                row.style.justifyContent = 'space-between';
+                row.style.padding = '4px 0';
+                row.style.borderBottom = '1px solid #eee';
+                row.style.fontSize = '12px';
+                const info = document.createElement('span');
+                info.innerHTML = '<strong>' + db.label + '</strong>' +
+                    (db.available ? '' : ' <span style="color:#c00;font-size:10px;">(unavailable)</span>') +
+                    (db.description && db.description !== db.name ? ' <span style="color:#666;font-size:10px;">' + db.description + '</span>' : '');
+                const delBtn = document.createElement('button');
+                delBtn.textContent = 'Delete';
+                delBtn.style.padding = '1px 8px';
+                delBtn.style.fontSize = '10px';
+                delBtn.style.background = '#e53935';
+                delBtn.style.color = 'white';
+                delBtn.style.border = 'none';
+                delBtn.style.borderRadius = '3px';
+                delBtn.style.cursor = 'pointer';
+                delBtn.onclick = async () => {
+                    if (!confirm('Delete database "' + db.name + '"? This removes the FASTA file and BLAST indexes.')) return;
+                    try {
+                        const resp = await fetch('/api/blast-db/' + encodeURIComponent(db.name), { method: 'DELETE' });
+                        if (resp.ok) {
+                            showMessage('Database "' + db.name + '" deleted', 2000);
+                            refreshDbList();
+                        } else {
+                            const err = await resp.json();
+                            showMessage('Delete failed: ' + (err.error || resp.status), 3000);
+                        }
+                    } catch (e) { showMessage('Delete error: ' + e.message, 3000); }
+                };
+                row.appendChild(info);
+                row.appendChild(delBtn);
+                listSection.appendChild(row);
+            }
+        }).catch(() => {
+            const err = document.createElement('div');
+            err.textContent = 'Server not available.';
+            err.style.color = '#c00';
+            err.style.fontSize = '12px';
+            err.className = 'db-row';
+            listSection.appendChild(err);
+        });
+    };
+    refreshDbList();
+    dialog.appendChild(listSection);
+    // Add new database form
+    const addSection = document.createElement('div');
+    addSection.style.padding = '16px';
+    const addTitle = document.createElement('div');
+    addTitle.textContent = 'Add new database:';
+    addTitle.style.fontWeight = 'bold';
+    addTitle.style.marginBottom = '8px';
+    addTitle.style.fontSize = '13px';
+    addSection.appendChild(addTitle);
+    const dbNameInput = document.createElement('input');
+    dbNameInput.type = 'text';
+    dbNameInput.placeholder = 'Database name (e.g. my_SINEs)';
+    dbNameInput.style.cssText = 'width:100%;padding:6px;margin-bottom:8px;font-size:12px;box-sizing:border-box';
+    addSection.appendChild(dbNameInput);
+    const dbDescInput = document.createElement('input');
+    dbDescInput.type = 'text';
+    dbDescInput.placeholder = 'Description (e.g. Snake SINEs from RepBase)';
+    dbDescInput.style.cssText = 'width:100%;padding:6px;margin-bottom:8px;font-size:12px;box-sizing:border-box';
+    addSection.appendChild(dbDescInput);
+    let fastaContent = null;
+    let fastaFileName = '';
+    const fileRow = document.createElement('div');
+    fileRow.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;align-items:center';
+    const fileBtn = document.createElement('button');
+    fileBtn.textContent = 'Select FASTA file...';
+    fileBtn.style.cssText = 'padding:4px 12px;font-size:12px;cursor:pointer';
+    fileBtn.onclick = () => {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = '.fa,.fasta,.fas,.bnk,.txt';
+        inp.onchange = () => {
+            const file = inp.files[0];
+            if (!file) return;
+            fastaFileName = file.name;
+            const reader = new FileReader();
+            reader.onload = () => {
+                fastaContent = reader.result;
+                const n = fastaContent.split('\n').filter(l => l.startsWith('>')).length;
+                if (!dbNameInput.value) dbNameInput.value = fastaFileName.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '_');
+                fileStatus.textContent = fastaFileName + ' (' + n + ' sequences)';
+                fileStatus.style.color = '#4CAF50';
+            };
+            reader.readAsText(file);
+        };
+        inp.click();
+    };
+    fileRow.appendChild(fileBtn);
+    const fileStatus = document.createElement('span');
+    fileStatus.textContent = 'No file selected';
+    fileStatus.style.cssText = 'font-size:11px;color:#888';
+    fileRow.appendChild(fileStatus);
+    addSection.appendChild(fileRow);
+    const addBtn = document.createElement('button');
+    addBtn.textContent = 'Create Database';
+    addBtn.style.cssText = 'padding:6px 20px;font-size:13px;background:#4CAF50;color:white;border:none;border-radius:4px;cursor:pointer';
+    addBtn.onclick = async () => {
+        const name = dbNameInput.value.trim();
+        if (!name) { showMessage('Enter a database name', 2000); return; }
+        if (!fastaContent) { showMessage('Select a FASTA file first', 2000); return; }
+        addBtn.disabled = true;
+        addBtn.textContent = 'Creating...';
+        try {
+            const resp = await fetch('/api/blast-db', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, description: dbDescInput.value.trim(), fasta: fastaContent })
+            });
+            const result = await resp.json();
+            if (resp.ok) {
+                showMessage('Database "' + name + '" created!', 2000);
+                dbNameInput.value = '';
+                dbDescInput.value = '';
+                fastaContent = null;
+                fastaFileName = '';
+                fileStatus.textContent = 'No file selected';
+                fileStatus.style.color = '#888';
+                refreshDbList();
+            } else {
+                showMessage('Error: ' + (result.error || resp.status), 4000);
+            }
+        } catch (e) {
+            showMessage('Creation failed: ' + e.message, 4000);
+        }
+        addBtn.disabled = false;
+        addBtn.textContent = 'Create Database';
+    };
+    addSection.appendChild(addBtn);
+    dialog.appendChild(addSection);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
     });
 }
 
@@ -10964,7 +11264,7 @@ function _dotUpdateHoverInfo(row, col) {
             `A ${String(aStart + 1).padStart(5)}  ${aSlice}\n` +
             `          ${guide.join('')}\n` +
             `B ${String(bStart + 1).padStart(5)}  ${bSlice}`;
-        
+
         // Store for copy button
         S._copyRegion = {
             aSlice, bSlice, aStart, bStart,
@@ -10981,7 +11281,7 @@ function _dotClearHoverInfo() {
     const panelEl = document.getElementById('dotPlotAlignPanel');
     if (hoverEl) hoverEl.textContent = '';
     if (metaEl) metaEl.textContent = '';
-    if (panelEl) panelEl.textContent = 'A: —\n   \nB: —';
+    if (panelEl) panelEl.textContent = 'A: -\n   \nB: -';
 }
 
 function _getDotWorker() {
@@ -11078,8 +11378,8 @@ function _dotRender() {
     // Axis titles
     ctx.fillStyle = '#333'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.font = 'bold 11px system-ui, sans-serif';
-    const nameB = S.nameB.length > 30 ? S.nameB.substring(0, 30) + '…' : S.nameB;
-    const nameA = S.nameA.length > 30 ? S.nameA.substring(0, 30) + '…' : S.nameA;
+    const nameB = S.nameB.length > 30 ? S.nameB.substring(0, 30) + '...' : S.nameB;
+    const nameA = S.nameA.length > 30 ? S.nameA.substring(0, 30) + '...' : S.nameA;
     ctx.fillText(nameB, DOT_AXIS_PAD + plotW / 2, 2);
     ctx.save(); ctx.translate(12, DOT_AXIS_PAD + plotH / 2); ctx.rotate(-Math.PI / 2);
     ctx.fillText(nameA, 0, 0); ctx.restore();
@@ -11114,7 +11414,7 @@ function _dotDetectRegions() {
         let runStart = -1, runSum = 0, runLen = 0;
         const startR = d < 0 ? -d : 0;
         const endR = Math.min(S.rows, S.cols - d);
-        
+
         for (let r = startR; r < endR; r++) {
             const c = r + d;
             if (c < 0 || c >= S.cols || r >= S.rows) continue;
@@ -11261,7 +11561,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     const titleEl = document.getElementById('dotPlotTitle');
     if (titleEl) titleEl.textContent = `Dot Plot: ${nameA} vs ${nameB}${revComp ? ' (rc)' : ''}`;
     const statusEl = document.getElementById('dotPlotStatus');
-    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} × ${S.seqB.length}…`;
+    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} × ${S.seqB.length}...`;
     _dotClearHoverInfo();
 
     S.computing = true;
@@ -11966,7 +12266,7 @@ function runRepeatAnalysis() {
             if (ds) params.downStart = parseInt(ds);
             if (de) params.downEnd = parseInt(de);
         }
-        resultsEl.textContent = 'Running TSD analysis…';
+        resultsEl.textContent = 'Running TSD analysis...';
         setTimeout(() => {
             try {
                 const results = _findTSD(state.seqs, tsdMode, params);
@@ -12008,7 +12308,7 @@ function runRepeatAnalysis() {
         return;
     }
 
-    // Regular repeat analysis — use a specific sequence
+    // Regular repeat analysis - use a specific sequence
     const seqIndex = _repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0;
     const seq = state.seqs[seqIndex]?.seq.replace(/[-. ]/g, '');
     if (!seq) {
@@ -12019,7 +12319,7 @@ function runRepeatAnalysis() {
     const maxDiv = parseInt(document.getElementById('repeatMaxDiv')?.value) || 15;
     const seqName = state.seqs[seqIndex].header;
 
-    resultsEl.textContent = `Searching ${mode} repeats in ${seqName} (${seq.length} bp)…`;
+    resultsEl.textContent = `Searching ${mode} repeats in ${seqName} (${seq.length} bp)...`;
     setTimeout(() => {
         try {
             const results = _findRepeats(seq, minLen, maxDiv, mode);
@@ -12045,7 +12345,7 @@ function runRepeatAnalysis() {
                 results.forEach((r, i) => {
                     out += String(i + 1).padEnd(5) + String(r.posA + 1).padEnd(8) + String(r.posB + 1).padEnd(8)
                         + String(r.length).padEnd(8) + (r.divergence + '%').padEnd(8)
-                        + (r.seqA.length > 50 ? r.seqA.substring(0, 50) + '…' : r.seqA) + '\n';
+                        + (r.seqA.length > 50 ? r.seqA.substring(0, 50) + '...' : r.seqA) + '\n';
                 });
             }
             out += `\nTotal: ${results.length} ${mode} repeat(s) found.`;

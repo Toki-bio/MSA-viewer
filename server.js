@@ -23,13 +23,41 @@ app.use(express.static('.')); // Serve static files from current directory
 
 const PORT = 3000;
 
-// Database configuration
-const DATABASES = {
-    'SINEBase.nr95': path.join(__dirname, 'SINEBase.nr95.fa'),
-    'RepBase_filtered': path.join(__dirname, 'RepBase_filtered.bnk'),
-    'snake_gekko_SINEs': path.join(__dirname, 'snake_gekko_SINEs_cons.fas'),
-    'tua_DL_ASuh_JGrau_repeat': path.join(__dirname, 'tua_DL_ASuh_JGrau_repeat.fa')
-};
+// ============ BLAST DATABASE REGISTRY ============
+const DB_REGISTRY_FILE = path.join(__dirname, 'blast_dbs.json');
+
+// Load persistent registry (survives server restarts)
+function loadDbRegistry() {
+    try {
+        if (fs.existsSync(DB_REGISTRY_FILE)) {
+            return JSON.parse(fs.readFileSync(DB_REGISTRY_FILE, 'utf8'));
+        }
+    } catch (e) {
+        console.error('Failed to load DB registry:', e.message);
+    }
+    // Default databases bundled with the viewer
+    return {
+        'SINEBase.nr95': { path: path.join(__dirname, 'SINEBase.nr95.fa'), desc: 'SINEBase non-redundant (95%)' },
+        'RepBase_filtered': { path: path.join(__dirname, 'RepBase_filtered.bnk'), desc: 'RepBase filtered' },
+        'snake_gekko_SINEs': { path: path.join(__dirname, 'snake_gekko_SINEs_cons.fas'), desc: 'Snake & Gekko SINEs' },
+        'tua_DL_ASuh_JGrau_repeat': { path: path.join(__dirname, 'tua_DL_ASuh_JGrau_repeat.fa'), desc: 'Tuatara repeats' }
+    };
+}
+
+function saveDbRegistry(registry) {
+    try {
+        fs.writeFileSync(DB_REGISTRY_FILE, JSON.stringify(registry, null, 2), 'utf8');
+    } catch (e) {
+        console.error('Failed to save DB registry:', e.message);
+    }
+}
+
+let DATABASES = loadDbRegistry();
+
+// Reload registry (hot-reload)
+function reloadDbRegistry() {
+    DATABASES = loadDbRegistry();
+}
 
 // Format a FASTA database for BLAST
 function formatDatabase(dbPath, dbName) {
@@ -40,14 +68,15 @@ function formatDatabase(dbPath, dbName) {
 
     try {
         const dbDir = path.dirname(dbPath);
-        // Check if already formatted
-        if (fs.existsSync(path.join(dbDir, `${dbName}.nhr`))) {
+        const outBase = path.join(dbDir, dbName);
+        // Check if already formatted (.nhr is the sequence header index)
+        if (fs.existsSync(outBase + '.nhr')) {
             return true;
         }
 
         // Try makeblastdb
         console.log(`Formatting database: ${dbName}`);
-        execSync(`makeblastdb -in "${dbPath}" -dbtype nucl -title "${dbName}" -out "${path.join(dbDir, dbName)}"`, {
+        execSync(`makeblastdb -in "${dbPath}" -dbtype nucl -title "${dbName}" -out "${outBase}"`, {
             stdio: 'ignore'
         });
         return true;
@@ -61,10 +90,11 @@ function formatDatabase(dbPath, dbName) {
 function initializeDatabases() {
     console.log('Initializing BLAST databases...');
     const results = {};
-    for (const [name, dbPath] of Object.entries(DATABASES)) {
+    for (const [name, info] of Object.entries(DATABASES)) {
         results[name] = {
-            exists: fs.existsSync(dbPath),
-            formatted: formatDatabase(dbPath, name)
+            description: info.desc || name,
+            exists: fs.existsSync(info.path),
+            formatted: formatDatabase(info.path, name)
         };
     }
     return results;
@@ -347,7 +377,8 @@ app.post('/api/blast', (req, res) => {
         return res.status(400).json({ error: `Unknown database: ${dbName}` });
     }
 
-    const dbPath = DATABASES[dbName];
+    const dbInfo = DATABASES[dbName];
+    const dbPath = dbInfo.path;
     if (!fs.existsSync(dbPath)) {
         return res.status(400).json({ error: `Database file not found: ${dbPath}` });
     }
@@ -424,7 +455,8 @@ app.post('/api/blast-all', (req, res) => {
     try {
         const allResults = {};
         
-        for (const [dbName, dbPath] of Object.entries(DATABASES)) {
+        for (const [dbName, dbInfo] of Object.entries(DATABASES)) {
+            const dbPath = dbInfo.path;
             if (!fs.existsSync(dbPath)) {
                 allResults[dbName] = { error: 'Database file not found' };
                 continue;
@@ -473,6 +505,86 @@ app.post('/api/blast-all', (req, res) => {
             error: 'Batch BLAST search failed',
             details: err.message
         });
+    }
+});
+
+// ============ BLAST DATABASE MANAGEMENT ============
+
+// GET /api/blast-db — list all databases
+app.get('/api/blast-db', (req, res) => {
+    reloadDbRegistry();
+    const dbs = {};
+    for (const [name, info] of Object.entries(DATABASES)) {
+        dbs[name] = {
+            description: info.desc || name,
+            exists: fs.existsSync(info.path),
+            formatted: info.path && fs.existsSync(path.join(path.dirname(info.path), name + '.nhr'))
+        };
+    }
+    res.json({ databases: dbs });
+});
+
+// POST /api/blast-db — add a new database from FASTA content
+app.post('/api/blast-db', (req, res) => {
+    const { name, description, fasta } = req.body;
+    if (!name || !fasta) {
+        return res.status(400).json({ error: 'Name and FASTA content required' });
+    }
+    const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (!safeName || safeName.length > 100) {
+        return res.status(400).json({ error: 'Invalid database name' });
+    }
+    reloadDbRegistry();
+    if (DATABASES[safeName]) {
+        return res.status(409).json({ error: 'Database "' + safeName + '" already exists. Delete it first.' });
+    }
+    try {
+        const dbDir = path.join(__dirname, 'blast_dbs');
+        if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+        const fastaPath = path.join(dbDir, safeName + '.fa');
+        fs.writeFileSync(fastaPath, fasta, 'utf8');
+        console.log('Creating BLAST database: ' + safeName);
+        const formatted = formatDatabase(fastaPath, safeName);
+        if (!formatted) {
+            return res.status(500).json({ error: 'makeblastdb failed. Is BLAST+ installed?' });
+        }
+        DATABASES[safeName] = {
+            path: fastaPath,
+            desc: (description || '').substring(0, 200)
+        };
+        saveDbRegistry(DATABASES);
+        console.log('Database "' + safeName + '" registered and formatted');
+        res.json({ success: true, name: safeName, description: DATABASES[safeName].desc });
+    } catch (err) {
+        console.error('Failed to create database ' + safeName + ':', err);
+        res.status(500).json({ error: 'Failed to create database: ' + err.message });
+    }
+});
+
+// DELETE /api/blast-db/:name — remove a database and its index files
+app.delete('/api/blast-db/:name', async (req, res) => {
+    const dbName = req.params.name;
+    reloadDbRegistry();
+    if (!DATABASES[dbName]) {
+        return res.status(404).json({ error: 'Database "' + dbName + '" not found' });
+    }
+    try {
+        const dbInfo = DATABASES[dbName];
+        const dbDir = path.dirname(dbInfo.path);
+        const basePath = path.join(dbDir, dbName);
+        const extensions = ['.nhr','.nin','.nsq','.nog','.nsd','.nsi','.ndb','.not','.ntf','.nto','.njs'];
+        for (const ext of extensions) {
+            const f = basePath + ext;
+            if (fs.existsSync(f)) { try { fs.unlinkSync(f); } catch (_) {} }
+        }
+        if (fs.existsSync(dbInfo.path)) { try { fs.unlinkSync(dbInfo.path); } catch (_) {} }
+        delete DATABASES[dbName];
+        saveDbRegistry(DATABASES);
+        console.log('Database "' + dbName + '" deleted');
+        res.json({ success: true, name: dbName });
+    } catch (err) {
+        console.error('Failed to delete database ' + dbName + ':', err);
+        res.status(500).json({ error: 'Failed to delete database: ' + err.message });
     }
 });
 
