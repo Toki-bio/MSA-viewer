@@ -1806,6 +1806,58 @@ function parsePhylip(text) {
     return seqs;
 }
 
+// NEXUS format parser (DATA block with MATRIX)
+function parseNexus(text) {
+    const t = text.replace(/\r/g, '');
+    const matrixIdx = t.search(/\bMATRIX\b/i);
+    if (matrixIdx < 0) return null;
+    // Find the matrix block content
+    const block = t.substring(matrixIdx + 6);
+    const endIdx = block.search(/;\s*end/i);
+    const content = endIdx > 0 ? block.substring(0, endIdx) : block;
+    const lines = content.split('\n');
+    const seqMap = new Map();
+    for (const line of lines) {
+        const m = line.trim().match(/^(['\"]?)(\S+)\1\s+(.+)$/);
+        if (!m) continue;
+        const name = m[2];
+        const seq = m[3].replace(/\s/g, '').replace(/[^A-Za-z?\-\.]/g, '');
+        if (!seqMap.has(name)) seqMap.set(name, '');
+        seqMap.set(name, seqMap.get(name) + seq);
+    }
+    if (seqMap.size === 0) return null;
+    const seqs = [];
+    for (const [name, seq] of seqMap) {
+        seqs.push({ header: name, fullHeader: name, seq: seq, gaplessPositions: calculateGaplessPositions(seq) });
+    }
+    return seqs;
+}
+
+// Stockholm format parser (Pfam/HMMER/Rfam)
+function parseStockholm(text) {
+    const lines = text.split(/\r?\n/);
+    const seqMap = new Map();
+    let inAlign = false;
+    for (const line of lines) {
+        const t = line.trim();
+        if (t === '//') break;
+        if (t === '# STOCKHOLM 1.0' || t.startsWith('#=GF')) { inAlign = true; continue; }
+        if (t.startsWith('#=GR') || t.startsWith('#=GC') || t.startsWith('#')) continue;
+        if (!inAlign || !t) continue;
+        const m = t.match(/^(\S+)\s+(.+)$/);
+        if (!m) continue;
+        const name = m[1], seq = m[2].replace(/\s/g, '').replace(/[.-]/g, '-');
+        if (!seqMap.has(name)) seqMap.set(name, '');
+        seqMap.set(name, seqMap.get(name) + seq);
+    }
+    if (seqMap.size === 0) return null;
+    const seqs = [];
+    for (const [name, seq] of seqMap) {
+        seqs.push({ header: name, fullHeader: name, seq: seq, gaplessPositions: calculateGaplessPositions(seq) });
+    }
+    return seqs;
+}
+
 function parseFasta(text) {
     const lines = text.trim().split(/\r?\n/);
     const seqs = [];
@@ -2541,9 +2593,10 @@ function renderAlignment(options = {}) {
         return;
     }
 
-    // Highlight-diffs: mark fully-conserved columns for CSS dimming
+    // Highlight-diffs + Var-sites: compute fully-conserved columns once
     const highlightDiffs = document.getElementById('highlightDiffs')?.checked;
-    if (highlightDiffs && state.seqs.length > 1) {
+    const varSites = document.getElementById('varSitesOnly')?.checked;
+    if ((highlightDiffs || varSites) && state.seqs.length > 1) {
         const conservedCols = new Set();
         for (let pos = 0; pos < len; pos++) {
             const cons = conservationData[pos];
@@ -2552,10 +2605,12 @@ function renderAlignment(options = {}) {
             }
         }
         state._conservedColumns = conservedCols;
-        document.body.classList.add('highlight-diffs');
+        if (highlightDiffs) document.body.classList.add('highlight-diffs');
+        if (varSites) document.body.classList.add('var-sites-only');
     } else {
         state._conservedColumns = null;
         document.body.classList.remove('highlight-diffs');
+        document.body.classList.remove('var-sites-only');
     }
 
     // Codon analysis
@@ -3280,6 +3335,16 @@ function parseAndRender(isFromDrop = false) {
             if (!parsed) throw new Error('Clustal parsing failed');
             state.currentFilename = state.currentFilename || 'clustal_import';
             showMessage('Detected Clustal format', 1500);
+        } else if (/^# STOCKHOLM/m.test(inputText)) {
+            parsed = parseStockholm(inputText);
+            if (!parsed) throw new Error('Stockholm parsing failed');
+            state.currentFilename = state.currentFilename || 'stockholm_import';
+            showMessage('Detected Stockholm format', 1500);
+        } else if (/#nexus|#NEXUS|begin\s+data/i.test(inputText)) {
+            parsed = parseNexus(inputText);
+            if (!parsed) throw new Error('NEXUS parsing failed');
+            state.currentFilename = state.currentFilename || 'nexus_import';
+            showMessage('Detected NEXUS format', 1500);
         } else if (/^\d+\s+\d+/.test(inputText.trim().split(/\r?\n/)[0])) {
             parsed = parsePhylip(inputText);
             if (parsed) {
@@ -3889,6 +3954,45 @@ function reverseComplementSelected() {
     renderAlignment();
     showMessage("Reverse complement applied!", 2000);
 }
+
+// ── Sort functions ──
+function sortByName() {
+    pushUndo();
+    const indices = state.seqs.map((s, i) => ({ idx: i, name: s.header.toLowerCase() }));
+    indices.sort((a, b) => a.name.localeCompare(b.name));
+    state.seqs = indices.map(e => state.seqs[e.idx]);
+    state.lastAction = 'sort';
+    renderAlignment();
+    showMessage('Sorted by name', 2000);
+}
+function sortByLength() {
+    pushUndo();
+    const indices = state.seqs.map((s, i) => ({ idx: i, len: s.seq.replace(/[-.]/g, '').length }));
+    indices.sort((a, b) => b.len - a.len);
+    state.seqs = indices.map(e => state.seqs[e.idx]);
+    state.lastAction = 'sort';
+    renderAlignment();
+    showMessage('Sorted by length (descending)', 2000);
+}
+function sortBySimilarity() {
+    if (state.seqs.length < 2) return;
+    pushUndo();
+    const ref = state.seqs[0].seq;
+    const scored = state.seqs.map((s, i) => {
+        let match = 0, total = 0;
+        for (let p = 0; p < ref.length; p++) {
+            const a = ref[p], b = s.seq[p] || '-';
+            if (a !== '-' && a !== '.' && b !== '-' && b !== '.') { total++; if (a === b) match++; }
+        }
+        return { idx: i, score: total > 0 ? match / total : 0 };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    state.seqs = scored.map(e => state.seqs[e.idx]);
+    state.lastAction = 'sort';
+    renderAlignment();
+    showMessage('Sorted by similarity to first sequence', 2000);
+}
+
 function deleteSelected() {
     if (state.selectedRows.size === 0) {
         showMessage("No sequences selected for deletion.", 3000);
@@ -5310,6 +5414,7 @@ function searchMotif() {
     if (!motif) return;
     const color = el('searchColor').value;
     const maxMismatches = parseInt(el('maxMismatches').value) || 0;
+    const useRegex = el('searchRegex')?.checked;
     const checkboxEl = el('searchBothStrands');
     const bothStrands = checkboxEl && checkboxEl.checked;
 
@@ -5396,8 +5501,26 @@ function searchMotif() {
             const normalizedDisplay = displayString.replace(/U/g, 'T');
             const normalizedMotif = searchMotifValue;
 
-            // Find matches with mismatches allowed
-            const matches = findMatchesWithMismatches(normalizedDisplay, normalizedMotif, maxMismatches);
+            // Find matches with mismatches allowed (or regex)
+            let matches;
+            let matchLen = normalizedMotif.length; // default for exact/mismatch search
+            if (useRegex) {
+                matches = [];
+                try {
+                    const re = new RegExp(normalizedMotif, 'gi');
+                    let m;
+                    while ((m = re.exec(normalizedDisplay)) !== null) {
+                        matches.push({ idx: m.index, len: m[0].length || 1 });
+                        if (m[0].length === 0) re.lastIndex++;
+                    }
+                } catch(e) {
+                    showMessage('Invalid regex: ' + e.message, 4000);
+                    return;
+                }
+            } else {
+                const rawMatches = findMatchesWithMismatches(normalizedDisplay, normalizedMotif, maxMismatches);
+                matches = rawMatches.map(idx => ({ idx, len: normalizedMotif.length }));
+            }
             debugLog(`  Seq ${index}: "${displayString}" vs "${normalizedMotif}" -> ${matches.length} matches`);
             if (matches.length > 0) {
                 motifSeqsWithMatches.add(index);
@@ -5416,9 +5539,9 @@ function searchMotif() {
             }
 
             // Highlight matching spans
-            matches.forEach(startIdx => {
-                for (let i = 0; i < searchMotifValue.length; i++) {
-                    const spanIndex = nonGapSpanIndices[startIdx + i];
+            matches.forEach(m => {
+                for (let i = 0; i < m.len; i++) {
+                    const spanIndex = nonGapSpanIndices[m.idx + i];
                     if (spanIndex !== undefined && spans[spanIndex]) {
                         spans[spanIndex].classList.add(className);
                     }
@@ -8784,7 +8907,7 @@ function attachUIListeners() {
 
     // Set up checkbox listeners
     const checkboxes = ['enableBlack', 'enableDark', 'enableLight', 'showConsensus',
-                        'compactDiffOnly', 'compactPairs', 'highlightDiffs', 'codonAnalysis'];
+                        'compactDiffOnly', 'compactPairs', 'highlightDiffs', 'varSitesOnly', 'codonAnalysis'];
     checkboxes.forEach(id => {
         const elRef = el(id);
         if (elRef) elRef.addEventListener('change', () => {

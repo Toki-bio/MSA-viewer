@@ -180,6 +180,9 @@
                         <label style="font-size:11px;margin-left:4px;" title="Dim fully conserved columns across all modes">
                             <input type="checkbox" id="highlightDiffs"> Highlight diffs
                         </label>
+                        <label style="font-size:11px;" title="Show only columns with variation (hide fully-conserved positions)">
+                            <input type="checkbox" id="varSitesOnly"> Var sites only
+                        </label>
                         <label style="font-size:11px;" title="Codon-aware: frame detection, stop codons, syn/non-syn, AA translation. Requires CDS alignment (len multiple of 3).">
                             <input type="checkbox" id="codonAnalysis"> Codons
                         </label>
@@ -375,6 +378,7 @@
                         <div class="slider-container search-row">
                             <div class="search-input-group">
                                 <input type="text" id="searchInput" placeholder="Enter motif..." style="width: 120px; height: 22px; padding: 2px; font-size: 12px;" title="Enter motif to search (case-insensitive, searches degapped sequences)">
+                                <label title="Interpret search as regular expression"><input type="checkbox" id="searchRegex" style="width:14px;height:14px;vertical-align:middle;"> .*</label>
                                 <input type="number" id="maxMismatches" min="0" max="10" value="0" style="width: 40px; height: 22px; padding: 2px; font-size: 12px;" title="Allowed mismatches (0 = exact match)">
                                 <input type="color" id="searchColor" value="#FFFF00" style="width: 32px; height: 26px; padding: 0;" title="Choose highlight color for search hits">
                             </div>
@@ -542,6 +546,9 @@
                             <button id="moveDownButton" title="Move selected down (Ctrl+Down)">Down</button>
                             <button id="moveToTopButton" title="Move selected to top (Ctrl+Home)">To Top</button>
                             <button id="moveToBottomButton" title="Move selected to bottom (Ctrl+End)">To Bottom</button>
+                            <button id="sortByNameButton" title="Sort all sequences alphabetically" onclick="sortByName()" style="font-size:10px;">A→Z</button>
+                            <button id="sortByLengthButton" title="Sort by sequence length (longest first)" onclick="sortByLength()" style="font-size:10px;">Len↓</button>
+                            <button id="sortBySimButton" title="Sort by similarity to 1st sequence" onclick="sortBySimilarity()" style="font-size:10px;">Sim↓</button>
                         </div>
                     </div>
                     <div class="action-section">

@@ -1837,3 +1837,6 @@ body.codon-mode .aa-row:empty { display: none; }
 /* Recent files dropdown */
 .recent-item:hover { background: #e8f0fe; }
 .recent-item:last-of-type { border-bottom: none !important; }
+
+/* Variable sites only — hide fully-conserved columns */
+body.var-sites-only .seq-data > span[data-pos].diff-conserved { display: none !important; }
