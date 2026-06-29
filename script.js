@@ -35,7 +35,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = '55eab27';
+const APP_VERSION = '728b3ac';
 
 const state = {
     seqs: [],
@@ -8828,6 +8828,18 @@ function initializeAppUI() {
     // Trigger initial render/setup based on defaults
     onModeChange();
     toggleStickyNames();
+
+    // ── Residue case toggle (GeneDoc-style upper/lower/asis) ────────────
+    const caseSel = el('residueCase');
+    if (caseSel) {
+        const applyCase = () => {
+            const v = caseSel.value;
+            alignmentContainer.classList.toggle('residue-case-upper', v === 'upper');
+            alignmentContainer.classList.toggle('residue-case-lower', v === 'lower');
+        };
+        caseSel.addEventListener('change', applyCase);
+        applyCase();
+    }
 
     updateControlsOffset();
     const controls = el('controls');
