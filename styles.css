@@ -185,6 +185,14 @@
     pointer-events: none;
 }
 
+/* Actions section: align dropdown to the right so it stays on-screen */
+#actions-section .control-group {
+    left: auto;
+    right: 0;
+    min-width: 280px;
+    max-width: 420px;
+}
+
 /* Ensure control-groups inside side-sections are visible outside the parent */
 .side-section .control-group {
     overflow: visible;
@@ -518,7 +526,7 @@ button:hover {
     flex-wrap: wrap;
 }
 .display-slider-row {
-    min-width: 300px;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1358,6 +1366,14 @@ span.column-selected {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
+    row-gap: 4px;
+}
+
+/* Display menu: need more width for mode controls */
+#display-controls {
+    max-width: 520px;
+    min-width: 360px;
 }
 .shade-mode-label {
     margin-right: 8px;
@@ -1838,5 +1854,5 @@ body.codon-mode .aa-row:empty { display: none; }
 .recent-item:hover { background: #e8f0fe; }
 .recent-item:last-of-type { border-bottom: none !important; }
 
-/* Variable sites only — hide fully-conserved columns */
+/* Variable sites only ï¿½ hide fully-conserved columns */
 body.var-sites-only .seq-data > span[data-pos].diff-conserved { display: none !important; }
