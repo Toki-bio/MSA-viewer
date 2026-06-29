@@ -817,6 +817,12 @@ body.row-reorder-active .seq-name.drag-source:hover {
     overflow: visible;
 }
 
+/* Residue case toggle (GeneDoc-style) */
+.residue-case-upper .seq-data,
+.residue-case-upper .gap { text-transform: uppercase; }
+.residue-case-lower .seq-data,
+.residue-case-lower .gap { text-transform: lowercase; }
+
 .seq-length {
     display: inline-block;
     margin-left: 6px;
