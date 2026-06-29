@@ -9,7 +9,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = 'edit-speed-tsd-v2';
+const APP_VERSION = '3a46668';
 
 const state = {
     seqs: [],
