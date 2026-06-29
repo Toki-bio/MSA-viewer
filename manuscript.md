@@ -103,7 +103,15 @@ For NGS read alignments, a SAM file can be loaded directly — the viewer auto-d
 
 MSA Viewer addresses the gap between desktop alignment tools and modern web-based bioinformatics workflows. By providing interactive editing, NGS read visualization, coding-sequence analysis, and publication-quality export in a zero-installation browser application, it lowers the barrier to entry for alignment inspection while supporting advanced analytical workflows. The modular architecture — purely client-side by default with an optional server for MAFFT, BLAST, and SSH — makes it suitable for both quick ad-hoc alignment viewing and integrated bioinformatics pipelines.
 
-The tool's primary limitation is performance with extremely large alignments (>5,000 sequences × 10,000 columns), where memory constraints inherent to browser-based rendering become apparent. Future work will explore canvas-based rendering and virtual scrolling to extend the practical upper limit. Additionally, we plan to add protein-level analyses (BLOSUM-based dot plots, structural feature annotation) and deeper phylogenetic integration.
+### 4.1 Performance Considerations
+
+MSA Viewer uses DOM-based rendering, building one HTML span element per residue position. CSS optimizations — `content-visibility: auto` on sequence rows, `contain: layout style` on data regions, and `will-change: scroll-position` on the viewport — instruct the browser to skip layout computation for off-screen content and use GPU compositing for scrolling, yielding responsive interaction for alignments up to approximately 200 sequences × 5,000 columns (~1 million residues) on modern hardware.
+
+For larger alignments, this approach reaches the fundamental limit of per-residue DOM rendering. All comparable tools that handle very large datasets employ Canvas-based or native rendering: MSAViewer (Yachdav et al., 2016) uses a Canvas viewport that draws only visible regions, AliView (Larsson, 2014) uses a custom lightweight Java text renderer, and IGV (Robinson et al., 2011) uses tile-based Canvas rendering. A Canvas rendering mode for MSA Viewer is planned for a future release and would extend the practical limit to tens of thousands of sequences. In the interim, users with very large alignments can reduce the visible region using the column slider, switch to Compact mode (which renders reads as SVG bars rather than per-residue spans), or split alignments into smaller subsets.
+
+### 4.2 Future Directions
+
+Beyond Canvas rendering, planned enhancements include protein-level dot plot analysis with BLOSUM substitution matrices, structural feature annotation tracks, deeper phylogenetic integration with external tree viewers, and a WebAssembly-based MAFFT module that would eliminate the server dependency for realignment operations entirely.
 
 ---
 

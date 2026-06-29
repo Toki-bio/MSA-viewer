@@ -647,6 +647,8 @@ input[type="number"] {
     overflow-y: auto;
     background: white;
     font-family: 'Courier New', monospace;
+    /* Performance: GPU compositing hint for large alignments */
+    will-change: scroll-position;
     line-height: 1.0;
     white-space: pre;
     border: 1px solid #ddd;
@@ -681,6 +683,9 @@ input[type="number"] {
     position: relative;
     min-width: max-content;
     height: 1em;
+    /* Performance: skip layout for off-screen rows */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 1em;
 }
 
 /* Persistent tiny scrollbar area below the alignment */
@@ -802,6 +807,8 @@ body.row-reorder-active .seq-name.drag-source:hover {
     margin: 0;
     padding: 0;
     line-height: 1.0;
+    /* Performance: isolate layout within each row */
+    contain: layout style;
     cursor: default;
     user-select: none;
     -moz-user-select: none;
