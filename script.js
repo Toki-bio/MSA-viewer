@@ -6274,6 +6274,7 @@ function showUndoRedoDropdown(buttonEl, stack, actionFn, labelPrefix) {
         const stepsToUndo = stack.length - i;
         item.addEventListener('click', () => {
             dropdown.remove();
+            cleanup();
             for (let j = 0; j < stepsToUndo; j++) {
                 actionFn();
             }
@@ -6283,15 +6284,27 @@ function showUndoRedoDropdown(buttonEl, stack, actionFn, labelPrefix) {
 
     document.body.appendChild(dropdown);
 
-    // Close on click outside
+    const closeHandler = (ev) => {
+        if (!dropdown.contains(ev.target)) {
+            dropdown.remove();
+            cleanup();
+        }
+    };
+    const escHandler = (ev) => {
+        if (ev.key === 'Escape') {
+            dropdown.remove();
+            cleanup();
+        }
+    };
+    const cleanup = () => {
+        document.removeEventListener('click', closeHandler);
+        document.removeEventListener('keydown', escHandler);
+    };
+
+    // Close on click outside or Escape key
     setTimeout(() => {
-        const closeHandler = (ev) => {
-            if (!dropdown.contains(ev.target)) {
-                dropdown.remove();
-                document.removeEventListener('click', closeHandler);
-            }
-        };
         document.addEventListener('click', closeHandler);
+        document.addEventListener('keydown', escHandler);
     }, 0);
 }
 
@@ -8090,8 +8103,9 @@ function handleAlignmentPanStart(e) {
     const dataTarget = e.target.closest('.seq-data');
     const nameTarget = e.target.closest('.seq-name');
     if (dataTarget || nameTarget) return;
-    
-    e.preventDefault();
+
+    // Don't preventDefault here — let the contextmenu handler decide
+    // (context menu is only suppressed after actual pan movement)
     state.panning.active = true;
     state.panning.started = false;
     state.panning.startX = e.clientX;
