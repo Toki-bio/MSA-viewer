@@ -1279,6 +1279,133 @@ function parseSamToAlignment(samText) {
     return seqs;
 }
 
+// =====================================================================
+// CODON ANALYSIS (MACSE-inspired)
+// Genetic code — Standard (NCBI table 1)
+// =====================================================================
+const _GENETIC_CODE = {
+    'TTT':'F','TTC':'F','TTA':'L','TTG':'L','TCT':'S','TCC':'S','TCA':'S','TCG':'S',
+    'TAT':'Y','TAC':'Y','TAA':'*','TAG':'*','TGT':'C','TGC':'C','TGA':'*','TGG':'W',
+    'CTT':'L','CTC':'L','CTA':'L','CTG':'L','CCT':'P','CCC':'P','CCA':'P','CCG':'P',
+    'CAT':'H','CAC':'H','CAA':'Q','CAG':'Q','CGT':'R','CGC':'R','CGA':'R','CGG':'R',
+    'ATT':'I','ATC':'I','ATA':'I','ATG':'M','ACT':'T','ACC':'T','ACA':'T','ACG':'T',
+    'AAT':'N','AAC':'N','AAA':'K','AAG':'K','AGT':'S','AGC':'S','AGA':'R','AGG':'R',
+    'GTT':'V','GTC':'V','GTA':'V','GTG':'V','GCT':'A','GCC':'A','GCA':'A','GCG':'A',
+    'GAT':'D','GAC':'D','GAA':'E','GAG':'E','GGT':'G','GGC':'G','GGA':'G','GGG':'G'
+};
+
+// Synonymous mutation check for each codon position
+const _SYN_CODONS = {}; // codon -> Set of synonymous codons
+for (const [codon, aa] of Object.entries(_GENETIC_CODE)) {
+    if (!_SYN_CODONS[codon]) _SYN_CODONS[codon] = new Set();
+    for (const [c2, a2] of Object.entries(_GENETIC_CODE)) {
+        if (a2 === aa && c2 !== codon) _SYN_CODONS[codon].add(c2);
+    }
+}
+
+// Compute per-position codon phase (0,1,2), stop codons, frameshifts, syn/non-syn
+function _computeCodonAnalysis(seqs, len) {
+    if (seqs.length < 1 || len % 3 !== 0) return null;
+    // Check sequences look like nucleotides
+    const ntRe = /^[ACGTUacgtuNn-]+$/;
+    for (const s of seqs) {
+        const cleaned = s.seq.replace(/[-.]/g, '');
+        if (cleaned.length > 0 && !ntRe.test(cleaned)) return null;
+    }
+
+    const nSeqs = seqs.length;
+    const phase = new Array(nSeqs).fill(null).map(() => new Array(len).fill(-1));
+    const stops = new Array(nSeqs).fill(null).map(() => []);
+    const frameShifts = new Array(nSeqs).fill(null).map(() => []);
+    const synNonSyn = new Array(nSeqs).fill(null).map(() => new Array(len).fill(null));
+    const aaSeq = new Array(nSeqs).fill(null).map(() => []);
+
+    // Build reference sequence (first non-ref seq with valid phase 0)
+    const refIdx = 0;
+    const refSeq = seqs[refIdx].seq;
+    const refGapless = refSeq.replace(/-/g, '').toUpperCase();
+
+    // For each sequence, walk codons tracking in-frame positions
+    for (let i = 0; i < nSeqs; i++) {
+        const seq = seqs[i].seq;
+        let codonPhase = 0; // 0,1,2 relative to alignment columns
+        let codonBuf = '';
+        let codonCols = [];
+
+        for (let pos = 0; pos < len; pos++) {
+            const base = seq[pos];
+            const isGap = base === '-' || base === '.';
+
+            if (codonPhase === -1) {
+                // Scanning for next in-frame codon
+                if (isGap) continue;
+                codonPhase = 0;
+                codonBuf = base.toUpperCase();
+                codonCols = [pos];
+                phase[i][pos] = 0;
+            } else {
+                if (isGap) {
+                    // Gap in middle of codon → frameshift
+                    frameShifts[i].push({ pos, phase: codonPhase, type: 'gap' });
+                    codonPhase = -1;
+                    codonBuf = '';
+                    codonCols = [];
+                    continue;
+                }
+                const oldPhase = codonPhase;
+                codonBuf += base.toUpperCase();
+                codonCols.push(pos);
+                phase[i][pos] = codonPhase;
+                codonPhase++;
+
+                if (codonPhase >= 3) {
+                    // Full codon assembled
+                    const codon = codonBuf.replace(/[Nn]/g, 'N');
+                    const aa = _GENETIC_CODE[codon] || 'X';
+                    aaSeq[i].push({ cols: codonCols, codon, aa });
+
+                    if (aa === '*') {
+                        // In-frame stop codon
+                        for (const c of codonCols) stops[i].push(c);
+                    }
+
+                    // Syn/non-syn check vs reference
+                    if (i !== refIdx) {
+                        const refCodon = codonCols.map(c => (refSeq[c] || '-').toUpperCase()).join('');
+                        const refAA = _GENETIC_CODE[refCodon] || 'X';
+                        if (aa === refAA && codon !== refCodon) {
+                            // Synonymous — all 3 positions get 'syn'
+                            for (const c of codonCols) synNonSyn[i][c] = 'syn';
+                        } else if (aa !== refAA) {
+                            // Non-synonymous — find which position(s) cause the change
+                            for (let k = 0; k < 3; k++) {
+                                const mutCodon = refCodon.substring(0,k) + codon[k] + refCodon.substring(k+1);
+                                const mutAA = _GENETIC_CODE[mutCodon] || 'X';
+                                if (mutAA !== refAA) {
+                                    synNonSyn[i][codonCols[k]] = 'nonsyn';
+                                } else {
+                                    synNonSyn[i][codonCols[k]] = 'syn';
+                                }
+                            }
+                        }
+                    }
+
+                    codonPhase = 0;
+                    codonBuf = '';
+                    codonCols = [];
+                }
+            }
+        }
+
+        // Check for incomplete final codon (frameshift)
+        if (codonPhase > 0 && codonPhase < 3) {
+            frameShifts[i].push({ pos: len - 1, phase: codonPhase, type: 'incomplete' });
+        }
+    }
+
+    return { phase, stops, frameShifts, synNonSyn, aaSeq, refIdx };
+}
+
 function parseFasta(text) {
     const lines = text.trim().split(/\r?\n/);
     const seqs = [];
@@ -2004,6 +2131,21 @@ function renderAlignment(options = {}) {
         document.body.classList.remove('highlight-diffs');
     }
 
+    // Codon analysis
+    const codonAnalysis = document.getElementById('codonAnalysis')?.checked;
+    if (codonAnalysis) {
+        state._codonData = _computeCodonAnalysis(state.seqs, len);
+        if (state._codonData) {
+            document.body.classList.add('codon-mode');
+        } else {
+            document.body.classList.remove('codon-mode');
+            showMessage('Codon analysis requires nucleotide CDS alignment (length multiple of 3)', 4000);
+        }
+    } else {
+        state._codonData = null;
+        document.body.classList.remove('codon-mode');
+    }
+
     if (useBlocks) {
         for (let start = 0; start < len; start += blockWidth) {
             const end = Math.min(start + blockWidth, len);
@@ -2087,6 +2229,68 @@ function renderAlignment(options = {}) {
             if (state._conservedColumns.has(pos)) {
                 span.classList.add('diff-conserved');
             }
+        });
+    }
+
+    // Post-process: codon analysis overlay
+    if (state._codonData) {
+        const cd = state._codonData;
+        const allSpans = alignmentContainer.querySelectorAll('.seq-data > span[data-pos]');
+        allSpans.forEach(span => {
+            const pos = parseInt(span.dataset.pos);
+            const rowEl = span.closest('.seq-row');
+            const seqIdx = rowEl ? parseInt(rowEl.dataset.idx) : -1;
+            if (seqIdx < 0) return;
+
+            // Codon phase coloring
+            if (cd.phase[seqIdx] && cd.phase[seqIdx][pos] >= 0) {
+                span.classList.add('codon-p' + cd.phase[seqIdx][pos]);
+            }
+
+            // Stop codon positions
+            if (cd.stops[seqIdx] && cd.stops[seqIdx].includes(pos)) {
+                span.classList.add('codon-stop');
+            }
+
+            // Frameshift positions
+            if (cd.frameShifts[seqIdx]) {
+                for (const fs of cd.frameShifts[seqIdx]) {
+                    if (fs.pos === pos && fs.type === 'incomplete') {
+                        span.classList.add('codon-fs');
+                    }
+                }
+            }
+
+            // Syn/non-syn annotations
+            if (cd.synNonSyn[seqIdx] && cd.synNonSyn[seqIdx][pos]) {
+                span.classList.add('codon-' + cd.synNonSyn[seqIdx][pos]);
+            }
+        });
+
+        // Add AA translation rows below each sequence
+        const seqRows = alignmentContainer.querySelectorAll('.seq-row');
+        seqRows.forEach(rowEl => {
+            const seqIdx = parseInt(rowEl.dataset.idx);
+            if (isNaN(seqIdx)) return;
+            // Check if already has AA row
+            if (rowEl.nextElementSibling?.classList.contains('aa-row')) return;
+
+            const aaRow = document.createElement('div');
+            aaRow.className = 'aa-row';
+            aaRow.style.cssText = 'padding-left:var(--nameLen)ch;font-family:monospace;font-size:11px;color:#1a5276;line-height:1;min-height:14px;';
+            if (cd.aaSeq[seqIdx]) {
+                for (const entry of cd.aaSeq[seqIdx]) {
+                    const aa = entry.aa;
+                    const startCol = entry.cols[0];
+                    // Create a 3-char wide AA label
+                    const aaSpan = document.createElement('span');
+                    aaSpan.style.cssText = `width:3ch;display:inline-block;text-align:center;${aa==='*'?'color:#e74c3c;font-weight:bold;':''}`;
+                    aaSpan.textContent = aa;
+                    aaSpan.dataset.col = startCol;
+                    aaRow.appendChild(aaSpan);
+                }
+            }
+            rowEl.insertAdjacentElement('afterend', aaRow);
         });
     }
 }
@@ -4163,7 +4367,7 @@ function downloadSnapshotHtml(snapshotUrl, sourceTitle) {
     setTimeout(() => URL.revokeObjectURL(dlUrl), 2000);
 }
 
-async async function createSnapshot() {
+async function createSnapshot() {
     if (!state.seqs || state.seqs.length === 0) {
         showMessage('Load an alignment first, then create snapshot.', 3000);
         return;
@@ -8116,7 +8320,7 @@ function attachUIListeners() {
 
     // Set up checkbox listeners
     const checkboxes = ['enableBlack', 'enableDark', 'enableLight', 'showConsensus',
-                        'compactDiffOnly', 'compactPairs', 'highlightDiffs'];
+                        'compactDiffOnly', 'compactPairs', 'highlightDiffs', 'codonAnalysis'];
     checkboxes.forEach(id => {
         const elRef = el(id);
         if (elRef) elRef.addEventListener('change', () => {

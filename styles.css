@@ -1779,3 +1779,50 @@ body.highlight-diffs .seq-data > span.diff-conserved {
   opacity: 0.25;
   font-size: 0.7em;
 }
+
+
+/* ── Codon Analysis ── */
+/* Codon phase coloring */
+body.codon-mode span.codon-p0 { border-bottom: 2px solid #3498db; }  /* 1st pos: blue */
+body.codon-mode span.codon-p1 { border-bottom: 2px solid #2ecc71; }  /* 2nd pos: green */
+body.codon-mode span.codon-p2 { border-bottom: 2px solid #e67e22; }  /* 3rd pos: orange */
+
+/* In-frame stop codons */
+body.codon-mode span.codon-stop {
+    background: #ff6b6b !important;
+    color: #fff !important;
+    font-weight: bold;
+    border-radius: 2px;
+}
+
+/* Frameshift positions */
+body.codon-mode span.codon-fs {
+    border-bottom: 3px wavy #e74c3c;
+}
+
+/* Synonymous mutations */
+body.codon-mode span.codon-syn {
+    text-decoration: underline;
+    text-decoration-color: #27ae60;
+    text-underline-offset: 2px;
+}
+
+/* Non-synonymous mutations */
+body.codon-mode span.codon-nonsyn {
+    text-decoration: underline;
+    text-decoration-color: #c0392b;
+    text-decoration-style: double;
+    text-underline-offset: 2px;
+}
+
+/* AA translation rows */
+body.codon-mode .aa-row {
+    font-size: 11px;
+    line-height: 14px;
+    color: #1a5276;
+    background: #f8fdf8;
+    border-bottom: 1px solid #d4efdf;
+    padding: 1px 0;
+    min-height: 16px;
+}
+body.codon-mode .aa-row:empty { display: none; }
