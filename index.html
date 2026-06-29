@@ -268,21 +268,21 @@
                             <div style="border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 8px;">
                                 <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Trimming</div>
                                 <div style="margin-bottom: 6px;">
-                                    <label for="leftGapInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Left Trim Gap %:</label>
-                                    <input type="number" id="leftGapInput" min="0" max="100" value="50" step="5" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;">
+                                    <label for="leftGapInput" style="font-size: 11px; display: block; margin-bottom: 2px;" title="Columns at the left edge with this % or more gaps are trimmed">Left Trim Gap %:</label>
+                                    <input type="number" id="leftGapInput" min="0" max="100" value="50" step="5" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;" title="If sliding window at left edge has >= this % gaps, trim it">
                                 </div>
                                 <div style="margin-bottom: 6px;">
-                                    <label for="rightGapInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Right Trim Gap %:</label>
-                                    <input type="number" id="rightGapInput" min="0" max="100" value="80" step="5" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;">
+                                    <label for="rightGapInput" style="font-size: 11px; display: block; margin-bottom: 2px;" title="Columns at the right edge with this % or more gaps are trimmed">Right Trim Gap %:</label>
+                                    <input type="number" id="rightGapInput" min="0" max="100" value="80" step="5" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;" title="If sliding window at right edge has >= this % gaps, trim it">
                                 </div>
                                 <div style="margin-bottom: 6px;">
-                                    <label for="edgeWindowInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Edge Window (cols):</label>
-                                    <input type="number" id="edgeWindowInput" min="1" max="50" value="15" step="1" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;">
+                                    <label for="edgeWindowInput" style="font-size: 11px; display: block; margin-bottom: 2px;" title="Number of consecutive columns checked at each edge for gap density">Edge Window (cols):</label>
+                                    <input type="number" id="edgeWindowInput" min="1" max="50" value="15" step="1" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;" title="Width of the sliding window used at alignment edges">
                                 </div>
                                 <div style="display: flex; gap: 4px; flex-wrap: wrap;">
-                                    <button id="previewTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Preview</button>
-                                    <button id="executeTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Trim</button>
-                                    <button id="undoTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Undo</button>
+                                    <button id="previewTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;" title="Show which columns would be trimmed without applying changes">Preview</button>
+                                    <button id="executeTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;" title="Remove trimmed columns from the alignment (undoable)">Trim</button>
+                                    <button id="undoTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;" title="Undo the last trim operation">Undo</button>
                                 </div>
                             </div>
                             <!-- Clustering Parameters Section -->
@@ -290,67 +290,67 @@
                                 <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Basic Parameters</div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
                                     <div>
-                                        <label for="clusterMinSizeInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Min Size:</label>
-                                        <input type="number" id="clusterMinSizeInput" min="2" max="20" value="3" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                        <label for="clusterMinSizeInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Minimum sequences a group needs to be considered a cluster">Min Size:</label>
+                                        <input type="number" id="clusterMinSizeInput" min="2" max="20" value="3" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Groups smaller than this are discarded">
                                     </div>
                                     <div>
-                                        <label for="clusterMinPerfectInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Min Features:</label>
-                                        <input type="number" id="clusterMinPerfectInput" min="1" max="50" value="5" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                        <label for="clusterMinPerfectInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Minimum number of diagnostic positions a cluster must have">Min Features:</label>
+                                        <input type="number" id="clusterMinPerfectInput" min="1" max="50" value="5" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Clusters with fewer unique diagnostic positions are discarded">
                                     </div>
                                     <div>
-                                        <label for="clusterMaxIterationsInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Max Iter:</label>
-                                        <input type="number" id="clusterMaxIterationsInput" min="1" max="20" value="10" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                        <label for="clusterMaxIterationsInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="How many rounds of clustering with progressively relaxed thresholds">Max Iter:</label>
+                                        <input type="number" id="clusterMaxIterationsInput" min="1" max="20" value="10" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="More iterations = more clusters found (threshold relaxes each round)">
                                     </div>
                                 </div>
                                 <!-- Quality Thresholds -->
                                 <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Quality Thresholds (%)</div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
                                     <div>
-                                        <label for="qualitySmallInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Small &lt;11:</label>
-                                        <input type="number" id="qualitySmallInput" min="0" max="100" value="80" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                        <label for="qualitySmallInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Min % of members sharing a feature in clusters of 10 or fewer sequences">Small &lt;11:</label>
+                                        <input type="number" id="qualitySmallInput" min="0" max="100" value="80" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Higher = stricter, fewer but cleaner clusters">
                                     </div>
                                     <div>
-                                        <label for="qualityMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Medium 11-19:</label>
-                                        <input type="number" id="qualityMediumInput" min="0" max="100" value="70" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                        <label for="qualityMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Quality threshold for medium clusters (11-19 sequences)">Medium 11-19:</label>
+                                        <input type="number" id="qualityMediumInput" min="0" max="100" value="70" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Higher = stricter, fewer but cleaner clusters">
                                     </div>
                                     <div>
-                                        <label for="qualityLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Large ≥20:</label>
-                                        <input type="number" id="qualityLargeInput" min="0" max="100" value="60" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                        <label for="qualityLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Quality threshold for large clusters (20+ sequences)">Large ≥20:</label>
+                                        <input type="number" id="qualityLargeInput" min="0" max="100" value="60" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Higher = stricter, fewer but cleaner clusters">
                                     </div>
                                 </div>
                                 <!-- Size Breakpoints -->
                                 <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Size Breakpoints</div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
                                     <div>
-                                        <label for="sizeSmallMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Small→Med:</label>
-                                        <input type="number" id="sizeSmallMediumInput" min="1" max="50" value="11" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                        <label for="sizeSmallMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Sequence count at which clusters transition from small to medium quality tier">Small→Med:</label>
+                                        <input type="number" id="sizeSmallMediumInput" min="1" max="50" value="11" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Groups below this size use the Small quality threshold">
                                     </div>
                                     <div>
-                                        <label for="sizeMediumLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Med→Large:</label>
-                                        <input type="number" id="sizeMediumLargeInput" min="1" max="50" value="20" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                        <label for="sizeMediumLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Sequence count at which clusters transition from medium to large quality tier">Med→Large:</label>
+                                        <input type="number" id="sizeMediumLargeInput" min="1" max="50" value="20" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Groups at or above this size use the Large quality threshold">
                                     </div>
                                     <div>
-                                        <label for="minOccurrencesInput" style="font-size: 10px; display: block; margin-bottom: 1px;">Min Occur (positions):</label>
+                                        <label for="minOccurrencesInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Minimum positions where a feature pattern must appear to be considered a cluster signal">Min Occur:</label>
                                         <input type="number" id="minOccurrencesInput" min="1" max="20" value="2" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Minimum number of diagnostic positions (features) required to form a cluster">
                                     </div>
                                 </div>
                                 <div style="display: flex; gap: 4px; flex-wrap: wrap;">
-                                    <button id="clusterNowButton" style="flex: 1; min-width: 70px; height: 24px; font-size: 11px; background: #4CAF50; color: white; border: none; border-radius: 2px; cursor: pointer;">Cluster Now</button>
+                                    <button id="clusterNowButton" style="flex: 1; min-width: 70px; height: 24px; font-size: 11px; background: #4CAF50; color: white; border: none; border-radius: 2px; cursor: pointer;" title="Run clustering with current parameters — results shown below">Cluster Now</button>
                                 </div>
                             </div>
                             <!-- Presets Section -->
                             <div style="padding-bottom: 0;">
                                 <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Presets</div>
                                 <div style="margin-bottom: 6px;">
-                                    <label for="presetNameInput" style="font-size: 11px; display: block; margin-bottom: 2px;">Preset Name:</label>
-                                    <input type="text" id="presetNameInput" placeholder="e.g. strict_clustering" style="width: 100%; max-width: 150px; height: 22px; padding: 2px; font-size: 11px; box-sizing: border-box;">
+                                    <label for="presetNameInput" style="font-size: 11px; display: block; margin-bottom: 2px;" title="Name to save current clustering parameters under">Preset Name:</label>
+                                    <input type="text" id="presetNameInput" placeholder="e.g. strict_clustering" style="width: 100%; max-width: 150px; height: 22px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Enter a name then click Save to store current settings">
                                 </div>
                                 <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px;">
-                                    <button id="clusteringSavePresetButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Save</button>
-                                    <button id="clusteringLoadPresetButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;">Load</button>
-                                    <button id="clusteringOptimalPresetButton" style="flex: 1; min-width: 70px; height: 22px; font-size: 10px;" title="Create optimal preset for complete clustering">Optimal</button>
+                                    <button id="clusteringSavePresetButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;" title="Save current parameters as a named preset">Save</button>
+                                    <button id="clusteringLoadPresetButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;" title="Load parameters from the selected preset">Load</button>
+                                    <button id="clusteringOptimalPresetButton" style="flex: 1; min-width: 70px; height: 22px; font-size: 10px;" title="Auto-fill parameters optimized for balanced subfamily detection">Optimal</button>
                                 </div>
-                                <select id="clusteringPresetList" style="width: 100%; max-width: 150px; height: 24px; font-size: 11px;">
+                                <select id="clusteringPresetList" style="width: 100%; max-width: 150px; height: 24px; font-size: 11px;" title="Select a saved parameter preset to load">
                                     <option value="">-- Select preset --</option>
                                 </select>
                             </div>
