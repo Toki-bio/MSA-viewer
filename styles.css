@@ -1833,3 +1833,7 @@ body.codon-mode .aa-row {
     min-height: 16px;
 }
 body.codon-mode .aa-row:empty { display: none; }
+
+/* Recent files dropdown */
+.recent-item:hover { background: #e8f0fe; }
+.recent-item:last-of-type { border-bottom: none !important; }

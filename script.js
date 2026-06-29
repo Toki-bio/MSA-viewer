@@ -66,6 +66,111 @@ const state = {
     groupConsensusCount: 0
 };
 
+// ── Recent Files & Clipboard History ──
+const _historyManager = {
+    maxItems: 10,
+    items: [],
+    
+    load() {
+        try {
+            const raw = localStorage.getItem('msaviewer_history');
+            if (raw) { this.items = JSON.parse(raw); this.maxItems = this.items._max || 10; }
+        } catch(e) { this.items = []; }
+        if (!Array.isArray(this.items)) this.items = [];
+    },
+
+    save() {
+        const store = this.items.slice(0, this.maxItems);
+        store._max = this.maxItems;
+        try { localStorage.setItem('msaviewer_history', JSON.stringify(store)); } catch(e) {}
+    },
+
+    add(type, data) {
+        this.load();
+        const entry = {
+            type, // 'file' or 'clipboard'
+            name: data.name || 'Untitled',
+            timestamp: Date.now(),
+            nSeqs: data.nSeqs || 0,
+            length: data.length || 0,
+            preview: data.preview || '',
+            source: data.source || '',
+            text: data.text || null // stored for clipboard items (small), null for files
+        };
+        // Remove duplicate (same name + source)
+        this.items = this.items.filter(e => !(e.name === entry.name && e.source === entry.source));
+        this.items.unshift(entry);
+        if (this.items.length > this.maxItems + 20) this.items.length = this.maxItems + 20;
+        this.save();
+    },
+
+    setMax(n) {
+        this.maxItems = Math.max(1, Math.min(50, n));
+        this.save();
+    },
+
+    renderDropdown() {
+        this.load();
+        const menu = document.getElementById('recentDropdown');
+        if (!menu) return;
+        if (this.items.length === 0) {
+            menu.innerHTML = '<div style="padding:8px;color:#999;font-size:11px;">No recent files</div>';
+            return;
+        }
+        const timeFmt = (ts) => {
+            const d = new Date(ts);
+            const now = new Date();
+            const diffMin = Math.floor((now - d) / 60000);
+            if (diffMin < 1) return 'just now';
+            if (diffMin < 60) return diffMin + 'm ago';
+            if (diffMin < 1440) return Math.floor(diffMin / 60) + 'h ago';
+            return d.toLocaleDateString();
+        };
+        let html = '';
+        for (const e of this.items.slice(0, this.maxItems)) {
+            const icon = e.type === 'file' ? '📁' : '📋';
+            const label = e.name.length > 35 ? e.name.substring(0, 32) + '...' : e.name;
+            const meta = e.nSeqs ? `${e.nSeqs} seq × ${e.length} col` : '';
+            html += `<div class="recent-item" data-idx="${this.items.indexOf(e)}"
+                title="${this._escapeHtml(e.source || e.name)}\n${meta}\n${this._escapeHtml(e.preview)}"
+                style="padding:5px 10px;cursor:pointer;font-size:11px;border-bottom:1px solid #eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                ${icon} <b>${this._escapeHtml(label)}</b>
+                <span style="color:#999;font-size:10px;">${meta ? ' · ' + meta : ''} · ${timeFmt(e.timestamp)}</span>
+            </div>`;
+        }
+        html += `<div style="padding:4px 10px;font-size:10px;color:#999;border-top:1px solid #eee;display:flex;justify-content:space-between;">
+            <span>Showing ${Math.min(this.items.length, this.maxItems)} of ${this.items.length}</span>
+            <span>Max: <input type="number" id="historyMaxInput" value="${this.maxItems}" min="1" max="50"
+                style="width:36px;font-size:10px;padding:0 2px;text-align:center;"
+                onchange="_historyManager.setMax(parseInt(this.value)||10);_historyManager.renderDropdown();"></span>
+        </div>`;
+        menu.innerHTML = html;
+        
+        // Click handlers
+        menu.querySelectorAll('.recent-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const idx = parseInt(el.dataset.idx);
+                const entry = this.items[idx];
+                if (!entry) return;
+                if (entry.text) {
+                    fastaInput.value = entry.text;
+                    state.currentFilename = entry.name;
+                    state.currentFilePath = entry.source || '';
+                    parseAndRender(false);
+                } else {
+                    showMessage('Original file not available — re-open the file to load it.', 3000);
+                }
+                document.getElementById('recentDropdown').style.display = 'none';
+            });
+        });
+    },
+
+    _escapeHtml(s) {
+        if (!s) return '';
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+};
+
 const SNAPSHOT_SCHEMA_VERSION = 1;
 
 let _dragPreviewEl = null;
@@ -3145,6 +3250,22 @@ function parseAndRender(isFromDrop = false) {
         setBlockSizeToScreen();
         setupHoverMenuReveal();
         showMessage("File loaded successfully!", 2000);
+
+        // Record in history
+        const isClipboard = !isFromDrop && state.currentFilename === 'Clipboard';
+        const previewNames = parsed.slice(0, 3).map(s => s.header).join(', ');
+        const previewSeq = (parsed[0]?.seq?.substring(0, 50) || '').replace(/-/g, '');
+        _historyManager.add(
+            isClipboard ? 'clipboard' : 'file',
+            {
+                name: isClipboard ? ('Paste ' + new Date().toLocaleTimeString()) : (state.currentFilename || 'Unknown'),
+                nSeqs: parsed.length,
+                length: (parsed[0]?.seq?.length || 0),
+                preview: previewNames + (previewSeq ? '  [' + previewSeq + '...]' : ''),
+                source: state.currentFilePath || '',
+                text: inputText.substring(0, 100000) // store text for all items (100KB cap)
+            }
+        );
 
         // Ensure menus don't have inline styles that interfere with hover
         setTimeout(() => {
@@ -8415,6 +8536,16 @@ function initializeAppUI() {
     _initRepeatFinderEvents();
 
     // ── URL parameter auto-loading ──────────────────────────────────────
+    // ...
+    
+    // Click-outside to close recent dropdown
+    document.addEventListener('click', (e) => {
+        const dd = document.getElementById('recentDropdown');
+        if (!dd || dd.style.display !== 'block') return;
+        if (!dd.contains(e.target) && e.target.id !== 'recentButton') {
+            dd.style.display = 'none';
+        }
+    });
     // Supports:
     //   ?url=<relative_or_absolute_url>   — fetch FASTA/MSF from URL
     //   ?data=<base64_encoded_text>        — decode inline data

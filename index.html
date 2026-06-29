@@ -29,6 +29,7 @@
                         <div style="display: flex; flex-direction: column; gap: 4px;">
                             <button id="loadButton" style="height: 20px; font-size: 10px;" title="Load the pasted or dropped FASTA/MSF data (shortcut: Ctrl+L)">Load</button>
                             <button id="clearButton" style="height: 24px; font-size: 12px;" title="Clear the sequence input">Clear</button>
+                            <button id="recentButton" style="height: 20px; font-size: 10px; position: relative;" title="Recent files and clipboard pastes" onclick="event.stopPropagation(); var d=document.getElementById('recentDropdown'); d.style.display=d.style.display==='block'?'none':'block'; _historyManager.renderDropdown();">🕐 Recent</button>
                         </div>
                     </div>
                     <div id="sshLoadRow" style="display: none; margin-top: 4px;">
@@ -844,6 +845,9 @@ B: —</pre>
             <pre id="treeTextOutput" style="max-height:42vh;overflow:auto;font-family:'Courier New',monospace;font-size:11px;white-space:pre;border:1px solid #ddd;padding:8px;background:#fafafa;min-height:70px;margin:0;"></pre>
         </div>
     </div>
+
+    <!-- Recent Files Dropdown -->
+    <div id="recentDropdown" style="display:none;position:fixed;top:140px;right:20px;width:360px;max-height:400px;overflow-y:auto;background:white;border:1px solid #ccc;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.2);z-index:10003;font-family:-apple-system,BlinkMacSystemFont,sans-serif;"></div>
 
     <script src="cluster.js"></script>
     <script src="script.js?v=24"></script>
