@@ -3449,9 +3449,12 @@ function parseAndRender(isFromDrop = false) {
     }
 }
 function onModeChange() {
+    // Keep block size row visible but gray it out when not in Block mode — prevents layout jump
     const container = el('blockSizeContainer');
+    const isBlocks = el('modeBlocks')?.checked;
     if (container) {
-        container.style.display = el('modeBlocks')?.checked ? 'flex' : 'none';
+        container.style.opacity = isBlocks ? '1' : '0.4';
+        container.style.pointerEvents = isBlocks ? 'auto' : 'none';
     }
     _updateCompactControlsVisibility();
     renderAlignment();
