@@ -731,7 +731,7 @@ app.get('/api/snapshots', (req, res) => {
 
 // ============ SSH MULTI-SERVER FILE FETCH ============
 // Load server config from external file (not committed to git)
-const PPK = process.env.SSH_KEY_PATH || '';
+const PPK = process.env.SSH_KEY_PATH || path.join(os.homedir(), '.ssh', process.platform === 'win32' ? 'id_ed25519.ppk' : 'id_ed25519');
 let SSH_SERVERS = {};
 try {
     const srvPath = path.join(__dirname, 'ssh-servers.json');
