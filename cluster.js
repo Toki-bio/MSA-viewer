@@ -9,7 +9,9 @@ class SINEClusterer {
     getPositionPatterns(pos, availableSeqs) {
         const patterns = {};
         for (const i of availableSeqs) {
+            if (pos >= this.matrix[i].length) continue;  // bounds guard
             const ch = this.matrix[i][pos];
+            if (ch === '-' || ch === '.') continue;       // gaps are not diagnostic
             if (!patterns[ch]) patterns[ch] = new Set();
             patterns[ch].add(i);
         }
@@ -34,11 +36,12 @@ class SINEClusterer {
 
         let upperBound = availableSeqs.length;
         
-        // FIX: Calculate upperBound once, and allow relaxation
+        // Upper bound: cap cluster size to avoid degenerate "everything" clusters.
+        // A cluster larger than 15% of the dataset is not a subfamily — it is noise.
         if (!options.relaxUpperBound) {
-            if (availableSeqs.length > 80)  upperBound = Math.floor(availableSeqs.length * 0.60);
-            else if (availableSeqs.length > 50) upperBound = Math.floor(availableSeqs.length * 0.75);
-            else if (availableSeqs.length > 30) upperBound = Math.floor(availableSeqs.length * 0.90);
+            if (availableSeqs.length > 80)  upperBound = Math.floor(availableSeqs.length * 0.15);
+            else if (availableSeqs.length > 50) upperBound = Math.floor(availableSeqs.length * 0.20);
+            else if (availableSeqs.length > 30) upperBound = Math.floor(availableSeqs.length * 0.25);
         }
 
         const candidates = new Map();
@@ -46,6 +49,11 @@ class SINEClusterer {
         // FIX: Loop only within valid trimmed region
         for (let pos = startPos; pos < endPos; pos++) {
             const patterns = this.getPositionPatterns(pos, availableSeqs);
+
+            // Skip positions where any single nucleotide dominates (>80% of avail seqs)
+            const availLen = availableSeqs.length;
+            const maxSize = Math.max(...Object.values(patterns).map(s => s.size));
+            if (maxSize / availLen > 0.8) continue;
 
             for (const [ch, set] of Object.entries(patterns)) {
                 const size = set.size;
@@ -117,6 +125,8 @@ class SINEClusterer {
                 const outP = outside / (this.nSeqs - gsize) * 100 || 0;
                 const qual = Math.max(0, inP - outP);
 
+                // Score weighting: perfect-unique (all members match, zero outside) = 3
+                // near-perfect (>=80% members match) = 2, majority match = 1.5, imperfect (qual threshold) = 1
                 if (outside === 0) {
                     good++;
                     score += inside === gsize ? 3 : inside >= gsize*0.8 ? 2 : 1.5;
