@@ -1361,6 +1361,9 @@ span.column-selected {
 }
 .mode-container .slider-label {
     align-self: center;
+    width: auto;
+    text-align: left;
+    margin-right: 4px;
 }
 
 /* Display menu: need more width for mode controls */
