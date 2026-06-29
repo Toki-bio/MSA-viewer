@@ -1349,9 +1349,9 @@ span.column-selected {
 .mode-container {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 2px;
     flex-wrap: wrap;
-    row-gap: 4px;
+    row-gap: 2px;
 }
 
 /* Display menu: need more width for mode controls */
