@@ -1134,6 +1134,149 @@ function computeConsensusForSequences(seqArray) {
     return out;
 }
 // PARSING FUNCTIONS
+
+// SAM/BAM detection — detects @HD/@SQ headers or tab-separated CIGAR lines
+function _isSamInput(text) {
+    const lines = text.split('\n').filter(l => l.trim());
+    if (lines.length < 2) return false;
+    const headerLines = lines.filter(l => l.startsWith('@'));
+    if (headerLines.length > 0) {
+        return headerLines.some(l => l.startsWith('@HD') || l.startsWith('@SQ') || l.startsWith('@PG'));
+    }
+    const nonHeader = lines.filter(l => !l.startsWith('@'));
+    if (nonHeader.length === 0) return false;
+    const sample = nonHeader[0].split('\t');
+    if (sample.length < 10) return false;
+    const cigar = sample[5] || '';
+    return /^(\d+[MIDNSHP=X])+$/.test(cigar);
+}
+
+// Expand CIGAR string into aligned read + reference sequences
+function _expandCigar(readSeq, cigar, refSeq, refStart) {
+    let readPos = 0, refPos = 0;
+    let alignedRead = '', alignedRef = '';
+    const ops = cigar.match(/\d+[MIDNSHP=X]/g) || [];
+    for (const op of ops) {
+        const len = parseInt(op);
+        const type = op[op.length - 1];
+        switch (type) {
+            case 'M': case '=': case 'X':
+                for (let i = 0; i < len; i++) {
+                    alignedRead += readSeq[readPos + i] || 'N';
+                    alignedRef += refSeq ? (refSeq[refStart + refPos + i] || 'N') : (readSeq[readPos + i] || 'N');
+                }
+                readPos += len; refPos += len;
+                break;
+            case 'I':
+                for (let i = 0; i < len; i++) { alignedRead += readSeq[readPos + i] || 'N'; alignedRef += '-'; }
+                readPos += len;
+                break;
+            case 'D':
+                for (let i = 0; i < len; i++) { alignedRead += '-'; alignedRef += refSeq ? (refSeq[refStart + refPos + i] || 'N') : 'N'; }
+                refPos += len;
+                break;
+            case 'S':
+                for (let i = 0; i < len; i++) { alignedRead += (readSeq[readPos + i] || 'n').toLowerCase(); alignedRef += '-'; }
+                readPos += len;
+                break;
+            case 'H': break;
+            case 'N':
+                for (let i = 0; i < len; i++) { alignedRead += '-'; alignedRef += refSeq ? (refSeq[refStart + refPos + i] || 'N') : 'N'; }
+                refPos += len;
+                break;
+            case 'P': refPos += len; break;
+        }
+    }
+    return { alignedRead, alignedRef };
+}
+
+// CIGAR reference span (M/D/N/= operations)
+function _cigarRefSpan(cigar) {
+    let span = 0;
+    const ops = cigar.match(/\d+[MIDNSHP=X]/g) || [];
+    for (const op of ops) {
+        const len = parseInt(op);
+        if ('MDN=X'.includes(op[op.length - 1])) span += len;
+    }
+    return span;
+}
+
+// Parse SAM into FASTA-like alignment (pileup reference + gapped reads)
+function parseSamToAlignment(samText) {
+    const lines = samText.split('\n').filter(l => l.trim() && !l.startsWith('@'));
+    if (lines.length === 0) return null;
+    
+    const records = [];
+    for (const line of lines) {
+        const f = line.split('\t');
+        if (f.length < 10) continue;
+        const flag = parseInt(f[1]) || 0;
+        if (flag & 0x904) continue; // unmapped or secondary/supplementary
+        if (!f[5] || f[5] === '*' || !f[9] || f[9] === '*') continue;
+        records.push({ qname: f[0], rname: f[2], pos: parseInt(f[3]) - 1, cigar: f[5], seq: f[9], flag });
+    }
+    if (records.length === 0) return null;
+    
+    // Determine coordinate range
+    let minPos = Infinity, maxPos = 0;
+    for (const r of records) {
+        const span = _cigarRefSpan(r.cigar);
+        minPos = Math.min(minPos, r.pos);
+        maxPos = Math.max(maxPos, r.pos + span);
+    }
+    const refLen = maxPos - minPos;
+    
+    // Build pileup consensus reference
+    const pileup = new Array(refLen).fill(null).map(() => ({}));
+    for (const r of records) {
+        const ops = r.cigar.match(/\d+[MIDNSHP=X]/g) || [];
+        let rp = 0, refp = r.pos - minPos;
+        for (const op of ops) {
+            const len = parseInt(op);
+            const t = op[op.length - 1];
+            if (t === 'M' || t === '=' || t === 'X') {
+                for (let i = 0; i < len; i++) {
+                    const b = (r.seq[rp + i] || 'N').toUpperCase();
+                    const idx = refp + i;
+                    if (idx >= 0 && idx < refLen) { const c = pileup[idx]; c[b] = (c[b] || 0) + 1; }
+                }
+                rp += len; refp += len;
+            } else if (t === 'I' || t === 'S') { rp += len; }
+            else if (t === 'D' || t === 'N') { refp += len; }
+        }
+    }
+    
+    let refSeq = '';
+    for (const counts of pileup) {
+        let best = 'N', bestN = 0;
+        for (const [b, n] of Object.entries(counts)) { if (n > bestN) { bestN = n; best = b; } }
+        refSeq += best;
+    }
+    
+    // Build output sequences: reference first, then reads
+    const seqs = [{
+        header: 'REF',
+        fullHeader: 'REF_' + (minPos + 1) + '-' + maxPos,
+        seq: refSeq,
+        gaplessPositions: calculateGaplessPositions(refSeq)
+    }];
+    
+    for (const r of records) {
+        const { alignedRead } = _expandCigar(r.seq, r.cigar, refSeq, r.pos - minPos);
+        const leftPad = Math.max(0, r.pos - minPos);
+        const rightLen = refLen - (leftPad + alignedRead.length);
+        const fullSeq = '-'.repeat(leftPad) + alignedRead + '-'.repeat(Math.max(0, rightLen));
+        seqs.push({
+            header: r.qname,
+            fullHeader: r.qname + ' pos=' + (r.pos + 1) + ' cigar=' + r.cigar,
+            seq: fullSeq,
+            gaplessPositions: calculateGaplessPositions(fullSeq)
+        });
+    }
+    
+    return seqs;
+}
+
 function parseFasta(text) {
     const lines = text.trim().split(/\r?\n/);
     const seqs = [];
@@ -2395,11 +2538,17 @@ function parseAndRender(isFromDrop = false) {
     }
     try {
         let parsed;
-    // PRIORITIZE CONTENT-BASED DETECTION. Ignore filename for pasted data.
+    // PRIORITIZE CONTENT-BASED DETECTION.
+        const isSamContent = _isSamInput(inputText);
         const isMsfContent = (inputText.includes('MSF:') && inputText.includes('Check:')) ||
                              inputText.includes('!!AA_MULTIPLE_ALIGNMENT') ||
                              inputText.includes('!!NA_MULTIPLE_ALIGNMENT');
-        if (isFromDrop || isMsfContent) {
+        
+        if (isSamContent) {
+            parsed = parseSamToAlignment(inputText);
+            if (!parsed) throw new Error('SAM parsing failed — check format');
+            state.currentFilename = state.currentFilename || 'SAM_import';
+        } else if (isFromDrop || isMsfContent) {
             // If it's a file drop OR the content looks like MSF, try MSF first.
             parsed = parseMsf(inputText);
             if (!parsed) {

@@ -831,6 +831,33 @@ app.get('/api/ssh-ls', (req, res) => {
     child.on('error', (err) => res.status(500).json({ error: `SSH failed: ${err.message}` }));
 });
 
+// ============ BAM/CRAM → SAM CONVERSION ============
+app.post('/api/bam2sam', (req, res) => {
+    const { bamPath, region } = req.body;
+    if (!bamPath) return res.status(400).json({ error: 'Missing bamPath' });
+    // Path traversal guard
+    if (/[;|&`$(){}\\]/.test(bamPath)) return res.status(400).json({ error: 'Invalid path' });
+    if (bamPath.includes('..')) return res.status(400).json({ error: 'Path traversal not allowed' });
+
+    try {
+        const args = ['view', '-h'];
+        if (region && /^[\w.-]+:\d+-\d+$/.test(region)) args.push(region);
+        args.push(bamPath);
+
+        const child = spawn('samtools', args, { timeout: 30000, maxBuffer: 100 * 1024 * 1024 });
+        let stdout = '', stderr = '';
+        child.stdout.on('data', d => { stdout += d.toString(); });
+        child.stderr.on('data', d => { stderr += d.toString(); });
+        child.on('close', code => {
+            if (code !== 0) return res.status(500).json({ error: stderr || 'samtools failed' });
+            res.json({ success: true, sam: stdout });
+        });
+        child.on('error', err => res.status(500).json({ error: err.message }));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`MSA Viewer server running on http://localhost:${PORT}  (also on Tailscale 100.78.77.10:${PORT})`);
     loadDbCache();
