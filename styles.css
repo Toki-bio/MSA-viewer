@@ -55,6 +55,14 @@
     border-color: var(--dropzone-hover-border);
     background: var(--dropzone-hover-bg);
 }
+
+/* Cross-browser: prevent iOS Safari text zoom on focus */
+html {
+    -webkit-text-size-adjust: 100%;
+    -ms-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
 #controls {
     position: fixed;
     top: 0;
@@ -249,7 +257,8 @@
 
 /* Keep menu open when hovering anywhere in control-group area */
 .menu-section:hover,
-.menu-section:has(.control-group:hover) {
+.menu-section:has(.control-group:hover),
+.menu-section.hover-active {
     z-index: 10001;
 }
 
@@ -1534,6 +1543,7 @@ body {
     width: 100vw;
     height: 100vh;
     background: rgba(59, 130, 246, 0.15);
+    -webkit-backdrop-filter: blur(4px);
     backdrop-filter: blur(4px);
     border: 4px dashed rgba(59, 130, 246, 0.5);
     z-index: 10000;

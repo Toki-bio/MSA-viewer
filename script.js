@@ -9,7 +9,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = '47f0413';
+const APP_VERSION = '5511bec';
 
 const state = {
     seqs: [],
@@ -8823,6 +8823,18 @@ function initializeAppUI() {
 
     // Setup menu stability to prevent flickering on mouse movement
     setupMenuStability();
+
+    // ── :has() fallback for Firefox < 121 ──────────────────────────────
+    // CSS :has(.control-group:hover) is not supported in Firefox < 121.
+    // We add .hover-active class via JS as a fallback.
+    if (!CSS.supports('selector(:has(*))')) {
+        document.querySelectorAll('.menu-section').forEach(section => {
+            const cg = section.querySelector('.control-group');
+            if (!cg) return;
+            cg.addEventListener('mouseenter', () => section.classList.add('hover-active'));
+            cg.addEventListener('mouseleave', () => section.classList.remove('hover-active'));
+        });
+    }
 
     // Initialize colour seqs feature
     initColourSeqs();
