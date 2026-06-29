@@ -3,7 +3,7 @@
 
 ---
 
-## Option A: Deploy on existing KIT server (85.89.102.78)
+## Option A: Deploy on a Linux server (Ubuntu/Debian recommended)
 
 ### Prerequisites
 - Root/sudo access on the server
@@ -13,8 +13,8 @@
 ### Step 1: Clone and configure
 
 ```bash
-ssh toki@85.89.102.78
-cd /data/W/toki
+ssh user@your-server.example.com
+cd /srv
 git clone https://github.com/Toki-bio/MSA-viewer.git msa-server
 cd msa-server
 npm install
@@ -22,11 +22,11 @@ npm install
 
 ### Step 2: Environment configuration
 
-Create `/data/W/toki/msa-server/.env`:
+Create `/srv/msa-server/.env`:
 ```env
 PORT=3000
 CORS_ORIGIN=https://toki-bio.github.io
-SSH_KEY_PATH=/home/toki/.ssh/id_ed25519
+SSH_KEY_PATH=/home/user/.ssh/id_ed25519
 MAFFT_PATH=/usr/bin/mafft  # adjust
 BLAST_PATH=/usr/bin        # adjust
 SAMTOOLS_PATH=/usr/bin     # adjust
@@ -75,7 +75,7 @@ sudo certbot --nginx -d msa-viewer.example.com
 
 ```bash
 npm install -g pm2
-cd /data/W/toki/msa-server
+cd /srv/msa-server
 pm2 start server.js --name msa-viewer --max-memory-restart 500M
 pm2 save
 pm2 startup systemd
