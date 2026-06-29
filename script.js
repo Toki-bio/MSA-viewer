@@ -6151,11 +6151,13 @@ function seqEditApply() {
             state.seqs[idx].gaplessPositions = calculateGaplessPositions(seq);
         }
         // If user added extra sequences in the textarea, append them
+        // Recompute alignment length in case updates above changed it
+        const updatedAlignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
         for (let i = updateCount; i < entries.length; i++) {
             let seq = entries[i].seq;
-            if (padCheckbox && padCheckbox.checked && alignLen > 0) {
-                if (seq.length < alignLen) seq = seq.padEnd(alignLen, '-');
-                else if (seq.length > alignLen) seq = seq.substring(0, alignLen);
+            if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) {
+                if (seq.length < updatedAlignLen) seq = seq.padEnd(updatedAlignLen, '-');
+                else if (seq.length > updatedAlignLen) seq = seq.substring(0, updatedAlignLen);
             }
             const fullH = entries[i].header;
             state.seqs.push({
@@ -7029,8 +7031,8 @@ function initializeAppUI() {
         'removeGapColumnsButton': removeGapColumns,
         'degapBlockLeftButton': () => degapSelectedBlock('left'),
         'degapBlockRightButton': () => degapSelectedBlock('right'),
-        'insertGapColumnAllButton': () => insertGapColumn(true),
-        'insertGapColumnExceptButton': () => insertGapColumn(false)
+        'insertGapColumnAllButton': () => insertGapColumn(),
+        'insertGapColumnExceptButton': () => insertGapColumn(true)
     };
 
     for (const id in buttonActions) {
@@ -7521,7 +7523,7 @@ function initializeGeneDocEditToolbar() {
         state.editLiveConservation = !!event.target.checked;
     });
 
-    el('editDeleteColumnsButton')?.addEventListener('click', () => deleteSelectedColumns());
+    el('editDeleteColumnsButton')?.addEventListener('click', () => deleteSelectedColumns(true));
     el('editClearGapColumnsButton')?.addEventListener('click', removeGapColumns);
     el('editSeqEditorButton')?.addEventListener('click', () => openSeqEditor());
 
@@ -7992,7 +7994,7 @@ function handleGeneDocResidueKey(e) {
     normalizeAlignmentLengths();
     const chars = state.seqs[row].seq.split('');
     if (pos < 0 || pos >= chars.length) return false;
-    chars[pos] = e.key === '.' ? '.' : e.key.toUpperCase();
+    chars[pos] = (e.key === '.' || e.key === '-') ? GENEDOC_FILLER : e.key.toUpperCase();
     state.seqs[row].seq = chars.join('');
     const nextPos = Math.min(pos + 1, chars.length - 1);
     state.editCell = { row, pos: nextPos };
@@ -8027,7 +8029,7 @@ function removeGapColumns() {
     showMessage(`${colsToRemove.length} gap columns removed!`, 2000);
 }
 
-function insertGapColumn(all = true) {
+function insertGapColumn(skipSelected = false) {
     if (state.selectedColumns.size === 0) {
         showMessage("Select a column position by Ctrl+Alt+click on a nucleotide to insert gap there.", 5000);
         return;
@@ -8036,7 +8038,7 @@ function insertGapColumn(all = true) {
     pushUndo('insertGap');
     normalizeAlignmentLengths();
     state.seqs.forEach((s, i) => {
-        if (!all && state.selectedRows.has(i)) return; // Skip selected if not all
+        if (skipSelected && state.selectedRows.has(i)) return; // Skip selected rows when requested
         s.seq = s.seq.slice(0, pos) + '-' + s.seq.slice(pos);
     });
     normalizeAlignmentLengths();
