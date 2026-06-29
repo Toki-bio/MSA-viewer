@@ -1353,6 +1353,10 @@ span.column-selected {
     height: auto;
     min-height: 22px;
 }
+.mode-container label {
+    min-width: 0;
+    margin-right: 0;
+}
 .mode-container input[type="checkbox"] {
     vertical-align: middle;
     margin: 0 2px 0 0;
