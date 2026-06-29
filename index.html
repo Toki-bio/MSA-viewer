@@ -160,6 +160,7 @@
                         </div>
                         <div class="slider-container mode-container">
                             <span class="slider-label" title="Toggle display mode">Mode</span>
+                            <span style="white-space:nowrap;display:inline-flex;align-items:center;gap:3px;">
                             <input type="radio" id="modeSingle" name="mode" value="single" title="Display full alignment in a single line">
                             <label for="modeSingle">Full</label>
                             <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Display alignment in blocks for better readability">
@@ -168,6 +169,7 @@
                             <label for="modeCompact">Compact</label>
                             <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas-based fast renderer for large alignments — only draws visible area">
                             <label for="modeCanvas">Canvas</label>
+                            </span>
                             <label style="margin-left:8px;font-size:11px;display:none;" class="compact-only" title="In compact mode: show only positions differing from reference">
                                 <input type="checkbox" id="compactDiffOnly"> Diffs only
                             </label>
