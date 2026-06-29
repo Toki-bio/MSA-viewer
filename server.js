@@ -971,6 +971,6 @@ app.post('/api/bam2sam', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`MSA Viewer server running on http://localhost:${PORT}  (also on Tailscale 100.78.77.10:${PORT})`);
+    console.log(`ViewAlign server running on http://localhost:${PORT}  (also on Tailscale 100.78.77.10:${PORT})`);
     loadDbCache();
 });

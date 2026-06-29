@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MSA Viewer — Manual</title>
+<title>ViewAlign — Manual</title>
 <style>
 :root {
   --bg: #fafbfc;
@@ -156,12 +156,12 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
 <!-- ═══ SIDEBAR ═══ -->
 <aside id="sidebar">
-  <h2><a href="#">MSA Viewer Manual</a></h2>
+  <h2><a href="#">ViewAlign Manual</a></h2>
 
   <div class="side-group open">
     <a href="#getting-started">1. Getting Started</a>
     <div class="side-sub">
-      <a href="#gs-what-is">1.1 What is MSA Viewer?</a>
+      <a href="#gs-what-is">1.1 What is ViewAlign?</a>
       <a href="#gs-loading">1.2 Loading an Alignment</a>
       <a href="#gs-formats">1.3 Supported Formats</a>
       <a href="#gs-interface">1.4 Interface Layout</a>
@@ -308,21 +308,21 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 <section id="getting-started">
   <h2>1. Getting Started</h2>
 
-  <h3 id="gs-what-is">1.1 What is MSA Viewer?</h3>
+  <h3 id="gs-what-is">1.1 What is ViewAlign?</h3>
   <p>
-    MSA Viewer is a browser-based application for viewing, editing, and analysing
+    ViewAlign is a browser-based application for viewing, editing, and analysing
     multiple sequence alignments. It handles DNA, RNA, protein, and coding sequence (CDS)
-    data — from a handful of sequences to thousands. No installation is required; the viewer
+    data - from a handful of sequences to thousands. No installation is required; the viewer
     runs entirely in your browser. An optional local Node.js server adds MAFFT realignment,
     BLAST search, SSH remote access, and BAM/CRAM support.
   </p>
   <p>Key capabilities:</p>
   <ul>
-    <li><strong>View</strong> — Four visualisation modes: Full, Block, Compact (IGV-style), Canvas (for massive alignments)</li>
-    <li><strong>Edit</strong> — GeneDoc-style residue editing, Move/Slide tools, undo/redo</li>
-    <li><strong>Analyse</strong> — Codon analysis (17 genetic codes), dot plots, repeat/TSD finder, tree builder, subfamily clustering</li>
-    <li><strong>Colour</strong> — Conservation shading (Identity, Similarity, Clustal, Zappo), custom per-sequence and per-group colours</li>
-    <li><strong>Export</strong> — FASTA, MSF, RTF (Word-compatible), SVG (vector), standalone HTML</li>
+    <li><strong>View</strong> - Four visualisation modes: Full, Block, Compact (IGV-style), Canvas (for massive alignments)</li>
+    <li><strong>Edit</strong> - GeneDoc-style residue editing, Move/Slide tools, undo/redo</li>
+    <li><strong>Analyse</strong> - Codon analysis (17 genetic codes), dot plots, repeat/TSD finder, tree builder, subfamily clustering</li>
+    <li><strong>Colour</strong> - Conservation shading (Identity, Similarity, Clustal, Zappo), custom per-sequence and per-group colours</li>
+    <li><strong>Export</strong> - FASTA, MSF, RTF (Word-compatible), SVG (vector), standalone HTML</li>
   </ul>
 
   <h3 id="gs-loading">1.2 Loading an Alignment</h3>
@@ -330,10 +330,10 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Method</th><th>How</th></tr>
     <tr><td>Paste &amp; Load</td><td>Paste FASTA or MSF text into the Input textarea and click <strong>Load</strong> (or press <kbd>Ctrl+L</kbd>)</td></tr>
-    <tr><td>Drag &amp; Drop</td><td>Drop a file onto the drop zone — supports <code>.fasta</code>, <code>.fa</code>, <code>.aln</code>, <code>.msf</code>, <code>.sam</code></td></tr>
+    <tr><td>Drag &amp; Drop</td><td>Drop a file onto the drop zone - supports <code>.fasta</code>, <code>.fa</code>, <code>.aln</code>, <code>.msf</code>, <code>.sam</code></td></tr>
     <tr><td>File Picker</td><td>Click the drop zone to browse for a file</td></tr>
     <tr><td>URL</td><td>Paste a URL to a raw alignment file and click <strong>Load URL</strong></td></tr>
-    <tr><td>SAM Paste</td><td>Paste SAM text directly — auto-detected and parsed with CIGAR expansion</td></tr>
+    <tr><td>SAM Paste</td><td>Paste SAM text directly - auto-detected and parsed with CIGAR expansion</td></tr>
     <tr><td>SSH Remote</td><td>Fetch files from a remote server via SSH (requires server with SSH configuration)</td></tr>
     <tr><td>BLAST Retrieval</td><td>Retrieve GenBank sequences by accession and align them automatically</td></tr>
   </table>
@@ -349,7 +349,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>PHYLIP</td><td><code>.phy</code></td><td>Interleaved and sequential PHYLIP formats</td></tr>
     <tr><td>NEXUS</td><td><code>.nex</code>, <code>.nexus</code></td><td>NEXUS <code>DATA</code> block with matrix</td></tr>
     <tr><td>Stockholm</td><td><code>.sto</code>, <code>.stockholm</code></td><td>Pfam/Rfam Stockholm format with <code>#=GC</code> markup</td></tr>
-    <tr><td>GenBank</td><td>—</td><td>Accession lookup → automatic MAFFT alignment</td></tr>
+    <tr><td>GenBank</td><td>-</td><td>Accession lookup → automatic MAFFT alignment</td></tr>
   </table>
 
   <h3 id="gs-interface">1.4 Interface Layout</h3>
@@ -361,13 +361,13 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>The menu bar is organised into dropdown sections:</p>
   <table>
     <tr><th>Menu</th><th>Purpose</th></tr>
-    <tr><td><strong>Input</strong></td><td>Load, save, import, export — file handling and snapshots</td></tr>
+    <tr><td><strong>Input</strong></td><td>Load, save, import, export - file handling and snapshots</td></tr>
     <tr><td><strong>Alignment</strong></td><td>MAFFT realignment, BLAST, add sequences, degap</td></tr>
     <tr><td><strong>Clustering</strong></td><td>Trim alignment ends, subfamily clustering, parameter presets</td></tr>
     <tr><td><strong>Display</strong></td><td>View mode, shading, zoom, name length, Sticky Names, codon toggle, variable sites filter</td></tr>
     <tr><td><strong>Consensus</strong></td><td>Consensus line settings, group consensus computation</td></tr>
     <tr><td><strong>Search</strong></td><td>Motif search with regex and mismatch support</td></tr>
-    <tr><td><strong>Edit…</strong></td><td>Edit mode toggle, degap button, GeneDoc-style editing tools</td></tr>
+    <tr><td><strong>Edit...</strong></td><td>Edit mode toggle, degap button, GeneDoc-style editing tools</td></tr>
     <tr><td><strong>Actions</strong></td><td>Selection, sorting, analysis (dot plot, TSD finder, tree), colour schemes, cluster operations, export</td></tr>
   </table>
   <p>
@@ -378,7 +378,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="gs-recent">1.5 Recent Files &amp; History</h3>
   <p>
     Click the <strong>🕐 Recent</strong> button to open the history dropdown.
-    It tracks every alignment loaded — by paste, file, URL, SSH, or BLAST —
+    It tracks every alignment loaded - by paste, file, URL, SSH, or BLAST -
     and stores timestamps and sequence counts. Click any entry to reload it instantly.
     History persists across browser sessions via <code>localStorage</code>.
   </p>
@@ -430,7 +430,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="in-sam">2.5 SAM / BAM / CRAM</h3>
   <p>
-    <strong>SAM text</strong> can be pasted directly — it is auto-detected by the tab-separated
+    <strong>SAM text</strong> can be pasted directly - it is auto-detected by the tab-separated
     format and parsed with full CIGAR expansion (insertions, deletions, soft/hard clips).
   </p>
   <p>
@@ -441,13 +441,13 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="in-snapshot">2.6 Snapshots (Save &amp; Load)</h3>
   <p>
-    Snapshots capture the complete viewer state — alignment data, view mode, zoom,
+    Snapshots capture the complete viewer state - alignment data, view mode, zoom,
     colour scheme, selected rows/columns, search highlights, and custom colour assignments.
     They are stored as JSON files.
   </p>
   <ul>
-    <li><strong>Save Preset</strong> (<kbd>Ctrl+S</kbd>) — save current state as a named snapshot</li>
-    <li><strong>Load Preset</strong> (<kbd>Ctrl+O</kbd>) — restore a saved snapshot</li>
+    <li><strong>Save Preset</strong> (<kbd>Ctrl+S</kbd>) - save current state as a named snapshot</li>
+    <li><strong>Load Preset</strong> (<kbd>Ctrl+O</kbd>) - restore a saved snapshot</li>
     <li>The snapshot dropdown lists all saved snapshots; click to preview, double-click to load</li>
   </ul>
   <p>Snapshots persist in <code>localStorage</code> and can be exported/downloaded as JSON files.</p>
@@ -473,13 +473,13 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <ul>
     <li>
-      <strong>Browser-based (MAFFT WASM)</strong> — runs MAFFT directly in the browser via
+      <strong>Browser-based (MAFFT WASM)</strong> - runs MAFFT directly in the browser via
       WebAssembly. No server required. Select from the strategy dropdown (auto, FFT-NS-2,
       G-INS-i, L-INS-i, E-INS-i) and click <strong>Align</strong>. Suitable for alignments
       up to ~200 sequences × ~2,000 columns.
     </li>
     <li>
-      <strong>Server-based MAFFT</strong> — when the Node.js server is running, alignment
+      <strong>Server-based MAFFT</strong> - when the Node.js server is running, alignment
       requests are sent to the server which executes the native MAFFT binary. Handles larger
       datasets and supports additional strategies.
     </li>
@@ -502,10 +502,10 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     FASTA sequences. Options:
   </p>
   <ul>
-    <li><strong>Just Add</strong> — append sequences padded with gaps at the end</li>
-    <li><strong>Add &amp; Align</strong> — realign the full alignment with MAFFT using add-keep-length mode</li>
-    <li><strong>Align to consensus</strong> — align new sequences against the existing consensus before adding</li>
-    <li><strong>Place at top</strong> — insert new sequences at position 1 instead of the bottom</li>
+    <li><strong>Just Add</strong> - append sequences padded with gaps at the end</li>
+    <li><strong>Add &amp; Align</strong> - realign the full alignment with MAFFT using add-keep-length mode</li>
+    <li><strong>Align to consensus</strong> - align new sequences against the existing consensus before adding</li>
+    <li><strong>Place at top</strong> - insert new sequences at position 1 instead of the bottom</li>
   </ul>
 
   <h3 id="al-blast">3.4 BLAST Search</h3>
@@ -514,8 +514,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <strong>BLAST</strong>, or use the Alignment dropdown.
   </p>
   <ul>
-    <li><strong>NCBI BLAST</strong> — queries NCBI's BLAST API. Requires a <code>BLAST_API_KEY</code> environment variable on the server</li>
-    <li><strong>Local BLAST</strong> — runs <code>blastn</code> / <code>blastp</code> against locally indexed databases. Requires the NCBI BLAST+ suite installed on the server</li>
+    <li><strong>NCBI BLAST</strong> - queries NCBI's BLAST API. Requires a <code>BLAST_API_KEY</code> environment variable on the server</li>
+    <li><strong>Local BLAST</strong> - runs <code>blastn</code> / <code>blastp</code> against locally indexed databases. Requires the NCBI BLAST+ suite installed on the server</li>
   </ul>
   <p>Results are shown inline with alignment previews and one-click retrieval of matching sequences.</p>
 
@@ -525,9 +525,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <strong>+ Manage Databases</strong> to open a management modal:
   </p>
   <ul>
-    <li><strong>List databases</strong> — view all configured databases with availability status</li>
-    <li><strong>Add database</strong> — upload a FASTA file, set a name and description; the server runs <code>makeblastdb</code> to index it</li>
-    <li><strong>Delete database</strong> — remove a database and its BLAST index files (<code>.nhr</code>, <code>.nin</code>, <code>.nsq</code>, etc.)</li>
+    <li><strong>List databases</strong> - view all configured databases with availability status</li>
+    <li><strong>Add database</strong> - upload a FASTA file, set a name and description; the server runs <code>makeblastdb</code> to index it</li>
+    <li><strong>Delete database</strong> - remove a database and its BLAST index files (<code>.nhr</code>, <code>.nin</code>, <code>.nsq</code>, etc.)</li>
   </ul>
   <p>
     Database metadata is stored in <code>blast_dbs.json</code> and FASTA files/indexes in
@@ -585,7 +585,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Parameter</th><th>Default</th><th>Applies To</th></tr>
     <tr><td>Small</td><td>80%</td><td>Clusters of 10 or fewer sequences</td></tr>
-    <tr><td>Medium</td><td>70%</td><td>Clusters of 11–19 sequences</td></tr>
+    <tr><td>Medium</td><td>70%</td><td>Clusters of 11-19 sequences</td></tr>
     <tr><td>Large</td><td>60%</td><td>Clusters of 20 or more sequences</td></tr>
   </table>
   <p>
@@ -607,9 +607,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <strong>Presets</strong> save and restore parameter configurations for reproducible analysis:
   </p>
   <ul>
-    <li><strong>Save</strong> — store current parameters under a name</li>
-    <li><strong>Load</strong> — restore parameters from a saved preset</li>
-    <li><strong>Optimal</strong> — auto-fill balanced parameters for general subfamily detection</li>
+    <li><strong>Save</strong> - store current parameters under a name</li>
+    <li><strong>Load</strong> - restore parameters from a saved preset</li>
+    <li><strong>Optimal</strong> - auto-fill balanced parameters for general subfamily detection</li>
     <li>Presets are stored in <code>localStorage</code> and persist across sessions</li>
   </ul>
   <p>Typical workflow:</p>
@@ -653,12 +653,12 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
     <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block.</td></tr>
-    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40–300 chars). Sequence names repeat per block.</td></tr>
+    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40-300 chars). Sequence names repeat per block.</td></tr>
     <tr><td><strong>Compact</strong></td><td>Read alignments, hundreds to thousands of reads</td><td>IGV-style read-packing tracks. Each read is a horizontal bar; mismatches are red ticks. Coverage histogram at top.</td></tr>
     <tr><td><strong>Canvas</strong></td><td>Massive alignments (≥ 150,000 residues)</td><td>Auto-activates for very large datasets. Canvas-based rendering for performance.</td></tr>
   </table>
   <p>
-    Mode switching is instant — no re-render delay. The Block Size slider adjusts
+    Mode switching is instant - no re-render delay. The Block Size slider adjusts
     characters per block in Block mode and is greyed out in other modes.
   </p>
 
@@ -666,11 +666,11 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>Two checkboxes control visual filtering of conserved positions:</p>
   <ul>
     <li>
-      <strong>Highlight diffs</strong> — dims fully-conserved columns to 25% opacity.
+      <strong>Highlight diffs</strong> - dims fully-conserved columns to 25% opacity.
       Works in all four view modes. Rapidly reveals where variation occurs.
     </li>
     <li>
-      <strong>Variable sites only</strong> — hides completely conserved columns entirely,
+      <strong>Variable sites only</strong> - hides completely conserved columns entirely,
       showing only positions with variation. Useful for scanning SNP-dense regions.
     </li>
   </ul>
@@ -684,7 +684,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>Select the appropriate genetic code from the dropdown (17 variants):</p>
   <table>
     <tr><th>Code</th><th>NCBI Table</th><th>Key Differences from Standard</th></tr>
-    <tr><td>Standard</td><td>1</td><td>—</td></tr>
+    <tr><td>Standard</td><td>1</td><td>-</td></tr>
     <tr><td>Vertebrate Mito</td><td>2</td><td>AGA/AGG = Stop, ATA = Met, TGA = Trp</td></tr>
     <tr><td>Yeast Mito</td><td>3</td><td>ATA = Met, CTN = Thr, TGA = Trp</td></tr>
     <tr><td>Mold Mito</td><td>4</td><td>TGA = Trp</td></tr>
@@ -692,7 +692,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>Ciliate</td><td>6</td><td>TAA/TAG = Gln</td></tr>
     <tr><td>Echino Mito</td><td>9</td><td>AAA = Asn, AGA/AGG = Ser, TGA = Trp</td></tr>
     <tr><td>Euplotid</td><td>10</td><td>TGA = Cys</td></tr>
-    <tr><td>Bacteria</td><td>11</td><td>—</td></tr>
+    <tr><td>Bacteria</td><td>11</td><td>-</td></tr>
     <tr><td>Alt Yeast</td><td>12</td><td>CTG = Ser</td></tr>
     <tr><td>Ascidian Mito</td><td>13</td><td>AGA/AGG = Gly, ATA = Met, TGA = Trp</td></tr>
     <tr><td>Flatworm Mito</td><td>14</td><td>AAA = Asn, AGA/AGG = Ser, TAA = Tyr, TGA = Trp</td></tr>
@@ -706,8 +706,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>Codon positions (1st/2nd/3rd)</td><td>Blue / green / orange underlines</td></tr>
     <tr><td>In-frame stop codons</td><td>Red background, white bold text</td></tr>
     <tr><td>Frameshifts</td><td>Wavy red underline at indel positions that break the reading frame</td></tr>
-    <tr><td>Synonymous mutations</td><td>Green underline — amino acid unchanged relative to reference</td></tr>
-    <tr><td>Non-synonymous mutations</td><td>Double red underline — amino acid changed</td></tr>
+    <tr><td>Synonymous mutations</td><td>Green underline - amino acid unchanged relative to reference</td></tr>
+    <tr><td>Non-synonymous mutations</td><td>Double red underline - amino acid changed</td></tr>
     <tr><td>AA translation row</td><td>Amino acid letters below each sequence; stops in bold red <code>*</code></td></tr>
   </table>
 
@@ -720,7 +720,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="di-zoom">5.5 Zoom &amp; Reset</h3>
   <p>
     The Zoom slider controls font size from <strong>50% to 200%</strong> using a
-    logarithmic scale. Use the <strong>−</strong> and <strong>+</strong> buttons
+    logarithmic scale. Use the <strong>-</strong> and <strong>+</strong> buttons
     for fine adjustment, or keyboard shortcuts <kbd>Ctrl+-</kbd> and <kbd>Ctrl++</kbd>.
   </p>
   <p>
@@ -739,11 +739,11 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>Two additional checkboxes appear only when Compact mode is active:</p>
   <ul>
     <li>
-      <strong>Diffs only</strong> — collapses reads to thin hairlines; only mismatch
+      <strong>Diffs only</strong> - collapses reads to thin hairlines; only mismatch
       positions are visible. Excellent for spotting variants in read piles.
     </li>
     <li>
-      <strong>Pairs</strong> — dashed lines connect paired-end reads. Only appears when
+      <strong>Pairs</strong> - dashed lines connect paired-end reads. Only appears when
       the input was SAM with paired-end flags. Click a pair line to highlight both mates.
     </li>
   </ul>
@@ -796,15 +796,15 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     as a JavaScript regular expression. Examples:
   </p>
   <ul>
-    <li><code>[AG]CGT</code> — A or G followed by CGT</li>
-    <li><code>ATG.{3}TAA</code> — ATG, any 3 bases, then TAA (in-frame stop search)</li>
-    <li><code>GG[ACGT]{10,}CC</code> — at least 10 bases between GG and CC</li>
-    <li><code>TATA[AT]A</code> — TATAWA (TATA box motif)</li>
+    <li><code>[AG]CGT</code> - A or G followed by CGT</li>
+    <li><code>ATG.{3}TAA</code> - ATG, any 3 bases, then TAA (in-frame stop search)</li>
+    <li><code>GG[ACGT]{10,}CC</code> - at least 10 bases between GG and CC</li>
+    <li><code>TATA[AT]A</code> - TATAWA (TATA box motif)</li>
   </ul>
 
   <h3 id="se-mismatch">7.3 Mismatch Tolerance</h3>
   <p>
-    The <strong>Mismatches</strong> input (0–10) allows approximate matching.
+    The <strong>Mismatches</strong> input (0-10) allows approximate matching.
     A mismatch budget of 2 means up to 2 character differences are allowed in each match.
     Works with both literal and regex search modes.
   </p>
@@ -862,22 +862,22 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <ul>
     <li>
-      <strong>Move NoGaps</strong> — drag residues without keeping intervening gaps.
+      <strong>Move NoGaps</strong> - drag residues without keeping intervening gaps.
       Equivalent to GeneDoc's "Arrange / MoveText".
     </li>
     <li>
-      <strong>Slide KeepGaps</strong> — drag a segment while preserving its internal
+      <strong>Slide KeepGaps</strong> - drag a segment while preserving its internal
       gap pattern. Equivalent to GeneDoc's "Move / SlideText".
     </li>
     <li>
-      <strong>Type</strong> — click a cell and type a residue letter (A, C, G, T, N)
+      <strong>Type</strong> - click a cell and type a residue letter (A, C, G, T, N)
       or <code>-</code> for a gap. Modifies the cell directly.
     </li>
     <li>
-      <strong>Insert Column</strong> — insert a gap column at the cursor position.
+      <strong>Insert Column</strong> - insert a gap column at the cursor position.
     </li>
     <li>
-      <strong>Select Column</strong> — click or drag to select columns for bulk delete.
+      <strong>Select Column</strong> - click or drag to select columns for bulk delete.
     </li>
   </ul>
   <p>
@@ -903,18 +903,18 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     with the raw sequence for the selected row, plus quick transformations:
   </p>
   <ul>
-    <li><strong>Degap</strong> — remove all gaps from the sequence</li>
-    <li><strong>Reverse</strong> — reverse the sequence order</li>
-    <li><strong>Complement</strong> — complement the sequence (DNA)</li>
-    <li><strong>Rev Comp</strong> — reverse and complement</li>
-    <li><strong>Uppercase</strong> / <strong>Lowercase</strong> — change case</li>
-    <li><strong>Pad/trim to alignment length</strong> — auto-adjust length on apply</li>
+    <li><strong>Degap</strong> - remove all gaps from the sequence</li>
+    <li><strong>Reverse</strong> - reverse the sequence order</li>
+    <li><strong>Complement</strong> - complement the sequence (DNA)</li>
+    <li><strong>Rev Comp</strong> - reverse and complement</li>
+    <li><strong>Uppercase</strong> / <strong>Lowercase</strong> - change case</li>
+    <li><strong>Pad/trim to alignment length</strong> - auto-adjust length on apply</li>
   </ul>
 
   <h3 id="ed-undo">8.6 Undo / Redo</h3>
   <p>
-    Every editing operation — row delete, column delete, duplicate, move, slide,
-    type, insert-gap, degap, trim — is tracked in an undo stack.
+    Every editing operation - row delete, column delete, duplicate, move, slide,
+    type, insert-gap, degap, trim - is tracked in an undo stack.
     <kbd>Ctrl+Z</kbd> steps backward; <kbd>Ctrl+Y</kbd> steps forward.
     The undo history is cleared when a new alignment is loaded.
   </p>
@@ -940,8 +940,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
     <tr><td>Select All</td><td><kbd>Ctrl+A</kbd></td><td>Select or deselect all rows</td></tr>
-    <tr><td>Invert Selection</td><td>—</td><td>Swap selected and unselected rows</td></tr>
-    <tr><td>Select by Name</td><td>—</td><td>Select rows whose names match a pattern</td></tr>
+    <tr><td>Invert Selection</td><td>-</td><td>Swap selected and unselected rows</td></tr>
+    <tr><td>Select by Name</td><td>-</td><td>Select rows whose names match a pattern</td></tr>
   </table>
 
   <h3 id="ac-sort">9.2 Sort Functions</h3>
@@ -987,17 +987,17 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="ac-cluster">9.6 Cluster Operations</h3>
   <ul>
-    <li><strong>Colour by Cluster</strong> — assign persistent background colours to sequence names based on cluster membership</li>
-    <li><strong>Open Cluster</strong> — create clusters with specific parameters for subfamily annotation</li>
+    <li><strong>Colour by Cluster</strong> - assign persistent background colours to sequence names based on cluster membership</li>
+    <li><strong>Open Cluster</strong> - create clusters with specific parameters for subfamily annotation</li>
   </ul>
 
   <h3 id="ac-plot">9.7 Plotting</h3>
   <p><strong>Dot Plot:</strong> Self-comparison or pairwise comparison of the alignment.</p>
   <table>
     <tr><th>Parameter</th><th>Description</th></tr>
-    <tr><td>Window size</td><td>Sliding window length (odd, 1–61)</td></tr>
-    <tr><td>Threshold</td><td>Minimum identity for a dot (0–100%)</td></tr>
-    <tr><td>Context radius</td><td>Nucleotide context shown on hover (5–100 bp)</td></tr>
+    <tr><td>Window size</td><td>Sliding window length (odd, 1-61)</td></tr>
+    <tr><td>Threshold</td><td>Minimum identity for a dot (0-100%)</td></tr>
+    <tr><td>Context radius</td><td>Nucleotide context shown on hover (5-100 bp)</td></tr>
     <tr><td>RevComp B</td><td>Reverse-complement axis B to find inverted repeats</td></tr>
   </table>
   <p>Additional features: automatic region detection (top 30 diagonal runs),
@@ -1010,7 +1010,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>FASTA</td><td>Downstream tools</td><td>Full alignment or selected sequences only</td></tr>
     <tr><td>MSF</td><td>GCG-compatible tools</td><td>MSF format with header block</td></tr>
     <tr><td>RTF</td><td>Microsoft Word</td><td>Monospace, per-residue shading, scale ruler, consensus line</td></tr>
-    <tr><td>SVG</td><td>Publication figures</td><td>Vector graphics — viewport or full alignment</td></tr>
+    <tr><td>SVG</td><td>Publication figures</td><td>Vector graphics - viewport or full alignment</td></tr>
     <tr><td>Standalone HTML</td><td>Sharing</td><td>Self-contained HTML page with embedded alignment (<kbd>Ctrl+T</kbd>)</td></tr>
     <tr><td>Copy Selected</td><td>Clipboard</td><td>FASTA of selected sequences (<kbd>Ctrl+Shift+C</kbd>)</td></tr>
     <tr><td>Copy Columns</td><td>Clipboard</td><td>FASTA of selected columns (<kbd>Ctrl+Shift+V</kbd>)</td></tr>
@@ -1090,10 +1090,10 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>Requirements:</p>
   <ul>
     <li>Node.js ≥ 16</li>
-    <li><strong>MAFFT</strong> — for realignment (binary in PATH)</li>
-    <li><strong>BLAST+</strong> — for local BLAST search (optional)</li>
-    <li><strong>samtools</strong> — for BAM/CRAM conversion (optional)</li>
-    <li><strong>SSH key</strong> — for remote file access (optional)</li>
+    <li><strong>MAFFT</strong> - for realignment (binary in PATH)</li>
+    <li><strong>BLAST+</strong> - for local BLAST search (optional)</li>
+    <li><strong>samtools</strong> - for BAM/CRAM conversion (optional)</li>
+    <li><strong>SSH key</strong> - for remote file access (optional)</li>
   </ul>
   <p>Environment variables:</p>
   <table>
@@ -1106,7 +1106,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="sv-mafft">11.2 MAFFT Integration</h3>
   <p>
     The server executes MAFFT as a child process with whitelisted options only.
-    Input is sanitised — only recognised MAFFT flags are passed to the binary.
+    Input is sanitised - only recognised MAFFT flags are passed to the binary.
     Strategies: auto, FFT-NS-2, G-INS-i, L-INS-i, E-INS-i.
   </p>
 
@@ -1114,7 +1114,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>
     Fetch alignment files from remote servers via SSH. Configuration is read from
     the SSH config and key path. Files are read with <code>cat</code> and streamed
-    to the browser — no temporary files on disk.
+    to the browser - no temporary files on disk.
   </p>
   <div class="note">
     <strong>Security:</strong> Path traversal (<code>..</code>), tilde expansion,
@@ -1135,12 +1135,12 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="sv-security">11.5 Security</h3>
   <ul>
-    <li><strong>CORS</strong> — restricted to localhost by default; configurable via <code>CORS_ORIGIN</code></li>
-    <li><strong>Request body limit</strong> — capped at 10 MB</li>
-    <li><strong>Path traversal</strong> — <code>..</code> and shell metacharacters blocked in file paths</li>
-    <li><strong>MAFFT argument whitelist</strong> — only recognised options pass to the binary</li>
-    <li><strong>BLAST parameter validation</strong> — no arbitrary flag injection</li>
-    <li><strong>SSH key path</strong> — auto-detected from <code>os.homedir()</code>, overridable via <code>SSH_KEY_PATH</code></li>
+    <li><strong>CORS</strong> - restricted to localhost by default; configurable via <code>CORS_ORIGIN</code></li>
+    <li><strong>Request body limit</strong> - capped at 10 MB</li>
+    <li><strong>Path traversal</strong> - <code>..</code> and shell metacharacters blocked in file paths</li>
+    <li><strong>MAFFT argument whitelist</strong> - only recognised options pass to the binary</li>
+    <li><strong>BLAST parameter validation</strong> - no arbitrary flag injection</li>
+    <li><strong>SSH key path</strong> - auto-detected from <code>os.homedir()</code>, overridable via <code>SSH_KEY_PATH</code></li>
   </ul>
 </section>
 
@@ -1150,9 +1150,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="tp-large">12.1 Large Alignments</h3>
   <ul>
-    <li>Use <strong>Compact mode</strong> for ≥ 200 sequences — it is designed for thousands of reads</li>
+    <li>Use <strong>Compact mode</strong> for ≥ 200 sequences - it is designed for thousands of reads</li>
     <li>Turn on <strong>Highlight Diffs</strong> to visually compress conserved regions</li>
-    <li>Use <strong>Block mode</strong> with smaller block sizes (20–30 columns) for very wide alignments</li>
+    <li>Use <strong>Block mode</strong> with smaller block sizes (20-30 columns) for very wide alignments</li>
     <li>The <strong>Canvas</strong> mode auto-activates at ≥ 150,000 total residues for maximum performance</li>
     <li>For extremely large files (&gt; 500 sequences × 5,000 columns), consider splitting the input</li>
     <li>Use <strong>Variable sites only</strong> to strip conserved columns and reduce visual noise</li>
@@ -1161,35 +1161,35 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="tp-figures">12.2 Publication Figures</h3>
   <ul>
     <li><strong>Block mode</strong> + <strong>Zappo shading</strong> for amino acid alignments</li>
-    <li><strong>Export SVG</strong> for vector graphics — refine in Inkscape or Illustrator</li>
+    <li><strong>Export SVG</strong> for vector graphics - refine in Inkscape or Illustrator</li>
     <li><strong>Export RTF</strong> for Word-compatible alignments with conservation shading</li>
     <li><strong>Dot plot → Export SVG</strong> for high-quality dot plots</li>
     <li>Use <strong>Snapshots</strong> to save exact figure settings for reproducibility</li>
-    <li>Set Name Length to a short value (e.g., 10–15 characters) for cleaner figures</li>
+    <li>Set Name Length to a short value (e.g., 10-15 characters) for cleaner figures</li>
     <li>Adjust zoom to fit the alignment width on your target page</li>
   </ul>
 
   <h3 id="tp-coding">12.3 Coding Sequence Analysis</h3>
   <ul>
     <li>Ensure your alignment is in-frame (length multiples of 3) before enabling Codon mode</li>
-    <li>Select the correct genetic code — mitochondrial genes use different codes than nuclear</li>
+    <li>Select the correct genetic code - mitochondrial genes use different codes than nuclear</li>
     <li>Wavy red underlines (frameshifts) often indicate sequencing errors or pseudogenes</li>
     <li>Clusters of non-synonymous mutations (double red underline) may indicate positive selection</li>
     <li>Mid-CDS stop codons suggest pseudogenisation or misannotation</li>
     <li>Combine <strong>Highlight Diffs</strong> + <strong>Codon Analysis</strong> to rapidly scan for impactful mutations</li>
-    <li>The AA translation row confirms reading frame — if it looks garbled, check your frame</li>
+    <li>The AA translation row confirms reading frame - if it looks garbled, check your frame</li>
   </ul>
 
   <h3 id="tp-clustering">12.4 Clustering Best Practices</h3>
   <ul>
-    <li><strong>Always trim</strong> alignment ends before clustering — ragged edges inflate gap-based cluster scores</li>
+    <li><strong>Always trim</strong> alignment ends before clustering - ragged edges inflate gap-based cluster scores</li>
     <li>Start with the <strong>Optimal</strong> preset, then tighten thresholds if clusters look noisy</li>
     <li>Use <strong>Preview</strong> (trim) and review the cluster table before committing to colours</li>
     <li>For small families, lower <em>Min Size</em> to 2 and reduce quality thresholds</li>
     <li>For highly conserved families, increase quality thresholds (90%+ for small clusters)</li>
     <li>After clustering, use <strong>Colour by Cluster</strong> + <strong>Group Consensus</strong> to extract representative sequences</li>
     <li>Save working parameter sets as named presets for reproducibility</li>
-    <li>Clusters of size 1 are discarded — they may represent singletons or sequencing artefacts</li>
+    <li>Clusters of size 1 are discarded - they may represent singletons or sequencing artefacts</li>
   </ul>
 </section>
 
@@ -1197,7 +1197,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 <section id="credits">
   <h2>13. Credits &amp; Attribution</h2>
   <p>
-    MSA Viewer is original software that builds upon, integrates, and draws inspiration
+    ViewAlign is original software that builds upon, integrates, and draws inspiration
     from the following open-source tools and published methods:
   </p>
 
@@ -1208,13 +1208,13 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
       <td><strong>MAFFT</strong></td>
       <td>Alignment engine compiled to WebAssembly (<code>disttbfast.js</code>). Also callable via native binary on the optional server.</td>
       <td>BSD</td>
-      <td>Katoh K, Standley DM (2013) <em>Mol Biol Evol</em> 30:772–780</td>
+      <td>Katoh K, Standley DM (2013) <em>Mol Biol Evol</em> 30:772-780</td>
     </tr>
     <tr>
       <td><strong>samtools</strong></td>
       <td>BAM/CRAM to SAM conversion on the server (<code>samtools view</code>)</td>
       <td>MIT</td>
-      <td>Li H et al. (2009) <em>Bioinformatics</em> 25:2078–2079</td>
+      <td>Li H et al. (2009) <em>Bioinformatics</em> 25:2078-2079</td>
     </tr>
     <tr>
       <td><strong>NCBI BLAST</strong></td>
@@ -1235,7 +1235,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr>
       <td><strong>IGV</strong></td>
       <td>Compact read-packing view mode</td>
-      <td>Robinson JT et al. (2011) <em>Nat Biotechnol</em> 29:24–26</td>
+      <td>Robinson JT et al. (2011) <em>Nat Biotechnol</em> 29:24-26</td>
     </tr>
     <tr>
       <td><strong>MACSE</strong></td>
@@ -1250,29 +1250,29 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr>
       <td><strong>BLOSUM62</strong></td>
       <td>Amino acid similarity matrix for conservation grouping</td>
-      <td>Henikoff S, Henikoff JG (1992) <em>PNAS</em> 89:10915–10919</td>
+      <td>Henikoff S, Henikoff JG (1992) <em>PNAS</em> 89:10915-10919</td>
     </tr>
     <tr>
       <td><strong>Jalview</strong></td>
       <td>Zappo colour scheme, conservation shading model</td>
-      <td>Waterhouse AM et al. (2009) <em>Bioinformatics</em> 25:1189–1191</td>
+      <td>Waterhouse AM et al. (2009) <em>Bioinformatics</em> 25:1189-1191</td>
     </tr>
   </table>
 
   <h3>Format Standards</h3>
   <ul>
-    <li><strong>FASTA</strong> — Pearson WR, Lipman DJ (1988) <em>PNAS</em> 85:2444–2448</li>
-    <li><strong>SAM/BAM</strong> — Li H et al. (2009) <em>Bioinformatics</em> 25:2078–2079</li>
-    <li><strong>Clustal</strong> — Thompson JD et al. (1994) <em>Nucleic Acids Res</em> 22:4673–4680</li>
-    <li><strong>PHYLIP</strong> — Felsenstein J (1989) <em>Cladistics</em> 5:164–166</li>
-    <li><strong>NEXUS</strong> — Maddison DR et al. (1997) <em>Syst Biol</em> 46:590–621</li>
-    <li><strong>Stockholm</strong> — Sonnhammer ELL et al. (1998) <em>Proc ISMB</em> 6:175–182</li>
-    <li><strong>NCBI Genetic Codes</strong> — <a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi" target="_blank">NCBI Taxonomy</a></li>
+    <li><strong>FASTA</strong> - Pearson WR, Lipman DJ (1988) <em>PNAS</em> 85:2444-2448</li>
+    <li><strong>SAM/BAM</strong> - Li H et al. (2009) <em>Bioinformatics</em> 25:2078-2079</li>
+    <li><strong>Clustal</strong> - Thompson JD et al. (1994) <em>Nucleic Acids Res</em> 22:4673-4680</li>
+    <li><strong>PHYLIP</strong> - Felsenstein J (1989) <em>Cladistics</em> 5:164-166</li>
+    <li><strong>NEXUS</strong> - Maddison DR et al. (1997) <em>Syst Biol</em> 46:590-621</li>
+    <li><strong>Stockholm</strong> - Sonnhammer ELL et al. (1998) <em>Proc ISMB</em> 6:175-182</li>
+    <li><strong>NCBI Genetic Codes</strong> - <a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi" target="_blank">NCBI Taxonomy</a></li>
   </ul>
 
   <p style="margin-top:16px;font-size:13px;color:var(--muted);">
     All external code is used under its original open-source license.
-    The MSA Viewer source code itself is released under the <strong>MIT License</strong>.
+    The ViewAlign source code itself is released under the <strong>MIT License</strong>.
   </p>
 </section>
 

@@ -1,4 +1,4 @@
-# MSA Viewer — Expanded Feature Inventory
+# ViewAlign — Expanded Feature Inventory
 
 > Supplementary material for the Bioinformatics Application Note.  
 > Each feature describes **what it does** mechanically, not what it's called.  
@@ -31,7 +31,7 @@ localStorage-backed panel. Stores metadata + full alignment text (100 KB cap per
 ### URL parameter loading
 `?file=https://...` auto-loads remote alignments. `?snapshotFile=https://...` auto-restores a full viewer state. Shareable links encode both data and display.
 
-**Why novel:** Direct sharing of an alignment + its exact visual configuration with one URL. No other MSA viewer supports state-serialized URL loading.
+**Why novel:** Direct sharing of an alignment + its exact visual configuration with one URL. No other ViewAlign supports state-serialized URL loading.
 
 ---
 
@@ -52,7 +52,7 @@ SVG-based greedy track assignment. Each read is a horizontal bar. Mismatch posit
 - **Diffs only:** 4-pixel hairlines — only variant positions visible. Hundreds of reads collapse to a single-column-width signal.
 - **Pairs:** Dashed lines connecting paired-end reads using SAM flags 0x1/0x40/0x80 at computed mate positions.
 
-**Why novel:** NGS read visualization inside a general MSA tool — not a separate application. Paired-end connection lines have no equivalent in any other MSA viewer.
+**Why novel:** NGS read visualization inside a general MSA tool — not a separate application. Paired-end connection lines have no equivalent in any other ViewAlign.
 
 ### Cross-mode Highlight Diffs + Variable Sites Only
 Conserved-column set computed once from the alignment. Highlight Diffs dims fully-conserved columns to 25% opacity across all view modes. Variable Sites Only hides them entirely. Both consume the same computation.
@@ -281,9 +281,9 @@ Save complete viewer state as JSON: alignment data, colour assignments, search h
 
 ---
 
-## 📊 Comparison: Browser-Based MSA Viewers
+## 📊 Comparison: Browser-Based ViewAligns
 
-| Feature | MSA Viewer | MSAViewer (Yachdav) | JalviewJS | AliView* | IGV.js |
+| Feature | ViewAlign | MSAViewer (Yachdav) | JalviewJS | AliView* | IGV.js |
 |---------|-----------|---------------------|-----------|----------|--------|
 | **Formats** | 8 (auto-detect) | 1 (FASTA) | 5+ | 5+ | SAM/BAM |
 | **View modes** | 5 | 1 | 2 | 2 | 1 |
