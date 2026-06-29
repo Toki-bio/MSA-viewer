@@ -932,6 +932,9 @@ function updateSliderBackground(slider) {
 function updateNameLengthSliderRange() {
     if (state.seqs.length === 0) return;
 
+    // If "No limit" is active, skip slider updates
+    if (el('nameLengthNoLimit')?.checked) return;
+
     // Use the display header (first token) only to size the name column,
     // so long descriptions in fullHeader don't blow up spacing.
     const maxNameLength = Math.max(...state.seqs.map(s => s.header.length));
@@ -999,6 +1002,11 @@ function clampMinCoverage(value) {
 }
 
 function setNameLengthUI(value, triggerRender = false) {
+    if (el('nameLengthNoLimit')?.checked) {
+        document.documentElement.style.setProperty('--nameLen', '9999');
+        if (triggerRender) debounceRender();
+        return;
+    }
     const slider = el('nameLengthSlider');
     const input = el('nameLengthInput');
     const clamped = clampNameLength(value);
@@ -3289,17 +3297,31 @@ function setupHoverMenuReveal() {
     });
 }
 
+// Non-linear zoom: slider 0-100 maps to 50%-200% with log curve
+// Gives equal space to zoom-out (50-100%) and zoom-in (100-200%)
+function _sliderToZoom(sliderVal) {
+    return Math.round(50 * Math.pow(4, sliderVal / 100));
+}
+function _zoomToSlider(zoomPct) {
+    return Math.round(100 * Math.log2(zoomPct / 50) / 2);
+}
+
 function setZoom(percent) {
     const size = (percent / 100) * 13;
     alignmentContainer.style.fontSize = size + 'px';
     el('zoomVal').textContent = percent + '%';
 }
+function setZoomFromSlider() {
+    const slider = el('zoomSlider');
+    setZoom(_sliderToZoom(parseInt(slider.value)));
+}
 function adjustZoom(delta) {
     const slider = el('zoomSlider');
-    let value = parseInt(slider.value) + delta;
-    value = Math.max(parseInt(slider.min), Math.min(parseInt(slider.max), value));
-    slider.value = value;
-    setZoom(value);
+    const currentPct = _sliderToZoom(parseInt(slider.value));
+    let newPct = currentPct + delta;
+    newPct = Math.max(50, Math.min(200, newPct));
+    slider.value = _zoomToSlider(newPct);
+    setZoom(newPct);
 }
 function debounce(func, delay) {
     let timer;
@@ -3383,6 +3405,7 @@ function parseAndRender(isFromDrop = false) {
         // Update source info with comprehensive statistics
         updateSourceInfo();
         renderAlignment();
+        _updateCompactControlsVisibility();
         // Auto-fit block size to screen width on every load
         setBlockSizeToScreen();
         setupHoverMenuReveal();
@@ -3430,8 +3453,20 @@ function onModeChange() {
     if (container) {
         container.style.display = el('modeBlocks')?.checked ? 'flex' : 'none';
     }
+    _updateCompactControlsVisibility();
     renderAlignment();
     setupHoverMenuReveal();
+}
+
+function _updateCompactControlsVisibility() {
+    const isCompact = el('modeCompact')?.checked;
+    const hasPairs = state.seqs.some(s => s._pairInfo || s._samPair);
+    document.querySelectorAll('.compact-only').forEach(el => {
+        el.style.display = isCompact ? '' : 'none';
+    });
+    document.querySelectorAll('.compact-pairs-only').forEach(el => {
+        el.style.display = (isCompact && hasPairs) ? '' : 'none';
+    });
 }
 
 function setBlockSizeToScreen() {
@@ -3449,7 +3484,7 @@ function setBlockSizeToScreen() {
     }
     if (!charPx) {
         // Fallback: use zoom-scaled monospace estimate (10px @ 100%)
-        const zoom = parseInt(el('zoomSlider')?.value || 100) / 100;
+        const zoom = _sliderToZoom(parseInt(el('zoomSlider')?.value || 50)) / 100;
         charPx = 10 * zoom;
     }
     // Available width = inner width of the container (excluding names)
@@ -3878,7 +3913,7 @@ function handleKeyDown(e) {
                 break;
             case '0':
                 // Reset zoom to 100%
-                el('zoomSlider').value = 100;
+                el('zoomSlider').value = _zoomToSlider(100);
                 setZoom(100);
                 e.preventDefault();
                 break;
@@ -4626,7 +4661,7 @@ function loadPreset() {
             document.documentElement.style.setProperty('--nameLen', value);
         }
     });
-    setZoom(p.zoom);
+    setZoom(p.zoom > 100 ? p.zoom : _sliderToZoom(p.zoom));
     el('modeBlocks').checked = p.mode === 'blocks';
     el('modeSingle').checked = p.mode !== 'blocks';
     el('stickyNames').checked = p.stickyNames !== undefined ? p.stickyNames : true;
@@ -4738,14 +4773,16 @@ function _applySnapshotView(view) {
     applySliderPair('dark', 'darkSlider', 'darkInput');
     applySliderPair('light', 'lightSlider', 'lightInput');
     applySliderPair('zoom', 'zoomSlider', null, (v) => {
-        const n = parseInt(v, 10);
+        let n = parseInt(v, 10);
         if (!Number.isNaN(n)) {
+            // Migration: old snapshots stored zoom as percent (50-200), new ones store raw slider (0-100)
+            if (n > 100) n = _zoomToSlider(n);
             const sliderEl = el('zoomSlider');
             if (sliderEl) {
                 sliderEl.value = n;
                 updateSliderBackground(sliderEl);
             }
-            setZoom(n);
+            setZoom(_sliderToZoom(n));
         }
     });
     applySliderPair('blockSize', 'blockSizeSlider', 'blockSizeInput');
@@ -8946,7 +8983,7 @@ function attachUIListeners() {
     const zoomSlider = el('zoomSlider');
     if (zoomSlider) {
         zoomSlider.addEventListener('input', debounce(() => {
-            setZoom(zoomSlider.value);
+            setZoomFromSlider();
         }, 50));
     }
 
@@ -8978,6 +9015,27 @@ function attachUIListeners() {
 
     const sticky = el('stickyNames');
     if (sticky) sticky.addEventListener('change', toggleStickyNames);
+
+    // Name length "No limit" checkbox
+    const noLimit = el('nameLengthNoLimit');
+    if (noLimit) {
+        noLimit.addEventListener('change', () => {
+            const slider = el('nameLengthSlider');
+            const input = el('nameLengthInput');
+            if (noLimit.checked) {
+                if (slider) slider.disabled = true;
+                if (input) input.disabled = true;
+                state.nameLength = 9999;
+                document.documentElement.style.setProperty('--nameLen', '9999');
+            } else {
+                if (slider) slider.disabled = false;
+                if (input) input.disabled = false;
+                state.nameLength = parseInt(slider?.value || 50);
+                document.documentElement.style.setProperty('--nameLen', state.nameLength);
+            }
+            debounceRender();
+        });
+    }
 
     // Alignment container events
     const controls = el('controls');

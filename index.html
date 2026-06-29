@@ -143,12 +143,13 @@
                             <span class="slider-label" title="How many characters of sequence names to show">Name Len</span>
                             <input type="range" id="nameLengthSlider" class="normal-slider" min="3" max="50" value="50" title="Adjust sequence name display length (3-50 characters)">
                             <input type="number" id="nameLengthInput" min="3" max="50" value="50" title="Adjust sequence name display length (3-50 characters)">
+                            <label style="font-size:10px;display:flex;align-items:center;gap:2px;white-space:nowrap;" title="Show full sequence names without truncation"><input type="checkbox" id="nameLengthNoLimit"> No limit</label>
                         </div>
                         <div class="slider-container display-slider-row" style="flex: 1; max-width: 500px;">
                             <span class="slider-label" title="Zoom controls for alignment display">Zoom</span>
                             <button id="zoomOutButton" class="zoom-button" title="Zoom out (shortcut: Ctrl+-)">−</button>
-                            <input type="range" id="zoomSlider" class="normal-slider" min="50" max="200" value="100" title="Zoom level for alignment display (50-200%)" style="flex: 1; min-width: 200px;">
-                            <span id="zoomVal" class="zoom-value" title="Current zoom level" style="min-width: 45px; text-align: center;">100%</span>
+                            <input type="range" id="zoomSlider" class="normal-slider" min="0" max="100" value="50" title="Zoom level for alignment display (50-200%)" style="flex: 1; min-width: 160px;">
+                            <span id="zoomVal" class="zoom-value" title="Current zoom level" style="min-width: 42px; text-align: center;">100%</span>
                             <button id="zoomInButton" class="zoom-button" title="Zoom in (shortcut: Ctrl++)">+</button>
                         </div>
                         <div class="slider-container display-slider-row" id="blockSizeContainer">
@@ -165,10 +166,10 @@
                         <label for="modeCompact">Compact</label>
                             <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas-based fast renderer for large alignments — only draws visible area">
                         <label for="modeCanvas">Canvas</label>
-                        <label style="margin-left:8px;font-size:11px;" title="In compact mode: show only positions differing from reference">
+                        <label style="margin-left:8px;font-size:11px;display:none;" class="compact-only" title="In compact mode: show only positions differing from reference">
                             <input type="checkbox" id="compactDiffOnly"> Diffs only
                         </label>
-                        <label style="font-size:11px;" title="Show connecting lines between paired reads">
+                        <label style="font-size:11px;display:none;" class="compact-only compact-pairs-only" title="Show connecting lines between paired reads">
                             <input type="checkbox" id="compactPairs"> Pairs
                         </label>
                         <label style="font-size:11px;margin-left:4px;" title="Dim fully conserved columns across all modes">
