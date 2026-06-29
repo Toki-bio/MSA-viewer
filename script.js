@@ -1412,6 +1412,277 @@ function getDeferredConsensus(len) {
     return Array.from({ length: len }, (_, pos) => cached.values[pos] || '-');
 }
 
+// IGV-style compact read packing renderer
+function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
+    enableBlack, enableDark, enableLight, nameLen, stickyNames, standard, ambiguous, ambiguousMap,
+    showConsensus, consType, threshold, fallbackMode, coverageMin) {
+
+    alignmentContainer.innerHTML = '';
+    state.spanCache = new Map();
+    state.domSelectedNucs = new Map();
+    state.domSelectedColumns = new Map();
+
+    const seqs = state.seqs;
+    const nSeqs = seqs.length;
+    if (nSeqs === 0) return;
+
+    // Find reference sequence (longest or first non-gappy)
+    let refIdx = 0;
+    let refLen = 0;
+    let refGappiness = 999;
+    for (let i = 0; i < nSeqs; i++) {
+        const s = seqs[i].seq;
+        const gapCount = (s.match(/[-.]/g) || []).length;
+        const gappiness = gapCount / Math.max(1, s.length);
+        if (s.length > refLen || (s.length === refLen && gappiness < refGappiness)) {
+            refIdx = i;
+            refLen = s.length;
+            refGappiness = gappiness;
+        }
+    }
+
+    // Parse read positions from reference-aligned sequences
+    // Each read: {seqIdx, start, end, seq, name, mismatches[]}
+    const reads = [];
+    for (let i = 0; i < nSeqs; i++) {
+        if (i === refIdx && nSeqs > 1) continue; // skip reference
+        const s = seqs[i].seq;
+        // Find first and last non-gap position
+        let start = -1, end = -1;
+        for (let p = 0; p < len; p++) {
+            const ch = s[p] || '-';
+            if (ch !== '-' && ch !== '.') {
+                if (start < 0) start = p;
+                end = p;
+            }
+        }
+        if (start < 0) continue;
+        const seq = s.substring(start, end + 1);
+        const mismatches = [];
+        const refSeq = seqs[refIdx].seq;
+        for (let p = start; p <= end; p++) {
+            const rb = (s[p] || '-').toUpperCase();
+            const refb = (refSeq[p] || '-').toUpperCase();
+            if (rb !== '-' && rb !== '.' && refb !== '-' && refb !== '.' && rb !== refb) {
+                mismatches.push(p);
+            }
+        }
+        reads.push({
+            seqIdx: i,
+            start, end, seq,
+            name: seqs[i].header || ('Read' + (i + 1)),
+            mismatches: new Set(mismatches),
+            gaplessLen: seq.replace(/[-.]/g, '').length
+        });
+    }
+
+    // Sort by start position
+    reads.sort((a, b) => a.start - b.start);
+
+    // Greedy track assignment
+    const tracks = []; // tracks[trackIdx] = last-end position
+    for (const read of reads) {
+        let assigned = false;
+        for (let t = 0; t < tracks.length; t++) {
+            if (read.start >= tracks[t]) {
+                tracks[t] = read.end + 1;
+                read.track = t;
+                assigned = true;
+                break;
+            }
+        }
+        if (!assigned) {
+            read.track = tracks.length;
+            tracks.push(read.end + 1);
+        }
+    }
+    const nTracks = tracks.length;
+
+    // Compute coverage per position
+    const coverage = new Uint16Array(len);
+    for (const read of reads) {
+        for (let p = read.start; p <= read.end; p++) {
+            const ch = seqs[read.seqIdx].seq[p] || '-';
+            if (ch !== '-' && ch !== '.') coverage[p]++;
+        }
+    }
+    const maxCov = Math.max(1, ...coverage);
+
+    // Color helpers
+    const bgColorPicker = document.getElementById('blackColorPicker');
+    const dkColorPicker = document.getElementById('darkColorPicker');
+    const ltColorPicker = document.getElementById('lightColorPicker');
+    const defBlack = bgColorPicker?.value || '#000000';
+    const defDark = dkColorPicker?.value || '#555555';
+    const defLight = ltColorPicker?.value || '#cccccc';
+
+    const getShade = (p, base) => {
+        const cons = conservationData[p];
+        if (!cons || cons.count === 0) return null;
+        const count = (cons.baseCounts || {})[base.toUpperCase()] || 0;
+        const pct = count / cons.count;
+        if (enableBlack && pct >= blackThresh) return defBlack;
+        if (enableDark && pct >= darkThresh) return defDark;
+        if (enableLight && pct >= lightThresh) return defLight;
+        return null;
+    };
+
+    const refSeq = seqs[refIdx].seq;
+    const CHAR_W = 10;
+    const ROW_H = 14;
+    const COV_H = 50;
+    const REF_H = 16;
+    const TRACK_H = 12;
+    const NAME_W = Math.min(nameLen * 7, 200);
+    const totalW = NAME_W + len * CHAR_W + 20;
+    const totalH = COV_H + nTracks * TRACK_H + REF_H + 40;
+
+    // Build SVG
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', totalW);
+    svg.setAttribute('height', totalH);
+    svg.setAttribute('style', 'font-family:monospace;font-size:11px;');
+    svg.setAttribute('id', 'compactSvg');
+
+    let y = 10;
+
+    // Coverage histogram
+    const covGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    for (let p = 0; p < len; p++) {
+        const h = Math.max(1, (coverage[p] / maxCov) * COV_H);
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', NAME_W + p * CHAR_W);
+        rect.setAttribute('y', y + COV_H - h);
+        rect.setAttribute('width', CHAR_W - 1);
+        rect.setAttribute('height', h);
+        rect.setAttribute('fill', coverage[p] > 0 ? '#4682b4' : '#eee');
+        covGroup.appendChild(rect);
+    }
+    // Coverage label
+    const covLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    covLabel.setAttribute('x', 4);
+    covLabel.setAttribute('y', y + COV_H / 2 + 4);
+    covLabel.setAttribute('fill', '#333');
+    covLabel.setAttribute('font-size', '10');
+    covLabel.textContent = 'Coverage';
+    covGroup.appendChild(covLabel);
+    svg.appendChild(covGroup);
+    y += COV_H + 4;
+
+    // Read tracks
+    for (let t = 0; t < nTracks; t++) {
+        const trackReads = reads.filter(r => r.track === t);
+        for (const read of trackReads) {
+            const rx = NAME_W + read.start * CHAR_W;
+            const rw = (read.end - read.start + 1) * CHAR_W;
+            const ry = y;
+            const rh = TRACK_H - 2;
+
+            // Read bar background
+            const bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            bar.setAttribute('x', rx);
+            bar.setAttribute('y', ry);
+            bar.setAttribute('width', rw);
+            bar.setAttribute('height', rh);
+            bar.setAttribute('fill', '#c8d8e8');
+            bar.setAttribute('stroke', '#8ab4d6');
+            bar.setAttribute('stroke-width', '0.5');
+            bar.setAttribute('rx', '2');
+            svg.appendChild(bar);
+
+            // Mismatch marks
+            for (const mp of read.mismatches) {
+                const mx = NAME_W + mp * CHAR_W + CHAR_W / 2;
+                const mark = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                mark.setAttribute('x', mx - 1);
+                mark.setAttribute('y', ry);
+                mark.setAttribute('width', 2);
+                mark.setAttribute('height', rh);
+                mark.setAttribute('fill', '#e74c3c');
+                svg.appendChild(mark);
+            }
+
+            // Read name (truncated)
+            if (NAME_W > 30 && t === 0 && trackReads.indexOf(read) < 3) {
+                const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                label.setAttribute('x', rx + 2);
+                label.setAttribute('y', ry + rh - 3);
+                label.setAttribute('fill', '#333');
+                label.setAttribute('font-size', '8');
+                label.textContent = read.name.substring(0, Math.floor(rw / 6));
+                svg.appendChild(label);
+            }
+        }
+        y += TRACK_H;
+    }
+
+    y += 4;
+
+    // Reference sequence
+    const refLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    refLabel.setAttribute('x', 4);
+    refLabel.setAttribute('y', y + 12);
+    refLabel.setAttribute('fill', '#333');
+    refLabel.setAttribute('font-weight', 'bold');
+    refLabel.setAttribute('font-size', '10');
+    refLabel.textContent = seqs[refIdx].header || 'Reference';
+    svg.appendChild(refLabel);
+
+    for (let p = 0; p < len; p++) {
+        const base = refSeq[p] || '-';
+        const shade = getShade(p, base);
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', NAME_W + p * CHAR_W + CHAR_W / 2);
+        text.setAttribute('y', y + 12);
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('fill', shade || '#333');
+        text.setAttribute('font-weight', shade ? 'bold' : 'normal');
+        text.setAttribute('font-size', '10');
+        text.textContent = base;
+        svg.appendChild(text);
+
+        // Background rect for shaded positions
+        if (shade) {
+            const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            bg.setAttribute('x', NAME_W + p * CHAR_W);
+            bg.setAttribute('y', y + 1);
+            bg.setAttribute('width', CHAR_W - 1);
+            bg.setAttribute('height', REF_H - 2);
+            bg.setAttribute('fill', shade);
+            bg.setAttribute('opacity', '0.3');
+            svg.insertBefore(bg, text);
+        }
+    }
+
+    // Scale ruler
+    y += REF_H + 4;
+    for (let p = 0; p < len; p += 5) {
+        const tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        tick.setAttribute('x1', NAME_W + p * CHAR_W);
+        tick.setAttribute('y1', y);
+        tick.setAttribute('x2', NAME_W + p * CHAR_W);
+        tick.setAttribute('y2', y + (p % 10 === 0 ? 8 : 4));
+        tick.setAttribute('stroke', '#999');
+        svg.appendChild(tick);
+        if (p % 10 === 0) {
+            const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            t.setAttribute('x', NAME_W + p * CHAR_W);
+            t.setAttribute('y', y + 16);
+            t.setAttribute('fill', '#666');
+            t.setAttribute('font-size', '8');
+            t.setAttribute('text-anchor', 'start');
+            t.textContent = String(p + 1);
+            svg.appendChild(t);
+        }
+    }
+
+    alignmentContainer.appendChild(svg);
+    alignmentContainer.style.overflow = 'auto';
+
+    // Update info
+    if (typeof updateSourceInfo === 'function') updateSourceInfo();
+}
+
 function renderAlignment(options = {}) {
     if (!state.seqs || state.seqs.length === 0) {
         alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
@@ -1496,6 +1767,15 @@ function renderAlignment(options = {}) {
         state.conservationDataCache = { len, shadeMode, data: conservationData };
     }
     
+    
+    const useCompact = document.getElementById('modeCompact')?.checked;
+    if (useCompact) {
+        renderCompactAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
+            enableBlack, enableDark, enableLight, nameLen, stickyNames, standard, ambiguous, ambiguousMap,
+            showConsensus, consType, threshold, fallbackMode, coverageMin);
+        return;
+    }
+
     if (useBlocks) {
         for (let start = 0; start < len; start += blockWidth) {
             const end = Math.min(start + blockWidth, len);
@@ -2180,7 +2460,7 @@ function parseAndRender(isFromDrop = false) {
 function onModeChange() {
     const container = el('blockSizeContainer');
     if (container) {
-        container.style.display = el('modeBlocks').checked ? 'flex' : 'none';
+        container.style.display = el('modeBlocks')?.checked ? 'flex' : 'none';
     }
     renderAlignment();
     setupHoverMenuReveal();
