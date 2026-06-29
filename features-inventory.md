@@ -125,6 +125,12 @@ Click-drag sequence names to reorder. Visual insertion indicator during drag. Wo
 
 **Why novel:** Three sort criteria in one dropdown. Most viewers offer none or one.
 
+### Save / Load sequence order
+- **Export (Exp):** serializes the current sequence order as a JSON file (`{version, exported, count, order}`). Downloadable with a timestamped filename.
+- **Import (Imp):** file-picker opens a `.json` order file. Sequences present in both the file and the alignment are reordered to match; sequences missing from the file are appended at the bottom; extra entries in the file are reported but ignored. Undoable in a single step.
+
+**Why novel:** Decouples sequence ordering from the alignment file. Reorder once in the viewer, export the order, and reapply it after reloading data — or share orders between collaborators. No other viewer offers a portable order format.
+
 ### Replace selected with consensus
 Select N sequences → one click computes their majority-rule consensus → deletes the N sequences → inserts a single consensus row named `cons_seqX-Y` at the position of the first selected sequence. Reduces alignment size while preserving subfamily signal. Tracked in undo — reversible.
 
@@ -202,6 +208,14 @@ Search bar accepts exact motifs (with configurable 0–10 mismatches) or JavaScr
 
 **Why novel:** Regex mode with the `.*` toggle is a single-checkbox conversion from exact to pattern search. Match-length-aware highlighting is rare.
 
+### BLAST search with server-backed database management
+Right-click a sequence → BLAST opens a dialog listing all configured databases, fetched dynamically from the server (`GET /api/blast-db`). Checkboxes select targets; unavailable databases (missing files or unformatted) are shown greyed out. Click **+ Manage Databases** to open a full CRUD modal:
+- **List:** all databases with name, description, and availability status
+- **Add:** file-picker for a FASTA file, name + description fields; server writes the FASTA, runs `makeblastdb`, and registers it in `blast_dbs.json`
+- **Delete:** removes the FASTA file and all BLAST index files (`.nhr`, `.nin`, `.nsq`, `.nog`, `.nsd`, `.nsi`, `.ndb`, `.not`, `.ntf`, `.nto`, `.njs`)
+
+**Why novel:** BLAST database management from the browser without touching the server CLI. No hardcoded paths — databases are registered in a JSON registry and survive server restarts. The modal lists, creates, and deletes databases in one place. Greying out unavailable databases prevents stale checkboxes from silently failing.
+
 ---
 
 ## 📤 Export & Publishing
@@ -259,7 +273,11 @@ Save complete viewer state as JSON: alignment data, colour assignments, search h
 
 13. **8-format automatic content detection** — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, BAM/CRAM. No file extension guessing. More formats than any browser viewer.
 
-14. **Zero-dependency vanilla JavaScript architecture** — 12,000 lines. No framework, no build step, no installation. Runs from GitHub Pages.
+14. **Save/load sequence order as portable JSON** — export current order to a file, reimport after reloading data. Decouples ordering from alignment content. Matches by header name, handles missing/extra entries gracefully.
+
+15. **Browser-based BLAST database CRUD** — upload FASTA → `makeblastdb` on server → registered in `blast_dbs.json`. Delete databases with index file cleanup. All from the viewer modal — no server CLI needed.
+
+16. **Zero-dependency vanilla JavaScript architecture** — 12,000 lines. No framework, no build step, no installation. Runs from GitHub Pages.
 
 ---
 
