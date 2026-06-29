@@ -290,15 +290,15 @@
                                 <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Basic Parameters</div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
                                     <div>
-                                        <label for="clusterMinSizeInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Minimum sequences a group needs to be considered a cluster">Min Size:</label>
+                                        <label for="clusterMinSizeInput" style="font-size: 10px; display: block; margin-bottom: 1px; white-space: nowrap;" title="Minimum sequences a group needs to be considered a cluster">Min Size:</label>
                                         <input type="number" id="clusterMinSizeInput" min="2" max="20" value="3" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Groups smaller than this are discarded">
                                     </div>
                                     <div>
-                                        <label for="clusterMinPerfectInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Minimum number of diagnostic positions a cluster must have">Min Features:</label>
+                                        <label for="clusterMinPerfectInput" style="font-size: 10px; display: block; margin-bottom: 1px; white-space: nowrap;" title="Minimum number of diagnostic positions a cluster must have">Min Features:</label>
                                         <input type="number" id="clusterMinPerfectInput" min="1" max="50" value="5" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Clusters with fewer unique diagnostic positions are discarded">
                                     </div>
                                     <div>
-                                        <label for="clusterMaxIterationsInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="How many rounds of clustering with progressively relaxed thresholds">Max Iter:</label>
+                                        <label for="clusterMaxIterationsInput" style="font-size: 10px; display: block; margin-bottom: 1px; white-space: nowrap;" title="How many rounds of clustering with progressively relaxed thresholds">Max Iter:</label>
                                         <input type="number" id="clusterMaxIterationsInput" min="1" max="20" value="10" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="More iterations = more clusters found (threshold relaxes each round)">
                                     </div>
                                 </div>
@@ -306,15 +306,15 @@
                                 <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Quality Thresholds (%)</div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
                                     <div>
-                                        <label for="qualitySmallInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Min % of members sharing a feature in clusters of 10 or fewer sequences">Small &lt;11:</label>
+                                        <label for="qualitySmallInput" style="font-size: 10px; display: block; margin-bottom: 1px; white-space: nowrap;" title="Min % of members sharing a feature in clusters of 10 or fewer sequences">Small &lt;11:</label>
                                         <input type="number" id="qualitySmallInput" min="0" max="100" value="80" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Higher = stricter, fewer but cleaner clusters">
                                     </div>
                                     <div>
-                                        <label for="qualityMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Quality threshold for medium clusters (11-19 sequences)">Medium 11-19:</label>
+                                        <label for="qualityMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px; white-space: nowrap;" title="Quality threshold for medium clusters (11-19 sequences)">Medium 11-19:</label>
                                         <input type="number" id="qualityMediumInput" min="0" max="100" value="70" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Higher = stricter, fewer but cleaner clusters">
                                     </div>
                                     <div>
-                                        <label for="qualityLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Quality threshold for large clusters (20+ sequences)">Large ≥20:</label>
+                                        <label for="qualityLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px; white-space: nowrap;" title="Quality threshold for large clusters (20+ sequences)">Large ≥20:</label>
                                         <input type="number" id="qualityLargeInput" min="0" max="100" value="60" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Higher = stricter, fewer but cleaner clusters">
                                     </div>
                                 </div>
@@ -322,15 +322,15 @@
                                 <div style="font-weight: bold; font-size: 11px; margin-bottom: 6px;">Size Breakpoints</div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px;">
                                     <div>
-                                        <label for="sizeSmallMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Sequence count at which clusters transition from small to medium quality tier">Small→Med:</label>
+                                        <label for="sizeSmallMediumInput" style="font-size: 10px; display: block; margin-bottom: 1px; white-space: nowrap;" title="Sequence count at which clusters transition from small to medium quality tier">Small→Med:</label>
                                         <input type="number" id="sizeSmallMediumInput" min="1" max="50" value="11" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Groups below this size use the Small quality threshold">
                                     </div>
                                     <div>
-                                        <label for="sizeMediumLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Sequence count at which clusters transition from medium to large quality tier">Med→Large:</label>
+                                        <label for="sizeMediumLargeInput" style="font-size: 10px; display: block; margin-bottom: 1px; white-space: nowrap;" title="Sequence count at which clusters transition from medium to large quality tier">Med→Large:</label>
                                         <input type="number" id="sizeMediumLargeInput" min="1" max="50" value="20" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Groups at or above this size use the Large quality threshold">
                                     </div>
                                     <div>
-                                        <label for="minOccurrencesInput" style="font-size: 10px; display: block; margin-bottom: 1px;" title="Minimum positions where a feature pattern must appear to be considered a cluster signal">Min Occur:</label>
+                                        <label for="minOccurrencesInput" style="font-size: 10px; display: block; margin-bottom: 1px; white-space: nowrap;" title="Minimum positions where a feature pattern must appear to be considered a cluster signal">Min Occur:</label>
                                         <input type="number" id="minOccurrencesInput" min="1" max="20" value="2" step="1" style="width: 100%; height: 20px; padding: 2px; font-size: 11px; box-sizing: border-box;" title="Minimum number of diagnostic positions (features) required to form a cluster">
                                     </div>
                                 </div>
@@ -568,7 +568,7 @@
                 </div>
             </div>
             <div id="headerInfoPanel">
-                <div id="versionIndicator"><a href="https://github.com/Toki-bio/MSA-viewer/commit/9280d5d" target="_blank" title="View this commit on GitHub" style="color:inherit;text-decoration:none;">commit 9280d5d</a></div>
+                <div id="versionIndicator"><a href="https://github.com/Toki-bio/MSA-viewer/commit/47f0413" target="_blank" title="View this commit on GitHub" style="color:inherit;text-decoration:none;">commit 47f0413</a></div>
                 <div id="sourceInfo">No file loaded</div>
             </div>
         </div>

@@ -3,586 +3,1043 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MSA Viewer — Comprehensive Manual</title>
+<title>MSA Viewer — Manual</title>
 <style>
 :root {
   --bg: #fafbfc;
-  --card-bg: #fff;
+  --sidebar-bg: #f6f8fa;
   --text: #24292e;
   --muted: #586069;
   --border: #e1e4e8;
   --accent: #0366d6;
-  --warn: #f66a0a;
+  --accent-subtle: #f0f7ff;
+  --warn: #b08800;
+  --warn-bg: #fff8e1;
   --code-bg: #f6f8fa;
-  --table-stripe: #f6f8fa;
   --heading: #1a1a2e;
+  --sidebar-width: 260px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0d1117;
-    --card-bg: #161b22;
+    --sidebar-bg: #161b22;
     --text: #c9d1d9;
     --muted: #8b949e;
     --border: #30363d;
     --accent: #58a6ff;
+    --accent-subtle: #1a2a3a;
     --warn: #d29922;
+    --warn-bg: #2a210f;
     --code-bg: #161b22;
-    --table-stripe: #21262d;
     --heading: #f0f6fc;
   }
 }
-* { box-sizing: border-box; }
+* { box-sizing: border-box; margin:0; padding:0; }
+html { scroll-behavior: smooth; }
 body {
-  margin:0; padding:0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-  font-size: 15px; line-height: 1.6;
+  font-size: 15px; line-height: 1.65;
   color: var(--text); background: var(--bg);
+  display: flex; min-height: 100vh;
 }
-header {
-  background: var(--card-bg); border-bottom: 1px solid var(--border);
-  padding: 20px 32px; position: sticky; top: 0; z-index: 10;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+
+/* ── SIDEBAR ── */
+#sidebar {
+  position: fixed; top:0; left:0; bottom:0;
+  width: var(--sidebar-width);
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  overflow-y: auto; overflow-x: hidden;
+  z-index: 20;
+  padding: 20px 0 40px;
+  scrollbar-width: thin;
 }
-header h1 { margin:0; font-size: 26px; color: var(--heading); }
-header p { margin:4px 0 0; color: var(--muted); font-size: 13px; }
-nav {
-  background: var(--card-bg); border-bottom: 1px solid var(--border);
-  padding: 8px 32px; overflow-x: auto; white-space: nowrap;
-  position: sticky; top: 73px; z-index: 9;
+#sidebar h2 {
+  font-size: 15px; font-weight: 700; padding: 0 20px 12px;
+  color: var(--heading); border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
 }
-nav a {
-  display: inline-block; padding: 6px 14px; margin-right: 4px;
-  text-decoration: none; color: var(--accent); font-size: 13px;
-  border-radius: 4px; transition: background .15s;
+#sidebar h2 a { color: inherit; text-decoration: none; }
+.side-group { margin-bottom: 4px; }
+.side-group > a {
+  display: flex; align-items: center;
+  padding: 5px 20px;
+  font-size: 13px; font-weight: 600;
+  color: var(--heading); text-decoration: none;
+  transition: background .12s;
 }
-nav a:hover { background: var(--code-bg); }
-main {
-  max-width: 960px; margin: 0 auto; padding: 28px 32px 80px;
+.side-group > a:hover { background: var(--border); }
+.side-group > a.active { color: var(--accent); background: var(--accent-subtle); }
+.side-sub {
+  display: none;
+  padding: 0 0 4px 0;
 }
-section { margin-bottom: 48px; }
+.side-group.open .side-sub { display: block; }
+.side-sub a {
+  display: block;
+  padding: 3px 20px 3px 34px;
+  font-size: 12.5px; color: var(--muted);
+  text-decoration: none;
+  transition: all .12s;
+  border-left: 2px solid transparent;
+}
+.side-sub a:hover { color: var(--text); background: var(--border); }
+.side-sub a.active { color: var(--accent); border-left-color: var(--accent); background: var(--accent-subtle); }
+
+/* ── MAIN ── */
+#main {
+  margin-left: var(--sidebar-width);
+  flex: 1; min-width: 0;
+  max-width: 900px; padding: 32px 40px 80px;
+}
+section { margin-bottom: 52px; }
 section h2 {
-  font-size: 20px; color: var(--heading); border-bottom: 2px solid var(--border);
-  padding-bottom: 6px; margin: 0 0 16px;
+  font-size: 22px; color: var(--heading); border-bottom: 2px solid var(--border);
+  padding-bottom: 6px; margin-bottom: 18px;
 }
 section h3 {
-  font-size: 16px; color: var(--heading); margin: 24px 0 8px;
+  font-size: 17px; color: var(--heading); margin: 28px 0 10px;
 }
+section h4 {
+  font-size: 15px; color: var(--heading); margin: 20px 0 8px; font-weight: 600;
+}
+p { margin-bottom: 12px; }
 p, li { color: var(--text); }
+ul, ol { margin: 0 0 14px 20px; }
+li { margin-bottom: 5px; }
 code {
   background: var(--code-bg); padding: 1px 5px; border-radius: 3px;
-  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-  font-size: 13px;
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace; font-size: 13px;
 }
 pre {
   background: var(--code-bg); padding: 12px 16px; overflow-x: auto;
   border: 1px solid var(--border); border-radius: 6px;
   font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-  font-size: 12px; line-height: 1.5;
+  font-size: 12px; line-height: 1.5; margin-bottom: 14px;
 }
 table {
-  width: 100%; border-collapse: collapse; margin: 12px 0;
-  font-size: 14px;
+  width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px;
 }
 th, td {
-  text-align: left; padding: 8px 12px;
-  border: 1px solid var(--border);
+  text-align: left; padding: 7px 10px; border: 1px solid var(--border);
 }
-th { background: var(--code-bg); font-weight: 600; }
+th { background: var(--code-bg); font-weight: 600; font-size: 12.5px; }
 tr:nth-child(even) td { background: var(--table-stripe); }
 kbd {
-  display: inline-block; padding: 2px 6px; font-size: 12px;
+  display: inline-block; padding: 2px 6px; font-size: 11.5px;
   font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-  line-height: 1; color: var(--text); background: var(--code-bg);
-  border: 1px solid var(--border); border-radius: 3px;
-  box-shadow: 0 1px 0 rgba(0,0,0,0.1);
-  vertical-align: middle;
+  line-height: 1.2; color: var(--text); background: var(--code-bg);
+  border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: 3px; vertical-align: middle;
 }
 .note {
-  background: #fff8e1; border-left: 4px solid var(--warn);
-  padding: 10px 14px; margin: 12px 0; border-radius: 0 4px 4px 0;
+  background: var(--warn-bg); border-left: 4px solid var(--warn);
+  padding: 10px 14px; margin: 14px 0; border-radius: 0 4px 4px 0;
   font-size: 14px;
 }
-@media (prefers-color-scheme: dark) { .note { background: #2a210f; } }
-.toc { columns: 2; column-gap: 32px; margin: 0; padding: 0; list-style: none; }
-.toc li { padding: 3px 0; }
-.toc a { font-size: 14px; }
-.back-top { font-size: 12px; margin-left: 10px; opacity: 0.5; }
-.back-top:hover { opacity: 1; }
+.tip {
+  background: #e6ffed; border-left: 4px solid #28a745;
+  padding: 10px 14px; margin: 14px 0; border-radius: 0 4px 4px 0;
+  font-size: 14px;
+}
+@media (prefers-color-scheme: dark) { .tip { background: #1a3320; } }
+img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; margin: 8px 0; }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 768px) {
+  #sidebar { display: none; }
+  #main { margin-left: 0; padding: 20px 16px 60px; }
+}
 </style>
 </head>
 <body>
 
-<header>
-  <h1>MSA Viewer — Comprehensive Manual</h1>
-  <p>v4.0 — Multiple Sequence Alignment browser, editor, and analysis toolkit</p>
-</header>
+<!-- ═══ SIDEBAR ═══ -->
+<aside id="sidebar">
+  <h2><a href="#">MSA Viewer Manual</a></h2>
 
-<nav>
-  <a href="#getting-started">Getting Started</a>
-  <a href="#view-modes">View Modes</a>
-  <a href="#display">Display Controls</a>
-  <a href="#editing">Editing</a>
-  <a href="#analysis">Analysis</a>
-  <a href="#export">Export</a>
-  <a href="#server">Server Features</a>
-  <a href="#shortcuts">Shortcuts</a>
-  <a href="#tips">Tips &amp; Tricks</a>
-</nav>
+  <div class="side-group open">
+    <a href="#getting-started">1. Getting Started</a>
+    <div class="side-sub">
+      <a href="#gs-what-is">1.1 What is MSA Viewer?</a>
+      <a href="#gs-loading">1.2 Loading an Alignment</a>
+      <a href="#gs-formats">1.3 Supported Formats</a>
+      <a href="#gs-interface">1.4 Interface Layout</a>
+      <a href="#gs-recent">1.5 Recent Files &amp; History</a>
+    </div>
+  </div>
 
-<main>
+  <div class="side-group open">
+    <a href="#input-menu">2. Input Menu</a>
+    <div class="side-sub">
+      <a href="#in-fasta">2.1 FASTA / MSF Input</a>
+      <a href="#in-file">2.2 File Loading</a>
+      <a href="#in-url">2.3 URL Loading</a>
+      <a href="#in-ssh">2.4 SSH Remote Loading</a>
+      <a href="#in-sam">2.5 SAM / BAM / CRAM</a>
+      <a href="#in-snapshot">2.6 Snapshots (Save &amp; Load)</a>
+      <a href="#in-saveload">2.7 Save / Export Alignment</a>
+    </div>
+  </div>
 
-<!-- ═══════════════════════════════════════════════════════════════════ -->
+  <div class="side-group open">
+    <a href="#alignment-menu">3. Alignment Menu</a>
+    <div class="side-sub">
+      <a href="#al-real-time">3.1 Real-Time Alignment</a>
+      <a href="#al-advanced">3.2 Advanced MAFFT Options</a>
+      <a href="#al-addseq">3.3 Adding Sequences</a>
+      <a href="#al-blast">3.4 BLAST Search</a>
+      <a href="#al-blast-db">3.5 BLAST DB Management</a>
+      <a href="#al-degap">3.6 Degap Alignment</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#clustering-menu">4. Clustering Menu</a>
+    <div class="side-sub">
+      <a href="#cl-trim">4.1 Trimming Parameters</a>
+      <a href="#cl-basic">4.2 Basic Clustering Parameters</a>
+      <a href="#cl-quality">4.3 Quality Thresholds</a>
+      <a href="#cl-breakpoints">4.4 Size Breakpoints</a>
+      <a href="#cl-presets">4.5 Presets &amp; Workflow</a>
+      <a href="#cl-understanding">4.6 Understanding Results</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#display-menu">5. Display Menu</a>
+    <div class="side-sub">
+      <a href="#di-modes">5.1 View Modes</a>
+      <a href="#di-checks">5.2 Highlight Diffs &amp; Variable Sites</a>
+      <a href="#di-codons">5.3 Codon Analysis</a>
+      <a href="#di-sticky">5.4 Sticky Names</a>
+      <a href="#di-zoom">5.5 Zoom &amp; Reset</a>
+      <a href="#di-names">5.6 Name Length</a>
+      <a href="#di-compat">5.7 Compact Mode Controls</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#consensus-menu">6. Consensus Menu</a>
+    <div class="side-sub">
+      <a href="#co-display">6.1 Consensus Display</a>
+      <a href="#co-thresholds">6.2 Thresholds &amp; Coverage</a>
+      <a href="#co-group">6.3 Group Consensus</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#search-menu">7. Search Menu</a>
+    <div class="side-sub">
+      <a href="#se-motif">7.1 Motif Search</a>
+      <a href="#se-regex">7.2 Regex Search</a>
+      <a href="#se-mismatch">7.3 Mismatch Tolerance</a>
+      <a href="#se-colour">7.4 Search Highlight Colour</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#edit-menu">8. Editing</a>
+    <div class="side-sub">
+      <a href="#ed-row">8.1 Row Operations</a>
+      <a href="#ed-col">8.2 Column Operations</a>
+      <a href="#ed-editmode">8.3 GeneDoc-Style Edit Mode</a>
+      <a href="#ed-move-slide">8.4 Move &amp; Slide Tools</a>
+      <a href="#ed-seqedit">8.5 Sequence Text Editor</a>
+      <a href="#ed-undo">8.6 Undo / Redo</a>
+      <a href="#ed-degap">8.7 Degap Tool</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#actions-menu">9. Actions Menu</a>
+    <div class="side-sub">
+      <a href="#ac-select">9.1 Selection</a>
+      <a href="#ac-sort">9.2 Sort Functions</a>
+      <a href="#ac-order">9.3 Save / Load Order</a>
+      <a href="#ac-tools">9.4 Analysis Tools</a>
+      <a href="#ac-colour">9.5 Colour &amp; Shading</a>
+      <a href="#ac-cluster">9.6 Cluster Operations</a>
+      <a href="#ac-plot">9.7 Plotting</a>
+      <a href="#ac-export">9.8 Export &amp; Share</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#shortcuts">10. Keyboard Shortcuts</a>
+    <div class="side-sub">
+      <a href="#sc-general">10.1 General</a>
+      <a href="#sc-editing">10.2 Editing</a>
+      <a href="#sc-mouse">10.3 Mouse Actions</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#server">11. Server Features</a>
+    <div class="side-sub">
+      <a href="#sv-setup">11.1 Setup</a>
+      <a href="#sv-mafft">11.2 MAFFT Integration</a>
+      <a href="#sv-ssh">11.3 SSH Remote Access</a>
+      <a href="#sv-bam">11.4 BAM/CRAM Support</a>
+      <a href="#sv-security">11.5 Security</a>
+    </div>
+  </div>
+
+  <div class="side-group open">
+    <a href="#tips">12. Tips &amp; Best Practices</a>
+    <div class="side-sub">
+      <a href="#tp-large">12.1 Large Alignments</a>
+      <a href="#tp-figures">12.2 Publication Figures</a>
+      <a href="#tp-coding">12.3 Coding Sequence Analysis</a>
+      <a href="#tp-clustering">12.4 Clustering Best Practices</a>
+    </div>
+  </div>
+
+</aside>
+
+<!-- ═══ MAIN CONTENT ═══ -->
+<div id="main">
+
+<!-- ════════════════════════════════════════ -->
 <section id="getting-started">
-  <h2>1. Getting Started <a href="#" class="back-top">↑</a></h2>
+  <h2>1. Getting Started</h2>
 
-  <h3>1.1 What is MSA Viewer?</h3>
+  <h3 id="gs-what-is">1.1 What is MSA Viewer?</h3>
   <p>
-    MSA Viewer is a browser-based tool for viewing, editing, and analyzing multiple sequence alignments.
-    It handles alignments of any size — from a handful of sequences to thousands — and supports DNA, RNA,
-    protein, and coding sequence (CDS) data. It runs entirely in your browser with no installation; an
-    optional local Node.js server adds MAFFT realignment, BLAST search, and remote file access.
+    MSA Viewer is a browser-based application for viewing, editing, and analysing
+    multiple sequence alignments. It handles DNA, RNA, protein, and coding sequence (CDS)
+    data — from a handful of sequences to thousands. No installation is required; the viewer
+    runs entirely in your browser. An optional local Node.js server adds MAFFT realignment,
+    BLAST search, SSH remote access, and BAM/CRAM support.
   </p>
-
-  <h3>1.2 Loading an Alignment</h3>
-  <p>Load data in any of these ways:</p>
+  <p>Key capabilities:</p>
   <ul>
-    <li><strong>Paste &amp; Load</strong> — paste MSF or FASTA text into the input box and click <em>Load</em></li>
-    <li><strong>Drag &amp; Drop</strong> — drop <code>.msf</code>, <code>.fasta</code>, <code>.fa</code>, <code>.aln</code>, or <code>.sam</code> files onto the page</li>
-    <li><strong>File Picker</strong> — click <em>Load File</em> or press <kbd>Ctrl+L</kbd></li>
-    <li><strong>URL</strong> — paste a URL to a raw alignment file and click <em>Load URL</em></li>
-    <li><strong>SAM/BAM/CRAM</strong> — paste SAM text directly, or load BAM/CRAM via the server endpoint</li>
-    <li><strong>SSH</strong> — fetch files from a remote server via SSH (requires server running with SSH config)</li>
-    <li><strong>BLAST</strong> — retrieve GenBank sequences by accession and align them on the fly</li>
+    <li><strong>View</strong> — Four visualisation modes: Full, Block, Compact (IGV-style), Canvas (for massive alignments)</li>
+    <li><strong>Edit</strong> — GeneDoc-style residue editing, Move/Slide tools, undo/redo</li>
+    <li><strong>Analyse</strong> — Codon analysis (17 genetic codes), dot plots, repeat/TSD finder, tree builder, subfamily clustering</li>
+    <li><strong>Colour</strong> — Conservation shading (Identity, Similarity, Clustal, Zappo), custom per-sequence and per-group colours</li>
+    <li><strong>Export</strong> — FASTA, MSF, RTF (Word-compatible), SVG (vector), standalone HTML</li>
   </ul>
 
-  <h3>1.3 Supported Formats</h3>
+  <h3 id="gs-loading">1.2 Loading an Alignment</h3>
+  <p>You can load data in any of these ways:</p>
   <table>
-    <tr><th>Format</th><th>Extension</th><th>Notes</th></tr>
-    <tr><td>FASTA</td><td>.fasta, .fa, .aln</td><td>Standard FASTA with <code>&gt;</code> headers; interleaved OK</td></tr>
-    <tr><td>MSF</td><td>.msf</td><td>GCG Multiple Sequence Format with header block</td></tr>
-    <tr><td>SAM</td><td>.sam</td><td>Tab-separated alignment records; auto-detected</td></tr>
-    <tr><td>BAM/CRAM</td><td>.bam, .cram</td><td>Via server <code>/api/bam2sam</code> (requires samtools)</td></tr>
+    <tr><th>Method</th><th>How</th></tr>
+    <tr><td>Paste &amp; Load</td><td>Paste FASTA or MSF text into the Input textarea and click <strong>Load</strong> (or press <kbd>Ctrl+L</kbd>)</td></tr>
+    <tr><td>Drag &amp; Drop</td><td>Drop a file onto the drop zone — supports <code>.fasta</code>, <code>.fa</code>, <code>.aln</code>, <code>.msf</code>, <code>.sam</code></td></tr>
+    <tr><td>File Picker</td><td>Click the drop zone to browse for a file</td></tr>
+    <tr><td>URL</td><td>Paste a URL to a raw alignment file and click <strong>Load URL</strong></td></tr>
+    <tr><td>SAM Paste</td><td>Paste SAM text directly — auto-detected and parsed with CIGAR expansion</td></tr>
+    <tr><td>SSH Remote</td><td>Fetch files from a remote server via SSH (requires server with SSH configuration)</td></tr>
+    <tr><td>BLAST Retrieval</td><td>Retrieve GenBank sequences by accession and align them automatically</td></tr>
+  </table>
+
+  <h3 id="gs-formats">1.3 Supported Formats</h3>
+  <table>
+    <tr><th>Format</th><th>Extensions</th><th>Notes</th></tr>
+    <tr><td>FASTA</td><td><code>.fasta</code>, <code>.fa</code>, <code>.aln</code></td><td>Standard FASTA with <code>&gt;</code> headers; interleaved OK</td></tr>
+    <tr><td>MSF</td><td><code>.msf</code></td><td>GCG Multiple Sequence Format with header block</td></tr>
+    <tr><td>SAM</td><td><code>.sam</code></td><td>Tab-separated alignment records; auto-detected, CIGAR-expanded</td></tr>
+    <tr><td>BAM / CRAM</td><td><code>.bam</code>, <code>.cram</code></td><td>Via server <code>POST /api/bam2sam</code> (requires samtools)</td></tr>
+    <tr><td>Clustal</td><td><code>.aln</code></td><td>ClustalW format with <code>CLUSTAL</code> header</td></tr>
+    <tr><td>PHYLIP</td><td><code>.phy</code></td><td>Interleaved and sequential PHYLIP formats</td></tr>
+    <tr><td>NEXUS</td><td><code>.nex</code>, <code>.nexus</code></td><td>NEXUS <code>DATA</code> block with matrix</td></tr>
+    <tr><td>Stockholm</td><td><code>.sto</code>, <code>.stockholm</code></td><td>Pfam/Rfam Stockholm format with <code>#=GC</code> markup</td></tr>
     <tr><td>GenBank</td><td>—</td><td>Accession lookup → automatic MAFFT alignment</td></tr>
   </table>
 
-  <h3>1.4 Interface Overview</h3>
-  <p>The interface is organized into a collapsible menu bar at the top and the alignment viewport below:</p>
-  <ul>
-    <li><strong>File</strong> — load, save, import, export</li>
-    <li><strong>Edit</strong> — undo/redo, delete, copy, sequence editing tools</li>
-    <li><strong>Colour</strong> — colour schemes, custom sequence highlighting</li>
-    <li><strong>Selection</strong> — select, sort, group, filter sequences</li>
-    <li><strong>Analysis</strong> — dot plot, repeat finder, tree builder, codon analysis</li>
-    <li><strong>Display</strong> — view mode, shading, consensus, zoom</li>
-    <li><strong>Help</strong> — keyboard shortcuts, manual</li>
-  </ul>
-  <p>Press <kbd>Ctrl+H</kbd> to hide/show the menu bar; press <kbd>Ctrl+I</kbd> for keyboard shortcuts.</p>
-</section>
-
-<!-- ═══════════════════════════════════════════════════════════════════ -->
-<section id="view-modes">
-  <h2>2. View Modes <a href="#" class="back-top">↑</a></h2>
-
-  <h3>2.1 Single Mode</h3>
+  <h3 id="gs-interface">1.4 Interface Layout</h3>
   <p>
-    Default continuous alignment view. All sequences displayed in a single scrolling pane.
-    Best for general browsing, editing, and small-to-medium alignments (
-    &lt; 100 sequences × &lt; 5000 columns).
-    Sequence names are on the left; residues are colour-coded by conservation.
+    The interface has a collapsible menu bar at the top and the alignment viewport below.
+    Press <kbd>Ctrl+H</kbd> to hide or show the menu bar; press <kbd>Ctrl+I</kbd> for the
+    keyboard shortcuts reference.
+  </p>
+  <p>The menu bar is organised into dropdown sections:</p>
+  <table>
+    <tr><th>Menu</th><th>Purpose</th></tr>
+    <tr><td><strong>Input</strong></td><td>Load, save, import, export — file handling and snapshots</td></tr>
+    <tr><td><strong>Alignment</strong></td><td>MAFFT realignment, BLAST, add sequences, degap</td></tr>
+    <tr><td><strong>Clustering</strong></td><td>Trim alignment ends, subfamily clustering, parameter presets</td></tr>
+    <tr><td><strong>Display</strong></td><td>View mode, shading, zoom, name length, Sticky Names, codon toggle, variable sites filter</td></tr>
+    <tr><td><strong>Consensus</strong></td><td>Consensus line settings, group consensus computation</td></tr>
+    <tr><td><strong>Search</strong></td><td>Motif search with regex and mismatch support</td></tr>
+    <tr><td><strong>Edit…</strong></td><td>Edit mode toggle, degap button, GeneDoc-style editing tools</td></tr>
+    <tr><td><strong>Actions</strong></td><td>Selection, sorting, analysis (dot plot, TSD finder, tree), colour schemes, cluster operations, export</td></tr>
+  </table>
+  <p>
+    The top-right corner shows the current commit hash (click to view on GitHub)
+    and the loaded file name.
   </p>
 
-  <h3>2.2 Block Mode</h3>
+  <h3 id="gs-recent">1.5 Recent Files &amp; History</h3>
   <p>
-    Splits the alignment into fixed-width blocks (default 50 columns) for readability.
-    Sequence names repeat in each block. Ideal for publication-quality viewing.
-    Adjust block width with the <em>Block Size</em> slider.
-  </p>
-
-  <h3>2.3 Compact Mode (IGV-style)</h3>
-  <p>
-    Renders alignments as SVG read-packing tracks, inspired by IGV. Each read is a horizontal bar;
-    mismatches from the reference are red ticks. A coverage histogram is shown at the top.
-    Ideal for hundreds or thousands of reads aligned to a single reference.
-  </p>
-  <p>Compact-mode specific controls:</p>
-  <ul>
-    <li><strong>Diffs only</strong> — reads become thin hairlines; only mismatch positions are visible. Great for spotting variants at a glance</li>
-    <li><strong>Pairs</strong> — dashed lines connect paired-end reads (requires SAM input with pair flags)</li>
-  </ul>
-
-  <h3>2.4 Highlight Diffs</h3>
-  <p>
-    Available in all modes. When checked, positions where all sequences have the same base
-    are dimmed to 25% opacity, drawing attention to variable sites only.
-    Turn this on alongside Block mode for a quick "where are the mutations?" overview.
+    Click the <strong>🕐 Recent</strong> button to open the history dropdown.
+    It tracks every alignment loaded — by paste, file, URL, SSH, or BLAST —
+    and stores timestamps and sequence counts. Click any entry to reload it instantly.
+    History persists across browser sessions via <code>localStorage</code>.
   </p>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════ -->
-<section id="display">
-  <h2>3. Display Controls <a href="#" class="back-top">↑</a></h2>
-
-  <h3>3.1 Conservation Shading</h3>
-  <p>Four shading modes control how residues are coloured based on conservation:</p>
-  <table>
-    <tr><th>Mode</th><th>Description</th></tr>
-    <tr><td>Identity</td><td>Colours only columns where all residues match exactly</td></tr>
-    <tr><td>Similarity</td><td>Groups amino acids by physico-chemical properties (BLOSUM62-based)</td></tr>
-    <tr><td>Clustal</td><td>ClustalW-style colour palette for amino acids</td></tr>
-    <tr><td>Zappo</td><td>Colours by amino acid property class (hydrophobic, positive, negative, etc.)</td></tr>
-  </table>
+<!-- ════════════════════════════════════════ -->
+<section id="input-menu">
+  <h2>2. Input Menu</h2>
   <p>
-    Threshold sliders control how dark the highlight appears: <em>Black</em> (highly conserved),
-    <em>Dark</em> (moderately conserved), <em>Light</em> (weakly conserved).
-    Adjust thresholds from the <em>Display</em> menu.
+    The Input menu is the starting point for loading data into the viewer.
+    It appears as the leftmost dropdown in the menu bar.
   </p>
 
-  <h3>3.2 Colour Schemes</h3>
-  <p>Built-in nucleotide colour schemes: <strong>Default</strong>, <strong>Taylor</strong>, <strong>Nucleobase</strong>.
-  Custom colour settings via the <em>Colour</em> menu: manually colour individual sequences, groups, or taxonomic clades.</p>
-
-  <h3>3.3 Consensus Line</h3>
+  <h3 id="in-fasta">2.1 FASTA / MSF Input</h3>
   <p>
-    Toggle with the <em>Show consensus</em> checkbox. The consensus sequence is displayed
-    at the top or bottom of the alignment (selectable via <em>Top</em> / <em>Bottom</em> radio buttons).
-    The consensus threshold and minimum coverage can be adjusted with sliders.
+    Paste your alignment directly into the textarea. Both FASTA and MSF formats are
+    auto-detected. Click <strong>Load</strong> (or press <kbd>Ctrl+L</kbd>) to process
+    the data. The <strong>Clear</strong> button empties the textarea.
+  </p>
+  <p>
+    The viewer auto-detects sequence type (DNA, RNA, protein) from the residue composition
+    of the first few sequences.
   </p>
 
-  <h3>3.4 Zoom &amp; Name Length</h3>
-  <ul>
-    <li><strong>Zoom</strong> — changes font size (50%–500%)</li>
-    <li><strong>Name Length</strong> — truncates sequence names to N characters. Set to 0 for full names</li>
-    <li><strong>Sticky Names</strong> — lock the name column in place while scrolling horizontally</li>
-  </ul>
-
-  <h3>3.5 Snapshot System</h3>
+  <h3 id="in-file">2.2 File Loading</h3>
   <p>
-    Save and restore complete viewer states. A snapshot captures the current alignment,
-    colour scheme, view mode, zoom level, selected rows/columns, search highlights,
-    and custom colour assignments. Snapshots are stored as JSON files.
+    The drop zone accepts files via drag-and-drop. Click the zone to open a file picker.
+    Supported file types are detected by extension and content inspection. After loading,
+    the file name appears in the top-right info panel.
   </p>
-  <ul>
-    <li><strong>Save Preset</strong> — <kbd>Ctrl+S</kbd> — save current state</li>
-    <li><strong>Load Preset</strong> — <kbd>Ctrl+O</kbd> — restore saved state</li>
-    <li><strong>Snapshots sidebar</strong> — manage multiple snapshots; click to preview, double-click to load</li>
-  </ul>
-</section>
 
-<!-- ═══════════════════════════════════════════════════════════════════ -->
-<section id="editing">
-  <h2>4. Editing Sequences <a href="#" class="back-top">↑</a></h2>
-
-  <h3>4.1 Row Operations</h3>
-  <table>
-    <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
-    <tr><td>Select all</td><td><kbd>Ctrl+A</kbd></td><td>Select / deselect all sequences</td></tr>
-    <tr><td>Copy names</td><td><kbd>Ctrl+C</kbd></td><td>Copy selected sequence names to clipboard</td></tr>
-    <tr><td>Copy sequences</td><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy selected sequences as FASTA</td></tr>
-    <tr><td>Delete</td><td><kbd>Ctrl+Del</kbd></td><td>Remove selected sequences</td></tr>
-    <tr><td>Duplicate</td><td><kbd>Ctrl+U</kbd></td><td>Duplicate selected sequences</td></tr>
-    <tr><td>Reverse complement</td><td><kbd>Ctrl+R</kbd></td><td>Reverse and complement selected sequences (DNA)</td></tr>
-    <tr><td>Move up/down</td><td><kbd>Ctrl+↑</kbd>/<kbd>↓</kbd></td><td>Reorder selected sequences</td></tr>
-    <tr><td>Move to top/bottom</td><td><kbd>Ctrl+Home</kbd>/<kbd>End</kbd></td><td>Send selected to extremes</td></tr>
-    <tr><td>Sort A→Z / Len↓ / Sim↓</td><td>—</td><td>Sort all sequences by name, length (descending), or similarity to the first sequence</td></tr>
-    <tr><td>Exp / Imp</td><td>—</td><td>Export current sequence order as JSON; import and apply a saved order</td></tr>
-    <tr><td>Undo / Redo</td><td><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd></td><td>Full undo history for all edit operations</td></tr>
-  </table>
-  <p>Click sequence names to select individual rows. <strong>Ctrl+Click</strong> for multi-select.
-  Drag rows to reorder them manually.</p>
-
-  <h3>4.2 Column Operations</h3>
-  <table>
-    <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
-    <tr><td>Copy columns</td><td><kbd>Ctrl+Shift+V</kbd></td><td>Copy selected columns as FASTA block</td></tr>
-    <tr><td>Delete columns</td><td><kbd>Ctrl+Shift+D</kbd></td><td>Remove selected columns from all sequences</td></tr>
-    <tr><td>Realign block</td><td><kbd>Ctrl+Shift+R</kbd></td><td>Realign selected columns with MAFFT</td></tr>
-  </table>
-  <p>Select columns by <strong>Ctrl+Click</strong> on any residue. Drag to select column ranges.</p>
-
-  <h3>4.3 GeneDoc-style Edit Mode</h3>
+  <h3 id="in-url">2.3 URL Loading</h3>
   <p>
-    Toggle <em>Edit Mode</em> from the Edit menu to modify individual residues directly in the alignment.
-    Three edit tools are available:
+    Paste a URL to a raw alignment file (e.g., a GitHub raw link or a public server path)
+    and click <strong>Load URL</strong>. The viewer fetches the file via <code>fetch()</code>
+    with CORS restrictions.
   </p>
-  <ul>
-    <li><strong>Type (<em>Type</em>)</strong> — click a cell, type a residue letter or <code>-</code> for gap</li>
-    <li><strong>Insert Column</strong> — insert a gap column at the cursor position</li>
-    <li><strong>Select Column</strong> — click or drag to select columns for bulk delete</li>
-  </ul>
 
+  <h3 id="in-ssh">2.4 SSH Remote Loading</h3>
+  <p>
+    When the server is running with SSH configuration, an SSH row appears in the Input menu.
+    Select a server, enter a file path, and click <strong>Fetch</strong> or press <kbd>Enter</kbd>.
+    The file is read via <code>cat</code> on the remote host and streamed to the browser.
+  </p>
   <div class="note">
-    <strong>Note:</strong> All editing operations are undoable. Edit mode shows the alignment length
-    in the status bar so you can verify changes are applied correctly.
+    <strong>Security:</strong> Path traversal (<code>..</code>) and shell metacharacters are
+    blocked. Files are never written to disk on the server.
   </div>
 
-  <h3>4.4 Sequence Text Editor (SeqEdit)</h3>
+  <h3 id="in-sam">2.5 SAM / BAM / CRAM</h3>
   <p>
-    Open the full-sequence text editor from the Edit menu. This provides a textarea with the
-    raw sequence for the selected row, plus quick transformations:
-    <strong>Degap</strong>, <strong>Reverse</strong>, <strong>Complement</strong>,
-    <strong>Rev Comp</strong>, <strong>Uppercase</strong>, <strong>Lowercase</strong>.
-    Check <em>Pad/trim to alignment length</em> to auto-adjust length on apply.
+    <strong>SAM text</strong> can be pasted directly — it is auto-detected by the tab-separated
+    format and parsed with full CIGAR expansion (insertions, deletions, soft/hard clips).
+  </p>
+  <p>
+    <strong>BAM / CRAM</strong> files require the server endpoint <code>POST /api/bam2sam</code>,
+    which uses <code>samtools view -h</code> to convert to SAM text. The resulting SAM is
+    then parsed and displayed client-side.
   </p>
 
-  <h3>4.5 Add Sequences</h3>
+  <h3 id="in-snapshot">2.6 Snapshots (Save &amp; Load)</h3>
   <p>
-    Paste FASTA sequences into the "Add Sequences" modal. Options:
+    Snapshots capture the complete viewer state — alignment data, view mode, zoom,
+    colour scheme, selected rows/columns, search highlights, and custom colour assignments.
+    They are stored as JSON files.
+  </p>
+  <ul>
+    <li><strong>Save Preset</strong> (<kbd>Ctrl+S</kbd>) — save current state as a named snapshot</li>
+    <li><strong>Load Preset</strong> (<kbd>Ctrl+O</kbd>) — restore a saved snapshot</li>
+    <li>The snapshot dropdown lists all saved snapshots; click to preview, double-click to load</li>
+  </ul>
+  <p>Snapshots persist in <code>localStorage</code> and can be exported/downloaded as JSON files.</p>
+
+  <h3 id="in-saveload">2.7 Save / Export Alignment</h3>
+  <p>
+    Save the current alignment to a file from the Actions menu (see §9.8).
+    Supported output formats: FASTA, MSF, RTF, SVG, standalone HTML.
+  </p>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="alignment-menu">
+  <h2>3. Alignment Menu</h2>
+  <p>
+    The Alignment menu contains tools for realignment, sequence addition, BLAST retrieval,
+    and degapping.
+  </p>
+
+  <h3 id="al-real-time">3.1 Real-Time Alignment</h3>
+  <p>
+    Two alignment engines are available:
+  </p>
+  <ul>
+    <li>
+      <strong>Browser-based (MAFFT WASM)</strong> — runs MAFFT directly in the browser via
+      WebAssembly. No server required. Select from the strategy dropdown (auto, FFT-NS-2,
+      G-INS-i, L-INS-i, E-INS-i) and click <strong>Align</strong>. Suitable for alignments
+      up to ~200 sequences × ~2,000 columns.
+    </li>
+    <li>
+      <strong>Server-based MAFFT</strong> — when the Node.js server is running, alignment
+      requests are sent to the server which executes the native MAFFT binary. Handles larger
+      datasets and supports additional strategies.
+    </li>
+  </ul>
+
+  <h3 id="al-advanced">3.2 Advanced MAFFT Options</h3>
+  <p>The server-based MAFFT supports fine-grained control:</p>
+  <table>
+    <tr><th>Option</th><th>Effect</th></tr>
+    <tr><td>Strategy</td><td>auto, FFT-NS-2, G-INS-i, L-INS-i, E-INS-i</td></tr>
+    <tr><td>Gap open penalty</td><td>Controls the cost of opening a new gap</td></tr>
+    <tr><td>Gap extension penalty</td><td>Controls the cost of extending an existing gap</td></tr>
+    <tr><td>Max iterations</td><td>Number of iterative refinement passes</td></tr>
+    <tr><td>Add-keep-length</td><td>When adding sequences: keep existing alignment length (no re-alignment)</td></tr>
+  </table>
+
+  <h3 id="al-addseq">3.3 Adding Sequences</h3>
+  <p>
+    Click <strong>+ Add Seq</strong> to open the "Add Sequences" modal. Paste one or more
+    FASTA sequences. Options:
   </p>
   <ul>
     <li><strong>Just Add</strong> — append sequences padded with gaps at the end</li>
-    <li><strong>Add &amp; Align</strong> — realign the full alignment with MAFFT (add-keep-length mode)</li>
+    <li><strong>Add &amp; Align</strong> — realign the full alignment with MAFFT using add-keep-length mode</li>
     <li><strong>Align to consensus</strong> — align new sequences against the existing consensus before adding</li>
-    <li><strong>Place at top</strong> — insert new sequences at position 1 (otherwise appended at bottom)</li>
+    <li><strong>Place at top</strong> — insert new sequences at position 1 instead of the bottom</li>
+  </ul>
+
+  <h3 id="al-blast">3.4 BLAST Search</h3>
+  <p>
+    Run BLAST directly from the viewer. Right-click a sequence name and select
+    <strong>BLAST</strong>, or use the Alignment dropdown.
+  </p>
+  <ul>
+    <li><strong>NCBI BLAST</strong> — queries NCBI's BLAST API. Requires a <code>BLAST_API_KEY</code> environment variable on the server</li>
+    <li><strong>Local BLAST</strong> — runs <code>blastn</code> / <code>blastp</code> against locally indexed databases. Requires the NCBI BLAST+ suite installed on the server</li>
+  </ul>
+  <p>Results are shown inline with alignment previews and one-click retrieval of matching sequences.</p>
+
+  <h3 id="al-blast-db">3.5 BLAST Database Management</h3>
+  <p>
+    The BLAST dialog dynamically fetches database lists from the server. Click
+    <strong>+ Manage Databases</strong> to open a management modal:
+  </p>
+  <ul>
+    <li><strong>List databases</strong> — view all configured databases with availability status</li>
+    <li><strong>Add database</strong> — upload a FASTA file, set a name and description; the server runs <code>makeblastdb</code> to index it</li>
+    <li><strong>Delete database</strong> — remove a database and its BLAST index files (<code>.nhr</code>, <code>.nin</code>, <code>.nsq</code>, etc.)</li>
+  </ul>
+  <p>
+    Database metadata is stored in <code>blast_dbs.json</code> and FASTA files/indexes in
+    <code>blast_dbs/</code>. Unavailable databases are shown greyed out.
+  </p>
+
+  <h3 id="al-degap">3.6 Degap Alignment</h3>
+  <p>
+    The <strong>Degap</strong> button removes all gap columns from the alignment.
+    This is useful for extracting ungapped sequence blocks for downstream analysis.
+    The operation is undoable (<kbd>Ctrl+Z</kbd>).
+  </p>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="clustering-menu">
+  <h2>4. Clustering Menu</h2>
+  <p>
+    The Clustering menu provides alignment trimming and subfamily clustering
+    for transposable element annotation and evolutionary analysis.
+  </p>
+
+  <h3 id="cl-trim">4.1 Trimming Parameters</h3>
+  <p>
+    Trim ragged alignment ends before clustering to prevent gap-based artefacts:
+  </p>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td>Left Trim Gap %</td><td>50</td><td>If the sliding window at the left edge has ≥ this % gaps, trim those columns</td></tr>
+    <tr><td>Right Trim Gap %</td><td>80</td><td>Same for right edge (more permissive by default, since right ends are often ragged)</td></tr>
+    <tr><td>Edge Window</td><td>15</td><td>Number of consecutive columns checked at each edge</td></tr>
+  </table>
+  <p>
+    Use <strong>Preview</strong> to see which columns would be trimmed without applying changes.
+    <strong>Trim</strong> removes them; <strong>Undo</strong> reverses. Both are undoable.
+  </p>
+  <div class="tip">
+    <strong>Recommendation:</strong> Always trim before clustering. Gap-heavy edges inflate
+    cluster scores with artefacts.
+  </div>
+
+  <h3 id="cl-basic">4.2 Basic Clustering Parameters</h3>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td>Min Size</td><td>3</td><td>Groups smaller than this are not considered clusters</td></tr>
+    <tr><td>Min Features</td><td>5</td><td>Minimum number of diagnostic positions (unique nucleotide patterns) a cluster must have</td></tr>
+    <tr><td>Max Iter</td><td>10</td><td>Number of clustering rounds with progressively relaxed quality thresholds. More iterations recover smaller families</td></tr>
+  </table>
+
+  <h3 id="cl-quality">4.3 Quality Thresholds</h3>
+  <p>
+    Quality thresholds control how many cluster members must share a given nucleotide pattern
+    for it to be considered a diagnostic feature. Higher values = stricter, fewer but cleaner clusters.
+  </p>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>Applies To</th></tr>
+    <tr><td>Small</td><td>80%</td><td>Clusters of 10 or fewer sequences</td></tr>
+    <tr><td>Medium</td><td>70%</td><td>Clusters of 11–19 sequences</td></tr>
+    <tr><td>Large</td><td>60%</td><td>Clusters of 20 or more sequences</td></tr>
+  </table>
+  <p>
+    Three quality tiers allow tighter thresholds for small clusters (where fewer sequences
+    must agree) and looser thresholds for large clusters (where perfect agreement is
+    unlikely).
+  </p>
+
+  <h3 id="cl-breakpoints">4.4 Size Breakpoints</h3>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td>Small → Medium</td><td>11</td><td>Clusters below this size use the Small quality threshold</td></tr>
+    <tr><td>Medium → Large</td><td>20</td><td>Clusters at or above this size use the Large quality threshold</td></tr>
+    <tr><td>Min Occur</td><td>2</td><td>Minimum number of diagnostic positions required to form a cluster</td></tr>
+  </table>
+
+  <h3 id="cl-presets">4.5 Presets &amp; Workflow</h3>
+  <p>
+    <strong>Presets</strong> save and restore parameter configurations for reproducible analysis:
+  </p>
+  <ul>
+    <li><strong>Save</strong> — store current parameters under a name</li>
+    <li><strong>Load</strong> — restore parameters from a saved preset</li>
+    <li><strong>Optimal</strong> — auto-fill balanced parameters for general subfamily detection</li>
+    <li>Presets are stored in <code>localStorage</code> and persist across sessions</li>
+  </ul>
+  <p>Typical workflow:</p>
+  <ol>
+    <li>Trim alignment ends with Preview → Trim</li>
+    <li>Adjust clustering parameters or load a preset</li>
+    <li>Click <strong>Cluster Now</strong></li>
+    <li>Review results (cluster sizes, diagnostic features, feature tables)</li>
+    <li>Use Actions → <em>Colour by Cluster</em> to visualise groups</li>
+    <li>Compute Group Consensus for selected clusters</li>
+  </ol>
+
+  <h3 id="cl-understanding">4.6 Understanding Results</h3>
+  <p>The clustering algorithm works as follows:</p>
+  <ul>
+    <li>At each alignment column, sequences are grouped by shared nucleotide</li>
+    <li>Groups meeting the size and quality thresholds are collected as candidate clusters</li>
+    <li>Near-identical clusters are fuzzy-merged (Jaccard similarity ≥ 90%)</li>
+    <li>Perfect-unique positions (all cluster members share a base unique to that cluster) get highest weight</li>
+    <li>Outliers matching &lt;50% of core cluster features are pruned</li>
+    <li>The algorithm iterates with progressively relaxed thresholds to recover smaller families</li>
+  </ul>
+  <p>After clustering:</p>
+  <ul>
+    <li>The results panel shows cluster sizes, diagnostic mutation tables, and per-cluster feature statistics</li>
+    <li>Hovering a cluster row highlights all member sequences in the alignment</li>
+    <li><em>Colour by Cluster</em> (Actions menu) assigns persistent background colours to sequence names by cluster membership</li>
+    <li><em>Group Consensus</em> (Consensus menu) computes and inserts a consensus row for any selected cluster</li>
   </ul>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════ -->
-<section id="analysis">
-  <h2>5. Analysis Features <a href="#" class="back-top">↑</a></h2>
-
-  <h3>5.1 Codon Analysis (MACSE-inspired)</h3>
+<!-- ════════════════════════════════════════ -->
+<section id="display-menu">
+  <h2>5. Display Menu</h2>
   <p>
-    Activates codon-aware viewing for coding sequences (CDS). Your alignment must be nucleotide
-    and have length divisible by 3. Enable with the <em>Codons</em> checkbox in the Display menu.
+    The Display menu controls how the alignment is rendered: view mode, visual overlays,
+    zoom level, and name display options.
   </p>
-  <p>Select the appropriate genetic code from the dropdown (17 variants available):</p>
+
+  <h3 id="di-modes">5.1 View Modes</h3>
+  <table>
+    <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
+    <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block.</td></tr>
+    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40–300 chars). Sequence names repeat per block.</td></tr>
+    <tr><td><strong>Compact</strong></td><td>Read alignments, hundreds to thousands of reads</td><td>IGV-style read-packing tracks. Each read is a horizontal bar; mismatches are red ticks. Coverage histogram at top.</td></tr>
+    <tr><td><strong>Canvas</strong></td><td>Massive alignments (≥ 150,000 residues)</td><td>Auto-activates for very large datasets. Canvas-based rendering for performance.</td></tr>
+  </table>
+  <p>
+    Mode switching is instant — no re-render delay. The Block Size slider adjusts
+    characters per block in Block mode and is greyed out in other modes.
+  </p>
+
+  <h3 id="di-checks">5.2 Highlight Diffs &amp; Variable Sites</h3>
+  <p>Two checkboxes control visual filtering of conserved positions:</p>
   <ul>
-    <li><strong>Standard</strong> (NCBI table 1) — default for nuclear genes</li>
-    <li><strong>Vertebrate Mito</strong> (table 2) — AGA/AGG = Stop, ATA = Met, TGA = Trp</li>
-    <li><strong>Yeast Mito</strong> (table 3) — ATA = Met, CTN = Thr, TGA = Trp</li>
-    <li><strong>Invert Mito</strong> (table 5) — AGA/AGG = Ser, ATA = Met, TGA = Trp</li>
-    <li>…plus 12 other mitochondrial and alternative nuclear codes</li>
+    <li>
+      <strong>Highlight diffs</strong> — dims fully-conserved columns to 25% opacity.
+      Works in all four view modes. Rapidly reveals where variation occurs.
+    </li>
+    <li>
+      <strong>Variable sites only</strong> — hides completely conserved columns entirely,
+      showing only positions with variation. Useful for scanning SNP-dense regions.
+    </li>
   </ul>
-  <p>When active, features appear:</p>
+  <p>Both can be combined with any view mode and with Codon analysis.</p>
+
+  <h3 id="di-codons">5.3 Codon Analysis</h3>
+  <p>
+    Activates codon-aware viewing for coding sequences (CDS). Your alignment must be
+    nucleotide and its length must be divisible by 3.
+  </p>
+  <p>Select the appropriate genetic code from the dropdown (17 variants):</p>
+  <table>
+    <tr><th>Code</th><th>NCBI Table</th><th>Key Differences from Standard</th></tr>
+    <tr><td>Standard</td><td>1</td><td>—</td></tr>
+    <tr><td>Vertebrate Mito</td><td>2</td><td>AGA/AGG = Stop, ATA = Met, TGA = Trp</td></tr>
+    <tr><td>Yeast Mito</td><td>3</td><td>ATA = Met, CTN = Thr, TGA = Trp</td></tr>
+    <tr><td>Mold Mito</td><td>4</td><td>TGA = Trp</td></tr>
+    <tr><td>Invert Mito</td><td>5</td><td>AGA/AGG = Ser, ATA = Met, TGA = Trp</td></tr>
+    <tr><td>Ciliate</td><td>6</td><td>TAA/TAG = Gln</td></tr>
+    <tr><td>Echino Mito</td><td>9</td><td>AAA = Asn, AGA/AGG = Ser, TGA = Trp</td></tr>
+    <tr><td>Euplotid</td><td>10</td><td>TGA = Cys</td></tr>
+    <tr><td>Bacteria</td><td>11</td><td>—</td></tr>
+    <tr><td>Alt Yeast</td><td>12</td><td>CTG = Ser</td></tr>
+    <tr><td>Ascidian Mito</td><td>13</td><td>AGA/AGG = Gly, ATA = Met, TGA = Trp</td></tr>
+    <tr><td>Flatworm Mito</td><td>14</td><td>AAA = Asn, AGA/AGG = Ser, TAA = Tyr, TGA = Trp</td></tr>
+    <tr><td>Chlorophyc Mito</td><td>16</td><td>TAG = Leu</td></tr>
+    <tr><td>Trematode Mito</td><td>21</td><td>TGA = Trp, ATA = Met, AGA/AGG = Ser, AAA = Asn</td></tr>
+    <tr><td>Scenedesmus</td><td>22</td><td>TAG = Leu, TCA = Stop</td></tr>
+  </table>
+  <p>When active, the following visual annotations appear:</p>
   <table>
     <tr><th>Feature</th><th>Visual</th></tr>
-    <tr><td>Codon position</td><td>Blue (1st), green (2nd), orange (3rd) underlines</td></tr>
+    <tr><td>Codon positions (1st/2nd/3rd)</td><td>Blue / green / orange underlines</td></tr>
     <tr><td>In-frame stop codons</td><td>Red background, white bold text</td></tr>
     <tr><td>Frameshifts</td><td>Wavy red underline at indel positions that break the reading frame</td></tr>
     <tr><td>Synonymous mutations</td><td>Green underline — amino acid unchanged relative to reference</td></tr>
     <tr><td>Non-synonymous mutations</td><td>Double red underline — amino acid changed</td></tr>
-    <tr><td>AA translation</td><td>Row below each sequence showing amino acid letters; stop codons in bold red (<code>*</code>)</td></tr>
+    <tr><td>AA translation row</td><td>Amino acid letters below each sequence; stops in bold red <code>*</code></td></tr>
   </table>
 
-  <h3>5.2 Dot Plot</h3>
+  <h3 id="di-sticky">5.4 Sticky Names</h3>
   <p>
-    Self-comparison or pairwise comparison of the alignment. Opens from the <em>Analysis</em> menu.
-  </p>
-  <ul>
-    <li><strong>Window size</strong> — sliding window length (odd numbers, 1–61)</li>
-    <li><strong>Threshold</strong> — minimum identity for a dot to be plotted (0–100%)</li>
-    <li><strong>Context radius</strong> — nucleotide context shown in the info panel when hovering (5–100 bp)</li>
-    <li><strong>RevComp B</strong> — reverse-complement axis B to find inverted repeats</li>
-  </ul>
-  <p>Additional dot plot features:</p>
-  <ul>
-    <li><strong>Region detection</strong> — automatically finds the top 30 strongest diagonal runs</li>
-    <li><strong>Click-to-navigate</strong> — click any region in the sidebar to jump to that position in the alignment</li>
-    <li><strong>Copy Region</strong> — export the hovered/selected region as FASTA</li>
-    <li><strong>Export PNG / SVG</strong> — save the dot plot as an image for publication</li>
-    <li><strong>Hover context</strong> — shows aligned sequence context with mismatch highlighting</li>
-  </ul>
-
-  <h3>5.3 Repeat &amp; TSD Finder</h3>
-  <p>
-    Scans the alignment for tandem repeats and target site duplications (TSDs),
-    useful for transposable element annotation.
-  </p>
-  <ul>
-    <li><strong>Tandem repeats</strong> — detects repeats of configurable minimum length and copy number</li>
-    <li><strong>TSD detection</strong> — finds flanking direct repeats with adjustable mismatch tolerance and window size</li>
-    <li><strong>TSR Mark</strong> — highlights found TSD pairs in the alignment using colour, bold, or lowercase styles</li>
-  </ul>
-
-  <h3>5.4 Alignment Tree</h3>
-  <p>
-    Build a UPGMA guide tree from pairwise distances. Opens from the <em>Analysis</em> menu.
-  </p>
-  <ul>
-    <li>Uses pairwise identity distance (1 − fraction of identical non-gap positions)</li>
-    <li>Outputs Newick format with branch lengths</li>
-    <li><strong>Copy Newick</strong> — copy tree string to clipboard</li>
-    <li><strong>Download .nwk</strong> — save as Newick file</li>
-    <li>Text tree visualisation in the output panel</li>
-  </ul>
-
-  <h3>5.5 Search</h3>
-  <p>
-    The search bar (top-right of the menu) highlights occurrences of a sequence motif.
-    Matches are highlighted in the alignment; total count and positions are reported.
-    Click the <em>RC</em> button to search the reverse complement instead.
-    Check the <em>.*</em> checkbox to interpret the motif as a JavaScript regular expression
-    (e.g., <code>[AG]CGT</code>, <code>ATG.{3}TAA</code>).
-    <strong>Ctrl+Click</strong> on any residue to search for that base.
+    When enabled (default), the sequence name column remains fixed on the left while
+    scrolling horizontally. This ensures you always know which sequence you are looking at.
   </p>
 
-  <h3>5.6 Sequence Clustering (Subfamily Detection)</h3>
+  <h3 id="di-zoom">5.5 Zoom &amp; Reset</h3>
   <p>
-    Clusters sequences into putative subfamilies using a position-pattern-based algorithm.
-    Open from the <em>Analysis → Cluster</em> menu (or <em>Colour → Colour by Cluster</em>).
-    Designed for transposable element family annotation.
+    The Zoom slider controls font size from <strong>50% to 200%</strong> using a
+    logarithmic scale. Use the <strong>−</strong> and <strong>+</strong> buttons
+    for fine adjustment, or keyboard shortcuts <kbd>Ctrl+-</kbd> and <kbd>Ctrl++</kbd>.
   </p>
-  <p><strong>How it works:</strong></p>
+  <p>
+    When zoom ≠ 100%, the percentage label turns bold blue.
+    <strong>Click the percentage</strong> to instantly reset to 100%.
+  </p>
+
+  <h3 id="di-names">5.6 Name Length</h3>
+  <p>
+    Controls how many characters of each sequence name are displayed. The slider ranges
+    from 3 to 60. Check <strong>No limit</strong> to show full names regardless of length.
+    This only affects display, not the underlying data.
+  </p>
+
+  <h3 id="di-compat">5.7 Compact Mode Controls</h3>
+  <p>Two additional checkboxes appear only when Compact mode is active:</p>
   <ul>
-    <li>At each alignment column, sequences are grouped by shared nucleotide</li>
-    <li>Groups meeting size and quality thresholds are collected as candidates</li>
-    <li>Near-identical groups are fuzzy-merged (Jaccard ≥ 90%)</li>
-    <li>Diagnostic features are scored — perfect-unique positions get highest weight</li>
-    <li>Outliers matching &lt;50% of cluster features are pruned</li>
-    <li>The algorithm iterates with progressively relaxed thresholds to recover smaller families</li>
+    <li>
+      <strong>Diffs only</strong> — collapses reads to thin hairlines; only mismatch
+      positions are visible. Excellent for spotting variants in read piles.
+    </li>
+    <li>
+      <strong>Pairs</strong> — dashed lines connect paired-end reads. Only appears when
+      the input was SAM with paired-end flags. Click a pair line to highlight both mates.
+    </li>
   </ul>
-  <p><strong>Configurable parameters:</strong></p>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="consensus-menu">
+  <h2>6. Consensus Menu</h2>
+
+  <h3 id="co-display">6.1 Consensus Display</h3>
+  <p>
+    The consensus line shows the most frequent residue (or gap) at each column.
+    Toggle it with the <strong>Show consensus</strong> checkbox. Position it at the
+    <strong>Top</strong> or <strong>Bottom</strong> of the alignment via the radio buttons.
+  </p>
+  <p>Keyboard shortcut: <kbd>Ctrl+B</kbd> toggles the bottom consensus bar.</p>
+
+  <h3 id="co-thresholds">6.2 Thresholds &amp; Coverage</h3>
   <table>
-    <tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr>
-    <tr><td>Min cluster size</td><td>3</td><td>Smallest acceptable cluster</td></tr>
-    <tr><td>Quality threshold (small)</td><td>85%</td><td>For clusters ≤10 seqs</td></tr>
-    <tr><td>Quality threshold (medium)</td><td>75%</td><td>For clusters 11–20 seqs</td></tr>
-    <tr><td>Quality threshold (large)</td><td>65%</td><td>For clusters &gt;20 seqs</td></tr>
-    <tr><td>Min perfect features</td><td>4</td><td>Minimum diagnostic positions required</td></tr>
-    <tr><td>Max iterations</td><td>20</td><td>Progressive relaxation steps</td></tr>
+    <tr><th>Parameter</th><th>Meaning</th></tr>
+    <tr><td>Consensus threshold</td><td>A residue must appear in ≥ this % of sequences at a column to be the consensus call. Below threshold, the position shows <code>?</code></td></tr>
+    <tr><td>Minimum coverage</td><td>A column must have ≥ this % of non-gap characters to be included. Below coverage, the position shows <code>·</code></td></tr>
   </table>
-  <p><strong>After clustering:</strong></p>
-  <ul>
-    <li>Results show cluster sizes, diagnostic mutation tables, and perfect vs. imperfect features</li>
-    <li><em>Colour by Cluster</em> assigns persistent background colours to sequence names by cluster membership</li>
-    <li>Hovering a cluster row highlights all member sequences in the alignment</li>
-    <li><em>Cluster Presets</em> save/restore parameter configurations for reproducible analysis</li>
-    <li>Use <em>Group Consensus</em> to compute and insert a consensus row for any selected cluster</li>
-  </ul>
+
+  <h3 id="co-group">6.3 Group Consensus</h3>
   <p>
-    <strong>Tip:</strong> Trim alignment ends first (Analysis → Cluster → Trim Parameters) to avoid
-    ragged-terminal artifacts inflating cluster scores with gap-based patterns.
+    After clustering (see §4), you can compute a consensus for any selected cluster.
+    The group consensus row is inserted into the alignment at the cluster's position.
+    Useful for extracting representative sequences of each subfamily.
   </p>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════ -->
-<section id="export">
-  <h2>6. Export Options <a href="#" class="back-top">↑</a></h2>
+<!-- ════════════════════════════════════════ -->
+<section id="search-menu">
+  <h2>7. Search Menu</h2>
 
+  <h3 id="se-motif">7.1 Motif Search</h3>
+  <p>
+    Type a sequence motif into the search box and click <strong>Find</strong>
+    (or press <kbd>Ctrl+F</kbd>). Matches are highlighted in the alignment
+    using the selected highlight colour. The total match count and positions
+    are reported.
+  </p>
+  <p>Search is case-insensitive and searches against degapped sequences
+  (gaps are stripped before comparison).</p>
+
+  <h3 id="se-regex">7.2 Regex Search</h3>
+  <p>
+    Check the <strong><code>.*</code></strong> checkbox to interpret your search
+    as a JavaScript regular expression. Examples:
+  </p>
+  <ul>
+    <li><code>[AG]CGT</code> — A or G followed by CGT</li>
+    <li><code>ATG.{3}TAA</code> — ATG, any 3 bases, then TAA (in-frame stop search)</li>
+    <li><code>GG[ACGT]{10,}CC</code> — at least 10 bases between GG and CC</li>
+    <li><code>TATA[AT]A</code> — TATAWA (TATA box motif)</li>
+  </ul>
+
+  <h3 id="se-mismatch">7.3 Mismatch Tolerance</h3>
+  <p>
+    The <strong>Mismatches</strong> input (0–10) allows approximate matching.
+    A mismatch budget of 2 means up to 2 character differences are allowed in each match.
+    Works with both literal and regex search modes.
+  </p>
+
+  <h3 id="se-colour">7.4 Search Highlight Colour</h3>
+  <p>
+    Use the colour picker to choose the highlight colour for search results.
+    Multiple searches (with <strong>Find</strong> not <strong>Clear Last</strong>)
+    accumulate highlights. Use <strong>Clear Last</strong> (<kbd>Ctrl+Shift+F</kbd>)
+    to remove the most recent search highlights.
+  </p>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="edit-menu">
+  <h2>8. Editing</h2>
+  <p>
+    The Edit menu and toolbar provide sequence editing capabilities with full
+    undo/redo support.
+  </p>
+
+  <h3 id="ed-row">8.1 Row Operations</h3>
   <table>
-    <tr><th>Format</th><th>Access</th><th>Notes</th></tr>
-    <tr><td>FASTA</td><td>File → Save as FASTA</td><td>Full alignment or selected sequences only</td></tr>
-    <tr><td>MSF</td><td>File → Save as MSF</td><td>GCG MSF format with header</td></tr>
-    <tr><td>RTF</td><td>File → Export RTF</td><td>GeneDoc-style: monospace, per-residue conservation shading, scale ruler, consensus line. Opens in Word</td></tr>
-    <tr><td>SVG</td><td>File → Export SVG</td><td>Vector graphics of the current view. Publication-quality</td></tr>
-    <tr><td>Open in New Tab</td><td><kbd>Ctrl+T</kbd></td><td>Opens the alignment as a standalone HTML page</td></tr>
-    <tr><td>Copy Selected</td><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy selected sequences to clipboard as FASTA</td></tr>
-    <tr><td>Copy Columns</td><td><kbd>Ctrl+Shift+V</kbd></td><td>Copy selected columns to clipboard as FASTA</td></tr>
+    <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
+    <tr><td>Select all</td><td><kbd>Ctrl+A</kbd></td><td>Select or deselect all sequences</td></tr>
+    <tr><td>Copy names</td><td><kbd>Ctrl+C</kbd></td><td>Copy selected sequence names to clipboard</td></tr>
+    <tr><td>Copy sequences</td><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy selected sequences as FASTA</td></tr>
+    <tr><td>Delete</td><td><kbd>Ctrl+Del</kbd></td><td>Remove selected sequences (undoable)</td></tr>
+    <tr><td>Duplicate</td><td><kbd>Ctrl+U</kbd></td><td>Duplicate selected sequences (undoable)</td></tr>
+    <tr><td>Reverse complement</td><td><kbd>Ctrl+R</kbd></td><td>Reverse and complement selected DNA sequences</td></tr>
+    <tr><td>Move up</td><td><kbd>Ctrl+↑</kbd></td><td>Move selected rows up by one position</td></tr>
+    <tr><td>Move down</td><td><kbd>Ctrl+↓</kbd></td><td>Move selected rows down by one position</td></tr>
+    <tr><td>Move to top</td><td><kbd>Ctrl+Home</kbd></td><td>Send selected rows to the top</td></tr>
+    <tr><td>Move to bottom</td><td><kbd>Ctrl+End</kbd></td><td>Send selected rows to the bottom</td></tr>
+    <tr><td>Undo</td><td><kbd>Ctrl+Z</kbd></td><td>Undo last editing operation</td></tr>
+    <tr><td>Redo</td><td><kbd>Ctrl+Y</kbd></td><td>Redo last undone operation</td></tr>
   </table>
 
-  <h3>6.1 RTF Export Details</h3>
+  <h3 id="ed-col">8.2 Column Operations</h3>
+  <table>
+    <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
+    <tr><td>Copy columns</td><td><kbd>Ctrl+Shift+V</kbd></td><td>Copy selected columns as FASTA block</td></tr>
+    <tr><td>Delete columns</td><td><kbd>Ctrl+Shift+D</kbd></td><td>Remove selected columns from all sequences (undoable)</td></tr>
+    <tr><td>Realign block</td><td><kbd>Ctrl+Shift+R</kbd></td><td>Realign selected columns with MAFFT (requires server)</td></tr>
+  </table>
   <p>
-    The RTF export produces a Word-compatible document with:
+    <strong>Select columns</strong> by <kbd>Ctrl+Click</kbd> on any residue.
+    Drag to select column ranges. Selected columns appear with a green background.
+  </p>
+
+  <h3 id="ed-editmode">8.3 GeneDoc-Style Edit Mode</h3>
+  <p>
+    Toggle <strong>Edit Mode</strong> from the Edit menu or the toolbar.
+    When active, three edit tools appear:
   </p>
   <ul>
-    <li>Courier New monospace font at 9pt</li>
-    <li>Per-residue background colours matching the current shading scheme</li>
-    <li>Scale ruler showing column numbers every 10 positions</li>
-    <li>Consensus line at the bottom</li>
-    <li>Sequence names left-aligned</li>
+    <li>
+      <strong>Move NoGaps</strong> — drag residues without keeping intervening gaps.
+      Equivalent to GeneDoc's "Arrange / MoveText".
+    </li>
+    <li>
+      <strong>Slide KeepGaps</strong> — drag a segment while preserving its internal
+      gap pattern. Equivalent to GeneDoc's "Move / SlideText".
+    </li>
+    <li>
+      <strong>Type</strong> — click a cell and type a residue letter (A, C, G, T, N)
+      or <code>-</code> for a gap. Modifies the cell directly.
+    </li>
+    <li>
+      <strong>Insert Column</strong> — insert a gap column at the cursor position.
+    </li>
+    <li>
+      <strong>Select Column</strong> — click or drag to select columns for bulk delete.
+    </li>
+  </ul>
+  <p>
+    A <em>Live Conservation</em> checkbox updates conservation shading in real time during
+    Move/Slide dragging.
+  </p>
+  <div class="note">
+    <strong>Note:</strong> All editing operations are undoable. The status bar shows the
+    current alignment length so you can verify changes.
+  </div>
+
+  <h3 id="ed-move-slide">8.4 Move &amp; Slide Tools</h3>
+  <p>
+    These tools operate on selected sequences only. <strong>Move NoGaps</strong> shifts
+    residues left or right within the row, collapsing gaps. <strong>Slide KeepGaps</strong>
+    shifts the entire segment (residues + gaps) as a block. Both are controlled by dragging
+    within the alignment viewport.
+  </p>
+
+  <h3 id="ed-seqedit">8.5 Sequence Text Editor</h3>
+  <p>
+    Open the full-sequence text editor from the Edit menu. This provides a textarea
+    with the raw sequence for the selected row, plus quick transformations:
+  </p>
+  <ul>
+    <li><strong>Degap</strong> — remove all gaps from the sequence</li>
+    <li><strong>Reverse</strong> — reverse the sequence order</li>
+    <li><strong>Complement</strong> — complement the sequence (DNA)</li>
+    <li><strong>Rev Comp</strong> — reverse and complement</li>
+    <li><strong>Uppercase</strong> / <strong>Lowercase</strong> — change case</li>
+    <li><strong>Pad/trim to alignment length</strong> — auto-adjust length on apply</li>
   </ul>
 
-  <h3>6.2 SVG Export</h3>
+  <h3 id="ed-undo">8.6 Undo / Redo</h3>
   <p>
-    Two SVG export paths:
+    Every editing operation — row delete, column delete, duplicate, move, slide,
+    type, insert-gap, degap, trim — is tracked in an undo stack.
+    <kbd>Ctrl+Z</kbd> steps backward; <kbd>Ctrl+Y</kbd> steps forward.
+    The undo history is cleared when a new alignment is loaded.
   </p>
-  <ul>
-    <li><strong>Export view as SVG</strong> — exports exactly what's visible on screen</li>
-    <li><strong>Export full alignment as SVG</strong> — exports the entire alignment (all columns) as a single SVG</li>
-  </ul>
+
+  <h3 id="ed-degap">8.7 Degap Tool</h3>
+  <p>
+    The <strong>Degap</strong> button in the Edit toolbar removes all gap-only columns
+    from the entire alignment. This is distinct from the SeqEdit degap (which operates
+    on individual sequences). Alignment-wide degap is undoable.
+  </p>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════ -->
-<section id="server">
-  <h2>7. Server Features <a href="#" class="back-top">↑</a></h2>
-
+<!-- ════════════════════════════════════════ -->
+<section id="actions-menu">
+  <h2>9. Actions Menu</h2>
   <p>
-    The optional Node.js server (<code>server.js</code>) runs locally on port 3000 and provides
-    backend services. Start it with:
-  </p>
-  <pre>node server.js</pre>
-
-  <h3>7.1 MAFFT Integration</h3>
-  <p>
-    Realign alignments or add sequences using MAFFT. Configure the MAFFT binary path
-    in the server settings. Supports multiple MAFFT strategies (auto, L-INS-i, G-INS-i, E-INS-i).
-    Input is sanitized — only whitelisted MAFFT options are passed to the binary.
+    The Actions menu is the rightmost dropdown, containing selection tools,
+    sort functions, analysis tools, colour schemes, and export options.
+    It opens leftward to avoid going off-screen.
   </p>
 
-  <h3>7.2 BLAST Search</h3>
+  <h3 id="ac-select">9.1 Selection</h3>
+  <table>
+    <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
+    <tr><td>Select All</td><td><kbd>Ctrl+A</kbd></td><td>Select or deselect all rows</td></tr>
+    <tr><td>Invert Selection</td><td>—</td><td>Swap selected and unselected rows</td></tr>
+    <tr><td>Select by Name</td><td>—</td><td>Select rows whose names match a pattern</td></tr>
+  </table>
+
+  <h3 id="ac-sort">9.2 Sort Functions</h3>
+  <table>
+    <tr><th>Sort</th><th>Description</th></tr>
+    <tr><td>A → Z</td><td>Sort sequences alphabetically by name</td></tr>
+    <tr><td>Len ↓</td><td>Sort by sequence length, longest first</td></tr>
+    <tr><td>Sim ↓</td><td>Sort by similarity to the first sequence, most similar first</td></tr>
+  </table>
+
+  <h3 id="ac-order">9.3 Save / Load Order</h3>
   <p>
-    Run BLAST directly from the viewer. Right-click a sequence name and select
-    <strong>BLAST</strong> or use the Actions menu. Results are displayed inline
-    with alignment previews and one-click retrieval.
+    The <strong>Exp</strong> (Export Order) button saves the current sequence order
+    as a JSON file. <strong>Imp</strong> (Import Order) loads a previously saved order
+    and reorders the sequences to match. This is useful for applying a curated ordering
+    across multiple sessions or sharing ordering between collaborators.
   </p>
+
+  <h3 id="ac-tools">9.4 Analysis Tools</h3>
+  <table>
+    <tr><th>Tool</th><th>Description</th></tr>
+    <tr><td><strong>New Tab</strong></td><td>Open selected sequences in a new browser tab (<kbd>Ctrl+T</kbd>)</td></tr>
+    <tr><td><strong>TSD Finder</strong></td><td>Find target site duplications around SINE insertion boundaries</td></tr>
+    <tr><td><strong>Tree</strong></td><td>Build a UPGMA tree from selected sequences (pairwise identity distances). Outputs Newick format with branch lengths. Includes Copy Newick and Download .nwk options</td></tr>
+  </table>
+
+  <h3 id="ac-colour">9.5 Colour &amp; Shading</h3>
+  <p><strong>Shading schemes:</strong></p>
+  <table>
+    <tr><th>Scheme</th><th>Behaviour</th></tr>
+    <tr><td>Identity</td><td>Colours only columns where all residues match exactly</td></tr>
+    <tr><td>Similarity</td><td>Groups amino acids by physico-chemical properties (BLOSUM62)</td></tr>
+    <tr><td>Clustal</td><td>ClustalW-style colour palette</td></tr>
+    <tr><td>Zappo</td><td>Colours by amino acid property class (hydrophobic, positive, negative, etc.)</td></tr>
+  </table>
+  <p><strong>Threshold sliders</strong> in the Display menu control darkness:
+  Black (highly conserved), Dark (moderately conserved), Light (weakly conserved).</p>
+  <p>
+    <strong>Nucleotide colour schemes:</strong> Default, Taylor, Nucleobase.
+    <strong>Custom colouring:</strong> manually colour individual sequences, groups,
+    or clades from the Actions → Colour section.
+  </p>
+
+  <h3 id="ac-cluster">9.6 Cluster Operations</h3>
   <ul>
-    <li><strong>NCBI BLAST</strong> — requires <code>BLAST_API_KEY</code> env var</li>
-    <li><strong>Local BLAST</strong> — requires <code>blastn</code> / <code>blastp</code> in PATH and indexed databases</li>
+    <li><strong>Colour by Cluster</strong> — assign persistent background colours to sequence names based on cluster membership</li>
+    <li><strong>Open Cluster</strong> — create clusters with specific parameters for subfamily annotation</li>
   </ul>
 
-  <h4>7.2.1 BLAST Database Management</h4>
-  <p>
-    The BLAST dialog now fetches the database list dynamically from the server.
-    Click <strong>+ Manage Databases</strong> to open a management modal where you can:
-  </p>
-  <ul>
-    <li><strong>List databases</strong> — view all configured databases with availability status</li>
-    <li><strong>Add database</strong> — upload a FASTA file, set a name and description;
-      the server runs <code>makeblastdb</code> to index it automatically</li>
-    <li><strong>Delete database</strong> — remove a database and its BLAST index files
-      (<code>.nhr</code>, <code>.nin</code>, <code>.nsq</code>, etc.)</li>
-  </ul>
-  <p>
-    Database metadata is stored in <code>blast_dbs.json</code> in the server directory.
-    FASTA files and indexes reside in the <code>blast_dbs/</code> subdirectory.
-    Unavailable databases (missing files or unformatted) are shown greyed out with
-    checkboxes disabled.
-  </p>
+  <h3 id="ac-plot">9.7 Plotting</h3>
+  <p><strong>Dot Plot:</strong> Self-comparison or pairwise comparison of the alignment.</p>
+  <table>
+    <tr><th>Parameter</th><th>Description</th></tr>
+    <tr><td>Window size</td><td>Sliding window length (odd, 1–61)</td></tr>
+    <tr><td>Threshold</td><td>Minimum identity for a dot (0–100%)</td></tr>
+    <tr><td>Context radius</td><td>Nucleotide context shown on hover (5–100 bp)</td></tr>
+    <tr><td>RevComp B</td><td>Reverse-complement axis B to find inverted repeats</td></tr>
+  </table>
+  <p>Additional features: automatic region detection (top 30 diagonal runs),
+  click-to-navigate to alignment position, copy region as FASTA,
+  export as PNG or SVG.</p>
 
-  <h3>7.3 SSH Remote Loading</h3>
+  <h3 id="ac-export">9.8 Export &amp; Share</h3>
+  <table>
+    <tr><th>Format</th><th>Use</th><th>Notes</th></tr>
+    <tr><td>FASTA</td><td>Downstream tools</td><td>Full alignment or selected sequences only</td></tr>
+    <tr><td>MSF</td><td>GCG-compatible tools</td><td>MSF format with header block</td></tr>
+    <tr><td>RTF</td><td>Microsoft Word</td><td>Monospace, per-residue shading, scale ruler, consensus line</td></tr>
+    <tr><td>SVG</td><td>Publication figures</td><td>Vector graphics — viewport or full alignment</td></tr>
+    <tr><td>Standalone HTML</td><td>Sharing</td><td>Self-contained HTML page with embedded alignment (<kbd>Ctrl+T</kbd>)</td></tr>
+    <tr><td>Copy Selected</td><td>Clipboard</td><td>FASTA of selected sequences (<kbd>Ctrl+Shift+C</kbd>)</td></tr>
+    <tr><td>Copy Columns</td><td>Clipboard</td><td>FASTA of selected columns (<kbd>Ctrl+Shift+V</kbd>)</td></tr>
+  </table>
   <p>
-    Load alignment files directly from a remote server via SSH. Configure host, user,
-    and key path in the server. Files are fetched with <code>cat</code> and piped to
-    the browser — no temporary files written.
+    RTF export uses Courier New 9pt with per-residue background colours matching
+    the current shading scheme, a scale ruler every 10 columns, and the consensus line.
   </p>
-  <ul>
-    <li>Path traversal protection — <code>..</code> and special characters are blocked</li>
-    <li>SSH key path configurable via <code>SSH_KEY_PATH</code> environment variable</li>
-    <li>Status console shows transfer progress</li>
-  </ul>
-
-  <h3>7.4 BAM/CRAM Support</h3>
-  <p>
-    <strong>Endpoint:</strong> <code>POST /api/bam2sam</code>
-  </p>
-  <p>
-    Converts BAM/CRAM files to SAM text on the server using <code>samtools view -h</code>.
-    The resulting SAM is sent to the browser, parsed client-side, and rendered as a
-    read alignment in the viewer.
-  </p>
-  <pre># Example request body
-{
-  "bamPath": "/data/alignments/sample.bam",
-  "region": "chr1:1000-5000"   // optional
-}</pre>
-
-  <h3>7.5 Security</h3>
-  <ul>
-    <li><strong>CORS</strong> — restricted to localhost by default; configurable via <code>CORS_ORIGIN</code> env var</li>
-    <li><strong>Request body limit</strong> — 10 MB maximum</li>
-    <li><strong>Path traversal blocked</strong> — <code>..</code> and shell metacharacters rejected in file paths</li>
-    <li><strong>MAFFT input sanitized</strong> — only whitelisted options pass to the binary</li>
-    <li><strong>BLAST parameters validated</strong> — no arbitrary flag injection</li>
-  </ul>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════ -->
 <section id="shortcuts">
-  <h2>8. Keyboard Shortcuts <a href="#" class="back-top">↑</a></h2>
+  <h2>10. Keyboard Shortcuts</h2>
 
+  <h3 id="sc-general">10.1 General</h3>
   <table>
     <tr><th>Shortcut</th><th>Action</th></tr>
-    <tr><td><kbd>Ctrl+L</kbd></td><td>Load file</td></tr>
+    <tr><td><kbd>Ctrl+L</kbd></td><td>Load alignment from input</td></tr>
+    <tr><td><kbd>Ctrl+H</kbd></td><td>Hide / show menu bar</td></tr>
+    <tr><td><kbd>Ctrl+I</kbd></td><td>Show keyboard shortcuts reference</td></tr>
+    <tr><td><kbd>Ctrl+S</kbd></td><td>Save snapshot / preset</td></tr>
+    <tr><td><kbd>Ctrl+O</kbd></td><td>Load snapshot / preset</td></tr>
+    <tr><td><kbd>Ctrl+T</kbd></td><td>Open alignment in new tab</td></tr>
+    <tr><td><kbd>Ctrl+F</kbd></td><td>Search motif</td></tr>
+    <tr><td><kbd>Ctrl+Shift+F</kbd></td><td>Clear last search highlight</td></tr>
+    <tr><td><kbd>Ctrl+-</kbd></td><td>Zoom out</td></tr>
+    <tr><td><kbd>Ctrl++</kbd></td><td>Zoom in</td></tr>
+    <tr><td><kbd>Ctrl+B</kbd></td><td>Toggle bottom consensus bar</td></tr>
+  </table>
+
+  <h3 id="sc-editing">10.2 Editing</h3>
+  <table>
+    <tr><th>Shortcut</th><th>Action</th></tr>
     <tr><td><kbd>Ctrl+A</kbd></td><td>Select / deselect all sequences</td></tr>
     <tr><td><kbd>Ctrl+C</kbd></td><td>Copy selected sequence names</td></tr>
     <tr><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy selected sequences (FASTA)</td></tr>
@@ -591,7 +1048,6 @@ kbd {
     <tr><td><kbd>Ctrl+Y</kbd></td><td>Redo</td></tr>
     <tr><td><kbd>Ctrl+R</kbd></td><td>Reverse complement selected</td></tr>
     <tr><td><kbd>Ctrl+U</kbd></td><td>Duplicate selected</td></tr>
-    <tr><td><kbd>Ctrl+B</kbd></td><td>Toggle consensus bar (below)</td></tr>
     <tr><td><kbd>Ctrl+↑</kbd></td><td>Move selected rows up</td></tr>
     <tr><td><kbd>Ctrl+↓</kbd></td><td>Move selected rows down</td></tr>
     <tr><td><kbd>Ctrl+Home</kbd></td><td>Move selected to top</td></tr>
@@ -599,97 +1055,174 @@ kbd {
     <tr><td><kbd>Ctrl+Shift+V</kbd></td><td>Copy selected columns</td></tr>
     <tr><td><kbd>Ctrl+Shift+D</kbd></td><td>Delete selected columns</td></tr>
     <tr><td><kbd>Ctrl+Shift+R</kbd></td><td>Realign selected block (MAFFT)</td></tr>
-    <tr><td><kbd>Ctrl+T</kbd></td><td>Open alignment in new tab</td></tr>
-    <tr><td><kbd>Ctrl+S</kbd></td><td>Save snapshot / preset</td></tr>
-    <tr><td><kbd>Ctrl+O</kbd></td><td>Load snapshot / preset</td></tr>
-    <tr><td><kbd>Ctrl+H</kbd></td><td>Hide / show menu bar</td></tr>
-    <tr><td><kbd>Ctrl+I</kbd></td><td>Show keyboard shortcuts</td></tr>
   </table>
 
-  <h3>Mouse Actions</h3>
+  <h3 id="sc-mouse">10.3 Mouse Actions</h3>
   <table>
     <tr><th>Action</th><th>Result</th></tr>
     <tr><td>Click sequence name</td><td>Select row</td></tr>
-    <tr><td>Ctrl+Click sequence name</td><td>Toggle row selection</td></tr>
+    <tr><td>Ctrl+Click name</td><td>Toggle row selection</td></tr>
     <tr><td>Ctrl+Click residue</td><td>Select column / search for that base</td></tr>
-    <tr><td>Drag column</td><td>Select column range</td></tr>
+    <tr><td>Drag residue</td><td>Select column range</td></tr>
     <tr><td>Drag sequence name</td><td>Reorder rows</td></tr>
-    <tr><td>Right-click alignment</td><td>Context menu (copy, export, edit)</td></tr>
-    <tr><td>Middle-click / pan</td><td>Pan viewport (drag to scroll)</td></tr>
+    <tr><td>Right-click alignment</td><td>Context menu (copy, BLAST, export)</td></tr>
+    <tr><td>Middle-click + drag</td><td>Pan viewport</td></tr>
+    <tr><td>Scroll wheel</td><td>Vertical scroll</td></tr>
+    <tr><td>Shift + scroll wheel</td><td>Horizontal scroll</td></tr>
   </table>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════ -->
-<section id="tips">
-  <h2>9. Tips &amp; Tricks <a href="#" class="back-top">↑</a></h2>
+<!-- ════════════════════════════════════════ -->
+<section id="server">
+  <h2>11. Server Features</h2>
+  <p>
+    The optional Node.js server (<code>server.js</code>) provides backend services.
+    Start it from the project directory:
+  </p>
+  <pre>node server.js</pre>
+  <p>The server listens on port 3000 by default.</p>
 
-  <h3>9.1 Large Alignments</h3>
+  <h3 id="sv-setup">11.1 Setup</h3>
+  <p>Requirements:</p>
   <ul>
-    <li>Use <strong>Compact mode</strong> for &gt;200 sequences — it's designed for thousands of reads</li>
-    <li>Turn on <strong>Highlight Diffs</strong> to visually compress conserved regions</li>
-    <li>Use <strong>Block mode</strong> with smaller block sizes (20-30 columns) for wide alignments</li>
-    <li>For extremely large files (&gt;500 seq × 5000 col), consider splitting the input</li>
+    <li>Node.js ≥ 16</li>
+    <li><strong>MAFFT</strong> — for realignment (binary in PATH)</li>
+    <li><strong>BLAST+</strong> — for local BLAST search (optional)</li>
+    <li><strong>samtools</strong> — for BAM/CRAM conversion (optional)</li>
+    <li><strong>SSH key</strong> — for remote file access (optional)</li>
   </ul>
+  <p>Environment variables:</p>
+  <table>
+    <tr><th>Variable</th><th>Purpose</th></tr>
+    <tr><td><code>CORS_ORIGIN</code></td><td>Allowed origin for cross-origin requests (default: localhost only)</td></tr>
+    <tr><td><code>SSH_KEY_PATH</code></td><td>Path to SSH private key for remote access</td></tr>
+    <tr><td><code>BLAST_API_KEY</code></td><td>NCBI API key for NCBI BLAST queries</td></tr>
+  </table>
 
-  <h3>9.2 Publication Figures</h3>
+  <h3 id="sv-mafft">11.2 MAFFT Integration</h3>
+  <p>
+    The server executes MAFFT as a child process with whitelisted options only.
+    Input is sanitised — only recognised MAFFT flags are passed to the binary.
+    Strategies: auto, FFT-NS-2, G-INS-i, L-INS-i, E-INS-i.
+  </p>
+
+  <h3 id="sv-ssh">11.3 SSH Remote Access</h3>
+  <p>
+    Fetch alignment files from remote servers via SSH. Configuration is read from
+    the SSH config and key path. Files are read with <code>cat</code> and streamed
+    to the browser — no temporary files on disk.
+  </p>
+  <div class="note">
+    <strong>Security:</strong> Path traversal (<code>..</code>), tilde expansion,
+    and shell metacharacters are blocked. Only absolute paths are accepted.
+  </div>
+
+  <h3 id="sv-bam">11.4 BAM/CRAM Support</h3>
+  <p><strong>Endpoint:</strong> <code>POST /api/bam2sam</code></p>
+  <pre>{
+  "bamPath": "/data/alignments/sample.bam",
+  "region": "chr1:1000-5000"
+}</pre>
+  <p>
+    Converts BAM/CRAM to SAM using <code>samtools view -h</code>.
+    The <code>region</code> field is optional and restricts output to a genomic interval.
+    Resulting SAM is parsed client-side with CIGAR expansion.
+  </p>
+
+  <h3 id="sv-security">11.5 Security</h3>
   <ul>
-    <li><strong>Block mode</strong> + <strong>Zappo shading</strong> for amino acid alignments</li>
-    <li><strong>Export SVG</strong> for vector graphics — edit in Inkscape/Illustrator</li>
-    <li><strong>Export RTF</strong> for Word-compatible alignments with conservation shading</li>
-    <li><strong>Dot plot → Export SVG</strong> for high-quality dot plots</li>
-    <li>Use <strong>Snapshots</strong> to save exact figure settings and reproduce them later</li>
+    <li><strong>CORS</strong> — restricted to localhost by default; configurable via <code>CORS_ORIGIN</code></li>
+    <li><strong>Request body limit</strong> — capped at 10 MB</li>
+    <li><strong>Path traversal</strong> — <code>..</code> and shell metacharacters blocked in file paths</li>
+    <li><strong>MAFFT argument whitelist</strong> — only recognised options pass to the binary</li>
+    <li><strong>BLAST parameter validation</strong> — no arbitrary flag injection</li>
+    <li><strong>SSH key path</strong> — auto-detected from <code>os.homedir()</code>, overridable via <code>SSH_KEY_PATH</code></li>
   </ul>
-
-  <h3>9.3 Coding Sequence Analysis</h3>
-  <ul>
-    <li>Ensure your alignment is in-frame (length multiples of 3) before enabling Codon mode</li>
-    <li>Select the correct genetic code for your organism — mitochondrial genes use different codes</li>
-    <li>Check for frameshifts (wavy red underlines) — these often indicate sequencing errors or pseudogenes</li>
-    <li>Non-synonymous mutations (double red underline) that cluster may indicate positive selection</li>
-    <li>Stop codons in the middle of a CDS suggest pseudogenization or misannotation</li>
-    <li>Use <em>Highlight Diffs</em> + <em>Codon Analysis</em> together to rapidly scan for impactful mutations</li>
-  </ul>
-
-  <h3>9.4 SAM/BAM Workflows</h3>
-  <ul>
-    <li>Paste SAM text directly into the input — auto-detected</li>
-    <li>For BAM files on the server, use the <code>/api/bam2sam</code> endpoint</li>
-    <li>Use <strong>Compact mode</strong> for read alignments — it shows coverage, mismatches, and paired-end connections</li>
-    <li>Turn on <strong>Pairs</strong> to see insert-size relationships between paired reads</li>
-    <li>Use <strong>Diffs only</strong> to see only variant positions across hundreds of reads</li>
-  </ul>
-
-  <h3>9.5 General Productivity</h3>
-  <ul>
-    <li><strong>Ctrl+Click</strong> any residue to instantly search for that base throughout the alignment</li>
-    <li>Use <strong>Ctrl+Shift+R</strong> to realign a problematic region without touching the rest</li>
-    <li>Colour groups of sequences by taxonomy for visual comparison (Colour menu)</li>
-    <li>The <strong>Undo</strong> stack preserves all edits — freely experiment with editing</li>
-    <li>Keep the server running if you use MAFFT/BLAST/SSH frequently — it's lightweight</li>
-  </ul>
-
-  <h3>9.6 Clustering Workflow</h3>
-  <ul>
-    <li>Start with <strong>trimming</strong> (Analysis → Cluster → Trim Parameters) to exclude ragged alignment ends — gap patterns inflate cluster scores</li>
-    <li>Run clustering at default settings first, then adjust <strong>quality thresholds</strong> if clusters are too large or too fragmented</li>
-    <li>Use <strong>Colour by Cluster</strong> to visually validate cluster assignments — outliers are obvious against colour-uniform groups</li>
-    <li>For each cluster: run <strong>Group Consensus</strong> to extract the subfamily consensus sequence</li>
-    <li>Export consensus + member sequences to the <strong>SINE Pixel Viewer</strong> for dense copy-level annotation</li>
-    <li>Save parameter presets so different TE families can be re-analysed with consistent settings</li>
-  </ul>
-
 </section>
 
-</main>
+<!-- ════════════════════════════════════════ -->
+<section id="tips">
+  <h2>12. Tips &amp; Best Practices</h2>
 
+  <h3 id="tp-large">12.1 Large Alignments</h3>
+  <ul>
+    <li>Use <strong>Compact mode</strong> for ≥ 200 sequences — it is designed for thousands of reads</li>
+    <li>Turn on <strong>Highlight Diffs</strong> to visually compress conserved regions</li>
+    <li>Use <strong>Block mode</strong> with smaller block sizes (20–30 columns) for very wide alignments</li>
+    <li>The <strong>Canvas</strong> mode auto-activates at ≥ 150,000 total residues for maximum performance</li>
+    <li>For extremely large files (&gt; 500 sequences × 5,000 columns), consider splitting the input</li>
+    <li>Use <strong>Variable sites only</strong> to strip conserved columns and reduce visual noise</li>
+  </ul>
+
+  <h3 id="tp-figures">12.2 Publication Figures</h3>
+  <ul>
+    <li><strong>Block mode</strong> + <strong>Zappo shading</strong> for amino acid alignments</li>
+    <li><strong>Export SVG</strong> for vector graphics — refine in Inkscape or Illustrator</li>
+    <li><strong>Export RTF</strong> for Word-compatible alignments with conservation shading</li>
+    <li><strong>Dot plot → Export SVG</strong> for high-quality dot plots</li>
+    <li>Use <strong>Snapshots</strong> to save exact figure settings for reproducibility</li>
+    <li>Set Name Length to a short value (e.g., 10–15 characters) for cleaner figures</li>
+    <li>Adjust zoom to fit the alignment width on your target page</li>
+  </ul>
+
+  <h3 id="tp-coding">12.3 Coding Sequence Analysis</h3>
+  <ul>
+    <li>Ensure your alignment is in-frame (length multiples of 3) before enabling Codon mode</li>
+    <li>Select the correct genetic code — mitochondrial genes use different codes than nuclear</li>
+    <li>Wavy red underlines (frameshifts) often indicate sequencing errors or pseudogenes</li>
+    <li>Clusters of non-synonymous mutations (double red underline) may indicate positive selection</li>
+    <li>Mid-CDS stop codons suggest pseudogenisation or misannotation</li>
+    <li>Combine <strong>Highlight Diffs</strong> + <strong>Codon Analysis</strong> to rapidly scan for impactful mutations</li>
+    <li>The AA translation row confirms reading frame — if it looks garbled, check your frame</li>
+  </ul>
+
+  <h3 id="tp-clustering">12.4 Clustering Best Practices</h3>
+  <ul>
+    <li><strong>Always trim</strong> alignment ends before clustering — ragged edges inflate gap-based cluster scores</li>
+    <li>Start with the <strong>Optimal</strong> preset, then tighten thresholds if clusters look noisy</li>
+    <li>Use <strong>Preview</strong> (trim) and review the cluster table before committing to colours</li>
+    <li>For small families, lower <em>Min Size</em> to 2 and reduce quality thresholds</li>
+    <li>For highly conserved families, increase quality thresholds (90%+ for small clusters)</li>
+    <li>After clustering, use <strong>Colour by Cluster</strong> + <strong>Group Consensus</strong> to extract representative sequences</li>
+    <li>Save working parameter sets as named presets for reproducibility</li>
+    <li>Clusters of size 1 are discarded — they may represent singletons or sequencing artefacts</li>
+  </ul>
+</section>
+
+</div>
+
+<!-- ── JS: sidebar active tracking ── -->
 <script>
-// Smooth scroll
-document.querySelectorAll('nav a[href^="#"]').forEach(a => {
-  a.addEventListener('click', e => {
-    e.preventDefault();
-    document.querySelector(a.getAttribute('href')).scrollIntoView({ behavior: 'smooth' });
+(function() {
+  const sidebar = document.getElementById('sidebar');
+  const allLinks = sidebar.querySelectorAll('a[href^="#"]');
+
+  // Expand/collapse groups
+  sidebar.querySelectorAll('.side-group > a').forEach(groupLink => {
+    groupLink.addEventListener('click', function(e) {
+      // Don't toggle on direct section link if we're just scrolling
+    });
   });
-});
+
+  const headings = [];
+  document.querySelectorAll('#main section h2, #main section h3').forEach(h => {
+    if (h.id) headings.push({ el: h, id: h.id });
+  });
+
+  function updateActive() {
+    let activeId = null;
+    const scrollY = window.scrollY + 100;
+    for (const h of headings) {
+      if (h.el.offsetTop <= scrollY) activeId = h.id;
+    }
+    allLinks.forEach(a => {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + activeId);
+    });
+  }
+
+  window.addEventListener('scroll', updateActive, { passive: true });
+  updateActive();
+})();
 </script>
 
 </body>
