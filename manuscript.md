@@ -3,17 +3,17 @@
 ## Target
 **Bioinformatics (Oxford) — Application Note**
 - 4 pages, ~2,600 words + 1–2 figures
-- 10–15 references
+- 13 references
 
 ---
 
 ## Summary
 
-MSA Viewer is a browser-based platform for interactive visualization, editing, and analysis of multiple sequence alignments. It supports DNA, RNA, protein, and coding-sequence data across five interchangeable view modes, including a Canvas-based renderer with viewport culling for large alignments and an IGV-style compact read-packing mode for next-generation sequencing reads. Built-in analysis tools include codon-aware frame detection with 17 selectable genetic codes, synonymous/non-synonymous mutation classification, dot-plot self-comparison with automatic region detection, tandem repeat and target-site duplication finding, and UPGMA tree reconstruction. Alignments can be edited through a GeneDoc-style residue editor and exported as publication-quality SVG vector graphics or Word-compatible RTF files with per-residue conservation shading. An optional companion Node.js server provides MAFFT realignment, BLAST search, SSH remote file loading, and on-the-fly BAM-to-SAM conversion via samtools. The viewer runs entirely in modern web browsers with no installation required and is freely available at https://toki-bio.github.io/MSA-viewer/ under the MIT license.
+MSA Viewer is a browser-based platform for interactive visualization, editing, and analysis of multiple sequence alignments. It supports DNA, RNA, protein, and coding-sequence data across five interchangeable view modes, including a Canvas-based renderer with viewport culling that automatically activates for large alignments and an IGV-style compact read-packing mode for next-generation sequencing reads. Eight input formats are supported — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, and BAM/CRAM — with automatic format detection. Built-in analysis tools include codon-aware frame detection with 17 selectable genetic codes, synonymous/non-synonymous mutation classification, dot-plot self-comparison with automatic region detection, tandem repeat and target-site duplication (TSD) finding, UPGMA tree reconstruction, and regular-expression motif search. Alignments can be edited through a GeneDoc-style residue editor, sorted by name, length, or similarity, and exported as publication-quality SVG vector graphics or Word-compatible RTF files with per-residue conservation shading. A recent-files history with localStorage persistence tracks opened files and clipboard pastes. An optional companion Node.js server provides MAFFT realignment, BLAST search, SSH remote file loading, and on-the-fly BAM-to-SAM conversion via samtools. The viewer runs entirely in modern web browsers with no installation required and is freely available at https://toki-bio.github.io/MSA-viewer/ under the MIT license.
 
-**Availability:** https://toki-bio.github.io/MSA-viewer/ — source code, manual, and example data at https://github.com/Toki-bio/MSA-viewer
+**Availability:** https://toki-bio.github.io/MSA-viewer/ — source code, comprehensive manual, and example data at https://github.com/Toki-bio/MSA-viewer
 **Contact:** [email]
-**Supplementary information:** Comprehensive manual (manual.html), example alignments, and server setup guide included in the repository.
+**Supplementary information:** 9-section manual (manual.html), example alignments, server setup guide, and feature inventory table included in the repository.
 
 ---
 
@@ -21,9 +21,9 @@ MSA Viewer is a browser-based platform for interactive visualization, editing, a
 
 Multiple sequence alignment (MSA) is a foundational technique in computational biology, essential for phylogenetic inference, protein structure prediction, functional motif detection, and comparative genomics. While mature alignment construction tools exist — MAFFT (Katoh & Standley, 2013), Clustal Omega (Sievers et al., 2011), MUSCLE (Edgar, 2004) — the downstream viewing and editing of alignments remains fragmented across desktop applications that require platform-specific installation and lack modern web-based interactivity.
 
-Desktop viewers such as Jalview (Waterhouse et al., 2009), AliView (Larsson, 2014), and SeaView (Gouy et al., 2010) provide rich feature sets but are tied to Java or native binaries and cannot easily integrate with web-based workflows or NGS pipelines. The browser-based MSAViewer (Yachdav et al., 2016) demonstrated the value of JavaScript-based MSA visualization, but its scope is limited to display with minimal editing or analysis functionality. Meanwhile, tools like IGV (Robinson et al., 2011) excel at read-level visualization but do not handle codon-level analysis or traditional MSA editing workflows. No existing tool combines interactive MSA editing, NGS read alignment viewing, coding-sequence analysis, and publication-quality export in a single browser-based platform.
+Desktop viewers such as Jalview (Waterhouse et al., 2009), AliView (Larsson, 2014), and SeaView (Gouy et al., 2010) provide rich feature sets but are tied to Java or native binaries. The browser-based MSAViewer (Yachdav et al., 2016) demonstrated the value of JavaScript-based MSA visualization, but its scope is limited to display with minimal editing or analysis functionality. IGV (Robinson et al., 2011) excels at read-level visualization but does not handle codon-level analysis or traditional MSA editing workflows. Furthermore, no existing tool accepts the full range of alignment formats (FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, BAM/CRAM) in a single interface, forcing users to convert between formats with external tools.
 
-Here we present MSA Viewer, a self-contained browser application that bridges these gaps. It provides four interchangeable view modes, GeneDoc-style interactive editing, MACSE-inspired codon analysis with 17 selectable genetic codes, and an IGV-style compact read-packing mode for SAM alignments — all running client-side without installation. An optional local server extends functionality with MAFFT realignment, BLAST search, and remote file access via SSH.
+Here we present MSA Viewer, a self-contained browser application that bridges these gaps. It combines interactive editing, NGS read alignment viewing, coding-sequence analysis, and publication-quality export in a zero-installation package, with automatic format detection across eight input types and a Canvas rendering mode that scales to thousands of sequences.
 
 ---
 
@@ -31,53 +31,64 @@ Here we present MSA Viewer, a self-contained browser application that bridges th
 
 ### 2.1 Architecture
 
-MSA Viewer is implemented as a single-page web application in vanilla JavaScript (~10,500 lines) with standard HTML and CSS. It has no framework dependencies, no build step, and no required installation — only a modern web browser is needed. The client runs on GitHub Pages for zero-configuration deployment. An optional Node.js Express server (`server.js`) provides backend services (MAFFT, BLAST, samtools) when additional compute resources are available locally. The server is not required for core viewing and editing functionality.
+MSA Viewer is implemented as a single-page web application in vanilla JavaScript (~12,000 lines) with standard HTML and CSS. It has no framework dependencies, no build step, and no required installation — only a modern web browser is needed. The client runs on GitHub Pages for zero-configuration deployment. An optional Node.js Express server (`server.js`) provides backend services (MAFFT, BLAST, samtools) when additional compute resources are available. The server is not required for core functionality.
 
 ### 2.2 Data Loading and Format Support
 
-Alignments can be loaded through six mechanisms: text paste, drag-and-drop, file picker, URL fetch, SSH remote loading (via the server), or GenBank accession lookup with automatic alignment. Supported input formats include FASTA (interleaved or sequential), GCG Multiple Sequence Format (MSF), and SAM. BAM and CRAM files are supported through a server-side `samtools view` pipeline that converts them to SAM for client-side parsing.
+Eight input formats are supported with automatic detection, eliminating the need for pre-conversion:
 
-The SAM parser auto-detects the format by checking for `@HD` or `@SQ` header lines, or tab-separated alignment records with CIGAR strings. All eleven CIGAR operations (M, I, D, S, H, N, P, =, X) are expanded into gapped alignments against a pileup consensus reference built from all mapped reads. Secondary, supplementary, and unmapped reads are filtered. The resulting alignment renders identically to FASTA-derived data in all view modes.
+| Format | Extension | Detection |
+|--------|-----------|-----------|
+| FASTA | .fasta, .fa | `>` header lines |
+| MSF | .msf | `MSF:` header block |
+| Clustal | .aln | `CLUSTAL` or `MUSCLE` header |
+| PHYLIP | .phy | `nSeqs length` first-line pattern |
+| NEXUS | .nex, .nxs | `#NEXUS` or `begin data` blocks |
+| Stockholm | .sth | `# STOCKHOLM 1.0` header |
+| SAM | .sam | `@HD`/`@SQ` headers or tab-separated CIGAR |
+| BAM/CRAM | .bam, .cram | Server-side `samtools view` pipeline |
+
+Alignments can be loaded through six mechanisms: text paste, drag-and-drop, file picker, URL fetch, SSH remote loading (via the server), or GenBank accession lookup with automatic alignment. A recent-files history panel stores metadata and full text (up to 100 KB per entry) in localStorage, allowing users to reload previous files and clipboard pastes across browser sessions.
+
+The SAM parser expands all eleven CIGAR operations (M, I, D, S, H, N, P, =, X) into gapped alignments against a pileup consensus reference built from all mapped reads. Secondary, supplementary, and unmapped reads are filtered. The Clustal, PHYLIP, NEXUS, and Stockholm parsers handle both sequential and interleaved alignment layouts.
 
 ### 2.3 View Modes
 
-Four interchangeable view modes serve different analytical needs:
+Five interchangeable view modes serve different analytical needs, with automatic mode selection for large datasets:
 
-- **Single mode**: continuous scrolling alignment optimized for browsing and editing alignments of typical size.
-- **Block mode**: fixed-width blocks (configurable 20–100 columns) with repeating sequence labels, designed for publication-quality inspection and figure preparation.
-- **Canvas mode**: a GPU-composited 2D canvas renderer that draws only the visible viewport, eliminating per-residue DOM nodes. This mode handles alignments of thousands of sequences and tens of thousands of columns with responsive scrolling, addressing the fundamental limitation of DOM-based MSA rendering. Navigation is via mouse wheel or click-drag panning.
-- **Compact mode**: SVG-based read-packing tracks inspired by IGV. A coverage histogram is displayed at the top, with reads rendered as bars and mismatch positions marked in red. A greedy track-assignment algorithm packs hundreds or thousands of reads into minimal vertical space.
-- **Highlight Diffs**: a cross-mode overlay that dims fully-conserved columns to 25% opacity (CSS in DOM modes, lighter fill in Canvas mode), drawing attention to variable sites.
+- **Full mode**: continuous scrolling alignment optimized for browsing and editing.
+- **Block mode**: fixed-width blocks (configurable 20–100 columns) with repeating sequence labels, designed for publication-quality inspection.
+- **Canvas mode**: a GPU-composited 2D canvas renderer that draws only the visible viewport, eliminating per-residue DOM nodes. This mode activates automatically when the alignment exceeds 150,000 total residues (~100 sequences × 1,500 columns), with an explanatory toast message and the option to switch back to DOM modes for editing. Navigation is via mouse wheel or click-drag panning. Conservation shading is fully supported.
+- **Compact mode**: SVG-based read-packing tracks inspired by IGV. A coverage histogram is displayed at the top; reads are rendered as bars with mismatch positions marked in red. Optional controls include "Diffs only" (reads reduced to 4-pixel hairlines showing only mismatches) and "Pairs" (dashed lines connecting paired-end reads detected from SAM flags, with mate-pair position from column 8 of the SAM record).
+- **Variable sites only** and **Highlight Diffs**: cross-mode overlays. Variable sites mode hides fully-conserved columns, collapsing the alignment to only informative positions. Highlight Diffs dims conserved columns to 25% opacity. Both compute the conserved-column set once per render and apply CSS or Canvas fill styling.
 
-The viewer supports conservation shading (Identity, Similarity, Clustal, Zappo), nucleotide colour schemes (Default, Taylor, Nucleobase), customizable threshold controls for highlight intensity, an adjustable consensus line with configurable threshold and minimum coverage, variable zoom (50%–500%), sticky sequence name columns, and a snapshot system for saving and restoring complete viewer states.
+The viewer supports conservation shading (Identity, Similarity, Clustal, Zappo), nucleotide colour schemes (Default, Taylor, Nucleobase), customizable threshold controls for highlight intensity, an adjustable consensus line, variable zoom (50%–500%), sticky sequence name columns, and a snapshot system for saving and restoring complete viewer states including colour assignments, search highlights, and column selections.
 
-### 2.4 Interactive Editing
+### 2.4 Sequence Management and Editing
 
-Alignment editing follows the GeneDoc paradigm. In Edit Mode, users can type individual residues, insert or delete gap columns, and select column ranges by clicking or dragging. A full-sequence text editor (SeqEdit) provides bulk operations: degap, reverse, complement, reverse-complement, uppercase, and lowercase conversion. Rows can be selected (Ctrl+Click), duplicated, deleted, reverse-complemented, and reordered by drag-and-drop or keyboard shortcuts. New sequences can be appended with automatic gap-padding, or realigned against the existing alignment via MAFFT in add-keep-length mode. All editing operations are tracked in a full undo/redo history.
+Rows can be selected (Ctrl+Click), duplicated, deleted, reverse-complemented, and reordered by drag-and-drop or keyboard shortcuts. Three sort operations are available: alphabetical by name, by gapless sequence length (descending), and by pairwise similarity to the first sequence. An undo/redo stack tracks all edit operations.
+
+Alignment editing follows the GeneDoc paradigm. In Edit Mode, users can type individual residues, insert or delete gap columns, and select column ranges. A full-sequence text editor (SeqEdit) provides bulk operations: degap, reverse, complement, reverse-complement, uppercase, and lowercase conversion. New sequences can be appended with automatic gap-padding, or realigned against the existing alignment via MAFFT in add-keep-length mode.
 
 ### 2.5 Codon-Aware Analysis
 
-Inspired by MACSE (Ranwez et al., 2011), MSA Viewer provides codon-aware visualization for protein-coding sequence alignments. When activated on a nucleotide alignment whose length is a multiple of three, the tool:
-
-- Colour-codes each nucleotide by codon position (blue for first, green for second, orange for third);  
-- Highlights in-frame stop codons (TAA, TAG, TGA) with red backgrounds and bold white text;  
-- Marks frameshift-inducing indels with wavy red underlines;  
-- Classifies each substitution relative to a reference sequence as synonymous (green underline) or non-synonymous (double red underline);  
-- Displays a translated amino acid track below each nucleotide sequence, with stop codons shown in bold red.
+Inspired by MACSE (Ranwez et al., 2011), MSA Viewer provides codon-aware visualization for protein-coding sequence alignments. When activated on a nucleotide alignment whose length is a multiple of three, the tool colour-codes each nucleotide by codon position (blue for first, green for second, orange for third), highlights in-frame stop codons (TAA, TAG, TGA) with red backgrounds, marks frameshift-inducing indels with wavy red underlines, and classifies each substitution as synonymous (green underline) or non-synonymous (double red underline) relative to a reference sequence. A translated amino acid track is displayed below each nucleotide sequence, with stop codons shown in bold red.
 
 A dropdown selector supports 17 genetic code variants (NCBI translation tables 1–6, 9–14, 16, 21, 22), covering standard, vertebrate mitochondrial, invertebrate mitochondrial, ciliate nuclear, euplotid, ascidian mitochondrial, and other alternative codes. All downstream analyses — stop codon detection, mutation classification, and amino acid translation — respect the selected code.
 
 ### 2.6 Additional Analysis Tools
 
-**Dot plot.** The dot-plot module performs self-comparison or pairwise comparison of the alignment with adjustable sliding window size (1–61) and identity threshold (0–100%). A context-radius control reveals flanking nucleotides on hover, shown alongside the aligned sequence pair with mismatch highlighting. An automatic region detector identifies the top 30 diagonal runs and presents them in a navigable sidebar — clicking any region scrolls the alignment to the corresponding position. Plots can be exported as publication-quality PNG or SVG.
+**Dot plot.** The dot-plot module performs self-comparison or pairwise comparison of the alignment with adjustable sliding window size (1–61) and identity threshold (0–100%). A context-radius control reveals flanking nucleotides on hover, shown alongside the aligned sequence pair with mismatch highlighting. An automatic region detector identifies the top 30 diagonal runs and presents them in a navigable sidebar; clicking any region scrolls the alignment to the corresponding position. Plots can be exported as publication-quality PNG or SVG.
 
-**Repeat and TSD Finder.** A dedicated analysis modal scans the alignment for tandem repeats and target-site duplications with configurable minimum repeat length, copy number, mismatch tolerance, and flanking window size. Found TSD pairs can be marked directly in the alignment using colour highlighting, bold text, or lowercase residue styles. This functionality is particularly useful for transposable element annotation.
+**Motif search.** A search bar supports exact motif matching with configurable mismatches, reverse-complement search, and regular-expression mode. Regex patterns (e.g., `[AG]CGT`, `ATG.{3}TAA`) are evaluated against degapped sequences, with all matches highlighted in the user-selected colour. Invalid regex patterns produce a user-friendly error message.
 
-**UPGMA Tree.** A guide tree can be constructed from pairwise identity distances (fraction of identical non-gap positions). The output includes a Newick-format string with branch lengths, downloadable as a `.nwk` file, and a text-based tree visualization.
+**Repeat and TSD Finder.** Scans the alignment for tandem repeats and target-site duplications with configurable minimum repeat length, copy number, mismatch tolerance, and flanking window size. Found TSD pairs can be marked in the alignment using colour highlighting, bold text, or lowercase residue styles.
 
-### 2.7 Export
+**UPGMA Tree.** A guide tree is constructed from pairwise identity distances, outputting a Newick-format string with branch lengths (downloadable as `.nwk`) and a text-based tree visualization.
 
-Export options cover multiple downstream needs: FASTA (full alignment or selected sequences), MSF (with GCG header), RTF (Word-compatible with per-residue conservation shading, a scale ruler showing column numbers every ten positions, and a consensus line), and SVG (current viewport or complete alignment as vector graphics). A complete table of all features is provided in the supplementary manual.
+### 2.7 Export and History
+
+Export options include FASTA (full alignment or selected sequences), MSF, RTF (Word-compatible with per-residue conservation shading, scale ruler, and consensus line using monospace Courier New), and SVG (current viewport or complete alignment). A recent-files panel accessible from the input area provides localStorage-persisted history of opened files and clipboard pastes with metadata (sequence count, column count, timestamp) and one-click reload. The history size is user-adjustable (1–50 entries).
 
 ---
 
@@ -85,32 +96,30 @@ Export options cover multiple downstream needs: FASTA (full alignment or selecte
 
 A typical workflow for analyzing a coding-sequence alignment:
 
-1. Load a FASTA alignment of orthologous CDS sequences by pasting or drag-and-drop.  
-2. Switch to Block mode with Clustal shading for initial inspection.  
-3. Enable Highlight Diffs to visually isolate variable positions.  
-4. Activate Codon Analysis and select the appropriate genetic code for the organism.  
-5. Scan for premature stop codons (red highlight) and frameshifts (wavy red underline) — these indicate potential sequencing errors, pseudogenes, or annotation issues.  
+1. Load a FASTA, Clustal, or PHYLIP alignment of orthologous CDS sequences — format is auto-detected.  
+2. The viewer automatically selects Canvas mode if the alignment exceeds 150,000 residues, or stays in Block mode for smaller datasets.  
+3. Enable **Highlight Diffs** to visually isolate variable positions, or **Var Sites Only** to collapse conserved columns entirely.  
+4. Activate **Codon Analysis** and select the appropriate genetic code for the organism.  
+5. Scan for premature stop codons (red highlight) and frameshifts (wavy red underline).  
 6. Examine clusters of non-synonymous mutations (double red underline) for candidate sites under positive selection.  
-7. Export the annotated view as RTF for supplementary material, or as SVG for a publication figure.  
-8. Open the Dot Plot to identify large-scale duplications, inversions (using reverse-complement mode), or recombination signals.  
-9. Use the Repeat Finder to detect transposable element boundaries through TSD detection.  
-10. Build a UPGMA tree to confirm expected phylogenetic relationships among the sequences.
+7. Use regex search (`[AG]CGT.*TAA`) to locate specific motifs across all sequences.  
+8. Sort sequences by similarity to identify outlier accessions.  
+9. Export the annotated view as RTF for supplementary material or as SVG for a publication figure.  
+10. Open the **Dot Plot** to identify large-scale duplications or recombination signals, and build a UPGMA tree to confirm phylogenetic relationships.
 
-For NGS read alignments, a SAM file can be loaded directly — the viewer auto-detects the format, builds a pileup consensus, and displays reads in Compact mode with coverage histogram, mismatch marks, and optional paired-end connections.
+For NGS read alignments, a SAM or BAM file is loaded directly — the viewer auto-detects SAM format, builds a pileup consensus, and displays reads in Compact mode with coverage histogram, mismatch marks, and paired-end connections.
 
 ---
 
 ## 4. Discussion and Conclusion
 
-MSA Viewer addresses the gap between desktop alignment tools and modern web-based bioinformatics workflows. By providing interactive editing, NGS read visualization, coding-sequence analysis, and publication-quality export in a zero-installation browser application, it lowers the barrier to entry for alignment inspection while supporting advanced analytical workflows. The modular architecture — purely client-side by default with an optional server for MAFFT, BLAST, and SSH — makes it suitable for both quick ad-hoc alignment viewing and integrated bioinformatics pipelines.
+MSA Viewer addresses the gap between desktop alignment tools and modern web-based bioinformatics workflows. By combining automatic format detection across eight input types, a Canvas rendering mode with auto-activation thresholds, interactive editing, NGS read visualization, coding-sequence analysis, and publication-quality export in a zero-installation browser application, it eliminates the format-conversion and installation barriers that fragment current MSA workflows.
 
-### 4.1 Performance Considerations
+The Canvas renderer's viewport-culling approach matches the rendering strategy used by MSAViewer (Yachdav et al., 2016) and IGV.js (Robinson et al., 2011), while the DOM-based Full and Block modes remain available for smaller alignments where interactive editing is needed. CSS optimizations — `content-visibility: auto`, `contain: layout style`, and GPU-composited scrolling — deliver responsive interaction for alignments up to approximately 200 sequences × 5,000 columns (~1 million residues) without switching to Canvas mode.
 
-MSA Viewer provides two rendering paths. The default DOM-based renderer (Single and Block modes) builds one HTML span per residue position and uses CSS optimizations — `content-visibility: auto` on sequence rows, `contain: layout style` on data regions, and GPU-composited scrolling — to deliver responsive interaction for alignments up to approximately 200 sequences × 5,000 columns (~1 million residues) on modern hardware. For larger alignments, the Canvas mode renders the alignment on a 2D canvas with viewport culling, drawing only the visible rows and columns on each frame. This eliminates the per-residue DOM overhead entirely and scales to thousands of sequences and tens of thousands of columns with responsive scroll performance, matching the approach used by MSAViewer (Yachdav et al., 2016) and IGV.js (Robinson et al., 2011).
+The tool's primary limitation is the lack of protein-level analyses (BLOSUM-based dot plots, structural feature annotation) and deeper phylogenetic integration with external tree viewers. A WebAssembly-based MAFFT module is planned to eliminate the server dependency for realignment operations entirely.
 
-### 4.2 Future Directions
-
-Planned enhancements include protein-level dot plot analysis with BLOSUM substitution matrices, structural feature annotation tracks, deeper phylogenetic integration with external tree viewers, and a WebAssembly-based MAFFT module that would eliminate the server dependency for realignment operations entirely.
+MSA Viewer is freely available, runs without installation, and includes a comprehensive 9-section manual covering all features, formats, and workflows.
 
 ---
 
@@ -119,7 +128,7 @@ Planned enhancements include protein-level dot plot analysis with BLOSUM substit
 1. Katoh, K. & Standley, D.M. (2013) MAFFT multiple sequence alignment software version 7: improvements in performance and usability. *Mol. Biol. Evol.*, 30, 772–780.
 2. Sievers, F. et al. (2011) Fast, scalable generation of high-quality protein multiple sequence alignments using Clustal Omega. *Mol. Syst. Biol.*, 7, 539.
 3. Edgar, R.C. (2004) MUSCLE: multiple sequence alignment with high accuracy and high throughput. *Nucleic Acids Res.*, 32, 1792–1797.
-4. Waterhouse, A.M. et al. (2009) Jalview Version 2—a multiple sequence alignment editor and analysis workbench. *Bioinformatics*, 25, 1189–1191.
+4. Waterhouse, A.M. et al. (2009) Jalview Version 2 — a multiple sequence alignment editor and analysis workbench. *Bioinformatics*, 25, 1189–1191.
 5. Larsson, A. (2014) AliView: a fast and lightweight alignment viewer and editor for large datasets. *Bioinformatics*, 30, 3276–3278.
 6. Gouy, M., Guindon, S. & Gascuel, O. (2010) SeaView Version 4: a multiplatform graphical user interface for sequence alignment and phylogenetic tree building. *Mol. Biol. Evol.*, 27, 221–224.
 7. Robinson, J.T. et al. (2011) Integrative genomics viewer. *Nat. Biotechnol.*, 29, 24–26.
@@ -147,7 +156,8 @@ Planned enhancements include protein-level dot plot analysis with BLOSUM substit
 
 ## Supplementary Information
 
-- **manual.html**: 9-section comprehensive manual (625 lines) covering all features, formats, keyboard shortcuts, and workflows  
-- **Example datasets**: FASTA, MSF, and SAM test files for demonstration  
-- **Server setup guide**: included in the repository README  
-- **Feature inventory**: Complete table of 15+ feature categories with descriptions
+- **manual.html**: 9-section comprehensive manual covering all features, 8 input formats, keyboard shortcuts, and workflows
+- **Example datasets**: FASTA, MSF, Clustal, PHYLIP, NEXUS, and SAM test files for demonstration
+- **Server setup guide**: included in the repository README
+- **Deployment guide**: DEPLOYMENT.md with step-by-step instructions for public server deployment
+- **Feature inventory**: Complete table of 17+ feature categories
