@@ -409,7 +409,47 @@ kbd {
     The search bar (top-right of the menu) highlights occurrences of a sequence motif.
     Matches are highlighted in the alignment; total count and positions are reported.
     Click the <em>RC</em> button to search the reverse complement instead.
+    Check the <em>.*</em> checkbox to interpret the motif as a JavaScript regular expression
+    (e.g., <code>[AG]CGT</code>, <code>ATG.{3}TAA</code>).
     <strong>Ctrl+Click</strong> on any residue to search for that base.
+  </p>
+
+  <h3>5.6 Sequence Clustering (Subfamily Detection)</h3>
+  <p>
+    Clusters sequences into putative subfamilies using a position-pattern-based algorithm.
+    Open from the <em>Analysis → Cluster</em> menu (or <em>Colour → Colour by Cluster</em>).
+    Designed for transposable element family annotation.
+  </p>
+  <p><strong>How it works:</strong></p>
+  <ul>
+    <li>At each alignment column, sequences are grouped by shared nucleotide</li>
+    <li>Groups meeting size and quality thresholds are collected as candidates</li>
+    <li>Near-identical groups are fuzzy-merged (Jaccard ≥ 90%)</li>
+    <li>Diagnostic features are scored — perfect-unique positions get highest weight</li>
+    <li>Outliers matching &lt;50% of cluster features are pruned</li>
+    <li>The algorithm iterates with progressively relaxed thresholds to recover smaller families</li>
+  </ul>
+  <p><strong>Configurable parameters:</strong></p>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td>Min cluster size</td><td>3</td><td>Smallest acceptable cluster</td></tr>
+    <tr><td>Quality threshold (small)</td><td>85%</td><td>For clusters ≤10 seqs</td></tr>
+    <tr><td>Quality threshold (medium)</td><td>75%</td><td>For clusters 11–20 seqs</td></tr>
+    <tr><td>Quality threshold (large)</td><td>65%</td><td>For clusters &gt;20 seqs</td></tr>
+    <tr><td>Min perfect features</td><td>4</td><td>Minimum diagnostic positions required</td></tr>
+    <tr><td>Max iterations</td><td>20</td><td>Progressive relaxation steps</td></tr>
+  </table>
+  <p><strong>After clustering:</strong></p>
+  <ul>
+    <li>Results show cluster sizes, diagnostic mutation tables, and perfect vs. imperfect features</li>
+    <li><em>Colour by Cluster</em> assigns persistent background colours to sequence names by cluster membership</li>
+    <li>Hovering a cluster row highlights all member sequences in the alignment</li>
+    <li><em>Cluster Presets</em> save/restore parameter configurations for reproducible analysis</li>
+    <li>Use <em>Group Consensus</em> to compute and insert a consensus row for any selected cluster</li>
+  </ul>
+  <p>
+    <strong>Tip:</strong> Trim alignment ends first (Analysis → Cluster → Trim Parameters) to avoid
+    ragged-terminal artifacts inflating cluster scores with gap-based patterns.
   </p>
 </section>
 
@@ -605,6 +645,16 @@ kbd {
     <li>Colour groups of sequences by taxonomy for visual comparison (Colour menu)</li>
     <li>The <strong>Undo</strong> stack preserves all edits — freely experiment with editing</li>
     <li>Keep the server running if you use MAFFT/BLAST/SSH frequently — it's lightweight</li>
+  </ul>
+
+  <h3>9.6 Clustering Workflow</h3>
+  <ul>
+    <li>Start with <strong>trimming</strong> (Analysis → Cluster → Trim Parameters) to exclude ragged alignment ends — gap patterns inflate cluster scores</li>
+    <li>Run clustering at default settings first, then adjust <strong>quality thresholds</strong> if clusters are too large or too fragmented</li>
+    <li>Use <strong>Colour by Cluster</strong> to visually validate cluster assignments — outliers are obvious against colour-uniform groups</li>
+    <li>For each cluster: run <strong>Group Consensus</strong> to extract the subfamily consensus sequence</li>
+    <li>Export consensus + member sequences to the <strong>SINE Pixel Viewer</strong> for dense copy-level annotation</li>
+    <li>Save parameter presets so different TE families can be re-analysed with consistent settings</li>
   </ul>
 
 </section>
