@@ -1213,7 +1213,8 @@ function parseSamToAlignment(samText) {
         const flag = parseInt(f[1]) || 0;
         if (flag & 0x904) continue; // unmapped or secondary/supplementary
         if (!f[5] || f[5] === '*' || !f[9] || f[9] === '*') continue;
-        records.push({ qname: f[0], rname: f[2], pos: parseInt(f[3]) - 1, cigar: f[5], seq: f[9], flag });
+        records.push({ qname: f[0], rname: f[2], pos: parseInt(f[3]) - 1, cigar: f[5], seq: f[9], flag,
+            mpos: f[7] !== '=' && f[7] !== '*' ? parseInt(f[7]) - 1 : -1, tlen: parseInt(f[8]) || 0 });
     }
     if (records.length === 0) return null;
     
@@ -1270,7 +1271,8 @@ function parseSamToAlignment(samText) {
             header: r.qname,
             fullHeader: r.qname + ' pos=' + (r.pos + 1) + ' cigar=' + r.cigar,
             seq: fullSeq,
-            gaplessPositions: calculateGaplessPositions(fullSeq)
+            gaplessPositions: calculateGaplessPositions(fullSeq),
+            _samPair: (r.flag & 0x1) ? { flag: r.flag, mpos: r.mpos, tlen: r.tlen } : null
         });
     }
     
@@ -1615,7 +1617,8 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
             start, end, seq,
             name: seqs[i].header || ('Read' + (i + 1)),
             mismatches: new Set(mismatches),
-            gaplessLen: seq.replace(/[-.]/g, '').length
+            gaplessLen: seq.replace(/[-.]/g, '').length,
+            _pairInfo: seqs[i]._samPair || null
         });
     }
 
@@ -1713,40 +1716,67 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
     y += COV_H + 4;
 
     // Read tracks
+    const diffOnly = document.getElementById('compactDiffOnly')?.checked;
+    const showPairs = document.getElementById('compactPairs')?.checked;
+    const pairLines = []; // collect pair connections to draw after all tracks
+    
+    // Build pair map: qname -> [read1, read2]
+    const pairMap = new Map();
+    if (showPairs) {
+        for (const read of reads) {
+            if (!read._pairInfo) continue;
+            const key = read.name;
+            if (!pairMap.has(key)) pairMap.set(key, []);
+            pairMap.get(key).push(read);
+        }
+    }
+
     for (let t = 0; t < nTracks; t++) {
         const trackReads = reads.filter(r => r.track === t);
         for (const read of trackReads) {
             const rx = NAME_W + read.start * CHAR_W;
             const rw = (read.end - read.start + 1) * CHAR_W;
             const ry = y;
-            const rh = TRACK_H - 2;
+            const rh = diffOnly ? 4 : TRACK_H - 2;
 
-            // Read bar background
-            const bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            bar.setAttribute('x', rx);
-            bar.setAttribute('y', ry);
-            bar.setAttribute('width', rw);
-            bar.setAttribute('height', rh);
-            bar.setAttribute('fill', '#c8d8e8');
-            bar.setAttribute('stroke', '#8ab4d6');
-            bar.setAttribute('stroke-width', '0.5');
-            bar.setAttribute('rx', '2');
-            svg.appendChild(bar);
+            if (diffOnly) {
+                // Thin line mode — just a hairline with mismatch ticks
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', rx);
+                line.setAttribute('y1', ry + 2);
+                line.setAttribute('x2', rx + rw);
+                line.setAttribute('y2', ry + 2);
+                line.setAttribute('stroke', '#b0c4de');
+                line.setAttribute('stroke-width', '1');
+                svg.appendChild(line);
+            } else {
+                // Full bar mode
+                const bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                bar.setAttribute('x', rx);
+                bar.setAttribute('y', ry);
+                bar.setAttribute('width', rw);
+                bar.setAttribute('height', rh);
+                bar.setAttribute('fill', '#c8d8e8');
+                bar.setAttribute('stroke', '#8ab4d6');
+                bar.setAttribute('stroke-width', '0.5');
+                bar.setAttribute('rx', '2');
+                svg.appendChild(bar);
+            }
 
-            // Mismatch marks
+            // Mismatch marks (always shown)
             for (const mp of read.mismatches) {
                 const mx = NAME_W + mp * CHAR_W + CHAR_W / 2;
                 const mark = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
                 mark.setAttribute('x', mx - 1);
                 mark.setAttribute('y', ry);
                 mark.setAttribute('width', 2);
-                mark.setAttribute('height', rh);
+                mark.setAttribute('height', diffOnly ? 4 : rh);
                 mark.setAttribute('fill', '#e74c3c');
                 svg.appendChild(mark);
             }
 
-            // Read name (truncated)
-            if (NAME_W > 30 && t === 0 && trackReads.indexOf(read) < 3) {
+            // Read name
+            if (NAME_W > 30 && t < 3 && trackReads.indexOf(read) < 2) {
                 const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 label.setAttribute('x', rx + 2);
                 label.setAttribute('y', ry + rh - 3);
@@ -1755,8 +1785,46 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
                 label.textContent = read.name.substring(0, Math.floor(rw / 6));
                 svg.appendChild(label);
             }
+
+            // Collect pair info for connecting lines
+            if (showPairs && read._pairInfo) {
+                const mates = pairMap.get(read.name);
+                if (mates && mates.length === 2) {
+                    const other = mates[0] === read ? mates[1] : mates[0];
+                    // Store: {track, read} for connection drawing
+                    pairLines.push({
+                        t1: t, t2: other.track,
+                        x1: NAME_W + read.start * CHAR_W + rw / 2,
+                        x2: NAME_W + other.start * CHAR_W + (other.end - other.start + 1) * CHAR_W / 2,
+                        y1: y + rh / 2,
+                        y2: -1 // filled after all tracks rendered
+                    });
+                }
+            }
         }
-        y += TRACK_H;
+        y += diffOnly ? 6 : TRACK_H;
+    }
+
+    // Draw pair connecting lines
+    if (showPairs && pairLines.length > 0) {
+        for (const pl of pairLines) {
+            if (pl.y2 < 0) {
+                // Find y2 from the mate's track
+                const mateTrack = pl.t2;
+                const trackY = COV_H + 4 + mateTrack * (diffOnly ? 6 : TRACK_H) + (diffOnly ? 2 : TRACK_H / 2);
+                pl.y2 = trackY;
+            }
+            const conn = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            conn.setAttribute('x1', pl.x1);
+            conn.setAttribute('y1', pl.y1);
+            conn.setAttribute('x2', pl.x2);
+            conn.setAttribute('y2', pl.y2);
+            conn.setAttribute('stroke', '#999');
+            conn.setAttribute('stroke-width', '0.5');
+            conn.setAttribute('stroke-dasharray', '3,2');
+            conn.setAttribute('opacity', '0.5');
+            svg.appendChild(conn);
+        }
     }
 
     y += 4;
@@ -8019,7 +8087,8 @@ function attachUIListeners() {
     });
 
     // Set up checkbox listeners
-    const checkboxes = ['enableBlack', 'enableDark', 'enableLight', 'showConsensus'];
+    const checkboxes = ['enableBlack', 'enableDark', 'enableLight', 'showConsensus',
+                        'compactDiffOnly', 'compactPairs'];
     checkboxes.forEach(id => {
         const elRef = el(id);
         if (elRef) elRef.addEventListener('change', debounceRender);
