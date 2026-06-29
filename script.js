@@ -1745,6 +1745,67 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     draw();
 }
 
+// Clustal (.aln) format parser
+function parseClustal(text) {
+    const lines = text.split(/\r?\n/);
+    const seqMap = new Map();
+    let started = false;
+    for (const line of lines) {
+        const t = line.trim();
+        if (!t || t.startsWith('//')) continue;
+        if (t.startsWith('CLUSTAL')) { started = true; continue; }
+        if (!started) continue;
+        const m = t.match(/^(\S+)\s+(.+)$/);
+        if (!m) continue;
+        const name = m[1], seq = m[2].replace(/\s/g, '').replace(/\*/g, '-');
+        if (!seqMap.has(name)) seqMap.set(name, '');
+        seqMap.set(name, seqMap.get(name) + seq);
+    }
+    if (seqMap.size === 0) return null;
+    const seqs = [];
+    for (const [name, seq] of seqMap) {
+        seqs.push({ header: name, fullHeader: name, seq: seq, gaplessPositions: calculateGaplessPositions(seq) });
+    }
+    return seqs;
+}
+
+// PHYLIP format parser (sequential and interleaved)
+function parsePhylip(text) {
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return null;
+    const hm = lines[0].trim().match(/^(\d+)\s+(\d+)/);
+    if (!hm) return null;
+    const nSeqs = parseInt(hm[1]), alignLen = parseInt(hm[2]);
+    if (nSeqs < 1 || alignLen < 1) return null;
+    const entries = [];
+    for (let i = 1; i < lines.length && entries.length < nSeqs; i++) {
+        const l = lines[i];
+        if (l.length >= 10) {
+            const name = l.substring(0, 10).trim();
+            const seq = l.substring(10).replace(/\s/g, '');
+            if (name && seq) entries.push({ name, seq });
+        }
+    }
+    // Handle interleaved blocks
+    if (entries.length === nSeqs) {
+        let blockStart = 1 + nSeqs;
+        while (blockStart < lines.length) {
+            for (let k = 0; k < nSeqs && blockStart + k < lines.length; k++) {
+                const l = lines[blockStart + k];
+                const seq = l.replace(/^\s*\S+\s*/, '').replace(/\s/g, '');
+                if (seq) entries[k].seq += seq;
+            }
+            blockStart += nSeqs;
+        }
+    }
+    if (entries.length < nSeqs) return null;
+    const seqs = [];
+    for (const e of entries) {
+        seqs.push({ header: e.name, fullHeader: e.name, seq: e.seq, gaplessPositions: calculateGaplessPositions(e.seq) });
+    }
+    return seqs;
+}
+
 function parseFasta(text) {
     const lines = text.trim().split(/\r?\n/);
     const seqs = [];
@@ -3214,6 +3275,17 @@ function parseAndRender(isFromDrop = false) {
             parsed = parseSamToAlignment(inputText);
             if (!parsed) throw new Error('SAM parsing failed — check format');
             state.currentFilename = state.currentFilename || 'SAM_import';
+        } else if (inputText.match(/^(CLUSTAL|MUSCLE\s)/m)) {
+            parsed = parseClustal(inputText);
+            if (!parsed) throw new Error('Clustal parsing failed');
+            state.currentFilename = state.currentFilename || 'clustal_import';
+            showMessage('Detected Clustal format', 1500);
+        } else if (/^\d+\s+\d+/.test(inputText.trim().split(/\r?\n/)[0])) {
+            parsed = parsePhylip(inputText);
+            if (parsed) {
+                state.currentFilename = state.currentFilename || 'phylip_import';
+                showMessage('Detected PHYLIP format', 1500);
+            }
         } else if (isFromDrop || isMsfContent) {
             // If it's a file drop OR the content looks like MSF, try MSF first.
             parsed = parseMsf(inputText);
