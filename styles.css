@@ -1348,6 +1348,17 @@ span.column-selected {
     min-width: 30px;
     text-align: center;
     display: inline-block;
+    cursor: pointer;
+    border-radius: 2px;
+    padding: 1px 2px;
+    transition: background-color 0.15s;
+}
+.zoom-value:hover {
+    background-color: #e8f0fe;
+}
+.zoom-value.not-default {
+    font-weight: bold;
+    color: #1a73e8;
 }
 .mode-container {
     display: flex;
