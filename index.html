@@ -180,6 +180,23 @@
                         <label style="font-size:11px;" title="Codon-aware: frame detection, stop codons, syn/non-syn, AA translation. Requires CDS alignment (len multiple of 3).">
                             <input type="checkbox" id="codonAnalysis"> Codons
                         </label>
+                        <select id="codonCode" style="font-size:10px;margin-left:2px;padding:1px 2px;" title="Genetic code variant">
+                            <option value="1">Standard</option>
+                            <option value="2">Vert Mito</option>
+                            <option value="3">Yeast Mito</option>
+                            <option value="4">Mold Mito</option>
+                            <option value="5">Invert Mito</option>
+                            <option value="6">Ciliate</option>
+                            <option value="9">Echino Mito</option>
+                            <option value="10">Euplotid</option>
+                            <option value="11">Bacteria</option>
+                            <option value="12">Alt Yeast</option>
+                            <option value="13">Ascidian Mito</option>
+                            <option value="14">Flatworm Mito</option>
+                            <option value="16">Chlorophyc Mito</option>
+                            <option value="21">Trematode Mito</option>
+                            <option value="22">Scenedesmus</option>
+                        </select>
                         <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Display alignment in blocks for better readability">
                             <label for="modeBlocks">Block</label>
                         </div>

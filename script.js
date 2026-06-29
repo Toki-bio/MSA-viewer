@@ -1294,6 +1294,78 @@ const _GENETIC_CODE = {
     'GAT':'D','GAC':'D','GAA':'E','GAG':'E','GGT':'G','GGC':'G','GGA':'G','GGG':'G'
 };
 
+// Genetic code variants — only differences from Standard
+const _CODE_VARIANTS = {
+    '2': { // Vertebrate Mitochondrial
+        'AGA':'*','AGG':'*','ATA':'M','TGA':'W'
+    },
+    '3': { // Yeast Mitochondrial
+        'ATA':'M','CTT':'T','CTC':'T','CTA':'T','CTG':'T','TGA':'W',
+        'CGA':null,'CGC':null // absent codons
+    },
+    '4': { // Mold / Protozoan / Coelenterate Mitochondrial + Mycoplasma/Spiroplasma
+        'TGA':'W'
+    },
+    '5': { // Invertebrate Mitochondrial
+        'AGA':'S','AGG':'S','ATA':'M','TGA':'W'
+    },
+    '6': { // Ciliate / Dasycladacean / Hexamita Nuclear
+        'TAA':'Q','TAG':'Q'
+    },
+    '9': { // Echinoderm / Flatworm Mitochondrial
+        'AAA':'N','AGA':'S','AGG':'S','TGA':'W'
+    },
+    '10': { // Euplotid Nuclear
+        'TGA':'C'
+    },
+    '11': { // Bacterial / Archaeal / Plant Plastid (same as Standard)
+    },
+    '12': { // Alternative Yeast Nuclear
+        'CTG':'S'
+    },
+    '13': { // Ascidian Mitochondrial
+        'AGA':'G','AGG':'G','ATA':'M','TGA':'W'
+    },
+    '14': { // Alternative Flatworm Mitochondrial
+        'AAA':'N','AGA':'S','AGG':'S','TAA':'Y','TGA':'W'
+    },
+    '16': { // Chlorophycean Mitochondrial
+        'TAG':'L'
+    },
+    '21': { // Trematode Mitochondrial
+        'TGA':'W','ATA':'M','AGA':'S','AGG':'S','AAA':'N'
+    },
+    '22': { // Scenedesmus obliquus Mitochondrial
+        'TCA':'*','TAG':'L'
+    }
+};
+
+// Build active code from selected variant
+function _getActiveCode() {
+    const sel = document.getElementById('codonCode');
+    const tableId = sel ? sel.value : '1';
+    const code = Object.assign({}, _GENETIC_CODE);
+    const overrides = _CODE_VARIANTS[tableId] || {};
+    for (const [codon, aa] of Object.entries(overrides)) {
+        if (aa === null) delete code[codon];
+        else code[codon] = aa;
+    }
+    return code;
+}
+
+// Build synonymous codon map for the active code
+function _getSynCodons(code) {
+    const syn = {};
+    for (const codon of Object.keys(code)) {
+        syn[codon] = new Set();
+        const aa = code[codon];
+        for (const c2 of Object.keys(code)) {
+            if (code[c2] === aa && c2 !== codon) syn[codon].add(c2);
+        }
+    }
+    return syn;
+}
+
 // Synonymous mutation check for each codon position
 const _SYN_CODONS = {}; // codon -> Set of synonymous codons
 for (const [codon, aa] of Object.entries(_GENETIC_CODE)) {
@@ -1312,6 +1384,9 @@ function _computeCodonAnalysis(seqs, len) {
         const cleaned = s.seq.replace(/[-.]/g, '');
         if (cleaned.length > 0 && !ntRe.test(cleaned)) return null;
     }
+
+    const activeCode = _getActiveCode();
+    const synCodons = _getSynCodons(activeCode);
 
     const nSeqs = seqs.length;
     const phase = new Array(nSeqs).fill(null).map(() => new Array(len).fill(-1));
@@ -1361,7 +1436,7 @@ function _computeCodonAnalysis(seqs, len) {
                 if (codonPhase >= 3) {
                     // Full codon assembled
                     const codon = codonBuf.replace(/[Nn]/g, 'N');
-                    const aa = _GENETIC_CODE[codon] || 'X';
+                    const aa = activeCode[codon] || 'X';
                     aaSeq[i].push({ cols: codonCols, codon, aa });
 
                     if (aa === '*') {
@@ -1372,7 +1447,7 @@ function _computeCodonAnalysis(seqs, len) {
                     // Syn/non-syn check vs reference
                     if (i !== refIdx) {
                         const refCodon = codonCols.map(c => (refSeq[c] || '-').toUpperCase()).join('');
-                        const refAA = _GENETIC_CODE[refCodon] || 'X';
+                        const refAA = activeCode[refCodon] || 'X';
                         if (aa === refAA && codon !== refCodon) {
                             // Synonymous — all 3 positions get 'syn'
                             for (const c of codonCols) synNonSyn[i][c] = 'syn';
@@ -1380,7 +1455,7 @@ function _computeCodonAnalysis(seqs, len) {
                             // Non-synonymous — find which position(s) cause the change
                             for (let k = 0; k < 3; k++) {
                                 const mutCodon = refCodon.substring(0,k) + codon[k] + refCodon.substring(k+1);
-                                const mutAA = _GENETIC_CODE[mutCodon] || 'X';
+                                const mutAA = activeCode[mutCodon] || 'X';
                                 if (mutAA !== refAA) {
                                     synNonSyn[i][codonCols[k]] = 'nonsyn';
                                 } else {
@@ -8330,6 +8405,9 @@ function attachUIListeners() {
             debounceRender();
         });
     });
+
+    const codonCode = el('codonCode');
+    if (codonCode) codonCode.addEventListener('change', debounceRender);
 
     const sticky = el('stickyNames');
     if (sticky) sticky.addEventListener('change', toggleStickyNames);
