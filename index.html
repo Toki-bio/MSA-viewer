@@ -55,6 +55,12 @@
                             <input type="text" id="snapshotPathInput" placeholder="snapshots/my_snapshot.json" style="flex: 1; font-size: 11px; padding: 2px 4px; font-family: 'Courier New', monospace; border: 1px solid #ccc; border-radius: 3px;" title="Manual snapshot path for ?snapshotFile mode">
                             <button id="snapshotPathOpenButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Open snapshot by path">Open Path</button>
                         </div>
+                        <div style="display: flex; gap: 4px; align-items: center; margin-top: 4px;">
+                            <button id="snapshotCreateTopButton" title="Save current state as snapshot" style="height: 22px; font-size: 10px; flex: 1;">Create</button>
+                            <button id="exportSvgTopButton" title="Export viewport as SVG" style="height: 22px; font-size: 10px;">SVG</button>
+                            <button id="exportRtfButton" title="Export as RTF (Word)" style="height: 22px; font-size: 10px;">RTF</button>
+                            <button id="exportSvgFullTopButton" title="Export full alignment as SVG" style="height: 22px; font-size: 10px;">Full SVG</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -69,20 +75,7 @@
             <button id="editToggleButton" class="edit-toggle-button" aria-pressed="false" title="Toggle GeneDoc-style sequence editing tools">Edit</button>
             <button id="degapColumnsButton" class="edit-toggle-button" title="Remove all gap-only columns from the alignment" onclick="removeGapColumns()" style="font-size:10px;padding:0 5px;margin-left:2px;font-weight:normal;">Degap</button>
 
-            <div class="menu-section" id="snapshot-section" style="margin-left: 4px;">
-                <div class="section-header" data-section="snapshot">
-                    <span>Snapshot</span>
-                    <span class="toggle-icon">▼</span>
-                </div>
-                <div class="control-group" id="snapshot-controls" style="min-width: 170px;">
-                    <div style="display: flex; flex-direction: column; gap: 6px;">
-                        <button id="snapshotCreateTopButton" title="Create shareable snapshot (link + JSON + HTML)" style="height: 24px; font-size: 11px;">Create</button>
-                        <button id="exportSvgTopButton" title="Export current visible viewport as SVG (vector)" style="height: 24px; font-size: 11px;">Export SVG</button>
-                        <button id="exportRtfButton" title="Export alignment as RTF with per-residue shading (open in Word)" style="height: 24px; font-size: 11px;">Export RTF</button>
-                        <button id="exportSvgFullTopButton" title="Export full alignment as SVG (vector)" style="height: 24px; font-size: 11px;">Export Full SVG</button>
-                    </div>
-                </div>
-            </div>
+            <div class="menu-section" id="snapshot-section" style="display:none;"></div>
 
             <div class="standard-menu-group">
                 <div class="menu-section">
@@ -481,10 +474,7 @@
                                 <button id="degapBlockLeftButton" title="Degap selected continuous column block and compact residues to LEFT">Degap Block ←</button>
                                 <button id="degapBlockRightButton" title="Degap selected continuous column block and compact residues to RIGHT">Degap Block →</button>
                             </div>
-                        </div>
-                        <div class="action-section">
-                            <div class="action-section-label">⚙️ Advanced Options</div>
-                            <div style="padding: 4px 0;">
+                            <div style="padding: 4px 0; border-top: 1px solid #eee;">
                                 <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 4px;">
                                     <label style="font-size: 11px; min-width: 55px; text-align: right;">Seq Type:</label>
                                     <select id="mafftSeqType" style="height: 20px; font-size: 11px;" title="Sequence type">
