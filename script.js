@@ -3329,6 +3329,9 @@ function _buildSnapshotPayload() {
     const consensusTypeEl = document.querySelector('input[name="consensusType"]:checked');
     const shadeModeEl = document.querySelector('input[name="shadeMode"]:checked');
     const consensusPosEl = document.querySelector('input[name="consensusPosition"]:checked');
+    // Serialize colour state (Map -> array of pairs)
+    const colourMappings = [];
+    state.colourState?.mappings?.forEach((color, name) => colourMappings.push([name, color]));
     return {
         schema: SNAPSHOT_SCHEMA_VERSION,
         appVersion: APP_VERSION,
@@ -3339,6 +3342,9 @@ function _buildSnapshotPayload() {
             black: el('blackSlider')?.value,
             dark: el('darkSlider')?.value,
             light: el('lightSlider')?.value,
+            blackColor: el('blackColorPicker')?.value,
+            darkColor: el('darkColorPicker')?.value,
+            lightColor: el('lightColorPicker')?.value,
             zoom: el('zoomSlider')?.value,
             mode: el('modeBlocks')?.checked ? 'blocks' : 'single',
             blockSize: el('blockSizeSlider')?.value,
@@ -3356,9 +3362,15 @@ function _buildSnapshotPayload() {
             enableLight: !!el('enableLight')?.checked,
             stickyNames: !!el('stickyNames')?.checked,
             selectedRows: Array.from(state.selectedRows).sort((a, b) => a - b),
+            selectedColumns: Array.from(state.selectedColumns).sort((a, b) => a - b),
             scrollLeft: alignmentContainer?.scrollLeft || 0,
-            scrollTop: alignmentContainer?.scrollTop || 0
-        }
+            scrollTop: alignmentContainer?.scrollTop || 0,
+            maxMismatches: el('maxMismatches')?.value
+        },
+        colourState: colourMappings.length > 0 ? { mappings: colourMappings } : null,
+        searchHistory: state.searchHistory.length > 0 ? state.searchHistory.map(h => ({
+            motif: h.motif, color: h.color, label: h.label, strand: h.strand
+        })) : null
     };
 }
 
@@ -3452,6 +3464,21 @@ function _applySnapshotView(view) {
         });
     }
 
+    state.selectedColumns.clear();
+    if (Array.isArray(view.selectedColumns)) {
+        view.selectedColumns.forEach(col => {
+            if (Number.isInteger(col) && col >= 0) {
+                state.selectedColumns.add(col);
+            }
+        });
+    }
+
+    // Restore custom shading colours
+    if (view.blackColor) { const el = document.getElementById('blackColorPicker'); if (el) el.value = view.blackColor; }
+    if (view.darkColor) { const el = document.getElementById('darkColorPicker'); if (el) el.value = view.darkColor; }
+    if (view.lightColor) { const el = document.getElementById('lightColorPicker'); if (el) el.value = view.lightColor; }
+    if (view.maxMismatches) { const el = document.getElementById('maxMismatches'); if (el) el.value = view.maxMismatches; }
+
     renderAlignment();
 
     const scrollLeft = Number(view.scrollLeft || 0);
@@ -3477,8 +3504,75 @@ function _loadSnapshotPayload(payload) {
 
     state.currentFilename = payload.sourceTitle || payload.title || 'Snapshot';
     state.currentFilePath = '';
-    parseAndRender(true);
-    _applySnapshotView(payload.view || {});
+    
+    // Parse and render first, THEN apply view settings
+    
+    parseAndRender(true).then(() => {
+        _applySnapshotView(payload.view || {});
+        if (payload.colourState) {
+            _applySnapshotColourState(payload.colourState);
+        }
+        if (payload.searchHistory) {
+            _applySnapshotSearchHistory(payload.searchHistory);
+        }
+    });
+}
+
+function _applySnapshotColourState(cs) {
+    if (!cs || !Array.isArray(cs.mappings)) return;
+    if (!state.colourState) {
+        state.colourState = { mappings: new Map(), history: new Map(), presets: {} };
+    }
+    cs.mappings.forEach(([name, color]) => {
+        state.colourState.mappings.set(name, color);
+    });
+    if (typeof applyColourToSeqNames === 'function') {
+        applyColourToSeqNames(state.colourState.mappings);
+    }
+}
+
+function _applySnapshotSearchHistory(sh) {
+    if (!Array.isArray(sh)) return;
+    sh.forEach(entry => {
+        const motifKey = (entry.motif || '') + ':' + (entry.strand || 'fwd');
+        // Re-run a lightweight highlight for saved searches
+        const color = entry.color || '#ffcc00';
+        const className = 'search-hit-snapshot-' + Math.random().toString(36).substring(2, 10);
+        const style = document.createElement('style');
+        style.textContent = '.' + className + ' { background-color: ' + color + ' !important; color: black !important; font-weight: bold; }';
+        style.setAttribute('data-motif', motifKey);
+        document.head.appendChild(style);
+
+        const motif = (entry.motif || '').replace(/:.+$/, ''); // strip strand suffix
+        document.querySelectorAll('.seq-line:not(.consensus-line)').forEach(row => {
+            const index = parseInt(row.dataset.seqIndex);
+            if (isNaN(index) || index < 0 || index >= state.seqs.length) return;
+            const dataSpan = row.querySelector('.seq-data');
+            if (!dataSpan) return;
+            const spans = Array.from(dataSpan.children);
+            const nonGapSpanIndices = [];
+            const displayedChars = [];
+            for (let si = 0; si < spans.length; si++) {
+                const ch = (spans[si].textContent || '').toUpperCase();
+                if (ch !== '-' && ch !== '.') {
+                    nonGapSpanIndices.push(si);
+                    displayedChars.push(ch);
+                }
+            }
+            const displayString = displayedChars.join('').replace(/U/g, 'T');
+            if (!displayString) return;
+            const searchMotif = motif.replace(/U/g, 'T');
+            for (let i = 0; i <= displayString.length - searchMotif.length; i++) {
+                if (displayString.substring(i, i + searchMotif.length) === searchMotif) {
+                    for (let j = 0; j < searchMotif.length; j++) {
+                        const si = nonGapSpanIndices[i + j];
+                        if (si !== undefined && spans[si]) spans[si].classList.add(className);
+                    }
+                }
+            }
+        });
+        state.searchHistory.push({ motif: motifKey, color, className, label: entry.label || motif, strand: entry.strand || 'fwd', matchCount: 0, sequencesWithMatches: 0 });
+    });
 }
 
 function _sanitizeSnapshotFileBaseName(sourceTitle) {
@@ -3544,7 +3638,7 @@ function downloadSnapshotHtml(snapshotUrl, sourceTitle) {
     setTimeout(() => URL.revokeObjectURL(dlUrl), 2000);
 }
 
-async function createSnapshot() {
+async async function createSnapshot() {
     if (!state.seqs || state.seqs.length === 0) {
         showMessage('Load an alignment first, then create snapshot.', 3000);
         return;
@@ -9412,7 +9506,15 @@ function _dotUpdateHoverInfo(row, col) {
             `A ${String(aStart + 1).padStart(5)}  ${aSlice}\n` +
             `          ${guide.join('')}\n` +
             `B ${String(bStart + 1).padStart(5)}  ${bSlice}`;
+        
+        // Store for copy button
+        S._copyRegion = {
+            aSlice, bSlice, aStart, bStart,
+            nameA: S.nameA, nameB: S.nameB
+        };
     }
+
+    if (panelEl) panelEl.style.display = 'block';
 }
 
 function _dotClearHoverInfo() {
@@ -9714,6 +9816,22 @@ function _initDotPlotEvents() {
             a.href = c.toDataURL('image/png');
             a.download = `dotplot_${_dotPlotState.nameA}_vs_${_dotPlotState.nameB}.png`;
             a.click();
+        });
+    }
+    const copyBtn = document.getElementById('dotPlotCopyRegion');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', () => {
+            const S = _dotPlotState;
+            const region = S._copyRegion;
+            if (!region) {
+                showMessage('Hover over the dot plot first to select a region.', 2500);
+                return;
+            }
+            const fasta = `>${region.nameA}_${region.aStart + 1}-${region.aStart + region.aSlice.length}\n${region.aSlice}\n` +
+                         `>${region.nameB}_${region.bStart + 1}-${region.bStart + region.bSlice.length}\n${region.bSlice}`;
+            navigator.clipboard.writeText(fasta).then(() => {
+                showMessage(`Copied ${region.aSlice.length}bp region as FASTA!`, 2000);
+            }).catch(() => showMessage('Copy failed.', 2000));
         });
     }
     if (closeBtn) {
