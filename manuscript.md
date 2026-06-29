@@ -2,18 +2,18 @@
 
 ## Target
 **Bioinformatics (Oxford) — Application Note**
-- 4 pages, ~2,600 words + 1–2 figures
-- 13 references
+- ~3,000 words + 1 comparison table
+- 14 references
 
 ---
 
 ## Summary
 
-ViewAlign is a browser-based platform for interactive visualization, editing, and analysis of multiple sequence alignments. It supports DNA, RNA, protein, and coding-sequence data across five interchangeable view modes, including a Canvas-based renderer with automatic viewport-culling activation for large alignments and an IGV-style compact read-packing mode. Eight input formats are supported — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, and BAM/CRAM — with automatic format detection. Built-in analysis tools include codon-aware frame detection with 17 selectable genetic codes, synonymous/non-synonymous mutation classification, a position-pattern-based sequence clustering algorithm with fuzzy merging and configurable quality thresholds, dot-plot self-comparison with region detection, tandem repeat and target-site duplication finding, UPGMA tree reconstruction, and regular-expression motif search. Sequences can be individually colour-labelled, sorted by name, length, or similarity, and edited through a GeneDoc-style residue editor with full undo history. The viewer exports publication-quality SVG vector graphics and Word-compatible RTF with per-residue conservation shading. A snapshot system saves and restores complete viewer states including colour assignments, search highlights, and column selections. A recent-files history with localStorage persistence tracks opened files and clipboard pastes. An optional Node.js server provides MAFFT realignment, BLAST search, SSH remote file loading, and BAM-to-SAM conversion. The viewer runs entirely in modern browsers with no installation and is freely available at https://toki-bio.github.io/MSA-viewer/ under the MIT license.
+ViewAlign is a browser-based platform for interactive visualization, editing, and analysis of multiple sequence alignments. It supports DNA, RNA, protein, and coding-sequence data across four interchangeable view modes plus a Canvas-based renderer with automatic viewport-culling activation for large alignments and an IGV-style compact read-packing mode. Eight input formats are supported — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, and BAM/CRAM — with automatic format detection. Built-in analysis tools include codon-aware frame detection with 17 selectable genetic codes, synonymous/non-synonymous mutation classification, a position-pattern-based sequence clustering algorithm with fuzzy merging and configurable quality thresholds, dot-plot self-comparison with region detection, tandem repeat and target-site duplication finding, UPGMA tree reconstruction, and regular-expression motif search. Sequences can be individually colour-labelled, sorted by name, length, or similarity, and edited through a GeneDoc-style residue editor with full undo history. A residue-case toggle (upper/lower/as-is) provides GeneDoc-compatible display conventions. The viewer exports publication-quality SVG vector graphics and Word-compatible RTF with per-residue conservation shading. A snapshot system saves and restores complete viewer states including colour assignments, search highlights, and column selections. Browser-based alignment is provided by a WebAssembly-compiled MAFFT module (disttbfast) requiring no server. An optional Node.js server enables BLAST search, SSH remote file access, and BAM/CRAM conversion via samtools. The viewer runs entirely in modern browsers with no installation and is freely available at https://toki-bio.github.io/MSA-viewer/ under the MIT license.
 
-**Availability:** https://toki-bio.github.io/MSA-viewer/ — source code, comprehensive manual, and example data at https://github.com/Toki-bio/MSA-viewer
+**Availability:** https://toki-bio.github.io/MSA-viewer/ — source code and 13-section manual at https://github.com/Toki-bio/MSA-viewer
 **Contact:** [email]
-**Supplementary information:** 9-section manual (manual.html), example alignments, server setup guide, and feature inventory table included in the repository.
+**Supplementary information:** Comprehensive manual (manual.html), example alignments, server setup guide, and feature inventory included in the repository.
 
 ---
 
@@ -104,11 +104,11 @@ Export options: FASTA (full alignment or selected sequences), MSF, RTF (Word-com
 
 ## 3. Discussion and Conclusion
 
-ViewAlign addresses the gap between desktop alignment tools and modern web-based bioinformatics workflows. By combining automatic format detection across eight input types, a Canvas rendering mode with auto-activation thresholds, interactive editing with full undo history, coding-sequence analysis, and publication-quality export in a zero-installation browser application, it eliminates the format-conversion and installation barriers that fragment current MSA workflows.
+ViewAlign addresses the gap between desktop alignment tools and modern browser-based bioinformatics workflows. By combining automatic format detection across eight input types, five view modes with GPU-composited Canvas rendering, GeneDoc-style interactive editing with full undo history, browser-based MAFFT alignment via WebAssembly, coding-sequence analysis with 17 genetic codes, and publication-quality export in a zero-installation package, it eliminates the format-conversion and multi-tool switching that fragment current MSA workflows.
 
-The Canvas renderer's viewport-culling approach matches the strategy used by MSAViewer (Yachdav et al., 2016) and IGV.js (Robinson et al., 2011), while CSS optimizations — `content-visibility: auto`, `contain: layout style`, and GPU-composited scrolling — deliver responsive DOM-based interaction for alignments up to approximately 200 sequences × 5,000 columns. The 17 selectable genetic codes and frameshift detection extend the MACSE paradigm (Ranwez et al., 2011) to a browser environment for the first time. The customizable multi-threshold shading system and per-sequence colour labelling provide visualization flexibility absent from most web-based viewers, while the position-pattern clustering algorithm enables subfamily-level annotation of repetitive elements directly within the viewer.
+The Canvas renderer's viewport-culling approach draws only visible residues per frame, matching strategies used by IGV.js (Robinson et al., 2011), while DOM-mode CSS optimizations — `content-visibility: auto` and `contain: layout style` — deliver responsive interaction for alignments up to approximately 200 sequences × 5,000 columns. The 17 selectable genetic codes and frameshift detection extend the MACSE paradigm (Ranwez et al., 2011) to a browser environment. The GeneDoc-style residue editor (Nicholas et al., 1997), with Move NoGaps and Slide KeepGaps tools, and the RTF export with per-residue conservation shading bring desktop-quality editing and figure generation to the browser. The position-pattern clustering algorithm enables subfamily-level annotation entirely within the viewing environment, while the colour system — supporting manual, cluster-based, regex-pattern, and name-similarity assignment with history tracking — provides visualization granularity absent from most viewers.
 
-Limitations include the absence of protein-level analyses (BLOSUM-based dot plots, structural feature annotation) and deeper phylogenetic integration. A WebAssembly-based MAFFT module is planned to eliminate the server dependency for realignment. ViewAlign is freely available, runs without installation, and includes a comprehensive 9-section manual.
+Limitations include the absence of protein-level analyses (BLOSUM-based dot plots, structural feature annotation), 3D structure linking, and deeper phylogenetic integration. ViewAlign is freely available, runs without installation, and includes a comprehensive 13-section manual.
 
 ---
 
@@ -146,8 +146,8 @@ Limitations include the absence of protein-level analyses (BLOSUM-based dot plot
 
 ## Supplementary Information
 
-- **manual.html**: 9-section comprehensive manual covering all features, 8 input formats, keyboard shortcuts, and workflows
-- **Example datasets**: FASTA, MSF, Clustal, PHYLIP, NEXUS, and SAM test files
+- **manual.html**: 13-section comprehensive manual with sidebar navigation covering all features, 8 input formats, keyboard shortcuts, credits and attribution, and workflows
+- **Example datasets**: FASTA, MSF, Clustal, PHYLIP, NEXUS, SAM, and BAM test files
 - **Server setup guide**: included in the repository README
 - **Deployment guide**: DEPLOYMENT.md with step-by-step public server deployment instructions
-- **Feature inventory**: Complete table of 17+ feature categories
+- **Feature inventory**: Complete table of 20+ feature categories
