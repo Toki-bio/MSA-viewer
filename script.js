@@ -1,4 +1,7 @@
 // DEFAULTS & STATE
+const DEBUG = false;
+const debugLog = (...args) => { if (DEBUG) console.log(...args); };
+
 const DEFAULTS = {
     consensusThreshold: 50,
     groupConsensusThreshold: 50,
@@ -159,7 +162,7 @@ async function checkSshServer() {
             const servers = await resp.json();
             _pollableServers = Object.keys(servers).filter(k => servers[k].pollable);
             if (Object.keys(servers).length === 0) return; // no servers configured
-            console.log(`[POLL] Pollable servers: ${_pollableServers.join(', ')}`);
+            debugLog(`[POLL] Pollable servers: ${_pollableServers.join(', ')}`);
             _buildServerButtons(servers);
             const row = document.getElementById('sshLoadRow');
             if (row) row.style.display = '';
@@ -176,7 +179,7 @@ async function _pollLoop() {
         try {
             await _pollQueuedFile();
         } catch (e) {
-            console.log(`[POLL] Loop error: ${e.message}`);
+            debugLog(`[POLL] Loop error: ${e.message}`);
         }
         await new Promise(r => setTimeout(r, 3000));
     }
@@ -192,7 +195,7 @@ async function _pollQueuedFile() {
         if (resp.ok) {
             const data = await resp.json();
             if (data.queued) {
-                console.log(`[POLL] Local queue detected: ${data.file}`);
+                debugLog(`[POLL] Local queue detected: ${data.file}`);
                 if (data.server) setSelectedServer(data.server);
                 await fetchFileFromServer(data.file, data.server);
                 return;
@@ -213,22 +216,22 @@ async function _pollQueuedFile() {
                         const err = await r.json();
                         if (err?.error) detail = err.error;
                     } catch {}
-                    console.log(`[POLL] ${serverKey}: ${detail}`);
+                    debugLog(`[POLL] ${serverKey}: ${detail}`);
                     continue;
                 }
                 const data = await r.json();
                 if (data.queued) {
-                    console.log(`[POLL] ${serverKey}: Queue detected: ${data.file}`);
+                    debugLog(`[POLL] ${serverKey}: Queue detected: ${data.file}`);
                     setSelectedServer(serverKey);
                     await fetchFileFromServer(data.file, serverKey);
                     return;
                 }
             } catch (e) { 
-                console.log(`[POLL] ${serverKey}: ${e.message}`);
+                debugLog(`[POLL] ${serverKey}: ${e.message}`);
             }
         }
     } catch (e) { 
-        console.log(`[POLL] Error: ${e.message}`);
+        debugLog(`[POLL] Error: ${e.message}`);
     } finally {
         _pollBusy = false;
     }
@@ -265,7 +268,7 @@ async function checkMCQueueOnce() {
         }
         const data = await r.json();
         if (data.queued) {
-            console.log(`[POLL] ${serverKey}: Queue detected: ${data.file}`);
+            debugLog(`[POLL] ${serverKey}: Queue detected: ${data.file}`);
             _sshLog(`Found: ${data.file.split('/').pop()} — fetching…`, 'info');
             await fetchFileFromServer(data.file, serverKey);
         } else {
@@ -3158,8 +3161,7 @@ function replaceSelectedWithConsensus() {
     const len = Math.max(...selectedSeqs.map(s => s.length));
     
     // Generate consensus sequence
-    let cons = '';
-    cons = computeConsensusForSequences(selectedSeqs);
+    const cons = computeConsensusForSequences(selectedSeqs);
     
     // Create consensus name based on selected sequence indices
     const firstIdx = indices[0] + 1; // 1-based for display
@@ -3191,6 +3193,7 @@ function replaceSelectedWithConsensus() {
 }
 function duplicateSelected() {
     if (state.selectedRows.size === 0) return;
+    pushUndo('duplicate');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const copies = indices.map(i => ({...state.seqs[i], header: state.seqs[i].header + '_copy'}));
     state.seqs.push(...copies);
@@ -3901,11 +3904,11 @@ function searchMotif() {
     const checkboxEl = el('searchBothStrands');
     const bothStrands = checkboxEl && checkboxEl.checked;
 
-    console.log('=== SEARCH MOTIF STARTED ===');
-    console.log('Input motif:', motif);
-    console.log('Checkbox element found:', !!checkboxEl);
-    console.log('Checkbox checked:', bothStrands);
-    console.log('===============================');
+    debugLog('=== SEARCH MOTIF STARTED ===');
+    debugLog('Input motif:', motif);
+    debugLog('Checkbox element found:', !!checkboxEl);
+    debugLog('Checkbox checked:', bothStrands);
+    debugLog('===============================');
 
     const fwdMotifRaw = motif;
     const fwdMotif = fwdMotifRaw.replace(/U/g, 'T');
@@ -3913,9 +3916,9 @@ function searchMotif() {
     if (bothStrands) {
         const rcMotifRaw = reverseComplement(fwdMotifRaw);
         const rcMotif = rcMotifRaw.replace(/U/g, 'T');
-        console.log('Both strands enabled. Reverse complement:', { fwdMotif, fwdMotifRaw, rcMotif, rcMotifRaw });
+        debugLog('Both strands enabled. Reverse complement:', { fwdMotif, fwdMotifRaw, rcMotif, rcMotifRaw });
         if (rcMotif && rcMotif !== fwdMotif) {
-            console.log('Adding reverse complement motif to search list');
+            debugLog('Adding reverse complement motif to search list');
             motifsToSearch.push({
                 motif: rcMotif,
                 color: getComplementaryColor(color),
@@ -3923,12 +3926,12 @@ function searchMotif() {
                 strand: 'rev comp'
             });
         } else {
-            console.log('NOT adding reverse complement (palindromic or empty)');
+            debugLog('NOT adding reverse complement (palindromic or empty)');
         }
     } else {
-        console.log('Both strands NOT checked');
+        debugLog('Both strands NOT checked');
     }
-    console.log('Final motifs to search:', motifsToSearch.map(m => ({ motif: m.motif, label: m.label })));
+    debugLog('Final motifs to search:', motifsToSearch.map(m => ({ motif: m.motif, label: m.label })));
 
     let totalMatches = 0;
     let fwdMatches = 0;
@@ -3937,7 +3940,7 @@ function searchMotif() {
     let revSeqs = new Set();
 
     motifsToSearch.forEach(({ motif: searchMotifValue, color: searchColorValue, label, strand }) => {
-        console.log(`Searching for motif: "${searchMotifValue}" (${label}, ${strand})`);
+        debugLog(`Searching for motif: "${searchMotifValue}" (${label}, ${strand})`);
         let motifMatches = 0;
         let motifSeqsWithMatches = new Set();
         const motifKey = `${searchMotifValue}:${strand}`;
@@ -3986,7 +3989,7 @@ function searchMotif() {
 
             // Find matches with mismatches allowed
             const matches = findMatchesWithMismatches(normalizedDisplay, normalizedMotif, maxMismatches);
-            console.log(`  Seq ${index}: "${displayString}" vs "${normalizedMotif}" -> ${matches.length} matches`);
+            debugLog(`  Seq ${index}: "${displayString}" vs "${normalizedMotif}" -> ${matches.length} matches`);
             if (matches.length > 0) {
                 motifSeqsWithMatches.add(index);
                 if (strand === 'fwd') {
@@ -4245,14 +4248,14 @@ function clusterSequences() {
     
     // Log to console
     console.log('=== CLUSTERING RESULTS ===');
-    console.log(`Parameters: minSize=${clusterParams.minSize}, minPerfect=${clusterParams.minPerfect}, maxIterations=${clusterParams.maxIterations}`);
-    console.log(`Quality Thresholds: small=${clusterParams.qualitySmall}%, medium=${clusterParams.qualityMedium}%, large=${clusterParams.qualityLarge}%`);
-    console.log(`Size Breakpoints: small-medium=${clusterParams.sizeSmallMedium}, medium-large=${clusterParams.sizeMediumLarge}`);
-    console.log(`Min Occurrences: ${clusterParams.minOccurrences}`);
-    console.log(`Total sequences: ${clusterResults.summary.nTotal}`);
-    console.log(`Clusters found: ${clusterResults.summary.nClusters}`);
-    console.log(`Assigned: ${clusterResults.summary.nAssigned}`);
-    console.log(`Unassigned: ${clusterResults.summary.nUnassigned}`);
+    debugLog(`Parameters: minSize=${clusterParams.minSize}, minPerfect=${clusterParams.minPerfect}, maxIterations=${clusterParams.maxIterations}`);
+    debugLog(`Quality Thresholds: small=${clusterParams.qualitySmall}%, medium=${clusterParams.qualityMedium}%, large=${clusterParams.qualityLarge}%`);
+    debugLog(`Size Breakpoints: small-medium=${clusterParams.sizeSmallMedium}, medium-large=${clusterParams.sizeMediumLarge}`);
+    debugLog(`Min Occurrences: ${clusterParams.minOccurrences}`);
+    debugLog(`Total sequences: ${clusterResults.summary.nTotal}`);
+    debugLog(`Clusters found: ${clusterResults.summary.nClusters}`);
+    debugLog(`Assigned: ${clusterResults.summary.nAssigned}`);
+    debugLog(`Unassigned: ${clusterResults.summary.nUnassigned}`);
     console.log('');
     
     const colors = SINEClusterer.getClusterColors();
@@ -4262,17 +4265,17 @@ function clusterSequences() {
     
     clusterResults.clusters.forEach((cluster, idx) => {
         const color = colors[idx % colors.length];
-        console.log(`\n--- CLUSTER ${idx + 1} ---`);
-        console.log(`Size: ${cluster.size} sequences`);
-        console.log(`Diagnostic features: ${cluster.nPerfect} (${cluster.nReliable || cluster.nPerfect} reliable)`);
+        debugLog(`\n--- CLUSTER ${idx + 1} ---`);
+        debugLog(`Size: ${cluster.size} sequences`);
+        debugLog(`Diagnostic features: ${cluster.nPerfect} (${cluster.nReliable || cluster.nPerfect} reliable)`);
         if (cluster.nFiltered) {
-            console.log(`⚠️  Filtered (high-leakage): ${cluster.nFiltered} features`);
+            debugLog(`⚠️  Filtered (high-leakage): ${cluster.nFiltered} features`);
         }
-        console.log(`Color: ${color}`);
+        debugLog(`Color: ${color}`);
         console.log('Sequences:');
         
         cluster.sequences.forEach(seq => {
-            console.log(`  • ${seq.id} (index ${seq.index})`);
+            debugLog(`  • ${seq.id} (index ${seq.index})`);
             state.clusterMap[seq.index] = {
                 cluster: idx,
                 color: color,
@@ -4281,24 +4284,24 @@ function clusterSequences() {
         });
         
         if (cluster.perfectFeatures.length > 0) {
-            console.log(`Perfect features (${cluster.perfectFeatures.length} reliable):`);
+            debugLog(`Perfect features (${cluster.perfectFeatures.length} reliable):`);
             cluster.perfectFeatures.slice(0, 5).forEach(f => {
-                console.log(`  Pos ${f.pos}: ${f.char}`);
+                debugLog(`  Pos ${f.pos}: ${f.char}`);
             });
         }
         
         if (cluster.imperfectFeatures && cluster.imperfectFeatures.length > 0) {
-            console.log(`Imperfect features (${cluster.imperfectFeatures.length} reliable):`);
+            debugLog(`Imperfect features (${cluster.imperfectFeatures.length} reliable):`);
             cluster.imperfectFeatures.slice(0, 5).forEach(f => {
-                console.log(`  Pos ${f.pos}: ${f.char} (leaks to ${f.countOutside})`);
+                debugLog(`  Pos ${f.pos}: ${f.char} (leaks to ${f.countOutside})`);
             });
         }
     });
     
     if (clusterResults.unassigned.length > 0) {
-        console.log(`\n--- UNASSIGNED (${clusterResults.unassigned.length} sequences) ---`);
+        debugLog(`\n--- UNASSIGNED (${clusterResults.unassigned.length} sequences) ---`);
         clusterResults.unassigned.forEach(seq => {
-            console.log(`  • ${seq.id} (index ${seq.index})`);
+            debugLog(`  • ${seq.id} (index ${seq.index})`);
             state.clusterMap[seq.index] = {
                 cluster: -1,
                 color: '#cccccc',

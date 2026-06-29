@@ -5,9 +5,14 @@ const path = require('path');
 const os = require('os');
 const app = express();
 
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '10mb' }));
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
+    const origin = req.get('origin') || '';
+    const allowed = ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost', 'http://127.0.0.1',
+                     'http://100.78.77.10:3000', 'http://100.78.77.10'];
+    if (allowed.includes(origin) || !origin) {
+        res.header('Access-Control-Allow-Origin', origin || '*');
+    }
     res.header('Access-Control-Allow-Headers', 'Content-Type');
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') return res.sendStatus(200);
@@ -328,7 +333,10 @@ function parseBlastResults(xmlOutput) {
 
 // Run BLASTN
 app.post('/api/blast', (req, res) => {
-    const { query, dbName, evalue = '1e-5', maxHits = 10 } = req.body;
+    const { query, dbName, evalue: rawEvalue = '1e-5', maxHits: rawMaxHits = 10 } = req.body;
+    // Sanitize user-supplied numeric parameters
+    const evalue = parseFloat(rawEvalue) || 1e-5;
+    const maxHits = Math.max(1, Math.min(50, parseInt(rawMaxHits) || 10));
 
     if (!query || !dbName) {
         return res.status(400).json({ error: 'Query sequence and database name required' });
@@ -405,7 +413,8 @@ app.post('/api/blast', (req, res) => {
 
 // Batch BLAST search against all databases
 app.post('/api/blast-all', (req, res) => {
-    const { query, evalue = '1e-5' } = req.body;
+    const { query, evalue: rawEvalue = '1e-5' } = req.body;
+    const evalue = parseFloat(rawEvalue) || 1e-5;
 
     if (!query) {
         return res.status(400).json({ error: 'Query sequence required' });
@@ -470,8 +479,33 @@ app.post('/api/blast-all', (req, res) => {
 // Path to MAFFT binary - update this if mafft is in a non-standard location
 const MAFFT_BIN = process.env.MAFFT_BIN || '/staging/conda/envs/bioinfo/bin/mafft';
 
+// Whitelist of allowed MAFFT options to prevent command injection
+const ALLOWED_MAFFT_OPTS = new Set([
+    '--auto', '--add', '--addfragments', '--keeplength',
+    '--maxiterate', '--localpair', '--globalpair', '--retree',
+    '--quiet', '--thread', '--anysymbol', '--preservecase',
+    '--reorder', '--treeout', '--inputorder', '--6merpair',
+    '--genafpair', '--fastapair', '--parttree', '--dpparttree',
+    '--amino', '--nuc', '--clustalout', '--phylipout'
+]);
+
+// Spawn MAFFT as child process to avoid shell injection
+function runMafft(args, inputFiles, env, timeout) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(MAFFT_BIN, args, { env, timeout, maxBuffer: 50 * 1024 * 1024 });
+        let stdout = '', stderr = '';
+        child.stdout.on('data', d => { stdout += d.toString(); });
+        child.stderr.on('data', d => { stderr += d.toString(); });
+        child.on('close', code => {
+            if (code !== 0) reject(new Error(stderr || `MAFFT exited with code ${code}`));
+            else resolve(stdout);
+        });
+        child.on('error', reject);
+    });
+}
+
 // Realign all sequences or add new sequences to existing alignment
-app.post('/api/mafft', (req, res) => {
+app.post('/api/mafft', async (req, res) => {
     const { mode = 'align', sequences, existingAlignment, newSequences, options = [] } = req.body;
 
     if (!sequences && !existingAlignment) {
@@ -485,47 +519,40 @@ app.post('/api/mafft', (req, res) => {
     const outputFile = path.join(tmpDir, `mafft_output_${timestamp}.fasta`);
 
     try {
-        let mafftCmd;
+        const mafftArgs = [];
+        let inputPath;
 
         if (mode === 'add' && existingAlignment && newSequences) {
-            // --add mode: add new sequences to existing alignment
             fs.writeFileSync(inputFile, existingAlignment);
             fs.writeFileSync(addFile, newSequences);
-            // Use --add to add new sequences to existing alignment without re-aligning existing
             const addMode = options.includes('--addfragments') ? '--addfragments' : '--add';
-            mafftCmd = `${MAFFT_BIN} ${addMode} "${addFile}" --keeplength "${inputFile}"`;
-            // Remove --addfragments from options if it was there (already used)
-            const filteredOpts = options.filter(o => o !== '--addfragments' && o !== '--add');
-            if (filteredOpts.length > 0) {
-                mafftCmd = `${MAFFT_BIN} ${addMode} "${addFile}" ${filteredOpts.join(' ')} "${inputFile}"`;
+            mafftArgs.push(addMode, addFile, '--keeplength', inputFile);
+            const extraOpts = options.filter(o => o !== '--addfragments' && o !== '--add');
+            for (const opt of extraOpts) {
+                if (ALLOWED_MAFFT_OPTS.has(opt)) mafftArgs.unshift(opt);
             }
+            inputPath = inputFile;
         } else if (mode === 'realign-block') {
-            // Realign a block: sequences are the extracted block columns
             fs.writeFileSync(inputFile, sequences);
-            mafftCmd = `${MAFFT_BIN} --auto "${inputFile}"`;
+            mafftArgs.push('--auto', inputFile);
+            inputPath = inputFile;
         } else {
-            // Full alignment of all sequences
             fs.writeFileSync(inputFile, sequences);
-            const mafftOpts = options.length > 0 ? options.join(' ') : '--auto';
-            mafftCmd = `${MAFFT_BIN} ${mafftOpts} "${inputFile}"`;
+            const mafftOpts = options.length > 0 ? options : ['--auto'];
+            for (const opt of mafftOpts) {
+                if (ALLOWED_MAFFT_OPTS.has(opt)) mafftArgs.push(opt);
+            }
+            mafftArgs.push(inputFile);
+            inputPath = inputFile;
         }
 
-        console.log(`Running MAFFT: ${mafftCmd}`);
+        console.log(`Running MAFFT: ${MAFFT_BIN} ${mafftArgs.join(' ')}`);
         const mafftEnv = { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin:/staging/conda/envs/bioinfo/bin:' + (process.env.PATH || '') };
-        const stderrFile = path.join(tmpDir, `mafft_stderr_${timestamp}.log`);
-        const fullCmd = `${mafftCmd} 2>${stderrFile}`;
-        const result = execSync(fullCmd, {
-            encoding: 'utf8',
-            timeout: 300000, // 5 minute timeout for large alignments
-            maxBuffer: 50 * 1024 * 1024, // 50MB buffer
-            shell: '/bin/bash',
-            env: mafftEnv
-        });
+        const result = await runMafft(mafftArgs, [inputPath], mafftEnv, 300000);
 
         // Clean up temp files
         try { fs.unlinkSync(inputFile); } catch (_) {}
         try { fs.unlinkSync(addFile); } catch (_) {}
-        try { fs.unlinkSync(stderrFile); } catch (_) {}
 
         if (!result || result.trim().length === 0) {
             return res.status(500).json({ error: 'MAFFT produced no output' });
@@ -539,17 +566,13 @@ app.post('/api/mafft', (req, res) => {
 
     } catch (err) {
         console.error('MAFFT error:', err);
-        // Read stderr log for details
-        let stderrContent = '';
-        try { stderrContent = fs.readFileSync(path.join(tmpDir, `mafft_stderr_${timestamp}.log`), 'utf8'); } catch (_) {}
         // Clean up temp files on error
         try { fs.unlinkSync(inputFile); } catch (_) {}
         try { fs.unlinkSync(addFile); } catch (_) {}
-        try { fs.unlinkSync(path.join(tmpDir, `mafft_stderr_${timestamp}.log`)); } catch (_) {}
 
         res.status(500).json({
             error: 'MAFFT alignment failed',
-            details: stderrContent || err.stderr || err.message
+            details: err.stderr || err.message
         });
     }
 });
@@ -595,7 +618,7 @@ app.get('/api/snapshots', (req, res) => {
 
 // ============ SSH MULTI-SERVER FILE FETCH ============
 // Load server config from external file (not committed to git)
-const PPK = 'C:\\Users\\T\\.ssh\\id_ed25519.ppk';
+const PPK = process.env.SSH_KEY_PATH || 'C:\\Users\\T\\.ssh\\id_ed25519.ppk';
 let SSH_SERVERS = {};
 try {
     const srvPath = path.join(__dirname, 'ssh-servers.json');
@@ -664,6 +687,7 @@ app.get('/api/queue-file', (req, res) => {
     if (!filePath)  return res.status(400).json({ error: 'Missing file' });
     if (!serverKey || !SSH_SERVERS[serverKey]) return res.status(400).json({ error: 'Unknown server' });
     if (/[;|&`$(){}\\]/.test(filePath)) return res.status(400).json({ error: 'Invalid path' });
+    if (filePath.includes('..')) return res.status(400).json({ error: 'Path traversal not allowed' });
     _queuedFile = { server: serverKey, file: filePath, ts: Date.now() };
     console.log(`Queued: [${serverKey}] ${filePath}`);
     res.json({ ok: true });
@@ -752,6 +776,7 @@ app.get('/api/ssh-cat', (req, res) => {
     if (!filePath)  return res.status(400).json({ error: 'Missing "file" query parameter' });
     if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
     if (/[;|&`$(){}\\]/.test(filePath)) return res.status(400).json({ error: 'Invalid characters in file path' });
+    if (filePath.includes('..')) return res.status(400).json({ error: 'Path traversal not allowed' });
 
     const sshArgs = buildSshCatArgs(serverKey, filePath);
     if (!sshArgs) return res.status(400).json({ error: 'Bad server config' });
@@ -773,6 +798,7 @@ app.get('/api/ssh-ls', (req, res) => {
     const dirPath   = req.query.dir || '~';
     const serverKey = req.query.server || 'copilot';
     if (/[;|&`$(){}\\]/.test(dirPath)) return res.status(400).json({ error: 'Invalid characters in path' });
+    if (dirPath.includes('..')) return res.status(400).json({ error: 'Path traversal not allowed' });
     if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
 
     const escaped   = dirPath.replace(/"/g, '\\"');
