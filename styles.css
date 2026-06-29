@@ -390,16 +390,17 @@ button:hover {
 }
 
 .edit-toggle-button {
-    height: 18px;
-    line-height: 16px;
-    padding: 0 8px;
+    height: 14px;
+    line-height: 12px;
+    padding: 0 6px;
     margin-left: 4px;
-    font-size: 11px;
+    font-size: 9px;
     font-weight: bold;
     border: 1px solid #aaa;
     border-radius: 3px;
     background: #f7f7f7;
     color: #333;
+    vertical-align: middle;
 }
 
 .edit-toggle-button.active {
