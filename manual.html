@@ -295,6 +295,10 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     </div>
   </div>
 
+  <div class="side-group open">
+    <a href="#credits">13. Credits &amp; Attribution</a>
+  </div>
+
 </aside>
 
 <!-- ═══ MAIN CONTENT ═══ -->
@@ -1187,6 +1191,89 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li>Save working parameter sets as named presets for reproducibility</li>
     <li>Clusters of size 1 are discarded — they may represent singletons or sequencing artefacts</li>
   </ul>
+</section>
+
+<!-- ════════════════════════════════════════ -->
+<section id="credits">
+  <h2>13. Credits &amp; Attribution</h2>
+  <p>
+    MSA Viewer is original software that builds upon, integrates, and draws inspiration
+    from the following open-source tools and published methods:
+  </p>
+
+  <h3>Software Used Directly</h3>
+  <table>
+    <tr><th>Software</th><th>How Used</th><th>License</th><th>Citation</th></tr>
+    <tr>
+      <td><strong>MAFFT</strong></td>
+      <td>Alignment engine compiled to WebAssembly (<code>disttbfast.js</code>). Also callable via native binary on the optional server.</td>
+      <td>BSD</td>
+      <td>Katoh K, Standley DM (2013) <em>Mol Biol Evol</em> 30:772–780</td>
+    </tr>
+    <tr>
+      <td><strong>samtools</strong></td>
+      <td>BAM/CRAM to SAM conversion on the server (<code>samtools view</code>)</td>
+      <td>MIT</td>
+      <td>Li H et al. (2009) <em>Bioinformatics</em> 25:2078–2079</td>
+    </tr>
+    <tr>
+      <td><strong>NCBI BLAST</strong></td>
+      <td>Sequence similarity search (server-side)</td>
+      <td>Public Domain</td>
+      <td>Camacho C et al. (2009) <em>BMC Bioinformatics</em> 10:421</td>
+    </tr>
+  </table>
+
+  <h3>Design &amp; Methodology Inspired By</h3>
+  <table>
+    <tr><th>Tool / Method</th><th>Inspiration</th><th>Citation</th></tr>
+    <tr>
+      <td><strong>GeneDoc</strong></td>
+      <td>Edit mode tools (Move NoGaps = GeneDoc Arrange/MoveText; Slide KeepGaps = GeneDoc SlideText). RTF export format.</td>
+      <td>Nicholas KB et al. (1997) <em>EMBNEW.NEWS</em> 4:14</td>
+    </tr>
+    <tr>
+      <td><strong>IGV</strong></td>
+      <td>Compact read-packing view mode</td>
+      <td>Robinson JT et al. (2011) <em>Nat Biotechnol</em> 29:24–26</td>
+    </tr>
+    <tr>
+      <td><strong>MACSE</strong></td>
+      <td>Codon-aware visualization with frameshift detection, synonymous/non-synonymous annotation</td>
+      <td>Ranwez V et al. (2011) <em>PLoS ONE</em> 6:e22594</td>
+    </tr>
+    <tr>
+      <td><strong>Clustal</strong></td>
+      <td>ClustalW conservation shading scheme and .aln format parser</td>
+      <td>Sievers F et al. (2011) <em>Mol Syst Biol</em> 7:539</td>
+    </tr>
+    <tr>
+      <td><strong>BLOSUM62</strong></td>
+      <td>Amino acid similarity matrix for conservation grouping</td>
+      <td>Henikoff S, Henikoff JG (1992) <em>PNAS</em> 89:10915–10919</td>
+    </tr>
+    <tr>
+      <td><strong>Jalview</strong></td>
+      <td>Zappo colour scheme, conservation shading model</td>
+      <td>Waterhouse AM et al. (2009) <em>Bioinformatics</em> 25:1189–1191</td>
+    </tr>
+  </table>
+
+  <h3>Format Standards</h3>
+  <ul>
+    <li><strong>FASTA</strong> — Pearson WR, Lipman DJ (1988) <em>PNAS</em> 85:2444–2448</li>
+    <li><strong>SAM/BAM</strong> — Li H et al. (2009) <em>Bioinformatics</em> 25:2078–2079</li>
+    <li><strong>Clustal</strong> — Thompson JD et al. (1994) <em>Nucleic Acids Res</em> 22:4673–4680</li>
+    <li><strong>PHYLIP</strong> — Felsenstein J (1989) <em>Cladistics</em> 5:164–166</li>
+    <li><strong>NEXUS</strong> — Maddison DR et al. (1997) <em>Syst Biol</em> 46:590–621</li>
+    <li><strong>Stockholm</strong> — Sonnhammer ELL et al. (1998) <em>Proc ISMB</em> 6:175–182</li>
+    <li><strong>NCBI Genetic Codes</strong> — <a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi" target="_blank">NCBI Taxonomy</a></li>
+  </ul>
+
+  <p style="margin-top:16px;font-size:13px;color:var(--muted);">
+    All external code is used under its original open-source license.
+    The MSA Viewer source code itself is released under the <strong>MIT License</strong>.
+  </p>
 </section>
 
 </div>
