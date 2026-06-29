@@ -711,13 +711,21 @@
             <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px;flex-wrap:wrap;">
                 <label>Window: <input type="number" id="dotPlotWindow" value="9" min="1" max="61" step="2" style="width:45px;"></label>
                 <label>Threshold: <input type="range" id="dotPlotThreshold" min="0" max="100" value="55" style="width:100px;vertical-align:middle;"><span id="dotPlotThreshVal">55%</span></label>
+                <label>Context: <input type="number" id="dotPlotContextRadius" value="20" min="5" max="100" step="5" style="width:45px;" title="Nucleotide context radius around hover position"> bp</label>
                 <label><input type="checkbox" id="dotPlotRevComp"> RevComp B</label>
                 <button id="dotPlotRecalc" style="font-size:11px;padding:2px 8px;">Recalculate</button>
                 <button id="dotPlotExport" style="font-size:11px;padding:2px 8px;">Export PNG</button>
+                <button id="dotPlotExportSvg" style="font-size:11px;padding:2px 8px;">Export SVG</button>
             </div>
-            <div id="dotPlotViewport" style="overflow:auto;flex:1;min-height:260px;max-height:none;border:1px solid #ccc;position:relative;cursor:crosshair;">
-                <canvas id="dotPlotCanvas" width="400" height="400"></canvas>
-                <canvas id="dotPlotOverlay" width="400" height="400" style="position:absolute;top:0;left:0;pointer-events:auto;"></canvas>
+            <div style="display:flex;gap:8px;flex:1;min-height:260px;">
+                <div id="dotPlotViewport" style="overflow:auto;flex:1;min-width:300px;border:1px solid #ccc;position:relative;cursor:crosshair;">
+                    <canvas id="dotPlotCanvas" width="400" height="400"></canvas>
+                    <canvas id="dotPlotOverlay" width="400" height="400" style="position:absolute;top:0;left:0;pointer-events:auto;"></canvas>
+                </div>
+                <div id="dotPlotRegionList" style="width:220px;min-width:180px;border:1px solid #ccc;overflow-y:auto;font-size:11px;display:none;background:#fafafa;">
+                    <div style="padding:6px;font-weight:bold;border-bottom:1px solid #ddd;background:#eee;position:sticky;top:0;">Top Regions</div>
+                    <div id="dotPlotRegionItems" style="padding:4px;"></div>
+                </div>
             </div>
             <div id="dotPlotStatus" style="font-size:11px;color:#666;margin-top:4px;"></div>
             <div id="dotPlotHover" style="font-size:11px;color:#555;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;"></div>

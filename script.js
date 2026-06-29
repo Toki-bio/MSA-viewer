@@ -9490,7 +9490,7 @@ function _dotUpdateHoverInfo(row, col) {
     }
 
     if (panelEl) {
-        const radius = 20;
+        const radius = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 20;
         const aStart = Math.max(0, row - radius);
         const aEnd = Math.min(S.seqA.length, row + radius + 1);
         const bStart = Math.max(0, col - radius);
@@ -9625,6 +9625,9 @@ function _dotRender() {
     ctx.fillText(nameB, DOT_AXIS_PAD + plotW / 2, 2);
     ctx.save(); ctx.translate(12, DOT_AXIS_PAD + plotH / 2); ctx.rotate(-Math.PI / 2);
     ctx.fillText(nameA, 0, 0); ctx.restore();
+
+    // Detect interesting regions for side panel
+    setTimeout(() => _dotDetectRegions(), 50);
 }
 
 function _dotFitView() {
@@ -9638,6 +9641,97 @@ function _dotFitView() {
     const z = Math.min(vw / S.cols, vh / S.rows, 24);
     S.zoom = Math.max(0.5, Math.round(z * 10) / 10);
     _dotRender();
+}
+
+// Detect top-scoring diagonal regions for the side navigation list
+function _dotDetectRegions() {
+    const S = _dotPlotState;
+    if (!S.scores) return;
+    const minRun = 15; // minimum diagonal run length
+    const minScore = S.threshold * S.windowSize * 0.9;
+    const regions = [];
+    const visited = new Set();
+
+    for (let d = -(S.rows - 1); d < S.cols; d++) {
+        let runStart = -1, runSum = 0, runLen = 0;
+        const startR = d < 0 ? -d : 0;
+        const endR = Math.min(S.rows, S.cols - d);
+        
+        for (let r = startR; r < endR; r++) {
+            const c = r + d;
+            if (c < 0 || c >= S.cols || r >= S.rows) continue;
+            const score = S.scores[r * S.cols + c];
+            if (score >= minScore) {
+                if (runStart < 0) runStart = r;
+                runSum += score;
+                runLen++;
+            } else {
+                if (runLen >= minRun) {
+                    regions.push({
+                        row: runStart, col: runStart + d,
+                        length: runLen,
+                        avgScore: runSum / (runLen * S.windowSize),
+                        diagonal: d
+                    });
+                }
+                runStart = -1; runSum = 0; runLen = 0;
+            }
+        }
+        if (runLen >= minRun) {
+            regions.push({
+                row: runStart, col: runStart + d,
+                length: runLen,
+                avgScore: runSum / (runLen * S.windowSize),
+                diagonal: d
+            });
+        }
+    }
+
+    // Sort by avgScore descending, take top 30
+    regions.sort((a, b) => b.avgScore - a.avgScore);
+    S.regions = regions.slice(0, 30);
+    _dotRenderRegionList();
+}
+
+function _dotRenderRegionList() {
+    const S = _dotPlotState;
+    const listEl = document.getElementById('dotPlotRegionList');
+    const itemsEl = document.getElementById('dotPlotRegionItems');
+    if (!listEl || !itemsEl) return;
+
+    if (!S.regions || S.regions.length === 0) {
+        listEl.style.display = 'none';
+        return;
+    }
+
+    listEl.style.display = 'block';
+    itemsEl.innerHTML = S.regions.map((r, i) => {
+        const pct = (r.avgScore * 100).toFixed(1);
+        return `<div style="padding:3px 6px;cursor:pointer;border-bottom:1px solid #eee;"
+            onmouseenter="this.style.background='#d0e4ff'"
+            onmouseleave="this.style.background=''"
+            onclick="_dotGoToRegion(${i})"
+            title="Diagonal run: ${r.length}bp, ${pct}% similarity">
+            <b>#${i + 1}</b> ${r.length}bp ${pct}%
+            <span style="color:#888;font-size:10px;">A${r.row + 1}-${r.row + r.length} / B${r.col + 1}-${r.col + r.length}</span>
+          </div>`;
+    }).join('');
+}
+
+function _dotGoToRegion(idx) {
+    const S = _dotPlotState;
+    if (!S.regions || !S.regions[idx]) return;
+    const r = S.regions[idx];
+    const vp = document.getElementById('dotPlotViewport');
+    if (!vp) return;
+    // Scroll to center the region in the viewport
+    const cx = DOT_AXIS_PAD + (r.col + r.length / 2) * S.zoom;
+    const cy = DOT_AXIS_PAD + (r.row + r.length / 2) * S.zoom;
+    vp.scrollLeft = Math.max(0, cx - vp.clientWidth / 2);
+    vp.scrollTop = Math.max(0, cy - vp.clientHeight / 2);
+    // Highlight the region on overlay
+    _dotDrawOverlay(r.row, r.col);
+    _dotUpdateHoverInfo(r.row, r.col);
 }
 
 function _dotDrawOverlay(row, col) {
@@ -9832,6 +9926,32 @@ function _initDotPlotEvents() {
             navigator.clipboard.writeText(fasta).then(() => {
                 showMessage(`Copied ${region.aSlice.length}bp region as FASTA!`, 2000);
             }).catch(() => showMessage('Copy failed.', 2000));
+        });
+    }
+    // SVG export
+    const svgBtn = document.getElementById('dotPlotExportSvg');
+    if (svgBtn) {
+        svgBtn.addEventListener('click', () => {
+            const canvas = document.getElementById('dotPlotCanvas');
+            if (!canvas) return;
+            const S = _dotPlotState;
+            const dataUrl = canvas.toDataURL('image/png');
+            const svg = [
+                '<?xml version="1.0" encoding="UTF-8"?>',
+                `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="0 0 ${canvas.width} ${canvas.height}">`,
+                `<title>Dot Plot: ${S.nameA} vs ${S.nameB}</title>`,
+                `<rect width="${canvas.width}" height="${canvas.height}" fill="white"/>`,
+                `<image href="${dataUrl}" width="${canvas.width}" height="${canvas.height}"/>`,
+                '</svg>'
+            ].join('\n');
+            const blob = new Blob([svg], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `dotplot_${S.nameA}_vs_${S.nameB}.svg`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            showMessage('Dot plot exported as SVG!', 2000);
         });
     }
     if (closeBtn) {
