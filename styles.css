@@ -961,13 +961,16 @@ body.row-reorder-active .seq-name.drag-source:hover {
 }
 
 #versionIndicator {
-    font-size: 9px;
-    color: #bbb;
+    font-size: 10px;
+    color: #888;
     line-height: 1;
     text-align: right;
     white-space: nowrap;
     flex: 0 0 auto;
+    pointer-events: auto;
 }
+#versionIndicator a { color: #888; }
+#versionIndicator a:hover { color: #333; text-decoration: underline; }
 
 body.suppress-menu-hover .menu-section:hover .control-group,
 body.suppress-menu-hover .section-header:hover + .control-group,
