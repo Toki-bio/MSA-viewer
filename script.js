@@ -3464,12 +3464,11 @@ function onModeChange() {
 function _updateCompactControlsVisibility() {
     const isCompact = el('modeCompact')?.checked;
     const hasPairs = state.seqs.some(s => s._pairInfo || s._samPair);
-    document.querySelectorAll('.compact-only').forEach(el => {
-        el.style.display = isCompact ? '' : 'none';
-    });
-    document.querySelectorAll('.compact-pairs-only').forEach(el => {
-        el.style.display = (isCompact && hasPairs) ? '' : 'none';
-    });
+    // The compact-only row is a div with class compact-only
+    const compactRow = document.querySelector('.mode-container .compact-only');
+    if (compactRow) compactRow.style.display = isCompact ? 'flex' : 'none';
+    const pairsEl = document.querySelector('.mode-container .compact-pairs-only');
+    if (pairsEl) pairsEl.style.display = (isCompact && hasPairs) ? '' : 'none';
 }
 
 function setBlockSizeToScreen() {
