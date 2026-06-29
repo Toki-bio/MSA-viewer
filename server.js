@@ -8,8 +8,9 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use((req, res, next) => {
     const origin = req.get('origin') || '';
-    const allowed = ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost', 'http://127.0.0.1',
-                     'http://100.78.77.10:3000', 'http://100.78.77.10'];
+    const allowed = ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost', 'http://127.0.0.1'];
+    const extraOrigin = process.env.CORS_ORIGIN;
+    if (extraOrigin) allowed.push(extraOrigin);
     if (allowed.includes(origin) || !origin) {
         res.header('Access-Control-Allow-Origin', origin || '*');
     }

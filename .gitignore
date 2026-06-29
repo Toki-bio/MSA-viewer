@@ -7,9 +7,16 @@ node_modules/
 # Server logs
 server_out.txt
 server_err.txt
+*.log
 
-# Large database files (keep small BLAST fastas tracked)
+# Large database files (>10MB — download separately or use smaller test sets)
 RepBase.bnk
+RepBase_filtered.bnk
+tua_DL_ASuh_JGrau_repeat.fa
+
+# User snapshot data (may contain personal alignment state)
+snapshots/*.json
+!snapshots/README.md
 
 # Backup files
 *.bak
@@ -22,8 +29,19 @@ snake_in_other_SINEs.fas
 # OS files
 Thumbs.db
 .DS_Store
+Desktop.ini
 
 # Editor
 .vscode/
 *.swp
 *.swo
+
+# BLAST formatted database indices (auto-generated)
+*.nhr
+*.nin
+*.nsq
+*.njs
+*.not
+*.ntf
+*.nto
+*.patch
