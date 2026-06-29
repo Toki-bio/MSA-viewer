@@ -9,7 +9,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = '7d2757d';
+const APP_VERSION = '9280d5d';
 
 const state = {
     seqs: [],
@@ -3310,6 +3310,7 @@ function setZoom(percent) {
     const size = (percent / 100) * 13;
     alignmentContainer.style.fontSize = size + 'px';
     el('zoomVal').textContent = percent + '%';
+    el('zoomVal').classList.toggle('not-default', percent !== 100);
 }
 function setZoomFromSlider() {
     const slider = el('zoomSlider');
@@ -3322,6 +3323,12 @@ function adjustZoom(delta) {
     newPct = Math.max(50, Math.min(200, newPct));
     slider.value = _zoomToSlider(newPct);
     setZoom(newPct);
+}
+function resetZoom() {
+    const slider = el('zoomSlider');
+    slider.value = _zoomToSlider(100);
+    setZoom(100);
+    updateSliderBackground(slider);
 }
 function debounce(func, delay) {
     let timer;
