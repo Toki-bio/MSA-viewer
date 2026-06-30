@@ -35,7 +35,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = '87aa917';
+const APP_VERSION = '5e55ec1';
 
 const state = {
     seqs: [],
@@ -2554,6 +2554,7 @@ function renderAlignment(options = {}) {
 
     // ── Auto-detect: Canvas for large alignments ──
     const TOTAL_RESIDUES = state.seqs.length * len;
+    const CANVAS_AUTO_THRESHOLD = 150000; // ~100 seq × 1500 col
     const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
     const userPickedDom = document.getElementById('modeAutoCanvasDismissed')?.checked; // hidden flag
 
