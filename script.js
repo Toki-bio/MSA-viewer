@@ -35,7 +35,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = 'd26520c';
+const APP_VERSION = '87aa917';
 
 const state = {
     seqs: [],
@@ -2549,9 +2549,11 @@ function renderAlignment(options = {}) {
     const useBlocks = el('modeBlocks').checked;
     const useSingle = el('modeSingle').checked;
 
+    // Calculate sequence length for consensus and scale (must be before any use of len)
+    const len = Math.max(...state.seqs.map(s => s.seq.length));
+
     // ── Auto-detect: Canvas for large alignments ──
     const TOTAL_RESIDUES = state.seqs.length * len;
-    const CANVAS_AUTO_THRESHOLD = 150000; // ~100 seq × 1500 col
     const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
     const userPickedDom = document.getElementById('modeAutoCanvasDismissed')?.checked; // hidden flag
 
@@ -2586,8 +2588,7 @@ function renderAlignment(options = {}) {
     const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
     const fallbackMode = (document.getElementById('consensusFallback')?.value) || 'gap';
 
-    // Calculate sequence length for consensus and scale
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    // (len is declared above, before TOTAL_RESIDUES calculation)
 
     let consensus = [];
     if (showConsensus) {
