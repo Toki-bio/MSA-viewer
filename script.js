@@ -35,7 +35,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = '5e55ec1';
+const APP_VERSION = 'a71755b';
 
 const state = {
     seqs: [],
@@ -4313,6 +4313,21 @@ function copyAlignment() {
         console.error('Copy failed:', err);
         showMessage("Failed to copy. Check console.", 5000);
     });
+}
+function downloadAlignment() {
+    if (!state.seqs || state.seqs.length === 0) {
+        showMessage("No alignment loaded to save.", 3000);
+        return;
+    }
+    const fasta = state.seqs.map(s => `>${s.fullHeader || s.header}\n${s.seq}`).join('\n');
+    const filename = (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '') + '.fasta';
+    const blob = new Blob([fasta], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showMessage(`Saved ${state.seqs.length} sequences as ${filename}`, 2000);
 }
 function copyPlainSingle(index) {
     const s = state.seqs[index];
