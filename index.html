@@ -849,6 +849,11 @@ B: —</pre>
                 <button id="treeBuilderCloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button>
             </div>
             <div id="treeBuilderSummary" style="font-size:12px;color:#555;margin-bottom:8px;"></div>
+            <div style="margin-bottom:6px;font-size:11px;display:flex;gap:12px;align-items:center;">
+                <span style="color:#777;">Method:</span>
+                <label title="Unweighted Pair Group Method with Arithmetic Mean"><input type="radio" name="treeMethod" value="upgma" checked> UPGMA</label>
+                <label title="Neighbor-Joining — Saitou & Nei 1987"><input type="radio" name="treeMethod" value="nj"> NJ</label>
+            </div>
             <textarea id="treeNewickOutput" readonly style="width:100%;height:130px;box-sizing:border-box;font-family:'Courier New',monospace;font-size:11px;white-space:pre;resize:vertical;"></textarea>
             <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;margin:8px 0;">
                 <button id="treeCopyNewickBtn" style="padding:4px 12px;font-size:12px;">Copy Newick</button>
