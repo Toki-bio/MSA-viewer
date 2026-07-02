@@ -2752,8 +2752,8 @@ function renderAlignment(options = {}) {
     const shouldRenderConsensus = showConsensus;
     const consensusPosEl = document.querySelector('input[name="consensusPosition"]:checked');
     const consensusPosition = consensusPosEl ? consensusPosEl.value : 'top';
-    if (showConsensus && consensus.length > 0) {
-        console.log(`[consensus] enabled=${showConsensus} position=${consensusPosition} len=${consensus.length}`);
+    if (showConsensus) {
+        document.getElementById('statusMessage').textContent = `Consensus: ${consensusPosition} | ${consensus.length} cols`;
     }
 
     // *** NEW: Pre-calculate conservation for ALL columns ONCE ***
