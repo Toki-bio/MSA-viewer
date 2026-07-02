@@ -2921,8 +2921,8 @@ function renderAlignment(options = {}) {
         const allSpans = alignmentContainer.querySelectorAll('.seq-data > span[data-pos]');
         allSpans.forEach(span => {
             const pos = parseInt(span.dataset.pos);
-            const rowEl = span.closest('.seq-row');
-            const seqIdx = rowEl ? parseInt(rowEl.dataset.idx) : -1;
+            const rowEl = span.closest('.seq-line');
+            const seqIdx = rowEl ? parseInt(rowEl.dataset.seqIndex) : -1;
             if (seqIdx < 0) return;
 
             // Codon phase coloring
@@ -2951,9 +2951,9 @@ function renderAlignment(options = {}) {
         });
 
         // Add AA translation rows below each sequence
-        const seqRows = alignmentContainer.querySelectorAll('.seq-row');
+        const seqRows = alignmentContainer.querySelectorAll('.seq-line');
         seqRows.forEach(rowEl => {
-            const seqIdx = parseInt(rowEl.dataset.idx);
+            const seqIdx = parseInt(rowEl.dataset.seqIndex);
             if (isNaN(seqIdx)) return;
             // Check if already has AA row
             if (rowEl.nextElementSibling?.classList.contains('aa-row')) return;
@@ -4894,6 +4894,11 @@ function loadPreset() {
     toggleStickyNames();
     document.querySelector(`input[name="consensusType"][value="${p.consensusType}"]`).checked = true;
     el('showConsensus').checked = p.showConsensus;
+    // Restore consensus position if present
+    if (p.consensusPosition) {
+        const consensusPosRadio = document.querySelector(`input[name="consensusPosition"][value="${p.consensusPosition}"]`);
+        if (consensusPosRadio && !consensusPosRadio.disabled) consensusPosRadio.checked = true;
+    }
     // Restore fallback mode if present (defaults to current select's default)
     if (p.consensusFallback && el('consensusFallback')) {
         el('consensusFallback').value = p.consensusFallback;
@@ -7418,6 +7423,18 @@ function openStats() {
     dm += `\nColumns: 1–${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
     // Append distance matrix and identity to summary
     const dmContent = `<details style="margin-top:6px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Distance Matrix (p-distance)</summary><pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${dm}</pre></details>`;
+    // Render identity matrix
+    let im = `<b>Pairwise % identity</b><br><br>`;
+    im += ' '.repeat(nameLen);
+    for (let i = 0; i < nseq; i++) im += ` ${String(i + 1).padStart(5)}`;
+    im += '\n';
+    for (let i = 0; i < nseq; i++) {
+        const name = seqNames[i].substring(0, maxName).padEnd(nameLen, ' ');
+        im += name;
+        for (let j = 0; j < nseq; j++) im += ` ${identityMatrix[i][j].padStart(5)}`;
+        im += '\n';
+    }
+    im += `\nColumns: 1–${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
     const imContent = `<details style="margin-top:4px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Pairwise Identity (%)</summary><pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${im}</pre></details>`;
     document.getElementById('statsSummaryTab').innerHTML += dmContent + imContent;
     document.getElementById('statsModal').style.display = 'block';
@@ -9361,14 +9378,8 @@ function initializeAppUI() {
     el('modeBlocks').checked = true;
     el('modeSingle').checked = false;
     const topConsensusRadio = document.querySelector('input[name="consensusPosition"][value="top"]');
-    const bottomConsensusRadio = document.querySelector('input[name="consensusPosition"][value="bottom"]');
     if (topConsensusRadio) {
         topConsensusRadio.checked = true;
-    }
-    if (bottomConsensusRadio) {
-        bottomConsensusRadio.checked = false;
-        bottomConsensusRadio.disabled = true;
-        bottomConsensusRadio.closest('label')?.classList.add('disabled-option');
     }
 
     // Trigger initial render/setup based on defaults
