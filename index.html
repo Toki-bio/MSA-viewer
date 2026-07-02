@@ -571,6 +571,7 @@
                             <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
                             <button id="tsdFinderButton" title="Find target site duplications around SINE insertion boundaries">TSD Finder</button>
                             <button id="buildTreeButton" title="Build a UPGMA tree from selected sequences, or all sequences if none are selected">Tree</button>
+                            <button id="statsButton" title="Distance matrix + alignment statistics (esl-alistat / esl-alipid)">Statistics</button>
                             <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
                             <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
                             <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
@@ -860,6 +861,25 @@ B: —</pre>
                 <button id="treeDownloadNewickBtn" style="padding:4px 12px;font-size:12px;">Download .nwk</button>
             </div>
             <pre id="treeTextOutput" style="max-height:42vh;overflow:auto;font-family:'Courier New',monospace;font-size:11px;white-space:pre;border:1px solid #ddd;padding:8px;background:#fafafa;min-height:70px;margin:0;"></pre>
+        </div>
+    </div>
+
+    <!-- Statistics Modal (distance matrix + alignment stats) -->
+    <div id="statsModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10002;overflow:auto;">
+        <div style="background:white;margin:30px auto;padding:16px;max-width:960px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <h3 style="margin:0;">Alignment Statistics</h3>
+                <button id="statsCloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button>
+            </div>
+            <div style="margin-bottom:8px;font-size:11px;display:flex;gap:8px;">
+                <button class="stats-tab-btn active" data-tab="summary" style="padding:2px 10px;border:1px solid #ccc;border-radius:3px;background:#e6f3ff;cursor:pointer;font-size:11px;">Summary</button>
+                <button class="stats-tab-btn" data-tab="matrix" style="padding:2px 10px;border:1px solid #ccc;border-radius:3px;background:#f5f5f5;cursor:pointer;font-size:11px;">Distance Matrix</button>
+                <button class="stats-tab-btn" data-tab="identity" style="padding:2px 10px;border:1px solid #ccc;border-radius:3px;background:#f5f5f5;cursor:pointer;font-size:11px;">Pairwise Identity</button>
+            </div>
+            <div id="statsSummaryTab" class="stats-tab" style="max-height:60vh;overflow:auto;font-size:12px;"></div>
+            <div id="statsMatrixTab" class="stats-tab" style="display:none;max-height:60vh;overflow:auto;font-family:'Courier New',monospace;font-size:11px;white-space:pre;"></div>
+            <div id="statsIdentityTab" class="stats-tab" style="display:none;max-height:60vh;overflow:auto;font-family:'Courier New',monospace;font-size:11px;white-space:pre;"></div>
+            <div style="margin-top:8px;font-size:10px;color:#999;">Statistics computed using methods from Easel library (Eddy lab, HHMI Janelia) — esl-alistat / esl-alipid.</div>
         </div>
     </div>
 
