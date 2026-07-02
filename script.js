@@ -7209,8 +7209,43 @@ function openAddSequencesModal() {
     const modal = document.getElementById('addSeqModal');
     if (modal) {
         document.getElementById('addSeqInput').value = '';
+        document.getElementById('addSeqFileLabel').textContent = '';
+        document.getElementById('addSeqFileInput').value = '';
         modal.style.display = 'block';
     }
+}
+
+/**
+ * Browse button: open file dialog to append FASTA/MSF/other files to add-seq textarea.
+ */
+function initAddSeqBrowse() {
+    const browseBtn = document.getElementById('addSeqBrowseButton');
+    const fileInput = document.getElementById('addSeqFileInput');
+    const label = document.getElementById('addSeqFileLabel');
+    const textarea = document.getElementById('addSeqInput');
+    if (!browseBtn || !fileInput || !textarea) return;
+
+    browseBtn.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', async () => {
+        const files = Array.from(fileInput.files);
+        if (!files.length) return;
+        label.textContent = `Reading ${files.length} file(s)...`;
+        let allContent = textarea.value.trim();
+        for (const file of files) {
+            try {
+                const text = await file.text();
+                const trimmed = text.trim();
+                if (allContent) allContent += '\n' + trimmed;
+                else allContent = trimmed;
+            } catch (e) {
+                console.error('Error reading file:', file.name, e);
+            }
+        }
+        textarea.value = allContent;
+        label.textContent = `Loaded ${files.length} file(s): ${files.map(f => f.name).join(', ')}`;
+        fileInput.value = '';
+    });
 }
 
 /**
@@ -9013,6 +9048,8 @@ function initializeAppUI() {
             showMessage(`Failed to decode data: ${err.message}`, 5000);
         }
     }
+    // Init Add-Sequences modal Browse button
+    initAddSeqBrowse();
 }
 
 document.addEventListener('DOMContentLoaded', initializeAppUI);
