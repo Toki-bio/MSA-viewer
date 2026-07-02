@@ -7443,7 +7443,7 @@ function openStats() {
     }
     im += `\nColumns: 1–${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
     const imContent = `<details style="margin-top:4px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Pairwise Identity (%)</summary><pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${im}</pre></details>`;
-    document.getElementById('statsSummaryTab').innerHTML += dmContent + imContent;
+    summaryTab.innerHTML += dmContent + imContent;
     const modal = document.getElementById('statsModal');
     if (modal) modal.style.display = 'block';
     } catch(e) {
