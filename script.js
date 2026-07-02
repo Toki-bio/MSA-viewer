@@ -2522,10 +2522,11 @@ function renderAlignment(options = {}) {
     }
     const coverageMin = clampMinCoverage(el('consensusMinCoverage')?.value) / 100;
     alignmentContainer.innerHTML = '';
-    // Reset styles that Canvas mode may have set (position, height, overflow)
+    // Ensure Full/Block modes have correct scroll/layout behaviour
+    // (any leftover Canvas/Compact inline styles are overwritten)
     alignmentContainer.style.position = 'static';
-    alignmentContainer.style.height = '';
-    alignmentContainer.style.overflow = '';
+    alignmentContainer.style.height = 'auto';
+    alignmentContainer.style.overflow = 'auto';
     // Container-level drag handlers: allow drops anywhere, show preview
     // Remove old handlers first to avoid stacking
     if (!alignmentContainer._dragHandlersSet) {
