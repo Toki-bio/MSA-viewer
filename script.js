@@ -35,7 +35,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = 'da3964f';
+const APP_VERSION = 'baddc8a';
 
 const state = {
     seqs: [],
