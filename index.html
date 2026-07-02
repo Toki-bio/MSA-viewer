@@ -737,6 +737,11 @@
                 <label title="Align new sequences against the consensus before adding"><input type="checkbox" id="addSeqAlignCons" checked> Align to consensus</label>
             </div>
             <textarea id="addSeqInput" placeholder=">new_sequence_1&#10;ACGTACGTACGT...&#10;>new_sequence_2&#10;TGCATGCATGCA..." style="width: 100%; height: 200px; font-family: 'Courier New', monospace; font-size: 12px; resize: vertical; box-sizing: border-box;"></textarea>
+            <div style="margin-top: 4px; font-size: 11px;">
+                <button id="addSeqBrowseButton" style="padding: 2px 8px; font-size: 11px; background: #f5f5f5; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; margin-right: 6px;">?? Browse Files</button>
+                <input type="file" id="addSeqFileInput" multiple accept=".fasta,.fa,.fas,.fna,.ffn,.faa,.frn,.aln,.msf,.nex,.nexus,.sto,.stockholm,.txt" style="display:none;">
+                <span id="addSeqFileLabel" style="color: #888;"></span>
+            </div>
             <div style="margin-top: 8px; text-align: right;">
                 <button id="addSeqJustAddButton" style="padding: 4px 16px; font-size: 13px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;">Just Add</button>
                 <button id="addSeqSubmitButton" style="padding: 4px 16px; font-size: 13px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 4px;">Add & Align</button>
