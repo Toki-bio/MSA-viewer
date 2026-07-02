@@ -7391,6 +7391,7 @@ function openStats() {
     const nameLen = maxName + 2;
 
     const summaryTab = document.getElementById('statsSummaryTab');
+    if (!summaryTab) { showMessage('Statistics panel not found.', 3000); return; }
     const scopeLabel = state.selectedRows.size >= 2 ? 'selected sequences' : 'all sequences';
     summaryTab.innerHTML =
         `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">` +
@@ -7443,7 +7444,8 @@ function openStats() {
     im += `\nColumns: 1–${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
     const imContent = `<details style="margin-top:4px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Pairwise Identity (%)</summary><pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${im}</pre></details>`;
     document.getElementById('statsSummaryTab').innerHTML += dmContent + imContent;
-    document.getElementById('statsModal').style.display = 'block';
+    const modal = document.getElementById('statsModal');
+    if (modal) modal.style.display = 'block';
     } catch(e) {
         console.error('Stats error:', e);
         showMessage(`Statistics error: ${e.message}`, 4000);
