@@ -35,7 +35,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = 'baddc8a';
+const APP_VERSION = 'c6d86ff';
 
 const state = {
     seqs: [],
@@ -1339,6 +1339,127 @@ function _cigarRefSpan(cigar) {
     }
     return span;
 }
+/**
+ * Parse GenBank flatfile format.
+ * Extracts: LOCUS name, DEFINITION, ACCESSION, ORGANISM,
+ * FEATURES (source, CDS, gene annotations with positions).
+ * Sequence from ORIGIN block.
+ */
+function parseGenBank(text) {
+    const lines = text.split(/\r?\n/);
+    let locus = '', definition = '', accession = '', organism = '', version = '';
+    let inFeatures = false, inOrigin = false, inOrganism = false;
+    let seqParts = [];
+    const features = [];
+    let currentFeature = null;
+
+    for (const rawLine of lines) {
+        const line = rawLine.replace(/\s+$/, '');
+        const trimmed = line.trim();
+
+        // End of record
+        if (trimmed === '//') break;
+
+        // HEADER fields
+        if (/^LOCUS\s+/i.test(trimmed)) {
+            const parts = trimmed.split(/\s+/);
+            if (parts.length > 1) locus = parts.slice(1).join(' ');
+            continue;
+        }
+        if (/^DEFINITION\s+/i.test(trimmed)) {
+            definition = trimmed.replace(/^DEFINITION\s+/i, '');
+            continue;
+        }
+        if (/^ACCESSION\s+/i.test(trimmed)) {
+            accession = trimmed.replace(/^ACCESSION\s+/i, '');
+            continue;
+        }
+        if (/^VERSION\s+/i.test(trimmed)) {
+            version = trimmed.replace(/^VERSION\s+/i, '');
+            continue;
+        }
+
+        // ORGANISM block (multi-line)
+        if (/^\s*ORGANISM\s+/i.test(line)) {
+            organism = line.replace(/^\s*ORGANISM\s+/i, '');
+            inOrganism = true;
+            continue;
+        }
+        if (inOrganism && /^\s{5,}\S/.test(line)) {
+            organism += ' ' + trimmed;
+            continue;
+        } else {
+            inOrganism = false;
+        }
+
+        // FEATURES block
+        if (trimmed === 'FEATURES' || trimmed.startsWith('FEATURES ')) {
+            inFeatures = true;
+            continue;
+        }
+        if (inFeatures) {
+            if (trimmed === 'ORIGIN' || /^\s{0,4}\w/.test(line) && !line.startsWith('     ')) {
+                if (currentFeature) features.push(currentFeature);
+                inFeatures = false;
+            } else {
+                const fline = trimmed;
+                // Feature key line (starts with a keyword)
+                if (/^(source|CDS|gene|mRNA|tRNA|rRNA|misc_feature|repeat_region|STS|primer_bind|promoter|exon|intron|misc_RNA|regulatory|LTR|misc_binding|misc_signal|misc_difference|variation|misc_recomb|mobile_element|oriT|protein_bind|stem_loop|sig_peptide|mat_peptide|transit_peptide|3'UTR|5'UTR|polyA_site|D-loop|TATA_signal|RBS|enhancer|CAAT_signal|GC_signal|terminator|rep_origin|D_segment|J_segment|V_segment|C_region|N_region|S_region|gap|assembly_gap|centromere|telomere|operon|iDNA|misc_structure)\b/.test(fline)) {
+                    if (currentFeature) features.push(currentFeature);
+                    const match = fline.match(/^(\w+)\s*(.+)?/);
+                    currentFeature = { type: match[1], location: match[2] || '', qualifiers: {} };
+                } else if (currentFeature && fline.startsWith('/')) {
+                    // Qualifier line
+                    const qmatch = fline.match(/^\/(\w+)=?"?(.*?)"?$/);
+                    if (qmatch) {
+                        currentFeature.qualifiers[qmatch[1]] = qmatch[2].replace(/"$/, '');
+                    }
+                }
+                continue;
+            }
+        }
+
+        // ORIGIN (sequence)
+        if (trimmed.startsWith('ORIGIN')) {
+            inOrigin = true;
+            continue;
+        }
+        if (inOrigin) {
+            // Remove line numbers and spaces
+            const seq = trimmed.replace(/^\d+\s*/, '').replace(/\s+/g, '').toUpperCase();
+            if (seq && !/^[\/\/]/.test(seq)) seqParts.push(seq);
+        }
+    }
+
+    // Flush last feature
+    if (currentFeature && Object.keys(currentFeature.qualifiers).length > 0) features.push(currentFeature);
+
+    const sequence = seqParts.join('');
+    if (!sequence) return null;
+
+    // Build header from metadata
+    let header = locus || (accession ? `${accession}` : 'GenBank_import');
+    if (organism) {
+        const org = organism.split(/[;.]/)[0]?.trim();
+        if (org) header += ` [${org}]`;
+    }
+    if (definition) {
+        const def = definition.length > 80 ? definition.substring(0, 77) + '...' : definition;
+        header += ` ${def}`;
+    }
+
+    // Store GenBank annotations in state for display
+    state._genbankAnnotations = {
+        locus, definition, accession, version, organism,
+        features, sequenceLength: sequence.length
+    };
+
+    return [{
+        header: header,
+        seq: sequence,
+        _genbank: { accession, organism, features }
+    }];
+}
 
 // Parse SAM into FASTA-like alignment (pileup reference + gapped reads)
 function parseSamToAlignment(samText) {
@@ -2300,9 +2421,10 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
     const COV_H = 50;
     const REF_H = 16;
     const TRACK_H = 12;
+    const SCALE_H = 20;
     const NAME_W = Math.min(nameLen * 7, 200);
     const totalW = NAME_W + len * CHAR_W + 20;
-    const totalH = COV_H + nTracks * TRACK_H + REF_H + 40;
+    const totalH = COV_H + nTracks * TRACK_H + REF_H + SCALE_H + 20;
 
     // Build SVG
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -2396,15 +2518,21 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
                 svg.appendChild(mark);
             }
 
-            // Read name
-            if (NAME_W > 30 && t < 3 && trackReads.indexOf(read) < 2) {
-                const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                label.setAttribute('x', rx + 2);
-                label.setAttribute('y', ry + rh - 3);
-                label.setAttribute('fill', '#333');
-                label.setAttribute('font-size', '8');
-                label.textContent = read.name.substring(0, Math.floor(rw / 6));
-                svg.appendChild(label);
+            // Read name label (only when enough space — not in diffOnly thin-line mode)
+            if (!diffOnly && NAME_W > 30) {
+                const name = read.name;
+                const maxChars = Math.max(3, Math.floor(rw / 6));
+                if (maxChars > 2) {
+                    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    label.setAttribute('x', rx + 2);
+                    label.setAttribute('y', ry + rh - 3);
+                    label.setAttribute('fill', '#555');
+                    label.setAttribute('font-size', '7');
+                    label.setAttribute('font-family', 'monospace');
+                    label.setAttribute('clip-path', `inset(0 ${rw - NAME_W + rx}px 0 0)`);
+                    label.textContent = name.substring(0, maxChars);
+                    svg.appendChild(label);
+                }
             }
 
             // Collect pair info for connecting lines
@@ -3439,6 +3567,11 @@ function parseAndRender(isFromDrop = false) {
             parsed = parseSamToAlignment(inputText);
             if (!parsed) throw new Error('SAM parsing failed - check format');
             state.currentFilename = state.currentFilename || 'SAM_import';
+        } else if (/^LOCUS\s+/mi.test(inputText)) {
+            parsed = parseGenBank(inputText);
+            if (!parsed) throw new Error('GenBank parsing failed');
+            state.currentFilename = state.currentFilename || 'genbank_import';
+            showMessage('Detected GenBank format', 1500);
         } else if (inputText.match(/^(CLUSTAL|MUSCLE\s)/m)) {
             parsed = parseClustal(inputText);
             if (!parsed) throw new Error('Clustal parsing failed');
@@ -5614,21 +5747,29 @@ function findMatchesWithMismatches(degapped, motif, maxMismatches) {
 
 function searchResEnzyme() {
     const sel = document.getElementById('reEnzymeSelect');
-    const site = sel?.value;
-    if (!site) { showMessage('Select a restriction enzyme first.', 2000); return; }
-    const input = document.getElementById('searchInput');
-    if (input) input.value = site;
-    searchMotif();
+    const selected = Array.from(sel?.selectedOptions || []).map(o => o.value);
+    if (!selected.length) { showMessage('Select one or more restriction enzymes first.', 2000); return; }
+    // Auto-assign distinct colors
+    const palette = ['#FFD700','#FF6B6B','#00CED1','#FF8C00','#9370DB','#3CB371','#FF69B4','#20B2AA',
+                     '#FFB347','#87CEEB','#FF6347','#98FB98','#DDA0DD','#F0E68C','#00BFFF','#FFA07A'];
+    let colorIdx = state._searchColorOffset || 0;
+    selected.forEach(site => {
+        const color = palette[colorIdx % palette.length];
+        const input = document.getElementById('searchInput');
+        const colorInput = document.getElementById('searchColor');
+        if (input && colorInput) {
+            input.value = site;
+            colorInput.value = color;
+            searchMotif();
+        }
+        colorIdx++;
+    });
+    state._searchColorOffset = (state._searchColorOffset || 0) + selected.length;
 }
 
-// Wire up RE dropdown to also fill search input on select
+// Wire up RE dropdown to fill search input on select
 function initResEnzymeSearch() {
-    const sel = document.getElementById('reEnzymeSelect');
-    if (!sel) return;
-    sel.addEventListener('change', () => {
-        const input = document.getElementById('searchInput');
-        if (input && sel.value) input.value = sel.value;
-    });
+    // Multi-select auto-fills handled by Find RE button
 }
 
 function searchMotif() {
