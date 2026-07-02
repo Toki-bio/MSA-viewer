@@ -169,18 +169,18 @@
                         <div class="slider-container mode-container" style="flex-direction:column;align-items:flex-start;gap:1px;height:auto;">
                             <div style="display:flex;align-items:center;gap:4px;">
                                 <span style="font-size:10px;font-weight:bold;width:70px;text-align:right;">Mode</span>
-                                <input type="radio" id="modeSingle" name="mode" value="single"><label for="modeSingle" style="font-size:10px;margin-right:5px;">Full</label>
-                                <input type="radio" id="modeBlocks" name="mode" value="blocks" checked><label for="modeBlocks" style="font-size:10px;margin-right:5px;">Block</label>
-                                <input type="radio" id="modeCompact" name="mode" value="compact"><label for="modeCompact" style="font-size:10px;margin-right:5px;">Compact</label>
-                                <input type="radio" id="modeCanvas" name="mode" value="canvas"><label for="modeCanvas" style="font-size:10px;">Canvas</label>
+                                <input type="radio" id="modeSingle" name="mode" value="single" title="Full-width display: every sequence shown on one continuous line"><label for="modeSingle" style="font-size:10px;margin-right:5px;">Full</label>
+                                <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Block display: sequences wrapped into fixed-width blocks with ruler"><label for="modeBlocks" style="font-size:10px;margin-right:5px;">Block</label>
+                                <input type="radio" id="modeCompact" name="mode" value="compact" title="Compact read-packing: IGV-style track view with coverage histogram"><label for="modeCompact" style="font-size:10px;margin-right:5px;">Compact</label>
+                                <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas renderer: GPU-accelerated for very large alignments (>150K residues)"><label for="modeCanvas" style="font-size:10px;">Canvas</label>
                             </div>
                             <div style="display:flex;align-items:center;gap:6px;margin-left:74px;">
-                                <label style="font-size:10px;"><input type="checkbox" id="highlightDiffs"> Highlight diffs</label>
-                                <label style="font-size:10px;"><input type="checkbox" id="varSitesOnly"> Variable sites only</label>
+                                <label style="font-size:10px;" title="Highlight positions that differ from the consensus"><input type="checkbox" id="highlightDiffs"> Highlight diffs</label>
+                                <label style="font-size:10px;" title="Show only variable (non-conserved) columns; hide invariant sites"><input type="checkbox" id="varSitesOnly"> Variable sites only</label>
                             </div>
                             <div style="display:flex;align-items:center;gap:6px;margin-left:74px;">
-                                <label style="font-size:10px;"><input type="checkbox" id="codonAnalysis"> Codon analysis</label>
-                                <select id="codonCode" style="font-size:10px;padding:0 2px;height:18px;">
+                                <label style="font-size:10px;" title="Overlay codon translation frame on nucleotide alignment"><input type="checkbox" id="codonAnalysis"> Codon analysis</label>
+                                <select id="codonCode" style="font-size:10px;padding:0 2px;height:18px;" title="Genetic code for codon translation (Standard=1, Vert Mito=2, etc.)">
                                     <option value="1">Standard</option>
                                     <option value="2">Vert Mito</option>
                                     <option value="3">Yeast Mito</option>
@@ -199,16 +199,16 @@
                                 </select>
                             </div>
                             <div style="display:flex;align-items:center;gap:6px;margin-left:74px;">
-                                <label style="font-size:10px;"><input type="checkbox" id="stickyNames" checked> Sticky Names</label>
-                                <select id="residueCase" style="font-size:10px;padding:0 2px;height:18px;" title="Residue display case (GeneDoc-style)">
+                                <label style="font-size:10px;" title="Pin sequence names to left edge while scrolling horizontally"><input type="checkbox" id="stickyNames" checked> Sticky Names</label>
+                                <select id="residueCase" style="font-size:10px;padding:0 2px;height:18px;" title="Residue display case (GeneDoc-style): As-is / UPPER / lower">
                                     <option value="asis" selected>As-is</option>
                                     <option value="upper">UPPER</option>
                                     <option value="lower">lower</option>
                                 </select>
                             </div>
                             <div style="display:none;align-items:center;gap:6px;margin-left:74px;" class="compact-only">
-                                <label style="font-size:10px;"><input type="checkbox" id="compactDiffOnly"> Diffs only</label>
-                                <label class="compact-pairs-only" style="font-size:10px;"><input type="checkbox" id="compactPairs"> Pairs</label>
+                                <label style="font-size:10px;" title="Show only reads with mismatches vs. reference (Compact mode)"><input type="checkbox" id="compactDiffOnly"> Diffs only</label>
+                                <label class="compact-pairs-only" style="font-size:10px;" title="Connect paired-end reads with lines (Compact mode)"><input type="checkbox" id="compactPairs"> Pairs</label>
                             </div>
                         </div>
                     </div>
