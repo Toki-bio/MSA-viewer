@@ -87,7 +87,6 @@
                         <span class="toggle-icon">▼</span>
                     </div>
                     <div class="control-group" id="shade-controls">
-                        <div id="shade-sliders">
                         <div class="slider-container shade-row">
                             <div class="shade-controls">
                                 <span class="slider-label" id="blackLabel" style="cursor:pointer; text-decoration:underline;" title="Highly conserved shading">Black</span>
@@ -124,7 +123,6 @@
                             <input type="range" id="lightSlider" class="shading-slider" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
                             <input type="number" id="lightInput" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
                         </div>
-                        </div><!-- /shade-sliders -->
                         <div class="slider-container shade-row">
                             <div class="shade-controls">
                                 <span class="slider-label">Shade By</span>
@@ -166,18 +164,18 @@
                         <div class="slider-container mode-container" style="flex-direction:column;align-items:flex-start;gap:1px;height:auto;">
                             <div style="display:flex;align-items:center;gap:4px;">
                                 <span style="font-size:10px;font-weight:bold;width:70px;text-align:right;">Mode</span>
-                                <input type="radio" id="modeSingle" name="mode" value="single" title="Full-width display: every sequence shown on one continuous line"><label for="modeSingle" style="font-size:10px;margin-right:5px;">Full</label>
-                                <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Block display: sequences wrapped into fixed-width blocks with ruler"><label for="modeBlocks" style="font-size:10px;margin-right:5px;">Block</label>
-                                <input type="radio" id="modeCompact" name="mode" value="compact" title="Compact read-packing: IGV-style track view with coverage histogram"><label for="modeCompact" style="font-size:10px;margin-right:5px;">Compact</label>
-                                <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas renderer: GPU-accelerated for very large alignments (>150K residues)"><label for="modeCanvas" style="font-size:10px;">Canvas</label>
+                                <input type="radio" id="modeSingle" name="mode" value="single"><label for="modeSingle" style="font-size:10px;margin-right:5px;">Full</label>
+                                <input type="radio" id="modeBlocks" name="mode" value="blocks" checked><label for="modeBlocks" style="font-size:10px;margin-right:5px;">Block</label>
+                                <input type="radio" id="modeCompact" name="mode" value="compact"><label for="modeCompact" style="font-size:10px;margin-right:5px;">Compact</label>
+                                <input type="radio" id="modeCanvas" name="mode" value="canvas"><label for="modeCanvas" style="font-size:10px;">Canvas</label>
                             </div>
                             <div style="display:flex;align-items:center;gap:6px;margin-left:74px;">
-                                <label style="font-size:10px;" title="Highlight positions that differ from the consensus"><input type="checkbox" id="highlightDiffs"> Highlight diffs</label>
-                                <label style="font-size:10px;" title="Show only variable (non-conserved) columns; hide invariant sites"><input type="checkbox" id="varSitesOnly"> Variable sites only</label>
+                                <label style="font-size:10px;"><input type="checkbox" id="highlightDiffs"> Highlight diffs</label>
+                                <label style="font-size:10px;"><input type="checkbox" id="varSitesOnly"> Variable sites only</label>
                             </div>
                             <div style="display:flex;align-items:center;gap:6px;margin-left:74px;">
-                                <label style="font-size:10px;" title="Overlay codon translation frame on nucleotide alignment"><input type="checkbox" id="codonAnalysis"> Codon analysis</label>
-                                <select id="codonCode" style="font-size:10px;padding:0 2px;height:18px;" title="Genetic code for codon translation (Standard=1, Vert Mito=2, etc.)">
+                                <label style="font-size:10px;"><input type="checkbox" id="codonAnalysis"> Codon analysis</label>
+                                <select id="codonCode" style="font-size:10px;padding:0 2px;height:18px;">
                                     <option value="1">Standard</option>
                                     <option value="2">Vert Mito</option>
                                     <option value="3">Yeast Mito</option>
@@ -196,16 +194,16 @@
                                 </select>
                             </div>
                             <div style="display:flex;align-items:center;gap:6px;margin-left:74px;">
-                                <label style="font-size:10px;" title="Pin sequence names to left edge while scrolling horizontally"><input type="checkbox" id="stickyNames" checked> Sticky Names</label>
-                                <select id="residueCase" style="font-size:10px;padding:0 2px;height:18px;" title="Residue display case (GeneDoc-style): As-is / UPPER / lower">
+                                <label style="font-size:10px;"><input type="checkbox" id="stickyNames" checked> Sticky Names</label>
+                                <select id="residueCase" style="font-size:10px;padding:0 2px;height:18px;" title="Residue display case (GeneDoc-style)">
                                     <option value="asis" selected>As-is</option>
                                     <option value="upper">UPPER</option>
                                     <option value="lower">lower</option>
                                 </select>
                             </div>
                             <div style="display:none;align-items:center;gap:6px;margin-left:74px;" class="compact-only">
-                                <label style="font-size:10px;" title="Show only reads with mismatches vs. reference (Compact mode)"><input type="checkbox" id="compactDiffOnly"> Diffs only</label>
-                                <label class="compact-pairs-only" style="font-size:10px;" title="Connect paired-end reads with lines (Compact mode)"><input type="checkbox" id="compactPairs"> Pairs</label>
+                                <label style="font-size:10px;"><input type="checkbox" id="compactDiffOnly"> Diffs only</label>
+                                <label class="compact-pairs-only" style="font-size:10px;"><input type="checkbox" id="compactPairs"> Pairs</label>
                             </div>
                         </div>
                     </div>
@@ -384,44 +382,6 @@
                                 <button id="searchButton" title="Find motif in sequences (shortcut: Ctrl+F)">Find</button>
                                 <button id="clearLastSearchButton" title="Clear last search highlight (shortcut: Ctrl+Shift+F)">Clear Last</button>
                                 <button id="clearAllSearchesButton" title="Clear all search highlights (shortcut: Ctrl+Alt+F)">Clear All</button>
-                            </div>
-                            <div style="margin-top:4px;font-size:11px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-                                <button id="reSitePopupBtn" style="font-size:11px;padding:1px 8px;" title="Select restriction enzymes to search">RE Sites...</button>
-                                <span id="reSiteLabel" style="color:#888;font-size:10px;"></span>
-                            </div>
-                            <!-- RE site popup (hidden) -->
-                            <div id="reSitePopup" style="display:none;position:absolute;background:white;border:1px solid #ccc;padding:6px;z-index:99999;max-height:250px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.2);border-radius:4px;min-width:160px;font-size:10px;">
-                                <div style="font-weight:bold;margin-bottom:3px;">Restriction Enzymes</div>
-                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;">
-                                    <label><input type="checkbox" class="re-cb" value="GAATTC"> EcoRI</label>
-                                    <label><input type="checkbox" class="re-cb" value="GGATCC"> BamHI</label>
-                                    <label><input type="checkbox" class="re-cb" value="AAGCTT"> HindIII</label>
-                                    <label><input type="checkbox" class="re-cb" value="CTGCAG"> PstI</label>
-                                    <label><input type="checkbox" class="re-cb" value="GTCGAC"> SalI</label>
-                                    <label><input type="checkbox" class="re-cb" value="CTCGAG"> XhoI</label>
-                                    <label><input type="checkbox" class="re-cb" value="GGTACC"> KpnI</label>
-                                    <label><input type="checkbox" class="re-cb" value="GAGCTC"> SacI</label>
-                                    <label><input type="checkbox" class="re-cb" value="CCCGGG"> SmaI</label>
-                                    <label><input type="checkbox" class="re-cb" value="TCTAGA"> XbaI</label>
-                                    <label><input type="checkbox" class="re-cb" value="GCGGCCGC"> NotI</label>
-                                    <label><input type="checkbox" class="re-cb" value="AGATCT"> BglII</label>
-                                    <label><input type="checkbox" class="re-cb" value="CCATGG"> NcoI</label>
-                                    <label><input type="checkbox" class="re-cb" value="CATATG"> NdeI</label>
-                                    <label><input type="checkbox" class="re-cb" value="GCTAGC"> NheI</label>
-                                    <label><input type="checkbox" class="re-cb" value="ACTAGT"> SpeI</label>
-                                    <label><input type="checkbox" class="re-cb" value="AGGCCT"> StuI</label>
-                                    <label><input type="checkbox" class="re-cb" value="CAGCTG"> PvuII</label>
-                                    <label><input type="checkbox" class="re-cb" value="ATCGAT"> ClaI</label>
-                                    <label><input type="checkbox" class="re-cb" value="GGCC"> HaeIII</label>
-                                    <label><input type="checkbox" class="re-cb" value="AGCT"> AluI</label>
-                                    <label><input type="checkbox" class="re-cb" value="TCGA"> TaqI</label>
-                                    <label><input type="checkbox" class="re-cb" value="TTAA"> MseI</label>
-                                </div>
-                                <div style="margin-top:4px;display:flex;gap:4px;">
-                                    <button id="reSiteRunBtn" style="font-size:10px;padding:1px 8px;background:#4CAF50;color:white;border:none;border-radius:2px;">Search</button>
-                                    <button id="reSiteClearBtn" style="font-size:10px;padding:1px 8px;">Clear all</button>
-                                </div>
-                            </div>
                             </div>
                         </div>
                         <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
@@ -605,8 +565,8 @@
                         <div class="button-group">
                             <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
                             <button id="tsdFinderButton" title="Find target site duplications around SINE insertion boundaries">TSD Finder</button>
-                            <button id="buildTreeButton" title="Build a UPGMA tree from selected sequences, or all sequences if none are selected">Tree</button>
-                            <button id="statsButton" title="Distance matrix + alignment statistics (esl-alistat / esl-alipid)">Statistics</button>
+                            <button id="buildTreeButton" title="Build a phylogenetic tree from selected sequences">Tree</button>
+                            <button id="statsButton" title="Alignment statistics: distance matrix, pairwise identity, summary">Statistics</button>
                             <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
                             <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
                             <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
@@ -617,7 +577,7 @@
                 </div>
             </div>
             <div id="headerInfoPanel">
-                <div id="versionIndicator"><a href="https://github.com/Toki-bio/MSA-viewer/commit/a6cfce4" target="_blank" title="View this commit on GitHub" style="color:inherit;text-decoration:none;">commit a6cfce4</a></div>
+                <div id="versionIndicator"><a href="https://github.com/Toki-bio/MSA-viewer/commit/c0e6ad5" target="_blank" title="View this commit on GitHub" style="color:inherit;text-decoration:none;">commit c0e6ad5</a></div>
                 <div id="sourceInfo">No file loaded</div>
             </div>
         </div>
@@ -774,8 +734,8 @@
             </div>
             <textarea id="addSeqInput" placeholder=">new_sequence_1&#10;ACGTACGTACGT...&#10;>new_sequence_2&#10;TGCATGCATGCA..." style="width: 100%; height: 200px; font-family: 'Courier New', monospace; font-size: 12px; resize: vertical; box-sizing: border-box;"></textarea>
             <div style="margin-top: 4px; font-size: 11px;">
-                <button id="addSeqBrowseButton" style="padding: 2px 8px; font-size: 11px; background: #f5f5f5; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; margin-right: 6px;">?? Browse Files</button>
-                <input type="file" id="addSeqFileInput" multiple accept=".fasta,.fa,.fas,.fna,.ffn,.faa,.frn,.aln,.msf,.nex,.nexus,.sto,.stockholm,.txt" style="display:none;">
+                <button id="addSeqBrowseButton" style="padding: 2px 8px; font-size: 11px; background: #f5f5f5; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; margin-right: 6px;">📂 Browse Files</button>
+                <input type="file" id="addSeqFileInput" multiple accept=".fasta,.fa,.fas,.fna,.ffn,.faa,.frn,.aln,.msf,.nex,.nexus,.sto,.stockholm,.txt,.gb,.gbk" style="display:none;">
                 <span id="addSeqFileLabel" style="color: #888;"></span>
             </div>
             <div style="margin-top: 8px; text-align: right;">
@@ -888,7 +848,7 @@ B: —</pre>
             <div style="margin-bottom:6px;font-size:11px;display:flex;gap:12px;align-items:center;">
                 <span style="color:#777;">Method:</span>
                 <label title="Unweighted Pair Group Method with Arithmetic Mean"><input type="radio" name="treeMethod" value="upgma" checked> UPGMA</label>
-                <label title="Neighbor-Joining — Saitou & Nei 1987"><input type="radio" name="treeMethod" value="nj"> NJ</label>
+                <label title="Neighbor-Joining — Saitou &amp; Nei 1987"><input type="radio" name="treeMethod" value="nj"> NJ</label>
             </div>
             <textarea id="treeNewickOutput" readonly style="width:100%;height:130px;box-sizing:border-box;font-family:'Courier New',monospace;font-size:11px;white-space:pre;resize:vertical;"></textarea>
             <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;margin:8px 0;">
@@ -899,21 +859,14 @@ B: —</pre>
         </div>
     </div>
 
-    <!-- Statistics Modal (distance matrix + alignment stats) -->
+    <!-- Statistics Modal -->
     <div id="statsModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10002;overflow:auto;">
         <div style="background:white;margin:30px auto;padding:16px;max-width:960px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                 <h3 style="margin:0;">Alignment Statistics</h3>
                 <button id="statsCloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button>
             </div>
-            <div style="margin-bottom:8px;font-size:11px;display:flex;gap:8px;">
-                <button class="stats-tab-btn active" data-tab="summary" style="padding:2px 10px;border:1px solid #ccc;border-radius:3px;background:#e6f3ff;cursor:pointer;font-size:11px;">Summary</button>
-                <button class="stats-tab-btn" data-tab="matrix" style="padding:2px 10px;border:1px solid #ccc;border-radius:3px;background:#f5f5f5;cursor:pointer;font-size:11px;">Distance Matrix</button>
-                <button class="stats-tab-btn" data-tab="identity" style="padding:2px 10px;border:1px solid #ccc;border-radius:3px;background:#f5f5f5;cursor:pointer;font-size:11px;">Pairwise Identity</button>
-            </div>
-            <div id="statsSummaryTab" class="stats-tab" style="max-height:60vh;overflow:auto;font-size:12px;"></div>
-            <div id="statsMatrixTab" class="stats-tab" style="display:none;max-height:60vh;overflow:auto;font-family:'Courier New',monospace;font-size:11px;white-space:pre;"></div>
-            <div id="statsIdentityTab" class="stats-tab" style="display:none;max-height:60vh;overflow:auto;font-family:'Courier New',monospace;font-size:11px;white-space:pre;"></div>
+            <div id="statsSummaryTab" style="max-height:60vh;overflow:auto;font-size:12px;"></div>
             <div style="margin-top:8px;font-size:10px;color:#999;">Statistics computed using methods from Easel library (Eddy lab, HHMI Janelia) — esl-alistat / esl-alipid.</div>
         </div>
     </div>
