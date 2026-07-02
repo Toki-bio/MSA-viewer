@@ -35,7 +35,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = 'a71755b';
+const APP_VERSION = 'c0e6ad5';
 
 const state = {
     seqs: [],
@@ -1639,6 +1639,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     alignmentContainer.innerHTML = '';
     alignmentContainer.style.overflow = 'hidden';
     alignmentContainer.style.position = 'relative';
+    // Canvas mode needs explicit height since absolute canvas has no flow height
+    const top = alignmentContainer.getBoundingClientRect().top;
+    alignmentContainer.style.height = (window.innerHeight - top - 28) + 'px';
 
     const canvas = document.createElement('canvas');
     canvas.id = 'alignmentCanvas';
@@ -1667,6 +1670,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
     }
     resize();
+    draw(); // Initial render after resize
     window.addEventListener('resize', () => { resize(); draw(); });
 
     // Clamp offsets
@@ -2176,6 +2180,10 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
     showConsensus, consType, threshold, fallbackMode, coverageMin) {
 
     alignmentContainer.innerHTML = '';
+    // Reset styles from other modes (Canvas sets position/height/overflow)
+    alignmentContainer.style.position = '';
+    alignmentContainer.style.height = '';
+    alignmentContainer.style.overflow = '';
     state.spanCache = new Map();
     state.domSelectedNucs = new Map();
     state.domSelectedColumns = new Map();
@@ -2514,6 +2522,10 @@ function renderAlignment(options = {}) {
     }
     const coverageMin = clampMinCoverage(el('consensusMinCoverage')?.value) / 100;
     alignmentContainer.innerHTML = '';
+    // Reset styles that Canvas mode may have set (position, height, overflow)
+    alignmentContainer.style.position = 'static';
+    alignmentContainer.style.height = '';
+    alignmentContainer.style.overflow = '';
     // Container-level drag handlers: allow drops anywhere, show preview
     // Remove old handlers first to avoid stacking
     if (!alignmentContainer._dragHandlersSet) {
@@ -2604,6 +2616,8 @@ function renderAlignment(options = {}) {
     }
     state.consensusSeq = consensus.join('').replace(/-/g, '');
     const shouldRenderConsensus = showConsensus;
+    const consensusPosEl = document.querySelector('input[name="consensusPosition"]:checked');
+    const consensusPosition = consensusPosEl ? consensusPosEl.value : 'top';
 
     // *** NEW: Pre-calculate conservation for ALL columns ONCE ***
     const shadeMode = document.querySelector('input[name="shadeMode"]:checked').value;
@@ -2686,13 +2700,16 @@ function renderAlignment(options = {}) {
             blockDiv.appendChild(scaleDiv);
             const isLastBlock = (start + blockWidth >= len);
 
-            if (shouldRenderConsensus) {
+            if (shouldRenderConsensus && consensusPosition === 'top') {
                 addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'top', options);
             }
             for (let i = 0; i < state.seqs.length; i++) {
                 // *** PASS conservationData to createSequenceLine ***
                 const lineDiv = createSequenceLine(i, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, conservationData);
                 blockDiv.appendChild(lineDiv);
+            }
+            if (shouldRenderConsensus && consensusPosition === 'bottom') {
+                addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'bottom', options);
             }
             alignmentContainer.appendChild(blockDiv);
         }
@@ -2711,13 +2728,16 @@ function renderAlignment(options = {}) {
         scaleDiv.appendChild(scaleDataDiv);
         alignmentContainer.appendChild(scaleDiv);
 
-        if (shouldRenderConsensus) {
+        if (shouldRenderConsensus && consensusPosition === 'top') {
             addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'top', options);
         }
         for (let i = 0; i < state.seqs.length; i++) {
             // *** PASS conservationData to createSequenceLine ***
             const lineDiv = createSequenceLine(i, 0, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, conservationData);
             alignmentContainer.appendChild(lineDiv);
+        }
+        if (shouldRenderConsensus && consensusPosition === 'bottom') {
+            addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'bottom', options);
         }
     }
     setTimeout(() => toggleStickyNames(), 0);

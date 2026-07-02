@@ -65,7 +65,10 @@
                 </div>
             </div>
 
-            <div class="undo-redo-bar" style="display: inline-flex; gap: 1px; vertical-align: middle; margin-left: 10px;">
+            <button id="copyAlignToolbarButton" class="edit-toggle-button" title="Copy entire alignment to clipboard (FASTA)" onclick="copyAlignment()" style="font-size:10px;padding:0 5px;margin-left:6px;font-weight:normal;">📋 Copy</button>
+            <button id="saveAlignToolbarButton" class="edit-toggle-button" title="Download alignment as FASTA file" onclick="downloadAlignment()" style="font-size:10px;padding:0 5px;margin-left:2px;font-weight:normal;margin-right:6px;">💾 Save</button>
+
+            <div class="undo-redo-bar" style="display: inline-flex; gap: 1px; vertical-align: middle;">
                 <button id="undoButton" title="Undo (Ctrl+Z)" style="padding: 0 3px; font-size: 12px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; border-radius: 3px 0 0 3px; min-width: 18px;">↩</button>
                 <button id="undoDropdownBtn" title="Undo history" style="padding: 0 2px; font-size: 8px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; border-left: none; background: #f0f0f0; min-width: 10px;">▼</button>
                 <button id="redoButton" title="Redo (Ctrl+Y)" style="padding: 0 3px; font-size: 12px; height: 18px; line-height: 16px; cursor: pointer; border: 1px solid #ccc; background: #f0f0f0; min-width: 18px;">↪</button>
@@ -73,9 +76,7 @@
             </div>
 
             <button id="editToggleButton" class="edit-toggle-button" aria-pressed="false" title="Toggle GeneDoc-style sequence editing tools">Edit</button>
-            <button id="degapColumnsButton" class="edit-toggle-button" title="Remove all gap-only columns from the alignment" onclick="removeGapColumns()" style="font-size:10px;padding:0 5px;margin-left:2px;font-weight:normal;margin-right:4px;">Degap</button>
-            <button id="copyAlignToolbarButton" class="edit-toggle-button" title="Copy entire alignment to clipboard (FASTA)" onclick="copyAlignment()" style="font-size:10px;padding:0 5px;font-weight:normal;">📋 Copy</button>
-            <button id="saveAlignToolbarButton" class="edit-toggle-button" title="Download alignment as FASTA file" onclick="downloadAlignment()" style="font-size:10px;padding:0 5px;margin-left:2px;font-weight:normal;margin-right:8px;">💾 Save</button>
+            <button id="degapColumnsButton" class="edit-toggle-button" title="Remove all gap-only columns from the alignment" onclick="removeGapColumns()" style="font-size:10px;padding:0 5px;margin-left:2px;font-weight:normal;margin-right:8px;">Degap</button>
 
             <div class="menu-section" id="snapshot-section" style="display:none;"></div>
 
@@ -575,7 +576,7 @@
                 </div>
             </div>
             <div id="headerInfoPanel">
-                <div id="versionIndicator"><a href="https://github.com/Toki-bio/MSA-viewer/commit/a71755b" target="_blank" title="View this commit on GitHub" style="color:inherit;text-decoration:none;">commit a71755b</a></div>
+                <div id="versionIndicator"><a href="https://github.com/Toki-bio/MSA-viewer/commit/c0e6ad5" target="_blank" title="View this commit on GitHub" style="color:inherit;text-decoration:none;">commit c0e6ad5</a></div>
                 <div id="sourceInfo">No file loaded</div>
             </div>
         </div>
