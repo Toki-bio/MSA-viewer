@@ -7316,11 +7316,12 @@ function downloadTreeNewick() {
  * http://eddylab.org/easel/
  */
 function openStats() {
-    const seqs = getTreeInputSequences();
-    if (seqs.length < 2) {
-        showMessage('Need at least two sequences for statistics.', 2200);
-        return;
-    }
+    try {
+        const seqs = getTreeInputSequences();
+        if (seqs.length < 2) {
+            showMessage('Need at least two sequences for statistics.', 2200);
+            return;
+        }
     // esl-alistat summary
     const alen = Math.max(...seqs.map(s => s.seq.length));
     const nseq = seqs.length;
@@ -7438,6 +7439,10 @@ function openStats() {
     const imContent = `<details style="margin-top:4px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Pairwise Identity (%)</summary><pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${im}</pre></details>`;
     document.getElementById('statsSummaryTab').innerHTML += dmContent + imContent;
     document.getElementById('statsModal').style.display = 'block';
+    } catch(e) {
+        console.error('Stats error:', e);
+        showMessage(`Statistics error: ${e.message}`, 4000);
+    }
 }
 
 function closeStats() {
