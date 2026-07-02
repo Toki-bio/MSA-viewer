@@ -3015,6 +3015,7 @@ function getSequenceBaseRenderClass(base, pos, config, conservationData) {
     // Add nucleotide letter class for letter-coloring mode
     if (baseUp.length === 1) cls += ` base-${baseUp}`;
     return cls;
+    return cls;
 }
 
 function getTsdMarkDisplay(rowIndex, pos) {
@@ -3064,6 +3065,23 @@ function refreshSequenceRowDom(rowIndex) {
         span.textContent = base;
         span.className = getSequenceBaseRenderClass(base, pos, config, conservationData);
         setSpanTsdMarkDisplay(span, rowIndex, pos);
+        // Nucleotide identity tooltip for letter coloring mode
+        if (!span.title) {
+            const baseUp = base.toUpperCase();
+            const baseNames = {A:'Adenine',C:'Cytosine',G:'Guanine',T:'Thymine',U:'Uracil',
+                N:'Any',R:'Purine (A/G)',Y:'Pyrimidine (C/T)',M:'Amino (A/C)',K:'Keto (G/T)',
+                S:'Strong (C/G)',W:'Weak (A/T)',H:'H (A/C/T)',B:'B (C/G/T)',V:'V (A/C/G)',D:'D (A/G/T)'};
+            const name = baseNames[baseUp] || baseUp;
+            if (baseUp !== '-' && baseUp !== '.') {
+                const posData = conservationData?.[pos];
+                if (posData?.hasData && posData?.hasValidCoverage) {
+                    const pct = Math.round(posData.conservation * 100);
+                    span.title = `${name} (${pct}% conserved)`;
+                } else {
+                    span.title = name;
+                }
+            }
+        }
     });
 
     if (state.selectedNucs.size) scheduleNucSelectionRefresh();

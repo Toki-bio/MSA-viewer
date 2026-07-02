@@ -1300,6 +1300,10 @@ span.column-selected {
 /* ============================================================================
    NUCLEOTIDE LETTER COLORING MODE (shadeMode=letter)
    ============================================================================ */
+/* In letter mode, override ALL shading backgrounds to white/transparent */
+.shade-letter .seq-data .black,
+.shade-letter .seq-data .dark,
+.shade-letter .seq-data .light { background: transparent !important; }
 .shade-letter .seq-data .base-A { color: #2ecc40 !important; }    /* Green */
 .shade-letter .seq-data .base-C { color: #0074d9 !important; }    /* Blue */
 .shade-letter .seq-data .base-G { color: #ff851b !important; }    /* Orange */
