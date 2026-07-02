@@ -35,7 +35,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = '3983e27';
+const APP_VERSION = 'aa4527f';
 
 const state = {
     seqs: [],
@@ -2853,8 +2853,7 @@ function renderAlignment(options = {}) {
                 const lineDiv = createSequenceLine(i, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, conservationData);
                 blockDiv.appendChild(lineDiv);
             }
-            if (shouldRenderConsensus && consensusPosition !== 'top') {
-                console.log('[consensus] rendering at BOTTOM (block), position=', consensusPosition);
+            if (shouldRenderConsensus && consensusPosition === 'bottom') {
                 addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'bottom', options);
             }
             alignmentContainer.appendChild(blockDiv);
@@ -2882,19 +2881,9 @@ function renderAlignment(options = {}) {
             const lineDiv = createSequenceLine(i, 0, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, conservationData);
             alignmentContainer.appendChild(lineDiv);
         }
-        if (shouldRenderConsensus && consensusPosition !== 'top') {
-            try {
-                console.log('[consensus] rendering at BOTTOM, position=', consensusPosition, 'consensusLen=', consensus.length);
-                addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'bottom', options);
-            } catch(e) {
-                console.error('[consensus] addConsensusLine threw:', e);
-            }
+        if (shouldRenderConsensus && consensusPosition === 'bottom') {
+            addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'bottom', options);
         }
-        // HARDCODED TEST: prove we reached this point
-        const testDiv = document.createElement('div');
-        testDiv.style.cssText = 'background:#ff0000;color:#fff;padding:6px;font-weight:bold;text-align:center;margin-top:8px;font-size:14px;';
-        testDiv.textContent = `[DEBUG] renderAlignment finished. consensusPosition=${consensusPosition} shouldRender=${shouldRenderConsensus} len=${consensus.length}`;
-        alignmentContainer.appendChild(testDiv);
     }
     setTimeout(() => toggleStickyNames(), 0);
     ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold'].forEach(id => {
@@ -3163,8 +3152,6 @@ function getSequenceBaseRenderClass(base, pos, config, conservationData) {
 
     if (state.selectedColumns.has(pos)) cls += ' column-selected';
     if (baseClass) cls += ` ${baseClass}`;
-    // Add nucleotide letter class for letter-coloring mode
-    if (baseUp.length === 1) cls += ` base-${baseUp}`;
     return cls;
     return cls;
 }
@@ -3216,23 +3203,6 @@ function refreshSequenceRowDom(rowIndex) {
         span.textContent = base;
         span.className = getSequenceBaseRenderClass(base, pos, config, conservationData);
         setSpanTsdMarkDisplay(span, rowIndex, pos);
-        // Nucleotide identity tooltip for letter coloring mode
-        if (!span.title) {
-            const baseUp = base.toUpperCase();
-            const baseNames = {A:'Adenine',C:'Cytosine',G:'Guanine',T:'Thymine',U:'Uracil',
-                N:'Any',R:'Purine (A/G)',Y:'Pyrimidine (C/T)',M:'Amino (A/C)',K:'Keto (G/T)',
-                S:'Strong (C/G)',W:'Weak (A/T)',H:'H (A/C/T)',B:'B (C/G/T)',V:'V (A/C/G)',D:'D (A/G/T)'};
-            const name = baseNames[baseUp] || baseUp;
-            if (baseUp !== '-' && baseUp !== '.') {
-                const posData = conservationData?.[pos];
-                if (posData?.hasData && posData?.hasValidCoverage) {
-                    const pct = Math.round(posData.conservation * 100);
-                    span.title = `${name} (${pct}% conserved)`;
-                } else {
-                    span.title = name;
-                }
-            }
-        }
     });
 
     if (state.selectedNucs.size) scheduleNucSelectionRefresh();
@@ -3402,13 +3372,9 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
 function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false, position = 'bottom', options = {}) {
     const consLine = document.createElement('div');
     consLine.className = `seq-line consensus-line consensus-${position}`;
-    if (position === 'bottom') {
-        consLine.style.border = '2px solid red';
-        consLine.style.background = '#fff3f3';
-    }
     const consName = document.createElement('div');
     consName.className = `seq-name ${stickyNames ? '' : 'static'}`;
-    consName.textContent = `Consensus ↓`;
+    consName.textContent = 'Consensus';
     consLine.appendChild(consName);
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
@@ -3748,12 +3714,6 @@ function setBlockSizeToScreen() {
     renderAlignment();
 }
 function onShadeModeChange() {
-    // Toggle letter-coloring class on body for CSS-based nucleotide colors
-    const shadeMode = document.querySelector('input[name="shadeMode"]:checked')?.value;
-    document.body.classList.toggle('shade-letter', shadeMode === 'letter');
-    // In letter mode, hide shading threshold sliders (they have no effect)
-    const shadeSliders = document.getElementById('shade-sliders');
-    if (shadeSliders) shadeSliders.style.display = shadeMode === 'letter' ? 'none' : '';
     validateThresholds();
     debounceRender();
 }
@@ -5093,8 +5053,6 @@ function _applySnapshotView(view) {
     if (view.shadeMode) {
         const shadeModeRadio = document.querySelector(`input[name="shadeMode"][value="${view.shadeMode}"]`);
         if (shadeModeRadio) shadeModeRadio.checked = true;
-        // Toggle letter-coloring class for snapshot restore
-        document.body.classList.toggle('shade-letter', view.shadeMode === 'letter');
     }
 
     if (view.enableBlack !== undefined) el('enableBlack').checked = !!view.enableBlack;
