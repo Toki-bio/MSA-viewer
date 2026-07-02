@@ -6932,6 +6932,146 @@ function buildUPGMATreeFromAlignment(seqObjects) {
     };
 }
 
+/**
+ * Neighbor-Joining tree from pairwise alignment distances.
+ * Saitou & Nei (1987). Same distance matrix as UPGMA, different clustering.
+ */
+function buildNJTreeFromAlignment(seqObjects) {
+    const n = seqObjects.length;
+    // Compute pairwise distances
+    const baseDist = Array.from({ length: n }, () => new Array(n).fill(0));
+    let distanceTotal = 0, distancePairs = 0, distanceMin = Infinity, distanceMax = 0;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const d = _alignmentPairDistance(seqObjects[i].seq, seqObjects[j].seq);
+            baseDist[i][j] = d;
+            baseDist[j][i] = d;
+            distanceTotal += d;
+            distancePairs++;
+            distanceMin = Math.min(distanceMin, d);
+            distanceMax = Math.max(distanceMax, d);
+        }
+    }
+
+    // Initialize clusters
+    const clusters = seqObjects.map((s, i) => ({
+        name: s.header || `seq_${i + 1}`,
+        size: 1,
+        height: 0,
+        branchLength: 0,
+        left: null,
+        right: null
+    }));
+    const dist = baseDist.map(r => r.slice());
+    const activeIndices = clusters.map((_, i) => i); // maps to original cluster positions
+
+    // NJ main loop
+    while (activeIndices.length > 2) {
+        const m = activeIndices.length;
+        // Net divergence r[i]
+        const r = new Array(m).fill(0);
+        for (let a = 0; a < m; a++) {
+            for (let b = 0; b < m; b++) {
+                if (a !== b) r[a] += dist[a][b];
+            }
+        }
+
+        // Find minimum Q
+        let minQ = Infinity, minI = 0, minJ = 1;
+        for (let a = 0; a < m; a++) {
+            for (let b = a + 1; b < m; b++) {
+                const q = (m - 2) * dist[a][b] - r[a] - r[b];
+                if (q < minQ) {
+                    minQ = q;
+                    minI = a;
+                    minJ = b;
+                }
+            }
+        }
+
+        // Branch lengths
+        const dij = dist[minI][minJ];
+        const bi = Math.max(0, (dij + (r[minI] - r[minJ]) / (m - 2)) / 2);
+        const bj = Math.max(0, dij - bi);
+
+        const clusterI = clusters[activeIndices[minI]];
+        const clusterJ = clusters[activeIndices[minJ]];
+        clusterI.branchLength = bi;
+        clusterJ.branchLength = bj;
+        const mergedHeight = dij / 2; // approximate
+
+        // New distances to merged node
+        const newDistances = [];
+        for (let k = 0; k < m; k++) {
+            if (k === minI || k === minJ) continue;
+            newDistances.push((dist[minI][k] + dist[minJ][k] - dij) / 2);
+        }
+
+        // Build merged node
+        const merged = {
+            name: '',
+            size: clusterI.size + clusterJ.size,
+            height: mergedHeight,
+            branchLength: 0,
+            left: clusterI,
+            right: clusterJ
+        };
+
+        // Rebuild distance matrix without minI, minJ, adding merged
+        const oldIndices = [];
+        for (let k = 0; k < m; k++) {
+            if (k === minI || k === minJ) continue;
+            oldIndices.push(activeIndices[k]);
+        }
+        const newIndex = clusters.length;
+        // Remove minI, minJ from dist matrix (minJ first since it's larger)
+        dist.splice(Math.max(minI, minJ), 1);
+        dist.splice(Math.min(minI, minJ), 1);
+        dist.forEach(row => {
+            row.splice(Math.max(minI, minJ), 1);
+            row.splice(Math.min(minI, minJ), 1);
+        });
+        // Add merged row/col
+        dist.forEach((row, ki) => row.push(newDistances[ki] ?? 0));
+        dist.push([...newDistances, 0]);
+
+        activeIndices.splice(Math.max(minI, minJ), 1);
+        activeIndices.splice(Math.min(minI, minJ), 1);
+        activeIndices.push(newIndex);
+        clusters.push(merged);
+    }
+
+    // Connect last two clusters
+    if (activeIndices.length === 2) {
+        const a = activeIndices[0];
+        const b = activeIndices[1];
+        clusters[a].branchLength = Math.max(0, dist[0][1] / 2);
+        clusters[b].branchLength = Math.max(0, dist[0][1] / 2);
+        const root = {
+            name: '',
+            size: clusters[a].size + clusters[b].size,
+            height: dist[0][1] / 2,
+            branchLength: 0,
+            left: clusters[a],
+            right: clusters[b]
+        };
+        clusters.push(root);
+        activeIndices = [clusters.length - 1];
+    }
+
+    const root = clusters[activeIndices[0]];
+    return {
+        newick: _treeNodeToNewick(root, true),
+        text: _treeNodeToText(root).trimEnd(),
+        stats: {
+            count: n,
+            averageDistance: distancePairs ? distanceTotal / distancePairs : 0,
+            minDistance: distanceMin === Infinity ? 0 : distanceMin,
+            maxDistance: distanceMax
+        }
+    };
+}
+
 function getTreeInputSequences() {
     if (!state.seqs || state.seqs.length < 2) return [];
     const selected = Array.from(state.selectedRows).filter(index => state.seqs[index]);
@@ -6945,22 +7085,25 @@ function openTreeBuilder() {
         showMessage('Need at least two sequences to build a tree.', 2200);
         return;
     }
-    showMessage('Building alignment tree...', 0);
+    const method = document.querySelector('input[name="treeMethod"]:checked')?.value || 'upgma';
+    showMessage(`Building ${method.toUpperCase()} tree...`, 0);
     setTimeout(() => {
         try {
-            const result = buildUPGMATreeFromAlignment(seqObjects);
+            const result = method === 'nj'
+                ? buildNJTreeFromAlignment(seqObjects)
+                : buildUPGMATreeFromAlignment(seqObjects);
             const modal = document.getElementById('treeBuilderModal');
             const summary = document.getElementById('treeBuilderSummary');
             const newickOutput = document.getElementById('treeNewickOutput');
             const textOutput = document.getElementById('treeTextOutput');
             const scope = state.selectedRows.size >= 2 ? 'selected sequences' : 'all sequences';
             if (summary) {
-                summary.textContent = `${result.stats.count} ${scope} · alignment p-distance · UPGMA · avg ${result.stats.averageDistance.toFixed(4)} · range ${result.stats.minDistance.toFixed(4)}-${result.stats.maxDistance.toFixed(4)}`;
+                summary.textContent = `${result.stats.count} ${scope} · alignment p-distance · ${method.toUpperCase()} · avg ${result.stats.averageDistance.toFixed(4)} · range ${result.stats.minDistance.toFixed(4)}-${result.stats.maxDistance.toFixed(4)}`;
             }
             if (newickOutput) newickOutput.value = result.newick;
             if (textOutput) textOutput.textContent = result.text;
             if (modal) modal.style.display = 'block';
-            showMessage('Tree built.', 1200);
+            showMessage(`${method.toUpperCase()} tree built.`, 1200);
         } catch (err) {
             console.error('Tree build failed:', err);
             showMessage(`Tree build failed: ${err.message}`, 4000);
@@ -6989,7 +7132,9 @@ function downloadTreeNewick() {
     const link = document.createElement('a');
     const base = (state.currentFilename || 'alignment').replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/_+$/, '') || 'alignment';
     link.href = downloadUrl;
-    link.download = `${base}.upgma.nwk`;
+    const method = document.querySelector('input[name="treeMethod"]:checked')?.value || 'upgma';
+    const suffix = method === 'nj' ? '.nj.nwk' : '.upgma.nwk';
+    link.download = `${base}${suffix}`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(downloadUrl), 500);
 }
