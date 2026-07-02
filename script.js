@@ -7139,6 +7139,161 @@ function downloadTreeNewick() {
     setTimeout(() => URL.revokeObjectURL(downloadUrl), 500);
 }
 
+/**
+ * Open Alignment Statistics modal.
+ * Implements esl-alistat (summary) and esl-alipid (pairwise identity)
+ * from the Easel library by Sean Eddy, HHMI Janelia.
+ * http://eddylab.org/easel/
+ */
+function openStats() {
+    const seqs = getTreeInputSequences();
+    if (seqs.length < 2) {
+        showMessage('Need at least two sequences for statistics.', 2200);
+        return;
+    }
+    // esl-alistat summary
+    const alen = Math.max(...seqs.map(s => s.seq.length));
+    const nseq = seqs.length;
+    let totalResidues = 0, totalGaps = 0;
+    for (const s of seqs) {
+        for (const ch of s.seq) {
+            if (ch === '-' || ch === '.') totalGaps++;
+            else totalResidues++;
+        }
+    }
+    const totalCells = nseq * alen;
+    const gapPct = totalCells ? (totalGaps / totalCells * 100).toFixed(1) : '0';
+
+    // esl-alipid: pairwise percent identity
+    const identities = [];
+    let minId = 100, maxId = 0, sumId = 0, pairCount = 0;
+    const identityMatrix = [];
+    for (let i = 0; i < nseq; i++) {
+        identityMatrix[i] = [];
+        for (let j = 0; j < nseq; j++) {
+            if (i === j) { identityMatrix[i][j] = '100.0'; continue; }
+            if (i < j) {
+                let matches = 0, compared = 0;
+                for (let p = 0; p < alen; p++) {
+                    const a = seqs[i].seq[p] || '-';
+                    const b = seqs[j].seq[p] || '-';
+                    if (a !== '-' && a !== '.' && b !== '-' && b !== '.') {
+                        compared++;
+                        if (a.toUpperCase() === b.toUpperCase()) matches++;
+                    }
+                }
+                const pid = compared > 0 ? (matches / compared * 100) : 0;
+                identities.push(pid);
+                identityMatrix[i][j] = pid.toFixed(1);
+                identityMatrix[j][i] = pid.toFixed(1);
+                minId = Math.min(minId, pid);
+                maxId = Math.max(maxId, pid);
+                sumId += pid;
+                pairCount++;
+            }
+        }
+    }
+    const avgId = pairCount > 0 ? (sumId / pairCount) : 0;
+
+    // Distance matrix (p-distance = 1 - identity)
+    const distMatrix = [];
+    for (let i = 0; i < nseq; i++) {
+        distMatrix[i] = new Array(nseq).fill('0.0000');
+        for (let j = 0; j < nseq; j++) {
+            if (i < j) {
+                const d = 1 - parseFloat(identityMatrix[i][j]) / 100;
+                distMatrix[i][j] = d.toFixed(4);
+                distMatrix[j][i] = d.toFixed(4);
+            }
+        }
+    }
+
+    // Render Summary tab
+    const seqNames = seqs.map((s, i) => s.header || `seq_${i + 1}`);
+    const longestName = Math.max(...seqNames.map(n => n.length));
+    const maxName = Math.min(longestName, 30);
+    const nameLen = maxName + 2;
+
+    const summaryTab = document.getElementById('statsSummaryTab');
+    const scopeLabel = state.selectedRows.size >= 2 ? 'selected sequences' : 'all sequences';
+    summaryTab.innerHTML =
+        `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">` +
+        `<div style="border:1px solid #ddd;padding:8px;border-radius:4px;">` +
+            `<b>Alignment (esl-alistat)</b><br>` +
+            `<table style="font-size:11px;">` +
+            `<tr><td>Sequences</td><td style="padding-left:12px;">${nseq}</td></tr>` +
+            `<tr><td>Length</td><td style="padding-left:12px;">${alen} columns</td></tr>` +
+            `<tr><td>Total cells</td><td style="padding-left:12px;">${totalCells.toLocaleString()}</td></tr>` +
+            `<tr><td>Residues</td><td style="padding-left:12px;">${totalResidues.toLocaleString()}</td></tr>` +
+            `<tr><td>Gaps</td><td style="padding-left:12px;">${totalGaps.toLocaleString()} (${gapPct}%)</td></tr>` +
+            `<tr><td>Scope</td><td style="padding-left:12px;">${scopeLabel}</td></tr>` +
+            `</table>` +
+        `</div>` +
+        `<div style="border:1px solid #ddd;padding:8px;border-radius:4px;">` +
+            `<b>Identity (esl-alipid)</b><br>` +
+            `<table style="font-size:11px;">` +
+            `<tr><td>Mean identity</td><td style="padding-left:12px;">${avgId.toFixed(1)}%</td></tr>` +
+            `<tr><td>Min identity</td><td style="padding-left:12px;">${minId.toFixed(1)}%</td></tr>` +
+            `<tr><td>Max identity</td><td style="padding-left:12px;">${maxId.toFixed(1)}%</td></tr>` +
+            `<tr><td>Pairs compared</td><td style="padding-left:12px;">${pairCount}</td></tr>` +
+            `</table>` +
+        `</div></div>`;
+
+    // Render Distance Matrix tab
+    let dm = `<b>Pairwise p-distance (1 − identity)</b><br><br>`;
+    dm += ' '.repeat(nameLen);
+    for (let i = 0; i < nseq; i++) dm += ` ${String(i + 1).padStart(4)} `;
+    dm += '\n';
+    for (let i = 0; i < nseq; i++) {
+        const name = seqNames[i].substring(0, maxName).padEnd(nameLen, ' ');
+        dm += name;
+        for (let j = 0; j < nseq; j++) dm += ` ${distMatrix[i][j].padStart(6)}`;
+        dm += '\n';
+    }
+    dm += `\nColumns: 1–${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
+    document.getElementById('statsMatrixTab').textContent = dm;
+
+    // Render Identity tab
+    let im = `<b>Pairwise percent identity (%)</b><br><br>`;
+    im += ' '.repeat(nameLen);
+    for (let i = 0; i < nseq; i++) im += ` ${String(i + 1).padStart(5)} `;
+    im += '\n';
+    for (let i = 0; i < nseq; i++) {
+        const name = seqNames[i].substring(0, maxName).padEnd(nameLen, ' ');
+        im += name;
+        for (let j = 0; j < nseq; j++) im += ` ${identityMatrix[i][j].padStart(5)} `;
+        im += '\n';
+    }
+    document.getElementById('statsIdentityTab').textContent = im;
+
+    // Reset tabs to summary
+    document.querySelectorAll('.stats-tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector('.stats-tab-btn[data-tab="summary"]').classList.add('active');
+    document.getElementById('statsSummaryTab').style.display = '';
+    document.getElementById('statsMatrixTab').style.display = 'none';
+    document.getElementById('statsIdentityTab').style.display = 'none';
+
+    document.getElementById('statsModal').style.display = 'block';
+}
+
+function closeStats() {
+    document.getElementById('statsModal').style.display = 'none';
+}
+
+function initStatsTabs() {
+    document.querySelectorAll('.stats-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.stats-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const tab = btn.dataset.tab;
+            document.getElementById('statsSummaryTab').style.display = tab === 'summary' ? '' : 'none';
+            document.getElementById('statsMatrixTab').style.display = tab === 'matrix' ? '' : 'none';
+            document.getElementById('statsIdentityTab').style.display = tab === 'identity' ? '' : 'none';
+        });
+    });
+    document.getElementById('statsCloseBtn')?.addEventListener('click', closeStats);
+}
+
 function realignSelectedBlock() {
     if (state.seqs.length === 0) {
         showMessage("No sequences loaded.", 2000);
@@ -8913,6 +9068,8 @@ function initializeAppUI() {
         'openInNewTabButton': openSelectedInNewTab,
         'tsdFinderButton': openTsdFinder,
         'buildTreeButton': openTreeBuilder,
+        'statsButton': openStats,
+        'statsCloseBtn': closeStats,
         'treeBuilderCloseBtn': closeTreeBuilder,
         'treeCopyNewickBtn': copyTreeNewick,
         'treeDownloadNewickBtn': downloadTreeNewick,
@@ -9213,6 +9370,7 @@ function initializeAppUI() {
     }
     // Init Add-Sequences modal Browse button
     initAddSeqBrowse();
+    initStatsTabs();
 }
 
 document.addEventListener('DOMContentLoaded', initializeAppUI);
