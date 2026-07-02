@@ -7416,28 +7416,10 @@ function openStats() {
         dm += '\n';
     }
     dm += `\nColumns: 1–${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
-    document.getElementById('statsMatrixTab').textContent = dm;
-
-    // Render Identity tab
-    let im = `<b>Pairwise percent identity (%)</b><br><br>`;
-    im += ' '.repeat(nameLen);
-    for (let i = 0; i < nseq; i++) im += ` ${String(i + 1).padStart(5)} `;
-    im += '\n';
-    for (let i = 0; i < nseq; i++) {
-        const name = seqNames[i].substring(0, maxName).padEnd(nameLen, ' ');
-        im += name;
-        for (let j = 0; j < nseq; j++) im += ` ${identityMatrix[i][j].padStart(5)} `;
-        im += '\n';
-    }
-    document.getElementById('statsIdentityTab').textContent = im;
-
-    // Reset tabs to summary
-    document.querySelectorAll('.stats-tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector('.stats-tab-btn[data-tab="summary"]').classList.add('active');
-    document.getElementById('statsSummaryTab').style.display = '';
-    document.getElementById('statsMatrixTab').style.display = 'none';
-    document.getElementById('statsIdentityTab').style.display = 'none';
-
+    // Append distance matrix and identity to summary
+    const dmContent = `<details style="margin-top:6px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Distance Matrix (p-distance)</summary><pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${dm}</pre></details>`;
+    const imContent = `<details style="margin-top:4px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Pairwise Identity (%)</summary><pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${im}</pre></details>`;
+    document.getElementById('statsSummaryTab').innerHTML += dmContent + imContent;
     document.getElementById('statsModal').style.display = 'block';
 }
 
@@ -7446,17 +7428,7 @@ function closeStats() {
 }
 
 function initStatsTabs() {
-    document.querySelectorAll('.stats-tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.stats-tab-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            const tab = btn.dataset.tab;
-            document.getElementById('statsSummaryTab').style.display = tab === 'summary' ? '' : 'none';
-            document.getElementById('statsMatrixTab').style.display = tab === 'matrix' ? '' : 'none';
-            document.getElementById('statsIdentityTab').style.display = tab === 'identity' ? '' : 'none';
-        });
-    });
-    document.getElementById('statsCloseBtn')?.addEventListener('click', closeStats);
+    // closeStats handled by buttonActions map
 }
 
 function realignSelectedBlock() {
