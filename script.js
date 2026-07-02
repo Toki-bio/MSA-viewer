@@ -35,7 +35,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = 'c6d86ff';
+const APP_VERSION = '3983e27';
 
 const state = {
     seqs: [],
@@ -5768,14 +5768,15 @@ function findMatchesWithMismatches(degapped, motif, maxMismatches) {
 }
 
 function searchResEnzyme() {
-    const sel = document.getElementById('reEnzymeSelect');
-    const selected = Array.from(sel?.selectedOptions || []).map(o => o.value);
-    if (!selected.length) { showMessage('Select one or more restriction enzymes first.', 2000); return; }
-    // Auto-assign distinct colors
+    const cbs = document.querySelectorAll('.re-cb:checked');
+    const sites = Array.from(cbs).map(cb => cb.value);
+    if (!sites.length) { showMessage('Select one or more restriction enzymes.', 2000); return; }
     const palette = ['#FFD700','#FF6B6B','#00CED1','#FF8C00','#9370DB','#3CB371','#FF69B4','#20B2AA',
                      '#FFB347','#87CEEB','#FF6347','#98FB98','#DDA0DD','#F0E68C','#00BFFF','#FFA07A'];
+    const enzymes = [];
+    cbs.forEach(cb => { enzymes.push(cb.parentElement.textContent.trim()); });
     let colorIdx = state._searchColorOffset || 0;
-    selected.forEach(site => {
+    sites.forEach(site => {
         const color = palette[colorIdx % palette.length];
         const input = document.getElementById('searchInput');
         const colorInput = document.getElementById('searchColor');
@@ -5786,12 +5787,31 @@ function searchResEnzyme() {
         }
         colorIdx++;
     });
-    state._searchColorOffset = (state._searchColorOffset || 0) + selected.length;
+    state._searchColorOffset = (state._searchColorOffset || 0) + sites.length;
+    document.getElementById('reSiteLabel').textContent = `${sites.length} enzyme(s) searched`;
+    document.getElementById('reSitePopup').style.display = 'none';
 }
 
-// Wire up RE dropdown to fill search input on select
 function initResEnzymeSearch() {
-    // Multi-select auto-fills handled by Find RE button
+    const popup = document.getElementById('reSitePopup');
+    const btn = document.getElementById('reSitePopupBtn');
+    const runBtn = document.getElementById('reSiteRunBtn');
+    const clearBtn = document.getElementById('reSiteClearBtn');
+    if (!popup || !btn) return;
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        popup.style.display = popup.style.display === 'none' ? 'block' : 'none';
+    });
+    runBtn?.addEventListener('click', searchResEnzyme);
+    clearBtn?.addEventListener('click', () => {
+        document.querySelectorAll('.re-cb').forEach(cb => cb.checked = false);
+    });
+    // Close popup on outside click
+    document.addEventListener('click', (e) => {
+        if (!popup.contains(e.target) && e.target !== btn) {
+            popup.style.display = 'none';
+        }
+    });
 }
 
 function searchMotif() {
@@ -9296,7 +9316,6 @@ function initializeAppUI() {
         'zoomInButton': () => adjustZoom(10),
         'zoomOutButton': () => adjustZoom(-10),
         'searchButton': searchMotif,
-        'reSearchButton': searchResEnzyme,
         'clearLastSearchButton': clearLastSearch,
         'clearAllSearchesButton': clearAllSearches,
         'copyConsensusButton': copyConsensus,

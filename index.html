@@ -389,33 +389,42 @@
                                 <button id="clearAllSearchesButton" title="Clear all search highlights (shortcut: Ctrl+Alt+F)">Clear All</button>
                             </div>
                             <div style="margin-top:4px;font-size:11px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-                                <span style="color:#666;">RE sites:</span>
-                                <select id="reEnzymeSelect" multiple size="3" style="font-size:10px;max-width:160px;min-width:130px;" title="Select restriction enzymes (Ctrl+click for multiple). Different colours are auto-assigned.">
-                                    <option value="GAATTC">EcoRI</option>
-                                    <option value="GGATCC">BamHI</option>
-                                    <option value="AAGCTT">HindIII</option>
-                                    <option value="CTGCAG">PstI</option>
-                                    <option value="GTCGAC">SalI</option>
-                                    <option value="CTCGAG">XhoI</option>
-                                    <option value="GGTACC">KpnI</option>
-                                    <option value="GAGCTC">SacI</option>
-                                    <option value="CCCGGG">SmaI</option>
-                                    <option value="TCTAGA">XbaI</option>
-                                    <option value="GCGGCCGC">NotI</option>
-                                    <option value="AGATCT">BglII</option>
-                                    <option value="CCATGG">NcoI</option>
-                                    <option value="CATATG">NdeI</option>
-                                    <option value="GCTAGC">NheI</option>
-                                    <option value="ACTAGT">SpeI</option>
-                                    <option value="AGGCCT">StuI</option>
-                                    <option value="CAGCTG">PvuII</option>
-                                    <option value="ATCGAT">ClaI</option>
-                                    <option value="GGCC">HaeIII</option>
-                                    <option value="AGCT">AluI</option>
-                                    <option value="TCGA">TaqI</option>
-                                    <option value="TTAA">MseI</option>
-                                </select>
-                                <button id="reSearchButton" style="font-size:11px;padding:1px 8px;" title="Find all selected restriction enzyme sites with distinct colors">Find RE</button>
+                                <button id="reSitePopupBtn" style="font-size:11px;padding:1px 8px;" title="Select restriction enzymes to search">RE Sites...</button>
+                                <span id="reSiteLabel" style="color:#888;font-size:10px;"></span>
+                            </div>
+                            <!-- RE site popup (hidden) -->
+                            <div id="reSitePopup" style="display:none;position:absolute;background:white;border:1px solid #ccc;padding:6px;z-index:99999;max-height:250px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.2);border-radius:4px;min-width:160px;font-size:10px;">
+                                <div style="font-weight:bold;margin-bottom:3px;">Restriction Enzymes</div>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;">
+                                    <label><input type="checkbox" class="re-cb" value="GAATTC"> EcoRI</label>
+                                    <label><input type="checkbox" class="re-cb" value="GGATCC"> BamHI</label>
+                                    <label><input type="checkbox" class="re-cb" value="AAGCTT"> HindIII</label>
+                                    <label><input type="checkbox" class="re-cb" value="CTGCAG"> PstI</label>
+                                    <label><input type="checkbox" class="re-cb" value="GTCGAC"> SalI</label>
+                                    <label><input type="checkbox" class="re-cb" value="CTCGAG"> XhoI</label>
+                                    <label><input type="checkbox" class="re-cb" value="GGTACC"> KpnI</label>
+                                    <label><input type="checkbox" class="re-cb" value="GAGCTC"> SacI</label>
+                                    <label><input type="checkbox" class="re-cb" value="CCCGGG"> SmaI</label>
+                                    <label><input type="checkbox" class="re-cb" value="TCTAGA"> XbaI</label>
+                                    <label><input type="checkbox" class="re-cb" value="GCGGCCGC"> NotI</label>
+                                    <label><input type="checkbox" class="re-cb" value="AGATCT"> BglII</label>
+                                    <label><input type="checkbox" class="re-cb" value="CCATGG"> NcoI</label>
+                                    <label><input type="checkbox" class="re-cb" value="CATATG"> NdeI</label>
+                                    <label><input type="checkbox" class="re-cb" value="GCTAGC"> NheI</label>
+                                    <label><input type="checkbox" class="re-cb" value="ACTAGT"> SpeI</label>
+                                    <label><input type="checkbox" class="re-cb" value="AGGCCT"> StuI</label>
+                                    <label><input type="checkbox" class="re-cb" value="CAGCTG"> PvuII</label>
+                                    <label><input type="checkbox" class="re-cb" value="ATCGAT"> ClaI</label>
+                                    <label><input type="checkbox" class="re-cb" value="GGCC"> HaeIII</label>
+                                    <label><input type="checkbox" class="re-cb" value="AGCT"> AluI</label>
+                                    <label><input type="checkbox" class="re-cb" value="TCGA"> TaqI</label>
+                                    <label><input type="checkbox" class="re-cb" value="TTAA"> MseI</label>
+                                </div>
+                                <div style="margin-top:4px;display:flex;gap:4px;">
+                                    <button id="reSiteRunBtn" style="font-size:10px;padding:1px 8px;background:#4CAF50;color:white;border:none;border-radius:2px;">Search</button>
+                                    <button id="reSiteClearBtn" style="font-size:10px;padding:1px 8px;">Clear all</button>
+                                </div>
+                            </div>
                             </div>
                         </div>
                         <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
