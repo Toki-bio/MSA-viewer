@@ -2619,6 +2619,9 @@ function renderAlignment(options = {}) {
     const shouldRenderConsensus = showConsensus;
     const consensusPosEl = document.querySelector('input[name="consensusPosition"]:checked');
     const consensusPosition = consensusPosEl ? consensusPosEl.value : 'top';
+    if (showConsensus && consensus.length > 0) {
+        console.log(`[consensus] enabled=${showConsensus} position=${consensusPosition} len=${consensus.length}`);
+    }
 
     // *** NEW: Pre-calculate conservation for ALL columns ONCE ***
     const shadeMode = document.querySelector('input[name="shadeMode"]:checked').value;
@@ -2738,6 +2741,7 @@ function renderAlignment(options = {}) {
             alignmentContainer.appendChild(lineDiv);
         }
         if (shouldRenderConsensus && consensusPosition === 'bottom') {
+            console.log('[consensus] rendering at BOTTOM');
             addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'bottom', options);
         }
     }
