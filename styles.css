@@ -1292,6 +1292,32 @@ span.column-selected {
     text-align: right;
     opacity: 0.7;
 }
+.tooltip.consensus-box .freq-row .raw {
+    font-size: 10px;
+    color: #888;
+}
+
+/* ============================================================================
+   NUCLEOTIDE LETTER COLORING MODE (shadeMode=letter)
+   ============================================================================ */
+.shade-letter .seq-data .base-A { color: #2ecc40 !important; }    /* Green */
+.shade-letter .seq-data .base-C { color: #0074d9 !important; }    /* Blue */
+.shade-letter .seq-data .base-G { color: #ff851b !important; }    /* Orange */
+.shade-letter .seq-data .base-T { color: #ff4136 !important; }    /* Red */
+.shade-letter .seq-data .base-U { color: #b10dc9 !important; }    /* Purple */
+.shade-letter .seq-data .base-N { color: #888 !important; }       /* Grey */
+/* Common IUPAC ambiguity codes */
+.shade-letter .seq-data .base-R { color: #01ff70 !important; }
+.shade-letter .seq-data .base-Y { color: #7fdbff !important; }
+.shade-letter .seq-data .base-M { color: #f39c12 !important; }
+.shade-letter .seq-data .base-K { color: #e74c3c !important; }
+.shade-letter .seq-data .base-S { color: #3498db !important; }
+.shade-letter .seq-data .base-W { color: #1abc9c !important; }
+.shade-letter .seq-data .base-H { color: #9b59b6 !important; }
+.shade-letter .seq-data .base-B { color: #e67e22 !important; }
+.shade-letter .seq-data .base-V { color: #2c3e50 !important; }
+.shade-letter .seq-data .base-D { color: #16a085 !important; }
+
 .modal {
     display: none;
     position: fixed;

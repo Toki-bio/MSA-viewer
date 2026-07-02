@@ -87,6 +87,7 @@
                         <span class="toggle-icon">▼</span>
                     </div>
                     <div class="control-group" id="shade-controls">
+                        <div id="shade-sliders">
                         <div class="slider-container shade-row">
                             <div class="shade-controls">
                                 <span class="slider-label" id="blackLabel" style="cursor:pointer; text-decoration:underline;" title="Highly conserved shading">Black</span>
@@ -123,6 +124,7 @@
                             <input type="range" id="lightSlider" class="shading-slider" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
                             <input type="number" id="lightInput" min="10" max="80" value="50" title="Light shading threshold (10-80%)">
                         </div>
+                        </div><!-- /shade-sliders -->
                         <div class="slider-container shade-row">
                             <div class="shade-controls">
                                 <span class="slider-label">Shade By</span>
@@ -132,6 +134,9 @@
                             </label>
                             <label class="shade-mode-label">
                                 <input type="radio" name="shadeMode" value="all" title="Shade based on all positions including gaps"> All
+                            </label>
+                            <label class="shade-mode-label">
+                                <input type="radio" name="shadeMode" value="letter" title="Color nucleotides by letter identity (A=green, C=blue, G=orange, T=red, U=purple)"> Letter
                             </label>
                         </div>
                     </div>

@@ -3012,6 +3012,8 @@ function getSequenceBaseRenderClass(base, pos, config, conservationData) {
 
     if (state.selectedColumns.has(pos)) cls += ' column-selected';
     if (baseClass) cls += ` ${baseClass}`;
+    // Add nucleotide letter class for letter-coloring mode
+    if (baseUp.length === 1) cls += ` base-${baseUp}`;
     return cls;
 }
 
@@ -3249,6 +3251,8 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
         let baseClass = '';
         if (!['A','C','G','T','U','N','-','.'].includes(baseUp)) baseClass = 'artifact';
         if (['R','Y','M','K','S','W','H','B','V','D'].includes(baseUp)) baseClass = 'ambiguous';
+        // Add nucleotide letter class for letter-coloring mode
+        if (baseUp.length === 1 && baseUp !== '-' && baseUp !== '.') baseClass += ` base-${baseUp}`;
 
         // Determine display case from column conservation (consensus STRING stays uppercase)
         let displayBase = base;
@@ -3566,6 +3570,12 @@ function setBlockSizeToScreen() {
     renderAlignment();
 }
 function onShadeModeChange() {
+    // Toggle letter-coloring class on body for CSS-based nucleotide colors
+    const shadeMode = document.querySelector('input[name="shadeMode"]:checked')?.value;
+    document.body.classList.toggle('shade-letter', shadeMode === 'letter');
+    // In letter mode, hide shading threshold sliders (they have no effect)
+    const shadeSliders = document.getElementById('shade-sliders');
+    if (shadeSliders) shadeSliders.style.display = shadeMode === 'letter' ? 'none' : '';
     validateThresholds();
     debounceRender();
 }
@@ -4905,6 +4915,8 @@ function _applySnapshotView(view) {
     if (view.shadeMode) {
         const shadeModeRadio = document.querySelector(`input[name="shadeMode"][value="${view.shadeMode}"]`);
         if (shadeModeRadio) shadeModeRadio.checked = true;
+        // Toggle letter-coloring class for snapshot restore
+        document.body.classList.toggle('shade-letter', view.shadeMode === 'letter');
     }
 
     if (view.enableBlack !== undefined) el('enableBlack').checked = !!view.enableBlack;
