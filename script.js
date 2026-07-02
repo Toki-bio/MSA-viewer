@@ -2775,22 +2775,35 @@ function renderAlignment(options = {}) {
         return;
     }
 
-    // Highlight-diffs + Var-sites: compute fully-conserved columns once
+    // Highlight-diffs + Var-sites: mark columns that differ from consensus
     const highlightDiffs = document.getElementById('highlightDiffs')?.checked;
     const varSites = document.getElementById('varSitesOnly')?.checked;
     if ((highlightDiffs || varSites) && state.seqs.length > 1) {
-        const conservedCols = new Set();
+        const diffCols = new Set();
+        // Pre-compute consensus for diff detection
+        const consSeq = consensus.length > 0 ? consensus : computeConsensusForSequences(state.seqs.map(s => s.seq)).split('');
         for (let pos = 0; pos < len; pos++) {
-            const cons = conservationData[pos];
-            if (cons && cons.best && cons.best.count === cons.count && cons.count === state.seqs.length) {
-                conservedCols.add(pos);
+            const consBase = (consSeq[pos] || '-').toUpperCase();
+            let isDiff = false;
+            for (let i = 0; i < state.seqs.length && !isDiff; i++) {
+                const base = (state.seqs[i].seq[pos] || '-').toUpperCase();
+                if (base !== '-' && base !== '.' && consBase !== '-' && consBase !== '.' && base !== consBase) {
+                    isDiff = true;
+                }
             }
+            if (isDiff) diffCols.add(pos);
         }
-        state._conservedColumns = conservedCols;
-        if (highlightDiffs) document.body.classList.add('highlight-diffs');
-        if (varSites) document.body.classList.add('var-sites-only');
+        state._diffColumns = diffCols;
+        if (highlightDiffs) {
+            document.body.classList.add('highlight-diffs');
+            document.body.classList.remove('var-sites-only');
+        }
+        if (varSites) {
+            document.body.classList.add('var-sites-only');
+            document.body.classList.remove('highlight-diffs');
+        }
     } else {
-        state._conservedColumns = null;
+        state._diffColumns = null;
         document.body.classList.remove('highlight-diffs');
         document.body.classList.remove('var-sites-only');
     }
@@ -2870,9 +2883,18 @@ function renderAlignment(options = {}) {
             alignmentContainer.appendChild(lineDiv);
         }
         if (shouldRenderConsensus && consensusPosition !== 'top') {
-            console.log('[consensus] rendering at BOTTOM, position=', consensusPosition, 'consensusLen=', consensus.length);
-            addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'bottom', options);
+            try {
+                console.log('[consensus] rendering at BOTTOM, position=', consensusPosition, 'consensusLen=', consensus.length);
+                addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'bottom', options);
+            } catch(e) {
+                console.error('[consensus] addConsensusLine threw:', e);
+            }
         }
+        // HARDCODED TEST: prove we reached this point
+        const testDiv = document.createElement('div');
+        testDiv.style.cssText = 'background:#ff0000;color:#fff;padding:6px;font-weight:bold;text-align:center;margin-top:8px;font-size:14px;';
+        testDiv.textContent = `[DEBUG] renderAlignment finished. consensusPosition=${consensusPosition} shouldRender=${shouldRenderConsensus} len=${consensus.length}`;
+        alignmentContainer.appendChild(testDiv);
     }
     setTimeout(() => toggleStickyNames(), 0);
     ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold'].forEach(id => {
@@ -2893,13 +2915,13 @@ function renderAlignment(options = {}) {
         applyColourToSeqNames(colourState.mappings);
     }
 
-    // Post-process: apply diff-highlight dimming to fully-conserved columns
-    if (state._conservedColumns && state._conservedColumns.size > 0) {
+    // Post-process: apply diff-highlight dimming to columns that match consensus
+    if (state._diffColumns && state._diffColumns.size > 0) {
         const allSpans = alignmentContainer.querySelectorAll('.seq-data > span[data-pos]');
         allSpans.forEach(span => {
             const pos = parseInt(span.dataset.pos);
-            if (state._conservedColumns.has(pos)) {
-                span.classList.add('diff-conserved');
+            if (state._diffColumns.has(pos)) {
+                span.classList.add('diff-highlight');
             }
         });
     }
