@@ -9086,7 +9086,7 @@ function attachUIListeners() {
     }
 
     // Set up radio button groups
-    const radioGroups = ['shadeMode', 'mode', 'consensusType'];
+    const radioGroups = ['shadeMode', 'mode', 'consensusType', 'consensusPosition', 'consensusFallback'];
     radioGroups.forEach(group => {
         document.querySelectorAll(`input[name="${group}"]`).forEach(radio => {
             const handler = group === 'shadeMode' ? onShadeModeChange :
@@ -10576,21 +10576,10 @@ function initColourSeqs() {
 
     function syncSizes() {
         const w = alignment.scrollWidth || alignment.clientWidth;
-        const hasOverflow = w > alignment.clientWidth + 10;
         thumb.style.width = Math.max(w, alignment.clientWidth + 1) + 'px';
         syncing = true;
         bar.scrollLeft = alignment.scrollLeft;
         syncing = false;
-        // Debug: make scrollbar visible and report status
-        if (hasOverflow) {
-            bar.style.background = '#e8e8e8';
-            bar.style.height = '14px';
-        }
-        const msg = document.getElementById('statusMessage');
-        if (msg) {
-            msg.style.display = 'block';
-            msg.textContent = `[scrollbar] scrollW=${w} clientW=${alignment.clientWidth} overflow=${hasOverflow ? 'YES' : 'no'} bar-offset=${bar.offsetHeight}px`;
-        }
     }
 
     function onBarScroll() {

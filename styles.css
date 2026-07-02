@@ -683,9 +683,7 @@ input[type="number"] {
     position: relative;
     min-width: max-content;
     height: 1em;
-    /* Performance: skip layout for off-screen rows */
-    content-visibility: auto;
-    contain-intrinsic-size: auto 1em;
+    height: 1em;
 }
 
 /* Persistent tiny scrollbar area below the alignment */
