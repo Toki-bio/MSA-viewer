@@ -1637,12 +1637,17 @@ for (const [codon, aa] of Object.entries(_GENETIC_CODE)) {
 
 // Compute per-position codon phase (0,1,2), stop codons, frameshifts, syn/non-syn
 function _computeCodonAnalysis(seqs, len) {
-    if (seqs.length < 1 || len % 3 !== 0) return null;
+    if (seqs.length < 1) return null;
     // Check sequences look like nucleotides
     const ntRe = /^[ACGTUacgtuNn-]+$/;
     for (const s of seqs) {
         const cleaned = s.seq.replace(/[-.]/g, '');
         if (cleaned.length > 0 && !ntRe.test(cleaned)) return null;
+    }
+    // Trim trailing incomplete codon columns
+    if (len % 3 !== 0) {
+        len -= len % 3;
+        if (len < 3) return null;
     }
 
     const activeCode = _getActiveCode();
@@ -2816,7 +2821,7 @@ function renderAlignment(options = {}) {
             document.body.classList.add('codon-mode');
         } else {
             document.body.classList.remove('codon-mode');
-            showMessage('Codon analysis requires nucleotide CDS alignment (length multiple of 3)', 4000);
+            showMessage('Codon analysis requires a nucleotide alignment', 4000);
         }
     } else {
         state._codonData = null;
