@@ -5607,6 +5607,25 @@ function findMatchesWithMismatches(degapped, motif, maxMismatches) {
     return findFuzzyPositions(degapped, motif, maxMismatches);
 }
 
+function searchResEnzyme() {
+    const sel = document.getElementById('reEnzymeSelect');
+    const site = sel?.value;
+    if (!site) { showMessage('Select a restriction enzyme first.', 2000); return; }
+    const input = document.getElementById('searchInput');
+    if (input) input.value = site;
+    searchMotif();
+}
+
+// Wire up RE dropdown to also fill search input on select
+function initResEnzymeSearch() {
+    const sel = document.getElementById('reEnzymeSelect');
+    if (!sel) return;
+    sel.addEventListener('change', () => {
+        const input = document.getElementById('searchInput');
+        if (input && sel.value) input.value = sel.value;
+    });
+}
+
 function searchMotif() {
     const raw = el('searchInput').value || '';
     const motif = raw.trim().replace(/\s+/g, '').toUpperCase();
@@ -9109,6 +9128,7 @@ function initializeAppUI() {
         'zoomInButton': () => adjustZoom(10),
         'zoomOutButton': () => adjustZoom(-10),
         'searchButton': searchMotif,
+        'reSearchButton': searchResEnzyme,
         'clearLastSearchButton': clearLastSearch,
         'clearAllSearchesButton': clearAllSearches,
         'copyConsensusButton': copyConsensus,
@@ -9371,6 +9391,7 @@ function initializeAppUI() {
     // Init Add-Sequences modal Browse button
     initAddSeqBrowse();
     initStatsTabs();
+    initResEnzymeSearch();
 }
 
 document.addEventListener('DOMContentLoaded', initializeAppUI);
