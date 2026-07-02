@@ -388,6 +388,36 @@
                                 <button id="clearLastSearchButton" title="Clear last search highlight (shortcut: Ctrl+Shift+F)">Clear Last</button>
                                 <button id="clearAllSearchesButton" title="Clear all search highlights (shortcut: Ctrl+Alt+F)">Clear All</button>
                             </div>
+                            <div style="margin-top:4px;font-size:11px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                                <span style="color:#666;">RE sites:</span>
+                                <select id="reEnzymeSelect" style="font-size:11px;max-width:140px;" title="Select a restriction enzyme to find its recognition site">
+                                    <option value="">-- Choose enzyme --</option>
+                                    <option value="GAATTC">EcoRI (GAATTC)</option>
+                                    <option value="GGATCC">BamHI (GGATCC)</option>
+                                    <option value="AAGCTT">HindIII (AAGCTT)</option>
+                                    <option value="CTGCAG">PstI (CTGCAG)</option>
+                                    <option value="GTCGAC">SalI (GTCGAC)</option>
+                                    <option value="CTCGAG">XhoI (CTCGAG)</option>
+                                    <option value="GGTACC">KpnI (GGTACC)</option>
+                                    <option value="GAGCTC">SacI (GAGCTC)</option>
+                                    <option value="CCCGGG">SmaI (CCCGGG)</option>
+                                    <option value="TCTAGA">XbaI (TCTAGA)</option>
+                                    <option value="GCGGCCGC">NotI (GCGGCCGC)</option>
+                                    <option value="AGATCT">BglII (AGATCT)</option>
+                                    <option value="CCATGG">NcoI (CCATGG)</option>
+                                    <option value="CATATG">NdeI (CATATG)</option>
+                                    <option value="GCTAGC">NheI (GCTAGC)</option>
+                                    <option value="ACTAGT">SpeI (ACTAGT)</option>
+                                    <option value="AGGCCT">StuI (AGGCCT)</option>
+                                    <option value="CAGCTG">PvuII (CAGCTG)</option>
+                                    <option value="ATCGAT">ClaI (ATCGAT)</option>
+                                    <option value="GGCC">HaeIII (GGCC)</option>
+                                    <option value="AGCT">AluI (AGCT)</option>
+                                    <option value="TCGA">TaqI (TCGA)</option>
+                                    <option value="TTAA">MseI (TTAA)</option>
+                                </select>
+                                <button id="reSearchButton" style="font-size:11px;padding:1px 8px;" title="Search for selected restriction enzyme site across alignment">Find RE</button>
+                            </div>
                         </div>
                         <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
                             <button id="reverseComplementQueryButton" style="height: 22px; font-size: 11px; padding: 0 6px;">Reverse complement query</button>
