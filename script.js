@@ -2183,7 +2183,7 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
     // Reset styles from other modes (Canvas sets position/height/overflow)
     alignmentContainer.style.position = '';
     alignmentContainer.style.height = '';
-    alignmentContainer.style.overflow = '';
+    alignmentContainer.style.overflow = 'auto';
     state.spanCache = new Map();
     state.domSelectedNucs = new Map();
     state.domSelectedColumns = new Map();
@@ -9818,10 +9818,41 @@ function handleGeneDocGapToolClick(rowIndex, pos, tool) {
 
 function handleGeneDocResidueKey(e) {
     if (!state.editModeActive || state.editTool !== 'residue' || !state.editCell) return false;
-    if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return false;
-    if (!/^[A-Za-z.-]$/.test(e.key)) return false;
+    if (e.ctrlKey || e.metaKey || e.altKey) return false;
+
     const { row, pos } = state.editCell;
     if (!state.seqs[row]) return false;
+
+    // Handle Backspace: delete previous character
+    if (e.key === 'Backspace') {
+        e.preventDefault();
+        if (pos > 0) {
+            pushUndo('geneDocResidueEdit');
+            const chars = state.seqs[row].seq.split('');
+            chars[pos - 1] = GENEDOC_FILLER;
+            state.seqs[row].seq = chars.join('');
+            state.editCell = { row, pos: pos - 1 };
+            fastUpdateEditCell();
+        }
+        return true;
+    }
+
+    // Handle Delete: delete current character
+    if (e.key === 'Delete') {
+        e.preventDefault();
+        const chars = state.seqs[row].seq.split('');
+        if (pos < chars.length) {
+            pushUndo('geneDocResidueEdit');
+            chars[pos] = GENEDOC_FILLER;
+            state.seqs[row].seq = chars.join('');
+            fastUpdateEditCell();
+        }
+        return true;
+    }
+
+    // Only single printable characters
+    if (e.key.length !== 1 || !/^[A-Za-z.-]$/.test(e.key)) return false;
+
     pushUndo('geneDocResidueEdit');
     normalizeAlignmentLengths();
     const chars = state.seqs[row].seq.split('');
@@ -9830,9 +9861,43 @@ function handleGeneDocResidueKey(e) {
     state.seqs[row].seq = chars.join('');
     const nextPos = Math.min(pos + 1, chars.length - 1);
     state.editCell = { row, pos: nextPos };
-    finalizeGeneDocEdit('', 0);
+    fastUpdateEditCell();
     e.preventDefault();
     return true;
+}
+
+/**
+ * Fast in-place update for Type mode: update the span DOM directly
+ * instead of doing a full renderAlignment(). Massively faster for large alignments.
+ */
+function fastUpdateEditCell() {
+    if (!state.editCell) return;
+    const { row, pos } = state.editCell;
+    const container = document.getElementById('alignmentContainer');
+    if (!container) return;
+    // Find the target span by position
+    const seqLines = container.querySelectorAll('.seq-line:not(.scale-ruler-line):not(.consensus-line)');
+    const line = seqLines[row];
+    if (!line) { renderAlignment(); return; }
+    const dataSpan = line.querySelector('.seq-data');
+    if (!dataSpan) { renderAlignment(); return; }
+    const spans = dataSpan.querySelectorAll('span');
+    if (pos < 0 || pos >= spans.length) { renderAlignment(); return; }
+    const span = spans[pos];
+    const base = state.seqs[row].seq[pos] || GENEDOC_FILLER;
+    span.textContent = base;
+    // Update class for correct shading/letter coloring
+    const consData = (state.conservationDataCache && state.conservationDataCache.data) || {};
+    span.className = getSequenceBaseRenderClass(base, pos, {
+        enableBlack: document.getElementById('enableBlack')?.checked,
+        enableDark: document.getElementById('enableDark')?.checked,
+        enableLight: document.getElementById('enableLight')?.checked,
+        blackThresh: parseInt(document.getElementById('blackSlider')?.value || '90') / 100,
+        darkThresh: parseInt(document.getElementById('darkSlider')?.value || '70') / 100,
+        lightThresh: parseInt(document.getElementById('lightSlider')?.value || '50') / 100
+    }, consData);
+    // Update sticky names if needed
+    toggleStickyNames();
 }
 
 function removeGapColumns() {
