@@ -2712,7 +2712,8 @@ function renderAlignment(options = {}) {
                 const lineDiv = createSequenceLine(i, start, end, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, conservationData);
                 blockDiv.appendChild(lineDiv);
             }
-            if (shouldRenderConsensus && consensusPosition === 'bottom') {
+            if (shouldRenderConsensus && consensusPosition !== 'top') {
+                console.log('[consensus] rendering at BOTTOM (block), position=', consensusPosition);
                 addConsensusLine(blockDiv, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, isLastBlock, 'bottom', options);
             }
             alignmentContainer.appendChild(blockDiv);
@@ -2740,8 +2741,8 @@ function renderAlignment(options = {}) {
             const lineDiv = createSequenceLine(i, 0, len, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, conservationData);
             alignmentContainer.appendChild(lineDiv);
         }
-        if (shouldRenderConsensus && consensusPosition === 'bottom') {
-            console.log('[consensus] rendering at BOTTOM');
+        if (shouldRenderConsensus && consensusPosition !== 'top') {
+            console.log('[consensus] rendering at BOTTOM, position=', consensusPosition, 'consensusLen=', consensus.length);
             addConsensusLine(alignmentContainer, consensus, 0, len, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, true, 'bottom', options);
         }
     }
@@ -3251,9 +3252,13 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
 function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false, position = 'bottom', options = {}) {
     const consLine = document.createElement('div');
     consLine.className = `seq-line consensus-line consensus-${position}`;
+    if (position === 'bottom') {
+        consLine.style.border = '2px solid red';
+        consLine.style.background = '#fff3f3';
+    }
     const consName = document.createElement('div');
     consName.className = `seq-name ${stickyNames ? '' : 'static'}`;
-    consName.textContent = 'Consensus';
+    consName.textContent = `Consensus ↓`;
     consLine.appendChild(consName);
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
@@ -9481,7 +9486,11 @@ function attachUIListeners() {
     }
 
     // Set up radio button groups
-    const radioGroups = ['shadeMode', 'mode', 'consensusType', 'consensusPosition', 'consensusFallback'];
+    const radioGroups = ['shadeMode', 'mode', 'consensusType', 'consensusFallback'];
+    // consensusPosition gets a direct (non-debounced) handler for instant feedback
+    document.querySelectorAll('input[name="consensusPosition"]').forEach(radio => {
+        radio.addEventListener('change', () => renderAlignment());
+    });
     radioGroups.forEach(group => {
         document.querySelectorAll(`input[name="${group}"]`).forEach(radio => {
             const handler = group === 'shadeMode' ? onShadeModeChange :
