@@ -2411,7 +2411,7 @@ async function handleBamFile(event) {
         }
 
         if (!matchedRef) {
-            hideMessage();
+            statusMessage.style.display = 'none';
             showMessage('BAM reference does not match loaded sequences. ' +
                 'Load a reference FASTA first.', 5000);
             return;
@@ -2421,7 +2421,7 @@ async function handleBamFile(event) {
         const { records, exceededLimit, totalReads } = BamParser.parseBAMRecords(buf, header.headerEndOffset);
 
         if (exceededLimit) {
-            hideMessage();
+            statusMessage.style.display = 'none';
             showMessage(
                 `BAM has >${BamParser.MAX_READS} reads (found ${totalReads}). ` +
                 'Please subset with samtools view -s or filter by region.',
@@ -2435,7 +2435,7 @@ async function handleBamFile(event) {
         let matchedReads = records.filter(r => r.refID === refIdx);
 
         if (matchedReads.length === 0) {
-            hideMessage();
+            statusMessage.style.display = 'none';
             showMessage('No reads map to the matched reference.', 3000);
             return;
         }
@@ -2483,16 +2483,18 @@ async function handleBamFile(event) {
             readOrder,
         };
 
-        // Switch to Reads display mode
+        // Switch to Full display mode and Reads view
+        const singleRadio = document.getElementById('modeSingle');
+        if (singleRadio) singleRadio.checked = true;
         const readsRadio = document.getElementById('modeReads');
         if (readsRadio) readsRadio.checked = true;
 
         renderAlignment();
-        hideMessage();
+        statusMessage.style.display = 'none';
         showMessage(`Loaded ${matchedReads.length} reads on ${matchedRef} (${minPos + 1}–${maxPos})`, 2500);
 
     } catch (err) {
-        hideMessage();
+        statusMessage.style.display = 'none';
         console.error('BAM load error:', err);
         showMessage('Error loading BAM: ' + err.message, 4000);
     }
@@ -2720,19 +2722,6 @@ function baseColorRef(base) {
 /**
  * Show/hide the BAM button based on whether a reference sequence is loaded.
  */
-function updateBamButtonVisibility() {
-    const btn = document.getElementById('openBamButton');
-    if (btn) {
-        const hasSeqs = state.seqs && state.seqs.length > 0;
-        btn.style.display = hasSeqs ? '' : 'none';
-    }
-    // Disable Reads mode radio if no BAM loaded
-    const readsRadio = document.getElementById('modeReads');
-    if (readsRadio) {
-        readsRadio.disabled = !bamState.reads || bamState.reads.length === 0;
-    }
-}
-
 // IGV-style compact read packing renderer
 function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
     enableBlack, enableDark, enableLight, nameLen, stickyNames, standard, ambiguous, ambiguousMap,
@@ -4101,9 +4090,6 @@ function parseAndRender(isFromDrop = false) {
         // Update name length slider range based on loaded sequences
         // This will set the slider to maximum actual name length
         updateNameLengthSliderRange();
-
-        // Update BAM button visibility (show only when reference sequences are loaded)
-        updateBamButtonVisibility();
 
         // Update source info with comprehensive statistics
         updateSourceInfo();
@@ -9845,13 +9831,20 @@ function initializeAppUI() {
             if (!file) return;
             state.currentFilename = file.name;
             state.currentFilePath = '';
+
+            // Auto-detect BAM
+            if (/\.(bam|sam)$/i.test(file.name) && state.seqs && state.seqs.length > 0) {
+                handleBamFile({ target: { files: [file], value: '' } });
+                return;
+            }
+
             const reader = new FileReader();
             reader.onload = function(e) {
                 fastaInput.value = e.target.result;
                 parseAndRender(true);
             };
             reader.onerror = () => {
-                alignmentContainer.innerHTML = '<div class="error-message">вќЊ Error reading file.</div>';
+                alignmentContainer.innerHTML = '<div class="error-message">❌ Error reading file.</div>';
                 showMessage("Error reading file.", 5000);
             };
             reader.readAsText(file);
@@ -9869,13 +9862,20 @@ function initializeAppUI() {
         if (!file) return;
         state.currentFilename = file.name;
         state.currentFilePath = '';
+
+        // Auto-detect BAM: if reference already loaded and file is .bam/.sam
+        if (/\\.(bam|sam)$/i.test(file.name) && state.seqs && state.seqs.length > 0) {
+            handleBamFile({ target: { files: [file], value: '' } });
+            return;
+        }
+
         const reader = new FileReader();
         reader.onload = function(evt) {
             fastaInput.value = evt.target.result;
             parseAndRender(true);
         };
         reader.onerror = () => {
-            alignmentContainer.innerHTML = '<div class="error-message">вќЊ Error reading file.</div>';
+            alignmentContainer.innerHTML = '<div class="error-message">❌ Error reading file.</div>';
             showMessage("Error reading file.", 5000);
         };
         reader.readAsText(file);
