@@ -7651,6 +7651,17 @@ function initStatsTabs() {
     // closeStats handled by buttonActions map
 }
 
+function initTreeBuilderControls() {
+    document.querySelectorAll('input[name="treeMethod"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            const modal = document.getElementById('treeBuilderModal');
+            if (modal && modal.style.display !== 'none') {
+                openTreeBuilder();
+            }
+        });
+    });
+}
+
 function realignSelectedBlock() {
     if (state.seqs.length === 0) {
         showMessage("No sequences loaded.", 2000);
@@ -9715,6 +9726,7 @@ function initializeAppUI() {
     // Init Add-Sequences modal Browse button
     initAddSeqBrowse();
     initStatsTabs();
+    initTreeBuilderControls();
     initResEnzymeSearch();
 }
 
