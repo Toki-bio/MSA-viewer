@@ -9864,7 +9864,9 @@ function initializeAppUI() {
         state.currentFilePath = '';
 
         // Auto-detect BAM: if reference already loaded and file is .bam/.sam
-        if (/\\.(bam|sam)$/i.test(file.name) && state.seqs && state.seqs.length > 0) {
+        const isBam = /\.(bam|sam)$/i.test(file.name);
+        console.log('BAM auto-detect:', { name: file.name, isBam, hasSeqs: !!(state.seqs && state.seqs.length > 0) });
+        if (isBam && state.seqs && state.seqs.length > 0) {
             handleBamFile({ target: { files: [file], value: '' } });
             return;
         }
