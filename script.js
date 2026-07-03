@@ -2355,6 +2355,384 @@ function getDeferredConsensus(len) {
     return Array.from({ length: len }, (_, pos) => cached.values[pos] || '-');
 }
 
+// ── BAM / Reads Display ──────────────────────────────────────────────────
+
+// BAM state
+let bamState = {
+    reads: [],          // parsed BAM records
+    refName: null,      // which reference these reads map to
+    refSeq: null,       // reference sequence string
+    refStart: 0,        // leftmost visible ref coordinate
+    columns: [],        // expanded CIGAR columns per read: columns[row][col]
+    readOrder: [],      // sorted read indices (by pos, then name)
+};
+
+/**
+ * Show the BAM file picker when user clicks the BAM button.
+ */
+function handleOpenBamClick() {
+    const input = document.getElementById('bamFileInput');
+    if (input) input.click();
+}
+
+/**
+ * Load and parse a BAM or SAM file.
+ */
+async function handleBamFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    showMessage('Loading BAM…', 0);
+
+    try {
+        const ext = file.name.split('.').pop().toLowerCase();
+        let buf;
+
+        if (ext === 'sam') {
+            // SAM is plain text — parse directly
+            const text = await file.text();
+            buf = parseSAMToBuffer(text);
+        } else {
+            // BAM binary — decompress with browser's DecompressionStream
+            buf = await BamParser.decompressBAM(file);
+        }
+
+        // Parse header
+        const header = BamParser.parseBAMHeader(buf);
+
+        // Check reference match
+        const loadedSeqs = state.seqs.map(s => ({ name: s.name, seq: s.seq }));
+        const { matchedRef, warnings } = BamParser.checkRefMatch(
+            header.refNames, header.refLengths, loadedSeqs
+        );
+
+        if (warnings.length) {
+            warnings.forEach(w => console.warn('BAM:', w));
+        }
+
+        if (!matchedRef) {
+            hideMessage();
+            showMessage('BAM reference does not match loaded sequences. ' +
+                'Load a reference FASTA first.', 5000);
+            return;
+        }
+
+        // Parse records (stops at MAX_READS + 1)
+        const { records, exceededLimit, totalReads } = BamParser.parseBAMRecords(buf, header.headerEndOffset);
+
+        if (exceededLimit) {
+            hideMessage();
+            showMessage(
+                `BAM has >${BamParser.MAX_READS} reads (found ${totalReads}). ` +
+                'Please subset with samtools view -s or filter by region.',
+                5000
+            );
+            return;
+        }
+
+        // Filter reads to matched reference
+        const refIdx = header.refNames.indexOf(matchedRef);
+        let matchedReads = records.filter(r => r.refID === refIdx);
+
+        if (matchedReads.length === 0) {
+            hideMessage();
+            showMessage('No reads map to the matched reference.', 3000);
+            return;
+        }
+
+        // Sort by position (pileup order)
+        matchedReads.sort((a, b) => a.pos - b.pos || a.name.localeCompare(b.name));
+
+        // Get reference sequence
+        const refSeqObj = loadedSeqs.find(s => s.name === matchedRef);
+        const refSeq = refSeqObj ? refSeqObj.seq.toUpperCase() : '';
+
+        // Determine view window: leftmost read pos to rightmost read end
+        let minPos = Infinity;
+        let maxPos = 0;
+        for (const r of matchedReads) {
+            if (r.pos < minPos) minPos = r.pos;
+            const readEnd = r.pos + computeReadSpan(r.cigar);
+            if (readEnd > maxPos) maxPos = readEnd;
+        }
+        // Expand slightly for context
+        minPos = Math.max(0, minPos - 10);
+        maxPos = Math.min(refSeq.length, maxPos + 10);
+
+        // Expand CIGAR for each read
+        const columns = [];
+        const readOrder = [];
+        for (let i = 0; i < matchedReads.length; i++) {
+            const r = matchedReads[i];
+            const cols = BamParser.expandCigar(r, (refPos) => {
+                if (refPos < 0 || refPos >= refSeq.length) return 'N';
+                return refSeq[refPos];
+            });
+            columns.push(cols);
+            readOrder.push(i);
+        }
+
+        // Store BAM state
+        bamState = {
+            reads: matchedReads,
+            refName: matchedRef,
+            refSeq,
+            refStart: minPos,
+            refEnd: maxPos,
+            columns,
+            readOrder,
+        };
+
+        // Switch to Reads display mode
+        const readsRadio = document.getElementById('modeReads');
+        if (readsRadio) readsRadio.checked = true;
+
+        renderAlignment();
+        hideMessage();
+        showMessage(`Loaded ${matchedReads.length} reads on ${matchedRef} (${minPos + 1}–${maxPos})`, 2500);
+
+    } catch (err) {
+        hideMessage();
+        console.error('BAM load error:', err);
+        showMessage('Error loading BAM: ' + err.message, 4000);
+    }
+
+    // Reset file input so the same file can be re-selected
+    event.target.value = '';
+}
+
+/**
+ * Compute the total span of a read across the reference from its CIGAR.
+ * Sum M, D, N operations (but not I or S).
+ */
+function computeReadSpan(cigar) {
+    let span = 0;
+    for (const op of cigar) {
+        if (op.op === 'M' || op.op === '=' || op.op === 'X' || op.op === 'D' || op.op === 'N') {
+            span += op.len;
+        }
+    }
+    return span;
+}
+
+/**
+ * Parse SAM text into a format compatible with the BAM parser's buffer output.
+ * Simplified: creates a synthetic buffer-like object with SAM records.
+ * In practice, we parse SAM as text and build record objects directly.
+ */
+function parseSAMToBuffer(text) {
+    // Parse SAM as plain text — we'll build a pseudo-BAM buffer
+    // This is simpler than trying to create binary BAM from SAM
+    const lines = text.split('\n').filter(l => l.trim());
+    const headerLines = [];
+    const readLines = [];
+
+    for (const line of lines) {
+        if (line.startsWith('@')) {
+            headerLines.push(line);
+        } else {
+            readLines.push(line);
+        }
+    }
+
+    // Build a synthetic BAM-like header buffer
+    // We'll create a minimal BAM header + encode records manually
+    throw new Error(
+        'SAM text input is not yet supported. ' +
+        'Please convert to BAM first: samtools view -bS file.sam > file.bam'
+    );
+}
+
+/**
+ * Render the reads alignment view (BAM mode).
+ * Shows reference track at top, reads below in pileup order.
+ */
+function renderReadsAlignment() {
+    if (!bamState.reads.length || !bamState.refSeq) {
+        alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the 🧬 BAM button.</div>';
+        return;
+    }
+
+    alignmentContainer.innerHTML = '';
+    alignmentContainer.style.position = '';
+    alignmentContainer.style.height = '';
+    alignmentContainer.style.overflow = 'auto';
+
+    const { reads, refSeq, refStart, refEnd, columns } = bamState;
+    const viewLen = refEnd - refStart;
+    const container = alignmentContainer;
+    const cellW = 12; // px per base
+
+    // ── Reference track ──
+    const refLine = document.createElement('div');
+    refLine.className = 'seq-line ref-track-line';
+    refLine.style.display = 'flex';
+    refLine.style.alignItems = 'center';
+    refLine.style.minHeight = '20px';
+    refLine.style.borderBottom = '2px solid #333';
+    refLine.style.position = 'sticky';
+    refLine.style.top = '0';
+    refLine.style.background = '#fafafa';
+    refLine.style.zIndex = '2';
+
+    // Reference name label
+    const refLabel = document.createElement('span');
+    refLabel.className = 'seq-name';
+    refLabel.style.cssText = 'width:160px;min-width:160px;font-weight:bold;font-size:11px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    refLabel.textContent = bamState.refName;
+    refLabel.title = bamState.refName;
+    refLine.appendChild(refLabel);
+
+    // Reference bases
+    const refData = document.createElement('div');
+    refData.className = 'seq-data';
+    refData.style.display = 'flex';
+    refData.style.flexWrap = 'nowrap';
+
+    for (let p = refStart; p < refEnd; p++) {
+        const base = refSeq[p] || 'N';
+        const span = document.createElement('span');
+        span.style.cssText = `display:inline-block;width:${cellW}px;text-align:center;font-size:10px;font-family:monospace;font-weight:bold;`;
+        span.style.color = baseColorRef(base);
+        span.textContent = base;
+        span.dataset.pos = p;
+        refData.appendChild(span);
+    }
+    refLine.appendChild(refData);
+    container.appendChild(refLine);
+
+    // ── Scale ruler ──
+    const scaleLine = document.createElement('div');
+    scaleLine.className = 'seq-line scale-line';
+    scaleLine.style.display = 'flex';
+    scaleLine.style.alignItems = 'center';
+    scaleLine.style.minHeight = '14px';
+    scaleLine.style.background = '#f5f5f5';
+    scaleLine.style.borderBottom = '1px solid #ddd';
+    scaleLine.style.fontSize = '8px';
+    scaleLine.style.color = '#888';
+    scaleLine.style.position = 'sticky';
+    scaleLine.style.top = '22px';
+    scaleLine.style.zIndex = '1';
+
+    const scaleLabel = document.createElement('span');
+    scaleLabel.style.cssText = 'width:160px;min-width:160px;text-align:right;padding:0 4px;';
+    scaleLine.appendChild(scaleLabel);
+
+    const scaleData = document.createElement('div');
+    scaleData.style.display = 'flex';
+    // Show position ticks every 10 bases
+    for (let p = refStart; p < refEnd; p++) {
+        const span = document.createElement('span');
+        span.style.cssText = `display:inline-block;width:${cellW}px;text-align:center;font-size:7px;`;
+        if ((p + 1) % 10 === 0) {
+            span.textContent = p + 1;
+        } else if ((p + 1) % 5 === 0) {
+            span.textContent = '·';
+        }
+        scaleData.appendChild(span);
+    }
+    scaleLine.appendChild(scaleData);
+    container.appendChild(scaleLine);
+
+    // ── Read tracks ──
+    for (let i = 0; i < reads.length; i++) {
+        const read = reads[i];
+        const readCols = columns[i];
+        const isReverse = (read.flag & 0x10) !== 0; // reverse strand
+
+        const readLine = document.createElement('div');
+        readLine.className = 'seq-line read-track-line';
+        readLine.style.display = 'flex';
+        readLine.style.alignItems = 'center';
+        readLine.style.minHeight = '16px';
+        readLine.style.borderBottom = '1px solid #eee';
+
+        // Read name label
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'seq-name';
+        nameSpan.style.cssText = 'width:160px;min-width:160px;font-size:9px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#555;';
+        nameSpan.textContent = isReverse ? '◀ ' + read.name : read.name + ' ▶';
+        nameSpan.title = `${read.name} pos=${read.pos + 1} mapq=${read.mapq} cigar=${BamParser.cigarToString(read.cigar)}`;
+        readLine.appendChild(nameSpan);
+
+        // Read data
+        const dataDiv = document.createElement('div');
+        dataDiv.className = 'seq-data';
+        dataDiv.style.display = 'flex';
+
+        for (let ci = 0; ci < readCols.length; ci++) {
+            const col = readCols[ci];
+            const span = document.createElement('span');
+            span.style.cssText = `display:inline-block;width:${cellW}px;text-align:center;font-size:10px;font-family:monospace;`;
+
+            switch (col.type) {
+                case 'match':
+                    span.textContent = '·'; // dot for match (clean IGV-like)
+                    span.style.color = '#ccc';
+                    break;
+                case 'mismatch':
+                    span.textContent = col.base;
+                    span.style.color = '#555';
+                    span.style.fontWeight = 'bold';
+                    break;
+                case 'insertion':
+                    span.textContent = col.base;
+                    span.style.color = '#4a90d9';
+                    span.style.fontSize = '9px';
+                    break;
+                case 'deletion':
+                    span.textContent = '−';
+                    span.style.color = '#999';
+                    span.style.fontSize = '11px';
+                    break;
+                case 'softclip':
+                    span.textContent = col.base;
+                    span.style.color = '#ccc';
+                    span.style.opacity = '0.5';
+                    break;
+                case 'intron':
+                    span.textContent = '·';
+                    span.style.color = '#ddd';
+                    break;
+            }
+            dataDiv.appendChild(span);
+        }
+        readLine.appendChild(dataDiv);
+        container.appendChild(readLine);
+    }
+}
+
+/**
+ * Reference base color helper.
+ */
+function baseColorRef(base) {
+    switch (base.toUpperCase()) {
+        case 'A': return '#4caf50'; // green
+        case 'C': return '#2196f3'; // blue
+        case 'G': return '#ff9800'; // orange
+        case 'T': return '#f44336'; // red
+        case 'U': return '#9c27b0'; // purple
+        default:  return '#999';   // grey
+    }
+}
+
+/**
+ * Show/hide the BAM button based on whether a reference sequence is loaded.
+ */
+function updateBamButtonVisibility() {
+    const btn = document.getElementById('openBamButton');
+    if (btn) {
+        const hasSeqs = state.seqs && state.seqs.length > 0;
+        btn.style.display = hasSeqs ? '' : 'none';
+    }
+    // Disable Reads mode radio if no BAM loaded
+    const readsRadio = document.getElementById('modeReads');
+    if (readsRadio) {
+        readsRadio.disabled = !bamState.reads || bamState.reads.length === 0;
+    }
+}
+
 // IGV-style compact read packing renderer
 function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
     enableBlack, enableDark, enableLight, nameLen, stickyNames, standard, ambiguous, ambiguousMap,
@@ -2706,6 +3084,15 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
 function renderAlignment(options = {}) {
     if (!state.seqs || state.seqs.length === 0) {
         alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
+        return;
+    }
+    // Reads mode: delegate to BAM renderer
+    if (document.getElementById('modeReads')?.checked) {
+        if (!bamState.reads || bamState.reads.length === 0) {
+            alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the 🧬 BAM button (after loading a reference FASTA).</div>';
+            return;
+        }
+        renderReadsAlignment();
         return;
     }
     const coverageMin = clampMinCoverage(el('consensusMinCoverage')?.value) / 100;
@@ -3714,6 +4101,9 @@ function parseAndRender(isFromDrop = false) {
         // Update name length slider range based on loaded sequences
         // This will set the slider to maximum actual name length
         updateNameLengthSliderRange();
+
+        // Update BAM button visibility (show only when reference sequences are loaded)
+        updateBamButtonVisibility();
 
         // Update source info with comprehensive statistics
         updateSourceInfo();
