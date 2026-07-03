@@ -10625,6 +10625,25 @@ function handleGeneDocResidueKey(e) {
         return true;
     }
 
+    // Handle Arrow Left/Right: move cursor along the sequence
+    if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (pos > 0) {
+            state.editCell = { row, pos: pos - 1 };
+            updateEditActiveCell();
+        }
+        return true;
+    }
+    if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        const maxPos = state.seqs[row].seq.length - 1;
+        if (pos < maxPos) {
+            state.editCell = { row, pos: pos + 1 };
+            updateEditActiveCell();
+        }
+        return true;
+    }
+
     // Only single printable characters
     if (e.key.length !== 1 || !/^[A-Za-z.-]$/.test(e.key)) return false;
 
