@@ -36,7 +36,7 @@ const DEFAULTS = {
     colorScheme: 'monochrome'
 };
 
-const APP_VERSION = '2026-07-03-restriction-sites-v2';
+const APP_VERSION = '591eec9';
 
 const state = {
     seqs: [],
@@ -4108,10 +4108,11 @@ function handleKeyDown(e) {
         return;
     }
 
-    // If focus is in an input/textarea/contenteditable, do not interfere with standard shortcuts
+    // If focus is in an input/textarea, only allow GeneDoc residue editing to pass through
     const activeEl = document.activeElement;
     if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
-        return;
+        if (!state.editModeActive || state.editTool !== 'residue' || !state.editCell) return;
+        // Fall through to handleGeneDocResidueKey below
     }
     if (handleGeneDocResidueKey(e)) {
         return;
