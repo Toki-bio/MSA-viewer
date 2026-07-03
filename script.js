@@ -36,7 +36,7 @@ const DEFAULTS = {
     colorScheme: 'monochrome'
 };
 
-const APP_VERSION = '591eec9';
+const APP_VERSION = '1e8580e';
 
 const state = {
     seqs: [],
@@ -10652,8 +10652,13 @@ function handleGeneDocResidueKey(e) {
  * using cached DOM references. No full re-render. Like GeneDoc.
  */
 function fastUpdateEditCellAt(row, pos) {
+    // Diagnostic: is cache populated?
+    const cacheSize = state.spanCache?.size || 0;
     const span = getCachedSpan(row, pos);
-    if (!span) { renderAlignment(); return; }
+    if (!span) {
+        console.warn('fastUpdateEditCellAt: cache miss', { cacheSize, row, pos, hasSeqs: !!state.seqs[row] });
+        renderAlignment(); return;
+    }
 
     const base = state.seqs[row].seq[pos] || GENEDOC_FILLER;
     span.textContent = base;
