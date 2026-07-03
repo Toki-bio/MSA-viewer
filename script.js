@@ -32,7 +32,8 @@ const DEFAULTS = {
     consensusThreshold: 50,
     groupConsensusThreshold: 50,
     nameLength: 25,
-    minCoverage: 30
+    minCoverage: 30,
+    colorScheme: 'monochrome'
 };
 
 const APP_VERSION = '2026-07-03-restriction-sites-v2';
@@ -2714,6 +2715,7 @@ function renderAlignment(options = {}) {
     alignmentContainer.style.position = 'static';
     alignmentContainer.style.height = 'auto';
     alignmentContainer.style.overflow = 'auto';
+    setAlignmentColorSchemeClass();
     // Container-level drag handlers: allow drops anywhere, show preview
     // Remove old handlers first to avoid stacking
     if (!alignmentContainer._dragHandlersSet) {
@@ -3172,6 +3174,65 @@ function getCachedSpan(row, pos) {
 
 const RENDER_STANDARD_BASES = new Set(['A', 'C', 'G', 'T', 'U', 'N', '-', '.', 'a', 'c', 'g', 't', 'u', 'n']);
 const RENDER_AMBIGUOUS_BASES = new Set(['R','Y','M','K','S','W','H','B','V','D','r','y','m','k','s','w','h','b','v','d']);
+const ALIGNMENT_COLOR_SCHEMES = new Set([
+    'monochrome',
+    'nucleotide',
+    'purine-pyrimidine',
+    'ambiguity',
+    'aa-clustal',
+    'aa-jalview'
+]);
+const ALIGNMENT_COLOR_SCHEME_CLASSES = Array.from(ALIGNMENT_COLOR_SCHEMES, scheme => `color-scheme-${scheme}`);
+const AMINO_ACID_GROUP_CLASSES = {
+    A: 'aa-hydrophobic', V: 'aa-hydrophobic', I: 'aa-hydrophobic', L: 'aa-hydrophobic', M: 'aa-hydrophobic',
+    R: 'aa-positive', K: 'aa-positive', H: 'aa-positive',
+    D: 'aa-negative', E: 'aa-negative',
+    S: 'aa-polar', T: 'aa-polar', N: 'aa-polar', Q: 'aa-polar',
+    F: 'aa-aromatic', W: 'aa-aromatic', Y: 'aa-aromatic',
+    C: 'aa-special', G: 'aa-special', P: 'aa-special',
+    B: 'aa-special', Z: 'aa-special', X: 'aa-special', J: 'aa-special', O: 'aa-special', U: 'aa-special',
+    '*': 'aa-stop'
+};
+
+function getAlignmentColorScheme() {
+    const scheme = el('colorSchemeSelect')?.value || DEFAULTS.colorScheme;
+    return ALIGNMENT_COLOR_SCHEMES.has(scheme) ? scheme : DEFAULTS.colorScheme;
+}
+
+function setAlignmentColorSchemeClass() {
+    if (!alignmentContainer) return;
+    alignmentContainer.classList.remove(...ALIGNMENT_COLOR_SCHEME_CLASSES);
+    alignmentContainer.classList.add(`color-scheme-${getAlignmentColorScheme()}`);
+}
+
+function getResidueAnnotationClasses(base, standard = RENDER_STANDARD_BASES, ambiguous = RENDER_AMBIGUOUS_BASES, colorScheme = getAlignmentColorScheme()) {
+    const baseUp = String(base || '-').toUpperCase();
+    if (baseUp === '-' || baseUp === '.') return '';
+
+    const classes = [];
+    if (/^[A-Z]$/.test(baseUp)) {
+        classes.push(`base-${baseUp}`);
+    } else if (baseUp === '*') {
+        classes.push('base-STOP');
+    }
+
+    const isProteinScheme = colorScheme === 'aa-clustal' || colorScheme === 'aa-jalview';
+    const isAmbiguousNucleotide = !isProteinScheme && (ambiguous.has(base) || ambiguous.has(baseUp));
+    const isKnownNucleotide = standard.has(base) || standard.has(baseUp) || isAmbiguousNucleotide;
+    const isAminoAcidSymbol = /^[A-Z*]$/.test(baseUp) && Boolean(AMINO_ACID_GROUP_CLASSES[baseUp]);
+
+    if (!isKnownNucleotide && !(isProteinScheme && isAminoAcidSymbol)) {
+        classes.push('artifact');
+    } else if (isAmbiguousNucleotide) {
+        classes.push('ambiguous', 'iupac-ambiguous');
+    }
+
+    if (baseUp === 'A' || baseUp === 'G') classes.push('pp-purine');
+    if (baseUp === 'C' || baseUp === 'T' || baseUp === 'U') classes.push('pp-pyrimidine');
+    if (AMINO_ACID_GROUP_CLASSES[baseUp]) classes.push(AMINO_ACID_GROUP_CLASSES[baseUp]);
+
+    return classes.join(' ');
+}
 
 function getSequenceRenderConfig() {
     return {
@@ -3181,20 +3242,15 @@ function getSequenceRenderConfig() {
         enableBlack: !!el('enableBlack')?.checked,
         enableDark: !!el('enableDark')?.checked,
         enableLight: !!el('enableLight')?.checked,
-        shadeMode: document.querySelector('input[name="shadeMode"]:checked')?.value || 'nongap'
+        shadeMode: document.querySelector('input[name="shadeMode"]:checked')?.value || 'nongap',
+        colorScheme: getAlignmentColorScheme()
     };
 }
 
 function getSequenceBaseRenderClass(base, pos, config, conservationData) {
     const baseUp = (base || '-').toUpperCase();
     let cls = 'other';
-    let baseClass = '';
-
-    if (!RENDER_STANDARD_BASES.has(base) && !RENDER_AMBIGUOUS_BASES.has(base)) {
-        baseClass = 'artifact';
-    } else if (RENDER_AMBIGUOUS_BASES.has(base)) {
-        baseClass = 'ambiguous';
-    }
+    const baseClass = getResidueAnnotationClasses(base, RENDER_STANDARD_BASES, RENDER_AMBIGUOUS_BASES, config.colorScheme);
 
     const posData = conservationData?.[pos] || { hasData: false, hasValidCoverage: false };
     if (posData.hasData && posData.hasValidCoverage) {
@@ -3211,7 +3267,6 @@ function getSequenceBaseRenderClass(base, pos, config, conservationData) {
 
     if (state.selectedColumns.has(pos)) cls += ' column-selected';
     if (baseClass) cls += ` ${baseClass}`;
-    return cls;
     return cls;
 }
 
@@ -3371,18 +3426,13 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     const gaplessPositions = state.seqs[index].gaplessPositions;
     const selectedCols = state.selectedColumns;
     const htmlParts = [];
+    const colorScheme = getAlignmentColorScheme();
 
     for (let pos = start; pos < end; pos++) {
         const base = seq[pos] || '-';
         const baseUp = base.toUpperCase();
         let cls = 'other';
-        let baseClass = '';
-
-        if (!standard.has(base) && !ambiguous.has(base)) {
-            baseClass = 'artifact';
-        } else if (ambiguous.has(base)) {
-            baseClass = 'ambiguous';
-        }
+        const baseClass = getResidueAnnotationClasses(base, standard, ambiguous, colorScheme);
 
         const posData = conservationData[pos] || { hasData: false, hasValidCoverage: false };
         if (posData.hasData && posData.hasValidCoverage) {
@@ -3446,11 +3496,7 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
     for (let pos = start; pos < end; pos++) {
         const base = pos < consensus.length ? consensus[pos] : '-';
         const baseUp = base.toUpperCase();
-        let baseClass = '';
-        if (!['A','C','G','T','U','N','-','.'].includes(baseUp)) baseClass = 'artifact';
-        if (['R','Y','M','K','S','W','H','B','V','D'].includes(baseUp)) baseClass = 'ambiguous';
-        // Add nucleotide letter class for letter-coloring mode
-        if (baseUp.length === 1 && baseUp !== '-' && baseUp !== '.') baseClass += ` base-${baseUp}`;
+        const baseClass = getResidueAnnotationClasses(base);
 
         // Determine display case from column conservation (consensus STRING stays uppercase)
         let displayBase = base;
@@ -4895,6 +4941,7 @@ function savePreset() {
         consensusMinCoverage: el('consensusMinCoverage')?.value,
         consensusFallback: el('consensusFallback')?.value,
         shadeMode: document.querySelector('input[name="shadeMode"]:checked').value,
+        colorScheme: getAlignmentColorScheme(),
         enableBlack: el('enableBlack').checked,
         enableDark: el('enableDark').checked,
         enableLight: el('enableLight').checked,
@@ -4962,6 +5009,9 @@ function loadPreset() {
     if (p.consensusFallback && el('consensusFallback')) {
         el('consensusFallback').value = p.consensusFallback;
     }
+    if (p.colorScheme && el('colorSchemeSelect')) {
+        el('colorSchemeSelect').value = ALIGNMENT_COLOR_SCHEMES.has(p.colorScheme) ? p.colorScheme : DEFAULTS.colorScheme;
+    }
     document.querySelector(`input[name="shadeMode"][value="${p.shadeMode}"]`).checked = true;
     el('enableBlack').checked = p.enableBlack;
     el('enableDark').checked = p.enableDark;
@@ -5023,6 +5073,7 @@ function _buildSnapshotPayload() {
             consensusFallback: el('consensusFallback')?.value,
             consensusPosition: consensusPosEl ? consensusPosEl.value : 'top',
             shadeMode: shadeModeEl ? shadeModeEl.value : 'nongap',
+            colorScheme: getAlignmentColorScheme(),
             enableBlack: !!el('enableBlack')?.checked,
             enableDark: !!el('enableDark')?.checked,
             enableLight: !!el('enableLight')?.checked,
@@ -5117,6 +5168,9 @@ function _applySnapshotView(view) {
     if (view.shadeMode) {
         const shadeModeRadio = document.querySelector(`input[name="shadeMode"][value="${view.shadeMode}"]`);
         if (shadeModeRadio) shadeModeRadio.checked = true;
+    }
+    if (view.colorScheme && el('colorSchemeSelect')) {
+        el('colorSchemeSelect').value = ALIGNMENT_COLOR_SCHEMES.has(view.colorScheme) ? view.colorScheme : DEFAULTS.colorScheme;
     }
 
     if (view.enableBlack !== undefined) el('enableBlack').checked = !!view.enableBlack;
@@ -9880,6 +9934,9 @@ function attachUIListeners() {
 
     const codonCode = el('codonCode');
     if (codonCode) codonCode.addEventListener('change', debounceRender);
+
+    const colorSchemeSelect = el('colorSchemeSelect');
+    if (colorSchemeSelect) colorSchemeSelect.addEventListener('change', debounceRender);
 
     const sticky = el('stickyNames');
     if (sticky) sticky.addEventListener('change', toggleStickyNames);
