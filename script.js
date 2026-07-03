@@ -10635,7 +10635,7 @@ function handleGeneDocResidueKey(e) {
     state.seqs[row].seq = chars.join('');
     const nextPos = Math.min(pos + 1, chars.length - 1);
     state.editCell = { row, pos: nextPos };
-    fastUpdateEditCell();
+    renderAlignment();
     e.preventDefault();
     return true;
 }
@@ -10660,6 +10660,11 @@ function fastUpdateEditCell() {
 
     // Move visual cursor to new position
     updateEditActiveCell();
+    // Verify the update actually took effect
+    if (span.textContent !== base) {
+        // DOM update failed — fall back to full re-render
+        renderAlignment();
+    }
 }
 
 function removeGapColumns() {
