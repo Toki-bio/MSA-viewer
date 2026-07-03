@@ -201,6 +201,17 @@
                                     <option value="lower">lower</option>
                                 </select>
                             </div>
+                            <div style="display:flex;align-items:center;gap:6px;margin-left:74px;">
+                                <label for="colorSchemeSelect" style="font-size:10px;">Color scheme</label>
+                                <select id="colorSchemeSelect" style="font-size:10px;padding:0 2px;height:18px;" title="Residue color scheme for the alignment">
+                                    <option value="monochrome" selected>Monochrome (current)</option>
+                                    <option value="nucleotide">Nucleotide</option>
+                                    <option value="purine-pyrimidine">Purine/Pyrimidine</option>
+                                    <option value="ambiguity">Nucleotide Ambiguity</option>
+                                    <option value="aa-clustal">Amino Acid: Clustal-like</option>
+                                    <option value="aa-jalview">Amino Acid: Jalview-like</option>
+                                </select>
+                            </div>
                             <div style="display:none;align-items:center;gap:6px;margin-left:74px;" class="compact-only">
                                 <label style="font-size:10px;"><input type="checkbox" id="compactDiffOnly"> Diffs only</label>
                                 <label class="compact-pairs-only" style="font-size:10px;"><input type="checkbox" id="compactPairs"> Pairs</label>

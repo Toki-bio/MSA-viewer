@@ -1110,6 +1110,44 @@ body.edit-dragging .seq-data {
     background-color: #ffe6e6 !important;
     font-weight: bold !important;
 }
+
+/* Alignment residue color schemes. Monochrome is the existing conservation shading. */
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-A { background-color: #8ddf88 !important; color: #063b09 !important; }
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-C { background-color: #87c7ff !important; color: #07335e !important; }
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-G { background-color: #ffc878 !important; color: #5f3300 !important; }
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-T,
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-U { background-color: #ff8c8c !important; color: #5e0505 !important; }
+#alignmentContainer.color-scheme-nucleotide .seq-data .base-N { background-color: #d9d9d9 !important; color: #333 !important; }
+
+#alignmentContainer.color-scheme-purine-pyrimidine .seq-data .pp-purine { background-color: #ffe9a8 !important; color: #6b4500 !important; }
+#alignmentContainer.color-scheme-purine-pyrimidine .seq-data .pp-pyrimidine { background-color: #cbe7ff !important; color: #06466d !important; }
+#alignmentContainer.color-scheme-purine-pyrimidine .seq-data .iupac-ambiguous,
+#alignmentContainer.color-scheme-purine-pyrimidine .seq-data .base-N { background-color: #e5e5e5 !important; color: #333 !important; }
+
+#alignmentContainer.color-scheme-ambiguity .seq-data .iupac-ambiguous { background-color: #e8ddff !important; color: #3f1375 !important; font-weight: bold; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-R { background-color: #d7ffd7 !important; color: #075007 !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-Y { background-color: #d7edff !important; color: #06466d !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-S { background-color: #dff7ff !important; color: #06515f !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-W { background-color: #fff4c7 !important; color: #6b5200 !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-K { background-color: #ffe2ce !important; color: #6a2a00 !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-M { background-color: #f4dcff !important; color: #5d126d !important; }
+#alignmentContainer.color-scheme-ambiguity .seq-data .base-N { background-color: #d9d9d9 !important; color: #333 !important; font-weight: bold; }
+
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-hydrophobic { background-color: #80b1ff !important; color: #062a5f !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-positive { background-color: #ff9a9a !important; color: #650808 !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-negative { background-color: #ff77dd !important; color: #5d064e !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-polar { background-color: #8ee68e !important; color: #064906 !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-aromatic { background-color: #8fe6ff !important; color: #07495a !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-special { background-color: #ffe680 !important; color: #5c4600 !important; }
+#alignmentContainer.color-scheme-aa-clustal .seq-data .aa-stop { background-color: #222 !important; color: #fff !important; }
+
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-hydrophobic { background-color: #ffcc99 !important; color: #5c2c00 !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-positive { background-color: #99ccff !important; color: #06345f !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-negative { background-color: #ff9999 !important; color: #620909 !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-polar { background-color: #99e699 !important; color: #064906 !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-aromatic { background-color: #d6b3ff !important; color: #3d0b63 !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-special { background-color: #ffff99 !important; color: #555500 !important; }
+#alignmentContainer.color-scheme-aa-jalview .seq-data .aa-stop { background-color: #222 !important; color: #fff !important; }
 .selected .seq-name {
     background-color: var(--selected-bg) !important;
     color: #000 !important;
