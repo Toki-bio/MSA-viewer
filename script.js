@@ -89,7 +89,8 @@ const state = {
     },
     trimBoundaries: null,
     trimBackup: null,
-    groupConsensusCount: 0
+    groupConsensusCount: 0,
+    _statsMatrices: null
 };
 
 // ── Recent Files & Clipboard History ──
@@ -1375,6 +1376,13 @@ function parseGenBank(text) {
     let seqParts = [];
     const features = [];
     let currentFeature = null;
+    let currentQualifierKey = null;
+
+    function flushCurrentFeature() {
+        if (currentFeature) features.push(currentFeature);
+        currentFeature = null;
+        currentQualifierKey = null;
+    }
 
     for (const rawLine of lines) {
         const line = rawLine.replace(/\s+$/, '');
@@ -1422,21 +1430,28 @@ function parseGenBank(text) {
         }
         if (inFeatures) {
             if (trimmed === 'ORIGIN' || /^\s{0,4}\w/.test(line) && !line.startsWith('     ')) {
-                if (currentFeature) features.push(currentFeature);
+                flushCurrentFeature();
                 inFeatures = false;
             } else {
                 const fline = trimmed;
                 // Feature key line (starts with a keyword)
                 if (/^(source|CDS|gene|mRNA|tRNA|rRNA|misc_feature|repeat_region|STS|primer_bind|promoter|exon|intron|misc_RNA|regulatory|LTR|misc_binding|misc_signal|misc_difference|variation|misc_recomb|mobile_element|oriT|protein_bind|stem_loop|sig_peptide|mat_peptide|transit_peptide|3'UTR|5'UTR|polyA_site|D-loop|TATA_signal|RBS|enhancer|CAAT_signal|GC_signal|terminator|rep_origin|D_segment|J_segment|V_segment|C_region|N_region|S_region|gap|assembly_gap|centromere|telomere|operon|iDNA|misc_structure)\b/.test(fline)) {
-                    if (currentFeature) features.push(currentFeature);
-                    const match = fline.match(/^(\w+)\s*(.+)?/);
+                    flushCurrentFeature();
+                    const match = fline.match(/^([A-Za-z0-9_'.-]+)\s*(.+)?/);
                     currentFeature = { type: match[1], location: match[2] || '', qualifiers: {} };
                 } else if (currentFeature && fline.startsWith('/')) {
                     // Qualifier line
-                    const qmatch = fline.match(/^\/(\w+)=?"?(.*?)"?$/);
+                    const qmatch = fline.match(/^\/([^=]+)(?:=([\s\S]*))?$/);
                     if (qmatch) {
-                        currentFeature.qualifiers[qmatch[1]] = qmatch[2].replace(/"$/, '');
+                        currentQualifierKey = qmatch[1];
+                        const value = qmatch[2] === undefined ? true : qmatch[2].replace(/^"/, '').replace(/"$/, '');
+                        currentFeature.qualifiers[currentQualifierKey] = value;
                     }
+                } else if (currentFeature && currentQualifierKey && fline) {
+                    const previous = currentFeature.qualifiers[currentQualifierKey];
+                    const continuation = fline.replace(/"$/, '');
+                    currentFeature.qualifiers[currentQualifierKey] =
+                        previous === true ? continuation : `${previous} ${continuation}`.trim();
                 }
                 continue;
             }
@@ -1455,7 +1470,7 @@ function parseGenBank(text) {
     }
 
     // Flush last feature
-    if (currentFeature && Object.keys(currentFeature.qualifiers).length > 0) features.push(currentFeature);
+    flushCurrentFeature();
 
     const sequence = seqParts.join('');
     if (!sequence) return null;
@@ -7620,7 +7635,8 @@ function openStats() {
     }
     dm += `\nColumns: 1–${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
     // Append distance matrix and identity to summary
-    const dmContent = `<details style="margin-top:6px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Distance Matrix (p-distance)</summary><pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${dm}</pre></details>`;
+    const dmControls = `<div style="margin:4px 0;"><button id="copyDistanceMatrixBtn" style="font-size:11px;padding:2px 8px;">Copy distance matrix</button></div>`;
+    const dmContent = `<details style="margin-top:6px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Distance Matrix (p-distance)</summary>${dmControls}<pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${dm}</pre></details>`;
     // Render identity matrix
     let im = `<b>Pairwise % identity</b><br><br>`;
     im += ' '.repeat(nameLen);
@@ -7633,7 +7649,9 @@ function openStats() {
         im += '\n';
     }
     im += `\nColumns: 1–${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
-    const imContent = `<details style="margin-top:4px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Pairwise Identity (%)</summary><pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${im}</pre></details>`;
+    state._statsMatrices = { distance: dm, identity: im };
+    const imControls = `<div style="margin:4px 0;"><button id="copyIdentityMatrixBtn" style="font-size:11px;padding:2px 8px;">Copy identity matrix</button></div>`;
+    const imContent = `<details style="margin-top:4px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Pairwise Identity (%)</summary>${imControls}<pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${im}</pre></details>`;
     summaryTab.innerHTML += dmContent + imContent;
     showExclusiveModal('statsModal');
     } catch(e) {
@@ -7647,8 +7665,25 @@ function closeStats() {
     if (modal) modal.style.display = 'none';
 }
 
+function copyStatsMatrix(kind) {
+    const text = state._statsMatrices?.[kind];
+    if (!text) {
+        showMessage('No statistics matrix available to copy.', 2200);
+        return;
+    }
+    navigator.clipboard.writeText(text)
+        .then(() => showMessage(`${kind === 'distance' ? 'Distance' : 'Identity'} matrix copied.`, 1600))
+        .catch(() => showMessage('Failed to copy statistics matrix.', 2500));
+}
+
 function initStatsTabs() {
-    // closeStats handled by buttonActions map
+    const summaryTab = document.getElementById('statsSummaryTab');
+    if (!summaryTab) return;
+    summaryTab.addEventListener('click', (event) => {
+        const target = event.target;
+        if (target?.id === 'copyDistanceMatrixBtn') copyStatsMatrix('distance');
+        if (target?.id === 'copyIdentityMatrixBtn') copyStatsMatrix('identity');
+    });
 }
 
 function initTreeBuilderControls() {
