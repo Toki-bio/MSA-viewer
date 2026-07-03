@@ -5774,29 +5774,144 @@ function findMatchesWithMismatches(degapped, motif, maxMismatches) {
     return findFuzzyPositions(degapped, motif, maxMismatches);
 }
 
+const RESTRICTION_ENZYMES = [
+    { name: 'EcoRI', site: 'GAATTC' },
+    { name: 'BamHI', site: 'GGATCC' },
+    { name: 'HindIII', site: 'AAGCTT' },
+    { name: 'NotI', site: 'GCGGCCGC' },
+    { name: 'XhoI', site: 'CTCGAG' },
+    { name: 'KpnI', site: 'GGTACC' },
+    { name: 'SacI', site: 'GAGCTC' },
+    { name: 'PstI', site: 'CTGCAG' },
+    { name: 'SalI', site: 'GTCGAC' },
+    { name: 'SmaI', site: 'CCCGGG' },
+    { name: 'XbaI', site: 'TCTAGA' },
+    { name: 'SpeI', site: 'ACTAGT' },
+    { name: 'NheI', site: 'GCTAGC' },
+    { name: 'AvrII', site: 'CCTAGG' },
+    { name: 'BglII', site: 'AGATCT' },
+    { name: 'NcoI', site: 'CCATGG' },
+    { name: 'NdeI', site: 'CATATG' },
+    { name: 'ApaI', site: 'GGGCCC' },
+    { name: 'AgeI', site: 'ACCGGT' },
+    { name: 'AscI', site: 'GGCGCGCC' },
+    { name: 'BstBI', site: 'TTCGAA' },
+    { name: 'ClaI', site: 'ATCGAT' },
+    { name: 'DraI', site: 'TTTAAA' },
+    { name: 'EagI', site: 'CGGCCG' },
+    { name: 'EcoRV', site: 'GATATC' },
+    { name: 'HaeIII', site: 'GGCC' },
+    { name: 'HhaI', site: 'GCGC' },
+    { name: 'HinfI', site: 'GANTC' },
+    { name: 'HpaI', site: 'GTTAAC' },
+    { name: 'MluI', site: 'ACGCGT' },
+    { name: 'MfeI', site: 'CAATTG' },
+    { name: 'MseI', site: 'TTAA' },
+    { name: 'MspI', site: 'CCGG' },
+    { name: 'NsiI', site: 'ATGCAT' },
+    { name: 'PacI', site: 'TTAATTAA' },
+    { name: 'PvuI', site: 'CGATCG' },
+    { name: 'PvuII', site: 'CAGCTG' },
+    { name: 'ScaI', site: 'AGTACT' },
+    { name: 'SphI', site: 'GCATGC' },
+    { name: 'SspI', site: 'AATATT' },
+    { name: 'StuI', site: 'AGGCCT' },
+    { name: 'TaqI', site: 'TCGA' },
+    { name: 'XmaI', site: 'CCCGGG' },
+    { name: 'BsaI', site: 'GGTCTC' },
+    { name: 'BsmBI', site: 'CGTCTC' },
+    { name: 'BbsI', site: 'GAAGAC' },
+    { name: 'BtgZI', site: 'GCGATG' },
+    { name: 'SapI', site: 'GCTCTTC' },
+    { name: 'AarI', site: 'CACCTGC' },
+    { name: 'DpnI', site: 'GATC' }
+];
+
+const IUPAC_REGEX = {
+    A: 'A', C: 'C', G: 'G', T: 'T', U: 'T',
+    R: '[AG]', Y: '[CT]', S: '[GC]', W: '[AT]',
+    K: '[GT]', M: '[AC]', B: '[CGT]', D: '[AGT]',
+    H: '[ACT]', V: '[ACG]', N: '[ACGT]'
+};
+
+function restrictionSiteToRegex(site) {
+    return String(site || '').toUpperCase().replace(/[^ACGTURYSWKMBDHVN]/g, '').split('')
+        .map(ch => IUPAC_REGEX[ch] || '')
+        .join('');
+}
+
+function parseManualRestrictionSites(text) {
+    return String(text || '').split(',').map(token => token.trim()).filter(Boolean).map((token, index) => {
+        const parts = token.split(':');
+        const name = parts.length > 1 ? parts.shift().trim() : `Custom${index + 1}`;
+        const site = parts.join(':').trim() || token;
+        return { name, site: site.toUpperCase().replace(/[^ACGTURYSWKMBDHVN]/g, '') };
+    }).filter(entry => entry.site);
+}
+
+function renderRestrictionEnzymeList() {
+    const list = el('reSiteList');
+    if (!list || list.children.length > 0) return;
+    RESTRICTION_ENZYMES.forEach(({ name, site }) => {
+        const label = document.createElement('label');
+        label.style.cssText = 'display:flex;align-items:center;gap:3px;white-space:nowrap;font-size:10px;';
+        label.title = `${name}: ${site}`;
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 're-cb';
+        cb.value = site;
+        cb.dataset.name = name;
+        cb.style.margin = '0';
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(`${name} (${site})`));
+        list.appendChild(label);
+    });
+}
+
 function searchResEnzyme() {
     const cbs = document.querySelectorAll('.re-cb:checked');
-    const sites = Array.from(cbs).map(cb => cb.value);
-    if (!sites.length) { showMessage('Select one or more restriction enzymes.', 2000); return; }
+    const selected = Array.from(cbs).map(cb => ({ name: cb.dataset.name || cb.value, site: cb.value }));
+    const manual = parseManualRestrictionSites(el('reSiteManualInput')?.value);
+    const enzymes = [...selected, ...manual];
+    if (!enzymes.length) { showMessage('Select one or more restriction enzymes or enter a site.', 2000); return; }
     const palette = ['#FFD700','#FF6B6B','#00CED1','#FF8C00','#9370DB','#3CB371','#FF69B4','#20B2AA',
                      '#FFB347','#87CEEB','#FF6347','#98FB98','#DDA0DD','#F0E68C','#00BFFF','#FFA07A'];
-    const enzymes = [];
-    cbs.forEach(cb => { enzymes.push(cb.parentElement.textContent.trim()); });
     let colorIdx = state._searchColorOffset || 0;
-    sites.forEach(site => {
+    const bothStrands = !!el('searchBothStrands')?.checked;
+    enzymes.forEach(({ name, site }) => {
+        const regex = restrictionSiteToRegex(site);
+        if (!regex) return;
         const color = palette[colorIdx % palette.length];
-        const input = document.getElementById('searchInput');
-        const colorInput = document.getElementById('searchColor');
-        if (input && colorInput) {
-            input.value = site;
-            colorInput.value = color;
-            searchMotif();
+        searchMotif({
+            motif: regex,
+            label: `${name} ${site}`,
+            color,
+            useRegex: true,
+            bothStrands: false,
+            strand: 'restriction',
+            key: `restriction:${name}:${site}:fwd`
+        });
+        if (bothStrands) {
+            const rcSite = reverseComplement(site).replace(/U/g, 'T');
+            if (rcSite && rcSite !== site.replace(/U/g, 'T')) {
+                searchMotif({
+                    motif: restrictionSiteToRegex(rcSite),
+                    label: `${name} ${site} (rev comp ${rcSite})`,
+                    color: getComplementaryColor(color),
+                    useRegex: true,
+                    bothStrands: false,
+                    strand: 'restriction rev comp',
+                    key: `restriction:${name}:${site}:rev`
+                });
+            }
         }
         colorIdx++;
     });
-    state._searchColorOffset = (state._searchColorOffset || 0) + sites.length;
-    document.getElementById('reSiteLabel').textContent = `${sites.length} enzyme(s) searched`;
-    document.getElementById('reSitePopup').style.display = 'none';
+    state._searchColorOffset = colorIdx;
+    const label = el('reSiteLabel');
+    if (label) label.textContent = `${enzymes.length} enzyme/site${enzymes.length !== 1 ? 's' : ''} searched`;
+    const popup = el('reSitePopup');
+    if (popup) popup.style.display = 'none';
 }
 
 function initResEnzymeSearch() {
@@ -5805,6 +5920,7 @@ function initResEnzymeSearch() {
     const runBtn = document.getElementById('reSiteRunBtn');
     const clearBtn = document.getElementById('reSiteClearBtn');
     if (!popup || !btn) return;
+    renderRestrictionEnzymeList();
     btn.addEventListener('click', (e) => {
         e.stopPropagation();
         popup.style.display = popup.style.display === 'none' ? 'block' : 'none';
@@ -5812,6 +5928,8 @@ function initResEnzymeSearch() {
     runBtn?.addEventListener('click', searchResEnzyme);
     clearBtn?.addEventListener('click', () => {
         document.querySelectorAll('.re-cb').forEach(cb => cb.checked = false);
+        const manual = el('reSiteManualInput');
+        if (manual) manual.value = '';
     });
     // Close popup on outside click
     document.addEventListener('click', (e) => {
@@ -5821,15 +5939,15 @@ function initResEnzymeSearch() {
     });
 }
 
-function searchMotif() {
-    const raw = el('searchInput').value || '';
+function searchMotif(options = {}) {
+    const raw = options.motif ?? (el('searchInput').value || '');
     const motif = raw.trim().replace(/\s+/g, '').toUpperCase();
     if (!motif) return;
-    const color = el('searchColor').value;
-    const maxMismatches = parseInt(el('maxMismatches').value) || 0;
-    const useRegex = el('searchRegex')?.checked;
+    const color = options.color || el('searchColor').value;
+    const maxMismatches = options.maxMismatches ?? (parseInt(el('maxMismatches').value) || 0);
+    const useRegex = options.useRegex ?? el('searchRegex')?.checked;
     const checkboxEl = el('searchBothStrands');
-    const bothStrands = checkboxEl && checkboxEl.checked;
+    const bothStrands = options.bothStrands ?? (checkboxEl && checkboxEl.checked);
 
     debugLog('=== SEARCH MOTIF STARTED ===');
     debugLog('Input motif:', motif);
@@ -5839,7 +5957,15 @@ function searchMotif() {
 
     const fwdMotifRaw = motif;
     const fwdMotif = fwdMotifRaw.replace(/U/g, 'T');
-    const motifsToSearch = [{ motif: fwdMotif, color, label: bothStrands ? `${fwdMotifRaw} (fwd)` : fwdMotifRaw, strand: 'fwd' }];
+    const baseLabel = options.label || fwdMotifRaw;
+    const baseKey = options.key || fwdMotif;
+    const motifsToSearch = [{
+        motif: fwdMotif,
+        color,
+        label: bothStrands ? `${baseLabel} (fwd)` : baseLabel,
+        strand: options.strand || 'fwd',
+        key: baseKey
+    }];
     if (bothStrands) {
         const rcMotifRaw = reverseComplement(fwdMotifRaw);
         const rcMotif = rcMotifRaw.replace(/U/g, 'T');
@@ -5850,7 +5976,8 @@ function searchMotif() {
                 motif: rcMotif,
                 color: getComplementaryColor(color),
                 label: `${rcMotifRaw} (rev comp)`,
-                strand: 'rev comp'
+                strand: 'rev comp',
+                key: `${baseKey}:rev`
             });
         } else {
             debugLog('NOT adding reverse complement (palindromic or empty)');
@@ -5866,11 +5993,11 @@ function searchMotif() {
     let fwdSeqs = new Set();
     let revSeqs = new Set();
 
-    motifsToSearch.forEach(({ motif: searchMotifValue, color: searchColorValue, label, strand }) => {
+    motifsToSearch.forEach(({ motif: searchMotifValue, color: searchColorValue, label, strand, key }) => {
         debugLog(`Searching for motif: "${searchMotifValue}" (${label}, ${strand})`);
         let motifMatches = 0;
         let motifSeqsWithMatches = new Set();
-        const motifKey = `${searchMotifValue}:${strand}`;
+        const motifKey = `${key || searchMotifValue}:${strand}`;
         const className = 'search-hit-' + Math.random().toString(36).substring(2, 12) + btoa(motifKey).replace(/=/g, '').substring(0, 5);
 
         // Remove any existing identical motif highlights first
