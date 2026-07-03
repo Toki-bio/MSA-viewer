@@ -35,7 +35,7 @@ const DEFAULTS = {
     minCoverage: 30
 };
 
-const APP_VERSION = 'aa4527f';
+const APP_VERSION = '2026-07-03-restriction-sites-v2';
 
 const state = {
     seqs: [],
@@ -227,7 +227,7 @@ function _getDragIndicatorEl() {
 function updateVersionIndicator() {
     const elVersion = document.getElementById('versionIndicator');
     if (!elVersion) return;
-    elVersion.textContent = `commit ${APP_VERSION}`;
+    elVersion.textContent = `version ${APP_VERSION}`;
 }
 
 function updateControlsOffset() {
@@ -5917,11 +5917,14 @@ function searchResEnzyme() {
     state._searchColorOffset = colorIdx;
     const totalSites = currentResults.reduce((sum, item) => sum + (item.matchCount || 0), 0);
     const totalRowMatches = currentResults.reduce((sum, item) => sum + (item.rawMatchCount || 0), 0);
+    const sequenceSet = new Set();
+    currentResults.forEach(item => (item.sequenceIndices || []).forEach(index => sequenceSet.add(index)));
+    const totalSeqs = sequenceSet.size;
     const label = el('reSiteLabel');
     if (label) label.textContent = `${enzymes.length} enzyme/site${enzymes.length !== 1 ? 's' : ''} searched`;
     const popup = el('reSitePopup');
     if (popup) popup.style.display = 'none';
-    showMessage(`Found ${totalSites} unique restriction site${totalSites !== 1 ? 's' : ''} (${totalRowMatches} row match${totalRowMatches !== 1 ? 'es' : ''}).`, 3500);
+    showMessage(`Found ${totalSites} unique restriction site${totalSites !== 1 ? 's' : ''} in ${totalSeqs} sequence${totalSeqs !== 1 ? 's' : ''} (${totalRowMatches} row match${totalRowMatches !== 1 ? 'es' : ''}).`, 3500);
 }
 
 function initResEnzymeSearch() {
@@ -6111,7 +6114,7 @@ function searchMotif(options = {}) {
         // Track search history
         const displayMatches = options.countMode === 'alignmentSites' ? motifAlignmentSites.size : motifMatches;
         state.searchHistory.push({ motif: motifKey, color: searchColorValue, className, matchCount: displayMatches, rawMatchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size, label, strand });
-        searchResults.push({ label, strand, matchCount: displayMatches, rawMatchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size });
+        searchResults.push({ label, strand, matchCount: displayMatches, rawMatchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size, sequenceIndices: Array.from(motifSeqsWithMatches) });
     });
 
     updateActiveSearchesPanel();
@@ -7328,7 +7331,7 @@ function buildNJTreeFromAlignment(seqObjects) {
         right: null
     }));
     const dist = baseDist.map(r => r.slice());
-    const activeIndices = clusters.map((_, i) => i); // maps to original cluster positions
+    let activeIndices = clusters.map((_, i) => i); // maps to original cluster positions
 
     // NJ main loop
     while (activeIndices.length > 2) {
