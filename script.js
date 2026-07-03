@@ -10634,22 +10634,24 @@ function handleGeneDocResidueKey(e) {
     if (pos < 0 || pos >= chars.length) return false;
     chars[pos] = (e.key === '.' || e.key === '-') ? GENEDOC_FILLER : e.key.toUpperCase();
     state.seqs[row].seq = chars.join('');
+
+    // Update the span at the OLD position (where we just typed)
+    fastUpdateEditCellAt(row, pos);
+
+    // Advance cursor
     const nextPos = Math.min(pos + 1, chars.length - 1);
     state.editCell = { row, pos: nextPos };
-    renderAlignment();
+    updateEditActiveCell();
+
     e.preventDefault();
     return true;
 }
 
 /**
- * Fast in-place update for Type mode: update the span DOM directly
- * instead of doing a full renderAlignment(). Massively faster for large alignments.
+ * Fast in-place update for Type mode: updates a single span at (row,pos)
+ * using cached DOM references. No full re-render. Like GeneDoc.
  */
-function fastUpdateEditCell() {
-    if (!state.editCell) return;
-    const { row, pos } = state.editCell;
-
-    // Use cached span (created during render) — works across all display modes
+function fastUpdateEditCellAt(row, pos) {
     const span = getCachedSpan(row, pos);
     if (!span) { renderAlignment(); return; }
 
@@ -10658,14 +10660,17 @@ function fastUpdateEditCell() {
     // Update class for correct shading
     const consData = (state.conservationDataCache && state.conservationDataCache.data) || {};
     span.className = getSequenceBaseRenderClass(base, pos, getSequenceRenderConfig(), consData);
+}
 
-    // Move visual cursor to new position
+/**
+ * Fast in-place update using current state.editCell position.
+ * Used by Backspace/Delete where editCell already points to the right position.
+ */
+function fastUpdateEditCell() {
+    if (!state.editCell) return;
+    const { row, pos } = state.editCell;
+    fastUpdateEditCellAt(row, pos);
     updateEditActiveCell();
-    // Verify the update actually took effect
-    if (span.textContent !== base) {
-        // DOM update failed — fall back to full re-render
-        renderAlignment();
-    }
 }
 
 function removeGapColumns() {
