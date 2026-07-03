@@ -166,6 +166,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
       <a href="#gs-formats">1.3 Supported Formats</a>
       <a href="#gs-interface">1.4 Interface Layout</a>
       <a href="#gs-recent">1.5 Recent Files &amp; History</a>
+      <a href="#gs-updates">1.6 Recent Updates</a>
     </div>
   </div>
 
@@ -211,11 +212,12 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <div class="side-sub">
       <a href="#di-modes">5.1 View Modes</a>
       <a href="#di-checks">5.2 Highlight Diffs &amp; Variable Sites</a>
-      <a href="#di-codons">5.3 Codon Analysis</a>
-      <a href="#di-sticky">5.4 Sticky Names</a>
-      <a href="#di-zoom">5.5 Zoom &amp; Reset</a>
-      <a href="#di-names">5.6 Name Length</a>
-      <a href="#di-compat">5.7 Compact Mode Controls</a>
+      <a href="#di-colors">5.3 Alignment Colour Schemes</a>
+      <a href="#di-codons">5.4 Codon Analysis</a>
+      <a href="#di-sticky">5.5 Sticky Names</a>
+      <a href="#di-zoom">5.6 Zoom &amp; Reset</a>
+      <a href="#di-names">5.7 Name Length</a>
+      <a href="#di-compat">5.8 Compact Mode Controls</a>
     </div>
   </div>
 
@@ -235,6 +237,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
       <a href="#se-regex">7.2 Regex Search</a>
       <a href="#se-mismatch">7.3 Mismatch Tolerance</a>
       <a href="#se-colour">7.4 Search Highlight Colour</a>
+      <a href="#se-restriction">7.5 Restriction Sites</a>
     </div>
   </div>
 
@@ -320,8 +323,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <ul>
     <li><strong>View</strong> - Four visualisation modes: Full, Block, Compact (IGV-style), Canvas (for massive alignments)</li>
     <li><strong>Edit</strong> - GeneDoc-style residue editing, Move/Slide tools, undo/redo</li>
-    <li><strong>Analyse</strong> - Codon analysis (17 genetic codes), dot plots, repeat/TSD finder, tree builder, subfamily clustering</li>
-    <li><strong>Colour</strong> - Conservation shading (Identity, Similarity, Clustal, Zappo), custom per-sequence and per-group colours</li>
+    <li><strong>Analyse</strong> - Statistics, copyable distance matrices, codon analysis, dot plots, repeat/TSD finder, tree builder, restriction site search, subfamily clustering</li>
+    <li><strong>Colour</strong> - Monochrome conservation shading plus nucleotide, purine/pyrimidine, ambiguity, and amino-acid colour schemes</li>
     <li><strong>Export</strong> - FASTA, MSF, RTF (Word-compatible), SVG (vector), standalone HTML</li>
   </ul>
 
@@ -330,7 +333,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Method</th><th>How</th></tr>
     <tr><td>Paste &amp; Load</td><td>Paste FASTA or MSF text into the Input textarea and click <strong>Load</strong> (or press <kbd>Ctrl+L</kbd>)</td></tr>
-    <tr><td>Drag &amp; Drop</td><td>Drop a file onto the drop zone - supports <code>.fasta</code>, <code>.fa</code>, <code>.aln</code>, <code>.msf</code>, <code>.sam</code></td></tr>
+    <tr><td>Drag &amp; Drop</td><td>Drop a file onto the drop zone - supports <code>.fasta</code>, <code>.fa</code>, <code>.aln</code>, <code>.msf</code>, <code>.sam</code>, <code>.gb</code>, <code>.gbk</code></td></tr>
     <tr><td>File Picker</td><td>Click the drop zone to browse for a file</td></tr>
     <tr><td>URL</td><td>Paste a URL to a raw alignment file and click <strong>Load URL</strong></td></tr>
     <tr><td>SAM Paste</td><td>Paste SAM text directly - auto-detected and parsed with CIGAR expansion</td></tr>
@@ -349,7 +352,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>PHYLIP</td><td><code>.phy</code></td><td>Interleaved and sequential PHYLIP formats</td></tr>
     <tr><td>NEXUS</td><td><code>.nex</code>, <code>.nexus</code></td><td>NEXUS <code>DATA</code> block with matrix</td></tr>
     <tr><td>Stockholm</td><td><code>.sto</code>, <code>.stockholm</code></td><td>Pfam/Rfam Stockholm format with <code>#=GC</code> markup</td></tr>
-    <tr><td>GenBank</td><td>-</td><td>Accession lookup → automatic MAFFT alignment</td></tr>
+    <tr><td>GenBank</td><td><code>.gb</code>, <code>.gbk</code></td><td>Flatfile import from <code>LOCUS</code>/<code>FEATURES</code>/<code>ORIGIN</code>; accession lookup can also retrieve GenBank records</td></tr>
   </table>
 
   <h3 id="gs-interface">1.4 Interface Layout</h3>
@@ -371,8 +374,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td><strong>Actions</strong></td><td>Selection, sorting, analysis (dot plot, TSD finder, tree), colour schemes, cluster operations, export</td></tr>
   </table>
   <p>
-    The top-right corner shows the current commit hash (click to view on GitHub)
-    and the loaded file name.
+    The top-right corner shows the current application version and the loaded file name.
   </p>
 
   <h3 id="gs-recent">1.5 Recent Files &amp; History</h3>
@@ -382,6 +384,18 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     and stores timestamps and sequence counts. Click any entry to reload it instantly.
     History persists across browser sessions via <code>localStorage</code>.
   </p>
+
+  <h3 id="gs-updates">1.6 Recent Updates</h3>
+  <p>Recent GitHub Pages updates added or improved the following user-facing features:</p>
+  <ul>
+    <li><strong>Restriction Sites</strong> search in the Search menu, with 50 common enzymes, manual site input, IUPAC ambiguity support, and optional reverse-complement search.</li>
+    <li><strong>Statistics</strong> now includes copy-to-clipboard buttons for p-distance and identity matrices.</li>
+    <li><strong>Tree Builder</strong> supports both UPGMA and Neighbor-Joining; switching method in the modal rebuilds the tree.</li>
+    <li><strong>Display colour schemes</strong> now include Monochrome, Nucleotide, Purine/Pyrimidine, Nucleotide Ambiguity, Clustal-like amino acid, and Jalview-like amino acid modes.</li>
+    <li><strong>GenBank import</strong> now parses sequence metadata and common FEATURES more reliably, including multi-line qualifiers.</li>
+    <li><strong>Protein FASTA handling</strong> preserves amino-acid residues instead of treating them as nucleotides.</li>
+    <li><strong>Reliability fixes</strong> improved Statistics, Save Preset, modal handling, snapshot loading on GitHub Pages, and version display.</li>
+  </ul>
 </section>
 
 <!-- ════════════════════════════════════════ -->
@@ -400,7 +414,15 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <p>
     The viewer auto-detects sequence type (DNA, RNA, protein) from the residue composition
-    of the first few sequences.
+    of the first few sequences. Protein FASTA input is preserved as amino-acid data; unknown
+    protein characters are normalised to <code>X</code> rather than converted to nucleotide
+    ambiguity characters.
+  </p>
+  <p>
+    GenBank flatfiles can also be pasted directly. Records beginning with <code>LOCUS</code>
+    are parsed for header metadata, <code>FEATURES</code>, and the <code>ORIGIN</code> sequence.
+    The imported sequence is displayed as a normal alignment row; feature coordinates are stored
+    with the parsed record for future annotation features.
   </p>
 
   <h3 id="in-file">2.2 File Loading</h3>
@@ -451,6 +473,10 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li>The snapshot dropdown lists all saved snapshots; click to preview, double-click to load</li>
   </ul>
   <p>Snapshots persist in <code>localStorage</code> and can be exported/downloaded as JSON files.</p>
+  <p>
+    On GitHub Pages, snapshot listing is loaded from <code>snapshots/index.json</code>. If no
+    shared snapshots are available, the viewer shows an empty list instead of a failed request.
+  </p>
 
   <h3 id="in-saveload">2.7 Save / Export Alignment</h3>
   <p>
@@ -676,7 +702,27 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </ul>
   <p>Both can be combined with any view mode and with Codon analysis.</p>
 
-  <h3 id="di-codons">5.3 Codon Analysis</h3>
+  <h3 id="di-colors">5.3 Alignment Colour Schemes</h3>
+  <p>
+    The <strong>Color scheme</strong> dropdown controls residue colouring in the main
+    Full and Block alignment renderers. The current conservation-based black/grey/white
+    display is preserved as <strong>Monochrome (current)</strong> and remains the default.
+  </p>
+  <table>
+    <tr><th>Scheme</th><th>Use</th></tr>
+    <tr><td>Monochrome (current)</td><td>Existing conservation shading using Black/Dark/Light thresholds from the Shade menu</td></tr>
+    <tr><td>Nucleotide</td><td>Distinct colours for A, C, G, T/U and N</td></tr>
+    <tr><td>Purine/Pyrimidine</td><td>Groups A/G as purines and C/T/U as pyrimidines; ambiguous bases are neutral</td></tr>
+    <tr><td>Nucleotide Ambiguity</td><td>Highlights IUPAC ambiguity codes such as R, Y, S, W, K, M, B, D, H, V and N</td></tr>
+    <tr><td>Amino Acid: Clustal-like</td><td>Groups amino acids by broad physico-chemical classes in a Clustal-inspired palette</td></tr>
+    <tr><td>Amino Acid: Jalview-like</td><td>Groups amino acids in a Jalview-style property palette</td></tr>
+  </table>
+  <p>
+    The selected colour scheme is saved in presets and snapshots. Compact and Canvas modes
+    keep their own existing high-performance colouring behaviour.
+  </p>
+
+  <h3 id="di-codons">5.4 Codon Analysis</h3>
   <p>
     Activates codon-aware viewing for coding sequences (CDS). Your alignment must be
     nucleotide and its length must be divisible by 3.
@@ -711,13 +757,13 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>AA translation row</td><td>Amino acid letters below each sequence; stops in bold red <code>*</code></td></tr>
   </table>
 
-  <h3 id="di-sticky">5.4 Sticky Names</h3>
+  <h3 id="di-sticky">5.5 Sticky Names</h3>
   <p>
     When enabled (default), the sequence name column remains fixed on the left while
     scrolling horizontally. This ensures you always know which sequence you are looking at.
   </p>
 
-  <h3 id="di-zoom">5.5 Zoom &amp; Reset</h3>
+  <h3 id="di-zoom">5.6 Zoom &amp; Reset</h3>
   <p>
     The Zoom slider controls font size from <strong>50% to 200%</strong> using a
     logarithmic scale. Use the <strong>-</strong> and <strong>+</strong> buttons
@@ -728,14 +774,14 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <strong>Click the percentage</strong> to instantly reset to 100%.
   </p>
 
-  <h3 id="di-names">5.6 Name Length</h3>
+  <h3 id="di-names">5.7 Name Length</h3>
   <p>
     Controls how many characters of each sequence name are displayed. The slider ranges
     from 3 to 60. Check <strong>No limit</strong> to show full names regardless of length.
     This only affects display, not the underlying data.
   </p>
 
-  <h3 id="di-compat">5.7 Compact Mode Controls</h3>
+  <h3 id="di-compat">5.8 Compact Mode Controls</h3>
   <p>Two additional checkboxes appear only when Compact mode is active:</p>
   <ul>
     <li>
@@ -816,6 +862,19 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     accumulate highlights. Use <strong>Clear Last</strong> (<kbd>Ctrl+Shift+F</kbd>)
     to remove the most recent search highlights.
   </p>
+
+  <h3 id="se-restriction">7.5 Restriction Sites</h3>
+  <p>
+    Click <strong>Restriction Sites</strong> in the Search menu to search common
+    restriction enzyme recognition sites across the loaded alignment.
+  </p>
+  <ul>
+    <li>The popup includes 50 commonly used enzymes, each labelled with its recognition sequence.</li>
+    <li>Use <strong>Manual enzymes/sites</strong> for additional enzymes. Enter comma-separated values such as <code>BspQI:GCTCTTC, GAATTC</code>.</li>
+    <li>IUPAC ambiguity codes are supported in recognition sites, for example <code>GANTC</code>.</li>
+    <li>Enable <strong>Search both strands</strong> to include reverse-complement matches.</li>
+    <li>Results are highlighted in the alignment and reported as unique sites, affected sequences, and raw row matches.</li>
+  </ul>
 </section>
 
 <!-- ════════════════════════════════════════ -->
@@ -965,11 +1024,12 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><th>Tool</th><th>Description</th></tr>
     <tr><td><strong>New Tab</strong></td><td>Open selected sequences in a new browser tab (<kbd>Ctrl+T</kbd>)</td></tr>
     <tr><td><strong>TSD Finder</strong></td><td>Find target site duplications around SINE insertion boundaries</td></tr>
-    <tr><td><strong>Tree</strong></td><td>Build a UPGMA tree from selected sequences (pairwise identity distances). Outputs Newick format with branch lengths. Includes Copy Newick and Download .nwk options</td></tr>
+    <tr><td><strong>Tree</strong></td><td>Build UPGMA or Neighbor-Joining trees from selected sequences using pairwise p-distance. Switching UPGMA/NJ in the modal rebuilds the tree. Outputs text view and Newick with Copy Newick and Download .nwk options</td></tr>
+    <tr><td><strong>Statistics</strong></td><td>Compute alignment statistics, pairwise identity, and p-distance matrices. Distance and identity matrices include copy-to-clipboard buttons</td></tr>
   </table>
 
   <h3 id="ac-colour">9.5 Colour &amp; Shading</h3>
-  <p><strong>Shading schemes:</strong></p>
+  <p><strong>Shading and colour schemes:</strong></p>
   <table>
     <tr><th>Scheme</th><th>Behaviour</th></tr>
     <tr><td>Identity</td><td>Colours only columns where all residues match exactly</td></tr>
@@ -980,9 +1040,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p><strong>Threshold sliders</strong> in the Display menu control darkness:
   Black (highly conserved), Dark (moderately conserved), Light (weakly conserved).</p>
   <p>
-    <strong>Nucleotide colour schemes:</strong> Default, Taylor, Nucleobase.
-    <strong>Custom colouring:</strong> manually colour individual sequences, groups,
-    or clades from the Actions → Colour section.
+    Residue colour schemes are selected in the Display menu. Sequence-name colouring
+    remains available in the Colour Names menu for manually colouring individual sequences,
+    groups, or clades.
   </p>
 
   <h3 id="ac-cluster">9.6 Cluster Operations</h3>
