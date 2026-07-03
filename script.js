@@ -5878,40 +5878,50 @@ function searchResEnzyme() {
                      '#FFB347','#87CEEB','#FF6347','#98FB98','#DDA0DD','#F0E68C','#00BFFF','#FFA07A'];
     let colorIdx = state._searchColorOffset || 0;
     const bothStrands = !!el('searchBothStrands')?.checked;
+    const currentResults = [];
     enzymes.forEach(({ name, site }) => {
         const regex = restrictionSiteToRegex(site);
         if (!regex) return;
         const color = palette[colorIdx % palette.length];
-        searchMotif({
+        const forwardResult = searchMotif({
             motif: regex,
             label: `${name} ${site}`,
             color,
             useRegex: true,
             bothStrands: false,
             strand: 'restriction',
-            key: `restriction:${name}:${site}:fwd`
+            key: `restriction:${name}:${site}:fwd`,
+            countMode: 'alignmentSites',
+            suppressMessage: true
         });
+        if (forwardResult) currentResults.push(...forwardResult.results);
         if (bothStrands) {
             const rcSite = reverseComplement(site).replace(/U/g, 'T');
             if (rcSite && rcSite !== site.replace(/U/g, 'T')) {
-                searchMotif({
+                const reverseResult = searchMotif({
                     motif: restrictionSiteToRegex(rcSite),
                     label: `${name} ${site} (rev comp ${rcSite})`,
                     color: getComplementaryColor(color),
                     useRegex: true,
                     bothStrands: false,
                     strand: 'restriction rev comp',
-                    key: `restriction:${name}:${site}:rev`
+                    key: `restriction:${name}:${site}:rev`,
+                    countMode: 'alignmentSites',
+                    suppressMessage: true
                 });
+                if (reverseResult) currentResults.push(...reverseResult.results);
             }
         }
         colorIdx++;
     });
     state._searchColorOffset = colorIdx;
+    const totalSites = currentResults.reduce((sum, item) => sum + (item.matchCount || 0), 0);
+    const totalRowMatches = currentResults.reduce((sum, item) => sum + (item.rawMatchCount || 0), 0);
     const label = el('reSiteLabel');
     if (label) label.textContent = `${enzymes.length} enzyme/site${enzymes.length !== 1 ? 's' : ''} searched`;
     const popup = el('reSitePopup');
     if (popup) popup.style.display = 'none';
+    showMessage(`Found ${totalSites} unique restriction site${totalSites !== 1 ? 's' : ''} (${totalRowMatches} row match${totalRowMatches !== 1 ? 'es' : ''}).`, 3500);
 }
 
 function initResEnzymeSearch() {
@@ -5921,6 +5931,9 @@ function initResEnzymeSearch() {
     const clearBtn = document.getElementById('reSiteClearBtn');
     if (!popup || !btn) return;
     renderRestrictionEnzymeList();
+    if (popup.parentElement !== document.body) {
+        document.body.appendChild(popup);
+    }
     btn.addEventListener('click', (e) => {
         e.stopPropagation();
         popup.style.display = popup.style.display === 'none' ? 'block' : 'none';
@@ -5992,10 +6005,12 @@ function searchMotif(options = {}) {
     let revMatches = 0;
     let fwdSeqs = new Set();
     let revSeqs = new Set();
+    const searchResults = [];
 
     motifsToSearch.forEach(({ motif: searchMotifValue, color: searchColorValue, label, strand, key }) => {
         debugLog(`Searching for motif: "${searchMotifValue}" (${label}, ${strand})`);
         let motifMatches = 0;
+        const motifAlignmentSites = new Set();
         let motifSeqsWithMatches = new Set();
         const motifKey = `${key || searchMotifValue}:${strand}`;
         const className = 'search-hit-' + Math.random().toString(36).substring(2, 12) + btoa(motifKey).replace(/=/g, '').substring(0, 5);
@@ -6064,22 +6079,26 @@ function searchMotif(options = {}) {
             debugLog(`  Seq ${index}: "${displayString}" vs "${normalizedMotif}" -> ${matches.length} matches`);
             if (matches.length > 0) {
                 motifSeqsWithMatches.add(index);
-                if (strand === 'fwd') {
-                    fwdSeqs.add(index);
-                } else if (strand === 'rev comp') {
+                const isReverseStrand = String(strand || '').includes('rev comp');
+                if (isReverseStrand) {
                     revSeqs.add(index);
+                } else {
+                    fwdSeqs.add(index);
                 }
             }
             totalMatches += matches.length;
             motifMatches += matches.length;
-            if (strand === 'fwd') {
-                fwdMatches += matches.length;
-            } else if (strand === 'rev comp') {
+            if (String(strand || '').includes('rev comp')) {
                 revMatches += matches.length;
+            } else {
+                fwdMatches += matches.length;
             }
 
             // Highlight matching spans
             matches.forEach(m => {
+                const startSpanIndex = nonGapSpanIndices[m.idx];
+                const startPos = startSpanIndex !== undefined ? spans[startSpanIndex]?.dataset?.pos : undefined;
+                if (startPos !== undefined) motifAlignmentSites.add(`${startPos}:${m.len}`);
                 for (let i = 0; i < m.len; i++) {
                     const spanIndex = nonGapSpanIndices[m.idx + i];
                     if (spanIndex !== undefined && spans[spanIndex]) {
@@ -6090,18 +6109,23 @@ function searchMotif(options = {}) {
         });
 
         // Track search history
-        state.searchHistory.push({ motif: motifKey, color: searchColorValue, className, matchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size, label, strand });
+        const displayMatches = options.countMode === 'alignmentSites' ? motifAlignmentSites.size : motifMatches;
+        state.searchHistory.push({ motif: motifKey, color: searchColorValue, className, matchCount: displayMatches, rawMatchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size, label, strand });
+        searchResults.push({ label, strand, matchCount: displayMatches, rawMatchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size });
     });
 
     updateActiveSearchesPanel();
-    if (bothStrands) {
-        showMessage(
-            `Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} (fwd:${fwdMatches}, rev comp:${revMatches}) in ${fwdSeqs.size + revSeqs.size} sequence${(fwdSeqs.size + revSeqs.size) !== 1 ? 's' : ''}`,
-            3000
-        );
-    } else {
-        showMessage(`Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} in ${fwdSeqs.size} sequence${fwdSeqs.size !== 1 ? 's' : ''}`, 2000);
+    if (!options.suppressMessage) {
+        if (bothStrands) {
+            showMessage(
+                `Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} (fwd:${fwdMatches}, rev comp:${revMatches}) in ${fwdSeqs.size + revSeqs.size} sequence${(fwdSeqs.size + revSeqs.size) !== 1 ? 's' : ''}`,
+                3000
+            );
+        } else {
+            showMessage(`Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} in ${fwdSeqs.size} sequence${fwdSeqs.size !== 1 ? 's' : ''}`, 2000);
+        }
     }
+    return { totalMatches, fwdMatches, revMatches, fwdSeqs: fwdSeqs.size, revSeqs: revSeqs.size, results: searchResults };
 }
 
 function updateActiveSearchesPanel() {
