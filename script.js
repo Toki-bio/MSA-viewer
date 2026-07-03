@@ -798,6 +798,29 @@ function showMessage(msg, duration = 2000) {
     if (duration > 0) setTimeout(() => { statusMessage.style.display = 'none'; }, duration);
 }
 
+const EXCLUSIVE_MODAL_IDS = [
+    'infoModal',
+    'colourInspectorModal',
+    'clusteringModal',
+    'seqEditModal',
+    'addSeqModal',
+    'dotPlotModal',
+    'repeatFinderModal',
+    'treeBuilderModal',
+    'statsModal'
+];
+
+function showExclusiveModal(id) {
+    EXCLUSIVE_MODAL_IDS.forEach(modalId => {
+        if (modalId === id) return;
+        const modal = el(modalId);
+        if (modal) modal.style.display = 'none';
+    });
+    const modal = el(id);
+    if (modal) modal.style.display = 'block';
+    return modal;
+}
+
 // SSH mini-console helpers
 let _sshConsoleCloseTimer = null;
 function _sshOpen(title) {
@@ -2022,6 +2045,32 @@ function parseStockholm(text) {
     return seqs;
 }
 
+const FASTA_NUCLEOTIDE_CHARS = /^[ACGTUNRYMKSWHBVD.-]+$/i;
+const FASTA_PROTEIN_ONLY_CHARS = /[EFILPQZXJO*]/i;
+
+function _isProteinFastaSequence(rawSeq) {
+    const seqType = el('mafftSeqType')?.value;
+    if (seqType === '0' || seqType === '1') return true;
+    const letters = String(rawSeq || '').replace(/[^A-Za-z*.-]/g, '');
+    return FASTA_PROTEIN_ONLY_CHARS.test(letters) || !FASTA_NUCLEOTIDE_CHARS.test(letters);
+}
+
+function _sanitizeFastaSequence(rawSeq, isProtein) {
+    const compact = String(rawSeq || '').replace(/\s+/g, '').toUpperCase().replace(/\./g, '-');
+    if (isProtein) {
+        return compact.replace(/[^ACDEFGHIKLMNPQRSTVWYBXZJUO*.-]/g, 'X');
+    }
+    return compact.replace(/[^ACGTUNRYMKSWHBVD.-]/g, 'N');
+}
+
+function _pushParsedFastaSequence(seqs, header, seq) {
+    const cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ');
+    const displayHeader = cleanHeader.split(/\s+/)[0] || 'unnamed';
+    const processedSeq = _sanitizeFastaSequence(seq, _isProteinFastaSequence(seq));
+    const gaplessPositions = calculateGaplessPositions(processedSeq);
+    seqs.push({ header: displayHeader, fullHeader: cleanHeader, seq: processedSeq, gaplessPositions: gaplessPositions });
+}
+
 function parseFasta(text) {
     const lines = text.trim().split(/\r?\n/);
     const seqs = [];
@@ -2032,26 +2081,16 @@ function parseFasta(text) {
             if (!line) continue;
             if (line.startsWith('>')) {
                 if (seq) {
-                    const cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ');
-                    const displayHeader = cleanHeader.split(/\s+/)[0] || 'unnamed';
-                    let processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
-                    processedSeq = processedSeq.replace(/\./g, '-');
-                    const gaplessPositions = calculateGaplessPositions(processedSeq);
-                    seqs.push({ header: displayHeader, fullHeader: cleanHeader, seq: processedSeq, gaplessPositions: gaplessPositions });
+                    _pushParsedFastaSequence(seqs, header, seq);
                     seq = '';
                 }
                 header = line;
             } else {
-                seq += line.replace(/[^A-Za-z\.\-]/g, '');
+                seq += line.replace(/[^A-Za-z*.\-]/g, '');
             }
         }
         if (header && seq) {
-            const cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ');
-            const displayHeader = cleanHeader.split(/\s+/)[0] || 'unnamed';
-            let processedSeq = seq.toUpperCase().replace(/[^ACGTUNRYMKSWHBVD\.\-]/g, 'N');
-            processedSeq = processedSeq.replace(/\./g, '-');
-            const gaplessPositions = calculateGaplessPositions(processedSeq);
-            seqs.push({ header: displayHeader, fullHeader: cleanHeader, seq: processedSeq, gaplessPositions: gaplessPositions });
+            _pushParsedFastaSequence(seqs, header, seq);
         }
     } catch (err) {
         console.error('Error in parseFasta:', err);
@@ -4834,9 +4873,9 @@ function savePreset() {
         blockSize: el('blockSizeSlider').value,
         nameLen: el('nameLengthSlider').value,
         consensusThreshold: el('consensusThreshold').value,
-        groupConsensusThreshold: el('groupConsensusThreshold').value,
-    consensusType: document.querySelector('input[name="consensusType"]:checked').value,
-    showConsensus: el('showConsensus').checked,
+        groupConsensusThreshold: el('groupConsensusThreshold')?.value ?? DEFAULTS.groupConsensusThreshold,
+        consensusType: document.querySelector('input[name="consensusType"]:checked').value,
+        showConsensus: el('showConsensus').checked,
         // Persist new consensus options
         consensusMinCoverage: el('consensusMinCoverage')?.value,
         consensusFallback: el('consensusFallback')?.value,
@@ -6005,7 +6044,7 @@ function clearAllSearches() {
     showMessage("All searches cleared!", 2000);
 }
 function openInfoModal() {
-    infoModal.style.display = 'block';
+    showExclusiveModal('infoModal');
 }
 function closeInfoModal() {
     infoModal.style.display = 'none';
@@ -6721,7 +6760,7 @@ function displayClusteringResults(results) {
     }
 
     content.innerHTML = html;
-    modal.style.display = 'block';
+    showExclusiveModal('clusteringModal');
 }
 
 function highlightCluster(clusterIdx) {
@@ -7277,7 +7316,7 @@ function openTreeBuilder() {
             }
             if (newickOutput) newickOutput.value = result.newick;
             if (textOutput) textOutput.textContent = result.text;
-            if (modal) modal.style.display = 'block';
+            if (modal) showExclusiveModal('treeBuilderModal');
             showMessage(`${method.toUpperCase()} tree built.`, 1200);
         } catch (err) {
             console.error('Tree build failed:', err);
@@ -7343,9 +7382,8 @@ function openStats() {
     // esl-alipid: pairwise percent identity
     const identities = [];
     let minId = 100, maxId = 0, sumId = 0, pairCount = 0;
-    const identityMatrix = [];
+    const identityMatrix = Array.from({ length: nseq }, () => new Array(nseq).fill('100.0'));
     for (let i = 0; i < nseq; i++) {
-        identityMatrix[i] = [];
         for (let j = 0; j < nseq; j++) {
             if (i === j) { identityMatrix[i][j] = '100.0'; continue; }
             if (i < j) {
@@ -7372,9 +7410,8 @@ function openStats() {
     const avgId = pairCount > 0 ? (sumId / pairCount) : 0;
 
     // Distance matrix (p-distance = 1 - identity)
-    const distMatrix = [];
+    const distMatrix = Array.from({ length: nseq }, () => new Array(nseq).fill('0.0000'));
     for (let i = 0; i < nseq; i++) {
-        distMatrix[i] = new Array(nseq).fill('0.0000');
         for (let j = 0; j < nseq; j++) {
             if (i < j) {
                 const d = 1 - parseFloat(identityMatrix[i][j]) / 100;
@@ -7444,8 +7481,7 @@ function openStats() {
     im += `\nColumns: 1–${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
     const imContent = `<details style="margin-top:4px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Pairwise Identity (%)</summary><pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${im}</pre></details>`;
     summaryTab.innerHTML += dmContent + imContent;
-    const modal = document.getElementById('statsModal');
-    if (modal) modal.style.display = 'block';
+    showExclusiveModal('statsModal');
     } catch(e) {
         console.error('Stats error:', e);
         showMessage(`Statistics error: ${e.message}`, 4000);
@@ -7453,7 +7489,8 @@ function openStats() {
 }
 
 function closeStats() {
-    document.getElementById('statsModal').style.display = 'none';
+    const modal = document.getElementById('statsModal');
+    if (modal) modal.style.display = 'none';
 }
 
 function initStatsTabs() {
@@ -7695,7 +7732,7 @@ function openAddSequencesModal() {
         document.getElementById('addSeqInput').value = '';
         document.getElementById('addSeqFileLabel').textContent = '';
         document.getElementById('addSeqFileInput').value = '';
-        modal.style.display = 'block';
+        showExclusiveModal('addSeqModal');
     }
 }
 
@@ -8191,7 +8228,7 @@ function openSeqEditor(index) {
     }
     _updateSeqEditLength();
 
-    modal.style.display = 'block';
+    showExclusiveModal('seqEditModal');
     textarea.focus();
 }
 
@@ -8220,7 +8257,7 @@ function openSeqEditorMulti() {
     textarea.value = text.trimEnd();
     _updateSeqEditLength();
 
-    modal.style.display = 'block';
+    showExclusiveModal('seqEditModal');
     textarea.focus();
 }
 
@@ -9241,7 +9278,6 @@ function initializeAppUI() {
         'treeDownloadNewickBtn': downloadTreeNewick,
         'selectAllButton': selectAllSequences,
         'copyColumnsButton': copySelectedColumns,
-        'deleteColumnsButton': deleteSelectedColumns,
         'realignBlockButton': realignSelectedBlock,
         'realignAllButton': realignAll,
         'realignSelectedButton': realignSelected,
@@ -9251,18 +9287,15 @@ function initializeAppUI() {
         'addSeqJustAddButton': addSequencesJustAdd,
         'addSeqSubmitButton': addSequencesAndAlign,
         'addSeqCancelButton': closeAddSequencesModal,
-        'clusterSequencesButton': clusterSequences,
         'clusterNowButton': clusterSequences,
         'previewTrimButton': previewTrimming,
         'executeTrimButton': executeTrimming,
         'undoTrimButton': undoTrimming,
-        'fullClusteringButton': clusterSequences,
         'clusteringSavePresetButton': saveClusteringPreset,
         'clusteringLoadPresetButton': loadClusteringPreset,
         'clusteringOptimalPresetButton': createOptimalPreset,
         'savePresetButton': savePreset,
         'loadPresetButton': loadPreset,
-        'snapshotButton': createSnapshot,
         'snapshotCreateTopButton': createSnapshot,
         'exportSvgTopButton': exportVisibleViewportAsSvg,
         'exportRtfButton': exportAlignmentAsRtf,
@@ -9279,11 +9312,8 @@ function initializeAppUI() {
         'clearAllSearchesButton': clearAllSearches,
         'copyConsensusButton': copyConsensus,
         'copySelectedConsensusButton': copySelectedConsensus,
-        'removeGapColumnsButton': removeGapColumns,
         'degapBlockLeftButton': () => degapSelectedBlock('left'),
-        'degapBlockRightButton': () => degapSelectedBlock('right'),
-        'insertGapColumnAllButton': () => insertGapColumn(),
-        'insertGapColumnExceptButton': () => insertGapColumn(true)
+        'degapBlockRightButton': () => degapSelectedBlock('right')
     };
 
     for (const id in buttonActions) {
@@ -11079,7 +11109,7 @@ function showColorHistory() {
 
     if (colourState.history.size === 0) {
         content.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">No colors assigned yet</div>';
-        modal.style.display = 'block';
+        showExclusiveModal('colourInspectorModal');
         return;
     }
 
@@ -11111,7 +11141,7 @@ function showColorHistory() {
     });
 
     content.innerHTML = html;
-    modal.style.display = 'block';
+    showExclusiveModal('colourInspectorModal');
 }
 
 function initColourSeqs() {
@@ -12317,7 +12347,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     }
 
     const modal = document.getElementById('dotPlotModal');
-    if (modal) modal.style.display = 'block';
+    if (modal) showExclusiveModal('dotPlotModal');
     const titleEl = document.getElementById('dotPlotTitle');
     if (titleEl) titleEl.textContent = `Dot Plot: ${nameA} vs ${nameB}${revComp ? ' (rc)' : ''}`;
     const statusEl = document.getElementById('dotPlotStatus');
@@ -12506,7 +12536,7 @@ function openRepeatFinder(seqIndex, preferredMode = null) {
     }
     _syncRepeatFinderModeUI();
     const modal = document.getElementById('repeatFinderModal');
-    if (modal) modal.style.display = 'block';
+    if (modal) showExclusiveModal('repeatFinderModal');
     document.getElementById('repeatResults').textContent = 'Click "Run Analysis" to start.';
 }
 
