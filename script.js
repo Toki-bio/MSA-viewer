@@ -10647,31 +10647,19 @@ function handleGeneDocResidueKey(e) {
 function fastUpdateEditCell() {
     if (!state.editCell) return;
     const { row, pos } = state.editCell;
-    const container = document.getElementById('alignmentContainer');
-    if (!container) return;
-    // Find the target span by position
-    const seqLines = container.querySelectorAll('.seq-line:not(.scale-ruler-line):not(.consensus-line)');
-    const line = seqLines[row];
-    if (!line) { renderAlignment(); return; }
-    const dataSpan = line.querySelector('.seq-data');
-    if (!dataSpan) { renderAlignment(); return; }
-    const spans = dataSpan.querySelectorAll('span');
-    if (pos < 0 || pos >= spans.length) { renderAlignment(); return; }
-    const span = spans[pos];
+
+    // Use cached span (created during render) — works across all display modes
+    const span = getCachedSpan(row, pos);
+    if (!span) { renderAlignment(); return; }
+
     const base = state.seqs[row].seq[pos] || GENEDOC_FILLER;
     span.textContent = base;
-    // Update class for correct shading/letter coloring
+    // Update class for correct shading
     const consData = (state.conservationDataCache && state.conservationDataCache.data) || {};
-    span.className = getSequenceBaseRenderClass(base, pos, {
-        enableBlack: document.getElementById('enableBlack')?.checked,
-        enableDark: document.getElementById('enableDark')?.checked,
-        enableLight: document.getElementById('enableLight')?.checked,
-        blackThresh: parseInt(document.getElementById('blackSlider')?.value || '90') / 100,
-        darkThresh: parseInt(document.getElementById('darkSlider')?.value || '70') / 100,
-        lightThresh: parseInt(document.getElementById('lightSlider')?.value || '50') / 100
-    }, consData);
-    // Update sticky names if needed
-    toggleStickyNames();
+    span.className = getSequenceBaseRenderClass(base, pos, getSequenceRenderConfig(), consData);
+
+    // Move visual cursor to new position
+    updateEditActiveCell();
 }
 
 function removeGapColumns() {
