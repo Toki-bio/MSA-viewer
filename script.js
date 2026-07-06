@@ -10016,6 +10016,7 @@ function initializeAppUI() {
         'openInNewTabButton': openSelectedInNewTab,
         'buildTreeButton': openTreeBuilder,
         'statsButton': openStats,
+        'repeatFinderMenuButton': openRepeatFinder,
         'statsCloseBtn': closeStats,
         'treeBuilderCloseBtn': closeTreeBuilder,
         'treeCopyNewickBtn': copyTreeNewick,
@@ -13304,10 +13305,25 @@ function _syncRepeatFinderModeUI() {
 }
 
 function openRepeatFinder(seqIndex, preferredMode = null) {
+    if (seqIndex === undefined || seqIndex === null || seqIndex < 0) seqIndex = 0;
     _repeatFinderSeqIndex = seqIndex;
     if (preferredMode) {
         const modeRadio = document.querySelector(`input[name="repeatMode"][value="${preferredMode}"]`);
         if (modeRadio) modeRadio.checked = true;
+    }
+    // Populate sequence selector
+    const sel = document.getElementById('repeatFinderSeqSelect');
+    if (sel) {
+        sel.innerHTML = '';
+        state.seqs.forEach((s, i) => {
+            const opt = document.createElement('option');
+            opt.value = i;
+            const name = s.header.length > 40 ? s.header.substring(0,40)+'...' : s.header;
+            opt.textContent = `${i+1}: ${name}`;
+            if (i === seqIndex) opt.selected = true;
+            sel.appendChild(opt);
+        });
+        sel.onchange = () => { _repeatFinderSeqIndex = parseInt(sel.value); };
     }
     _syncRepeatFinderModeUI();
     const modal = document.getElementById('repeatFinderModal');
@@ -13824,6 +13840,13 @@ function runRepeatAnalysis() {
     const minLen = parseInt(document.getElementById('repeatMinLen')?.value) || 5;
     const maxDiv = parseInt(document.getElementById('repeatMaxDiv')?.value) || 15;
     const seqName = state.seqs[seqIndex].header;
+    // Build gap-stripped -> alignment column mapping for highlighting
+    const fullSeq = state.seqs[seqIndex].seq;
+    const gs2al = [];
+    let gs = 0;
+    for (let c = 0; c < fullSeq.length; c++) {
+        if (!' -.'.includes(fullSeq[c])) { gs2al[gs++] = c; }
+    }
 
     resultsEl.textContent = `Searching ${mode} repeats in ${seqName} (${seq.length} bp)...`;
     setTimeout(() => {
