@@ -13790,11 +13790,36 @@ function runRepeatAnalysis() {
     resultsEl.textContent = `Searching ${mode} repeats in ${seqName} (${seq.length} bp)...`;
     setTimeout(() => {
         try {
-            const results = _findRepeats(seq, minLen, maxDiv, mode);
+            let results = _findRepeats(seq, minLen, maxDiv, mode);
             if (results.length === 0) {
                 resultsEl.textContent = `No ${mode} repeats found (min ${minLen}bp, max ${maxDiv}% divergence).`;
                 return;
             }
+            // Convert gap-stripped positions to alignment column positions
+            results = results.map(r => {
+                if (mode === 'tandem') {
+                    r.start = gs2al[r.start] ?? r.start;
+                    const endGS = r.end - 1; // last gap-stripped position
+                    r.end = gs2al[endGS] != null ? gs2al[endGS] + 1 : r.end;
+                } else {
+                    // Convert posA, posB first, then compute alignment span for posA region
+                    const origLen = r.length;
+                    r.posA = gs2al[r.posA] ?? r.posA;
+                    r.posB = gs2al[r.posB] ?? r.posB;
+                    // Alignment span for copy A: from posA to posA + origLen bases
+                    // We need the alignment column of the last base of the repeat in copy A
+                    // But we lost the original gap-stripped posA... use the sequence directly
+                    let col = r.posA;
+                    let bases = 0;
+                    const seq = fullSeq;
+                    while (col < seq.length && bases < origLen) {
+                        if (!' -.'.includes(seq[col])) bases++;
+                        col++;
+                    }
+                    r.alignEnd = col; // one past the last aligned base
+                }
+                return r;
+            });
             // Store results and render as clickable HTML table
             _lastRepeatResults = results;
             _renderRepeatResultsHTML(resultsEl, results, mode, seqName, seq.length);
@@ -13858,7 +13883,8 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
             const rid = mode + '-' + i;
             const active = hl.has(rid);
             const bg = active ? color : 'transparent';
-            html += `<tr data-repeat-id="${rid}" data-start="${r.posA}" data-end="${r.posA+r.length}" data-color="${color}"` +
+            const alignEnd = r.alignEnd != null ? r.alignEnd : (r.posA + r.length);
+            html += `<tr data-repeat-id="${rid}" data-start="${r.posA}" data-end="${alignEnd}" data-color="${color}"` +
                 ` style="cursor:pointer;background:${bg};" ` +
                 ` onmouseover="if(!this.dataset.active)this.style.background='${color}33'" ` +
                 ` onmouseout="if(!this.dataset.active)this.style.background='transparent'" ` +
@@ -13885,16 +13911,14 @@ function _toggleRepeatHighlight(row) {
     const hl = state.repeatHighlights;
     if (hl.has(rid)) {
         hl.delete(rid);
-        row.dataset.active = '';
     } else {
         hl.set(rid, { start, end, color });
-        row.dataset.active = '1';
     }
     // Re-render to apply/remove highlights
     renderAlignment({ deferConservation: true });
-    // Scroll to the highlighted region
+    // Scroll after DOM settles
     if (hl.has(rid)) {
-        _scrollToColumn(start);
+        requestAnimationFrame(() => _scrollToColumn(start));
     }
     // Refresh the results table to update row backgrounds
     const el = document.getElementById('repeatResults');
@@ -13902,8 +13926,7 @@ function _toggleRepeatHighlight(row) {
         const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
         const seqIndex = _repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0;
         const seqName = state.seqs[seqIndex]?.header || '';
-        const seq = state.seqs[seqIndex]?.seq.replace(/[-. ]/g, '') || '';
-        _renderRepeatResultsHTML(el, _lastRepeatResults, mode, seqName, seq.length);
+        _renderRepeatResultsHTML(el, _lastRepeatResults, mode, seqName);
     }
 }
 
@@ -13928,11 +13951,11 @@ function _applyLineHighlights(dataSpan) {
 function _scrollToColumn(colIndex) {
     const container = document.getElementById('alignmentContainer');
     if (!container) return;
-    // Each base is ~8.5px wide in monospace
-    const baseWidth = 8.5;
-    const nameWidth = container.querySelector('.seq-name')?.offsetWidth || 120;
-    const scrollLeft = Math.max(0, colIndex * baseWidth - 100);
-    container.scrollLeft = scrollLeft;
+    // Measure actual character width from a rendered span
+    const sampleSpan = container.querySelector('.seq-data > span[data-pos]');
+    let charW = 7.8; // fallback for 13px Courier New
+    if (sampleSpan) { charW = sampleSpan.getBoundingClientRect().width || charW; }
+    container.scrollLeft = Math.max(0, colIndex * charW - 120);
 }
 
 function _initRepeatFinderEvents() {
