@@ -8829,6 +8829,54 @@ function copySequences(gapped, isFasta, index) {
 // Sequence Editor (SeqEdit)
 // ============================================================
 
+const _seqEditUndoStack = [];
+let _seqEditUndoPos = -1;
+
+function _seqEditPushUndo() {
+    const textarea = document.getElementById('seqEditTextarea');
+    if (!textarea) return;
+    const val = textarea.value;
+    if (_seqEditUndoPos >= 0 && _seqEditUndoStack[_seqEditUndoPos] === val) return;
+    _seqEditUndoStack.length = _seqEditUndoPos + 1;
+    _seqEditUndoStack.push(val);
+    _seqEditUndoPos = _seqEditUndoStack.length - 1;
+    if (_seqEditUndoStack.length > 50) { _seqEditUndoStack.shift(); _seqEditUndoPos--; }
+    _updateSeqEditUndoButtons();
+}
+
+function _seqEditUndo() {
+    if (_seqEditUndoPos <= 0) return;
+    _seqEditUndoPos--;
+    const textarea = document.getElementById('seqEditTextarea');
+    if (textarea) textarea.value = _seqEditUndoStack[_seqEditUndoPos];
+    _updateSeqEditUndoButtons();
+    _updateSeqEditLength();
+}
+
+function _seqEditRedo() {
+    if (_seqEditUndoPos >= _seqEditUndoStack.length - 1) return;
+    _seqEditUndoPos++;
+    const textarea = document.getElementById('seqEditTextarea');
+    if (textarea) textarea.value = _seqEditUndoStack[_seqEditUndoPos];
+    _updateSeqEditUndoButtons();
+    _updateSeqEditLength();
+}
+
+function _updateSeqEditUndoButtons() {
+    const undoBtn = document.getElementById('seqEditUndoBtn');
+    const redoBtn = document.getElementById('seqEditRedoBtn');
+    if (undoBtn) undoBtn.disabled = _seqEditUndoPos < 1;
+    if (redoBtn) redoBtn.disabled = _seqEditUndoPos >= _seqEditUndoStack.length - 1;
+}
+
+function _seqEditResetUndo(initialValue) {
+    _seqEditUndoStack.length = 0;
+    _seqEditUndoStack.push(initialValue);
+    _seqEditUndoPos = 0;
+    _updateSeqEditUndoButtons();
+}
+
+
 function openSeqEditor(index) {
     if (index === undefined || index === null) {
         // Use selected rows, or open freeform if none selected
@@ -8868,6 +8916,7 @@ function openSeqEditor(index) {
     _updateSeqEditLength();
 
     showExclusiveModal('seqEditModal');
+    _seqEditResetUndo(textarea.value);
     textarea.focus();
 }
 
@@ -10004,6 +10053,14 @@ function initializeAppUI() {
     const seqEditTextarea = document.getElementById('seqEditTextarea');
     if (seqEditTextarea) {
         seqEditTextarea.addEventListener('input', _updateSeqEditLength);
+                seqEditTextarea.addEventListener('input', _seqEditPushUndo);
+        seqEditTextarea.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
+                e.preventDefault(); _seqEditUndo();
+            } else if (e.ctrlKey && (e.key === 'y' || e.key === 'Y')) {
+                e.preventDefault(); _seqEditRedo();
+            }
+        });
     }
 
     // Undo/Redo dropdown buttons
