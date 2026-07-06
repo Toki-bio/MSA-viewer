@@ -3856,6 +3856,10 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         }
     }
 
+    // Apply repeat highlights to this sequence line
+    if (state.repeatHighlights && state.repeatHighlights.size > 0) {
+        _applyLineHighlights(dataSpan);
+    }
     lineDiv.appendChild(dataSpan);
     if (state.selectedRows.has(index)) {
         lineDiv.classList.add('selected');
@@ -9416,7 +9420,7 @@ function showContextMenu(e, index) {
 
         // Repeat/TSD finder
         const repeatItem = document.createElement('div');
-        repeatItem.textContent = 'Find repeats / TSD';
+        repeatItem.textContent = 'Find repeats';
         repeatItem.addEventListener('click', () => {
             openRepeatFinder(index);
             closeContextMenu();
@@ -9973,7 +9977,6 @@ function initializeAppUI() {
         'insertGroupConsensusButton': insertGroupConsensus,
         'duplicateButton': duplicateSelected,
         'openInNewTabButton': openSelectedInNewTab,
-        'tsdFinderButton': openTsdFinder,
         'buildTreeButton': openTreeBuilder,
         'statsButton': openStats,
         'statsCloseBtn': closeStats,
@@ -13253,17 +13256,13 @@ function _initDotPlotEvents() {
 // ═══════════════════════════════════════════════════════════════════
 
 let _repeatFinderSeqIndex = -1;
-let _lastTsdResults = [];
+// Repeat highlighting state
+state.repeatHighlights = state.repeatHighlights || new Map(); // repeatId => {start, end, color}
+let _lastRepeatResults = [];
+const _repeatColorPalette = ["#ff6b6b","#ffa94d","#ffd43b","#69db7c","#4dabf7","#da77f2","#20c997","#ff8787","#74c0fc","#f783ac","#ffe066","#63e6be","#a9e34b","#e599f7","#66d9e8","#fcc419","#94d82d","#ff922b","#be4bdb","#339af0"];
 
 function _syncRepeatFinderModeUI() {
-    const selectedMode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
-    const selectedTsdMode = document.querySelector('input[name="tsdMode"]:checked')?.value || 'manual';
-    const tsdParams = document.getElementById('tsdParams');
-    const generalParams = document.getElementById('repeatParamsGeneral');
-    const manualParams = document.getElementById('tsdManualParams');
-    if (tsdParams) tsdParams.style.display = selectedMode === 'tsd' ? '' : 'none';
-    if (generalParams) generalParams.style.display = selectedMode === 'tsd' ? 'none' : '';
-    if (manualParams) manualParams.style.display = selectedMode === 'tsd' && selectedTsdMode === 'manual' ? '' : 'none';
+    // All modes use the same general params now — nothing to toggle
 }
 
 function openRepeatFinder(seqIndex, preferredMode = null) {
@@ -13777,65 +13776,6 @@ function runRepeatAnalysis() {
     if (!resultsEl) return;
     const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
 
-    if (mode === 'tsd') {
-        // TSD analysis uses ALL sequences
-        const tsdMode = document.querySelector('input[name="tsdMode"]:checked')?.value || 'manual';
-        const params = {
-            minLen: parseInt(document.getElementById('tsdMinLen')?.value) || 4,
-            maxLen: parseInt(document.getElementById('tsdMaxLen')?.value) || 20,
-            maxDiv: parseInt(document.getElementById('tsdMaxDiv')?.value) || 20,
-            flankSize: parseInt(document.getElementById('tsdFlankSize')?.value) || 30,
-        };
-        if (tsdMode === 'manual') {
-            params.upStart = parseInt(document.getElementById('tsdUpStart')?.value) || 1;
-            params.upEnd = parseInt(document.getElementById('tsdUpEnd')?.value) || 30;
-            const ds = document.getElementById('tsdDownStart')?.value;
-            const de = document.getElementById('tsdDownEnd')?.value;
-            if (ds) params.downStart = parseInt(ds);
-            if (de) params.downEnd = parseInt(de);
-        }
-        resultsEl.textContent = 'Running TSD analysis...';
-        setTimeout(() => {
-            try {
-                const results = _findTSD(state.seqs, tsdMode, params);
-                _lastTsdResults = results;
-                if (results.length === 0) {
-                    resultsEl.textContent = 'No TSDs found with current parameters.';
-                    return;
-                }
-                let out = `TSD Analysis (mode: ${tsdMode}) - ${results.length} sequences with TSD\n`;
-                out += '─'.repeat(80) + '\n';
-                out += 'Sequence'.padEnd(25) + 'Len'.padEnd(6) + 'Div%'.padEnd(8) + 'Up TSD'.padEnd(22) + 'Down TSD'.padEnd(22) + 'Cols / offset\n';
-                out += '─'.repeat(80) + '\n';
-                for (const r of results) {
-                    const name = r.seqName.length > 23 ? r.seqName.substring(0, 23) + '..' : r.seqName;
-                    const colInfo = `${r.upCols} / ${r.downCols} (${r.downstreamOffset >= 0 ? '+' : ''}${r.downstreamOffset})`;
-                    out += name.padEnd(25) + String(r.tsdLen).padEnd(6) + (r.divergence + '%').padEnd(8) + r.upTSD.padEnd(22) + r.downTSD.padEnd(22) + colInfo + '\n';
-                }
-                if (results[0]?.boundary) out += `\nBoundary: ${results[0].boundary}\n`;
-                // Consensus TSD
-                if (results.length >= 2) {
-                    out += '\n- Consensus TSD -\n';
-                    const maxLen = Math.max(...results.map(r => r.tsdLen));
-                    for (let pos = 0; pos < maxLen; pos++) {
-                        const counts = {};
-                        results.forEach(r => {
-                            const b = r.upTSD[pos];
-                            if (b) counts[b] = (counts[b] || 0) + 1;
-                        });
-                        const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-                        out += top ? top[0] : '-';
-                    }
-                    out += ' (from upstream TSDs)\n';
-                }
-                resultsEl.textContent = out;
-            } catch (e) {
-                resultsEl.textContent = `Error: ${e.message}`;
-            }
-        }, 50);
-        return;
-    }
-
     // Regular repeat analysis - use a specific sequence
     const seqIndex = _repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0;
     const seq = state.seqs[seqIndex]?.seq.replace(/[-. ]/g, '');
@@ -13855,33 +13795,144 @@ function runRepeatAnalysis() {
                 resultsEl.textContent = `No ${mode} repeats found (min ${minLen}bp, max ${maxDiv}% divergence).`;
                 return;
             }
-            let out = `${mode.charAt(0).toUpperCase() + mode.slice(1)} repeats in ${seqName} (${seq.length} bp)\n`;
-            out += `Min length: ${minLen}, Max divergence: ${maxDiv}%\n`;
-            out += '─'.repeat(80) + '\n';
-
-            if (mode === 'tandem') {
-                out += '#'.padEnd(5) + 'Start'.padEnd(8) + 'End'.padEnd(8) + 'Unit'.padEnd(8) + 'Copies'.padEnd(8) + 'Div%'.padEnd(8) + 'Repeat unit\n';
-                out += '─'.repeat(80) + '\n';
-                results.forEach((r, i) => {
-                    out += String(i + 1).padEnd(5) + String(r.start + 1).padEnd(8) + String(r.end).padEnd(8)
-                        + String(r.unitLen + 'bp').padEnd(8) + String(r.copies + '×').padEnd(8)
-                        + (r.divergence + '%').padEnd(8) + r.unit + '\n';
-                });
-            } else {
-                out += '#'.padEnd(5) + 'PosA'.padEnd(8) + 'PosB'.padEnd(8) + 'Len'.padEnd(8) + 'Div%'.padEnd(8) + 'SequenceA\n';
-                out += '─'.repeat(80) + '\n';
-                results.forEach((r, i) => {
-                    out += String(i + 1).padEnd(5) + String(r.posA + 1).padEnd(8) + String(r.posB + 1).padEnd(8)
-                        + String(r.length).padEnd(8) + (r.divergence + '%').padEnd(8)
-                        + (r.seqA.length > 50 ? r.seqA.substring(0, 50) + '...' : r.seqA) + '\n';
-                });
-            }
-            out += `\nTotal: ${results.length} ${mode} repeat(s) found.`;
-            resultsEl.textContent = out;
+            // Store results and render as clickable HTML table
+            _lastRepeatResults = results;
+            _renderRepeatResultsHTML(resultsEl, results, mode, seqName, seq.length);
         } catch (e) {
             resultsEl.textContent = `Error: ${e.message}`;
         }
     }, 50);
+}
+
+function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
+    const colors = _repeatColorPalette;
+    const hl = state.repeatHighlights;
+
+    let html = `<div style="margin-bottom:8px;font-weight:bold;font-size:12px;">${mode} repeats in ${seqName} (${seqLength} bp) — ${results.length} found</div>`;
+    html += '<div style="font-size:11px;color:#666;margin-bottom:4px;">Click a row to highlight in alignment. Click again to remove.</div>';
+
+    if (mode === 'tandem') {
+        html += `<table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr style="background:#f0f0f0;">` +
+            `<th style="text-align:left;padding:2px 4px;width:30px;">#</th>` +
+            `<th style="text-align:left;padding:2px 4px;">Colour</th>` +
+            `<th style="text-align:right;padding:2px 4px;">Start</th>` +
+            `<th style="text-align:right;padding:2px 4px;">End</th>` +
+            `<th style="text-align:right;padding:2px 4px;">Unit</th>` +
+            `<th style="text-align:right;padding:2px 4px;">Copies</th>` +
+            `<th style="text-align:right;padding:2px 4px;">Div%</th>` +
+            `<th style="text-align:left;padding:2px 4px;">Unit seq</th>` +
+            `</tr></thead><tbody>`;
+        results.forEach((r, i) => {
+            const color = colors[i % colors.length];
+            const rid = 'tandem-' + i;
+            const active = hl.has(rid);
+            const bg = active ? color : 'transparent';
+            html += `<tr data-repeat-id="${rid}" data-start="${r.start}" data-end="${r.end}" data-color="${color}"` +
+                ` style="cursor:pointer;background:${bg};" ` +
+                ` onmouseover="if(!this.dataset.active)this.style.background='${color}33'" ` +
+                ` onmouseout="if(!this.dataset.active)this.style.background='transparent'" ` +
+                ` onclick="_toggleRepeatHighlight(this)">` +
+                `<td style="padding:2px 4px;">${i+1}</td>` +
+                `<td style="padding:2px 4px;"><span style="display:inline-block;width:14px;height:14px;background:${color};border-radius:2px;vertical-align:middle;"></span></td>` +
+                `<td style="text-align:right;padding:2px 4px;">${r.start+1}</td>` +
+                `<td style="text-align:right;padding:2px 4px;">${r.end}</td>` +
+                `<td style="text-align:right;padding:2px 4px;">${r.unitLen}bp</td>` +
+                `<td style="text-align:right;padding:2px 4px;">${r.copies}×</td>` +
+                `<td style="text-align:right;padding:2px 4px;">${r.divergence}%</td>` +
+                `<td style="padding:2px 4px;font-family:monospace;">${r.unit}</td>` +
+                `</tr>`;
+        });
+        html += '</tbody></table>';
+    } else {
+        html += `<table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr style="background:#f0f0f0;">` +
+            `<th style="text-align:left;padding:2px 4px;width:30px;">#</th>` +
+            `<th style="text-align:left;padding:2px 4px;">Colour</th>` +
+            `<th style="text-align:right;padding:2px 4px;">PosA</th>` +
+            `<th style="text-align:right;padding:2px 4px;">PosB</th>` +
+            `<th style="text-align:right;padding:2px 4px;">Len</th>` +
+            `<th style="text-align:right;padding:2px 4px;">Div%</th>` +
+            `<th style="text-align:left;padding:2px 4px;">SeqA</th>` +
+            `</tr></thead><tbody>`;
+        results.forEach((r, i) => {
+            const color = colors[i % colors.length];
+            const rid = mode + '-' + i;
+            const active = hl.has(rid);
+            const bg = active ? color : 'transparent';
+            html += `<tr data-repeat-id="${rid}" data-start="${r.posA}" data-end="${r.posA+r.length}" data-color="${color}"` +
+                ` style="cursor:pointer;background:${bg};" ` +
+                ` onmouseover="if(!this.dataset.active)this.style.background='${color}33'" ` +
+                ` onmouseout="if(!this.dataset.active)this.style.background='transparent'" ` +
+                ` onclick="_toggleRepeatHighlight(this)">` +
+                `<td style="padding:2px 4px;">${i+1}</td>` +
+                `<td style="padding:2px 4px;"><span style="display:inline-block;width:14px;height:14px;background:${color};border-radius:2px;vertical-align:middle;"></span></td>` +
+                `<td style="text-align:right;padding:2px 4px;">${r.posA+1}</td>` +
+                `<td style="text-align:right;padding:2px 4px;">${r.posB+1}</td>` +
+                `<td style="text-align:right;padding:2px 4px;">${r.length}</td>` +
+                `<td style="text-align:right;padding:2px 4px;">${r.divergence}%</td>` +
+                `<td style="padding:2px 4px;font-family:monospace;">${r.seqA.length > 50 ? r.seqA.substring(0,50)+'...' : r.seqA}</td>` +
+                `</tr>`;
+        });
+        html += '</tbody></table>';
+    }
+    el.innerHTML = html;
+}
+
+function _toggleRepeatHighlight(row) {
+    const rid = row.dataset.repeatId;
+    const start = parseInt(row.dataset.start);
+    const end = parseInt(row.dataset.end);
+    const color = row.dataset.color;
+    const hl = state.repeatHighlights;
+    if (hl.has(rid)) {
+        hl.delete(rid);
+        row.dataset.active = '';
+    } else {
+        hl.set(rid, { start, end, color });
+        row.dataset.active = '1';
+    }
+    // Re-render to apply/remove highlights
+    renderAlignment({ deferConservation: true });
+    // Scroll to the highlighted region
+    if (hl.has(rid)) {
+        _scrollToColumn(start);
+    }
+    // Refresh the results table to update row backgrounds
+    const el = document.getElementById('repeatResults');
+    if (el && _lastRepeatResults.length) {
+        const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
+        const seqIndex = _repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0;
+        const seqName = state.seqs[seqIndex]?.header || '';
+        const seq = state.seqs[seqIndex]?.seq.replace(/[-. ]/g, '') || '';
+        _renderRepeatResultsHTML(el, _lastRepeatResults, mode, seqName, seq.length);
+    }
+}
+
+function _applyLineHighlights(dataSpan) {
+    const hl = state.repeatHighlights;
+    if (!hl || hl.size === 0) return;
+    const spans = dataSpan.children;
+    for (let i = 0; i < spans.length; i++) {
+        const span = spans[i];
+        const pos = parseInt(span.dataset.pos);
+        if (isNaN(pos)) continue;
+        for (const [rid, info] of hl) {
+            if (pos >= info.start && pos < info.end) {
+                span.style.backgroundColor = info.color + '66'; // 40% opacity
+                span.title = span.title ? span.title + ' | repeat region' : 'repeat region';
+                break; // first matching highlight wins
+            }
+        }
+    }
+}
+
+function _scrollToColumn(colIndex) {
+    const container = document.getElementById('alignmentContainer');
+    if (!container) return;
+    // Each base is ~8.5px wide in monospace
+    const baseWidth = 8.5;
+    const nameWidth = container.querySelector('.seq-name')?.offsetWidth || 120;
+    const scrollLeft = Math.max(0, colIndex * baseWidth - 100);
+    container.scrollLeft = scrollLeft;
 }
 
 function _initRepeatFinderEvents() {
@@ -13892,27 +13943,7 @@ function _initRepeatFinderEvents() {
     });
     const runBtn = document.getElementById('repeatRunBtn');
     if (runBtn) runBtn.addEventListener('click', runRepeatAnalysis);
-    const markBtn = document.getElementById('tsdMarkButton');
-    if (markBtn) markBtn.addEventListener('click', applyTsdMarking);
-    const undoMarkBtn = document.getElementById('tsdUndoMarkButton');
-    if (undoMarkBtn) undoMarkBtn.addEventListener('click', undoTsdMarking);
-    const markColor = document.getElementById('tsdMarkColor');
-    if (markColor) markColor.addEventListener('input', event => {
-        state.tsdMarkColor = event.target.value;
-        if (state.tsdMarks?.size && state.tsdMarkStyle === 'color') renderAlignment({ deferConservation: true });
-    });
-    const markStyle = document.getElementById('tsdMarkStyle');
-    if (markStyle) markStyle.addEventListener('change', event => {
-        state.tsdMarkStyle = event.target.value;
-        if (state.tsdMarks?.size) renderAlignment({ deferConservation: true });
-    });
-
-    // Toggle TSD params visibility
     document.querySelectorAll('input[name="repeatMode"]').forEach(radio => {
-        radio.addEventListener('change', _syncRepeatFinderModeUI);
-    });
-    // Toggle TSD mode params
-    document.querySelectorAll('input[name="tsdMode"]').forEach(radio => {
         radio.addEventListener('change', _syncRepeatFinderModeUI);
     });
     _syncRepeatFinderModeUI();

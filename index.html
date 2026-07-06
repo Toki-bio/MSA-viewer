@@ -587,8 +587,7 @@
                         <div class="action-section-label">Tools</div>
                         <div class="button-group">
                             <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
-                            <button id="tsdFinderButton" title="Find target site duplications around SINE insertion boundaries">TSD Finder</button>
-                            <button id="buildTreeButton" title="Build a phylogenetic tree from selected sequences">Tree</button>
+                                                        <button id="buildTreeButton" title="Build a phylogenetic tree from selected sequences">Tree</button>
                             <button id="statsButton" title="Alignment statistics: distance matrix, pairwise identity, summary">Statistics</button>
                             <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
                             <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
@@ -811,7 +810,7 @@ B: —</pre>
     <div id="repeatFinderModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10002;overflow:auto;">
         <div style="background:white;margin:30px auto;padding:16px;max-width:700px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <h3 style="margin:0;">Repeat &amp; TSD Finder</h3>
+                <h3 style="margin:0;">Repeat Finder</h3>
                 <button id="repeatFinderCloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button>
             </div>
             <div style="font-size:12px;margin-bottom:8px;">
@@ -820,39 +819,10 @@ B: —</pre>
                     <label><input type="radio" name="repeatMode" value="tandem" checked> Tandem repeats</label>
                     <label><input type="radio" name="repeatMode" value="direct"> Direct repeats</label>
                     <label><input type="radio" name="repeatMode" value="inverted"> Inverted repeats</label>
-                    <label><input type="radio" name="repeatMode" value="tsd"> TSD finder</label>
                 </div>
                 <div id="repeatParamsGeneral" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
                     <label>Min length: <input type="number" id="repeatMinLen" value="5" min="3" max="50" style="width:45px;"></label>
                     <label>Max divergence: <input type="number" id="repeatMaxDiv" value="15" min="0" max="50" style="width:45px;">%</label>
-                </div>
-                <div id="tsdParams" style="display:none;margin-bottom:6px;">
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px;">
-                        <strong>TSD mode:</strong>
-                        <label><input type="radio" name="tsdMode" value="manual" checked> Specify flank columns</label>
-                        <label><input type="radio" name="tsdMode" value="topseq"> Use top sequence borders</label>
-                        <label><input type="radio" name="tsdMode" value="auto"> Auto-detect</label>
-                    </div>
-                    <div id="tsdManualParams" style="display:flex;gap:8px;align-items:center;">
-                        <label>Upstream cols: <input type="number" id="tsdUpStart" value="1" min="1" style="width:55px;">–<input type="number" id="tsdUpEnd" value="30" min="1" style="width:55px;"></label>
-                        <label>Downstream cols: <input type="number" id="tsdDownStart" value="" min="1" style="width:55px;" placeholder="auto">–<input type="number" id="tsdDownEnd" value="" min="1" style="width:55px;" placeholder="auto"></label>
-                    </div>
-                    <div style="margin-top:4px;">
-                        <label>TSD length: <input type="number" id="tsdMinLen" value="4" min="2" max="30" style="width:45px;"> – <input type="number" id="tsdMaxLen" value="20" min="2" max="50" style="width:45px;"> bp</label>
-                        <label style="margin-left:8px;">Max divergence: <input type="number" id="tsdMaxDiv" value="20" min="0" max="50" style="width:45px;">%</label>
-                        <label style="margin-left:8px;">Flank size: <input type="number" id="tsdFlankSize" value="30" min="5" max="100" style="width:45px;"> bp</label>
-                    </div>
-                    <div id="tsdMarkControls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;padding-top:6px;border-top:1px solid #ddd;">
-                        <strong>Mark:</strong>
-                        <select id="tsdMarkStyle" style="height:22px;font-size:11px;">
-                            <option value="lowercase">TSD lowercase, others uppercase</option>
-                            <option value="bold">Bold/underline TSD</option>
-                            <option value="color" selected>Color TSD</option>
-                        </select>
-                        <input type="color" id="tsdMarkColor" value="#ffd54f" title="TSD mark color" style="width:34px;height:22px;padding:0;">
-                        <button id="tsdMarkButton" style="padding:3px 10px;font-size:12px;">Mark Found TSDs</button>
-                        <button id="tsdUndoMarkButton" style="padding:3px 10px;font-size:12px;">Undo TSD Marking</button>
-                    </div>
                 </div>
                 <button id="repeatRunBtn" style="padding:4px 16px;font-size:13px;background:#4CAF50;color:white;border:none;border-radius:4px;cursor:pointer;">Run Analysis</button>
             </div>
@@ -901,7 +871,7 @@ B: —</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=29"></script>
+    <script src="script.js?v=30"></script>
     <script>
 // All functionality moved to script.js
 </script>
