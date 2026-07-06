@@ -295,10 +295,16 @@
                                     <label for="edgeWindowInput" style="font-size: 11px; display: block; margin-bottom: 2px;" title="Number of consecutive columns checked at each edge for gap density">Edge Window (cols):</label>
                                     <input type="number" id="edgeWindowInput" min="1" max="50" value="15" step="1" style="width: 60px; height: 22px; padding: 2px; font-size: 11px;" title="Width of the sliding window used at alignment edges">
                                 </div>
+                                <div style="margin-bottom: 6px; display: flex; gap: 8px; align-items: center;">
+                                    <span style="font-size: 11px; font-weight: bold;">Trim mode:</span>
+                                    <label style="font-size: 11px;"><input type="radio" name="trimMode" value="hard" checked> Hard</label>
+                                    <label style="font-size: 11px;"><input type="radio" name="trimMode" value="soft"> Soft</label>
+                                </div>
                                 <div style="display: flex; gap: 4px; flex-wrap: wrap;">
                                     <button id="previewTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;" title="Show which columns would be trimmed without applying changes">Preview</button>
                                     <button id="executeTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;" title="Remove trimmed columns from the alignment (undoable)">Trim</button>
                                     <button id="undoTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px;" title="Undo the last trim operation">Undo</button>
+                                    <button id="clearSoftTrimButton" style="flex: 1; min-width: 60px; height: 22px; font-size: 10px; display: none;" title="Clear soft trim boundaries (restore all columns for clustering)">Clear Soft</button>
                                 </div>
                             </div>
                             <!-- Clustering Parameters Section -->
@@ -871,7 +877,7 @@ B: —</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=32"></script>
+    <script src="script.js?v=33"></script>
     <script>
 // All functionality moved to script.js
 </script>
