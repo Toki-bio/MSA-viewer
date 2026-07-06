@@ -922,7 +922,7 @@ function hideTooltip() {
 
 // Menu stability: delay closing menus when mouse leaves to prevent flickering
 const menuCloseDelays = new Map();
-const MENU_CLOSE_DELAY = 300; // milliseconds
+const MENU_CLOSE_DELAY = 100; // milliseconds (was 300, reduced for snappier UX)
 
 function setupMenuStability() {
     const menuSections = document.querySelectorAll('.menu-section');
