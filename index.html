@@ -167,7 +167,6 @@
                                 <span style="font-size:10px;font-weight:bold;width:70px;text-align:right;">Mode</span>
                                 <input type="radio" id="modeSingle" name="mode" value="single"><label for="modeSingle" style="font-size:10px;margin-right:5px;">Full</label>
                                 <input type="radio" id="modeBlocks" name="mode" value="blocks" checked><label for="modeBlocks" style="font-size:10px;margin-right:5px;">Block</label>
-                                <input type="radio" id="modeCompact" name="mode" value="compact"><label for="modeCompact" style="font-size:10px;margin-right:5px;">Compact</label>
                                 <input type="radio" id="modeCanvas" name="mode" value="canvas"><label for="modeCanvas" style="font-size:10px;margin-right:5px;">Canvas</label>
                                 <input type="radio" id="modeReads" name="mode" value="reads"><label for="modeReads" style="font-size:10px;">Reads</label>
                             </div>
@@ -213,10 +212,6 @@
                                     <option value="aa-clustal">Amino Acid: Clustal-like</option>
                                     <option value="aa-jalview">Amino Acid: Jalview-like</option>
                                 </select>
-                            </div>
-                            <div style="display:none;align-items:center;gap:6px;margin-left:74px;" class="compact-only">
-                                <label style="font-size:10px;"><input type="checkbox" id="compactDiffOnly"> Diffs only</label>
-                                <label class="compact-pairs-only" style="font-size:10px;"><input type="checkbox" id="compactPairs"> Pairs</label>
                             </div>
                         </div>
                     </div>
@@ -904,7 +899,7 @@ B: —</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=26"></script>
+    <script src="script.js?v=29"></script>
     <script>
 // All functionality moved to script.js
 </script>

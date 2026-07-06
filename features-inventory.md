@@ -47,7 +47,7 @@ GPU-composited Canvas 2D context. Draws only rows and columns visible in the vie
 
 **Why novel:** Handles alignments that crash pure-DOM viewers. Auto-activation removes the performance decision from the user — the tool adapts.
 
-### Compact mode (IGV-style read packing)
+### Compact mode (IGV-style read packing) � *removed, may return*
 SVG-based greedy track assignment. Each read is a horizontal bar. Mismatch positions colored red. Coverage histogram above reads. Two optional overlays:
 - **Diffs only:** 4-pixel hairlines — only variant positions visible. Hundreds of reads collapse to a single-column-width signal.
 - **Pairs:** Dashed lines connecting paired-end reads using SAM flags 0x1/0x40/0x80 at computed mate positions.
