@@ -3966,7 +3966,7 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
         const lengthSpan = document.createElement('span');
         lengthSpan.className = 'seq-length';
         // For consensus, count non-gap characters
-        const consensusStr = String(consensus || '');
+        const consensusStr = Array.isArray(consensus) ? consensus.join('') : String(consensus || '');
         const gaplessLength = (consensusStr.match(/[^-.\s]/g) || []).length;
         lengthSpan.textContent = gaplessLength;
         lengthSpan.title = `Consensus length: ${gaplessLength} (gapless)`;
