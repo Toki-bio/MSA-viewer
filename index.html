@@ -814,10 +814,10 @@ B: —</pre>
     </div>
 
     <!-- Repeat/TSD Finder Modal -->
-    <div id="repeatFinderModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10002;overflow:auto;">
-        <div style="background:white;margin:30px auto;padding:16px;max-width:700px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <h3 style="margin:0;">Repeat Finder</h3>
+    <div id="repeatFinderModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.3);z-index:10002;overflow:auto;">
+        <div id="repeatFinderModalInner" style="background:white;position:absolute;top:40px;right:20px;padding:16px;max-width:520px;width:480px;max-height:90vh;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);overflow:auto;">
+            <div id="repeatFinderDragHandle" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;cursor:move;user-select:none;padding:2px 0;" title="Drag to reposition">
+                <h3 style="margin:0;pointer-events:none;">Repeat Finder</h3>
                 <button id="repeatFinderCloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button>
             </div>
             <div style="font-size:12px;margin-bottom:8px;">
@@ -883,7 +883,7 @@ B: —</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=37"></script>
+    <script src="script.js?v=38"></script>
     <script>
 // All functionality moved to script.js
 </script>
