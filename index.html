@@ -739,7 +739,9 @@
                     <input type="checkbox" id="seqEditPadGaps" checked> Pad/trim to alignment length
                 </label>
                 <div>
-                    <button id="seqEditApplyBtn" style="padding: 4px 16px; font-size: 13px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">Apply to Alignment</button>
+                    <button id="seqEditUndoBtn" onclick="_seqEditUndo()" disabled style="padding: 4px 8px; font-size: 12px; cursor: pointer;" title="Undo last edit in textarea (Ctrl+Z)">↩ Undo</button>
+                    <button id="seqEditRedoBtn" onclick="_seqEditRedo()" disabled style="padding: 4px 8px; font-size: 12px; margin-left: 2px; cursor: pointer;" title="Redo undone edit (Ctrl+Y)">↪ Redo</button>
+                    <button id="seqEditApplyBtn" style="padding: 4px 16px; font-size: 13px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 12px;">Apply to Alignment</button>
                     <button id="seqEditCancelBtn" style="padding: 4px 16px; font-size: 13px; margin-left: 8px;">Cancel</button>
                 </div>
             </div>
