@@ -217,7 +217,6 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
       <a href="#di-sticky">5.5 Sticky Names</a>
       <a href="#di-zoom">5.6 Zoom &amp; Reset</a>
       <a href="#di-names">5.7 Name Length</a>
-      <a href="#di-compat">5.8 Compact Mode Controls</a>
     </div>
   </div>
 
@@ -321,7 +320,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <p>Key capabilities:</p>
   <ul>
-    <li><strong>View</strong> - Four visualisation modes: Full, Block, Compact (IGV-style), Canvas (for massive alignments)</li>
+    <li><strong>View</strong> - Three visualisation modes: Full, Block, Canvas (for massive alignments). <em>Planned future modes: Compact (IGV-style read packing), Circular (mtDNA wrap-around display), Tandem (stacked in-phase repeat units).</em></li>
     <li><strong>Edit</strong> - GeneDoc-style residue editing, Move/Slide tools, undo/redo</li>
     <li><strong>Analyse</strong> - Statistics, copyable distance matrices, codon analysis, dot plots, repeat/TSD finder, tree builder, restriction site search, subfamily clustering</li>
     <li><strong>Colour</strong> - Monochrome conservation shading plus nucleotide, purine/pyrimidine, ambiguity, and amino-acid colour schemes</li>
@@ -679,8 +678,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
     <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block.</td></tr>
-    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40-300 chars). Sequence names repeat per block.</td></tr>
-    <tr><td><strong>Compact</strong></td><td>Read alignments, hundreds to thousands of reads</td><td>IGV-style read-packing tracks. Each read is a horizontal bar; mismatches are red ticks. Coverage histogram at top.</td></tr>
+    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40–300 chars). Sequence names repeat per block.</td></tr>
     <tr><td><strong>Canvas</strong></td><td>Massive alignments (≥ 150,000 residues)</td><td>Auto-activates for very large datasets. Canvas-based rendering for performance.</td></tr>
   </table>
   <p>
@@ -780,20 +778,6 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     from 3 to 60. Check <strong>No limit</strong> to show full names regardless of length.
     This only affects display, not the underlying data.
   </p>
-
-  <h3 id="di-compat">5.8 Compact Mode Controls</h3>
-  <p>Two additional checkboxes appear only when Compact mode is active:</p>
-  <ul>
-    <li>
-      <strong>Diffs only</strong> - collapses reads to thin hairlines; only mismatch
-      positions are visible. Excellent for spotting variants in read piles.
-    </li>
-    <li>
-      <strong>Pairs</strong> - dashed lines connect paired-end reads. Only appears when
-      the input was SAM with paired-end flags. Click a pair line to highlight both mates.
-    </li>
-  </ul>
-</section>
 
 <!-- ════════════════════════════════════════ -->
 <section id="consensus-menu">
@@ -1210,7 +1194,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="tp-large">12.1 Large Alignments</h3>
   <ul>
-    <li>Use <strong>Compact mode</strong> for ≥ 200 sequences - it is designed for thousands of reads</li>
+    <!-- Compact mode removed -->
     <li>Turn on <strong>Highlight Diffs</strong> to visually compress conserved regions</li>
     <li>Use <strong>Block mode</strong> with smaller block sizes (20-30 columns) for very wide alignments</li>
     <li>The <strong>Canvas</strong> mode auto-activates at ≥ 150,000 total residues for maximum performance</li>

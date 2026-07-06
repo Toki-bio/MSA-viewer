@@ -229,7 +229,15 @@ function _getDragIndicatorEl() {
 function updateVersionIndicator() {
     const elVersion = document.getElementById('versionIndicator');
     if (!elVersion) return;
-    elVersion.textContent = `version ${APP_VERSION}`;
+    elVersion.textContent = 'version ...';
+    fetch('https://api.github.com/repos/Toki-bio/MSA-viewer/commits/main?per_page=1')
+        .then(r => r.json())
+        .then(data => {
+            const sha = (data.sha || '').substring(0, 7);
+            const url = data.html_url || 'https://github.com/Toki-bio/MSA-viewer';
+            elVersion.innerHTML = 'version <a href="' + url + '" target="_blank" style="color:#888;">' + sha + '</a>';
+        })
+        .catch(() => { elVersion.textContent = 'version --'; });
 }
 
 function updateControlsOffset() {
