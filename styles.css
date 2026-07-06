@@ -1259,10 +1259,6 @@ span.column-selected {
     color: white !important;
     opacity: 1 !important;
 }
-/* Soft-trim visual indicators — dimmed columns excluded from clustering */
-.soft-trim-left { opacity: 0.35; background-color: #f0f0f0 !important; }
-.soft-trim-right { opacity: 0.35; background-color: #f0f0f0 !important; }
-
 .error-message {
     color: red;
     font-weight: bold;
