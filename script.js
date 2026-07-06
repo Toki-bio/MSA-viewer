@@ -3083,8 +3083,6 @@ function renderAlignment(options = {}) {
         alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
         return;
     }
-    // Ensure all sequences padded to same length before rendering
-    normalizeAlignmentLengths();
     // Reads mode: delegate to BAM renderer
     if (document.getElementById('modeReads')?.checked) {
         if (!bamState.reads || bamState.reads.length === 0) {
