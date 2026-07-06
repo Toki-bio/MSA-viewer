@@ -13331,8 +13331,36 @@ function openRepeatFinder(seqIndex, preferredMode = null) {
     }
     _syncRepeatFinderModeUI();
     const modal = document.getElementById('repeatFinderModal');
-    if (modal) showExclusiveModal('repeatFinderModal');
+    if (modal) {
+        showExclusiveModal('repeatFinderModal');
+        _initRepeatFinderDrag();
+    }
     document.getElementById('repeatResults').textContent = 'Click "Run Analysis" to start.';
+}
+
+function _initRepeatFinderDrag() {
+    const inner = document.getElementById('repeatFinderModalInner');
+    const handle = document.getElementById('repeatFinderDragHandle');
+    if (!inner || !handle) return;
+    let dragX = 0, dragY = 0, startX = 0, startY = 0;
+    handle.onmousedown = (e) => {
+        if (e.target.tagName === 'BUTTON') return;
+        e.preventDefault();
+        startX = e.clientX;
+        startY = e.clientY;
+        dragX = inner.offsetLeft;
+        dragY = inner.offsetTop;
+        document.onmousemove = (me) => {
+            me.preventDefault();
+            inner.style.left = (dragX + me.clientX - startX) + 'px';
+            inner.style.top = (dragY + me.clientY - startY) + 'px';
+            inner.style.right = 'auto';
+        };
+        document.onmouseup = () => {
+            document.onmousemove = null;
+            document.onmouseup = null;
+        };
+    };
 }
 
 function openTsdFinder() {
@@ -14008,7 +14036,7 @@ function _applyLineHighlights(dataSpan) {
         if (isNaN(pos)) continue;
         for (const [rid, info] of hl) {
             if (pos >= info.start && pos < info.end) {
-                span.style.backgroundColor = info.color + '66'; // 40% opacity
+                span.style.setProperty('background-color', info.color + '66', 'important');
                 span.title = span.title ? span.title + ' | repeat region' : 'repeat region';
                 break; // first matching highlight wins
             }
