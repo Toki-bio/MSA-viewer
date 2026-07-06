@@ -3961,6 +3961,10 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
         span.addEventListener('mouseout', () => hideTooltip());
         dataSpan.appendChild(span);
     }
+    // Apply repeat highlights to consensus line too
+    if (state.repeatHighlights && state.repeatHighlights.size > 0) {
+        _applyLineHighlights(dataSpan);
+    }
     // Add consensus length at the end (only for last block and using gapless length)
     if (showLength) {
         const lengthSpan = document.createElement('span');
@@ -13837,7 +13841,7 @@ function runRepeatAnalysis() {
         resultsEl.textContent = 'No sequence available.';
         return;
     }
-    const minLen = parseInt(document.getElementById('repeatMinLen')?.value) || 5;
+    const minLen = parseInt(document.getElementById('repeatMinLen')?.value) || 10;
     const maxDiv = parseInt(document.getElementById('repeatMaxDiv')?.value) || 15;
     const seqName = state.seqs[seqIndex].header;
     // Build gap-stripped -> alignment column mapping for highlighting
@@ -13859,14 +13863,17 @@ function runRepeatAnalysis() {
             // Convert gap-stripped positions to alignment column positions
             results = results.map(r => {
                 if (mode === 'tandem') {
-                    r.start = gs2al[r.start] ?? r.start;
-                    const endGS = r.end - 1; // last gap-stripped position
-                    r.end = gs2al[endGS] != null ? gs2al[endGS] + 1 : r.end;
+                    const startGS = r.start;
+                    r.start = (startGS >= 0 && startGS < gs2al.length) ? (gs2al[startGS] ?? r.start) : r.start;
+                    const endGS = r.end - 1;
+                    r.end = (endGS >= 0 && endGS < gs2al.length && gs2al[endGS] !== undefined) ? gs2al[endGS] + 1 : r.end;
                 } else {
                     // Convert posA, posB first, then compute alignment span for posA region
                     const origLen = r.length;
-                    r.posA = gs2al[r.posA] ?? r.posA;
-                    r.posB = gs2al[r.posB] ?? r.posB;
+                    const gsA = r.posA;
+                    r.posA = (gsA >= 0 && gsA < gs2al.length) ? (gs2al[gsA] ?? r.posA) : r.posA;
+                    const gsB = r.posB;
+                    r.posB = (gsB >= 0 && gsB < gs2al.length) ? (gs2al[gsB] ?? r.posB) : r.posB;
                     // Alignment span for copy A: from posA to posA + origLen bases
                     // We need the alignment column of the last base of the repeat in copy A
                     // But we lost the original gap-stripped posA... use the sequence directly
