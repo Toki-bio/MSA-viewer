@@ -90,7 +90,6 @@ const state = {
     },
     trimBoundaries: null,
     trimBackup: null,
-    softTrimBoundaries: null, // { leftTrimEnd, rightTrimStart } — columns excluded from clustering only
     groupConsensusCount: 0,
     _statsMatrices: null
 };
@@ -3196,12 +3195,7 @@ function renderAlignment(options = {}) {
     const consensusPosEl = document.querySelector('input[name="consensusPosition"]:checked');
     const consensusPosition = consensusPosEl ? consensusPosEl.value : 'top';
     if (showConsensus) {
-        let msg = `Consensus: ${consensusPosition} | ${consensus.length} cols`;
-        if (state.softTrimBoundaries) {
-            const stb = state.softTrimBoundaries;
-            msg += ` [soft trim: -${stb.leftTrimEnd + 1}L -${len - stb.rightTrimStart}R]`;
-        }
-        document.getElementById('statusMessage').textContent = msg;
+        document.getElementById('statusMessage').textContent = `Consensus: ${consensusPosition} | ${consensus.length} cols`;
     }
 
     // *** NEW: Pre-calculate conservation for ALL columns ONCE ***
@@ -3884,9 +3878,8 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
     const dataSpan = document.createElement('div');
     dataSpan.className = 'seq-data';
 
-    // Get trim boundaries (preview) + soft trim boundaries (persistent marker)
-    const trimBounds = state.trimBoundaries || state.softTrimBoundaries || {};
-    const isSoft = !state.trimBoundaries && !!state.softTrimBoundaries;
+    // Get trim boundaries if available
+    const trimBounds = state.trimBoundaries || {};
     const leftTrimEnd = trimBounds.leftTrimEnd !== undefined ? trimBounds.leftTrimEnd : -1;
     const rightTrimStart = trimBounds.rightTrimStart !== undefined ? trimBounds.rightTrimStart : Infinity;
 
@@ -3914,13 +3907,13 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
         span.className = baseClass;
         span.textContent = displayBase;
 
-        // Apply trim region coloring (using ABSOLUTE position indices)
+        // Apply trim region coloring (using ABSOLUTE position indices, not relative to block)
         if (pos <= leftTrimEnd) {
-            span.classList.add(isSoft ? 'soft-trim-left' : 'trim-left');
-            span.title = isSoft ? 'Soft-trimmed (excluded from clustering)' : 'Trimmed (left)';
+            span.classList.add('trim-left');
+            span.title = 'Trimmed (left)';
         } else if (pos >= rightTrimStart) {
-            span.classList.add(isSoft ? 'soft-trim-right' : 'trim-right');
-            span.title = isSoft ? 'Soft-trimmed (excluded from clustering)' : 'Trimmed (right)';
+            span.classList.add('trim-right');
+            span.title = 'Trimmed (right)';
         }
 
         // Tooltip on hover: show coverage and per-nucleotide percentages for this column
@@ -6727,29 +6720,7 @@ function executeTrimming() {
         return;
     }
 
-    const trimMode = document.querySelector('input[name="trimMode"]:checked')?.value || 'hard';
-    const leftTrimEnd = state.trimBoundaries.leftTrimEnd;
-    const rightTrimStart = state.trimBoundaries.rightTrimStart;
-    const alnLen = state.seqs[0].seq.length;
-    const leftRemoved = leftTrimEnd + 1;
-    const rightRemoved = alnLen - rightTrimStart;
-
-    if (trimMode === 'soft') {
-        // Soft trim: mark columns as excluded without deleting them
-        state.softTrimBoundaries = { leftTrimEnd, rightTrimStart };
-        state.trimBackup = null; // no hard trim backup
-        const clearBtn = document.getElementById('clearSoftTrimButton');
-        if (clearBtn) clearBtn.style.display = '';
-        const status = `✓ Soft trim: ${leftRemoved}L + ${rightRemoved}R marked for clustering. Alignment unchanged.`;
-        updateClusteringStatus(status);
-        showMessage(status, 3000);
-        state.trimBoundaries = null;
-        debounceRender();
-        return;
-    }
-
-    // Hard trim: actually delete columns
-    state.softTrimBoundaries = null; // clear any previous soft trim
+    // Backup original sequences before trimming
     state.trimBackup = state.seqs.map(seq => ({
         header: seq.header,
         fullHeader: seq.fullHeader,
@@ -6757,29 +6728,31 @@ function executeTrimming() {
         gaplessPositions: seq.gaplessPositions
     }));
 
+    const leftTrimEnd = state.trimBoundaries.leftTrimEnd;
+    const rightTrimStart = state.trimBoundaries.rightTrimStart;
+
     const trimStart = leftTrimEnd + 1;
     const trimEnd = rightTrimStart;
+    const alnLen = state.seqs[0].seq.length;
 
+    // Trim each sequence
     for (let i = 0; i < state.seqs.length; i++) {
         const seq = state.seqs[i].seq;
         state.seqs[i].seq = seq.substring(trimStart, trimEnd);
+        // Recalculate gapless positions
         state.seqs[i].gaplessPositions = calculateGaplessPositions(state.seqs[i].seq);
     }
 
+    const leftRemoved = trimStart;
+    const rightRemoved = alnLen - trimEnd;
     const newLen = trimEnd - trimStart;
-    const status = `✓ Hard trim: ${leftRemoved}L + ${rightRemoved}R = ${leftRemoved + rightRemoved} cols. New length: ${newLen}`;
+
+    const status = `✓ Trimmed: ${leftRemoved}L + ${rightRemoved}R = ${leftRemoved + rightRemoved} cols. New length: ${newLen}`;
     updateClusteringStatus(status);
     showMessage(status, 3000);
-    state.trimBoundaries = null;
-    debounceRender();
-}
 
-function clearSoftTrimming() {
-    state.softTrimBoundaries = null;
-    const clearBtn = document.getElementById('clearSoftTrimButton');
-    if (clearBtn) clearBtn.style.display = 'none';
-    updateClusteringStatus('Soft trim cleared — all columns available for clustering');
-    showMessage('Soft trim boundaries removed.', 2000);
+    // Clear visual trim indicators
+    state.trimBoundaries = null;
     debounceRender();
 }
 
@@ -6792,7 +6765,6 @@ function undoTrimming() {
     state.seqs = state.trimBackup.map(seq => ({...seq}));
     state.trimBackup = null;
     state.trimBoundaries = null;
-    state.softTrimBoundaries = null;
 
     updateClusteringStatus('✓ Trimming reverted');
     showMessage('Trimming reverted - original alignment restored', 3000);
@@ -6805,19 +6777,13 @@ function clusterSequences() {
         return;
     }
 
-    updateClusteringStatus('Running clustering algorithm...' + (state.softTrimBoundaries ? ' (soft trim active)' : ''));
+    updateClusteringStatus('Running clustering algorithm...');
 
-    // Prepare sequences for clustering — respect soft trim if active
-    const stb = state.softTrimBoundaries;
-    const seqsForClustering = state.seqs.map(seq => {
-        let s = seq.seq;
-        if (stb) {
-            const leftEnd = (stb.leftTrimEnd >= 0) ? stb.leftTrimEnd + 1 : 0;
-            const rightStart = (stb.rightTrimStart > leftEnd) ? stb.rightTrimStart : s.length;
-            s = s.substring(leftEnd, rightStart);
-        }
-        return { id: seq.header || seq.name || 'unnamed', seq: s };
-    });
+    // Prepare sequences for clustering
+    const seqsForClustering = state.seqs.map(seq => ({
+        id: seq.header || seq.name || 'unnamed',
+        seq: seq.seq
+    }));
 
     // Get clustering parameters from UI
     const clusterParams = getClusteringParameters();
@@ -10034,7 +10000,6 @@ function initializeAppUI() {
         'previewTrimButton': previewTrimming,
         'executeTrimButton': executeTrimming,
         'undoTrimButton': undoTrimming,
-        'clearSoftTrimButton': clearSoftTrimming,
         'clusteringSavePresetButton': saveClusteringPreset,
         'clusteringLoadPresetButton': loadClusteringPreset,
         'clusteringOptimalPresetButton': createOptimalPreset,
@@ -14003,17 +13968,6 @@ function _initRepeatFinderEvents() {
     });
     const runBtn = document.getElementById('repeatRunBtn');
     if (runBtn) runBtn.addEventListener('click', runRepeatAnalysis);
-        // Trim mode toggle: show/hide Clear Soft button
-    document.querySelectorAll('input[name="trimMode"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            const clearBtn = document.getElementById('clearSoftTrimButton');
-            const isSoft = radio.value === 'soft';
-            if (clearBtn) {
-                clearBtn.style.display = (isSoft && state.softTrimBoundaries) ? '' : 'none';
-            }
-        });
-    });
-
     document.querySelectorAll('input[name="repeatMode"]').forEach(radio => {
         radio.addEventListener('change', _syncRepeatFinderModeUI);
     });
