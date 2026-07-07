@@ -735,7 +735,8 @@ input[type="number"] {
     background: white;
     font-family: 'Courier New', monospace;
     /* Performance: GPU compositing hint for large alignments */
-    will-change: scroll-position;
+    will-change: scroll-position, top;
+    transition: top 0.12s ease-out;
     line-height: 1.0;
     white-space: pre;
     border: 1px solid #ddd;
@@ -1584,7 +1585,7 @@ span.column-selected {
     cursor: pointer;
     z-index: 100;
     text-align: center;
-    transition: background 0.15s;
+    transition: background 0.15s, opacity 0.12s ease-out;
     font-size: 10px;
     color: #666;
     user-select: none;
