@@ -13112,13 +13112,21 @@ function _dotRender() {
     const overlay = document.getElementById('dotPlotOverlay');
     if (!canvas || !overlay) return;
     const ctx = canvas.getContext('2d', { alpha: false });
+    const dpr = window.devicePixelRatio || 1;
     const z = S.zoom;
     const plotW = Math.round(S.cols * z);
     const plotH = Math.round(S.rows * z);
     const totalW = DOT_AXIS_PAD + plotW + 1;
     const totalH = DOT_AXIS_PAD + plotH + 1;
-    canvas.width = totalW; canvas.height = totalH;
-    overlay.width = totalW; overlay.height = totalH;
+    // HiDPI: scale backing store, keep CSS size at logical pixels
+    canvas.width = totalW * dpr; canvas.height = totalH * dpr;
+    canvas.style.width = totalW + 'px'; canvas.style.height = totalH + 'px';
+    overlay.width = totalW * dpr; overlay.height = totalH * dpr;
+    overlay.style.width = totalW + 'px'; overlay.style.height = totalH + 'px';
+    ctx.scale(dpr, dpr);
+    // overlay context also needs HiDPI scaling
+    const oCtx = overlay.getContext('2d');
+    oCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, totalW, totalH);
@@ -13182,12 +13190,13 @@ function _dotFitView() {
 function _dotDetectRegions() {
     const S = _dotPlotState;
     if (!S.scores) return;
-    const minRun = 15; // minimum diagonal run length
+    // Adaptive minRun: at least 6bp, up to 15, proportional to sequence length
+    const minRun = Math.max(6, Math.min(15, Math.floor(Math.min(S.rows, S.cols) * 0.12)));
     const minScore = S.threshold * S.windowSize * 0.9;
     const regions = [];
-    const visited = new Set();
 
     for (let d = -(S.rows - 1); d < S.cols; d++) {
+        if (d === 0) continue; // skip self-match (main diagonal)
         let runStart = -1, runSum = 0, runLen = 0;
         const startR = d < 0 ? -d : 0;
         const endR = Math.min(S.rows, S.cols - d);
@@ -13274,8 +13283,10 @@ function _dotDrawOverlay(row, col) {
     const overlay = document.getElementById('dotPlotOverlay');
     if (!overlay) return;
     const oCtx = overlay.getContext('2d');
-    const w = overlay.width, h = overlay.height;
-    oCtx.clearRect(0, 0, w, h);
+    // Use logical dimensions (CSS pixels), context is already scaled by dpr
+    const totalW = DOT_AXIS_PAD + S.cols * S.zoom + 1;
+    const totalH = DOT_AXIS_PAD + S.rows * S.zoom + 1;
+    oCtx.clearRect(0, 0, totalW, totalH);
     if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
     const z = S.zoom;
     const plotW = S.cols * z, plotH = S.rows * z;
@@ -13408,7 +13419,10 @@ function _initDotPlotEvents() {
         overlay.addEventListener('mouseleave', () => {
             if (hoverRaf) { cancelAnimationFrame(hoverRaf); hoverRaf = 0; }
             const oCtx = overlay.getContext('2d');
-            oCtx.clearRect(0, 0, overlay.width, overlay.height);
+            const S = _dotPlotState;
+            const tw = DOT_AXIS_PAD + S.cols * S.zoom + 1;
+            const th = DOT_AXIS_PAD + S.rows * S.zoom + 1;
+            oCtx.clearRect(0, 0, tw, th);
             _dotPlotState.lastRow = _dotPlotState.lastCol = -1;
             _dotClearHoverInfo();
             // Redraw pinned marker if present
