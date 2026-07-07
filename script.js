@@ -13043,20 +13043,22 @@ function _dotUpdateHoverInfo(row, col) {
             if (n < threshold) break;
             rFwd++; cFwd++;
         }
-        // Extend a few extra positions for context
+        // Extract matched region + context, making both slices equal length
         const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 5;
+        const matchLen = rFwd - rBack; // length of matching region
+        const maxSlice = matchLen + 2 * context;
         const aStart = Math.max(0, rBack - context);
-        const aEnd = Math.min(S.seqA.length, rFwd + context);
         const bStart = Math.max(0, cBack - context);
-        const bEnd = Math.min(S.seqB.length, cFwd + context);
+        const availA = S.seqA.length - aStart;
+        const availB = S.seqB.length - bStart;
+        const sliceLen = Math.min(maxSlice, availA, availB);
 
-        const aSlice = S.seqA.slice(aStart, aEnd);
-        const bSlice = S.seqB.slice(bStart, bEnd);
-        const len = Math.min(aSlice.length, bSlice.length);
+        const aSlice = S.seqA.slice(aStart, aStart + sliceLen);
+        const bSlice = S.seqB.slice(bStart, bStart + sliceLen);
         const guide = [];
-        for (let i = 0; i < len; i++) guide.push(aSlice[i] === bSlice[i] ? '|' : ' ');
+        for (let i = 0; i < sliceLen; i++) guide.push(aSlice[i] === bSlice[i] ? '|' : ' ');
 
-        // Mark the matched core region
+        // Mark the matched core region with brackets
         const matchStartA = rBack - aStart;
         const matchEndA = rFwd - aStart;
         let guideArr = guide.join('');
@@ -13313,36 +13315,34 @@ function _dotDrawOverlay(row, col) {
     const overlay = document.getElementById('dotPlotOverlay');
     if (!overlay) return;
     const oCtx = overlay.getContext('2d');
-    // Use logical dimensions (CSS pixels), context is already scaled by dpr
-    const totalW = DOT_AXIS_PAD + S.cols * S.zoom + 1;
-    const totalH = DOT_AXIS_PAD + S.rows * S.zoom + 1;
+    const z = S.zoom;
+    const plotW = Math.round(S.cols * z), plotH = Math.round(S.rows * z);
+    const totalW = DOT_AXIS_PAD + plotW + 1;
+    const totalH = DOT_AXIS_PAD + plotH + 1;
     oCtx.clearRect(0, 0, totalW, totalH);
     if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
-    const z = S.zoom;
-    const plotW = S.cols * z, plotH = S.rows * z;
-    const cx = DOT_AXIS_PAD + (col + 0.5) * z;
-    const cy = DOT_AXIS_PAD + (row + 0.5) * z;
-    oCtx.strokeStyle = 'rgba(80,160,255,0.7)'; oCtx.lineWidth = 1;
+    const colW = plotW / S.cols, rowH = plotH / S.rows;
+    // Crosshair
     oCtx.beginPath();
     oCtx.moveTo(DOT_AXIS_PAD, cy); oCtx.lineTo(DOT_AXIS_PAD + plotW, cy);
     oCtx.moveTo(cx, DOT_AXIS_PAD); oCtx.lineTo(cx, DOT_AXIS_PAD + plotH);
     oCtx.stroke();
-    // Diagonal trace
+    // Diagonal trace — snap to pixel grid for crisp alignment with dot image
     const range = S.scoreMax - S.scoreMin || 1;
     oCtx.fillStyle = 'rgba(100,230,160,0.85)';
-    const pxSz = Math.max(1, Math.round(z));
+    const pxSz = Math.max(1, Math.round(colW));
     let r = row, c = col;
     while (r >= 0 && c >= 0) {
         const n = (S.scores[r * S.cols + c] - S.scoreMin) / range;
         if (n < S.threshold) break;
-        oCtx.fillRect(DOT_AXIS_PAD + c * z, DOT_AXIS_PAD + r * z, pxSz, pxSz);
+        oCtx.fillRect(DOT_AXIS_PAD + Math.floor(c * colW), DOT_AXIS_PAD + Math.floor(r * rowH), pxSz, pxSz);
         r--; c--;
     }
     r = row + 1; c = col + 1;
     while (r < S.rows && c < S.cols) {
         const n = (S.scores[r * S.cols + c] - S.scoreMin) / range;
         if (n < S.threshold) break;
-        oCtx.fillRect(DOT_AXIS_PAD + c * z, DOT_AXIS_PAD + r * z, pxSz, pxSz);
+        oCtx.fillRect(DOT_AXIS_PAD + Math.floor(c * colW), DOT_AXIS_PAD + Math.floor(r * rowH), pxSz, pxSz);
         r++; c++;
     }
     // Position labels
@@ -13354,8 +13354,8 @@ function _dotDrawOverlay(row, col) {
 
     // Draw pinned position marker (red crosshair) if set
     if (S.pinnedRow >= 0 && S.pinnedCol >= 0) {
-        const pcx = DOT_AXIS_PAD + (S.pinnedCol + 0.5) * z;
-        const pcy = DOT_AXIS_PAD + (S.pinnedRow + 0.5) * z;
+        const pcx = DOT_AXIS_PAD + (S.pinnedCol + 0.5) * colW;
+        const pcy = DOT_AXIS_PAD + (S.pinnedRow + 0.5) * rowH;
         oCtx.strokeStyle = 'rgba(220,50,50,0.85)'; oCtx.lineWidth = 1.5;
         oCtx.beginPath();
         oCtx.moveTo(DOT_AXIS_PAD, pcy); oCtx.lineTo(DOT_AXIS_PAD + plotW, pcy);
@@ -13364,7 +13364,7 @@ function _dotDrawOverlay(row, col) {
         // Red square around pinned cell
         oCtx.strokeStyle = 'rgba(220,50,50,0.9)';
         oCtx.lineWidth = 2;
-        oCtx.strokeRect(DOT_AXIS_PAD + S.pinnedCol * z - 1, DOT_AXIS_PAD + S.pinnedRow * z - 1, z + 2, z + 2);
+        oCtx.strokeRect(DOT_AXIS_PAD + Math.floor(S.pinnedCol * colW) - 1, DOT_AXIS_PAD + Math.floor(S.pinnedRow * rowH) - 1, colW + 2, rowH + 2);
         // Label
         oCtx.fillStyle = 'rgba(220,50,50,0.95)'; oCtx.font = 'bold 10px system-ui';
         oCtx.textAlign = 'left'; oCtx.textBaseline = 'bottom';
@@ -13450,8 +13450,10 @@ function _initDotPlotEvents() {
             if (hoverRaf) { cancelAnimationFrame(hoverRaf); hoverRaf = 0; }
             const oCtx = overlay.getContext('2d');
             const S = _dotPlotState;
-            const tw = DOT_AXIS_PAD + S.cols * S.zoom + 1;
-            const th = DOT_AXIS_PAD + S.rows * S.zoom + 1;
+            const z = S.zoom;
+            const pW = Math.round(S.cols * z), pH = Math.round(S.rows * z);
+            const tw = DOT_AXIS_PAD + pW + 1;
+            const th = DOT_AXIS_PAD + pH + 1;
             oCtx.clearRect(0, 0, tw, th);
             _dotPlotState.lastRow = _dotPlotState.lastCol = -1;
             _dotClearHoverInfo();
@@ -13541,16 +13543,34 @@ function _initDotPlotEvents() {
                 fasta = `>${region.nameA}_${region.aStart + 1}-${region.aStart + region.aSlice.length}\n${region.aSlice}\n` +
                         `>${region.nameB}_${region.bStart + 1}-${region.bStart + region.bSlice.length}\n${region.bSlice}`;
             } else {
-                // Use pinned position + context radius
-                const radius = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 20;
-                const aStart = Math.max(0, S.pinnedRow - radius);
-                const aEnd = Math.min(S.seqA.length, S.pinnedRow + radius + 1);
-                const bStart = Math.max(0, S.pinnedCol - radius);
-                const bEnd = Math.min(S.seqB.length, S.pinnedCol + radius + 1);
-                const aSlice = S.seqA.slice(aStart, aEnd);
-                const bSlice = S.seqB.slice(bStart, bEnd);
-                fasta = `>${S.nameA}_${aStart + 1}-${aEnd}\n${aSlice}\n` +
-                        `>${S.nameB}_${bStart + 1}-${bEnd}\n${bSlice}`;
+                // Use pinned position — walk diagonal to find match extent
+                const range = S.scoreMax - S.scoreMin || 1;
+                const threshold = S.threshold;
+                let rBack = S.pinnedRow, cBack = S.pinnedCol;
+                while (rBack >= 0 && cBack >= 0) {
+                    const n = (S.scores[rBack * S.cols + cBack] - S.scoreMin) / range;
+                    if (n < threshold) break;
+                    rBack--; cBack--;
+                }
+                rBack++; cBack++;
+                let rFwd = S.pinnedRow + 1, cFwd = S.pinnedCol + 1;
+                while (rFwd < S.rows && cFwd < S.cols) {
+                    const n = (S.scores[rFwd * S.cols + cFwd] - S.scoreMin) / range;
+                    if (n < threshold) break;
+                    rFwd++; cFwd++;
+                }
+                const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 5;
+                const matchLen = rFwd - rBack;
+                const maxSlice = matchLen + 2 * context;
+                const aStart = Math.max(0, rBack - context);
+                const bStart = Math.max(0, cBack - context);
+                const availA = S.seqA.length - aStart;
+                const availB = S.seqB.length - bStart;
+                const sliceLen = Math.min(maxSlice, availA, availB);
+                const aSlice = S.seqA.slice(aStart, aStart + sliceLen);
+                const bSlice = S.seqB.slice(bStart, bStart + sliceLen);
+                fasta = `>${S.nameA}_${aStart + 1}-${aStart + sliceLen}\n${aSlice}\n` +
+                        `>${S.nameB}_${bStart + 1}-${bStart + sliceLen}\n${bSlice}`;
             }
             const len = fasta.split('\n')[1]?.length || 0;
             navigator.clipboard.writeText(fasta).then(() => {
