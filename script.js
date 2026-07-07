@@ -13028,8 +13028,12 @@ function _dot2Compute() {
         D.rows = e.data.rows; D.cols = e.data.cols;
         D.scoreMin = e.data.min; D.scoreMax = e.data.max;
         _dot2BuildImage();
-        // Defer fitView until modal layout is complete
-        requestAnimationFrame(() => { _dot2FitView(); });
+        // Defer fitView until modal is visible and laid out
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                _dot2FitView();
+            });
+        });
         const ms = performance.now() - t0;
         const el = document.getElementById('dotPlotV2Status');
         if (el) el.textContent = `${D.rows}×${D.cols} in ${ms<1000?ms.toFixed(0)+'ms':(ms/1000).toFixed(1)+'s'}`;
@@ -13772,13 +13776,14 @@ function _initDotPlotV2Events() {
     if (ctxEl) ctxEl.addEventListener('change', () => _dot2UpdateInfo(_D2.hoverRow, _D2.hoverCol));
 
     // Canvas events
+    const AX_PLOT = 52, AX_TOP = 14;
     if (cv) {
         cv.addEventListener('mousemove', (e) => {
             if (!_D2.scores) return;
             const rect = cv.getBoundingClientRect();
-            const AX = 50;
-            const col = Math.floor((e.clientX - rect.left - AX) / _D2.zoom);
-            const row = Math.floor((e.clientY - rect.top - AX) / _D2.zoom);
+            // rect and clientX/Y are in CSS pixels; AX_PLOT and zoom are in logical (CSS) units
+            const col = Math.floor((e.clientX - rect.left - AX_PLOT) / _D2.zoom);
+            const row = Math.floor((e.clientY - rect.top - AX_PLOT - AX_TOP) / _D2.zoom);
             if (row < 0 || col < 0 || row >= _D2.rows || col >= _D2.cols) {
                 if (_D2.hoverRow >= 0) { _D2.hoverRow = _D2.hoverCol = -1; _dot2Render(); _dot2ClearInfo(); }
                 return;
@@ -13796,9 +13801,8 @@ function _initDotPlotV2Events() {
         cv.addEventListener('click', (e) => {
             if (!_D2.scores) return;
             const rect = cv.getBoundingClientRect();
-            const AX = 50;
-            const col = Math.floor((e.clientX - rect.left - AX) / _D2.zoom);
-            const row = Math.floor((e.clientY - rect.top - AX) / _D2.zoom);
+            const col = Math.floor((e.clientX - rect.left - AX_PLOT) / _D2.zoom);
+            const row = Math.floor((e.clientY - rect.top - (AX_PLOT + AX_TOP)) / _D2.zoom);
             if (row < 0 || col < 0 || row >= _D2.rows || col >= _D2.cols) return;
             _D2.pinnedRow = row; _D2.pinnedCol = col;
             _D2.hoverRow = row; _D2.hoverCol = col;
@@ -13825,6 +13829,15 @@ function _initDotPlotV2Events() {
             if (modal && modal.style.display !== 'none') { modal.style.display = 'none'; e.stopPropagation(); }
         }
     });
+
+    // Auto-refit when viewport or window resizes
+    if (vp) {
+        new ResizeObserver(() => {
+            if (_D2.scores && el('dotPlotV2Modal')?.style.display !== 'none') {
+                _dot2FitView();
+            }
+        }).observe(vp);
+    }
 }
 
 function _initDotPlotEvents() {
