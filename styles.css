@@ -241,10 +241,8 @@ html {
     max-height: none;
 }
 
-/* Show control groups on hover */
-.menu-section:hover .control-group,
-.section-header:hover + .control-group,
-.control-group:hover {
+/* Top menu dropdowns are JS-controlled to avoid overlap when switching sections */
+#controls .menu-section.menu-open .control-group {
     display: block !important;
 }
 
@@ -255,20 +253,15 @@ html {
     pointer-events: auto;
 }
 
-/* Keep menu open when hovering anywhere in control-group area */
-.menu-section:hover,
+/* Raise active menu above neighbours */
+#controls .menu-section.menu-open,
 .menu-section:has(.control-group:hover),
 .menu-section.hover-active {
     z-index: 10001;
 }
 
-/* Show control groups when menu is open via JS (stable state) */
-.menu-section.menu-open .control-group {
-    display: block !important;
-}
-
-/* Add a larger invisible bridge to prevent hover breaking */
-.menu-section:hover::after {
+/* Invisible bridge between header and dropdown to prevent hover gaps */
+#controls .menu-section.menu-open::after {
     content: '';
     position: absolute;
     top: 100%;
@@ -276,19 +269,8 @@ html {
     right: -20px;
     height: 80px; /* Cover entire autocomplete popup area */
     z-index: 9998;
-    pointer-events: auto; /* Allow interaction through bridge */
+    pointer-events: auto;
     background: transparent;
-}
-
-/* Keep bridge visible for open menus */
-.menu-section.menu-open::after {
-    content: '';
-    position: absolute;
-    top: 100%;
-    left: -20px;
-    right: -20px;
-    height: 80px;
-    z-index: 9998;
 }
 
 .color-picker {
@@ -985,10 +967,7 @@ body.row-reorder-active .seq-name.drag-source:hover {
 #versionIndicator a { color: #888; }
 #versionIndicator a:hover { color: #333; text-decoration: underline; }
 
-body.suppress-menu-hover .menu-section:hover .control-group,
-body.suppress-menu-hover .section-header:hover + .control-group,
-body.suppress-menu-hover .control-group:hover,
-body.suppress-menu-hover .menu-section.menu-open .control-group {
+body.suppress-menu-hover #controls .menu-section.menu-open .control-group {
     display: none !important;
 }
 
