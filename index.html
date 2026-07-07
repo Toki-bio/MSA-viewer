@@ -832,7 +832,7 @@
             <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px;flex-wrap:wrap;">
                 <label>Window: <input type="number" id="dotPlotWindow" value="9" min="1" max="61" step="2" style="width:45px;"></label>
                 <label>Threshold: <input type="range" id="dotPlotThreshold" min="0" max="100" value="55" style="width:100px;vertical-align:middle;"><span id="dotPlotThreshVal">55%</span></label>
-                <label>Context: <input type="number" id="dotPlotContextRadius" value="20" min="5" max="100" step="5" style="width:45px;" title="Nucleotide context radius around hover position"> bp</label>
+                <label>Context: <input type="number" id="dotPlotContextRadius" value="5" min="0" max="40" step="1" style="width:40px;" title="Extra bases to show around the matched diagonal region"> bp</label>
                 <label><input type="checkbox" id="dotPlotRevComp"> RevComp B</label>
                 <button id="dotPlotRecalc" style="font-size:11px;padding:2px 8px;">Recalculate</button>
                 <button id="dotPlotExport" style="font-size:11px;padding:2px 8px;">Export PNG</button>
