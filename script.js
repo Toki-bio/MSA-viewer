@@ -921,9 +921,31 @@ function hideTooltip() {
     tooltip.className = 'tooltip';
 }
 
-// Menu stability: delay closing menus when mouse leaves to prevent flickering
+// Menu stability: JS owns open state; short delay only when leaving a menu entirely
 const menuCloseDelays = new Map();
-const MENU_CLOSE_DELAY = 100; // milliseconds (was 300, reduced for snappier UX)
+const MENU_CLOSE_DELAY = 120; // milliseconds — gap tolerance when moving to dropdown
+
+function clearMenuCloseDelay(section) {
+    if (menuCloseDelays.has(section)) {
+        clearTimeout(menuCloseDelays.get(section));
+        menuCloseDelays.delete(section);
+    }
+}
+
+function closeOtherMenusExcept(activeSection) {
+    document.querySelectorAll('.menu-section').forEach(section => {
+        if (section === activeSection) return;
+        clearMenuCloseDelay(section);
+        section.classList.remove('menu-open');
+        section.classList.remove('hover-active');
+    });
+}
+
+function openMenuSection(section) {
+    closeOtherMenusExcept(section);
+    clearMenuCloseDelay(section);
+    section.classList.add('menu-open');
+}
 
 function setupMenuStability() {
     const menuSections = document.querySelectorAll('.menu-section');
@@ -931,12 +953,7 @@ function setupMenuStability() {
         const controlGroup = section.querySelector('.control-group');
 
         section.addEventListener('mouseenter', () => {
-            // Clear any pending close timeout for this menu
-            if (menuCloseDelays.has(section)) {
-                clearTimeout(menuCloseDelays.get(section));
-                menuCloseDelays.delete(section);
-            }
-            section.classList.add('menu-open');
+            openMenuSection(section);
         });
 
         section.addEventListener('mouseleave', () => {
@@ -948,9 +965,10 @@ function setupMenuStability() {
                 return;
             }
 
-            // Delay closing the menu to avoid flickering on brief mouse movements
+            // Brief delay when leaving menu entirely; switching sections closes others immediately
             const timeoutId = setTimeout(() => {
                 section.classList.remove('menu-open');
+                section.classList.remove('hover-active');
                 menuCloseDelays.delete(section);
             }, MENU_CLOSE_DELAY);
             menuCloseDelays.set(section, timeoutId);
@@ -959,11 +977,7 @@ function setupMenuStability() {
         // Keep menu open when hovering over control-group
         if (controlGroup) {
             controlGroup.addEventListener('mouseenter', () => {
-                if (menuCloseDelays.has(section)) {
-                    clearTimeout(menuCloseDelays.get(section));
-                    menuCloseDelays.delete(section);
-                }
-                section.classList.add('menu-open');
+                openMenuSection(section);
             });
 
             // Close menu when blur happens and mouse is not hovering
@@ -972,10 +986,8 @@ function setupMenuStability() {
                     // Check if mouse is still over the section
                     if (!section.matches(':hover')) {
                         section.classList.remove('menu-open');
-                        if (menuCloseDelays.has(section)) {
-                            clearTimeout(menuCloseDelays.get(section));
-                            menuCloseDelays.delete(section);
-                        }
+                        section.classList.remove('hover-active');
+                        clearMenuCloseDelay(section);
                     }
                 });
             });
@@ -1846,6 +1858,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     resize();
     draw(); // Initial render after resize
     window.addEventListener('resize', () => { resize(); draw(); });
+    setAlignmentColorSchemeClass();
 
     // Clamp offsets
     function clampOffsets() {
@@ -1895,21 +1908,32 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const base = seq[p] || '-';
                 const baseUp = base.toUpperCase();
                 const pd = consPos[p];
-                let fill = '#333';
+                const schemeStyle = getResidueSchemeStyle(base);
+                let textFill = '#333';
+                let bgFill = null;
 
-                if (pd && pd.hasData && pd.hasValidCoverage) {
+                if (schemeStyle) {
+                    bgFill = schemeStyle.bg;
+                    textFill = schemeStyle.fg;
+                } else if (pd && pd.hasData && pd.hasValidCoverage) {
                     if (baseUp !== '-' && baseUp !== '.' && pd.consensusBases && pd.consensusBases.has(baseUp)) {
-                        if (enableBlack && pd.conservation >= blackThresh) fill = '#000';
-                        else if (enableDark && pd.conservation >= darkThresh) fill = '#444';
-                        else if (enableLight && pd.conservation >= lightThresh) fill = '#888';
+                        if (enableBlack && pd.conservation >= blackThresh) textFill = '#fff', bgFill = '#000';
+                        else if (enableDark && pd.conservation >= darkThresh) textFill = '#fff', bgFill = '#444';
+                        else if (enableLight && pd.conservation >= lightThresh) textFill = '#000', bgFill = '#888';
                     } else if (baseUp === '-' || baseUp === '.') {
-                        fill = '#ccc';
+                        textFill = '#888';
+                        bgFill = '#fff';
                     }
                 } else if (baseUp === '-' || baseUp === '.') {
-                    fill = '#ccc';
+                    textFill = '#888';
+                    bgFill = '#fff';
                 }
 
-                ctx.fillStyle = fill;
+                if (bgFill) {
+                    ctx.fillStyle = bgFill;
+                    ctx.fillRect(x, y, CHAR_W, CHAR_H);
+                }
+                ctx.fillStyle = textFill;
                 ctx.fillText(base, x, y);
             }
 
@@ -3528,7 +3552,11 @@ function initSourceInfoInteractions() {
 }
 
 function closeAllMenusViaEsc() {
-    document.querySelectorAll('.menu-section.menu-open').forEach(section => section.classList.remove('menu-open'));
+    document.querySelectorAll('.menu-section').forEach(section => {
+        clearMenuCloseDelay(section);
+        section.classList.remove('menu-open');
+        section.classList.remove('hover-active');
+    });
     document.body.classList.add('suppress-menu-hover');
     const clearSuppress = () => {
         document.body.classList.remove('suppress-menu-hover');
@@ -3578,6 +3606,91 @@ const AMINO_ACID_GROUP_CLASSES = {
     B: 'aa-special', Z: 'aa-special', X: 'aa-special', J: 'aa-special', O: 'aa-special', U: 'aa-special',
     '*': 'aa-stop'
 };
+const NUCLEOTIDE_ORIENTED_SCHEMES = new Set(['nucleotide', 'purine-pyrimidine', 'ambiguity']);
+const RESIDUE_SCHEME_STYLES = {
+    'aa-clustal': {
+        'aa-hydrophobic': { bg: '#80b1ff', fg: '#062a5f' },
+        'aa-positive': { bg: '#ff9a9a', fg: '#650808' },
+        'aa-negative': { bg: '#ff77dd', fg: '#5d064e' },
+        'aa-polar': { bg: '#8ee68e', fg: '#064906' },
+        'aa-aromatic': { bg: '#8fe6ff', fg: '#07495a' },
+        'aa-special': { bg: '#ffe680', fg: '#5c4600' },
+        'aa-stop': { bg: '#222222', fg: '#ffffff' }
+    },
+    'aa-jalview': {
+        'aa-hydrophobic': { bg: '#ffcc99', fg: '#5c2c00' },
+        'aa-positive': { bg: '#99ccff', fg: '#06345f' },
+        'aa-negative': { bg: '#ff9999', fg: '#620909' },
+        'aa-polar': { bg: '#99e699', fg: '#064906' },
+        'aa-aromatic': { bg: '#d6b3ff', fg: '#3d0b63' },
+        'aa-special': { bg: '#ffff99', fg: '#555500' },
+        'aa-stop': { bg: '#222222', fg: '#ffffff' }
+    },
+    'nucleotide': {
+        'base-A': { bg: '#8ddf88', fg: '#063b09' },
+        'base-C': { bg: '#87c7ff', fg: '#07335e' },
+        'base-G': { bg: '#ffc878', fg: '#5f3300' },
+        'base-T': { bg: '#ff8c8c', fg: '#5e0505' },
+        'base-U': { bg: '#ff8c8c', fg: '#5e0505' },
+        'base-N': { bg: '#d9d9d9', fg: '#333333' }
+    },
+    'purine-pyrimidine': {
+        'pp-purine': { bg: '#ffe9a8', fg: '#6b4500' },
+        'pp-pyrimidine': { bg: '#cbe7ff', fg: '#06466d' },
+        'iupac-ambiguous': { bg: '#e5e5e5', fg: '#333333' },
+        'base-N': { bg: '#e5e5e5', fg: '#333333' }
+    },
+    'ambiguity': {
+        'iupac-ambiguous': { bg: '#e8ddff', fg: '#3f1375' },
+        'base-R': { bg: '#d7ffd7', fg: '#075007' },
+        'base-Y': { bg: '#d7edff', fg: '#06466d' },
+        'base-S': { bg: '#dff7ff', fg: '#06515f' },
+        'base-W': { bg: '#fff4c7', fg: '#6b5200' },
+        'base-K': { bg: '#ffe2ce', fg: '#6a2a00' },
+        'base-M': { bg: '#f4dcff', fg: '#5d126d' },
+        'base-N': { bg: '#d9d9d9', fg: '#333333' }
+    }
+};
+const RESIDUE_SCHEME_CLASS_PRIORITY = [
+    'aa-stop', 'aa-hydrophobic', 'aa-positive', 'aa-negative', 'aa-polar', 'aa-aromatic', 'aa-special',
+    'iupac-ambiguous', 'base-R', 'base-Y', 'base-S', 'base-W', 'base-K', 'base-M', 'base-H', 'base-B', 'base-V', 'base-D',
+    'pp-purine', 'pp-pyrimidine',
+    'base-A', 'base-C', 'base-G', 'base-T', 'base-U', 'base-N'
+];
+let _proteinSchemeRemapWarned = false;
+
+function isProteinAlignment(seqs = state.seqs) {
+    if (!seqs || seqs.length === 0) return false;
+    const seqType = el('mafftSeqType')?.value;
+    if (seqType === '0' || seqType === '1') return true;
+    return seqs.some(entry => _isProteinFastaSequence(entry.seq));
+}
+
+function usesMonochromeShading(colorScheme = getAlignmentColorScheme()) {
+    return colorScheme === 'monochrome';
+}
+
+function getEffectiveColorScheme(scheme = getAlignmentColorScheme()) {
+    if (isProteinAlignment() && NUCLEOTIDE_ORIENTED_SCHEMES.has(scheme)) {
+        if (!_proteinSchemeRemapWarned) {
+            _proteinSchemeRemapWarned = true;
+            showMessage('Nucleotide colour scheme selected for protein alignment — using amino-acid colours', 3500);
+        }
+        return 'aa-clustal';
+    }
+    return scheme;
+}
+
+function getResidueSchemeStyle(base, scheme = getEffectiveColorScheme()) {
+    if (usesMonochromeShading(scheme)) return null;
+    const palette = RESIDUE_SCHEME_STYLES[scheme];
+    if (!palette) return null;
+    const classes = getResidueAnnotationClasses(base, RENDER_STANDARD_BASES, RENDER_AMBIGUOUS_BASES, scheme).split(/\s+/);
+    for (const key of RESIDUE_SCHEME_CLASS_PRIORITY) {
+        if (classes.includes(key) && palette[key]) return palette[key];
+    }
+    return null;
+}
 
 function getAlignmentColorScheme() {
     const scheme = el('colorSchemeSelect')?.value || DEFAULTS.colorScheme;
@@ -3587,10 +3700,10 @@ function getAlignmentColorScheme() {
 function setAlignmentColorSchemeClass() {
     if (!alignmentContainer) return;
     alignmentContainer.classList.remove(...ALIGNMENT_COLOR_SCHEME_CLASSES);
-    alignmentContainer.classList.add(`color-scheme-${getAlignmentColorScheme()}`);
+    alignmentContainer.classList.add(`color-scheme-${getEffectiveColorScheme()}`);
 }
 
-function getResidueAnnotationClasses(base, standard = RENDER_STANDARD_BASES, ambiguous = RENDER_AMBIGUOUS_BASES, colorScheme = getAlignmentColorScheme()) {
+function getResidueAnnotationClasses(base, standard = RENDER_STANDARD_BASES, ambiguous = RENDER_AMBIGUOUS_BASES, colorScheme = getEffectiveColorScheme()) {
     const baseUp = String(base || '-').toUpperCase();
     if (baseUp === '-' || baseUp === '.') return '';
 
@@ -3628,27 +3741,35 @@ function getSequenceRenderConfig() {
         enableDark: !!el('enableDark')?.checked,
         enableLight: !!el('enableLight')?.checked,
         shadeMode: document.querySelector('input[name="shadeMode"]:checked')?.value || 'nongap',
-        colorScheme: getAlignmentColorScheme()
+        colorScheme: getAlignmentColorScheme(),
+        effectiveColorScheme: getEffectiveColorScheme()
     };
+}
+
+function applyConservationShadeClass(baseUp, posData, config) {
+    if (!usesMonochromeShading(config.effectiveColorScheme || config.colorScheme)) {
+        return baseUp === '-' || baseUp === '.' ? 'gap' : 'other';
+    }
+    if (posData.hasData && posData.hasValidCoverage) {
+        if (baseUp !== '-' && baseUp !== '.' && posData.consensusBases?.has(baseUp)) {
+            if (config.enableBlack && posData.conservation >= config.blackThresh) return 'black';
+            if (config.enableDark && posData.conservation >= config.darkThresh) return 'dark';
+            if (config.enableLight && posData.conservation >= config.lightThresh) return 'light';
+        }
+        if (baseUp === '-' || baseUp === '.') return 'gap';
+    } else if (baseUp === '-' || baseUp === '.') {
+        return 'gap';
+    }
+    return 'other';
 }
 
 function getSequenceBaseRenderClass(base, pos, config, conservationData) {
     const baseUp = (base || '-').toUpperCase();
-    let cls = 'other';
-    const baseClass = getResidueAnnotationClasses(base, RENDER_STANDARD_BASES, RENDER_AMBIGUOUS_BASES, config.colorScheme);
+    const effectiveScheme = config.effectiveColorScheme || getEffectiveColorScheme(config.colorScheme);
+    const baseClass = getResidueAnnotationClasses(base, RENDER_STANDARD_BASES, RENDER_AMBIGUOUS_BASES, effectiveScheme);
 
     const posData = conservationData?.[pos] || { hasData: false, hasValidCoverage: false };
-    if (posData.hasData && posData.hasValidCoverage) {
-        if (baseUp !== '-' && baseUp !== '.' && posData.consensusBases?.has(baseUp)) {
-            if (config.enableBlack && posData.conservation >= config.blackThresh) cls = 'black';
-            else if (config.enableDark && posData.conservation >= config.darkThresh) cls = 'dark';
-            else if (config.enableLight && posData.conservation >= config.lightThresh) cls = 'light';
-        } else if (baseUp === '-' || baseUp === '.') {
-            cls = 'gap';
-        }
-    } else if (baseUp === '-' || baseUp === '.') {
-        cls = 'gap';
-    }
+    let cls = applyConservationShadeClass(baseUp, posData, config);
 
     if (state.selectedColumns.has(pos)) cls += ' column-selected';
     if (baseClass) cls += ` ${baseClass}`;
@@ -3812,25 +3933,19 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     const selectedCols = state.selectedColumns;
     const htmlParts = [];
     const colorScheme = getAlignmentColorScheme();
+    const effectiveColorScheme = getEffectiveColorScheme(colorScheme);
+    const renderConfig = {
+        blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight,
+        colorScheme, effectiveColorScheme
+    };
 
     for (let pos = start; pos < end; pos++) {
         const base = seq[pos] || '-';
         const baseUp = base.toUpperCase();
-        let cls = 'other';
-        const baseClass = getResidueAnnotationClasses(base, standard, ambiguous, colorScheme);
+        const baseClass = getResidueAnnotationClasses(base, standard, ambiguous, effectiveColorScheme);
 
         const posData = conservationData[pos] || { hasData: false, hasValidCoverage: false };
-        if (posData.hasData && posData.hasValidCoverage) {
-            if (baseUp !== '-' && baseUp !== '.' && posData.consensusBases.has(baseUp)) {
-                if (enableBlack && posData.conservation >= blackThresh) cls = 'black';
-                else if (enableDark && posData.conservation >= darkThresh) cls = 'dark';
-                else if (enableLight && posData.conservation >= lightThresh) cls = 'light';
-            } else if (baseUp === '-' || baseUp === '.') {
-                cls = 'gap';
-            }
-        } else if (baseUp === '-' || baseUp === '.') {
-            cls = 'gap';
-        }
+        let cls = applyConservationShadeClass(baseUp, posData, renderConfig);
 
         const colSelected = selectedCols.has(pos) ? ' column-selected' : '';
         const tsdDisplay = getTsdMarkDisplay(index, pos);
@@ -4044,6 +4159,7 @@ const debounceRender = debounce(renderAlignment, 50);
 // CORE FUNCTIONS
 function parseAndRender(isFromDrop = false) {
     showMessage("Parsing file...", 0);
+    _proteinSchemeRemapWarned = false;
     const inputText = fastaInput.value.trim();
     if (!inputText) {
         alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
@@ -10263,7 +10379,7 @@ function initializeAppUI() {
         document.querySelectorAll('.menu-section').forEach(section => {
             const cg = section.querySelector('.control-group');
             if (!cg) return;
-            cg.addEventListener('mouseenter', () => section.classList.add('hover-active'));
+            cg.addEventListener('mouseenter', () => openMenuSection(section));
             cg.addEventListener('mouseleave', () => section.classList.remove('hover-active'));
         });
     }

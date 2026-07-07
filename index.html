@@ -552,58 +552,67 @@
                     <span class="toggle-icon">▼</span>
                 </div>
                 <div class="control-group" id="actions-controls">
-                    <div class="action-section">
-                        <div class="action-section-label">Selection</div>
-                        <div class="button-group">
-                            <button id="selectAllButton" title="Select/deselect all sequences (Ctrl+A)">Select All</button>
-                            <button id="copySelectedButton" title="Copy selected sequences (Ctrl+Shift+C)">Copy Sel</button>
-                            <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">Copy Align</button>
-                            <button id="deleteSelectedButton" title="Delete selected sequences (Ctrl+Del)">Delete Sel</button>
+                    <div class="actions-menu-body">
+                        <div class="action-section action-section-selection">
+                            <div class="action-section-label">Selection</div>
+                            <div class="button-group">
+                                <button id="selectAllButton" title="Select/deselect all sequences (Ctrl+A)">Select All</button>
+                                <button id="copySelectedButton" title="Copy selected sequences (Ctrl+Shift+C)">Copy Sel</button>
+                                <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">Copy Align</button>
+                                <button id="deleteSelectedButton" title="Delete selected sequences (Ctrl+Del)">Delete Sel</button>
+                            </div>
+                        </div>
+                        <div class="action-section action-section-order">
+                            <div class="action-section-label">Order</div>
+                            <div class="button-group">
+                                <button id="moveUpButton" title="Move selected up (Ctrl+Up)">Up</button>
+                                <button id="moveDownButton" title="Move selected down (Ctrl+Down)">Down</button>
+                                <button id="moveToTopButton" title="Move selected to top (Ctrl+Home)">To Top</button>
+                                <button id="moveToBottomButton" title="Move selected to bottom (Ctrl+End)">To Bottom</button>
+                                <button id="sortByNameButton" title="Sort all sequences alphabetically" onclick="sortByName()">A→Z</button>
+                                <button id="sortByLengthButton" title="Sort by sequence length (longest first)" onclick="sortByLength()">Len↓</button>
+                                <button id="sortBySimButton" title="Sort by similarity to 1st sequence" onclick="sortBySimilarity()">Sim↓</button>
+                                <button id="exportOrderButton" title="Export current sequence order as JSON" onclick="exportOrder()">Export</button>
+                                <button id="importOrderButton" title="Import sequence order from JSON file" onclick="importOrder()">Import</button>
+                            </div>
+                        </div>
+                        <div class="action-section action-section-editing">
+                            <div class="action-section-label">Editing</div>
+                            <div class="button-group">
+                                <button id="reverseComplementButton" title="Reverse complement selected (Ctrl+R)">RevComp</button>
+                                <button id="duplicateButton" title="Duplicate selected (Ctrl+U)">Duplicate</button>
+                                <button id="seqEditButton" title="Open sequence in text editor">SeqEdit</button>
+                            </div>
+                        </div>
+                        <div class="action-section action-section-columns">
+                            <div class="action-section-label">Columns</div>
+                            <div class="button-group">
+                                <button id="copyColumnsButton" title="Copy selected columns as FASTA (Ctrl+Shift+V)">Copy Cols</button>
+                            </div>
+                        </div>
+                        <div class="action-section action-section-analysis">
+                            <div class="action-section-label">Analysis</div>
+                            <div class="button-group">
+                                <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
+                                <button id="buildTreeButton" title="Build a phylogenetic tree from selected sequences">Tree</button>
+                                <button id="statsButton" title="Alignment statistics: distance matrix, pairwise identity, summary">Statistics</button>
+                                <button id="repeatFinderMenuButton" title="Find tandem, direct, and inverted repeats in sequences">Repeats</button>
+                            </div>
+                        </div>
+                        <div class="action-section action-section-settings">
+                            <div class="action-section-label">Presets &amp; Help</div>
+                            <div class="button-group">
+                                <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
+                                <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
+                                <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
+                                <button id="hotkeysIconBtn" title="Keyboard shortcuts (hover for quick ref)" style="font-size:14px;padding:0 6px;height:22px;line-height:1;position:relative;background:#f5f5f5;border:1px solid #ccc;border-radius:3px;cursor:pointer;">⌨</button>
+                                <button id="manualButton" title="Open comprehensive manual in new tab" onclick="window.open('manual.html','_blank')">Manual</button>
+                            </div>
                         </div>
                     </div>
-                    <div class="action-section">
-                        <div class="action-section-label">Order</div>
-                        <div class="button-group">
-                            <button id="moveUpButton" title="Move selected up (Ctrl+Up)">Up</button>
-                            <button id="moveDownButton" title="Move selected down (Ctrl+Down)">Down</button>
-                            <button id="moveToTopButton" title="Move selected to top (Ctrl+Home)">To Top</button>
-                            <button id="moveToBottomButton" title="Move selected to bottom (Ctrl+End)">To Bottom</button>
-                            <button id="sortByNameButton" title="Sort all sequences alphabetically" onclick="sortByName()" style="font-size:10px;">A→Z</button>
-                            <button id="sortByLengthButton" title="Sort by sequence length (longest first)" onclick="sortByLength()" style="font-size:10px;">Len↓</button>
-                            <button id="sortBySimButton" title="Sort by similarity to 1st sequence" onclick="sortBySimilarity()" style="font-size:10px;">Sim↓</button>
-                            <span style="display:inline-block;width:8px;"></span>
-                            <button id="exportOrderButton" title="Export current sequence order as JSON" onclick="exportOrder()" style="font-size:10px;">Exp</button>
-                            <button id="importOrderButton" title="Import sequence order from JSON file" onclick="importOrder()" style="font-size:10px;">Imp</button>
-                        </div>
-                    </div>
-                    <div class="action-section">
-                        <div class="action-section-label">Editing</div>
-                        <div class="button-group">
-                            <button id="reverseComplementButton" title="Reverse complement selected (Ctrl+R)">RevComp</button>
-                            <button id="duplicateButton" title="Duplicate selected (Ctrl+U)">Duplicate</button>
-                            <button id="seqEditButton" title="Open sequence in text editor">SeqEdit</button>
-                        </div>
-                    </div>
-                    <div class="action-section">
-                        <div class="action-section-label">Columns</div>
-                        <div class="button-group">
-                            <button id="copyColumnsButton" title="Copy selected columns as FASTA (Ctrl+Shift+V)">Copy Cols</button>
-                        </div>
-                    </div>
-                    <div class="action-section">
-                        <div class="action-section-label">Tools</div>
-                        <div class="button-group">
-                            <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
-                                                        <button id="buildTreeButton" title="Build a phylogenetic tree from selected sequences">Tree</button>
-                            <button id="statsButton" title="Alignment statistics: distance matrix, pairwise identity, summary">Statistics</button>
-                            <button id="repeatFinderMenuButton" title="Find tandem, direct, and inverted repeats in sequences">Repeats</button>
-                            <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
-                            <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
-                            <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
-                            <button id="hotkeysIconBtn" title="Keyboard shortcuts (hover for quick ref)" style="font-size:14px;padding:0 6px;height:24px;line-height:1;position:relative;background:#f5f5f5;border:1px solid #ccc;border-radius:3px;cursor:pointer;">⌨</button>
-                            <button id="manualButton" title="Open comprehensive manual in new tab" onclick="window.open('manual.html','_blank')">📖 Manual</button>
-                            <button id="minimizeBtn" title="Hide menu (Ctrl+H)">Hide Menu</button>
-                        </div>
+                    <div class="actions-menu-footer">
+                        <button id="minimizeBtn" class="actions-hide-menu-btn" title="Hide menu (Ctrl+H)">Hide Menu</button>
+
                     </div>
                 </div>
             </div>
