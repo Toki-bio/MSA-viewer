@@ -1,28 +1,28 @@
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// ViewAlign â€” browser-based multiple sequence alignment viewer & editor
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+// ViewAlign Ã¢â‚¬â€ browser-based multiple sequence alignment viewer & editor
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 //
 // EXTERNAL CODE & ATTRIBUTION
 // ===========================
-// â€¢ MAFFT - alignment engine compiled to WebAssembly (disttbfast.js, mafft-wasm.js).
+// Ã¢â‚¬Â¢ MAFFT - alignment engine compiled to WebAssembly (disttbfast.js, mafft-wasm.js).
 //   Katoh K, Standley DM (2013) Mol Biol Evol 30:772-780. BSD license.
-// â€¢ GeneDoc - editing tools (Move NoGaps, Slide KeepGaps, RTF export) modeled after
+// Ã¢â‚¬Â¢ GeneDoc - editing tools (Move NoGaps, Slide KeepGaps, RTF export) modeled after
 //   GeneDoc's Arrange/MoveText and SlideText operations.
 //   Nicholas KB et al. (1997) EMBNEW.NEWS 4:14.
-// â€¢ IGV - Compact read-packing view inspired by the Integrative Genomics Viewer.
+// Ã¢â‚¬Â¢ IGV - Compact read-packing view inspired by the Integrative Genomics Viewer.
 //   Robinson JT et al. (2011) Nat Biotechnol 29:24-26.
-// â€¢ MACSE - Codon-aware visualization inspired by MACSE's approach.
+// Ã¢â‚¬Â¢ MACSE - Codon-aware visualization inspired by MACSE's approach.
 //   Ranwez V et al. (2011) PLoS ONE 6:e22594.
-// â€¢ Clustal - Clustal shading scheme and .aln format parser.
+// Ã¢â‚¬Â¢ Clustal - Clustal shading scheme and .aln format parser.
 //   Sievers F et al. (2011) Mol Syst Biol 7:539.
-// â€¢ BLOSUM62 - similarity matrix for amino acid grouping.
+// Ã¢â‚¬Â¢ BLOSUM62 - similarity matrix for amino acid grouping.
 //   Henikoff S, Henikoff JG (1992) PNAS 89:10915-10919.
-// â€¢ samtools - BAM/CRAM conversion (server-side).
+// Ã¢â‚¬Â¢ samtools - BAM/CRAM conversion (server-side).
 //   Li H et al. (2009) Bioinformatics 25:2078-2079.
 //
 // All external code is used under its original open-source license.
 // The remainder is original work.
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
 // DEFAULTS & STATE
 const DEBUG = false;
@@ -90,12 +90,12 @@ const state = {
     },
     trimBoundaries: null,
     trimBackup: null,
-    softTrimBoundaries: null, // { leftTrimEnd, rightTrimStart } â€” excluded from clustering only
+    softTrimBoundaries: null, // { leftTrimEnd, rightTrimStart } Ã¢â‚¬â€ excluded from clustering only
     groupConsensusCount: 0,
     _statsMatrices: null
 };
 
-// â”€â”€ Recent Files & Clipboard History â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Recent Files & Clipboard History Ã¢â€â‚¬Ã¢â€â‚¬
 const _historyManager = {
     maxItems: 10,
     items: [],
@@ -157,14 +157,14 @@ const _historyManager = {
         };
         let html = '';
         for (const e of this.items.slice(0, this.maxItems)) {
-            const icon = e.type === 'file' ? 'ðŸ“' : 'ðŸ“‹';
+            const icon = e.type === 'file' ? 'Ã°Å¸â€œÂ' : 'Ã°Å¸â€œâ€¹';
             const label = e.name.length > 35 ? e.name.substring(0, 32) + '...' : e.name;
-            const meta = e.nSeqs ? `${e.nSeqs} seq Ã— ${e.length} col` : '';
+            const meta = e.nSeqs ? `${e.nSeqs} seq Ãƒâ€” ${e.length} col` : '';
             html += `<div class="recent-item" data-idx="${this.items.indexOf(e)}"
                 title="${this._escapeHtml(e.source || e.name)}\n${meta}\n${this._escapeHtml(e.preview)}"
                 style="padding:5px 10px;cursor:pointer;font-size:11px;border-bottom:1px solid #eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                 ${icon} <b>${this._escapeHtml(label)}</b>
-                <span style="color:#999;font-size:10px;">${meta ? ' Â· ' + meta : ''} Â· ${timeFmt(e.timestamp)}</span>
+                <span style="color:#999;font-size:10px;">${meta ? ' Ã‚Â· ' + meta : ''} Ã‚Â· ${timeFmt(e.timestamp)}</span>
             </div>`;
         }
         html += `<div style="padding:4px 10px;font-size:10px;color:#999;border-top:1px solid #eee;display:flex;justify-content:space-between;">
@@ -452,14 +452,14 @@ async function fetchFileFromServer(filePath, serverKey) {
         state.currentFilename = fname;
         state.currentFilePath = filePath;
         parseAndRender(true);
-        _sshSuccess(`${fname} Â· ${state.seqs.length} seq${state.seqs.length !== 1 ? 's' : ''} Â· ${serverKey}`);
+        _sshSuccess(`${fname} Ã‚Â· ${state.seqs.length} seq${state.seqs.length !== 1 ? 's' : ''} Ã‚Â· ${serverKey}`);
         // Auto-focus browser window and bring to front
         window.focus();
         // Flash title bar to attract attention
         const origTitle = document.title;
         let flashCount = 0;
         const flashInterval = setInterval(() => {
-            document.title = (flashCount % 2 === 0) ? `â˜… LOADED: ${fname}` : origTitle;
+            document.title = (flashCount % 2 === 0) ? `Ã¢Ëœâ€¦ LOADED: ${fname}` : origTitle;
             flashCount++;
             if (flashCount > 8 || document.hasFocus()) {
                 document.title = origTitle;
@@ -857,13 +857,13 @@ function _sshLog(msg, type = 'plain') {
     body.scrollTop = body.scrollHeight;
 }
 function _sshSuccess(msg) {
-    _sshLog('âœ“ ' + msg, 'ok');
+    _sshLog('Ã¢Å“â€œ ' + msg, 'ok');
     _sshConsoleCloseTimer = setTimeout(() => {
         const cons = document.getElementById('sshConsole');
         if (cons) cons.style.display = 'none';
     }, 2500);
 }
-function _sshError(msg) { _sshLog('âœ— ' + msg, 'err'); }
+function _sshError(msg) { _sshLog('Ã¢Å“â€” ' + msg, 'err'); }
 
 // Tooltip helper functions with viewport-aware positioning
 function showTooltipAt(content, target, options = {}) {
@@ -923,7 +923,7 @@ function hideTooltip() {
 
 // Menu stability: JS owns open state; short delay only when leaving a menu entirely
 const menuCloseDelays = new Map();
-const MENU_CLOSE_DELAY = 120; // milliseconds â€” gap tolerance when moving to dropdown
+const MENU_CLOSE_DELAY = 120; // milliseconds Ã¢â‚¬â€ gap tolerance when moving to dropdown
 
 function clearMenuCloseDelay(section) {
     if (menuCloseDelays.has(section)) {
@@ -1745,7 +1745,7 @@ function _computeCodonAnalysis(seqs, len) {
                 phase[i][pos] = 0;
             } else {
                 if (isGap) {
-                    // Gap in middle of codon â†’ frameshift
+                    // Gap in middle of codon Ã¢â€ â€™ frameshift
                     frameShifts[i].push({ pos, phase: codonPhase, type: 'gap' });
                     codonPhase = -1;
                     codonBuf = '';
@@ -2388,7 +2388,7 @@ function getDeferredConsensus(len) {
     return Array.from({ length: len }, (_, pos) => cached.values[pos] || '-');
 }
 
-// â”€â”€ BAM / Reads Display â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ BAM / Reads Display Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 // BAM state
 let bamState = {
@@ -2415,18 +2415,18 @@ async function handleBamFile(event) {
     const file = event.target.files[0];
     if (!file) return;
 
-    showMessage('Loading BAMâ€¦', 0);
+    showMessage('Loading BAMÃ¢â‚¬Â¦', 0);
 
     try {
         const ext = file.name.split('.').pop().toLowerCase();
         let buf;
 
         if (ext === 'sam') {
-            // SAM is plain text â€” parse directly
+            // SAM is plain text Ã¢â‚¬â€ parse directly
             const text = await file.text();
             buf = parseSAMToBuffer(text);
         } else {
-            // BAM binary â€” decompress with browser's DecompressionStream
+            // BAM binary Ã¢â‚¬â€ decompress with browser's DecompressionStream
             buf = await BamParser.decompressBAM(file);
         }
 
@@ -2524,7 +2524,7 @@ async function handleBamFile(event) {
 
         renderAlignment();
         statusMessage.style.display = 'none';
-        showMessage(`Loaded ${matchedReads.length} reads on ${matchedRef} (${minPos + 1}â€“${maxPos})`, 2500);
+        showMessage(`Loaded ${matchedReads.length} reads on ${matchedRef} (${minPos + 1}Ã¢â‚¬â€œ${maxPos})`, 2500);
 
     } catch (err) {
         statusMessage.style.display = 'none';
@@ -2556,7 +2556,7 @@ function computeReadSpan(cigar) {
  * In practice, we parse SAM as text and build record objects directly.
  */
 function parseSAMToBuffer(text) {
-    // Parse SAM as plain text â€” we'll build a pseudo-BAM buffer
+    // Parse SAM as plain text Ã¢â‚¬â€ we'll build a pseudo-BAM buffer
     // This is simpler than trying to create binary BAM from SAM
     const lines = text.split('\n').filter(l => l.trim());
     const headerLines = [];
@@ -2584,7 +2584,7 @@ function parseSAMToBuffer(text) {
  */
 function renderReadsAlignment() {
     if (!bamState.reads.length || !bamState.refSeq) {
-        alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the ðŸ§¬ BAM button.</div>';
+        alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the Ã°Å¸Â§Â¬ BAM button.</div>';
         return;
     }
 
@@ -2598,7 +2598,7 @@ function renderReadsAlignment() {
     const container = alignmentContainer;
     const cellW = 12; // px per base
 
-    // â”€â”€ Reference track â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Reference track Ã¢â€â‚¬Ã¢â€â‚¬
     const refLine = document.createElement('div');
     refLine.className = 'seq-line ref-track-line';
     refLine.style.display = 'flex';
@@ -2636,7 +2636,7 @@ function renderReadsAlignment() {
     refLine.appendChild(refData);
     container.appendChild(refLine);
 
-    // â”€â”€ Scale ruler â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Scale ruler Ã¢â€â‚¬Ã¢â€â‚¬
     const scaleLine = document.createElement('div');
     scaleLine.className = 'seq-line scale-line';
     scaleLine.style.display = 'flex';
@@ -2663,14 +2663,14 @@ function renderReadsAlignment() {
         if ((p + 1) % 10 === 0) {
             span.textContent = p + 1;
         } else if ((p + 1) % 5 === 0) {
-            span.textContent = 'Â·';
+            span.textContent = 'Ã‚Â·';
         }
         scaleData.appendChild(span);
     }
     scaleLine.appendChild(scaleData);
     container.appendChild(scaleLine);
 
-    // â”€â”€ Read tracks â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Read tracks Ã¢â€â‚¬Ã¢â€â‚¬
     for (let i = 0; i < reads.length; i++) {
         const read = reads[i];
         const readCols = columns[i];
@@ -2687,7 +2687,7 @@ function renderReadsAlignment() {
         const nameSpan = document.createElement('span');
         nameSpan.className = 'seq-name';
         nameSpan.style.cssText = 'width:160px;min-width:160px;font-size:9px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#555;';
-        nameSpan.textContent = isReverse ? 'â—€ ' + read.name : read.name + ' â–¶';
+        nameSpan.textContent = isReverse ? 'Ã¢â€”â‚¬ ' + read.name : read.name + ' Ã¢â€“Â¶';
         nameSpan.title = `${read.name} pos=${read.pos + 1} mapq=${read.mapq} cigar=${BamParser.cigarToString(read.cigar)}`;
         readLine.appendChild(nameSpan);
 
@@ -2703,7 +2703,7 @@ function renderReadsAlignment() {
 
             switch (col.type) {
                 case 'match':
-                    span.textContent = 'Â·'; // dot for match (clean IGV-like)
+                    span.textContent = 'Ã‚Â·'; // dot for match (clean IGV-like)
                     span.style.color = '#ccc';
                     break;
                 case 'mismatch':
@@ -2717,7 +2717,7 @@ function renderReadsAlignment() {
                     span.style.fontSize = '9px';
                     break;
                 case 'deletion':
-                    span.textContent = 'âˆ’';
+                    span.textContent = 'Ã¢Ë†â€™';
                     span.style.color = '#999';
                     span.style.fontSize = '11px';
                     break;
@@ -2727,7 +2727,7 @@ function renderReadsAlignment() {
                     span.style.opacity = '0.5';
                     break;
                 case 'intron':
-                    span.textContent = 'Â·';
+                    span.textContent = 'Ã‚Â·';
                     span.style.color = '#ddd';
                     break;
             }
@@ -2978,7 +2978,7 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
                 svg.appendChild(mark);
             }
 
-            // Read name label (only when enough space â€” not in diffOnly thin-line mode)
+            // Read name label (only when enough space Ã¢â‚¬â€ not in diffOnly thin-line mode)
             if (!diffOnly && NAME_W > 30) {
                 const name = read.name;
                 const maxChars = Math.max(3, Math.floor(rw / 6));
@@ -3111,7 +3111,7 @@ function renderAlignment(options = {}) {
     // Reads mode: delegate to BAM renderer
     if (document.getElementById('modeReads')?.checked) {
         if (!bamState.reads || bamState.reads.length === 0) {
-            alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the ðŸ§¬ BAM button (after loading a reference FASTA).</div>';
+            alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the Ã°Å¸Â§Â¬ BAM button (after loading a reference FASTA).</div>';
             return;
         }
         renderReadsAlignment();
@@ -3163,9 +3163,9 @@ function renderAlignment(options = {}) {
     // Calculate sequence length for consensus and scale (must be before any use of len)
     const len = Math.max(...state.seqs.map(s => s.seq.length));
 
-    // â”€â”€ Auto-detect: Canvas for large alignments â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Auto-detect: Canvas for large alignments Ã¢â€â‚¬Ã¢â€â‚¬
     const TOTAL_RESIDUES = state.seqs.length * len;
-    const CANVAS_AUTO_THRESHOLD = 150000; // ~100 seq Ã— 1500 col
+    const CANVAS_AUTO_THRESHOLD = 150000; // ~100 seq Ãƒâ€” 1500 col
     const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
     const userPickedDom = document.getElementById('modeAutoCanvasDismissed')?.checked; // hidden flag
 
@@ -3674,7 +3674,7 @@ function getEffectiveColorScheme(scheme = getAlignmentColorScheme()) {
     if (isProteinAlignment() && NUCLEOTIDE_ORIENTED_SCHEMES.has(scheme)) {
         if (!_proteinSchemeRemapWarned) {
             _proteinSchemeRemapWarned = true;
-            showMessage('Nucleotide colour scheme selected for protein alignment â€” using amino-acid colours', 3500);
+            showMessage('Nucleotide colour scheme selected for protein alignment Ã¢â‚¬â€ using amino-acid colours', 3500);
         }
         return 'aa-clustal';
     }
@@ -4271,7 +4271,7 @@ function parseAndRender(isFromDrop = false) {
         }, 100);
     } catch (e) {
         console.error("Error in parseAndRender:", e);
-    alignmentContainer.innerHTML = `<div class="error-message">âœ– ${e.message}</div>`;
+    alignmentContainer.innerHTML = `<div class="error-message">Ã¢Å“â€“ ${e.message}</div>`;
         showMessage(`Error: ${e.message}`, 5000);
     // Reset filename on error to avoid poisoning future loads
         state.currentFilename = '';
@@ -4627,7 +4627,7 @@ function handleKeyDown(e) {
     }
 
     // If focus is in an input/textarea, block unmodified keypresses (normal typing),
-    // but allow Ctrl/Meta/Alt shortcuts to pass through â€” EXCEPT in TEXTAREA
+    // but allow Ctrl/Meta/Alt shortcuts to pass through Ã¢â‚¬â€ EXCEPT in TEXTAREA
     // where browser-native shortcuts (Ctrl+A select-all-text, Ctrl+C copy, etc.) should work.
     const activeEl = document.activeElement;
     if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
@@ -4635,11 +4635,11 @@ function handleKeyDown(e) {
             return; // let browser handle all keys in textarea (Input window etc.)
         }
         if (e.ctrlKey || e.metaKey || e.altKey) {
-            // modifier key held â€” treat as shortcut, let it fall through
+            // modifier key held Ã¢â‚¬â€ treat as shortcut, let it fall through
         } else if (state.editModeActive && state.editTool === 'residue' && state.editCell) {
-            // GeneDoc residue editing mode â€” allow unmodified keys
+            // GeneDoc residue editing mode Ã¢â‚¬â€ allow unmodified keys
         } else {
-            return; // normal typing in input â€” don't intercept
+            return; // normal typing in input Ã¢â‚¬â€ don't intercept
         }
     }
     if (handleGeneDocResidueKey(e)) {
@@ -4834,7 +4834,7 @@ function reverseComplementSelected() {
     showMessage("Reverse complement applied!", 2000);
 }
 
-// â”€â”€ Sort functions â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Sort functions Ã¢â€â‚¬Ã¢â€â‚¬
 function sortByName() {
     pushUndo();
     const indices = state.seqs.map((s, i) => ({ idx: i, name: s.header.toLowerCase() }));
@@ -4872,7 +4872,7 @@ function sortBySimilarity() {
     showMessage('Sorted by similarity to first sequence', 2000);
 }
 
-// â”€â”€ Save / Load sequence order â”€â”€
+// Ã¢â€â‚¬Ã¢â€â‚¬ Save / Load sequence order Ã¢â€â‚¬Ã¢â€â‚¬
 function exportOrder() {
     if (!state.seqs.length) { showMessage('No sequences loaded', 2000); return; }
     const order = state.seqs.map(s => s.header);
@@ -6340,7 +6340,7 @@ function minimizeMenu() {
     controls.style.right = '';
     controls.style.zIndex = '';
     controls.style.boxShadow = '';
-    // Batch all visual changes in one animation frame â€” no intermediate paint
+    // Batch all visual changes in one animation frame Ã¢â‚¬â€ no intermediate paint
     requestAnimationFrame(() => {
         controls.style.display = 'none';
         minimizeBar.style.display = 'block';
@@ -6782,7 +6782,7 @@ function updateActiveSearchesPanel() {
 
         const remove = document.createElement('button');
         remove.className = 'search-remove';
-    remove.innerHTML = 'Ã—';
+    remove.innerHTML = 'Ãƒâ€”';
         remove.title = 'Remove this search';
         remove.addEventListener('click', () => {
             // Remove this specific search
@@ -6898,7 +6898,7 @@ function executeTrimming() {
         state.trimBackup = null;
         const clearBtn = document.getElementById('clearSoftTrimButton');
         if (clearBtn) clearBtn.style.display = '';
-        const status = `âœ“ Soft trim: ${leftRemoved}L + ${rightRemoved}R marked for clustering. Alignment unchanged.`;
+        const status = `Ã¢Å“â€œ Soft trim: ${leftRemoved}L + ${rightRemoved}R marked for clustering. Alignment unchanged.`;
         updateClusteringStatus(status);
         showMessage(status, 3000);
         state.trimBoundaries = null;
@@ -6925,7 +6925,7 @@ function executeTrimming() {
     }
 
     const newLen = trimEnd - trimStart;
-    const status = `âœ“ Hard trim: ${leftRemoved}L + ${rightRemoved}R = ${leftRemoved + rightRemoved} cols. New length: ${newLen}`;
+    const status = `Ã¢Å“â€œ Hard trim: ${leftRemoved}L + ${rightRemoved}R = ${leftRemoved + rightRemoved} cols. New length: ${newLen}`;
     updateClusteringStatus(status);
     showMessage(status, 3000);
     state.trimBoundaries = null;
@@ -6952,7 +6952,7 @@ function undoTrimming() {
     state.trimBoundaries = null;
     state.softTrimBoundaries = null;
 
-    updateClusteringStatus('âœ“ Trimming reverted');
+    updateClusteringStatus('Ã¢Å“â€œ Trimming reverted');
     showMessage('Trimming reverted - original alignment restored', 3000);
     debounceRender();
 }
@@ -6965,7 +6965,7 @@ function clusterSequences() {
 
     updateClusteringStatus('Running clustering algorithm...');
 
-    // Prepare sequences for clustering â€” respect soft trim if active
+    // Prepare sequences for clustering Ã¢â‚¬â€ respect soft trim if active
     const stb = state.softTrimBoundaries;
     const seqsForClustering = state.seqs.map(seq => {
         let s = seq.seq;
@@ -7020,13 +7020,13 @@ function clusterSequences() {
         debugLog(`Size: ${cluster.size} sequences`);
         debugLog(`Diagnostic features: ${cluster.nPerfect} (${cluster.nReliable || cluster.nPerfect} reliable)`);
         if (cluster.nFiltered) {
-            debugLog(`âš ï¸  Filtered (high-leakage): ${cluster.nFiltered} features`);
+            debugLog(`Ã¢Å¡Â Ã¯Â¸Â  Filtered (high-leakage): ${cluster.nFiltered} features`);
         }
         debugLog(`Color: ${color}`);
         console.log('Sequences:');
 
         cluster.sequences.forEach(seq => {
-            debugLog(`  â€¢ ${seq.id} (index ${seq.index})`);
+            debugLog(`  Ã¢â‚¬Â¢ ${seq.id} (index ${seq.index})`);
             state.clusterMap[seq.index] = {
                 cluster: idx,
                 color: color,
@@ -7052,7 +7052,7 @@ function clusterSequences() {
     if (clusterResults.unassigned.length > 0) {
         debugLog(`\n--- UNASSIGNED (${clusterResults.unassigned.length} sequences) ---`);
         clusterResults.unassigned.forEach(seq => {
-            debugLog(`  â€¢ ${seq.id} (index ${seq.index})`);
+            debugLog(`  Ã¢â‚¬Â¢ ${seq.id} (index ${seq.index})`);
             state.clusterMap[seq.index] = {
                 cluster: -1,
                 color: '#cccccc',
@@ -7527,13 +7527,13 @@ function displayClusteringResults(results) {
         html += `
             <div style="margin-bottom: 12px; padding: 8px; border: 1px solid #ddd; border-left: 4px solid ${color}; border-radius: 2px;">
                 <div style="cursor: pointer; font-weight: bold; user-select: none; margin-bottom: 4px;" onclick="document.getElementById('cluster${idx}').style.display = document.getElementById('cluster${idx}').style.display === 'none' ? 'block' : 'none';">
-                    â–¶ Cluster ${idx + 1}: ${cluster.size} sequences, ${cluster.nPerfect} diagnostic features
+                    Ã¢â€“Â¶ Cluster ${idx + 1}: ${cluster.size} sequences, ${cluster.nPerfect} diagnostic features
                 </div>
                 <div id="cluster${idx}" style="display: none; margin-left: 8px; margin-top: 8px;">
                     <div style="margin-bottom: 8px;">
                         <strong>Sequences:</strong>
                         <div style="margin: 4px 0; padding: 4px; background: #f9f9f9; border-radius: 2px;">
-                            ${cluster.sequences.map((s, i) => `<div style="font-family: monospace; font-size: 10px;">â€¢ ${s.id}</div>`).join('')}
+                            ${cluster.sequences.map((s, i) => `<div style="font-family: monospace; font-size: 10px;">Ã¢â‚¬Â¢ ${s.id}</div>`).join('')}
                         </div>
                     </div>
                     <div style="margin-bottom: 8px;">
@@ -7553,11 +7553,11 @@ function displayClusteringResults(results) {
         html += `
             <div style="margin-bottom: 12px; padding: 8px; border: 1px solid #ddd; border-left: 4px solid #999999; border-radius: 2px;">
                 <div style="cursor: pointer; font-weight: bold; user-select: none; margin-bottom: 4px;" onclick="document.getElementById('unassignedCluster').style.display = document.getElementById('unassignedCluster').style.display === 'none' ? 'block' : 'none';">
-                    â–¶ Unassigned: ${results.unassigned.length} sequences
+                    Ã¢â€“Â¶ Unassigned: ${results.unassigned.length} sequences
                 </div>
                 <div id="unassignedCluster" style="display: none; margin-left: 8px; margin-top: 8px;">
                     <div style="margin: 4px 0; padding: 4px; background: #f9f9f9; border-radius: 2px;">
-                        ${results.unassigned.map(s => `<div style="font-family: monospace; font-size: 10px;">â€¢ ${s.id}</div>`).join('')}
+                        ${results.unassigned.map(s => `<div style="font-family: monospace; font-size: 10px;">Ã¢â‚¬Â¢ ${s.id}</div>`).join('')}
                     </div>
                     <button onclick="highlightCluster(-1)" style="padding: 4px 8px; font-size: 11px; background: #999999; color: white; border: none; border-radius: 2px; cursor: pointer; margin-top: 4px;">Highlight in alignment</button>
                 </div>
@@ -7744,7 +7744,7 @@ function _reorderByGuideTree(fasta) {
         }
     }
 
-    // UPGMA guide tree construction â†’ extract leaf order
+    // UPGMA guide tree construction Ã¢â€ â€™ extract leaf order
     // Represent clusters as arrays of leaf indices; merge closest pair
     const clusters = seqs.map((_, i) => [i]);
     const clusterDist = dist.map(row => new Float32Array(row)); // copy
@@ -7767,7 +7767,7 @@ function _reorderByGuideTree(fasta) {
 
         // Optimal leaf ordering at junction: try all 4 orientations of the two
         // clusters and pick the one where the junction elements are closest.
-        // A=[...aL, aR] B=[...bL, bR] â†’ try (A+B), (A+B'), (A'+B), (A'+B')
+        // A=[...aL, aR] B=[...bL, bR] Ã¢â€ â€™ try (A+B), (A+B'), (A'+B), (A'+B')
         // where A' = reversed A, B' = reversed B
         const cA = clusters[ci], cB = clusters[cj];
         const aFirst = cA[0], aLast = cA[cA.length - 1];
@@ -8118,7 +8118,7 @@ function openTreeBuilder() {
             const textOutput = document.getElementById('treeTextOutput');
             const scope = state.selectedRows.size >= 2 ? 'selected sequences' : 'all sequences';
             if (summary) {
-                summary.textContent = `${result.stats.count} ${scope} Â· alignment p-distance Â· ${method.toUpperCase()} Â· avg ${result.stats.averageDistance.toFixed(4)} Â· range ${result.stats.minDistance.toFixed(4)}-${result.stats.maxDistance.toFixed(4)}`;
+                summary.textContent = `${result.stats.count} ${scope} Ã‚Â· alignment p-distance Ã‚Â· ${method.toUpperCase()} Ã‚Â· avg ${result.stats.averageDistance.toFixed(4)} Ã‚Â· range ${result.stats.minDistance.toFixed(4)}-${result.stats.maxDistance.toFixed(4)}`;
             }
             if (newickOutput) newickOutput.value = result.newick;
             if (textOutput) textOutput.textContent = result.text;
@@ -8260,7 +8260,7 @@ function openStats() {
         `</div></div>`;
 
     // Render Distance Matrix tab
-    let dm = `<b>Pairwise p-distance (1 âˆ’ identity)</b><br><br>`;
+    let dm = `<b>Pairwise p-distance (1 Ã¢Ë†â€™ identity)</b><br><br>`;
     dm += ' '.repeat(nameLen);
     for (let i = 0; i < nseq; i++) dm += ` ${String(i + 1).padStart(4)} `;
     dm += '\n';
@@ -8270,7 +8270,7 @@ function openStats() {
         for (let j = 0; j < nseq; j++) dm += ` ${distMatrix[i][j].padStart(6)}`;
         dm += '\n';
     }
-    dm += `\nColumns: 1â€“${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
+    dm += `\nColumns: 1Ã¢â‚¬â€œ${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
     // Append distance matrix and identity to summary
     const dmControls = `<div style="margin:4px 0;"><button id="copyDistanceMatrixBtn" style="font-size:11px;padding:2px 8px;">Copy distance matrix</button></div>`;
     const dmContent = `<details style="margin-top:6px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Distance Matrix (p-distance)</summary>${dmControls}<pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${dm}</pre></details>`;
@@ -8285,7 +8285,7 @@ function openStats() {
         for (let j = 0; j < nseq; j++) im += ` ${identityMatrix[i][j].padStart(5)}`;
         im += '\n';
     }
-    im += `\nColumns: 1â€“${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
+    im += `\nColumns: 1Ã¢â‚¬â€œ${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
     state._statsMatrices = { distance: dm, identity: im };
     const imControls = `<div style="margin:4px 0;"><button id="copyIdentityMatrixBtn" style="font-size:11px;padding:2px 8px;">Copy identity matrix</button></div>`;
     const imContent = `<details style="margin-top:4px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Pairwise Identity (%)</summary>${imControls}<pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${im}</pre></details>`;
@@ -10104,7 +10104,7 @@ function initializeAppUI() {
                 parseAndRender(true);
             };
             reader.onerror = () => {
-                alignmentContainer.innerHTML = '<div class="error-message">âŒ Error reading file.</div>';
+                alignmentContainer.innerHTML = '<div class="error-message">Ã¢ÂÅ’ Error reading file.</div>';
                 showMessage("Error reading file.", 5000);
             };
             reader.readAsText(file);
@@ -10137,7 +10137,7 @@ function initializeAppUI() {
             parseAndRender(true);
         };
         reader.onerror = () => {
-            alignmentContainer.innerHTML = '<div class="error-message">âŒ Error reading file.</div>';
+            alignmentContainer.innerHTML = '<div class="error-message">Ã¢ÂÅ’ Error reading file.</div>';
             showMessage("Error reading file.", 5000);
         };
         reader.readAsText(file);
@@ -10368,7 +10368,7 @@ function initializeAppUI() {
     onModeChange();
     toggleStickyNames();
 
-    // â”€â”€ Residue case toggle (GeneDoc-style upper/lower/asis) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Residue case toggle (GeneDoc-style upper/lower/asis) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     const caseSel = el('residueCase');
     if (caseSel) {
         const applyCase = () => {
@@ -10401,7 +10401,7 @@ function initializeAppUI() {
     // Setup menu stability to prevent flickering on mouse movement
     setupMenuStability();
 
-    // â”€â”€ :has() fallback for Firefox < 121 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ :has() fallback for Firefox < 121 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     // CSS :has(.control-group:hover) is not supported in Firefox < 121.
     // We add .hover-active class via JS as a fallback.
     if (!CSS.supports('selector(:has(*))')) {
@@ -10419,7 +10419,7 @@ function initializeAppUI() {
     // Initialize Dot Plot & Repeat Finder modals
     _initDotPlotEvents();    _initRepeatFinderEvents();
 
-    // â”€â”€ URL parameter auto-loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ URL parameter auto-loading Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     // ...
 
     // Click-outside to close recent dropdown
@@ -10819,7 +10819,7 @@ function initializeGeneDocEditToolbar() {
     el('editClearGapColumnsButton')?.addEventListener('click', removeGapColumns);
     el('editSeqEditorButton')?.addEventListener('click', () => openSeqEditor());
 
-    // â†» Cons button uses onclick=_recalcConservation in HTML
+    // Ã¢â€ Â» Cons button uses onclick=_recalcConservation in HTML
 
     updateGeneDocEditUI();
 }
@@ -11538,7 +11538,7 @@ function handleAlignmentPanContextMenu(e) {
     }
 }
 
-// Ctrl+A on fastaInput handled by main capture-phase handler â€” no special override needed
+// Ctrl+A on fastaInput handled by main capture-phase handler Ã¢â‚¬â€ no special override needed
 
 // Drag handlers are defined at top of file (window.handleDragStart / window.handleDragEnd)
 
@@ -12081,7 +12081,7 @@ function updateColourPresetList() {
                 applyColourToSeqNames(colourState.mappings);
                 showMessage('Loaded ${name}', 2000);
               })()">
-            ${name} <span style="float: right; cursor: pointer; color: #888;" onclick="(function(e) { e.stopPropagation(); delete colourState.presets['${name}']; localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets)); updateColourPresetList(); })(event)">âœ•</span>
+            ${name} <span style="float: right; cursor: pointer; color: #888;" onclick="(function(e) { e.stopPropagation(); delete colourState.presets['${name}']; localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets)); updateColourPresetList(); })(event)">Ã¢Å“â€¢</span>
         </div>`
     ).join('');
 }
@@ -12117,7 +12117,7 @@ function showColorHistory() {
             html += `<span style="color: #999; min-width: 20px;">${idx + 1}.</span>`;
             html += `<span style="display: inline-block; width: 14px; height: 14px; background: ${entry.color}; border: 1px solid #ccc; border-radius: 2px;"></span>`;
             html += `<span>${entry.color}</span>`;
-            html += `<span style="color: #0066cc; margin: 0 4px;">â† ${entry.method}</span>`;
+            html += `<span style="color: #0066cc; margin: 0 4px;">Ã¢â€ Â ${entry.method}</span>`;
             html += `<span style="color: #999; font-size: 9px;">${entry.timestamp}</span>`;
             html += `</div>`;
         });
@@ -12917,9 +12917,9 @@ function displayBlastResults(queryName, queryLen, results) {
     });
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // RE-ALIGN AGAINST CONSENSUS
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
 async function realignSequenceAgainstConsensus(index) {
     if (!state.seqs || state.seqs.length < 2) {
@@ -12959,12 +12959,14 @@ async function realignSequenceAgainstConsensus(index) {
     }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // DOT-PLOT (integrated from Doter)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
 let _dotPlotWorker = null;
 let _dotPlotState = {
+    matchMap: null,
+    spinMode: true,
     seqA: '', seqB: '', nameA: '', nameB: '',
     scores: null, rows: 0, cols: 0,
     scoreMin: 0, scoreMax: 1,
@@ -13004,8 +13006,44 @@ function _dotSeqContext(seq, pos0, radius = 8) {
 
 function _dotNormAt(row, col) {
     const S = _dotPlotState;
+    if (S.spinMode && S.matchMap) return S.matchMap[row * S.cols + col];
+    if (!S.scores) return 0;
     const range = S.scoreMax - S.scoreMin || 1;
     return (S.scores[row * S.cols + col] - S.scoreMin) / range;
+}
+
+// --- SPIN word-match computation (k-mer exact matching) ---
+let _dotWordWorker = null;
+function _dotComputeWord(seqA, seqB, wordSize) {
+    return new Promise((res, rej) => {
+        if (!_dotWordWorker) _dotWordWorker = new Worker('doter-word-worker.js');
+        const w = _dotWordWorker;
+        const ok = (e) => { w.removeEventListener('message', ok); w.removeEventListener('error', no);
+            if (e.data.error) { rej(new Error(e.data.error)); return; } res(e.data); };
+        const no = (e) => { w.removeEventListener('message', ok); w.removeEventListener('error', no); rej(e); };
+        w.addEventListener('message', ok);
+        w.addEventListener('error', no);
+        w.postMessage({ seqA, seqB, wordSize });
+    });
+}
+
+// --- Mode toggle handler ---
+function _dotOnModeChange() {
+    const S = _dotPlotState;
+    const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
+    S.spinMode = spinRadio ? spinRadio.checked : true;
+    const slider = document.getElementById('dotPlotThreshold');
+    const val = document.getElementById('dotPlotThreshVal');
+    const win = document.getElementById('dotPlotWindow');
+    if (S.spinMode) {
+        if (win) { win.max = 20; win.min = 2; if (parseInt(win.value) > 20) win.value = 9; }
+        if (slider) slider.disabled = true;
+        if (val) val.textContent = 'N/A';
+    } else {
+        if (win) { win.max = 61; win.min = 1; }
+        if (slider) slider.disabled = false;
+        if (slider && val) val.textContent = slider.value + '%';
+    }
 }
 
 function _dotUpdateHoverInfo(row, col) {
@@ -13015,71 +13053,38 @@ function _dotUpdateHoverInfo(row, col) {
     const panelEl = document.getElementById('dotPlotAlignPanel');
 
     const norm = _dotNormAt(row, col);
-    if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  score=${norm.toFixed(3)}`;
-
-    const alignColA = S.alignMapA?.[row] ?? null;
-    const alignColB = S.alignMapB?.[col] ?? null;
-    const rowLabelA = S.rowIndexA >= 0 ? `${S.rowIndexA + 1}` : 'n/a';
-    const rowLabelB = S.rowIndexB >= 0 ? `${S.rowIndexB + 1}` : 'n/a';
-    if (metaEl) {
-        metaEl.textContent = `Alignment ref: rowA=${rowLabelA} colA=${alignColA ?? 'n/a'} (${S.seqA[row] || 'N'})  |  rowB=${rowLabelB} colB=${alignColB ?? 'n/a'} (${S.seqB[col] || 'N'})`;
-    }
+    if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}`;
 
     if (panelEl) {
-        // Walk the diagonal to find the full matching region
-        const range = S.scoreMax - S.scoreMin || 1;
-        const threshold = S.threshold;
-        // Walk backward from (row,col) along the diagonal
-        let rBack = row, cBack = col;
-        while (rBack >= 0 && cBack >= 0) {
-            const n = (S.scores[rBack * S.cols + cBack] - S.scoreMin) / range;
-            if (n < threshold) break;
-            rBack--; cBack--;
-        }
-        rBack++; cBack++; // first matching position
-        // Walk forward from (row,col) along the diagonal
-        let rFwd = row + 1, cFwd = col + 1;
-        while (rFwd < S.rows && cFwd < S.cols) {
-            const n = (S.scores[rFwd * S.cols + cFwd] - S.scoreMin) / range;
-            if (n < threshold) break;
-            rFwd++; cFwd++;
-        }
-        // Extract matched region + context, making both slices equal length
-        const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 5;
-        const matchLen = rFwd - rBack; // length of matching region
-        const maxSlice = matchLen + 2 * context;
-        const aStart = Math.max(0, rBack - context);
-        const bStart = Math.max(0, cBack - context);
-        const availA = S.seqA.length - aStart;
-        const availB = S.seqB.length - bStart;
-        const sliceLen = Math.min(maxSlice, availA, availB);
+        // The diagonal IS the alignment: seqA[row+k] â†” seqB[col+k]
+        // Extract equal-length slices centered on the hover position
+        const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
+        const a0 = Math.max(0, row - context);
+        const b0 = Math.max(0, col - context);
+        const maxA = S.seqA.length - a0;
+        const maxB = S.seqB.length - b0;
+        const sliceLen = Math.min(context * 2 + 1, maxA, maxB);
+        const hoverPos = row - a0; // position of hover col within slice
 
-        const aSlice = S.seqA.slice(aStart, aStart + sliceLen);
-        const bSlice = S.seqB.slice(bStart, bStart + sliceLen);
-        const guide = [];
-        for (let i = 0; i < sliceLen; i++) guide.push(aSlice[i] === bSlice[i] ? '|' : ' ');
+        const aSlice = S.seqA.slice(a0, a0 + sliceLen);
+        const bSlice = S.seqB.slice(b0, b0 + sliceLen);
 
-        // Mark the matched core region with brackets
-        const matchStartA = rBack - aStart;
-        const matchEndA = rFwd - aStart;
-        let guideArr = guide.join('');
-        if (matchStartA < matchEndA && matchStartA >= 0 && matchEndA <= guideArr.length) {
-            const pre = guideArr.substring(0, matchStartA);
-            const mid = guideArr.substring(matchStartA, matchEndA);
-            const post = guideArr.substring(matchEndA);
-            guideArr = pre + '[' + mid + ']' + post;
+        let guide = '';
+        for (let i = 0; i < sliceLen; i++) {
+            guide += aSlice[i] === bSlice[i] ? '|' : ' ';
+        }
+
+        // Mark the hover position
+        if (hoverPos >= 0 && hoverPos < guide.length) {
+            guide = guide.substring(0, hoverPos) + '^' + guide.substring(hoverPos + 1);
         }
 
         panelEl.textContent =
-            `A ${String(aStart + 1).padStart(5)}  ${aSlice}\n` +
-            `          ${guideArr}\n` +
-            `B ${String(bStart + 1).padStart(5)}  ${bSlice}`;
+            `A ${String(a0 + 1).padStart(5)}  ${aSlice}\n` +
+            `          ${guide}\n` +
+            `B ${String(b0 + 1).padStart(5)}  ${bSlice}`;
 
-        // Store for copy button
-        S._copyRegion = {
-            aSlice, bSlice, aStart, bStart,
-            nameA: S.nameA, nameB: S.nameB
-        };
+        S._copyRegion = { aSlice, bSlice, aStart: a0, bStart: b0, nameA: S.nameA, nameB: S.nameB };
     }
 
     if (panelEl) panelEl.style.display = 'block';
@@ -13113,6 +13118,18 @@ function _dotCompute(seqA, seqB, windowSize, mode) {
 
 function _dotBuildImage() {
     const S = _dotPlotState;
+    // SPIN mode: binary matchMap (white dot on black background)
+    if (S.spinMode && S.matchMap) {
+        const img = new ImageData(S.cols, S.rows);
+        const d = img.data;
+        for (let i = 0, j = 0; i < S.rows * S.cols; i++, j += 4) {
+            const v = S.matchMap[i] ? 255 : 0;
+            d[j] = v; d[j+1] = v; d[j+2] = v; d[j+3] = 255;
+        }
+        S.dotImage = img;
+        return;
+    }
+    // Doter mode: grayscale scores (black=high similarity, white=low)
     if (!S.scores) return;
     const img = new ImageData(S.cols, S.rows);
     const d = img.data;
@@ -13208,7 +13225,7 @@ function _dotRender() {
 
 function _dotFitView() {
     const S = _dotPlotState;
-    if (!S.scores) return;
+    if ((!S.scores && !S.matchMap)) return;
     const vp = document.getElementById('dotPlotViewport');
     if (!vp) return;
     const vw = (vp.clientWidth || 600) - DOT_AXIS_PAD - 20;
@@ -13222,7 +13239,7 @@ function _dotFitView() {
 // Detect top-scoring diagonal regions for the side navigation list
 function _dotDetectRegions() {
     const S = _dotPlotState;
-    if (!S.scores) return;
+    if ((!S.scores && !S.matchMap)) return;
     // Adaptive minRun: at least 6bp, up to 15, proportional to sequence length
     const minRun = Math.max(6, Math.min(15, Math.floor(Math.min(S.rows, S.cols) * 0.12)));
     const minScore = S.threshold * S.windowSize * 0.9;
@@ -13336,18 +13353,34 @@ function _dotDrawOverlay(row, col) {
     oCtx.fillStyle = 'rgba(100,230,160,0.85)';
     const pxSz = Math.max(1, Math.round(colW));
     let r = row, c = col;
-    while (r >= 0 && c >= 0) {
-        const n = (S.scores[r * S.cols + c] - S.scoreMin) / range;
-        if (n < S.threshold) break;
-        oCtx.fillRect(DOT_AXIS_PAD + Math.floor(c * colW), DOT_AXIS_PAD + Math.floor(r * rowH), pxSz, pxSz);
-        r--; c--;
-    }
-    r = row + 1; c = col + 1;
-    while (r < S.rows && c < S.cols) {
-        const n = (S.scores[r * S.cols + c] - S.scoreMin) / range;
-        if (n < S.threshold) break;
-        oCtx.fillRect(DOT_AXIS_PAD + Math.floor(c * colW), DOT_AXIS_PAD + Math.floor(r * rowH), pxSz, pxSz);
-        r++; c++;
+    if (S.spinMode && S.matchMap) {
+        // SPIN: walk diagonal using binary matchMap
+        while (r >= 0 && c >= 0) {
+            if (!S.matchMap[r * S.cols + c]) break;
+            oCtx.fillRect(DOT_AXIS_PAD + Math.floor(c * colW), DOT_AXIS_PAD + Math.floor(r * rowH), pxSz, pxSz);
+            r--; c--;
+        }
+        r = row + 1; c = col + 1;
+        while (r < S.rows && c < S.cols) {
+            if (!S.matchMap[r * S.cols + c]) break;
+            oCtx.fillRect(DOT_AXIS_PAD + Math.floor(c * colW), DOT_AXIS_PAD + Math.floor(r * rowH), pxSz, pxSz);
+            r++; c++;
+        }
+    } else if (S.scores) {
+        // Doter: walk diagonal using normalized scores
+        while (r >= 0 && c >= 0) {
+            const n = (S.scores[r * S.cols + c] - S.scoreMin) / range;
+            if (n < S.threshold) break;
+            oCtx.fillRect(DOT_AXIS_PAD + Math.floor(c * colW), DOT_AXIS_PAD + Math.floor(r * rowH), pxSz, pxSz);
+            r--; c--;
+        }
+        r = row + 1; c = col + 1;
+        while (r < S.rows && c < S.cols) {
+            const n = (S.scores[r * S.cols + c] - S.scoreMin) / range;
+            if (n < S.threshold) break;
+            oCtx.fillRect(DOT_AXIS_PAD + Math.floor(c * colW), DOT_AXIS_PAD + Math.floor(r * rowH), pxSz, pxSz);
+            r++; c++;
+        }
     }
     // Position labels
     oCtx.fillStyle = 'rgba(80,160,255,0.95)'; oCtx.font = 'bold 11px system-ui';
@@ -13386,6 +13419,8 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S.rowIndexB = Number.isInteger(m.rowIndexB) ? m.rowIndexB : -1;
     S.alignMapA = m.alignMapA || _buildUngappedToAlignMap(m.alignedSeqA);
     S.alignMapB = m.alignMapB || _buildUngappedToAlignMap(m.alignedSeqB);
+    const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
+    S.spinMode = spinRadio ? spinRadio.checked : true;
     S.windowSize = parseInt(document.getElementById('dotPlotWindow')?.value) || 9;
     S.threshold = (parseInt(document.getElementById('dotPlotThreshold')?.value) || 55) / 100;
     S.pinnedRow = S.pinnedCol = -1; // clear pinned position on new plot
@@ -13403,16 +13438,26 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     const titleEl = document.getElementById('dotPlotTitle');
     if (titleEl) titleEl.textContent = `Dot Plot: ${nameA} vs ${nameB}${revComp ? ' (rc)' : ''}`;
     const statusEl = document.getElementById('dotPlotStatus');
-    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} Ã— ${S.seqB.length}...`;
+    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} Ãƒâ€” ${S.seqB.length}...`;
     _dotClearHoverInfo();
 
     S.computing = true;
     const t0 = performance.now();
     try {
-        const result = await _dotCompute(S.seqA, S.seqB, S.windowSize, 'identity');
-        S.scores = new Int16Array(result.scores);
-        S.rows = result.rows; S.cols = result.cols;
-        S.scoreMin = result.min; S.scoreMax = result.max;
+        if (S.spinMode) {
+            const ws = Math.max(2, S.windowSize);
+            const result = await _dotComputeWord(S.seqA, S.seqB, ws);
+            S.matchMap = new Uint8Array(result.matchMap);
+            S.scores = null;
+            S.rows = result.rows; S.cols = result.cols;
+            S.scoreMin = 0; S.scoreMax = 1;
+        } else {
+            const result = await _dotCompute(S.seqA, S.seqB, S.windowSize, 'identity');
+            S.scores = new Int16Array(result.scores);
+            S.matchMap = null;
+            S.rows = result.rows; S.cols = result.cols;
+            S.scoreMin = result.min; S.scoreMax = result.max;
+        }
     } catch (err) {
         if (statusEl) statusEl.textContent = `Error: ${err.message}`;
         S.computing = false; return;
@@ -13422,7 +13467,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     _dotBuildImage();
     _dotFitView();
     S.lastRow = S.lastCol = -1;
-    if (statusEl) statusEl.textContent = `${S.seqA.length} Ã— ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
+    if (statusEl) statusEl.textContent = `${S.seqA.length} Ãƒâ€” ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
 }
 
 
@@ -13438,7 +13483,7 @@ function _initDotPlotEvents() {
         let hoverRaf = 0;
         overlay.addEventListener('mousemove', (e) => {
             const S = _dotPlotState;
-            if (!S.scores || hoverRaf) return;
+            if ((!S.scores && !S.matchMap) || hoverRaf) return;
             hoverRaf = requestAnimationFrame(() => {
                 hoverRaf = 0;
                 const rect = overlay.getBoundingClientRect();
@@ -13473,7 +13518,7 @@ function _initDotPlotEvents() {
         // Click to pin a coordinate for region copying
         overlay.addEventListener('click', (e) => {
             const S = _dotPlotState;
-            if (!S.scores) return;
+            if ((!S.scores && !S.matchMap)) return;
             const rect = overlay.getBoundingClientRect();
             const col = Math.floor((e.clientX - rect.left - DOT_AXIS_PAD) / S.zoom);
             const row = Math.floor((e.clientY - rect.top - DOT_AXIS_PAD) / S.zoom);
@@ -13488,7 +13533,7 @@ function _initDotPlotEvents() {
         if (viewport) {
             viewport.addEventListener('wheel', (e) => {
                 const S = _dotPlotState;
-                if (!S.scores) return;
+                if ((!S.scores && !S.matchMap)) return;
                 e.preventDefault();
                 const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
                 S.zoom = Math.max(0.5, Math.min(24, Math.round(S.zoom * factor * 10) / 10));
@@ -13500,7 +13545,7 @@ function _initDotPlotEvents() {
             }, { passive: false });
         }
     }
-    if (threshSlider) {
+    if (threshSlider) { _dotOnModeChange(); _dotOnModeChange();
         threshSlider.addEventListener('input', () => {
             const v = parseInt(threshSlider.value);
             if (threshVal) threshVal.textContent = v + '%';
@@ -13551,7 +13596,7 @@ function _initDotPlotEvents() {
                 fasta = `>${region.nameA}_${region.aStart + 1}-${region.aStart + region.aSlice.length}\n${region.aSlice}\n` +
                         `>${region.nameB}_${region.bStart + 1}-${region.bStart + region.bSlice.length}\n${region.bSlice}`;
             } else {
-                // Use pinned position â€” walk diagonal to find match extent
+                // Use pinned position Ã¢â‚¬â€ walk diagonal to find match extent
                 const range = S.scoreMax - S.scoreMin || 1;
                 const threshold = S.threshold;
                 let rBack = S.pinnedRow, cBack = S.pinnedCol;
@@ -13618,11 +13663,16 @@ function _initDotPlotEvents() {
             if (modal) modal.style.display = 'none';
         });
     }
+
+    // Mode radio buttons
+    document.querySelectorAll('input[name="dotPlotMode"]').forEach(r => {
+        r.addEventListener('change', _dotOnModeChange);
+    });
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // REPEAT FINDER (Direct, Inverted, Tandem) & TSD FINDER
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
 let _repeatFinderSeqIndex = -1;
 // Repeat highlighting state
@@ -13631,7 +13681,7 @@ let _lastRepeatResults = [];
 const _repeatColorPalette = ["#ff6b6b","#ffa94d","#ffd43b","#69db7c","#4dabf7","#da77f2","#20c997","#ff8787","#74c0fc","#f783ac","#ffe066","#63e6be","#a9e34b","#e599f7","#66d9e8","#fcc419","#94d82d","#ff922b","#be4bdb","#339af0"];
 
 function _syncRepeatFinderModeUI() {
-    // All modes use the same general params now â€” nothing to toggle
+    // All modes use the same general params now Ã¢â‚¬â€ nothing to toggle
 }
 
 function openRepeatFinder(seqIndex, preferredMode = null) {
@@ -14263,7 +14313,7 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
     const colors = _repeatColorPalette;
     const hl = state.repeatHighlights;
 
-    let html = `<div style="margin-bottom:8px;font-weight:bold;font-size:12px;">${mode} repeats in ${seqName} (${seqLength} bp) â€” ${results.length} found</div>`;
+    let html = `<div style="margin-bottom:8px;font-weight:bold;font-size:12px;">${mode} repeats in ${seqName} (${seqLength} bp) Ã¢â‚¬â€ ${results.length} found</div>`;
     html += '<div style="font-size:11px;color:#666;margin-bottom:4px;">Click a row to highlight in alignment. Click again to remove.</div>';
 
     if (mode === 'tandem') {
@@ -14293,10 +14343,10 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
                 `<td style="text-align:right;padding:2px 4px;">${r.start+1}</td>` +
                 `<td style="text-align:right;padding:2px 4px;">${r.end}</td>` +
                 `<td style="text-align:right;padding:2px 4px;">${r.unitLen}bp</td>` +
-                `<td style="text-align:right;padding:2px 4px;">${r.copies}Ã—</td>` +
+                `<td style="text-align:right;padding:2px 4px;">${r.copies}Ãƒâ€”</td>` +
                 `<td style="text-align:right;padding:2px 4px;">${r.divergence}%</td>` +
                 `<td style="padding:2px 4px;font-family:monospace;">${r.unit}</td>` +
-                `<td style="padding:2px 4px;text-align:center;"><button class="repeat-remove-btn" style="background:none;border:none;color:#c00;font-size:14px;cursor:pointer;line-height:1;padding:0 2px;" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">Ã—</button></td>` +
+                `<td style="padding:2px 4px;text-align:center;"><button class="repeat-remove-btn" style="background:none;border:none;color:#c00;font-size:14px;cursor:pointer;line-height:1;padding:0 2px;" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">Ãƒâ€”</button></td>` +
                 `</tr>`;
         });
         html += '</tbody></table>';
@@ -14329,7 +14379,7 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
                 `<td style="text-align:right;padding:2px 4px;">${r.length}</td>` +
                 `<td style="text-align:right;padding:2px 4px;">${r.divergence}%</td>` +
                 `<td style="padding:2px 4px;font-family:monospace;">${r.seqA.length > 50 ? r.seqA.substring(0,50)+'...' : r.seqA}</td>` +
-                `<td style="padding:2px 4px;text-align:center;"><button class="repeat-remove-btn" style="background:none;border:none;color:#c00;font-size:14px;cursor:pointer;line-height:1;padding:0 2px;" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">Ã—</button></td>` +
+                `<td style="padding:2px 4px;text-align:center;"><button class="repeat-remove-btn" style="background:none;border:none;color:#c00;font-size:14px;cursor:pointer;line-height:1;padding:0 2px;" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">Ãƒâ€”</button></td>` +
                 `</tr>`;
         });
         html += '</tbody></table>';
@@ -14409,7 +14459,7 @@ function _applyLineHighlights(dataSpan) {
         const span = spans[i];
         const pos = parseInt(span.dataset.pos);
         if (isNaN(pos)) continue;
-        // Skip gap characters â€” do not colour gaps within repeats
+        // Skip gap characters Ã¢â‚¬â€ do not colour gaps within repeats
         const ch = span.textContent;
         if (ch === '-' || ch === '.') continue;
         for (const [rid, info] of hl) {

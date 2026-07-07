@@ -830,9 +830,13 @@
                 <button id="dotPlotCloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;padding:0 4px;">✕</button>
             </div>
             <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px;flex-wrap:wrap;">
-                <label>Window: <input type="number" id="dotPlotWindow" value="9" min="1" max="61" step="2" style="width:45px;"></label>
+                <span style="font-weight:bold;">Mode:</span>
+                <label><input type="radio" name="dotPlotMode" value="spin" checked onchange="_dotOnModeChange()"> SPIN (word)</label>
+                <label><input type="radio" name="dotPlotMode" value="doter" onchange="_dotOnModeChange()"> Doter (window)</label>
+                <span style="border-left:1px solid #ccc;height:16px;display:inline-block;margin:0 4px;"></span>
+                <label>Word/Window: <input type="number" id="dotPlotWindow" value="9" min="1" max="61" step="2" style="width:45px;"></label>
                 <label>Threshold: <input type="range" id="dotPlotThreshold" min="0" max="100" value="55" style="width:100px;vertical-align:middle;"><span id="dotPlotThreshVal">55%</span></label>
-                <label>Context: <input type="number" id="dotPlotContextRadius" value="5" min="0" max="40" step="1" style="width:40px;" title="Extra bases to show around the matched diagonal region"> bp</label>
+                <label>Context: <input type="number" id="dotPlotContextRadius" value="30" min="0" max="100" step="5" style="width:45px;" title="Extra bases to show around the hover position"> bp</label>
                 <label><input type="checkbox" id="dotPlotRevComp"> RevComp B</label>
                 <button id="dotPlotRecalc" style="font-size:11px;padding:2px 8px;">Recalculate</button>
                 <button id="dotPlotExport" style="font-size:11px;padding:2px 8px;">Export PNG</button>
@@ -933,7 +937,7 @@ B: —</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=44"></script>
+    <script src="script.js?v=45"></script>
     <script>
 // All functionality moved to script.js
 </script>
