@@ -13028,11 +13028,11 @@ function _dot2Compute() {
         D.rows = e.data.rows; D.cols = e.data.cols;
         D.scoreMin = e.data.min; D.scoreMax = e.data.max;
         _dot2BuildImage();
-        _dot2FitView();
+        // Defer fitView until modal layout is complete
+        requestAnimationFrame(() => { _dot2FitView(); });
         const ms = performance.now() - t0;
         const el = document.getElementById('dotPlotV2Status');
         if (el) el.textContent = `${D.rows}×${D.cols} in ${ms<1000?ms.toFixed(0)+'ms':(ms/1000).toFixed(1)+'s'}`;
-        _dot2Render();
     };
     const no = (e) => { w.removeEventListener('message',ok); w.removeEventListener('error',no);
         document.getElementById('dotPlotV2Status').textContent = 'Worker error'; };
@@ -13059,9 +13059,10 @@ function _dot2FitView() {
     if (!D.rows || !D.cols) return;
     const vp = document.getElementById('dotPlotV2Viewport');
     if (!vp) return;
+    const pad = 60;
     D.zoom = Math.max(1, Math.min(
-        Math.floor((vp.clientWidth - 55) / D.cols),
-        Math.floor((vp.clientHeight - 55) / D.rows)
+        Math.floor((vp.clientWidth - pad) / D.cols),
+        Math.floor((vp.clientHeight - pad) / D.rows)
     ));
     _dot2Render();
 }
@@ -13084,6 +13085,16 @@ function _dot2WalkDiag(row, col) {
     return { r0, c0, r1, c1, len: r1 - r0 };
 }
 
+function _dot2NiceTick(len, plotPx) {
+    // Guarantee at least 50px between tick labels
+    const maxTicks = Math.max(1, Math.floor(plotPx / 50));
+    const raw = len / maxTicks;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    let step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+    return Math.max(1, Math.round(step * mag));
+}
+
 function _dot2Render() {
     const D = _D2;
     const cv = document.getElementById('dotPlotV2Canvas');
@@ -13091,38 +13102,50 @@ function _dot2Render() {
     const ctx = cv.getContext('2d');
     const { rows, cols, zoom } = D;
     const pW = Math.round(cols * zoom), pH = Math.round(rows * zoom);
-    const AX = 50;
-    const tw = AX + pW + 1, th = AX + pH + 1;
+    const AX = 52; // axis label padding
+    const AX_TOP = 14; // top axis label height
+    const tw = AX + pW + 6, th = AX_TOP + AX + pH + 6;
     cv.width = tw; cv.height = th;
     cv.style.width = tw + 'px'; cv.style.height = th + 'px';
+
+    // Background
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, tw, th);
 
     // Dot image
     const tmp = document.createElement('canvas');
     tmp.width = cols; tmp.height = rows;
     tmp.getContext('2d').putImageData(D.dotImage, 0, 0);
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(tmp, AX, AX, pW, pH);
+    ctx.drawImage(tmp, AX, AX_TOP + AX, pW, pH);
 
-    // Axes
-    ctx.fillStyle = '#333'; ctx.font = '9px system-ui';
-    const stepA = _dot2NiceStep(rows, Math.floor(pH / 18));
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    for (let i = 0; i < rows; i += stepA) {
-        const y = AX + Math.round(i * zoom) + Math.round(zoom/2);
-        ctx.fillText(i+1, AX - 5, y);
-        ctx.fillRect(AX - 3, y - 1, 6, 1);
-    }
-    const stepB = _dot2NiceStep(cols, Math.floor(pW / 18));
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    for (let j = 0; j < cols; j += stepB) {
-        const x = AX + Math.round(j * zoom) + Math.round(zoom/2);
-        ctx.save(); ctx.translate(x, AX - 5); ctx.rotate(-Math.PI/2);
-        ctx.fillText(j+1, 0, 0); ctx.restore();
-        ctx.fillRect(x - 1, AX - 3, 1, 6);
-    }
-
+    const plotX = AX, plotY = AX_TOP + AX;
     const cW = pW / cols, rH = pH / rows;
     const pxSz = Math.max(2, Math.round(cW));
+
+    // Axis ticks
+    ctx.fillStyle = '#444'; ctx.strokeStyle = '#ccc'; ctx.lineWidth = 0.5;
+
+    // Y-axis (row labels)
+    const stepA = _dot2NiceTick(rows, pH);
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.font = '10px system-ui';
+    for (let i = 0; i < rows; i += stepA) {
+        const y = plotY + Math.round(i * rH) + Math.round(rH / 2);
+        ctx.fillText(String(i + 1), plotX - 5, y);
+    }
+
+    // X-axis (col labels) — rotated
+    const stepB = _dot2NiceTick(cols, pW);
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.font = '10px system-ui';
+    for (let j = 0; j < cols; j += stepB) {
+        const x = plotX + Math.round(j * cW) + Math.round(cW / 2);
+        ctx.save();
+        ctx.translate(x, plotY - 10);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(String(j + 1), 0, 0);
+        ctx.restore();
+    }
 
     // Highlight diagonal for hover
     if (D.hoverRow >= 0 && D.hoverCol >= 0) {
@@ -13130,35 +13153,38 @@ function _dot2Render() {
         if (diag) {
             ctx.fillStyle = 'rgba(100,230,160,0.8)';
             for (let k = diag.r0; k < diag.r1; k++) {
-                ctx.fillRect(AX + Math.floor((diag.c0+k-diag.r0)*cW), AX + Math.floor(k*rH), pxSz, pxSz);
+                ctx.fillRect(plotX + Math.floor((diag.c0 + k - diag.r0) * cW), plotY + Math.floor(k * rH), pxSz, pxSz);
             }
         }
-        const cx = AX + (D.hoverCol + 0.5) * cW, cy = AX + (D.hoverRow + 0.5) * rH;
-        ctx.strokeStyle = 'rgba(80,160,255,0.6)'; ctx.lineWidth = 1;
+        const cx = plotX + (D.hoverCol + 0.5) * cW;
+        const cy = plotY + (D.hoverRow + 0.5) * rH;
+        ctx.strokeStyle = 'rgba(80,160,255,0.55)'; ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(AX, cy); ctx.lineTo(AX + pW, cy);
-        ctx.moveTo(cx, AX); ctx.lineTo(cx, AX + pH);
+        ctx.moveTo(plotX, cy); ctx.lineTo(plotX + pW, cy);
+        ctx.moveTo(cx, plotY); ctx.lineTo(cx, plotY + pH);
         ctx.stroke();
+        // Labels on axes
         ctx.fillStyle = 'rgba(80,160,255,0.9)'; ctx.font = 'bold 10px system-ui';
         ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-        ctx.fillText(D.hoverCol + 1, cx, AX - 1);
+        ctx.fillText(String(D.hoverCol + 1), cx, plotY - 1);
         ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-        ctx.fillText(D.hoverRow + 1, AX - 2, cy);
+        ctx.fillText(String(D.hoverRow + 1), plotX - 7, cy);
     }
 
     // Pinned marker
     if (D.pinnedRow >= 0 && D.pinnedCol >= 0) {
-        const cx = AX + (D.pinnedCol + 0.5) * cW, cy = AX + (D.pinnedRow + 0.5) * rH;
+        const cx = plotX + (D.pinnedCol + 0.5) * cW;
+        const cy = plotY + (D.pinnedRow + 0.5) * rH;
         ctx.strokeStyle = 'rgba(220,50,50,0.8)'; ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(AX, cy); ctx.lineTo(AX + pW, cy);
-        ctx.moveTo(cx, AX); ctx.lineTo(cx, AX + pH);
+        ctx.moveTo(plotX, cy); ctx.lineTo(plotX + pW, cy);
+        ctx.moveTo(cx, plotY); ctx.lineTo(cx, plotY + pH);
         ctx.stroke();
         ctx.strokeStyle = 'rgba(220,50,50,0.9)'; ctx.lineWidth = 2;
-        ctx.strokeRect(AX + Math.floor(D.pinnedCol*cW) - 1, AX + Math.floor(D.pinnedRow*rH) - 1, cW+2, rH+2);
+        ctx.strokeRect(plotX + Math.floor(D.pinnedCol * cW) - 1, plotY + Math.floor(D.pinnedRow * rH) - 1, cW + 2, rH + 2);
         ctx.fillStyle = 'rgba(220,50,50,0.9)'; ctx.font = 'bold 10px system-ui';
         ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-        ctx.fillText('PIN A'+String(D.pinnedRow+1)+' / B'+String(D.pinnedCol+1), AX+4, AX-1);
+        ctx.fillText('PIN A' + String(D.pinnedRow + 1) + '/B' + String(D.pinnedCol + 1), plotX + 4, plotY - 1);
     }
 }
 
@@ -13168,15 +13194,15 @@ function _dot2UpdateInfo(row, col) {
     const align = document.getElementById('dotPlotV2Align');
     if (row < 0 || col < 0 || row >= D.rows || col >= D.cols) {
         if (info) info.textContent = 'Hover over the plot…';
-        if (align) align.textContent = 'A: —\n   |\nB: —';
+        if (align) align.textContent = 'A  —\n   |\nB  —';
         return;
     }
     const range = D.scoreMax - D.scoreMin || 1;
     const norm = (D.scores[row * D.cols + col] - D.scoreMin) / range;
-    if (info) info.textContent = `A${row+1}/${D.rows} B${col+1}/${D.cols} score=${norm.toFixed(3)}  ${D.seqA[row]||'N'} vs ${D.seqB[col]||'N'}`;
+    if (info) info.textContent = `A${row+1}/${D.rows}  B${col+1}/${D.cols}  score=${norm.toFixed(3)}  ${D.seqA[row]||'N'} vs ${D.seqB[col]||'N'}`;
 
     const diag = _dot2WalkDiag(row, col);
-    if (!diag) { if (align) align.textContent = 'A: —\n   |\nB: —'; return; }
+    if (!diag) { if (align) align.textContent = 'A  —\n   |\nB  —'; return; }
 
     const ctxR = parseInt(document.getElementById('dotPlotV2Ctx')?.value) || 5;
     const maxSlice = diag.len + 2 * ctxR;
@@ -13186,13 +13212,33 @@ function _dot2UpdateInfo(row, col) {
     const aSl = D.seqA.slice(a0, a0+sl), bSl = D.seqB.slice(b0, b0+sl);
     const msA = diag.r0 - a0, meA = diag.r1 - a0;
 
-    let guide = '';
+    // Compact display: show match markers right under the sequences
+    let matchMarks = '';
     for (let i = 0; i < sl; i++) {
-        const ch = aSl[i] === bSl[i] ? '|' : ' ';
-        guide += (i >= msA && i < meA) ? '['+ch+']' : ' '+ch+' ';
+        const inMatch = i >= msA && i < meA;
+        if (inMatch) {
+            matchMarks += aSl[i] === bSl[i] ? '│' : '·';  // | or ·
+        } else {
+            matchMarks += ' ';
+        }
     }
-    if (align) align.textContent =
-        `A ${String(a0+1).padStart(5)}  ${aSl}\n          ${guide}\nB ${String(b0+1).padStart(5)}  ${bSl}`;
+    // Wrap every 60 chars
+    const wrap = 60;
+    let lines = [];
+    for (let off = 0; off < sl; off += wrap) {
+        const e = Math.min(off + wrap, sl);
+        const aPart = aSl.slice(off, e);
+        const mPart = matchMarks.slice(off, e);
+        const bPart = bSl.slice(off, e);
+        const aLabel = off === 0 ? `A ${String(a0+1).padStart(4)} ` : '      ';
+        const bLabel = off === 0 ? `B ${String(b0+1).padStart(4)} ` : '      ';
+        lines.push(aLabel + aPart);
+        lines.push('        ' + mPart);
+        lines.push(bLabel + bPart);
+    }
+    if (align) align.textContent = lines.join('\n');
+
+    // Store for copy
     D.copyRegion = { aSlice: aSl, bSlice: bSl, aStart: a0, bStart: b0, nameA: D.nameA, nameB: D.nameB };
 }
 
@@ -13200,14 +13246,7 @@ function _dot2ClearInfo() {
     const info = document.getElementById('dotPlotV2Info');
     const align = document.getElementById('dotPlotV2Align');
     if (info) info.textContent = 'Hover over the plot…';
-    if (align) align.textContent = 'A: —\n   |\nB: —';
-}
-
-function _dot2NiceStep(len, maxTicks) {
-    const raw = len / maxTicks, mag = Math.pow(10, Math.floor(Math.log10(raw)));
-    const norm = raw / mag;
-    const step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
-    return Math.max(1, Math.round(step * mag));
+    if (align) align.textContent = 'A  —\n   |\nB  —';
 }
 
 // Old v1 dot plot (kept for reference, can be removed later)
