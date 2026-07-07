@@ -258,6 +258,10 @@ html {
     align-items: stretch;
 }
 
+#actions-controls .action-section-order .button-group {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 #actions-controls .button-group button {
     width: 100%;
     min-width: 0;
