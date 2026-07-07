@@ -2042,5 +2042,13 @@ body.codon-mode .aa-row:empty { display: none; }
 .recent-item:hover { background: #e8f0fe; }
 .recent-item:last-of-type { border-bottom: none !important; }
 
-/* Variable sites only � hide fully-conserved columns */
+/* Variable sites only — hide fully-conserved columns */
 body.var-sites-only .seq-data > span[data-pos]:not(.diff-highlight) { display: none !important; }
+
+/* Keyboard shortcut displays — key column must not wrap */
+#infoModal > div strong,
+#shortcuts-controls strong,
+#hotkeysTooltip strong {
+    white-space: nowrap;
+}
+#hotkeysTooltip { max-width: 340px !important; }
