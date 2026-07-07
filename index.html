@@ -862,12 +862,12 @@ B: —</pre>
 
     <!-- Dot-Plot v2 Modal (clean single-canvas) -->
     <div id="dotPlotV2Modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10003;overflow:auto;">
-        <div id="dotPlotV2Dialog" style="background:white;margin:30px auto;padding:16px;max-width:96vw;max-height:93vh;width:1000px;min-width:600px;min-height:400px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);position:relative;display:flex;flex-direction:column;resize:both;overflow:auto;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <h3 style="margin:0;" id="dotPlotV2Title">Dot Plot v2</h3>
-                <button id="dotPlotV2CloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;padding:0 4px;">✕</button>
+        <div id="dotPlotV2Dialog" style="background:#fff;margin:24px auto;padding:14px;max-width:97vw;max-height:94vh;width:1000px;min-width:600px;min-height:400px;border-radius:8px;box-shadow:0 6px 28px rgba(0,0,0,0.25);position:relative;display:flex;flex-direction:column;resize:both;overflow:hidden;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #eee;">
+                <h3 style="margin:0;font-size:14px;" id="dotPlotV2Title">Dot Plot v2</h3>
+                <button id="dotPlotV2CloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;padding:0 4px;line-height:1;">✕</button>
             </div>
-            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px;flex-wrap:wrap;">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px;flex-wrap:wrap;padding:6px 8px;background:#f8f8f8;border-radius:4px;">
                 <label>Window <input type="number" id="dotPlotV2Win" value="9" min="1" max="61" step="2" style="width:45px;"></label>
                 <label>Thr <input type="range" id="dotPlotV2Thr" min="0" max="100" value="55" style="width:90px;vertical-align:middle;"><span id="dotPlotV2ThrVal">55%</span></label>
                 <label>Ctx <input type="number" id="dotPlotV2Ctx" value="5" min="0" max="40" style="width:40px;"> bp</label>
@@ -881,11 +881,11 @@ B: —</pre>
                 <div id="dotPlotV2Viewport" style="overflow:auto;flex:1;min-width:300px;border:1px solid #ccc;position:relative;cursor:crosshair;background:#fff;">
                     <canvas id="dotPlotV2Canvas"></canvas>
                 </div>
-                <div style="width:260px;min-width:200px;display:flex;flex-direction:column;gap:6px;font-size:11px;">
-                    <div id="dotPlotV2Info" style="border:1px solid #eee;padding:6px;border-radius:4px;min-height:20px;color:#555;">Hover over the plot…</div>
-                    <pre id="dotPlotV2Align" style="margin:0;padding:8px;border:1px solid #d8d8d8;background:#f7f7f7;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;overflow:auto;flex:1;min-height:58px;border-radius:4px;">A: —
+                <div style="width:280px;min-width:200px;display:flex;flex-direction:column;gap:6px;font-size:11px;">
+                    <div id="dotPlotV2Info" style="border:1px solid #ddd;padding:6px 8px;border-radius:4px;min-height:20px;color:#555;background:#fdfdfd;">Hover over the plot…</div>
+                    <pre id="dotPlotV2Align" style="margin:0;padding:8px;border:1px solid #d8d8d8;background:#f7f7f7;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;overflow:auto;flex:1;min-height:58px;border-radius:4px;word-break:break-all;">A  —
    |
-B: —</pre>
+B  —</pre>
                     <button id="dotPlotV2Copy" style="padding:4px 10px;font-size:12px;cursor:pointer;">📋 Copy Region</button>
                 </div>
             </div>
@@ -967,7 +967,7 @@ B: —</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=40"></script>
+    <script src="script.js?v=41"></script>
     <script>
 // All functionality moved to script.js
 </script>
