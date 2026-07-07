@@ -4626,11 +4626,17 @@ function handleKeyDown(e) {
         return;
     }
 
-    // If focus is in an input/textarea, only allow GeneDoc residue editing to pass through
+    // If focus is in an input/textarea, block unmodified keypresses (normal typing),
+    // but always allow Ctrl/Meta/Alt shortcuts to pass through
     const activeEl = document.activeElement;
     if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
-        if (!state.editModeActive || state.editTool !== 'residue' || !state.editCell) return;
-        // Fall through to handleGeneDocResidueKey below
+        if (e.ctrlKey || e.metaKey || e.altKey) {
+            // modifier key held — treat as shortcut, let it fall through
+        } else if (state.editModeActive && state.editTool === 'residue' && state.editCell) {
+            // GeneDoc residue editing mode — allow unmodified keys
+        } else {
+            return; // normal typing in input — don't intercept
+        }
     }
     if (handleGeneDocResidueKey(e)) {
         return;
@@ -10677,8 +10683,9 @@ function attachUIListeners() {
     document.addEventListener('mousemove', handleAlignmentPanMove);
     document.addEventListener('mousemove', _handleRowReorderMove);
     document.addEventListener('contextmenu', handleAlignmentPanContextMenu, true);
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('keyup', handleKeyUp);
+    // Use capture phase so shortcuts like Ctrl+H override browser built-ins
+    document.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('keyup', handleKeyUp, true);
 
     // Use existing global infoModal reference
     document.addEventListener('click', (event) => {
