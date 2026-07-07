@@ -6318,12 +6318,15 @@ function exportAlignmentAsRtf() {
     showMessage('Alignment exported as RTF (open in Word)!', 2500);
 }
 
+var _menuMinimized = false;
+
 function minimizeMenu() {
-    const controls = el('controls');
-    if (controls.style.display === 'none') {
+    if (_menuMinimized) {
         expandMenu();
+        _menuMinimized = false;
         return;
     }
+    const controls = el('controls');
     controls.style.display = 'none';
     // Reset any overlay positioning
     controls.style.position = '';
@@ -6333,11 +6336,13 @@ function minimizeMenu() {
     controls.style.zIndex = '';
     controls.style.boxShadow = '';
     minimizeBar.style.display = 'block';
-    // Move alignment up to fill the space (just below the thin bar)
-    alignmentContainer.style.top = '5px';
+    _menuMinimized = true;
+    // Move alignment below the bar with room for sticky header
+    alignmentContainer.style.top = '20px';
 }
 function expandMenu() {
     minimizeBar.style.display = 'none';
+    _menuMinimized = false;
     const controls = el('controls');
     controls.style.display = 'grid';
     // Reset any overlay positioning

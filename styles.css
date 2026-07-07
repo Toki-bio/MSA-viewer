@@ -1578,22 +1578,18 @@ span.column-selected {
     display: none;
     position: sticky;
     top: 0;
-    height: 5px;
-    background: #bbb;
+    height: 18px;
+    line-height: 18px;
+    background: #ccc;
     cursor: pointer;
     z-index: 100;
     text-align: center;
     transition: background 0.15s;
+    font-size: 10px;
+    color: #666;
+    user-select: none;
 }
-#minimizeBar:hover { background: #777; }
-#minimizeBar span {
-    font-size: 7px;
-    line-height: 5px;
-    color: #fff;
-    display: inline-block;
-    position: relative;
-    top: -5px;
-}
+#minimizeBar:hover { background: #aaa; color: #333; }
 
 /* SSH mini-console */
 #sshConsole {
