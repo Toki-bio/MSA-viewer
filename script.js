@@ -3814,9 +3814,9 @@ function refreshSequenceRowDom(rowIndex) {
 
     const len = Math.max(...state.seqs.map(s => s.seq.length));
     const config = getSequenceRenderConfig();
-    const conservationData = getDeferredConservationData(len, config.shadeMode)
-        || state.conservationDataCache?.data
-        || [];
+    const conservationData = state.editLiveConservation
+        ? (getDeferredConservationData(len, config.shadeMode) || state.conservationDataCache?.data || [])
+        : [];
 
     rowCache.forEach((span, pos) => {
         const base = seqObj.seq[pos] || GENEDOC_FILLER;
@@ -4627,9 +4627,13 @@ function handleKeyDown(e) {
     }
 
     // If focus is in an input/textarea, block unmodified keypresses (normal typing),
-    // but always allow Ctrl/Meta/Alt shortcuts to pass through
+    // but allow Ctrl/Meta/Alt shortcuts to pass through — EXCEPT in TEXTAREA
+    // where browser-native shortcuts (Ctrl+A select-all-text, Ctrl+C copy, etc.) should work.
     const activeEl = document.activeElement;
     if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
+        if (activeEl.tagName === 'TEXTAREA') {
+            return; // let browser handle all keys in textarea (Input window etc.)
+        }
         if (e.ctrlKey || e.metaKey || e.altKey) {
             // modifier key held — treat as shortcut, let it fall through
         } else if (state.editModeActive && state.editTool === 'residue' && state.editCell) {
@@ -10949,8 +10953,13 @@ function geneDocSlideStepString(seq, pos, direction) {
         const result = geneDocInsertDashString(seq, pos);
         return { seq: result.seq, moved: result.changed ? 1 : 0 };
     }
-    if (pos === 0 || !isGeneDocGapChar(chars[pos - 1])) return { seq, moved: 0 };
-    chars.splice(pos - 1, 1);
+    // Left: scan for any gap to the left (not just immediately adjacent)
+    let gapPos = -1;
+    for (let i = pos - 1; i >= 0; i--) {
+        if (isGeneDocGapChar(chars[i])) { gapPos = i; break; }
+    }
+    if (gapPos === -1) return { seq, moved: 0 };
+    chars.splice(gapPos, 1);
     chars.push(GENEDOC_FILLER);
     return { seq: chars.join(''), moved: -1 };
 }
@@ -11056,6 +11065,13 @@ function canGeneDocMove(rowIndex, pos, direction, tool) {
     if (pos < 0 || pos >= seq.length || !isGeneDocResidueChar(seq[pos])) return false;
     if (direction > 0) return true;
     if (tool === 'moveNoGaps') {
+        for (let scan = pos - 1; scan >= 0; scan--) {
+            if (isGeneDocGapChar(seq[scan])) return true;
+        }
+        return false;
+    }
+    if (tool === 'slideKeepGaps') {
+        // Slide Keep Gaps: any gap to the left is consumable
         for (let scan = pos - 1; scan >= 0; scan--) {
             if (isGeneDocGapChar(seq[scan])) return true;
         }
