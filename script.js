@@ -10819,6 +10819,11 @@ function initializeGeneDocEditToolbar() {
     el('editDeleteColumnsButton')?.addEventListener('click', () => deleteSelectedColumns(true));
     el('editClearGapColumnsButton')?.addEventListener('click', removeGapColumns);
     el('editSeqEditorButton')?.addEventListener('click', () => openSeqEditor());
+    el('editRecalcConsButton')?.addEventListener('click', () => {
+        state.conservationDataCache = null;
+        renderAlignment();
+        showMessage('Conservation recalculated.', 1500);
+    });
 
     updateGeneDocEditUI();
 }
@@ -10831,6 +10836,9 @@ function setGeneDocEditMode(active) {
     if (!state.editModeActive) {
         clearGeneDocEditDrag();
         state.editCell = null;
+        // Recalculate conservation on edit mode exit
+        state.conservationDataCache = null;
+        renderAlignment();
     }
     updateGeneDocEditUI();
     updateEditActiveCell();
