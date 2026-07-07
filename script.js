@@ -6320,6 +6320,10 @@ function exportAlignmentAsRtf() {
 
 function minimizeMenu() {
     const controls = el('controls');
+    if (controls.style.display === 'none') {
+        expandMenu();
+        return;
+    }
     controls.style.display = 'none';
     // Reset any overlay positioning
     controls.style.position = '';
