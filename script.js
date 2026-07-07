@@ -921,9 +921,31 @@ function hideTooltip() {
     tooltip.className = 'tooltip';
 }
 
-// Menu stability: delay closing menus when mouse leaves to prevent flickering
+// Menu stability: JS owns open state; short delay only when leaving a menu entirely
 const menuCloseDelays = new Map();
-const MENU_CLOSE_DELAY = 100; // milliseconds (was 300, reduced for snappier UX)
+const MENU_CLOSE_DELAY = 120; // milliseconds — gap tolerance when moving to dropdown
+
+function clearMenuCloseDelay(section) {
+    if (menuCloseDelays.has(section)) {
+        clearTimeout(menuCloseDelays.get(section));
+        menuCloseDelays.delete(section);
+    }
+}
+
+function closeOtherMenusExcept(activeSection) {
+    document.querySelectorAll('.menu-section').forEach(section => {
+        if (section === activeSection) return;
+        clearMenuCloseDelay(section);
+        section.classList.remove('menu-open');
+        section.classList.remove('hover-active');
+    });
+}
+
+function openMenuSection(section) {
+    closeOtherMenusExcept(section);
+    clearMenuCloseDelay(section);
+    section.classList.add('menu-open');
+}
 
 function setupMenuStability() {
     const menuSections = document.querySelectorAll('.menu-section');
@@ -931,12 +953,7 @@ function setupMenuStability() {
         const controlGroup = section.querySelector('.control-group');
 
         section.addEventListener('mouseenter', () => {
-            // Clear any pending close timeout for this menu
-            if (menuCloseDelays.has(section)) {
-                clearTimeout(menuCloseDelays.get(section));
-                menuCloseDelays.delete(section);
-            }
-            section.classList.add('menu-open');
+            openMenuSection(section);
         });
 
         section.addEventListener('mouseleave', () => {
@@ -948,9 +965,10 @@ function setupMenuStability() {
                 return;
             }
 
-            // Delay closing the menu to avoid flickering on brief mouse movements
+            // Brief delay when leaving menu entirely; switching sections closes others immediately
             const timeoutId = setTimeout(() => {
                 section.classList.remove('menu-open');
+                section.classList.remove('hover-active');
                 menuCloseDelays.delete(section);
             }, MENU_CLOSE_DELAY);
             menuCloseDelays.set(section, timeoutId);
@@ -959,11 +977,7 @@ function setupMenuStability() {
         // Keep menu open when hovering over control-group
         if (controlGroup) {
             controlGroup.addEventListener('mouseenter', () => {
-                if (menuCloseDelays.has(section)) {
-                    clearTimeout(menuCloseDelays.get(section));
-                    menuCloseDelays.delete(section);
-                }
-                section.classList.add('menu-open');
+                openMenuSection(section);
             });
 
             // Close menu when blur happens and mouse is not hovering
@@ -972,10 +986,8 @@ function setupMenuStability() {
                     // Check if mouse is still over the section
                     if (!section.matches(':hover')) {
                         section.classList.remove('menu-open');
-                        if (menuCloseDelays.has(section)) {
-                            clearTimeout(menuCloseDelays.get(section));
-                            menuCloseDelays.delete(section);
-                        }
+                        section.classList.remove('hover-active');
+                        clearMenuCloseDelay(section);
                     }
                 });
             });
@@ -3528,7 +3540,11 @@ function initSourceInfoInteractions() {
 }
 
 function closeAllMenusViaEsc() {
-    document.querySelectorAll('.menu-section.menu-open').forEach(section => section.classList.remove('menu-open'));
+    document.querySelectorAll('.menu-section').forEach(section => {
+        clearMenuCloseDelay(section);
+        section.classList.remove('menu-open');
+        section.classList.remove('hover-active');
+    });
     document.body.classList.add('suppress-menu-hover');
     const clearSuppress = () => {
         document.body.classList.remove('suppress-menu-hover');
@@ -10226,7 +10242,7 @@ function initializeAppUI() {
         document.querySelectorAll('.menu-section').forEach(section => {
             const cg = section.querySelector('.control-group');
             if (!cg) return;
-            cg.addEventListener('mouseenter', () => section.classList.add('hover-active'));
+            cg.addEventListener('mouseenter', () => openMenuSection(section));
             cg.addEventListener('mouseleave', () => section.classList.remove('hover-active'));
         });
     }
