@@ -6323,8 +6323,8 @@ function minimizeMenu() {
     controls.style.zIndex = '';
     controls.style.boxShadow = '';
     minimizeBar.style.display = 'block';
-    // Move alignment up to fill the space
-    alignmentContainer.style.top = '0';
+    // Move alignment up to fill the space (just below the thin bar)
+    alignmentContainer.style.top = '5px';
 }
 function expandMenu() {
     minimizeBar.style.display = 'none';
@@ -6542,6 +6542,12 @@ function initResEnzymeSearch() {
     const unselectAllBtn = document.getElementById('reSiteUnselectAllBtn');
     if (unselectAllBtn) unselectAllBtn.addEventListener('click', () => {
         document.querySelectorAll('.re-cb').forEach(cb => cb.checked = false);
+    });
+    // Close popup on Esc
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && popup.style.display === 'block') {
+            popup.style.display = 'none';
+        }
     });
     // Close popup on outside click
     document.addEventListener('click', (e) => {
@@ -14014,64 +14020,72 @@ function runRepeatAnalysis() {
     const resultsEl = document.getElementById('repeatResults');
     if (!resultsEl) return;
     const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
+    const scopeRadio = document.querySelector('input[name="repeatScope"]:checked');
+    const scope = scopeRadio ? scopeRadio.value : 'single';
 
-    // Regular repeat analysis - use a specific sequence
-    const seqIndex = _repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0;
-    const seq = state.seqs[seqIndex]?.seq.replace(/[-. ]/g, '');
-    if (!seq) {
-        resultsEl.textContent = 'No sequence available.';
-        return;
+    let targets = [];
+    if (scope === 'all') {
+        state.seqs.forEach((s, i) => targets.push({ index: i, seq: s.seq.replace(/[-. ]/g, ''), name: s.header, fullSeq: s.seq }));
+    } else if (scope === 'selected' && state.selectedRows.size > 0) {
+        Array.from(state.selectedRows).sort((a,b)=>a-b).forEach(i => {
+            const s = state.seqs[i];
+            targets.push({ index: i, seq: s.seq.replace(/[-. ]/g, ''), name: s.header, fullSeq: s.seq });
+        });
     }
+    if (targets.length === 0) {
+        const si = _repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0;
+        targets = [{ index: si, seq: state.seqs[si]?.seq.replace(/[-. ]/g, '') || '', name: state.seqs[si]?.header || '', fullSeq: state.seqs[si]?.seq || '' }];
+    }
+
     const minLen = parseInt(document.getElementById('repeatMinLen')?.value) || 10;
     const maxDiv = parseInt(document.getElementById('repeatMaxDiv')?.value) || 15;
-    const seqName = state.seqs[seqIndex].header;
-    // Build gap-stripped -> alignment column mapping for highlighting
-    const fullSeq = state.seqs[seqIndex].seq;
-    const gs2al = [];
-    let gs = 0;
-    for (let c = 0; c < fullSeq.length; c++) {
-        if (!' -.'.includes(fullSeq[c])) { gs2al[gs++] = c; }
-    }
 
-    resultsEl.textContent = `Searching ${mode} repeats in ${seqName} (${seq.length} bp)...`;
+    resultsEl.textContent = `Searching ${scope} ${mode} repeats in ${targets.length} sequence${targets.length!==1?'s':''}...`;
     setTimeout(() => {
         try {
-            let results = _findRepeats(seq, minLen, maxDiv, mode);
-            if (results.length === 0) {
+            let allResults = [];
+            let displayName = '';
+            let totalLen = 0;
+            for (const t of targets) {
+                if (!t.seq) continue;
+                if (!displayName) displayName = t.name;
+                totalLen += t.seq.length;
+                const gs2al = [];
+                let gs = 0;
+                for (let c = 0; c < t.fullSeq.length; c++) {
+                    if (!' -.'.includes(t.fullSeq[c])) { gs2al[gs++] = c; }
+                }
+                const seqResults = _findRepeats(t.seq, minLen, maxDiv, mode);
+                const mapped = seqResults.map(r => {
+                    if (mode === 'tandem') {
+                        const sG = r.start;
+                        r.start = (sG >= 0 && sG < gs2al.length) ? (gs2al[sG] ?? r.start) : r.start;
+                        const eG = r.end - 1;
+                        r.end = (eG >= 0 && eG < gs2al.length && gs2al[eG] !== undefined) ? gs2al[eG] + 1 : r.end;
+                    } else {
+                        const oL = r.length;
+                        const gA = r.posA;
+                        r.posA = (gA >= 0 && gA < gs2al.length) ? (gs2al[gA] ?? r.posA) : r.posA;
+                        const gB = r.posB;
+                        r.posB = (gB >= 0 && gB < gs2al.length) ? (gs2al[gB] ?? r.posB) : r.posB;
+                        let col = r.posA, bases = 0;
+                        while (col < t.fullSeq.length && bases < oL) {
+                            if (!' -.'.includes(t.fullSeq[col])) bases++;
+                            col++;
+                        }
+                        r.alignEnd = col;
+                    }
+                    return r;
+                });
+                allResults = allResults.concat(mapped);
+            }
+            if (allResults.length === 0) {
                 resultsEl.textContent = `No ${mode} repeats found (min ${minLen}bp, max ${maxDiv}% divergence).`;
                 return;
             }
-            // Convert gap-stripped positions to alignment column positions
-            results = results.map(r => {
-                if (mode === 'tandem') {
-                    const startGS = r.start;
-                    r.start = (startGS >= 0 && startGS < gs2al.length) ? (gs2al[startGS] ?? r.start) : r.start;
-                    const endGS = r.end - 1;
-                    r.end = (endGS >= 0 && endGS < gs2al.length && gs2al[endGS] !== undefined) ? gs2al[endGS] + 1 : r.end;
-                } else {
-                    // Convert posA, posB first, then compute alignment span for posA region
-                    const origLen = r.length;
-                    const gsA = r.posA;
-                    r.posA = (gsA >= 0 && gsA < gs2al.length) ? (gs2al[gsA] ?? r.posA) : r.posA;
-                    const gsB = r.posB;
-                    r.posB = (gsB >= 0 && gsB < gs2al.length) ? (gs2al[gsB] ?? r.posB) : r.posB;
-                    // Alignment span for copy A: from posA to posA + origLen bases
-                    // We need the alignment column of the last base of the repeat in copy A
-                    // But we lost the original gap-stripped posA... use the sequence directly
-                    let col = r.posA;
-                    let bases = 0;
-                    const seq = fullSeq;
-                    while (col < seq.length && bases < origLen) {
-                        if (!' -.'.includes(seq[col])) bases++;
-                        col++;
-                    }
-                    r.alignEnd = col; // one past the last aligned base
-                }
-                return r;
-            });
-            // Store results and render as clickable HTML table
-            _lastRepeatResults = results;
-            _renderRepeatResultsHTML(resultsEl, results, mode, seqName, seq.length);
+            _lastRepeatResults = allResults;
+            const name = targets.length === 1 ? displayName : `${targets.length} sequences`;
+            _renderRepeatResultsHTML(resultsEl, allResults, mode, name, totalLen);
         } catch (e) {
             resultsEl.textContent = `Error: ${e.message}`;
         }
@@ -14095,6 +14109,7 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
             `<th style="text-align:right;padding:2px 4px;">Copies</th>` +
             `<th style="text-align:right;padding:2px 4px;">Div%</th>` +
             `<th style="text-align:left;padding:2px 4px;">Unit seq</th>` +
+            `<th style="padding:2px 4px;width:20px;"></th>` +
             `</tr></thead><tbody>`;
         results.forEach((r, i) => {
             const color = colors[i % colors.length];
@@ -14114,6 +14129,7 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
                 `<td style="text-align:right;padding:2px 4px;">${r.copies}×</td>` +
                 `<td style="text-align:right;padding:2px 4px;">${r.divergence}%</td>` +
                 `<td style="padding:2px 4px;font-family:monospace;">${r.unit}</td>` +
+                `<td style="padding:2px 4px;text-align:center;"><button class="repeat-remove-btn" style="background:none;border:none;color:#c00;font-size:14px;cursor:pointer;line-height:1;padding:0 2px;" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">×</button></td>` +
                 `</tr>`;
         });
         html += '</tbody></table>';
@@ -14126,6 +14142,7 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
             `<th style="text-align:right;padding:2px 4px;">Len</th>` +
             `<th style="text-align:right;padding:2px 4px;">Div%</th>` +
             `<th style="text-align:left;padding:2px 4px;">SeqA</th>` +
+            `<th style="padding:2px 4px;width:20px;"></th>` +
             `</tr></thead><tbody>`;
         results.forEach((r, i) => {
             const color = colors[i % colors.length];
@@ -14145,11 +14162,36 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
                 `<td style="text-align:right;padding:2px 4px;">${r.length}</td>` +
                 `<td style="text-align:right;padding:2px 4px;">${r.divergence}%</td>` +
                 `<td style="padding:2px 4px;font-family:monospace;">${r.seqA.length > 50 ? r.seqA.substring(0,50)+'...' : r.seqA}</td>` +
+                `<td style="padding:2px 4px;text-align:center;"><button class="repeat-remove-btn" style="background:none;border:none;color:#c00;font-size:14px;cursor:pointer;line-height:1;padding:0 2px;" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">×</button></td>` +
                 `</tr>`;
         });
         html += '</tbody></table>';
     }
     el.innerHTML = html;
+}
+
+// Direct-DOM highlight removal (fast, no full renderAlignment)
+function _removeRepeatHighlight(row) {
+    const rid = row.dataset.repeatId;
+    const start = parseInt(row.dataset.start);
+    const end = parseInt(row.dataset.end);
+    const hl = state.repeatHighlights;
+    if (hl.has(rid)) {
+        hl.delete(rid);
+        // Remove backgrounds directly from DOM spans
+        const allSpans = document.querySelectorAll('.seq-data > span[data-pos]');
+        for (const span of allSpans) {
+            const pos = parseInt(span.dataset.pos);
+            if (pos >= start && pos < end) {
+                span.style.removeProperty('background-color');
+                const t = span.title || '';
+                span.title = t.replace(/ \| repeat region/g, '');
+            }
+        }
+    }
+    // Update row state
+    row.dataset.active = '';
+    row.style.background = 'transparent';
 }
 
 function _toggleRepeatHighlight(row) {
@@ -14160,22 +14202,35 @@ function _toggleRepeatHighlight(row) {
     const hl = state.repeatHighlights;
     if (hl.has(rid)) {
         hl.delete(rid);
+        // Fast path: remove backgrounds directly from DOM
+        const allSpans = document.querySelectorAll('.seq-data > span[data-pos]');
+        for (const span of allSpans) {
+            const pos = parseInt(span.dataset.pos);
+            if (pos >= start && pos < end) {
+                span.style.removeProperty('background-color');
+                const t = span.title || '';
+                span.title = t.replace(/ \| repeat region/g, '');
+            }
+        }
+        row.dataset.active = '';
+        row.style.background = 'transparent';
     } else {
         hl.set(rid, { start, end, color });
-    }
-    // Re-render to apply/remove highlights
-    renderAlignment({ deferConservation: true });
-    // Scroll after DOM settles
-    if (hl.has(rid)) {
+        // Fast path: apply backgrounds directly to DOM
+        const allSpans = document.querySelectorAll('.seq-data > span[data-pos]');
+        for (const span of allSpans) {
+            const pos = parseInt(span.dataset.pos);
+            if (isNaN(pos)) continue;
+            const ch = span.textContent;
+            if (ch === '-' || ch === '.') continue;
+            if (pos >= start && pos < end) {
+                span.style.setProperty('background-color', color + '66', 'important');
+                span.title = span.title ? span.title + ' | repeat region' : 'repeat region';
+            }
+        }
         requestAnimationFrame(() => _scrollToColumn(start));
-    }
-    // Refresh the results table to update row backgrounds
-    const el = document.getElementById('repeatResults');
-    if (el && _lastRepeatResults.length) {
-        const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
-        const seqIndex = _repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0;
-        const seqName = state.seqs[seqIndex]?.header || '';
-        _renderRepeatResultsHTML(el, _lastRepeatResults, mode, seqName);
+        row.dataset.active = '1';
+        row.style.background = color;
     }
 }
 
@@ -14201,9 +14256,14 @@ function _applyLineHighlights(dataSpan) {
 }
 
 function _clearRepeatHighlights() {
+    // Fast path: clear all highlight backgrounds directly from DOM
     state.repeatHighlights.clear();
-    renderAlignment({ deferConservation: true });
-    // Refresh results table to remove active backgrounds
+    document.querySelectorAll('.seq-data > span[data-pos]').forEach(span => {
+        span.style.removeProperty('background-color');
+        const t = span.title || '';
+        span.title = t.replace(/ \| repeat region/g, '');
+    });
+    // Refresh results table
     const el = document.getElementById('repeatResults');
     if (el && _lastRepeatResults.length) {
         const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
