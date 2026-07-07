@@ -548,7 +548,7 @@
 
             <div class="menu-section" id="shortcuts-section">
                 <div class="section-header" data-section="shortcuts">
-                    <span>⌨ Keyboard Shortcuts</span>
+                    <span title="Keyboard shortcuts (hover to view)">⌨</span>
                     <span class="toggle-icon">▼</span>
                 </div>
                 <div class="control-group" id="shortcuts-controls">
@@ -587,6 +587,7 @@
                                 <button id="copySelectedButton" title="Copy selected sequences (Ctrl+Shift+C)">Copy Sel</button>
                                 <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">Copy Align</button>
                                 <button id="deleteSelectedButton" title="Delete selected sequences (Ctrl+Del)">Delete Sel</button>
+                                <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
                             </div>
                         </div>
                         <div class="action-section action-section-order">
@@ -620,7 +621,6 @@
                         <div class="action-section action-section-analysis">
                             <div class="action-section-label">Analysis</div>
                             <div class="button-group">
-                                <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
                                 <button id="buildTreeButton" title="Build a phylogenetic tree from selected sequences">Tree</button>
                                 <button id="statsButton" title="Alignment statistics: distance matrix, pairwise identity, summary">Statistics</button>
                                 <button id="repeatFinderMenuButton" title="Find tandem, direct, and inverted repeats in sequences">Repeats</button>
@@ -632,7 +632,6 @@
                                 <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
                                 <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
                                 <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
-                                <button id="hotkeysIconBtn" title="Keyboard shortcuts (hover for quick ref)" style="font-size:14px;padding:0 6px;height:22px;line-height:1;position:relative;background:#f5f5f5;border:1px solid #ccc;border-radius:3px;cursor:pointer;">⌨</button>
                                 <button id="manualButton" title="Open comprehensive manual in new tab" onclick="window.open('manual.html','_blank')">Manual</button>
                             </div>
                         </div>
@@ -674,8 +673,8 @@
         </div>
     </div>
     
-    <div id="minimizeBar" style="display: none; padding: 8px; background: #f0f0f0; border-bottom: 1px solid #ccc; text-align: center; cursor: pointer;">
-        <button id="expandButton" style="padding: 4px 12px; cursor: pointer;">▼ Show Menu</button>
+    <div id="minimizeBar" style="display: none; position: sticky; top: 0; height: 5px; background: #bbb; cursor: pointer; z-index: 100; text-align: center;" title="Click to show menu (Ctrl+H)" onclick="expandMenu()">
+        <span style="font-size: 7px; line-height: 5px; color: #fff; display: inline-block; position: relative; top: -5px;">▲</span>
     </div>
     
     <div id="viewer-container">
@@ -866,7 +865,11 @@ B: —</pre>
                     <label title="Two copies in opposite orientation (reverse-complement)"><input type="radio" name="repeatMode" value="inverted"> Inverted repeats</label>
                 </div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
-                    <label title="Which sequence to search for repeats">Sequence:
+                    <strong title="Which sequences to search for repeats">Scope:</strong>
+                    <label title="Search a single sequence"><input type="radio" name="repeatScope" value="single" checked> Single</label>
+                    <label title="Search all loaded sequences"><input type="radio" name="repeatScope" value="all"> All</label>
+                    <label title="Search only selected sequences"><input type="radio" name="repeatScope" value="selected"> Selected</label>
+                    <label title="Which sequence (single mode)">Seq:
                         <select id="repeatFinderSeqSelect" style="max-width:180px;font-size:11px;height:22px;" title="Select a sequence to analyze for repeats"></select>
                     </label>
                 </div>
