@@ -13025,11 +13025,30 @@ function _dotUpdateHoverInfo(row, col) {
     }
 
     if (panelEl) {
-        const radius = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 20;
-        const aStart = Math.max(0, row - radius);
-        const aEnd = Math.min(S.seqA.length, row + radius + 1);
-        const bStart = Math.max(0, col - radius);
-        const bEnd = Math.min(S.seqB.length, col + radius + 1);
+        // Walk the diagonal to find the full matching region
+        const range = S.scoreMax - S.scoreMin || 1;
+        const threshold = S.threshold;
+        // Walk backward from (row,col) along the diagonal
+        let rBack = row, cBack = col;
+        while (rBack >= 0 && cBack >= 0) {
+            const n = (S.scores[rBack * S.cols + cBack] - S.scoreMin) / range;
+            if (n < threshold) break;
+            rBack--; cBack--;
+        }
+        rBack++; cBack++; // first matching position
+        // Walk forward from (row,col) along the diagonal
+        let rFwd = row + 1, cFwd = col + 1;
+        while (rFwd < S.rows && cFwd < S.cols) {
+            const n = (S.scores[rFwd * S.cols + cFwd] - S.scoreMin) / range;
+            if (n < threshold) break;
+            rFwd++; cFwd++;
+        }
+        // Extend a few extra positions for context
+        const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 5;
+        const aStart = Math.max(0, rBack - context);
+        const aEnd = Math.min(S.seqA.length, rFwd + context);
+        const bStart = Math.max(0, cBack - context);
+        const bEnd = Math.min(S.seqB.length, cFwd + context);
 
         const aSlice = S.seqA.slice(aStart, aEnd);
         const bSlice = S.seqB.slice(bStart, bEnd);
@@ -13037,9 +13056,20 @@ function _dotUpdateHoverInfo(row, col) {
         const guide = [];
         for (let i = 0; i < len; i++) guide.push(aSlice[i] === bSlice[i] ? '|' : ' ');
 
+        // Mark the matched core region
+        const matchStartA = rBack - aStart;
+        const matchEndA = rFwd - aStart;
+        let guideArr = guide.join('');
+        if (matchStartA < matchEndA && matchStartA >= 0 && matchEndA <= guideArr.length) {
+            const pre = guideArr.substring(0, matchStartA);
+            const mid = guideArr.substring(matchStartA, matchEndA);
+            const post = guideArr.substring(matchEndA);
+            guideArr = pre + '[' + mid + ']' + post;
+        }
+
         panelEl.textContent =
             `A ${String(aStart + 1).padStart(5)}  ${aSlice}\n` +
-            `          ${guide.join('')}\n` +
+            `          ${guideArr}\n` +
             `B ${String(bStart + 1).padStart(5)}  ${bSlice}`;
 
         // Store for copy button
