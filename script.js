@@ -13322,7 +13322,10 @@ function _dotDrawOverlay(row, col) {
     oCtx.clearRect(0, 0, totalW, totalH);
     if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
     const colW = plotW / S.cols, rowH = plotH / S.rows;
+    const cx = DOT_AXIS_PAD + (col + 0.5) * colW;
+    const cy = DOT_AXIS_PAD + (row + 0.5) * rowH;
     // Crosshair
+    oCtx.strokeStyle = 'rgba(80,160,255,0.7)'; oCtx.lineWidth = 1;
     oCtx.beginPath();
     oCtx.moveTo(DOT_AXIS_PAD, cy); oCtx.lineTo(DOT_AXIS_PAD + plotW, cy);
     oCtx.moveTo(cx, DOT_AXIS_PAD); oCtx.lineTo(cx, DOT_AXIS_PAD + plotH);
