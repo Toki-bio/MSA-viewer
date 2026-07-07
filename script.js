@@ -6324,7 +6324,7 @@ function parseManualRestrictionSites(text) {
 function renderRestrictionEnzymeList() {
     const list = el('reSiteList');
     if (!list || list.children.length > 0) return;
-    RESTRICTION_ENZYMES.forEach(({ name, site }) => {
+    RESTRICTION_ENZYMES.sort((a, b) => a.name.localeCompare(b.name)).forEach(({ name, site }) => {
         const label = document.createElement('label');
         label.style.cssText = 'display:flex;align-items:center;gap:3px;white-space:nowrap;font-size:10px;';
         label.title = `${name}: ${site}`;
@@ -6418,6 +6418,14 @@ function initResEnzymeSearch() {
         document.querySelectorAll('.re-cb').forEach(cb => cb.checked = false);
         const manual = el('reSiteManualInput');
         if (manual) manual.value = '';
+    });
+    const selectAllBtn = document.getElementById('reSiteSelectAllBtn');
+    if (selectAllBtn) selectAllBtn.addEventListener('click', () => {
+        document.querySelectorAll('.re-cb').forEach(cb => cb.checked = true);
+    });
+    const unselectAllBtn = document.getElementById('reSiteUnselectAllBtn');
+    if (unselectAllBtn) unselectAllBtn.addEventListener('click', () => {
+        document.querySelectorAll('.re-cb').forEach(cb => cb.checked = false);
     });
     // Close popup on outside click
     document.addEventListener('click', (e) => {
@@ -9417,12 +9425,170 @@ function showContextMenu(e, index) {
         contextMenu.appendChild(copySameColorUngapped);
     }
 
-    // Add BLAST search option
+    // ---- Edit section ----
+    const sepEdit = document.createElement('div');
+    sepEdit.style.borderTop = '1px solid #ccc';
+    sepEdit.style.margin = '4px 0';
+    contextMenu.appendChild(sepEdit);
+
+    // Edit in Sequence Editor
+    const seqEditItem = document.createElement('div');
+    seqEditItem.textContent = 'Edit Sequence...';
+    seqEditItem.addEventListener('click', () => {
+        openSeqEditor(index);
+        closeContextMenu();
+    });
+    contextMenu.appendChild(seqEditItem);
+
     if (state.selectedRows.size <= 1) {
-        const sep = document.createElement('div');
-        sep.style.borderTop = '1px solid #ccc';
-        sep.style.margin = '4px 0';
-        contextMenu.appendChild(sep);
+        const renameItem = document.createElement('div');
+        renameItem.textContent = 'Rename sequence';
+        renameItem.addEventListener('click', () => {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = state.seqs[index].header;
+            input.style.width = `${e.target.offsetWidth}px`;
+            input.style.fontSize = getComputedStyle(e.target).fontSize;
+            input.style.fontFamily = getComputedStyle(e.target).fontFamily;
+            input.style.padding = '0';
+            input.style.border = '1px solid #ccc';
+            e.target.innerHTML = '';
+            e.target.appendChild(input);
+            input.focus();
+            input.select();
+            const save = () => {
+                const newName = input.value.trim();
+                if (newName && newName !== state.seqs[index].header) {
+                    pushUndo('rename');
+                    state.seqs[index].header = newName;
+                    state.seqs[index].fullHeader = newName;
+                    renderAlignment();
+                    showMessage("Sequence renamed!", 2000);
+                } else {
+                    renderAlignment();
+                }
+            };
+            input.addEventListener('blur', save);
+            input.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Enter') {
+                    save();
+                } else if (ev.key === 'Escape') {
+                    renderAlignment();
+                }
+            });
+            closeContextMenu();
+        });
+        contextMenu.appendChild(renameItem);
+    }
+
+    // Add "Replace / Add consensus" if multiple sequences selected
+    if (state.selectedRows.size >= 2) {
+        const replaceConsensusItem = document.createElement('div');
+        replaceConsensusItem.textContent = `Replace ${state.selectedRows.size} selected with consensus`;
+        replaceConsensusItem.addEventListener('click', () => {
+            replaceSelectedWithConsensus();
+            closeContextMenu();
+        });
+        contextMenu.appendChild(replaceConsensusItem);
+
+        const addConsensusItem = document.createElement('div');
+        addConsensusItem.textContent = `Add consensus below (${state.selectedRows.size} selected)`;
+        addConsensusItem.addEventListener('click', () => {
+            insertGroupConsensus();
+            closeContextMenu();
+        });
+        contextMenu.appendChild(addConsensusItem);
+    }
+
+    const deleteItem = document.createElement('div');
+    deleteItem.textContent = state.selectedRows.size > 1 ? 'Delete selected' : 'Delete sequence';
+    deleteItem.addEventListener('click', () => {
+        if (state.selectedRows.size > 1) {
+            deleteSelected();
+        } else {
+            deleteSequence(index);
+        }
+        closeContextMenu();
+    });
+    contextMenu.appendChild(deleteItem);
+
+    const clearSelItem = document.createElement('div');
+    clearSelItem.textContent = 'Clear selection';
+    clearSelItem.addEventListener('click', () => {
+        state.selectedRows.clear();
+        state.selectedColumns.clear();
+        state.selectedNucs.clear();
+        state.pendingNucStart = null;
+        updateRowSelections();
+        updateColumnSelections();
+        scheduleNucSelectionRefresh();
+        closeContextMenu();
+    });
+    contextMenu.appendChild(clearSelItem);
+
+    // ---- Movement section ----
+    const sepMovement = document.createElement('div');
+    sepMovement.style.borderTop = '1px solid #ccc';
+    sepMovement.style.margin = '4px 0';
+    contextMenu.appendChild(sepMovement);
+
+    // Move to Top
+    const moveTopItem = document.createElement('div');
+    moveTopItem.textContent = 'Move to Top';
+    moveTopItem.addEventListener('click', () => {
+        if (!state.selectedRows.has(index)) {
+            state.selectedRows.clear();
+            state.selectedRows.add(index);
+        }
+        moveSelectedToTop();
+        closeContextMenu();
+    });
+    contextMenu.appendChild(moveTopItem);
+
+    // Move to Bottom
+    const moveBottomItem = document.createElement('div');
+    moveBottomItem.textContent = 'Move to Bottom';
+    moveBottomItem.addEventListener('click', () => {
+        if (!state.selectedRows.has(index)) {
+            state.selectedRows.clear();
+            state.selectedRows.add(index);
+        }
+        moveSelectedToBottom();
+        closeContextMenu();
+    });
+    contextMenu.appendChild(moveBottomItem);
+
+    // ---- Gap tools (on nucleotide click) ----
+    if (e.target.tagName === 'SPAN' && e.target.parentNode.className === 'seq-data') {
+        const pos = parseInt(e.target.dataset.pos);
+        const sepGap = document.createElement('div');
+        sepGap.style.borderTop = '1px solid #ccc';
+        sepGap.style.margin = '4px 0';
+        contextMenu.appendChild(sepGap);
+
+        const insertGapItem = document.createElement('div');
+        insertGapItem.textContent = 'Insert Single Gap Here';
+        insertGapItem.addEventListener('click', () => {
+            insertSingleGap(index, pos);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(insertGapItem);
+
+        const removeGapItem = document.createElement('div');
+        removeGapItem.textContent = 'Remove Single Gap Here';
+        removeGapItem.addEventListener('click', () => {
+            removeSingleGap(index, pos);
+            closeContextMenu();
+        });
+        contextMenu.appendChild(removeGapItem);
+    }
+
+    // ---- Analysis tools ----
+    if (state.selectedRows.size <= 1) {
+        const sepAnalysis = document.createElement('div');
+        sepAnalysis.style.borderTop = '1px solid #ccc';
+        sepAnalysis.style.margin = '4px 0';
+        contextMenu.appendChild(sepAnalysis);
 
         const blastItem = document.createElement('div');
         blastItem.textContent = 'BLAST Search';
@@ -9471,11 +9637,6 @@ function showContextMenu(e, index) {
 
     // Dot-plot between two selected sequences
     if (state.selectedRows.size === 2) {
-        const sep2 = document.createElement('div');
-        sep2.style.borderTop = '1px solid #ccc';
-        sep2.style.margin = '4px 0';
-        contextMenu.appendChild(sep2);
-
         const dotPairItem = document.createElement('div');
         const selIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
         dotPairItem.textContent = `Dot-plot (${state.seqs[selIndices[0]].header} vs ${state.seqs[selIndices[1]].header})`;
@@ -9492,155 +9653,6 @@ function showContextMenu(e, index) {
         });
         contextMenu.appendChild(dotPairItem);
     }
-
-    // Add "Replace with Consensus" option if multiple sequences selected
-    if (state.selectedRows.size >= 2) {
-        const replaceConsensusItem = document.createElement('div');
-        replaceConsensusItem.textContent = `Replace ${state.selectedRows.size} selected with consensus`;
-        replaceConsensusItem.addEventListener('click', () => {
-            replaceSelectedWithConsensus();
-            closeContextMenu();
-        });
-        contextMenu.appendChild(replaceConsensusItem);
-
-        const addConsensusItem = document.createElement('div');
-        addConsensusItem.textContent = `Add consensus below (${state.selectedRows.size} selected)`;
-        addConsensusItem.addEventListener('click', () => {
-            insertGroupConsensus();
-            closeContextMenu();
-        });
-        contextMenu.appendChild(addConsensusItem);
-
-        // Add separator
-        const separator = document.createElement('div');
-        separator.style.borderTop = '1px solid #ccc';
-        separator.style.margin = '4px 0';
-        contextMenu.appendChild(separator);
-    }
-
-    const deleteItem = document.createElement('div');
-    deleteItem.textContent = state.selectedRows.size > 1 ? 'Delete selected' : 'Delete sequence';
-    deleteItem.addEventListener('click', () => {
-        if (state.selectedRows.size > 1) {
-            deleteSelected();
-        } else {
-            deleteSequence(index);
-        }
-        closeContextMenu();
-    });
-    contextMenu.appendChild(deleteItem);
-    if (state.selectedRows.size <= 1) {
-        const renameItem = document.createElement('div');
-        renameItem.textContent = 'Rename sequence';
-        renameItem.addEventListener('click', () => {
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.value = state.seqs[index].header;
-            input.style.width = `${e.target.offsetWidth}px`;
-            input.style.fontSize = getComputedStyle(e.target).fontSize;
-            input.style.fontFamily = getComputedStyle(e.target).fontFamily;
-            input.style.padding = '0';
-            input.style.border = '1px solid #ccc';
-            e.target.innerHTML = '';
-            e.target.appendChild(input);
-            input.focus();
-            input.select();
-            const save = () => {
-                const newName = input.value.trim();
-                if (newName && newName !== state.seqs[index].header) {
-                    pushUndo('rename');
-                    state.seqs[index].header = newName;
-                    state.seqs[index].fullHeader = newName;
-                    renderAlignment();
-                    showMessage("Sequence renamed!", 2000);
-                } else {
-                    renderAlignment();
-                }
-            };
-            input.addEventListener('blur', save);
-            input.addEventListener('keydown', (ev) => {
-                if (ev.key === 'Enter') {
-                    save();
-                } else if (ev.key === 'Escape') {
-                    renderAlignment();
-                }
-            });
-            closeContextMenu();
-        });
-        contextMenu.appendChild(renameItem);
-    }
-    const clearSelItem = document.createElement('div');
-    clearSelItem.textContent = 'Clear selection';
-    clearSelItem.addEventListener('click', () => {
-        state.selectedRows.clear();
-        state.selectedColumns.clear();
-        state.selectedNucs.clear();
-        state.pendingNucStart = null;
-        updateRowSelections();
-        updateColumnSelections();
-        scheduleNucSelectionRefresh();
-        closeContextMenu();
-    });
-    contextMenu.appendChild(clearSelItem);
-    // Add insert/remove single gap if on span
-    if (e.target.tagName === 'SPAN' && e.target.parentNode.className === 'seq-data') {
-        const pos = parseInt(e.target.dataset.pos);
-        const insertGapItem = document.createElement('div');
-        insertGapItem.textContent = 'Insert Single Gap Here';
-        insertGapItem.addEventListener('click', () => {
-            insertSingleGap(index, pos);
-            closeContextMenu();
-        });
-        contextMenu.appendChild(insertGapItem);
-        const removeGapItem = document.createElement('div');
-        removeGapItem.textContent = 'Remove Single Gap Here';
-        removeGapItem.addEventListener('click', () => {
-            removeSingleGap(index, pos);
-            closeContextMenu();
-        });
-        contextMenu.appendChild(removeGapItem);
-    }
-
-    // Separator before movement/edit items
-    const sepMovement = document.createElement('div');
-    sepMovement.style.borderTop = '1px solid #ccc';
-    sepMovement.style.margin = '4px 0';
-    contextMenu.appendChild(sepMovement);
-
-    // Move to Top
-    const moveTopItem = document.createElement('div');
-    moveTopItem.textContent = 'Move to Top';
-    moveTopItem.addEventListener('click', () => {
-        if (!state.selectedRows.has(index)) {
-            state.selectedRows.clear();
-            state.selectedRows.add(index);
-        }
-        moveSelectedToTop();
-        closeContextMenu();
-    });
-    contextMenu.appendChild(moveTopItem);
-
-    // Move to Bottom
-    const moveBottomItem = document.createElement('div');
-    moveBottomItem.textContent = 'Move to Bottom';
-    moveBottomItem.addEventListener('click', () => {
-        if (!state.selectedRows.has(index)) {
-            state.selectedRows.clear();
-            state.selectedRows.add(index);
-        }
-        moveSelectedToBottom();
-        closeContextMenu();
-    });
-    contextMenu.appendChild(moveBottomItem);
-
-    // Edit in Sequence Editor
-    const seqEditItem = document.createElement('div');
-    seqEditItem.textContent = 'Edit Sequence...';
-    seqEditItem.addEventListener('click', () => {
-        openSeqEditor(index);
-        closeContextMenu();
-    });
-    contextMenu.appendChild(seqEditItem);
 
     document.body.appendChild(contextMenu);
 
@@ -9684,6 +9696,7 @@ function showContextMenu(e, index) {
         document.addEventListener('click', closeOnClickOutside);
     }, 0);
 }
+
 function updateRowSelections() {
     document.querySelectorAll('.seq-line.selected').forEach(line => line.classList.remove('selected'));
     document.querySelectorAll('.seq-name.selected').forEach(name => name.classList.remove('selected'));
@@ -10054,6 +10067,11 @@ function initializeAppUI() {
         'snapshotOpenButton': openSelectedSnapshotFromInputMenu,
         'snapshotPathOpenButton': openSnapshotFromManualPath,
         'infoButton': openInfoModal,
+        'hotkeysIconBtn': () => {
+            openInfoModal();
+            const tip = document.getElementById('hotkeysTooltip');
+            if (tip) tip.style.display = 'none';
+        },
         'minimizeBtn': minimizeMenu,
         'zoomInButton': () => adjustZoom(10),
         'zoomOutButton': () => adjustZoom(-10),
@@ -10068,6 +10086,25 @@ function initializeAppUI() {
 
     for (const id in buttonActions) {
         el(id)?.addEventListener('click', buttonActions[id]);
+    }
+
+    // Hotkeys icon hover tooltip
+    const hotkeysBtn = el('hotkeysIconBtn');
+    const hotkeysTip = el('hotkeysTooltip');
+    if (hotkeysBtn && hotkeysTip) {
+        let hideTimer = null;
+        hotkeysBtn.addEventListener('mouseenter', () => {
+            clearTimeout(hideTimer);
+            hotkeysTip.style.display = 'block';
+            const rect = hotkeysBtn.getBoundingClientRect();
+            hotkeysTip.style.top = (rect.bottom + 4) + 'px';
+            hotkeysTip.style.left = Math.min(rect.left, window.innerWidth - 310) + 'px';
+        });
+        hotkeysBtn.addEventListener('mouseleave', () => {
+            hideTimer = setTimeout(() => { hotkeysTip.style.display = 'none'; }, 300);
+        });
+        hotkeysTip.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+        hotkeysTip.addEventListener('mouseleave', () => { hotkeysTip.style.display = 'none'; });
     }
 
     initializeGeneDocEditToolbar();
@@ -13948,7 +13985,7 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
             const rid = 'tandem-' + i;
             const active = hl.has(rid);
             const bg = active ? color : 'transparent';
-            html += `<tr data-repeat-id="${rid}" data-start="${r.start}" data-end="${r.end}" data-color="${color}"` +
+            html += `<tr data-repeat-id="${rid}" data-start="${r.start}" data-end="${r.end}" data-color="${color}" data-active="${active ? '1' : ''}"` +
                 ` style="cursor:pointer;background:${bg};" ` +
                 ` onmouseover="if(!this.dataset.active)this.style.background='${color}33'" ` +
                 ` onmouseout="if(!this.dataset.active)this.style.background='transparent'" ` +
@@ -13980,7 +14017,7 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
             const active = hl.has(rid);
             const bg = active ? color : 'transparent';
             const alignEnd = r.alignEnd != null ? r.alignEnd : (r.posA + r.length);
-            html += `<tr data-repeat-id="${rid}" data-start="${r.posA}" data-end="${alignEnd}" data-color="${color}"` +
+            html += `<tr data-repeat-id="${rid}" data-start="${r.posA}" data-end="${alignEnd}" data-color="${color}" data-active="${active ? '1' : ''}"` +
                 ` style="cursor:pointer;background:${bg};" ` +
                 ` onmouseover="if(!this.dataset.active)this.style.background='${color}33'" ` +
                 ` onmouseout="if(!this.dataset.active)this.style.background='transparent'" ` +
@@ -14034,6 +14071,9 @@ function _applyLineHighlights(dataSpan) {
         const span = spans[i];
         const pos = parseInt(span.dataset.pos);
         if (isNaN(pos)) continue;
+        // Skip gap characters — do not colour gaps within repeats
+        const ch = span.textContent;
+        if (ch === '-' || ch === '.') continue;
         for (const [rid, info] of hl) {
             if (pos >= info.start && pos < info.end) {
                 span.style.setProperty('background-color', info.color + '66', 'important');
@@ -14041,6 +14081,19 @@ function _applyLineHighlights(dataSpan) {
                 break; // first matching highlight wins
             }
         }
+    }
+}
+
+function _clearRepeatHighlights() {
+    state.repeatHighlights.clear();
+    renderAlignment({ deferConservation: true });
+    // Refresh results table to remove active backgrounds
+    const el = document.getElementById('repeatResults');
+    if (el && _lastRepeatResults.length) {
+        const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
+        const seqIndex = _repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0;
+        const seqName = state.seqs[seqIndex]?.header || '';
+        _renderRepeatResultsHTML(el, _lastRepeatResults, mode, seqName);
     }
 }
 
@@ -14055,8 +14108,11 @@ function _scrollToColumn(colIndex) {
 }
 
 function _initRepeatFinderEvents() {
+    const clearBtn = document.getElementById('repeatClearHighlightsBtn');
+    if (clearBtn) clearBtn.addEventListener('click', _clearRepeatHighlights);
     const closeBtn = document.getElementById('repeatFinderCloseBtn');
     if (closeBtn) closeBtn.addEventListener('click', () => {
+        _clearRepeatHighlights();
         const modal = document.getElementById('repeatFinderModal');
         if (modal) modal.style.display = 'none';
     });
