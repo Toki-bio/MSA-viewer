@@ -12972,6 +12972,7 @@ let _dotPlotState = {
     threshold: 0.55, windowSize: 9, zoom: 1,
     dotImage: null, computing: false,
     lastRow: -1, lastCol: -1,
+    pinnedRow: -1, pinnedCol: -1,
     meta: null,
     alignMapA: null,
     alignMapB: null,
@@ -13309,6 +13310,25 @@ function _dotDrawOverlay(row, col) {
     oCtx.fillText(String(col + 1), cx, DOT_AXIS_PAD - 1);
     oCtx.textAlign = 'right'; oCtx.textBaseline = 'middle';
     oCtx.fillText(String(row + 1), DOT_AXIS_PAD - 2, cy);
+
+    // Draw pinned position marker (red crosshair) if set
+    if (S.pinnedRow >= 0 && S.pinnedCol >= 0) {
+        const pcx = DOT_AXIS_PAD + (S.pinnedCol + 0.5) * z;
+        const pcy = DOT_AXIS_PAD + (S.pinnedRow + 0.5) * z;
+        oCtx.strokeStyle = 'rgba(220,50,50,0.85)'; oCtx.lineWidth = 1.5;
+        oCtx.beginPath();
+        oCtx.moveTo(DOT_AXIS_PAD, pcy); oCtx.lineTo(DOT_AXIS_PAD + plotW, pcy);
+        oCtx.moveTo(pcx, DOT_AXIS_PAD); oCtx.lineTo(pcx, DOT_AXIS_PAD + plotH);
+        oCtx.stroke();
+        // Red square around pinned cell
+        oCtx.strokeStyle = 'rgba(220,50,50,0.9)';
+        oCtx.lineWidth = 2;
+        oCtx.strokeRect(DOT_AXIS_PAD + S.pinnedCol * z - 1, DOT_AXIS_PAD + S.pinnedRow * z - 1, z + 2, z + 2);
+        // Label
+        oCtx.fillStyle = 'rgba(220,50,50,0.95)'; oCtx.font = 'bold 10px system-ui';
+        oCtx.textAlign = 'left'; oCtx.textBaseline = 'bottom';
+        oCtx.fillText('PIN: A'+String(S.pinnedRow+1)+' / B'+String(S.pinnedCol+1), DOT_AXIS_PAD + 4, DOT_AXIS_PAD - 1);
+    }
 }
 
 async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
@@ -13323,6 +13343,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S.alignMapB = m.alignMapB || _buildUngappedToAlignMap(m.alignedSeqB);
     S.windowSize = parseInt(document.getElementById('dotPlotWindow')?.value) || 9;
     S.threshold = (parseInt(document.getElementById('dotPlotThreshold')?.value) || 55) / 100;
+    S.pinnedRow = S.pinnedCol = -1; // clear pinned position on new plot
 
     const revComp = document.getElementById('dotPlotRevComp')?.checked;
     if (revComp) {
@@ -13390,6 +13411,23 @@ function _initDotPlotEvents() {
             oCtx.clearRect(0, 0, overlay.width, overlay.height);
             _dotPlotState.lastRow = _dotPlotState.lastCol = -1;
             _dotClearHoverInfo();
+            // Redraw pinned marker if present
+            if (_dotPlotState.pinnedRow >= 0) {
+                _dotDrawOverlay(_dotPlotState.pinnedRow, _dotPlotState.pinnedCol);
+            }
+        });
+        // Click to pin a coordinate for region copying
+        overlay.addEventListener('click', (e) => {
+            const S = _dotPlotState;
+            if (!S.scores) return;
+            const rect = overlay.getBoundingClientRect();
+            const col = Math.floor((e.clientX - rect.left - DOT_AXIS_PAD) / S.zoom);
+            const row = Math.floor((e.clientY - rect.top - DOT_AXIS_PAD) / S.zoom);
+            if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
+            S.pinnedRow = row; S.pinnedCol = col;
+            _dotDrawOverlay(row, col);
+            _dotUpdateHoverInfo(row, col);
+            showMessage(`Pinned: A${row + 1} / B${col + 1}. Click \"Copy Region\" to copy FASTA.`, 2500);
         });
         // Mouse wheel zoom
         const viewport = document.getElementById('dotPlotViewport');
@@ -13400,8 +13438,7 @@ function _initDotPlotEvents() {
                 e.preventDefault();
                 const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
                 S.zoom = Math.max(0.5, Math.min(24, Math.round(S.zoom * factor * 10) / 10));
-                _dotBuildImage();
-                _dotRender();
+                _dotRender(); // image unchanged, only scale needs re-render
                 if (S.lastRow >= 0) {
                     _dotDrawOverlay(S.lastRow, S.lastCol);
                     _dotUpdateHoverInfo(S.lastRow, S.lastCol);
@@ -13451,14 +13488,29 @@ function _initDotPlotEvents() {
         copyBtn.addEventListener('click', () => {
             const S = _dotPlotState;
             const region = S._copyRegion;
-            if (!region) {
-                showMessage('Hover over the dot plot first to select a region.', 2500);
+            if (!region && S.pinnedRow < 0) {
+                showMessage('Hover over or click the dot plot first to select a region.', 3000);
                 return;
             }
-            const fasta = `>${region.nameA}_${region.aStart + 1}-${region.aStart + region.aSlice.length}\n${region.aSlice}\n` +
-                         `>${region.nameB}_${region.bStart + 1}-${region.bStart + region.bSlice.length}\n${region.bSlice}`;
+            let fasta;
+            if (region) {
+                fasta = `>${region.nameA}_${region.aStart + 1}-${region.aStart + region.aSlice.length}\n${region.aSlice}\n` +
+                        `>${region.nameB}_${region.bStart + 1}-${region.bStart + region.bSlice.length}\n${region.bSlice}`;
+            } else {
+                // Use pinned position + context radius
+                const radius = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 20;
+                const aStart = Math.max(0, S.pinnedRow - radius);
+                const aEnd = Math.min(S.seqA.length, S.pinnedRow + radius + 1);
+                const bStart = Math.max(0, S.pinnedCol - radius);
+                const bEnd = Math.min(S.seqB.length, S.pinnedCol + radius + 1);
+                const aSlice = S.seqA.slice(aStart, aEnd);
+                const bSlice = S.seqB.slice(bStart, bEnd);
+                fasta = `>${S.nameA}_${aStart + 1}-${aEnd}\n${aSlice}\n` +
+                        `>${S.nameB}_${bStart + 1}-${bEnd}\n${bSlice}`;
+            }
+            const len = fasta.split('\n')[1]?.length || 0;
             navigator.clipboard.writeText(fasta).then(() => {
-                showMessage(`Copied ${region.aSlice.length}bp region as FASTA!`, 2000);
+                showMessage(`Copied ${len}bp region as FASTA!`, 2000);
             }).catch(() => showMessage('Copy failed.', 2000));
         });
     }
