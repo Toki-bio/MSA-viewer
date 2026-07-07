@@ -1,28 +1,28 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// ViewAlign — browser-based multiple sequence alignment viewer & editor
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ViewAlign â€” browser-based multiple sequence alignment viewer & editor
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //
 // EXTERNAL CODE & ATTRIBUTION
 // ===========================
-// • MAFFT - alignment engine compiled to WebAssembly (disttbfast.js, mafft-wasm.js).
+// â€¢ MAFFT - alignment engine compiled to WebAssembly (disttbfast.js, mafft-wasm.js).
 //   Katoh K, Standley DM (2013) Mol Biol Evol 30:772-780. BSD license.
-// • GeneDoc - editing tools (Move NoGaps, Slide KeepGaps, RTF export) modeled after
+// â€¢ GeneDoc - editing tools (Move NoGaps, Slide KeepGaps, RTF export) modeled after
 //   GeneDoc's Arrange/MoveText and SlideText operations.
 //   Nicholas KB et al. (1997) EMBNEW.NEWS 4:14.
-// • IGV - Compact read-packing view inspired by the Integrative Genomics Viewer.
+// â€¢ IGV - Compact read-packing view inspired by the Integrative Genomics Viewer.
 //   Robinson JT et al. (2011) Nat Biotechnol 29:24-26.
-// • MACSE - Codon-aware visualization inspired by MACSE's approach.
+// â€¢ MACSE - Codon-aware visualization inspired by MACSE's approach.
 //   Ranwez V et al. (2011) PLoS ONE 6:e22594.
-// • Clustal - Clustal shading scheme and .aln format parser.
+// â€¢ Clustal - Clustal shading scheme and .aln format parser.
 //   Sievers F et al. (2011) Mol Syst Biol 7:539.
-// • BLOSUM62 - similarity matrix for amino acid grouping.
+// â€¢ BLOSUM62 - similarity matrix for amino acid grouping.
 //   Henikoff S, Henikoff JG (1992) PNAS 89:10915-10919.
-// • samtools - BAM/CRAM conversion (server-side).
+// â€¢ samtools - BAM/CRAM conversion (server-side).
 //   Li H et al. (2009) Bioinformatics 25:2078-2079.
 //
 // All external code is used under its original open-source license.
 // The remainder is original work.
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 // DEFAULTS & STATE
 const DEBUG = false;
@@ -90,12 +90,12 @@ const state = {
     },
     trimBoundaries: null,
     trimBackup: null,
-    softTrimBoundaries: null, // { leftTrimEnd, rightTrimStart } — excluded from clustering only
+    softTrimBoundaries: null, // { leftTrimEnd, rightTrimStart } â€” excluded from clustering only
     groupConsensusCount: 0,
     _statsMatrices: null
 };
 
-// ── Recent Files & Clipboard History ──
+// â”€â”€ Recent Files & Clipboard History â”€â”€
 const _historyManager = {
     maxItems: 10,
     items: [],
@@ -157,14 +157,14 @@ const _historyManager = {
         };
         let html = '';
         for (const e of this.items.slice(0, this.maxItems)) {
-            const icon = e.type === 'file' ? '📁' : '📋';
+            const icon = e.type === 'file' ? 'ðŸ“' : 'ðŸ“‹';
             const label = e.name.length > 35 ? e.name.substring(0, 32) + '...' : e.name;
-            const meta = e.nSeqs ? `${e.nSeqs} seq × ${e.length} col` : '';
+            const meta = e.nSeqs ? `${e.nSeqs} seq Ã— ${e.length} col` : '';
             html += `<div class="recent-item" data-idx="${this.items.indexOf(e)}"
                 title="${this._escapeHtml(e.source || e.name)}\n${meta}\n${this._escapeHtml(e.preview)}"
                 style="padding:5px 10px;cursor:pointer;font-size:11px;border-bottom:1px solid #eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                 ${icon} <b>${this._escapeHtml(label)}</b>
-                <span style="color:#999;font-size:10px;">${meta ? ' · ' + meta : ''} · ${timeFmt(e.timestamp)}</span>
+                <span style="color:#999;font-size:10px;">${meta ? ' Â· ' + meta : ''} Â· ${timeFmt(e.timestamp)}</span>
             </div>`;
         }
         html += `<div style="padding:4px 10px;font-size:10px;color:#999;border-top:1px solid #eee;display:flex;justify-content:space-between;">
@@ -452,14 +452,14 @@ async function fetchFileFromServer(filePath, serverKey) {
         state.currentFilename = fname;
         state.currentFilePath = filePath;
         parseAndRender(true);
-        _sshSuccess(`${fname} · ${state.seqs.length} seq${state.seqs.length !== 1 ? 's' : ''} · ${serverKey}`);
+        _sshSuccess(`${fname} Â· ${state.seqs.length} seq${state.seqs.length !== 1 ? 's' : ''} Â· ${serverKey}`);
         // Auto-focus browser window and bring to front
         window.focus();
         // Flash title bar to attract attention
         const origTitle = document.title;
         let flashCount = 0;
         const flashInterval = setInterval(() => {
-            document.title = (flashCount % 2 === 0) ? `★ LOADED: ${fname}` : origTitle;
+            document.title = (flashCount % 2 === 0) ? `â˜… LOADED: ${fname}` : origTitle;
             flashCount++;
             if (flashCount > 8 || document.hasFocus()) {
                 document.title = origTitle;
@@ -816,7 +816,6 @@ const EXCLUSIVE_MODAL_IDS = [
     'seqEditModal',
     'addSeqModal',
     'dotPlotModal',
-    'dotPlotV2Modal',
     'repeatFinderModal',
     'treeBuilderModal',
     'statsModal'
@@ -858,13 +857,13 @@ function _sshLog(msg, type = 'plain') {
     body.scrollTop = body.scrollHeight;
 }
 function _sshSuccess(msg) {
-    _sshLog('✓ ' + msg, 'ok');
+    _sshLog('âœ“ ' + msg, 'ok');
     _sshConsoleCloseTimer = setTimeout(() => {
         const cons = document.getElementById('sshConsole');
         if (cons) cons.style.display = 'none';
     }, 2500);
 }
-function _sshError(msg) { _sshLog('✗ ' + msg, 'err'); }
+function _sshError(msg) { _sshLog('âœ— ' + msg, 'err'); }
 
 // Tooltip helper functions with viewport-aware positioning
 function showTooltipAt(content, target, options = {}) {
@@ -924,7 +923,7 @@ function hideTooltip() {
 
 // Menu stability: JS owns open state; short delay only when leaving a menu entirely
 const menuCloseDelays = new Map();
-const MENU_CLOSE_DELAY = 120; // milliseconds — gap tolerance when moving to dropdown
+const MENU_CLOSE_DELAY = 120; // milliseconds â€” gap tolerance when moving to dropdown
 
 function clearMenuCloseDelay(section) {
     if (menuCloseDelays.has(section)) {
@@ -1746,7 +1745,7 @@ function _computeCodonAnalysis(seqs, len) {
                 phase[i][pos] = 0;
             } else {
                 if (isGap) {
-                    // Gap in middle of codon → frameshift
+                    // Gap in middle of codon â†’ frameshift
                     frameShifts[i].push({ pos, phase: codonPhase, type: 'gap' });
                     codonPhase = -1;
                     codonBuf = '';
@@ -2389,7 +2388,7 @@ function getDeferredConsensus(len) {
     return Array.from({ length: len }, (_, pos) => cached.values[pos] || '-');
 }
 
-// ── BAM / Reads Display ──────────────────────────────────────────────────
+// â”€â”€ BAM / Reads Display â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // BAM state
 let bamState = {
@@ -2416,18 +2415,18 @@ async function handleBamFile(event) {
     const file = event.target.files[0];
     if (!file) return;
 
-    showMessage('Loading BAM…', 0);
+    showMessage('Loading BAMâ€¦', 0);
 
     try {
         const ext = file.name.split('.').pop().toLowerCase();
         let buf;
 
         if (ext === 'sam') {
-            // SAM is plain text — parse directly
+            // SAM is plain text â€” parse directly
             const text = await file.text();
             buf = parseSAMToBuffer(text);
         } else {
-            // BAM binary — decompress with browser's DecompressionStream
+            // BAM binary â€” decompress with browser's DecompressionStream
             buf = await BamParser.decompressBAM(file);
         }
 
@@ -2525,7 +2524,7 @@ async function handleBamFile(event) {
 
         renderAlignment();
         statusMessage.style.display = 'none';
-        showMessage(`Loaded ${matchedReads.length} reads on ${matchedRef} (${minPos + 1}–${maxPos})`, 2500);
+        showMessage(`Loaded ${matchedReads.length} reads on ${matchedRef} (${minPos + 1}â€“${maxPos})`, 2500);
 
     } catch (err) {
         statusMessage.style.display = 'none';
@@ -2557,7 +2556,7 @@ function computeReadSpan(cigar) {
  * In practice, we parse SAM as text and build record objects directly.
  */
 function parseSAMToBuffer(text) {
-    // Parse SAM as plain text — we'll build a pseudo-BAM buffer
+    // Parse SAM as plain text â€” we'll build a pseudo-BAM buffer
     // This is simpler than trying to create binary BAM from SAM
     const lines = text.split('\n').filter(l => l.trim());
     const headerLines = [];
@@ -2585,7 +2584,7 @@ function parseSAMToBuffer(text) {
  */
 function renderReadsAlignment() {
     if (!bamState.reads.length || !bamState.refSeq) {
-        alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the 🧬 BAM button.</div>';
+        alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the ðŸ§¬ BAM button.</div>';
         return;
     }
 
@@ -2599,7 +2598,7 @@ function renderReadsAlignment() {
     const container = alignmentContainer;
     const cellW = 12; // px per base
 
-    // ── Reference track ──
+    // â”€â”€ Reference track â”€â”€
     const refLine = document.createElement('div');
     refLine.className = 'seq-line ref-track-line';
     refLine.style.display = 'flex';
@@ -2637,7 +2636,7 @@ function renderReadsAlignment() {
     refLine.appendChild(refData);
     container.appendChild(refLine);
 
-    // ── Scale ruler ──
+    // â”€â”€ Scale ruler â”€â”€
     const scaleLine = document.createElement('div');
     scaleLine.className = 'seq-line scale-line';
     scaleLine.style.display = 'flex';
@@ -2664,14 +2663,14 @@ function renderReadsAlignment() {
         if ((p + 1) % 10 === 0) {
             span.textContent = p + 1;
         } else if ((p + 1) % 5 === 0) {
-            span.textContent = '·';
+            span.textContent = 'Â·';
         }
         scaleData.appendChild(span);
     }
     scaleLine.appendChild(scaleData);
     container.appendChild(scaleLine);
 
-    // ── Read tracks ──
+    // â”€â”€ Read tracks â”€â”€
     for (let i = 0; i < reads.length; i++) {
         const read = reads[i];
         const readCols = columns[i];
@@ -2688,7 +2687,7 @@ function renderReadsAlignment() {
         const nameSpan = document.createElement('span');
         nameSpan.className = 'seq-name';
         nameSpan.style.cssText = 'width:160px;min-width:160px;font-size:9px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#555;';
-        nameSpan.textContent = isReverse ? '◀ ' + read.name : read.name + ' ▶';
+        nameSpan.textContent = isReverse ? 'â—€ ' + read.name : read.name + ' â–¶';
         nameSpan.title = `${read.name} pos=${read.pos + 1} mapq=${read.mapq} cigar=${BamParser.cigarToString(read.cigar)}`;
         readLine.appendChild(nameSpan);
 
@@ -2704,7 +2703,7 @@ function renderReadsAlignment() {
 
             switch (col.type) {
                 case 'match':
-                    span.textContent = '·'; // dot for match (clean IGV-like)
+                    span.textContent = 'Â·'; // dot for match (clean IGV-like)
                     span.style.color = '#ccc';
                     break;
                 case 'mismatch':
@@ -2718,7 +2717,7 @@ function renderReadsAlignment() {
                     span.style.fontSize = '9px';
                     break;
                 case 'deletion':
-                    span.textContent = '−';
+                    span.textContent = 'âˆ’';
                     span.style.color = '#999';
                     span.style.fontSize = '11px';
                     break;
@@ -2728,7 +2727,7 @@ function renderReadsAlignment() {
                     span.style.opacity = '0.5';
                     break;
                 case 'intron':
-                    span.textContent = '·';
+                    span.textContent = 'Â·';
                     span.style.color = '#ddd';
                     break;
             }
@@ -2979,7 +2978,7 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
                 svg.appendChild(mark);
             }
 
-            // Read name label (only when enough space — not in diffOnly thin-line mode)
+            // Read name label (only when enough space â€” not in diffOnly thin-line mode)
             if (!diffOnly && NAME_W > 30) {
                 const name = read.name;
                 const maxChars = Math.max(3, Math.floor(rw / 6));
@@ -3112,7 +3111,7 @@ function renderAlignment(options = {}) {
     // Reads mode: delegate to BAM renderer
     if (document.getElementById('modeReads')?.checked) {
         if (!bamState.reads || bamState.reads.length === 0) {
-            alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the 🧬 BAM button (after loading a reference FASTA).</div>';
+            alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the ðŸ§¬ BAM button (after loading a reference FASTA).</div>';
             return;
         }
         renderReadsAlignment();
@@ -3164,9 +3163,9 @@ function renderAlignment(options = {}) {
     // Calculate sequence length for consensus and scale (must be before any use of len)
     const len = Math.max(...state.seqs.map(s => s.seq.length));
 
-    // ── Auto-detect: Canvas for large alignments ──
+    // â”€â”€ Auto-detect: Canvas for large alignments â”€â”€
     const TOTAL_RESIDUES = state.seqs.length * len;
-    const CANVAS_AUTO_THRESHOLD = 150000; // ~100 seq × 1500 col
+    const CANVAS_AUTO_THRESHOLD = 150000; // ~100 seq Ã— 1500 col
     const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
     const userPickedDom = document.getElementById('modeAutoCanvasDismissed')?.checked; // hidden flag
 
@@ -3675,7 +3674,7 @@ function getEffectiveColorScheme(scheme = getAlignmentColorScheme()) {
     if (isProteinAlignment() && NUCLEOTIDE_ORIENTED_SCHEMES.has(scheme)) {
         if (!_proteinSchemeRemapWarned) {
             _proteinSchemeRemapWarned = true;
-            showMessage('Nucleotide colour scheme selected for protein alignment — using amino-acid colours', 3500);
+            showMessage('Nucleotide colour scheme selected for protein alignment â€” using amino-acid colours', 3500);
         }
         return 'aa-clustal';
     }
@@ -4272,7 +4271,7 @@ function parseAndRender(isFromDrop = false) {
         }, 100);
     } catch (e) {
         console.error("Error in parseAndRender:", e);
-    alignmentContainer.innerHTML = `<div class="error-message">✖ ${e.message}</div>`;
+    alignmentContainer.innerHTML = `<div class="error-message">âœ– ${e.message}</div>`;
         showMessage(`Error: ${e.message}`, 5000);
     // Reset filename on error to avoid poisoning future loads
         state.currentFilename = '';
@@ -4628,7 +4627,7 @@ function handleKeyDown(e) {
     }
 
     // If focus is in an input/textarea, block unmodified keypresses (normal typing),
-    // but allow Ctrl/Meta/Alt shortcuts to pass through — EXCEPT in TEXTAREA
+    // but allow Ctrl/Meta/Alt shortcuts to pass through â€” EXCEPT in TEXTAREA
     // where browser-native shortcuts (Ctrl+A select-all-text, Ctrl+C copy, etc.) should work.
     const activeEl = document.activeElement;
     if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
@@ -4636,11 +4635,11 @@ function handleKeyDown(e) {
             return; // let browser handle all keys in textarea (Input window etc.)
         }
         if (e.ctrlKey || e.metaKey || e.altKey) {
-            // modifier key held — treat as shortcut, let it fall through
+            // modifier key held â€” treat as shortcut, let it fall through
         } else if (state.editModeActive && state.editTool === 'residue' && state.editCell) {
-            // GeneDoc residue editing mode — allow unmodified keys
+            // GeneDoc residue editing mode â€” allow unmodified keys
         } else {
-            return; // normal typing in input — don't intercept
+            return; // normal typing in input â€” don't intercept
         }
     }
     if (handleGeneDocResidueKey(e)) {
@@ -4835,7 +4834,7 @@ function reverseComplementSelected() {
     showMessage("Reverse complement applied!", 2000);
 }
 
-// ── Sort functions ──
+// â”€â”€ Sort functions â”€â”€
 function sortByName() {
     pushUndo();
     const indices = state.seqs.map((s, i) => ({ idx: i, name: s.header.toLowerCase() }));
@@ -4873,7 +4872,7 @@ function sortBySimilarity() {
     showMessage('Sorted by similarity to first sequence', 2000);
 }
 
-// ── Save / Load sequence order ──
+// â”€â”€ Save / Load sequence order â”€â”€
 function exportOrder() {
     if (!state.seqs.length) { showMessage('No sequences loaded', 2000); return; }
     const order = state.seqs.map(s => s.header);
@@ -6341,7 +6340,7 @@ function minimizeMenu() {
     controls.style.right = '';
     controls.style.zIndex = '';
     controls.style.boxShadow = '';
-    // Batch all visual changes in one animation frame — no intermediate paint
+    // Batch all visual changes in one animation frame â€” no intermediate paint
     requestAnimationFrame(() => {
         controls.style.display = 'none';
         minimizeBar.style.display = 'block';
@@ -6783,7 +6782,7 @@ function updateActiveSearchesPanel() {
 
         const remove = document.createElement('button');
         remove.className = 'search-remove';
-    remove.innerHTML = '×';
+    remove.innerHTML = 'Ã—';
         remove.title = 'Remove this search';
         remove.addEventListener('click', () => {
             // Remove this specific search
@@ -6899,7 +6898,7 @@ function executeTrimming() {
         state.trimBackup = null;
         const clearBtn = document.getElementById('clearSoftTrimButton');
         if (clearBtn) clearBtn.style.display = '';
-        const status = `✓ Soft trim: ${leftRemoved}L + ${rightRemoved}R marked for clustering. Alignment unchanged.`;
+        const status = `âœ“ Soft trim: ${leftRemoved}L + ${rightRemoved}R marked for clustering. Alignment unchanged.`;
         updateClusteringStatus(status);
         showMessage(status, 3000);
         state.trimBoundaries = null;
@@ -6926,7 +6925,7 @@ function executeTrimming() {
     }
 
     const newLen = trimEnd - trimStart;
-    const status = `✓ Hard trim: ${leftRemoved}L + ${rightRemoved}R = ${leftRemoved + rightRemoved} cols. New length: ${newLen}`;
+    const status = `âœ“ Hard trim: ${leftRemoved}L + ${rightRemoved}R = ${leftRemoved + rightRemoved} cols. New length: ${newLen}`;
     updateClusteringStatus(status);
     showMessage(status, 3000);
     state.trimBoundaries = null;
@@ -6953,7 +6952,7 @@ function undoTrimming() {
     state.trimBoundaries = null;
     state.softTrimBoundaries = null;
 
-    updateClusteringStatus('✓ Trimming reverted');
+    updateClusteringStatus('âœ“ Trimming reverted');
     showMessage('Trimming reverted - original alignment restored', 3000);
     debounceRender();
 }
@@ -6966,7 +6965,7 @@ function clusterSequences() {
 
     updateClusteringStatus('Running clustering algorithm...');
 
-    // Prepare sequences for clustering — respect soft trim if active
+    // Prepare sequences for clustering â€” respect soft trim if active
     const stb = state.softTrimBoundaries;
     const seqsForClustering = state.seqs.map(seq => {
         let s = seq.seq;
@@ -7021,13 +7020,13 @@ function clusterSequences() {
         debugLog(`Size: ${cluster.size} sequences`);
         debugLog(`Diagnostic features: ${cluster.nPerfect} (${cluster.nReliable || cluster.nPerfect} reliable)`);
         if (cluster.nFiltered) {
-            debugLog(`⚠️  Filtered (high-leakage): ${cluster.nFiltered} features`);
+            debugLog(`âš ï¸  Filtered (high-leakage): ${cluster.nFiltered} features`);
         }
         debugLog(`Color: ${color}`);
         console.log('Sequences:');
 
         cluster.sequences.forEach(seq => {
-            debugLog(`  • ${seq.id} (index ${seq.index})`);
+            debugLog(`  â€¢ ${seq.id} (index ${seq.index})`);
             state.clusterMap[seq.index] = {
                 cluster: idx,
                 color: color,
@@ -7053,7 +7052,7 @@ function clusterSequences() {
     if (clusterResults.unassigned.length > 0) {
         debugLog(`\n--- UNASSIGNED (${clusterResults.unassigned.length} sequences) ---`);
         clusterResults.unassigned.forEach(seq => {
-            debugLog(`  • ${seq.id} (index ${seq.index})`);
+            debugLog(`  â€¢ ${seq.id} (index ${seq.index})`);
             state.clusterMap[seq.index] = {
                 cluster: -1,
                 color: '#cccccc',
@@ -7528,13 +7527,13 @@ function displayClusteringResults(results) {
         html += `
             <div style="margin-bottom: 12px; padding: 8px; border: 1px solid #ddd; border-left: 4px solid ${color}; border-radius: 2px;">
                 <div style="cursor: pointer; font-weight: bold; user-select: none; margin-bottom: 4px;" onclick="document.getElementById('cluster${idx}').style.display = document.getElementById('cluster${idx}').style.display === 'none' ? 'block' : 'none';">
-                    ▶ Cluster ${idx + 1}: ${cluster.size} sequences, ${cluster.nPerfect} diagnostic features
+                    â–¶ Cluster ${idx + 1}: ${cluster.size} sequences, ${cluster.nPerfect} diagnostic features
                 </div>
                 <div id="cluster${idx}" style="display: none; margin-left: 8px; margin-top: 8px;">
                     <div style="margin-bottom: 8px;">
                         <strong>Sequences:</strong>
                         <div style="margin: 4px 0; padding: 4px; background: #f9f9f9; border-radius: 2px;">
-                            ${cluster.sequences.map((s, i) => `<div style="font-family: monospace; font-size: 10px;">• ${s.id}</div>`).join('')}
+                            ${cluster.sequences.map((s, i) => `<div style="font-family: monospace; font-size: 10px;">â€¢ ${s.id}</div>`).join('')}
                         </div>
                     </div>
                     <div style="margin-bottom: 8px;">
@@ -7554,11 +7553,11 @@ function displayClusteringResults(results) {
         html += `
             <div style="margin-bottom: 12px; padding: 8px; border: 1px solid #ddd; border-left: 4px solid #999999; border-radius: 2px;">
                 <div style="cursor: pointer; font-weight: bold; user-select: none; margin-bottom: 4px;" onclick="document.getElementById('unassignedCluster').style.display = document.getElementById('unassignedCluster').style.display === 'none' ? 'block' : 'none';">
-                    ▶ Unassigned: ${results.unassigned.length} sequences
+                    â–¶ Unassigned: ${results.unassigned.length} sequences
                 </div>
                 <div id="unassignedCluster" style="display: none; margin-left: 8px; margin-top: 8px;">
                     <div style="margin: 4px 0; padding: 4px; background: #f9f9f9; border-radius: 2px;">
-                        ${results.unassigned.map(s => `<div style="font-family: monospace; font-size: 10px;">• ${s.id}</div>`).join('')}
+                        ${results.unassigned.map(s => `<div style="font-family: monospace; font-size: 10px;">â€¢ ${s.id}</div>`).join('')}
                     </div>
                     <button onclick="highlightCluster(-1)" style="padding: 4px 8px; font-size: 11px; background: #999999; color: white; border: none; border-radius: 2px; cursor: pointer; margin-top: 4px;">Highlight in alignment</button>
                 </div>
@@ -7745,7 +7744,7 @@ function _reorderByGuideTree(fasta) {
         }
     }
 
-    // UPGMA guide tree construction → extract leaf order
+    // UPGMA guide tree construction â†’ extract leaf order
     // Represent clusters as arrays of leaf indices; merge closest pair
     const clusters = seqs.map((_, i) => [i]);
     const clusterDist = dist.map(row => new Float32Array(row)); // copy
@@ -7768,7 +7767,7 @@ function _reorderByGuideTree(fasta) {
 
         // Optimal leaf ordering at junction: try all 4 orientations of the two
         // clusters and pick the one where the junction elements are closest.
-        // A=[...aL, aR] B=[...bL, bR] → try (A+B), (A+B'), (A'+B), (A'+B')
+        // A=[...aL, aR] B=[...bL, bR] â†’ try (A+B), (A+B'), (A'+B), (A'+B')
         // where A' = reversed A, B' = reversed B
         const cA = clusters[ci], cB = clusters[cj];
         const aFirst = cA[0], aLast = cA[cA.length - 1];
@@ -8119,7 +8118,7 @@ function openTreeBuilder() {
             const textOutput = document.getElementById('treeTextOutput');
             const scope = state.selectedRows.size >= 2 ? 'selected sequences' : 'all sequences';
             if (summary) {
-                summary.textContent = `${result.stats.count} ${scope} · alignment p-distance · ${method.toUpperCase()} · avg ${result.stats.averageDistance.toFixed(4)} · range ${result.stats.minDistance.toFixed(4)}-${result.stats.maxDistance.toFixed(4)}`;
+                summary.textContent = `${result.stats.count} ${scope} Â· alignment p-distance Â· ${method.toUpperCase()} Â· avg ${result.stats.averageDistance.toFixed(4)} Â· range ${result.stats.minDistance.toFixed(4)}-${result.stats.maxDistance.toFixed(4)}`;
             }
             if (newickOutput) newickOutput.value = result.newick;
             if (textOutput) textOutput.textContent = result.text;
@@ -8261,7 +8260,7 @@ function openStats() {
         `</div></div>`;
 
     // Render Distance Matrix tab
-    let dm = `<b>Pairwise p-distance (1 − identity)</b><br><br>`;
+    let dm = `<b>Pairwise p-distance (1 âˆ’ identity)</b><br><br>`;
     dm += ' '.repeat(nameLen);
     for (let i = 0; i < nseq; i++) dm += ` ${String(i + 1).padStart(4)} `;
     dm += '\n';
@@ -8271,7 +8270,7 @@ function openStats() {
         for (let j = 0; j < nseq; j++) dm += ` ${distMatrix[i][j].padStart(6)}`;
         dm += '\n';
     }
-    dm += `\nColumns: 1–${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
+    dm += `\nColumns: 1â€“${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
     // Append distance matrix and identity to summary
     const dmControls = `<div style="margin:4px 0;"><button id="copyDistanceMatrixBtn" style="font-size:11px;padding:2px 8px;">Copy distance matrix</button></div>`;
     const dmContent = `<details style="margin-top:6px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Distance Matrix (p-distance)</summary>${dmControls}<pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${dm}</pre></details>`;
@@ -8286,7 +8285,7 @@ function openStats() {
         for (let j = 0; j < nseq; j++) im += ` ${identityMatrix[i][j].padStart(5)}`;
         im += '\n';
     }
-    im += `\nColumns: 1–${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
+    im += `\nColumns: 1â€“${nseq} = ${seqNames.slice(0, 4).join(', ')}${nseq > 4 ? '...' : ''}`;
     state._statsMatrices = { distance: dm, identity: im };
     const imControls = `<div style="margin:4px 0;"><button id="copyIdentityMatrixBtn" style="font-size:11px;padding:2px 8px;">Copy identity matrix</button></div>`;
     const imContent = `<details style="margin-top:4px;"><summary style="cursor:pointer;font-weight:bold;font-size:11px;">Pairwise Identity (%)</summary>${imControls}<pre style="font-size:10px;white-space:pre;overflow:auto;max-height:200px;">${im}</pre></details>`;
@@ -9755,13 +9754,18 @@ function showContextMenu(e, index) {
         });
         contextMenu.appendChild(realignItem);
 
-        // Dot-plot self (v2)
+        // Dot-plot self
         const dotSelfItem = document.createElement('div');
-        dotSelfItem.textContent = 'Dot-plot (self) v2';
+        dotSelfItem.textContent = 'Dot-plot (self)';
         dotSelfItem.addEventListener('click', () => {
             const s = state.seqs[index];
             const ungapped = s.seq.replace(/[-. ]/g, '');
-            _dot2Open(ungapped, ungapped, s.header, s.header);
+            openDotPlot(ungapped, ungapped, s.header, s.header, {
+                rowIndexA: index,
+                rowIndexB: index,
+                alignedSeqA: s.seq,
+                alignedSeqB: s.seq
+            });
             closeContextMenu();
         });
         contextMenu.appendChild(dotSelfItem);
@@ -9776,15 +9780,20 @@ function showContextMenu(e, index) {
         contextMenu.appendChild(repeatItem);
     }
 
-    // Dot-plot between two selected sequences (v2)
+    // Dot-plot between two selected sequences
     if (state.selectedRows.size === 2) {
         const dotPairItem = document.createElement('div');
         const selIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
-        dotPairItem.textContent = `Dot-plot v2 (${state.seqs[selIndices[0]].header} vs ${state.seqs[selIndices[1]].header})`;
+        dotPairItem.textContent = `Dot-plot (${state.seqs[selIndices[0]].header} vs ${state.seqs[selIndices[1]].header})`;
         dotPairItem.addEventListener('click', () => {
             const sA = state.seqs[selIndices[0]];
             const sB = state.seqs[selIndices[1]];
-            _dot2Open(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header);
+            openDotPlot(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header, {
+                rowIndexA: selIndices[0],
+                rowIndexB: selIndices[1],
+                alignedSeqA: sA.seq,
+                alignedSeqB: sB.seq
+            });
             closeContextMenu();
         });
         contextMenu.appendChild(dotPairItem);
@@ -10095,7 +10104,7 @@ function initializeAppUI() {
                 parseAndRender(true);
             };
             reader.onerror = () => {
-                alignmentContainer.innerHTML = '<div class="error-message">❌ Error reading file.</div>';
+                alignmentContainer.innerHTML = '<div class="error-message">âŒ Error reading file.</div>';
                 showMessage("Error reading file.", 5000);
             };
             reader.readAsText(file);
@@ -10128,7 +10137,7 @@ function initializeAppUI() {
             parseAndRender(true);
         };
         reader.onerror = () => {
-            alignmentContainer.innerHTML = '<div class="error-message">❌ Error reading file.</div>';
+            alignmentContainer.innerHTML = '<div class="error-message">âŒ Error reading file.</div>';
             showMessage("Error reading file.", 5000);
         };
         reader.readAsText(file);
@@ -10170,8 +10179,6 @@ function initializeAppUI() {
         'buildTreeButton': openTreeBuilder,
         'statsButton': openStats,
         'repeatFinderMenuButton': openRepeatFinder,
-        'dotplotSelfBtn': openDotplotSelf,
-        'dotplotPairBtn': openDotplotPair,
         'statsCloseBtn': closeStats,
         'treeBuilderCloseBtn': closeTreeBuilder,
         'treeCopyNewickBtn': copyTreeNewick,
@@ -10361,7 +10368,7 @@ function initializeAppUI() {
     onModeChange();
     toggleStickyNames();
 
-    // ── Residue case toggle (GeneDoc-style upper/lower/asis) ────────────
+    // â”€â”€ Residue case toggle (GeneDoc-style upper/lower/asis) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const caseSel = el('residueCase');
     if (caseSel) {
         const applyCase = () => {
@@ -10394,7 +10401,7 @@ function initializeAppUI() {
     // Setup menu stability to prevent flickering on mouse movement
     setupMenuStability();
 
-    // ── :has() fallback for Firefox < 121 ──────────────────────────────
+    // â”€â”€ :has() fallback for Firefox < 121 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // CSS :has(.control-group:hover) is not supported in Firefox < 121.
     // We add .hover-active class via JS as a fallback.
     if (!CSS.supports('selector(:has(*))')) {
@@ -10410,11 +10417,9 @@ function initializeAppUI() {
     initColourSeqs();
 
     // Initialize Dot Plot & Repeat Finder modals
-    _initDotPlotEvents();
-    _initDotPlotV2Events();
-    _initRepeatFinderEvents();
+    _initDotPlotEvents();    _initRepeatFinderEvents();
 
-    // ── URL parameter auto-loading ──────────────────────────────────────
+    // â”€â”€ URL parameter auto-loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // ...
 
     // Click-outside to close recent dropdown
@@ -10814,7 +10819,7 @@ function initializeGeneDocEditToolbar() {
     el('editClearGapColumnsButton')?.addEventListener('click', removeGapColumns);
     el('editSeqEditorButton')?.addEventListener('click', () => openSeqEditor());
 
-    // ↻ Cons button uses onclick=_recalcConservation in HTML
+    // â†» Cons button uses onclick=_recalcConservation in HTML
 
     updateGeneDocEditUI();
 }
@@ -11533,7 +11538,7 @@ function handleAlignmentPanContextMenu(e) {
     }
 }
 
-// Ctrl+A on fastaInput handled by main capture-phase handler — no special override needed
+// Ctrl+A on fastaInput handled by main capture-phase handler â€” no special override needed
 
 // Drag handlers are defined at top of file (window.handleDragStart / window.handleDragEnd)
 
@@ -12076,7 +12081,7 @@ function updateColourPresetList() {
                 applyColourToSeqNames(colourState.mappings);
                 showMessage('Loaded ${name}', 2000);
               })()">
-            ${name} <span style="float: right; cursor: pointer; color: #888;" onclick="(function(e) { e.stopPropagation(); delete colourState.presets['${name}']; localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets)); updateColourPresetList(); })(event)">✕</span>
+            ${name} <span style="float: right; cursor: pointer; color: #888;" onclick="(function(e) { e.stopPropagation(); delete colourState.presets['${name}']; localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets)); updateColourPresetList(); })(event)">âœ•</span>
         </div>`
     ).join('');
 }
@@ -12112,7 +12117,7 @@ function showColorHistory() {
             html += `<span style="color: #999; min-width: 20px;">${idx + 1}.</span>`;
             html += `<span style="display: inline-block; width: 14px; height: 14px; background: ${entry.color}; border: 1px solid #ccc; border-radius: 2px;"></span>`;
             html += `<span>${entry.color}</span>`;
-            html += `<span style="color: #0066cc; margin: 0 4px;">← ${entry.method}</span>`;
+            html += `<span style="color: #0066cc; margin: 0 4px;">â† ${entry.method}</span>`;
             html += `<span style="color: #999; font-size: 9px;">${entry.timestamp}</span>`;
             html += `</div>`;
         });
@@ -12912,9 +12917,9 @@ function displayBlastResults(queryName, queryLen, results) {
     });
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // RE-ALIGN AGAINST CONSENSUS
-// ═══════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async function realignSequenceAgainstConsensus(index) {
     if (!state.seqs || state.seqs.length < 2) {
@@ -12954,9 +12959,9 @@ async function realignSequenceAgainstConsensus(index) {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // DOT-PLOT (integrated from Doter)
-// ═══════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 let _dotPlotWorker = null;
 let _dotPlotState = {
@@ -12975,287 +12980,6 @@ let _dotPlotState = {
 };
 const DOT_AXIS_PAD = 50;
 
-// --- Dot Plot v2 (integrated modal, single-canvas clean render) ---
-const _D2 = {
-    seqA:'', seqB:'', nameA:'A', nameB:'B',
-    scores:null, rows:0, cols:0, scoreMin:0, scoreMax:1,
-    zoom:1, threshold:0.55, windowSize:9,
-    dotImage:null, hoverRow:-1, hoverCol:-1, pinnedRow:-1, pinnedCol:-1,
-    copyRegion:null
-};
-
-function openDotplotSelf() {
-    const sel = Array.from(state.selectedRows);
-    const index = sel.length === 1 ? sel[0] : 0;
-    const s = state.seqs[index];
-    _dot2Open(s.seq.replace(/[-. ]/g, ''), s.seq.replace(/[-. ]/g, ''), s.header, s.header);
-}
-
-function openDotplotPair() {
-    const sel = Array.from(state.selectedRows).sort((a,b)=>a-b);
-    if (sel.length < 2) { showMessage('Select exactly 2 sequences.', 3000); return; }
-    const sA = state.seqs[sel[0]], sB = state.seqs[sel[1]];
-    _dot2Open(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header);
-}
-
-function _dot2Open(seqA, seqB, nameA, nameB) {
-    const D = _D2;
-    D.seqA = seqA.toUpperCase(); D.seqB = seqB.toUpperCase();
-    D.nameA = nameA; D.nameB = nameB;
-    D.scores = null; D.rows = 0; D.cols = 0; D.dotImage = null;
-    D.hoverRow = D.hoverCol = D.pinnedRow = D.pinnedCol = -1;
-    D.windowSize = parseInt(document.getElementById('dotPlotV2Win')?.value) || 9;
-    D.threshold = (parseInt(document.getElementById('dotPlotV2Thr')?.value) || 55) / 100;
-    D.copyRegion = null;
-    showExclusiveModal('dotPlotV2Modal');
-    const t = document.getElementById('dotPlotV2Title');
-    if (t) t.textContent = `Dot Plot v2: ${nameA} vs ${nameB}`;
-    const s = document.getElementById('dotPlotV2Status');
-    if (s) s.textContent = `Computing ${D.seqA.length} × ${D.seqB.length}…`;
-    _dot2ClearInfo();
-    _dot2Compute();
-}
-
-function _dot2Compute() {
-    const D = _D2;
-    if (!D.seqA || !D.seqB) return;
-    const w = _getDotWorker();
-    const t0 = performance.now();
-    const ok = (e) => {
-        w.removeEventListener('message', ok); w.removeEventListener('error', no);
-        if (e.data.error) { document.getElementById('dotPlotV2Status').textContent = 'Error: '+e.data.error; return; }
-        D.scores = new Int16Array(e.data.scores);
-        D.rows = e.data.rows; D.cols = e.data.cols;
-        D.scoreMin = e.data.min; D.scoreMax = e.data.max;
-        _dot2BuildImage();
-        // Defer fitView until modal is visible and laid out
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                _dot2FitView();
-            });
-        });
-        const ms = performance.now() - t0;
-        const el = document.getElementById('dotPlotV2Status');
-        if (el) el.textContent = `${D.rows}×${D.cols} in ${ms<1000?ms.toFixed(0)+'ms':(ms/1000).toFixed(1)+'s'}`;
-    };
-    const no = (e) => { w.removeEventListener('message',ok); w.removeEventListener('error',no);
-        document.getElementById('dotPlotV2Status').textContent = 'Worker error'; };
-    w.addEventListener('message', ok);
-    w.addEventListener('error', no);
-    w.postMessage({ seqA: D.seqA, seqB: D.seqB, windowSize: D.windowSize, mode: 'identity' });
-}
-
-function _dot2BuildImage() {
-    const D = _D2;
-    if (!D.scores) return;
-    const img = new ImageData(D.cols, D.rows);
-    const d = img.data, range = D.scoreMax - D.scoreMin || 1, thr = D.threshold;
-    for (let i = 0, j = 0; i < D.rows * D.cols; i++, j += 4) {
-        const n = (D.scores[i] - D.scoreMin) / range;
-        const v = n >= thr ? Math.round((1 - n) * 255) : 255;
-        d[j] = v; d[j+1] = v; d[j+2] = v; d[j+3] = 255;
-    }
-    D.dotImage = img;
-}
-
-function _dot2FitView() {
-    const D = _D2;
-    if (!D.rows || !D.cols) return;
-    const vp = document.getElementById('dotPlotV2Viewport');
-    if (!vp) return;
-    const pad = 60;
-    D.zoom = Math.max(1, Math.min(
-        Math.floor((vp.clientWidth - pad) / D.cols),
-        Math.floor((vp.clientHeight - pad) / D.rows)
-    ));
-    _dot2Render();
-}
-
-function _dot2WalkDiag(row, col) {
-    const D = _D2;
-    if (!D.scores) return null;
-    const range = D.scoreMax - D.scoreMin || 1, thr = D.threshold;
-    let r0 = row, c0 = col;
-    while (r0 >= 0 && c0 >= 0) {
-        if ((D.scores[r0 * D.cols + c0] - D.scoreMin) / range < thr) break;
-        r0--; c0--;
-    }
-    r0++; c0++;
-    let r1 = row + 1, c1 = col + 1;
-    while (r1 < D.rows && c1 < D.cols) {
-        if ((D.scores[r1 * D.cols + c1] - D.scoreMin) / range < thr) break;
-        r1++; c1++;
-    }
-    return { r0, c0, r1, c1, len: r1 - r0 };
-}
-
-function _dot2NiceTick(len, plotPx) {
-    // Guarantee at least 50px between tick labels
-    const maxTicks = Math.max(1, Math.floor(plotPx / 50));
-    const raw = len / maxTicks;
-    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-    const norm = raw / mag;
-    let step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
-    return Math.max(1, Math.round(step * mag));
-}
-
-function _dot2Render() {
-    const D = _D2;
-    const cv = document.getElementById('dotPlotV2Canvas');
-    if (!cv || !D.dotImage) return;
-    const ctx = cv.getContext('2d');
-    const { rows, cols, zoom } = D;
-    const pW = Math.round(cols * zoom), pH = Math.round(rows * zoom);
-    const AX = 52; // axis label padding
-    const AX_TOP = 14; // top axis label height
-    const tw = AX + pW + 6, th = AX_TOP + AX + pH + 6;
-    const dpr = window.devicePixelRatio || 1;
-    cv.width = Math.round(tw * dpr);
-    cv.height = Math.round(th * dpr);
-    cv.style.width = tw + 'px';
-    cv.style.height = th + 'px';
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    // Background
-    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, tw, th);
-
-    // Dot image
-    const tmp = document.createElement('canvas');
-    tmp.width = cols; tmp.height = rows;
-    tmp.getContext('2d').putImageData(D.dotImage, 0, 0);
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(tmp, AX, AX_TOP + AX, pW, pH);
-
-    const plotX = AX, plotY = AX_TOP + AX;
-    const cW = pW / cols, rH = pH / rows;
-    const pxSz = Math.max(2, Math.round(cW));
-
-    // Axis ticks
-    ctx.fillStyle = '#444';
-
-    // Y-axis (row labels)
-    const stepA = _dot2NiceTick(rows, pH);
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.font = '10px system-ui';
-    for (let i = 0; i < rows; i += stepA) {
-        const y = plotY + Math.round(i * rH) + Math.round(rH / 2);
-        ctx.fillText(String(i + 1), plotX - 5, y);
-    }
-
-    // X-axis (col labels) — rotated
-    const stepB = _dot2NiceTick(cols, pW);
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.font = '10px system-ui';
-    for (let j = 0; j < cols; j += stepB) {
-        const x = plotX + Math.round(j * cW) + Math.round(cW / 2);
-        ctx.save();
-        ctx.translate(x, plotY - 10);
-        ctx.rotate(-Math.PI / 2);
-        ctx.fillText(String(j + 1), 0, 0);
-        ctx.restore();
-    }
-
-    // Highlight diagonal for hover
-    if (D.hoverRow >= 0 && D.hoverCol >= 0) {
-        const diag = _dot2WalkDiag(D.hoverRow, D.hoverCol);
-        if (diag) {
-            ctx.fillStyle = 'rgba(100,230,160,0.8)';
-            for (let k = diag.r0; k < diag.r1; k++) {
-                ctx.fillRect(plotX + Math.floor((diag.c0 + k - diag.r0) * cW), plotY + Math.floor(k * rH), pxSz, pxSz);
-            }
-        }
-        const cx = plotX + (D.hoverCol + 0.5) * cW;
-        const cy = plotY + (D.hoverRow + 0.5) * rH;
-        ctx.strokeStyle = 'rgba(80,160,255,0.55)'; ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(plotX, cy); ctx.lineTo(plotX + pW, cy);
-        ctx.moveTo(cx, plotY); ctx.lineTo(cx, plotY + pH);
-        ctx.stroke();
-        // Labels on axes
-        ctx.fillStyle = 'rgba(80,160,255,0.9)'; ctx.font = 'bold 10px system-ui';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-        ctx.fillText(String(D.hoverCol + 1), cx, plotY - 1);
-        ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-        ctx.fillText(String(D.hoverRow + 1), plotX - 7, cy);
-    }
-
-    // Pinned marker
-    if (D.pinnedRow >= 0 && D.pinnedCol >= 0) {
-        const cx = plotX + (D.pinnedCol + 0.5) * cW;
-        const cy = plotY + (D.pinnedRow + 0.5) * rH;
-        ctx.strokeStyle = 'rgba(220,50,50,0.8)'; ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(plotX, cy); ctx.lineTo(plotX + pW, cy);
-        ctx.moveTo(cx, plotY); ctx.lineTo(cx, plotY + pH);
-        ctx.stroke();
-        ctx.strokeStyle = 'rgba(220,50,50,0.9)'; ctx.lineWidth = 2;
-        ctx.strokeRect(plotX + Math.floor(D.pinnedCol * cW) - 1, plotY + Math.floor(D.pinnedRow * rH) - 1, cW + 2, rH + 2);
-        ctx.fillStyle = 'rgba(220,50,50,0.9)'; ctx.font = 'bold 10px system-ui';
-        ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-        ctx.fillText('PIN A' + String(D.pinnedRow + 1) + '/B' + String(D.pinnedCol + 1), plotX + 4, plotY - 1);
-    }
-}
-
-function _dot2UpdateInfo(row, col) {
-    const D = _D2;
-    const info = document.getElementById('dotPlotV2Info');
-    const align = document.getElementById('dotPlotV2Align');
-    if (row < 0 || col < 0 || row >= D.rows || col >= D.cols) {
-        if (info) info.textContent = 'Hover over the plot…';
-        if (align) align.textContent = 'A  —\n   |\nB  —';
-        return;
-    }
-    const range = D.scoreMax - D.scoreMin || 1;
-    const norm = (D.scores[row * D.cols + col] - D.scoreMin) / range;
-    if (info) info.textContent = `A${row+1}/${D.rows}  B${col+1}/${D.cols}  score=${norm.toFixed(3)}  ${D.seqA[row]||'N'} vs ${D.seqB[col]||'N'}`;
-
-    const diag = _dot2WalkDiag(row, col);
-    if (!diag) { if (align) align.textContent = 'A  —\n   |\nB  —'; return; }
-
-    const ctxR = parseInt(document.getElementById('dotPlotV2Ctx')?.value) || 5;
-    const maxSlice = diag.len + 2 * ctxR;
-    const a0 = Math.max(0, diag.r0 - ctxR), b0 = Math.max(0, diag.c0 - ctxR);
-    const avA = D.seqA.length - a0, avB = D.seqB.length - b0;
-    const sl = Math.min(maxSlice, avA, avB);
-    const aSl = D.seqA.slice(a0, a0+sl), bSl = D.seqB.slice(b0, b0+sl);
-    const msA = diag.r0 - a0, meA = diag.r1 - a0;
-
-    // Compact display: show match markers right under the sequences
-    let matchMarks = '';
-    for (let i = 0; i < sl; i++) {
-        const inMatch = i >= msA && i < meA;
-        if (inMatch) {
-            matchMarks += aSl[i] === bSl[i] ? '│' : '·';  // | or ·
-        } else {
-            matchMarks += ' ';
-        }
-    }
-    // Wrap every 60 chars
-    const wrap = 60;
-    let lines = [];
-    for (let off = 0; off < sl; off += wrap) {
-        const e = Math.min(off + wrap, sl);
-        const aPart = aSl.slice(off, e);
-        const mPart = matchMarks.slice(off, e);
-        const bPart = bSl.slice(off, e);
-        const aLabel = off === 0 ? `A ${String(a0+1).padStart(4)} ` : '      ';
-        const bLabel = off === 0 ? `B ${String(b0+1).padStart(4)} ` : '      ';
-        lines.push(aLabel + aPart);
-        lines.push('        ' + mPart);
-        lines.push(bLabel + bPart);
-    }
-    if (align) align.textContent = lines.join('\n');
-
-    // Store for copy
-    D.copyRegion = { aSlice: aSl, bSlice: bSl, aStart: a0, bStart: b0, nameA: D.nameA, nameB: D.nameB };
-}
-
-function _dot2ClearInfo() {
-    const info = document.getElementById('dotPlotV2Info');
-    const align = document.getElementById('dotPlotV2Align');
-    if (info) info.textContent = 'Hover over the plot…';
-    if (align) align.textContent = 'A  —\n   |\nB  —';
-}
 
 // Old v1 dot plot (kept for reference, can be removed later)
 function _buildUngappedToAlignMap(alignedSeq) {
@@ -13607,7 +13331,7 @@ function _dotDrawOverlay(row, col) {
     oCtx.moveTo(DOT_AXIS_PAD, cy); oCtx.lineTo(DOT_AXIS_PAD + plotW, cy);
     oCtx.moveTo(cx, DOT_AXIS_PAD); oCtx.lineTo(cx, DOT_AXIS_PAD + plotH);
     oCtx.stroke();
-    // Diagonal trace — snap to pixel grid for crisp alignment with dot image
+    // Diagonal trace â€” snap to pixel grid for crisp alignment with dot image
     const range = S.scoreMax - S.scoreMin || 1;
     oCtx.fillStyle = 'rgba(100,230,160,0.85)';
     const pxSz = Math.max(1, Math.round(colW));
@@ -13679,7 +13403,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     const titleEl = document.getElementById('dotPlotTitle');
     if (titleEl) titleEl.textContent = `Dot Plot: ${nameA} vs ${nameB}${revComp ? ' (rc)' : ''}`;
     const statusEl = document.getElementById('dotPlotStatus');
-    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} × ${S.seqB.length}...`;
+    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} Ã— ${S.seqB.length}...`;
     _dotClearHoverInfo();
 
     S.computing = true;
@@ -13698,147 +13422,9 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     _dotBuildImage();
     _dotFitView();
     S.lastRow = S.lastCol = -1;
-    if (statusEl) statusEl.textContent = `${S.seqA.length} × ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
+    if (statusEl) statusEl.textContent = `${S.seqA.length} Ã— ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
 }
 
-function _initDotPlotV2Events() {
-    const cv = document.getElementById('dotPlotV2Canvas');
-    const vp = document.getElementById('dotPlotV2Viewport');
-
-    // Close button
-    const closeBtn = document.getElementById('dotPlotV2CloseBtn');
-    if (closeBtn) closeBtn.addEventListener('click', () => { el('dotPlotV2Modal').style.display = 'none'; });
-
-    // Recalculate
-    const recalc = document.getElementById('dotPlotV2Recalc');
-    if (recalc) recalc.addEventListener('click', () => {
-        _D2.windowSize = parseInt(document.getElementById('dotPlotV2Win')?.value) || 9;
-        _D2.threshold = (parseInt(document.getElementById('dotPlotV2Thr')?.value) || 55) / 100;
-        _D2.scores = null; _D2.dotImage = null;
-        document.getElementById('dotPlotV2Status').textContent = 'Computing…';
-        _dot2Compute();
-    });
-
-    // Threshold slider live
-    const thrS = document.getElementById('dotPlotV2Thr');
-    const thrV = document.getElementById('dotPlotV2ThrVal');
-    if (thrS) thrS.addEventListener('input', () => {
-        thrV.textContent = thrS.value + '%';
-        _D2.threshold = parseInt(thrS.value) / 100;
-        if (_D2.scores) { _dot2BuildImage(); _dot2Render(); _dot2UpdateInfo(_D2.hoverRow, _D2.hoverCol); }
-    });
-
-    // Fit
-    const fit = document.getElementById('dotPlotV2Fit');
-    if (fit) fit.addEventListener('click', _dot2FitView);
-
-    // PNG export
-    const png = document.getElementById('dotPlotV2Png');
-    if (png) png.addEventListener('click', () => {
-        const a = document.createElement('a');
-        a.download = `dotplot_${_D2.nameA}_vs_${_D2.nameB}.png`;
-        a.href = cv.toDataURL('image/png');
-        a.click();
-    });
-
-    // SVG export
-    const svg = document.getElementById('dotPlotV2Svg');
-    if (svg) svg.addEventListener('click', () => {
-        const dataUrl = cv.toDataURL('image/png');
-        const svgText = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
-    width="${cv.width}" height="${cv.height}" viewBox="0 0 ${cv.width} ${cv.height}">
-    <image width="${cv.width}" height="${cv.height}" xlink:href="${dataUrl}"/>
-    <text x="4" y="12" font-size="10" font-family="system-ui" fill="#666">
-      ${_D2.nameA} vs ${_D2.nameB} | w=${_D2.windowSize} thr=${Math.round(_D2.threshold*100)}%
-    </text>
-  </svg>`;
-        const blob = new Blob([svgText], { type: 'image/svg+xml' });
-        const a = document.createElement('a');
-        a.download = `dotplot_${_D2.nameA}_vs_${_D2.nameB}.svg`;
-        a.href = URL.createObjectURL(blob);
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    });
-
-    // Copy region
-    const copy = document.getElementById('dotPlotV2Copy');
-    if (copy) copy.addEventListener('click', () => {
-        const r = _D2.copyRegion;
-        if (!r) { showMessage('Hover over the plot first.', 2000); return; }
-        const fasta = `>${r.nameA}_${r.aStart+1}-${r.aStart+r.aSlice.length}\n${r.aSlice}\n` +
-                      `>${r.nameB}_${r.bStart+1}-${r.bStart+r.bSlice.length}\n${r.bSlice}`;
-        navigator.clipboard.writeText(fasta).then(() => showMessage('Copied!', 1500))
-            .catch(() => showMessage('Copy failed.', 1500));
-    });
-
-    // Context radius change
-    const ctxEl = document.getElementById('dotPlotV2Ctx');
-    if (ctxEl) ctxEl.addEventListener('change', () => _dot2UpdateInfo(_D2.hoverRow, _D2.hoverCol));
-
-    // Canvas events
-    const AX_PLOT = 52, AX_TOP = 14;
-    if (cv) {
-        cv.addEventListener('mousemove', (e) => {
-            if (!_D2.scores) return;
-            const rect = cv.getBoundingClientRect();
-            // rect and clientX/Y are in CSS pixels; AX_PLOT and zoom are in logical (CSS) units
-            const col = Math.floor((e.clientX - rect.left - AX_PLOT) / _D2.zoom);
-            const row = Math.floor((e.clientY - rect.top - AX_PLOT - AX_TOP) / _D2.zoom);
-            if (row < 0 || col < 0 || row >= _D2.rows || col >= _D2.cols) {
-                if (_D2.hoverRow >= 0) { _D2.hoverRow = _D2.hoverCol = -1; _dot2Render(); _dot2ClearInfo(); }
-                return;
-            }
-            if (row === _D2.hoverRow && col === _D2.hoverCol) return;
-            _D2.hoverRow = row; _D2.hoverCol = col;
-            _dot2Render();
-            _dot2UpdateInfo(row, col);
-        });
-        cv.addEventListener('mouseleave', () => {
-            _D2.hoverRow = _D2.hoverCol = -1;
-            _dot2Render();
-            _dot2ClearInfo();
-        });
-        cv.addEventListener('click', (e) => {
-            if (!_D2.scores) return;
-            const rect = cv.getBoundingClientRect();
-            const col = Math.floor((e.clientX - rect.left - AX_PLOT) / _D2.zoom);
-            const row = Math.floor((e.clientY - rect.top - (AX_PLOT + AX_TOP)) / _D2.zoom);
-            if (row < 0 || col < 0 || row >= _D2.rows || col >= _D2.cols) return;
-            _D2.pinnedRow = row; _D2.pinnedCol = col;
-            _D2.hoverRow = row; _D2.hoverCol = col;
-            _dot2Render();
-            _dot2UpdateInfo(row, col);
-        });
-    }
-
-    // Wheel zoom
-    if (vp) {
-        vp.addEventListener('wheel', (e) => {
-            if (!_D2.scores) return;
-            e.preventDefault();
-            const old = _D2.zoom;
-            _D2.zoom = Math.max(1, Math.min(20, _D2.zoom + (e.deltaY < 0 ? 1 : -1)));
-            if (_D2.zoom !== old) _dot2Render();
-        }, { passive: false });
-    }
-
-    // Escape to close
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            const modal = el('dotPlotV2Modal');
-            if (modal && modal.style.display !== 'none') { modal.style.display = 'none'; e.stopPropagation(); }
-        }
-    });
-
-    // Auto-refit when viewport or window resizes
-    if (vp) {
-        new ResizeObserver(() => {
-            if (_D2.scores && el('dotPlotV2Modal')?.style.display !== 'none') {
-                _dot2FitView();
-            }
-        }).observe(vp);
-    }
-}
 
 function _initDotPlotEvents() {
     const overlay = document.getElementById('dotPlotOverlay');
@@ -13965,7 +13551,7 @@ function _initDotPlotEvents() {
                 fasta = `>${region.nameA}_${region.aStart + 1}-${region.aStart + region.aSlice.length}\n${region.aSlice}\n` +
                         `>${region.nameB}_${region.bStart + 1}-${region.bStart + region.bSlice.length}\n${region.bSlice}`;
             } else {
-                // Use pinned position — walk diagonal to find match extent
+                // Use pinned position â€” walk diagonal to find match extent
                 const range = S.scoreMax - S.scoreMin || 1;
                 const threshold = S.threshold;
                 let rBack = S.pinnedRow, cBack = S.pinnedCol;
@@ -14034,9 +13620,9 @@ function _initDotPlotEvents() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // REPEAT FINDER (Direct, Inverted, Tandem) & TSD FINDER
-// ═══════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 let _repeatFinderSeqIndex = -1;
 // Repeat highlighting state
@@ -14045,7 +13631,7 @@ let _lastRepeatResults = [];
 const _repeatColorPalette = ["#ff6b6b","#ffa94d","#ffd43b","#69db7c","#4dabf7","#da77f2","#20c997","#ff8787","#74c0fc","#f783ac","#ffe066","#63e6be","#a9e34b","#e599f7","#66d9e8","#fcc419","#94d82d","#ff922b","#be4bdb","#339af0"];
 
 function _syncRepeatFinderModeUI() {
-    // All modes use the same general params now — nothing to toggle
+    // All modes use the same general params now â€” nothing to toggle
 }
 
 function openRepeatFinder(seqIndex, preferredMode = null) {
@@ -14677,7 +14263,7 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
     const colors = _repeatColorPalette;
     const hl = state.repeatHighlights;
 
-    let html = `<div style="margin-bottom:8px;font-weight:bold;font-size:12px;">${mode} repeats in ${seqName} (${seqLength} bp) — ${results.length} found</div>`;
+    let html = `<div style="margin-bottom:8px;font-weight:bold;font-size:12px;">${mode} repeats in ${seqName} (${seqLength} bp) â€” ${results.length} found</div>`;
     html += '<div style="font-size:11px;color:#666;margin-bottom:4px;">Click a row to highlight in alignment. Click again to remove.</div>';
 
     if (mode === 'tandem') {
@@ -14707,10 +14293,10 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
                 `<td style="text-align:right;padding:2px 4px;">${r.start+1}</td>` +
                 `<td style="text-align:right;padding:2px 4px;">${r.end}</td>` +
                 `<td style="text-align:right;padding:2px 4px;">${r.unitLen}bp</td>` +
-                `<td style="text-align:right;padding:2px 4px;">${r.copies}×</td>` +
+                `<td style="text-align:right;padding:2px 4px;">${r.copies}Ã—</td>` +
                 `<td style="text-align:right;padding:2px 4px;">${r.divergence}%</td>` +
                 `<td style="padding:2px 4px;font-family:monospace;">${r.unit}</td>` +
-                `<td style="padding:2px 4px;text-align:center;"><button class="repeat-remove-btn" style="background:none;border:none;color:#c00;font-size:14px;cursor:pointer;line-height:1;padding:0 2px;" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">×</button></td>` +
+                `<td style="padding:2px 4px;text-align:center;"><button class="repeat-remove-btn" style="background:none;border:none;color:#c00;font-size:14px;cursor:pointer;line-height:1;padding:0 2px;" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">Ã—</button></td>` +
                 `</tr>`;
         });
         html += '</tbody></table>';
@@ -14743,7 +14329,7 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength) {
                 `<td style="text-align:right;padding:2px 4px;">${r.length}</td>` +
                 `<td style="text-align:right;padding:2px 4px;">${r.divergence}%</td>` +
                 `<td style="padding:2px 4px;font-family:monospace;">${r.seqA.length > 50 ? r.seqA.substring(0,50)+'...' : r.seqA}</td>` +
-                `<td style="padding:2px 4px;text-align:center;"><button class="repeat-remove-btn" style="background:none;border:none;color:#c00;font-size:14px;cursor:pointer;line-height:1;padding:0 2px;" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">×</button></td>` +
+                `<td style="padding:2px 4px;text-align:center;"><button class="repeat-remove-btn" style="background:none;border:none;color:#c00;font-size:14px;cursor:pointer;line-height:1;padding:0 2px;" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">Ã—</button></td>` +
                 `</tr>`;
         });
         html += '</tbody></table>';
@@ -14823,7 +14409,7 @@ function _applyLineHighlights(dataSpan) {
         const span = spans[i];
         const pos = parseInt(span.dataset.pos);
         if (isNaN(pos)) continue;
-        // Skip gap characters — do not colour gaps within repeats
+        // Skip gap characters â€” do not colour gaps within repeats
         const ch = span.textContent;
         if (ch === '-' || ch === '.') continue;
         for (const [rid, info] of hl) {
