@@ -9754,18 +9754,13 @@ function showContextMenu(e, index) {
         });
         contextMenu.appendChild(realignItem);
 
-        // Dot-plot self
+        // Dot-plot self (v2)
         const dotSelfItem = document.createElement('div');
-        dotSelfItem.textContent = 'Dot-plot (self)';
+        dotSelfItem.textContent = 'Dot-plot (self) v2';
         dotSelfItem.addEventListener('click', () => {
             const s = state.seqs[index];
             const ungapped = s.seq.replace(/[-. ]/g, '');
-            openDotPlot(ungapped, ungapped, s.header, s.header, {
-                rowIndexA: index,
-                rowIndexB: index,
-                alignedSeqA: s.seq,
-                alignedSeqB: s.seq
-            });
+            _openDotPlotV2(ungapped, ungapped, s.header, s.header);
             closeContextMenu();
         });
         contextMenu.appendChild(dotSelfItem);
@@ -9780,20 +9775,15 @@ function showContextMenu(e, index) {
         contextMenu.appendChild(repeatItem);
     }
 
-    // Dot-plot between two selected sequences
+    // Dot-plot between two selected sequences (v2)
     if (state.selectedRows.size === 2) {
         const dotPairItem = document.createElement('div');
         const selIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
-        dotPairItem.textContent = `Dot-plot (${state.seqs[selIndices[0]].header} vs ${state.seqs[selIndices[1]].header})`;
+        dotPairItem.textContent = `Dot-plot v2 (${state.seqs[selIndices[0]].header} vs ${state.seqs[selIndices[1]].header})`;
         dotPairItem.addEventListener('click', () => {
             const sA = state.seqs[selIndices[0]];
             const sB = state.seqs[selIndices[1]];
-            openDotPlot(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header, {
-                rowIndexA: selIndices[0],
-                rowIndexB: selIndices[1],
-                alignedSeqA: sA.seq,
-                alignedSeqB: sB.seq
-            });
+            _openDotPlotV2(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header);
             closeContextMenu();
         });
         contextMenu.appendChild(dotPairItem);
@@ -10179,6 +10169,8 @@ function initializeAppUI() {
         'buildTreeButton': openTreeBuilder,
         'statsButton': openStats,
         'repeatFinderMenuButton': openRepeatFinder,
+        'dotplotSelfBtn': openDotplotSelf,
+        'dotplotPairBtn': openDotplotPair,
         'statsCloseBtn': closeStats,
         'treeBuilderCloseBtn': closeTreeBuilder,
         'treeCopyNewickBtn': copyTreeNewick,
@@ -12981,6 +12973,39 @@ let _dotPlotState = {
 };
 const DOT_AXIS_PAD = 50;
 
+// --- Dot Plot v2 (standalone page) ---
+function _openDotPlotV2(seqA, seqB, nameA, nameB) {
+    try {
+        const data = JSON.stringify({ seqA, seqB, nameA, nameB });
+        sessionStorage.setItem('_dotplot_data', data);
+    } catch (e) {
+        showMessage('Sequences too large for sessionStorage. Try a single-sequence dot plot.', 3000);
+        return;
+    }
+    window.open('dotplot2.html', '_blank', 'width=1200,height=800');
+}
+
+function openDotplotSelf() {
+    const sel = Array.from(state.selectedRows);
+    const index = sel.length === 1 ? sel[0] : 0;
+    const s = state.seqs[index];
+    const ungapped = s.seq.replace(/[-. ]/g, '');
+    _openDotPlotV2(ungapped, ungapped, s.header, s.header);
+}
+
+function openDotplotPair() {
+    const sel = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (sel.length < 2) {
+        showMessage('Please select exactly 2 sequences for pair dot plot.', 3000);
+        return;
+    }
+    // Use the first two selected
+    const sA = state.seqs[sel[0]];
+    const sB = state.seqs[sel[1]];
+    _openDotPlotV2(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header);
+}
+
+// Old v1 dot plot (kept for reference, can be removed later)
 function _buildUngappedToAlignMap(alignedSeq) {
     if (!alignedSeq) return null;
     const map = [];
