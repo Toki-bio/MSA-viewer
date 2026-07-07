@@ -816,6 +816,7 @@ const EXCLUSIVE_MODAL_IDS = [
     'seqEditModal',
     'addSeqModal',
     'dotPlotModal',
+    'dotPlotV2Modal',
     'repeatFinderModal',
     'treeBuilderModal',
     'statsModal'
@@ -9760,7 +9761,7 @@ function showContextMenu(e, index) {
         dotSelfItem.addEventListener('click', () => {
             const s = state.seqs[index];
             const ungapped = s.seq.replace(/[-. ]/g, '');
-            _openDotPlotV2(ungapped, ungapped, s.header, s.header);
+            _dot2Open(ungapped, ungapped, s.header, s.header);
             closeContextMenu();
         });
         contextMenu.appendChild(dotSelfItem);
@@ -9783,7 +9784,7 @@ function showContextMenu(e, index) {
         dotPairItem.addEventListener('click', () => {
             const sA = state.seqs[selIndices[0]];
             const sB = state.seqs[selIndices[1]];
-            _openDotPlotV2(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header);
+            _dot2Open(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header);
             closeContextMenu();
         });
         contextMenu.appendChild(dotPairItem);
@@ -10410,6 +10411,7 @@ function initializeAppUI() {
 
     // Initialize Dot Plot & Repeat Finder modals
     _initDotPlotEvents();
+    _initDotPlotV2Events();
     _initRepeatFinderEvents();
 
     // ── URL parameter auto-loading ──────────────────────────────────────
@@ -12973,36 +12975,239 @@ let _dotPlotState = {
 };
 const DOT_AXIS_PAD = 50;
 
-// --- Dot Plot v2 (standalone page) ---
-function _openDotPlotV2(seqA, seqB, nameA, nameB) {
-    try {
-        const data = JSON.stringify({ seqA, seqB, nameA, nameB });
-        sessionStorage.setItem('_dotplot_data', data);
-    } catch (e) {
-        showMessage('Sequences too large for sessionStorage. Try a single-sequence dot plot.', 3000);
-        return;
-    }
-    window.open('dotplot2.html', '_blank', 'width=1200,height=800');
-}
+// --- Dot Plot v2 (integrated modal, single-canvas clean render) ---
+const _D2 = {
+    seqA:'', seqB:'', nameA:'A', nameB:'B',
+    scores:null, rows:0, cols:0, scoreMin:0, scoreMax:1,
+    zoom:1, threshold:0.55, windowSize:9,
+    dotImage:null, hoverRow:-1, hoverCol:-1, pinnedRow:-1, pinnedCol:-1,
+    copyRegion:null
+};
 
 function openDotplotSelf() {
     const sel = Array.from(state.selectedRows);
     const index = sel.length === 1 ? sel[0] : 0;
     const s = state.seqs[index];
-    const ungapped = s.seq.replace(/[-. ]/g, '');
-    _openDotPlotV2(ungapped, ungapped, s.header, s.header);
+    _dot2Open(s.seq.replace(/[-. ]/g, ''), s.seq.replace(/[-. ]/g, ''), s.header, s.header);
 }
 
 function openDotplotPair() {
-    const sel = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (sel.length < 2) {
-        showMessage('Please select exactly 2 sequences for pair dot plot.', 3000);
+    const sel = Array.from(state.selectedRows).sort((a,b)=>a-b);
+    if (sel.length < 2) { showMessage('Select exactly 2 sequences.', 3000); return; }
+    const sA = state.seqs[sel[0]], sB = state.seqs[sel[1]];
+    _dot2Open(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header);
+}
+
+function _dot2Open(seqA, seqB, nameA, nameB) {
+    const D = _D2;
+    D.seqA = seqA.toUpperCase(); D.seqB = seqB.toUpperCase();
+    D.nameA = nameA; D.nameB = nameB;
+    D.scores = null; D.rows = 0; D.cols = 0; D.dotImage = null;
+    D.hoverRow = D.hoverCol = D.pinnedRow = D.pinnedCol = -1;
+    D.windowSize = parseInt(document.getElementById('dotPlotV2Win')?.value) || 9;
+    D.threshold = (parseInt(document.getElementById('dotPlotV2Thr')?.value) || 55) / 100;
+    D.copyRegion = null;
+    showExclusiveModal('dotPlotV2Modal');
+    const t = document.getElementById('dotPlotV2Title');
+    if (t) t.textContent = `Dot Plot v2: ${nameA} vs ${nameB}`;
+    const s = document.getElementById('dotPlotV2Status');
+    if (s) s.textContent = `Computing ${D.seqA.length} × ${D.seqB.length}…`;
+    _dot2ClearInfo();
+    _dot2Compute();
+}
+
+function _dot2Compute() {
+    const D = _D2;
+    if (!D.seqA || !D.seqB) return;
+    const w = _getDotWorker();
+    const t0 = performance.now();
+    const ok = (e) => {
+        w.removeEventListener('message', ok); w.removeEventListener('error', no);
+        if (e.data.error) { document.getElementById('dotPlotV2Status').textContent = 'Error: '+e.data.error; return; }
+        D.scores = new Int16Array(e.data.scores);
+        D.rows = e.data.rows; D.cols = e.data.cols;
+        D.scoreMin = e.data.min; D.scoreMax = e.data.max;
+        _dot2BuildImage();
+        _dot2FitView();
+        const ms = performance.now() - t0;
+        const el = document.getElementById('dotPlotV2Status');
+        if (el) el.textContent = `${D.rows}×${D.cols} in ${ms<1000?ms.toFixed(0)+'ms':(ms/1000).toFixed(1)+'s'}`;
+        _dot2Render();
+    };
+    const no = (e) => { w.removeEventListener('message',ok); w.removeEventListener('error',no);
+        document.getElementById('dotPlotV2Status').textContent = 'Worker error'; };
+    w.addEventListener('message', ok);
+    w.addEventListener('error', no);
+    w.postMessage({ seqA: D.seqA, seqB: D.seqB, windowSize: D.windowSize, mode: 'identity' });
+}
+
+function _dot2BuildImage() {
+    const D = _D2;
+    if (!D.scores) return;
+    const img = new ImageData(D.cols, D.rows);
+    const d = img.data, range = D.scoreMax - D.scoreMin || 1, thr = D.threshold;
+    for (let i = 0, j = 0; i < D.rows * D.cols; i++, j += 4) {
+        const n = (D.scores[i] - D.scoreMin) / range;
+        const v = n >= thr ? Math.round((1 - n) * 255) : 255;
+        d[j] = v; d[j+1] = v; d[j+2] = v; d[j+3] = 255;
+    }
+    D.dotImage = img;
+}
+
+function _dot2FitView() {
+    const D = _D2;
+    if (!D.rows || !D.cols) return;
+    const vp = document.getElementById('dotPlotV2Viewport');
+    if (!vp) return;
+    D.zoom = Math.max(1, Math.min(
+        Math.floor((vp.clientWidth - 55) / D.cols),
+        Math.floor((vp.clientHeight - 55) / D.rows)
+    ));
+    _dot2Render();
+}
+
+function _dot2WalkDiag(row, col) {
+    const D = _D2;
+    if (!D.scores) return null;
+    const range = D.scoreMax - D.scoreMin || 1, thr = D.threshold;
+    let r0 = row, c0 = col;
+    while (r0 >= 0 && c0 >= 0) {
+        if ((D.scores[r0 * D.cols + c0] - D.scoreMin) / range < thr) break;
+        r0--; c0--;
+    }
+    r0++; c0++;
+    let r1 = row + 1, c1 = col + 1;
+    while (r1 < D.rows && c1 < D.cols) {
+        if ((D.scores[r1 * D.cols + c1] - D.scoreMin) / range < thr) break;
+        r1++; c1++;
+    }
+    return { r0, c0, r1, c1, len: r1 - r0 };
+}
+
+function _dot2Render() {
+    const D = _D2;
+    const cv = document.getElementById('dotPlotV2Canvas');
+    if (!cv || !D.dotImage) return;
+    const ctx = cv.getContext('2d');
+    const { rows, cols, zoom } = D;
+    const pW = Math.round(cols * zoom), pH = Math.round(rows * zoom);
+    const AX = 50;
+    const tw = AX + pW + 1, th = AX + pH + 1;
+    cv.width = tw; cv.height = th;
+    cv.style.width = tw + 'px'; cv.style.height = th + 'px';
+
+    // Dot image
+    const tmp = document.createElement('canvas');
+    tmp.width = cols; tmp.height = rows;
+    tmp.getContext('2d').putImageData(D.dotImage, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tmp, AX, AX, pW, pH);
+
+    // Axes
+    ctx.fillStyle = '#333'; ctx.font = '9px system-ui';
+    const stepA = _dot2NiceStep(rows, Math.floor(pH / 18));
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (let i = 0; i < rows; i += stepA) {
+        const y = AX + Math.round(i * zoom) + Math.round(zoom/2);
+        ctx.fillText(i+1, AX - 5, y);
+        ctx.fillRect(AX - 3, y - 1, 6, 1);
+    }
+    const stepB = _dot2NiceStep(cols, Math.floor(pW / 18));
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let j = 0; j < cols; j += stepB) {
+        const x = AX + Math.round(j * zoom) + Math.round(zoom/2);
+        ctx.save(); ctx.translate(x, AX - 5); ctx.rotate(-Math.PI/2);
+        ctx.fillText(j+1, 0, 0); ctx.restore();
+        ctx.fillRect(x - 1, AX - 3, 1, 6);
+    }
+
+    const cW = pW / cols, rH = pH / rows;
+    const pxSz = Math.max(2, Math.round(cW));
+
+    // Highlight diagonal for hover
+    if (D.hoverRow >= 0 && D.hoverCol >= 0) {
+        const diag = _dot2WalkDiag(D.hoverRow, D.hoverCol);
+        if (diag) {
+            ctx.fillStyle = 'rgba(100,230,160,0.8)';
+            for (let k = diag.r0; k < diag.r1; k++) {
+                ctx.fillRect(AX + Math.floor((diag.c0+k-diag.r0)*cW), AX + Math.floor(k*rH), pxSz, pxSz);
+            }
+        }
+        const cx = AX + (D.hoverCol + 0.5) * cW, cy = AX + (D.hoverRow + 0.5) * rH;
+        ctx.strokeStyle = 'rgba(80,160,255,0.6)'; ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(AX, cy); ctx.lineTo(AX + pW, cy);
+        ctx.moveTo(cx, AX); ctx.lineTo(cx, AX + pH);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(80,160,255,0.9)'; ctx.font = 'bold 10px system-ui';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        ctx.fillText(D.hoverCol + 1, cx, AX - 1);
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        ctx.fillText(D.hoverRow + 1, AX - 2, cy);
+    }
+
+    // Pinned marker
+    if (D.pinnedRow >= 0 && D.pinnedCol >= 0) {
+        const cx = AX + (D.pinnedCol + 0.5) * cW, cy = AX + (D.pinnedRow + 0.5) * rH;
+        ctx.strokeStyle = 'rgba(220,50,50,0.8)'; ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(AX, cy); ctx.lineTo(AX + pW, cy);
+        ctx.moveTo(cx, AX); ctx.lineTo(cx, AX + pH);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(220,50,50,0.9)'; ctx.lineWidth = 2;
+        ctx.strokeRect(AX + Math.floor(D.pinnedCol*cW) - 1, AX + Math.floor(D.pinnedRow*rH) - 1, cW+2, rH+2);
+        ctx.fillStyle = 'rgba(220,50,50,0.9)'; ctx.font = 'bold 10px system-ui';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+        ctx.fillText('PIN A'+String(D.pinnedRow+1)+' / B'+String(D.pinnedCol+1), AX+4, AX-1);
+    }
+}
+
+function _dot2UpdateInfo(row, col) {
+    const D = _D2;
+    const info = document.getElementById('dotPlotV2Info');
+    const align = document.getElementById('dotPlotV2Align');
+    if (row < 0 || col < 0 || row >= D.rows || col >= D.cols) {
+        if (info) info.textContent = 'Hover over the plot…';
+        if (align) align.textContent = 'A: —\n   |\nB: —';
         return;
     }
-    // Use the first two selected
-    const sA = state.seqs[sel[0]];
-    const sB = state.seqs[sel[1]];
-    _openDotPlotV2(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header);
+    const range = D.scoreMax - D.scoreMin || 1;
+    const norm = (D.scores[row * D.cols + col] - D.scoreMin) / range;
+    if (info) info.textContent = `A${row+1}/${D.rows} B${col+1}/${D.cols} score=${norm.toFixed(3)}  ${D.seqA[row]||'N'} vs ${D.seqB[col]||'N'}`;
+
+    const diag = _dot2WalkDiag(row, col);
+    if (!diag) { if (align) align.textContent = 'A: —\n   |\nB: —'; return; }
+
+    const ctxR = parseInt(document.getElementById('dotPlotV2Ctx')?.value) || 5;
+    const maxSlice = diag.len + 2 * ctxR;
+    const a0 = Math.max(0, diag.r0 - ctxR), b0 = Math.max(0, diag.c0 - ctxR);
+    const avA = D.seqA.length - a0, avB = D.seqB.length - b0;
+    const sl = Math.min(maxSlice, avA, avB);
+    const aSl = D.seqA.slice(a0, a0+sl), bSl = D.seqB.slice(b0, b0+sl);
+    const msA = diag.r0 - a0, meA = diag.r1 - a0;
+
+    let guide = '';
+    for (let i = 0; i < sl; i++) {
+        const ch = aSl[i] === bSl[i] ? '|' : ' ';
+        guide += (i >= msA && i < meA) ? '['+ch+']' : ' '+ch+' ';
+    }
+    if (align) align.textContent =
+        `A ${String(a0+1).padStart(5)}  ${aSl}\n          ${guide}\nB ${String(b0+1).padStart(5)}  ${bSl}`;
+    D.copyRegion = { aSlice: aSl, bSlice: bSl, aStart: a0, bStart: b0, nameA: D.nameA, nameB: D.nameB };
+}
+
+function _dot2ClearInfo() {
+    const info = document.getElementById('dotPlotV2Info');
+    const align = document.getElementById('dotPlotV2Align');
+    if (info) info.textContent = 'Hover over the plot…';
+    if (align) align.textContent = 'A: —\n   |\nB: —';
+}
+
+function _dot2NiceStep(len, maxTicks) {
+    const raw = len / maxTicks, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    const step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+    return Math.max(1, Math.round(step * mag));
 }
 
 // Old v1 dot plot (kept for reference, can be removed later)
@@ -13447,6 +13652,136 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     _dotFitView();
     S.lastRow = S.lastCol = -1;
     if (statusEl) statusEl.textContent = `${S.seqA.length} × ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
+}
+
+function _initDotPlotV2Events() {
+    const cv = document.getElementById('dotPlotV2Canvas');
+    const vp = document.getElementById('dotPlotV2Viewport');
+
+    // Close button
+    const closeBtn = document.getElementById('dotPlotV2CloseBtn');
+    if (closeBtn) closeBtn.addEventListener('click', () => { el('dotPlotV2Modal').style.display = 'none'; });
+
+    // Recalculate
+    const recalc = document.getElementById('dotPlotV2Recalc');
+    if (recalc) recalc.addEventListener('click', () => {
+        _D2.windowSize = parseInt(document.getElementById('dotPlotV2Win')?.value) || 9;
+        _D2.threshold = (parseInt(document.getElementById('dotPlotV2Thr')?.value) || 55) / 100;
+        _D2.scores = null; _D2.dotImage = null;
+        document.getElementById('dotPlotV2Status').textContent = 'Computing…';
+        _dot2Compute();
+    });
+
+    // Threshold slider live
+    const thrS = document.getElementById('dotPlotV2Thr');
+    const thrV = document.getElementById('dotPlotV2ThrVal');
+    if (thrS) thrS.addEventListener('input', () => {
+        thrV.textContent = thrS.value + '%';
+        _D2.threshold = parseInt(thrS.value) / 100;
+        if (_D2.scores) { _dot2BuildImage(); _dot2Render(); _dot2UpdateInfo(_D2.hoverRow, _D2.hoverCol); }
+    });
+
+    // Fit
+    const fit = document.getElementById('dotPlotV2Fit');
+    if (fit) fit.addEventListener('click', _dot2FitView);
+
+    // PNG export
+    const png = document.getElementById('dotPlotV2Png');
+    if (png) png.addEventListener('click', () => {
+        const a = document.createElement('a');
+        a.download = `dotplot_${_D2.nameA}_vs_${_D2.nameB}.png`;
+        a.href = cv.toDataURL('image/png');
+        a.click();
+    });
+
+    // SVG export
+    const svg = document.getElementById('dotPlotV2Svg');
+    if (svg) svg.addEventListener('click', () => {
+        const dataUrl = cv.toDataURL('image/png');
+        const svgText = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+    width="${cv.width}" height="${cv.height}" viewBox="0 0 ${cv.width} ${cv.height}">
+    <image width="${cv.width}" height="${cv.height}" xlink:href="${dataUrl}"/>
+    <text x="4" y="12" font-size="10" font-family="system-ui" fill="#666">
+      ${_D2.nameA} vs ${_D2.nameB} | w=${_D2.windowSize} thr=${Math.round(_D2.threshold*100)}%
+    </text>
+  </svg>`;
+        const blob = new Blob([svgText], { type: 'image/svg+xml' });
+        const a = document.createElement('a');
+        a.download = `dotplot_${_D2.nameA}_vs_${_D2.nameB}.svg`;
+        a.href = URL.createObjectURL(blob);
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    });
+
+    // Copy region
+    const copy = document.getElementById('dotPlotV2Copy');
+    if (copy) copy.addEventListener('click', () => {
+        const r = _D2.copyRegion;
+        if (!r) { showMessage('Hover over the plot first.', 2000); return; }
+        const fasta = `>${r.nameA}_${r.aStart+1}-${r.aStart+r.aSlice.length}\n${r.aSlice}\n` +
+                      `>${r.nameB}_${r.bStart+1}-${r.bStart+r.bSlice.length}\n${r.bSlice}`;
+        navigator.clipboard.writeText(fasta).then(() => showMessage('Copied!', 1500))
+            .catch(() => showMessage('Copy failed.', 1500));
+    });
+
+    // Context radius change
+    const ctxEl = document.getElementById('dotPlotV2Ctx');
+    if (ctxEl) ctxEl.addEventListener('change', () => _dot2UpdateInfo(_D2.hoverRow, _D2.hoverCol));
+
+    // Canvas events
+    if (cv) {
+        cv.addEventListener('mousemove', (e) => {
+            if (!_D2.scores) return;
+            const rect = cv.getBoundingClientRect();
+            const AX = 50;
+            const col = Math.floor((e.clientX - rect.left - AX) / _D2.zoom);
+            const row = Math.floor((e.clientY - rect.top - AX) / _D2.zoom);
+            if (row < 0 || col < 0 || row >= _D2.rows || col >= _D2.cols) {
+                if (_D2.hoverRow >= 0) { _D2.hoverRow = _D2.hoverCol = -1; _dot2Render(); _dot2ClearInfo(); }
+                return;
+            }
+            if (row === _D2.hoverRow && col === _D2.hoverCol) return;
+            _D2.hoverRow = row; _D2.hoverCol = col;
+            _dot2Render();
+            _dot2UpdateInfo(row, col);
+        });
+        cv.addEventListener('mouseleave', () => {
+            _D2.hoverRow = _D2.hoverCol = -1;
+            _dot2Render();
+            _dot2ClearInfo();
+        });
+        cv.addEventListener('click', (e) => {
+            if (!_D2.scores) return;
+            const rect = cv.getBoundingClientRect();
+            const AX = 50;
+            const col = Math.floor((e.clientX - rect.left - AX) / _D2.zoom);
+            const row = Math.floor((e.clientY - rect.top - AX) / _D2.zoom);
+            if (row < 0 || col < 0 || row >= _D2.rows || col >= _D2.cols) return;
+            _D2.pinnedRow = row; _D2.pinnedCol = col;
+            _D2.hoverRow = row; _D2.hoverCol = col;
+            _dot2Render();
+            _dot2UpdateInfo(row, col);
+        });
+    }
+
+    // Wheel zoom
+    if (vp) {
+        vp.addEventListener('wheel', (e) => {
+            if (!_D2.scores) return;
+            e.preventDefault();
+            const old = _D2.zoom;
+            _D2.zoom = Math.max(1, Math.min(20, _D2.zoom + (e.deltaY < 0 ? 1 : -1)));
+            if (_D2.zoom !== old) _dot2Render();
+        }, { passive: false });
+    }
+
+    // Escape to close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            const modal = el('dotPlotV2Modal');
+            if (modal && modal.style.display !== 'none') { modal.style.display = 'none'; e.stopPropagation(); }
+        }
+    });
 }
 
 function _initDotPlotEvents() {
