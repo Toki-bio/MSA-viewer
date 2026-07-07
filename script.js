@@ -13105,8 +13105,12 @@ function _dot2Render() {
     const AX = 52; // axis label padding
     const AX_TOP = 14; // top axis label height
     const tw = AX + pW + 6, th = AX_TOP + AX + pH + 6;
-    cv.width = tw; cv.height = th;
-    cv.style.width = tw + 'px'; cv.style.height = th + 'px';
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(tw * dpr);
+    cv.height = Math.round(th * dpr);
+    cv.style.width = tw + 'px';
+    cv.style.height = th + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Background
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, tw, th);
@@ -13123,7 +13127,7 @@ function _dot2Render() {
     const pxSz = Math.max(2, Math.round(cW));
 
     // Axis ticks
-    ctx.fillStyle = '#444'; ctx.strokeStyle = '#ccc'; ctx.lineWidth = 0.5;
+    ctx.fillStyle = '#444';
 
     // Y-axis (row labels)
     const stepA = _dot2NiceTick(rows, pH);
