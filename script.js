@@ -13442,11 +13442,14 @@ function _initDotPlotEvents() {
                 const rect = overlay.getBoundingClientRect();
                 const col = Math.floor((e.clientX - rect.left - DOT_AXIS_PAD) / S.zoom);
                 const row = Math.floor((e.clientY - rect.top - DOT_AXIS_PAD) / S.zoom);
-                if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
+                if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) {
+                    _dotClearHoverInfo();
+                    return;
+                }
                 if (row === S.lastRow && col === S.lastCol) return;
                 S.lastRow = row; S.lastCol = col;
-                _dotDrawOverlay(row, col);
-                _dotUpdateHoverInfo(row, col);
+                try { _dotDrawOverlay(row, col); } catch (e) { console.error('_dotDrawOverlay:', e); }
+                try { _dotUpdateHoverInfo(row, col); } catch (e) { console.error('_dotUpdateHoverInfo:', e); }
             });
         });
         overlay.addEventListener('mouseleave', () => {
