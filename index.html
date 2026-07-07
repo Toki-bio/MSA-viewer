@@ -552,22 +552,25 @@
                     <span class="toggle-icon">▼</span>
                 </div>
                 <div class="control-group" id="shortcuts-controls">
-                    <div style="display:grid; grid-template-columns: auto 1fr; gap: 3px 16px; font-family: monospace; font-size: 11px; padding: 6px 8px;">
-                        <strong>Ctrl+L</strong><span>Load</span>
+                    <div style="display:grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-family: monospace; font-size: 10px; padding: 4px 6px;">
                         <strong>Ctrl+A</strong><span>Select/deselect all</span>
-                        <strong>Ctrl+C</strong><span>Copy name</span>
-                        <strong>Ctrl+Shift+C</strong><span>Copy selected</span>
+                        <strong>Ctrl+C</strong><span>Copy nucleotides</span>
                         <strong>Ctrl+Del</strong><span>Delete selected</span>
-                        <strong>Ctrl+Z / Ctrl+Y</strong><span>Undo / Redo</span>
+                        <strong>Ctrl+Z / Y</strong><span>Undo / Redo</span>
                         <strong>Ctrl+R</strong><span>Reverse complement</span>
+                        <strong>Ctrl+Shift+R</strong><span>Realign block</span>
                         <strong>Ctrl+U</strong><span>Duplicate</span>
                         <strong>Ctrl+B</strong><span>Consensus below</span>
-                        <strong>Ctrl+↑ / Ctrl+↓</strong><span>Move selected</span>
-                        <strong>Ctrl+Home / End</strong><span>Move to top/bottom</span>
                         <strong>Ctrl+T</strong><span>New tab</span>
                         <strong>Ctrl+F</strong><span>Find motif</span>
-                        <strong>Ctrl+S / Ctrl+O</strong><span>Save / Load preset</span>
-                        <strong>Ctrl+H</strong><span>Hide menu</span>
+                        <strong>Ctrl+Shift+S</strong><span>Save preset</span>
+                        <strong>Ctrl+O</strong><span>Load preset</span>
+                        <strong>Ctrl+↑↓</strong><span>Move selected</span>
+                        <strong>Ctrl+Home/End</strong><span>Move to top/bottom</span>
+                        <strong>Ctrl+Shift+V</strong><span>Copy columns</span>
+                        <strong>Ctrl+Shift+D</strong><span>Delete columns</span>
+                        <strong>Ctrl++/−</strong><span>Zoom in/out</span>
+                        <strong>Ctrl+H</strong><span>Hide/show menu</span>
                         <strong>Ctrl+I</strong><span>Full info</span>
                     </div>
                 </div>
@@ -698,29 +701,33 @@
     <div id="infoModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10001; overflow: auto;">
         <div style="background: white; margin: 50px auto; padding: 20px; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
             <h2 style="margin-top: 0;">ViewAlign - Keyboard Shortcuts</h2>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-family: monospace; font-size: 13px;">
-                <strong>Ctrl+L</strong><span>Load file</span>
-                <strong>Ctrl+A</strong><span>Select/deselect all</span>
-                <strong>Ctrl+C</strong><span>Copy sequence name</span>
-                <strong>Ctrl+Shift+C</strong><span>Copy selected sequences</span>
-                <strong>Ctrl+Del</strong><span>Delete selected</span>
+            <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; font-family: monospace; font-size: 12px;">
+                <strong>Ctrl+A</strong><span>Select/deselect all sequences</span>
+                <strong>Ctrl+C</strong><span>Copy selected nucleotides</span>
+                <strong>Ctrl+Del</strong><span>Delete selected sequences</span>
                 <strong>Ctrl+Z</strong><span>Undo</span>
                 <strong>Ctrl+Y</strong><span>Redo</span>
-                <strong>Ctrl+R</strong><span>Reverse complement</span>
-                <strong>Ctrl+U</strong><span>Duplicate</span>
-                <strong>Ctrl+B</strong><span>Consensus below</span>
-                <strong>Ctrl+Up</strong><span>Move selected up</span>
-                <strong>Ctrl+Down</strong><span>Move selected down</span>
-                <strong>Ctrl+Home</strong><span>Move to top</span>
-                <strong>Ctrl+End</strong><span>Move to bottom</span>
-                <strong>Ctrl+Shift+V</strong><span>Copy columns</span>
-                <strong>Ctrl+Shift+D</strong><span>Delete columns</span>
-                <strong>Ctrl+Shift+R</strong><span>Realign block</span>
-                <strong>Ctrl+T</strong><span>Open in new tab</span>
-                <strong>Ctrl+S</strong><span>Save preset</span>
+                <strong>Ctrl+R</strong><span>Reverse complement selected</span>
+                <strong>Ctrl+Shift+R</strong><span>Realign selected block</span>
+                <strong>Ctrl+U</strong><span>Duplicate selected</span>
+                <strong>Ctrl+B</strong><span>Insert consensus below</span>
+                <strong>Ctrl+T</strong><span>Open selected in new tab</span>
+                <strong>Ctrl+F</strong><span>Find motif</span>
+                <strong>Ctrl+Shift+F</strong><span>Clear last search</span>
+                <strong>Ctrl+Alt+F</strong><span>Clear all searches</span>
+                <strong>Ctrl+Shift+S</strong><span>Save preset</span>
                 <strong>Ctrl+O</strong><span>Load preset</span>
+                <strong>Ctrl+↑ / Ctrl+↓</strong><span>Move selected up/down</span>
+                <strong>Ctrl+Home / End</strong><span>Move to top/bottom</span>
+                <strong>Ctrl+Shift+V</strong><span>Copy selected columns</span>
+                <strong>Ctrl+Shift+D</strong><span>Delete selected columns</span>
+                <strong>Ctrl++ / Ctrl+−</strong><span>Zoom in/out</span>
+                <strong>Ctrl+0</strong><span>Reset zoom to 100%</span>
+                <strong>Ctrl+M</strong><span>Toggle all menu sections</span>
                 <strong>Ctrl+H</strong><span>Hide/show menu</span>
-                <strong>Ctrl+I</strong><span>Show this info</span>
+                <strong>Ctrl+I</strong><span>Show this dialog</span>
+                <strong>Esc</strong><span>Close popups/menus</span>
+                <strong>PgUp / PgDn</strong><span>Scroll alignment page</span>
             </div>
             <div style="margin-top: 20px; text-align: right;">
                 <button onclick="window.open('manual.html','_blank')" style="padding: 8px 16px; cursor: pointer; margin-right: 8px;">📖 Full Manual</button>
@@ -932,19 +939,19 @@ B: —</pre>
     <div id="hotkeysTooltip" style="display:none;position:fixed;z-index:10060;background:#fff;border:1px solid #888;border-radius:6px;box-shadow:0 4px 18px rgba(0,0,0,0.35);padding:10px 14px;font-size:11px;font-family:monospace;max-width:300px;pointer-events:auto;">
         <div style="font-weight:bold;margin-bottom:6px;font-size:12px;">⌨ Keyboard Shortcuts</div>
         <div style="display:grid;grid-template-columns:auto 1fr;gap:3px 10px;">
-            <strong>Ctrl+L</strong><span>Load</span>
             <strong>Ctrl+A</strong><span>Select/deselect all</span>
-            <strong>Ctrl+C</strong><span>Copy name</span>
-            <strong>Ctrl+Shift+C</strong><span>Copy selected</span>
+            <strong>Ctrl+C</strong><span>Copy nucleotides</span>
             <strong>Ctrl+Del</strong><span>Delete selected</span>
             <strong>Ctrl+Z/Y</strong><span>Undo / Redo</span>
             <strong>Ctrl+R</strong><span>Reverse complement</span>
             <strong>Ctrl+U</strong><span>Duplicate</span>
             <strong>Ctrl+B</strong><span>Consensus below</span>
+            <strong>Ctrl+T</strong><span>New tab</span>
+            <strong>Ctrl+F</strong><span>Find motif</span>
             <strong>Ctrl+↑↓</strong><span>Move selected</span>
             <strong>Ctrl+Home/End</strong><span>Move to top/bottom</span>
-            <strong>Ctrl+T</strong><span>New tab</span>
-            <strong>Ctrl+S/O</strong><span>Save / Load preset</span>
+            <strong>Ctrl++/−</strong><span>Zoom in/out</span>
+            <strong>Ctrl+H</strong><span>Hide/show menu</span>
             <strong>Ctrl+I</strong><span>Full shortcuts list</span>
         </div>
         <div style="margin-top:4px;font-size:10px;color:#888;font-family:sans-serif;">Click ⌨ for full list</div>

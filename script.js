@@ -11511,12 +11511,7 @@ function handleAlignmentPanContextMenu(e) {
     }
 }
 
-// Prevent Ctrl+A from selecting nucleotides in alignment when fastaInput is focused.
-fastaInput.addEventListener('keydown', function(e) {
-    if (e.ctrlKey && e.key === 'a') {
-        e.stopPropagation();
-    }
-});
+// Ctrl+A on fastaInput handled by main capture-phase handler — no special override needed
 
 // Drag handlers are defined at top of file (window.handleDragStart / window.handleDragEnd)
 
