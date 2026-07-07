@@ -1090,6 +1090,15 @@ body.edit-dragging .seq-data {
     font-weight: bold !important;
 }
 
+/* Non-monochrome schemes replace conservation shading with residue colours */
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .black,
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .dark,
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .light,
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .other {
+    background-color: transparent !important;
+    color: inherit !important;
+}
+
 /* Alignment residue color schemes. Monochrome is the existing conservation shading. */
 #alignmentContainer.color-scheme-nucleotide .seq-data .base-A { background-color: #8ddf88 !important; color: #063b09 !important; }
 #alignmentContainer.color-scheme-nucleotide .seq-data .base-C { background-color: #87c7ff !important; color: #07335e !important; }
