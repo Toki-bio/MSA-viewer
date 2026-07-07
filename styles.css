@@ -197,8 +197,109 @@ html {
 #actions-section .control-group {
     left: auto;
     right: 0;
-    min-width: 280px;
-    max-width: 420px;
+    min-width: 300px;
+    max-width: min(380px, calc(100vw - 12px));
+    padding: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    box-sizing: border-box;
+}
+
+#controls #actions-section.menu-open .control-group {
+    display: flex !important;
+    flex-direction: column;
+}
+
+#actions-controls .actions-menu-body {
+    padding: 10px 10px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#actions-controls .action-section {
+    margin: 0;
+    padding: 8px 10px 10px;
+    border: 1px solid #e4e8ed;
+    border-radius: 6px;
+    background: linear-gradient(180deg, #fcfdfe 0%, #f6f8fa 100%);
+    box-sizing: border-box;
+}
+
+#actions-controls .action-section-label {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 0 8px;
+    padding: 2px 0 2px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #455a64;
+    background: transparent;
+    border: none;
+    border-left: 3px solid #90a4ae;
+    border-radius: 0;
+}
+
+#actions-controls .action-section-selection .action-section-label { border-left-color: #1976d2; color: #1565c0; }
+#actions-controls .action-section-order .action-section-label { border-left-color: #7b1fa2; color: #6a1b9a; }
+#actions-controls .action-section-editing .action-section-label { border-left-color: #ef6c00; color: #e65100; }
+#actions-controls .action-section-columns .action-section-label { border-left-color: #00897b; color: #00695c; }
+#actions-controls .action-section-analysis .action-section-label { border-left-color: #5c6bc0; color: #3949ab; }
+#actions-controls .action-section-settings .action-section-label { border-left-color: #546e7a; color: #37474f; }
+
+#actions-controls .button-group {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+    width: 100%;
+    align-items: stretch;
+}
+
+#actions-controls .button-group button {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    padding: 4px 6px;
+    font-size: 11px;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-sizing: border-box;
+}
+
+#actions-controls .action-section-columns .button-group {
+    grid-template-columns: 1fr;
+}
+
+.actions-menu-footer {
+    flex-shrink: 0;
+    padding: 8px 10px 10px;
+    border-top: 1px solid #d8dee4;
+    background: #eef1f4;
+    box-sizing: border-box;
+}
+
+.actions-hide-menu-btn {
+    display: block;
+    width: 100%;
+    margin: 0 !important;
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+    font-weight: 600;
+    color: #37474f;
+    background: #fff !important;
+    border: 1px solid #b0bec5 !important;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+.actions-hide-menu-btn:hover {
+    background: #eceff1 !important;
+    border-color: #78909c !important;
 }
 
 /* Ensure control-groups inside side-sections are visible outside the parent */
@@ -241,10 +342,8 @@ html {
     max-height: none;
 }
 
-/* Show control groups on hover */
-.menu-section:hover .control-group,
-.section-header:hover + .control-group,
-.control-group:hover {
+/* Top menu dropdowns are JS-controlled to avoid overlap when switching sections */
+#controls .menu-section.menu-open .control-group {
     display: block !important;
 }
 
@@ -255,20 +354,15 @@ html {
     pointer-events: auto;
 }
 
-/* Keep menu open when hovering anywhere in control-group area */
-.menu-section:hover,
+/* Raise active menu above neighbours */
+#controls .menu-section.menu-open,
 .menu-section:has(.control-group:hover),
 .menu-section.hover-active {
     z-index: 10001;
 }
 
-/* Show control groups when menu is open via JS (stable state) */
-.menu-section.menu-open .control-group {
-    display: block !important;
-}
-
-/* Add a larger invisible bridge to prevent hover breaking */
-.menu-section:hover::after {
+/* Invisible bridge between header and dropdown to prevent hover gaps */
+#controls .menu-section.menu-open::after {
     content: '';
     position: absolute;
     top: 100%;
@@ -276,19 +370,8 @@ html {
     right: -20px;
     height: 80px; /* Cover entire autocomplete popup area */
     z-index: 9998;
-    pointer-events: auto; /* Allow interaction through bridge */
+    pointer-events: auto;
     background: transparent;
-}
-
-/* Keep bridge visible for open menus */
-.menu-section.menu-open::after {
-    content: '';
-    position: absolute;
-    top: 100%;
-    left: -20px;
-    right: -20px;
-    height: 80px;
-    z-index: 9998;
 }
 
 .color-picker {
@@ -985,10 +1068,7 @@ body.row-reorder-active .seq-name.drag-source:hover {
 #versionIndicator a { color: #888; }
 #versionIndicator a:hover { color: #333; text-decoration: underline; }
 
-body.suppress-menu-hover .menu-section:hover .control-group,
-body.suppress-menu-hover .section-header:hover + .control-group,
-body.suppress-menu-hover .control-group:hover,
-body.suppress-menu-hover .menu-section.menu-open .control-group {
+body.suppress-menu-hover #controls .menu-section.menu-open .control-group {
     display: none !important;
 }
 
@@ -1109,6 +1189,15 @@ body.edit-dragging .seq-data {
     color: red !important;
     background-color: #ffe6e6 !important;
     font-weight: bold !important;
+}
+
+/* Non-monochrome schemes replace conservation shading with residue colours */
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .black,
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .dark,
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .light,
+#alignmentContainer:not(.color-scheme-monochrome) .seq-data .other {
+    background-color: transparent !important;
+    color: inherit !important;
 }
 
 /* Alignment residue color schemes. Monochrome is the existing conservation shading. */
@@ -1717,12 +1806,11 @@ span.diagnostic-mutation {
 
     #actions-section .control-group {
         max-height: calc(100vh - 96px);
+        max-width: calc(100vw - 8px);
     }
 
-    .button-group {
-        flex-wrap: wrap;
-        width: auto;
-        max-width: calc(100vw - 32px);
+    #actions-controls .button-group {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .action-section {
