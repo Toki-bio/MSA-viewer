@@ -6324,39 +6324,41 @@ var _lastMenuHeight = 0;
 function minimizeMenu() {
     if (_menuMinimized) {
         expandMenu();
-        _menuMinimized = false;
         return;
     }
+    _menuMinimized = true;
     const controls = el('controls');
-    // Cache menu height before hiding, so expand knows the value
     _lastMenuHeight = controls.offsetHeight;
-    controls.style.display = 'none';
-    // Reset any overlay positioning
+    // Reset overlay positioning
     controls.style.position = '';
     controls.style.top = '';
     controls.style.left = '';
     controls.style.right = '';
     controls.style.zIndex = '';
     controls.style.boxShadow = '';
-    minimizeBar.style.display = 'block';
-    _menuMinimized = true;
-    // Move alignment below the bar with room for sticky header
-    alignmentContainer.style.top = '20px';
+    // Batch all visual changes in one animation frame — no intermediate paint
+    requestAnimationFrame(() => {
+        controls.style.display = 'none';
+        minimizeBar.style.display = 'block';
+        alignmentContainer.style.top = '20px';
+        window.scrollTo(0, 0);
+    });
 }
 function expandMenu() {
-    minimizeBar.style.display = 'none';
     _menuMinimized = false;
-    // Set alignment position BEFORE showing controls — prevents layout jump
-    alignmentContainer.style.top = (_lastMenuHeight || 80) + 'px';
-    const controls = el('controls');
-    controls.style.display = 'grid';
-    // Reset any overlay positioning
-    controls.style.position = '';
-    controls.style.top = '';
-    controls.style.left = '';
-    controls.style.right = '';
-    controls.style.zIndex = '';
-    controls.style.boxShadow = '';
+    // Batch all visual changes in one animation frame
+    requestAnimationFrame(() => {
+        minimizeBar.style.display = 'none';
+        const controls = el('controls');
+        alignmentContainer.style.top = (_lastMenuHeight || 80) + 'px';
+        controls.style.display = 'grid';
+        controls.style.position = '';
+        controls.style.top = '';
+        controls.style.left = '';
+        controls.style.right = '';
+        controls.style.zIndex = '';
+        controls.style.boxShadow = '';
+    });
 }
 function findFuzzyPositions(degapped, motif, maxMismatches) {
     const positions = [];
