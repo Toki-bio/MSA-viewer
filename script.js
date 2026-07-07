@@ -6319,6 +6319,7 @@ function exportAlignmentAsRtf() {
 }
 
 var _menuMinimized = false;
+var _lastMenuHeight = 0;
 
 function minimizeMenu() {
     if (_menuMinimized) {
@@ -6327,6 +6328,8 @@ function minimizeMenu() {
         return;
     }
     const controls = el('controls');
+    // Cache menu height before hiding, so expand knows the value
+    _lastMenuHeight = controls.offsetHeight;
     controls.style.display = 'none';
     // Reset any overlay positioning
     controls.style.position = '';
@@ -6343,6 +6346,8 @@ function minimizeMenu() {
 function expandMenu() {
     minimizeBar.style.display = 'none';
     _menuMinimized = false;
+    // Set alignment position BEFORE showing controls — prevents layout jump
+    alignmentContainer.style.top = (_lastMenuHeight || 80) + 'px';
     const controls = el('controls');
     controls.style.display = 'grid';
     // Reset any overlay positioning
@@ -6352,9 +6357,6 @@ function expandMenu() {
     controls.style.right = '';
     controls.style.zIndex = '';
     controls.style.boxShadow = '';
-    // Move alignment back down
-    const menuHeight = controls.offsetHeight;
-    alignmentContainer.style.top = menuHeight + 'px';
 }
 function findFuzzyPositions(degapped, motif, maxMismatches) {
     const positions = [];
