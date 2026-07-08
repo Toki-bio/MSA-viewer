@@ -1861,6 +1861,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const totalContentW = NAME_W + len * CHAR_W + 4;
     const totalContentH = nSeqs * CHAR_H + 4;
 
+    let overviewCanvas = null;
+    const dpr = window.devicePixelRatio || 1;
+
     // Resize canvas to viewport
     function resize() {
         const rect = alignmentContainer.getBoundingClientRect();
@@ -1980,12 +1983,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     }
 
     // Build overview minimap (runs once on init, cached as _ovBgCanvas)
-    const overviewCanvas = document.createElement('canvas');
+    overviewCanvas = document.createElement('canvas');
     overviewCanvas.id = 'alignmentOverview';
     overviewCanvas.style.cssText = 'display:block;position:absolute;bottom:0;left:0;width:100%;height:'+OVERVIEW_H+'px;background:#fafafa;border-top:1px solid #ccc;z-index:2;cursor:pointer;';
     alignmentContainer.appendChild(overviewCanvas);
 
-    const dpr = window.devicePixelRatio || 1;
     function _buildOverview() {
         const ow = parseInt(overviewCanvas.style.width) || 800;
         const oh = OVERVIEW_H;
