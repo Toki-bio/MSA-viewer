@@ -13083,6 +13083,14 @@ function _dotUpdateHoverInfo(row, col) {
     if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}`;
 
     if (panelEl) {
+        if (S._frozen) {
+            panelEl.style.border = "2px solid #4a9eff";
+            panelEl.style.background = "#f0f8ff";
+            return;
+        }
+        panelEl.style.border = "1px solid #d8d8d8";
+        panelEl.style.background = "#f7f7f7";
+
         // The diagonal IS the alignment: seqA[row+k] ├óΓÇáΓÇ¥ seqB[col+k]
         // Extract equal-length slices centered on the hover position
         const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
@@ -13219,28 +13227,6 @@ function _dotRender() {
     const colW = plotW / S.cols; // logical px per column
     const rowH = plotH / S.rows;
 
-    // Draw nucleotide letter pairs in match cells when zoomed in enough
-    if (colW >= 6 && rowH >= 6) {
-        const id = S.dotImage.data;
-        const fs = Math.max(6, Math.min(12, Math.floor(Math.min(colW, rowH) * 0.75)));
-        ctx.font = `bold ${fs}px system-ui`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        for (let i = 0; i < S.rows; i++) {
-            const y = DOT_AXIS_PAD + Math.floor((i + 0.5) * rowH);
-            for (let j = 0; j < S.cols; j++) {
-                const x = DOT_AXIS_PAD + Math.floor((j + 0.5) * colW);
-                const idx = (i * S.cols + j) * 4;
-                const isMatch = (S.spinMode && S.matchMap) ? Boolean(S.matchMap[i * S.cols + j]) : (id[idx] < 128 && id[idx+1] < 128 && id[idx+2] < 128);
-                if (!isMatch) continue;
-                const chA = S.seqA[i] || 'N', chB = S.seqB[j] || 'N';
-                const txt = chA + chB;
-                ctx.fillStyle = 'rgba(0,0,0,0.7)';
-                ctx.fillText(txt, x + 1, y + 1);
-                ctx.fillStyle = '#fff';
-                ctx.fillText(txt, x, y);
-            }
-        }
-    }
 
     // Axes — border outside image area
     ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
@@ -13489,123 +13475,13 @@ function _dotDrawOverlay(row, col) {
     }
 }
 
-async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
+async function _dotUnfreeze() {
     const S = _dotPlotState;
-    S.seqA = seqA.toUpperCase(); S.seqB = seqB.toUpperCase();
-    S.nameA = nameA; S.nameB = nameB;
-    S.meta = meta || S.meta || null;
-    const m = S.meta || {};
-    S.rowIndexA = Number.isInteger(m.rowIndexA) ? m.rowIndexA : -1;
-    S.rowIndexB = Number.isInteger(m.rowIndexB) ? m.rowIndexB : -1;
-    S.alignMapA = m.alignMapA || _buildUngappedToAlignMap(m.alignedSeqA);
-    S.alignMapB = m.alignMapB || _buildUngappedToAlignMap(m.alignedSeqB);
-    const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
-    S.spinMode = spinRadio ? spinRadio.checked : true;
-    S.windowSize = parseInt(document.getElementById(S.spinMode ? 'dotPlotWindow' : 'dotPlotDoterWindow')?.value) || 9;
-    S.threshold = (parseInt(document.getElementById('dotPlotThreshold')?.value) || 55) / 100;
-    S.pinnedRow = S.pinnedCol = -1; // clear pinned position on new plot
-
-    const revComp = document.getElementById('dotPlotRevComp')?.checked;
-    if (revComp) {
-        const m = { A: 'T', C: 'G', G: 'C', T: 'A', U: 'A', N: 'N' };
-        S.seqB = [...S.seqB].reverse().map(b => m[b] ?? 'N').join('');
-        S.nameB = nameB + ' (RevComp)';
-        if (S.alignMapB) S.alignMapB = [...S.alignMapB].reverse();
-    }
-
-    const modal = document.getElementById('dotPlotModal');
-    if (modal) showExclusiveModal('dotPlotModal');
-
-    // Populate sequence dropdowns from current alignment
-    _dotPopulateSeqDropdowns(nameA, nameB);
-
-    const titleEl = document.getElementById('dotPlotTitle');
-    if (titleEl) titleEl.textContent = `Dot Plot`;
-    const statusEl = document.getElementById('dotPlotStatus');
-    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} × ${S.seqB.length}...`;
-    _dotClearHoverInfo();
-
-    S.computing = true;
-    const t0 = performance.now();
-    try {
-        if (S.spinMode) {
-            const ws = Math.max(2, S.windowSize);
-            const result = await _dotComputeWord(S.seqA, S.seqB, ws);
-            S.matchMap = new Uint8Array(result.matchMap);
-            S.scores = null;
-            S.rows = result.rows; S.cols = result.cols;
-            S.scoreMin = 0; S.scoreMax = 1;
-        } else {
-            const result = await _dotCompute(S.seqA, S.seqB, S.windowSize, 'identity');
-            S.scores = new Int16Array(result.scores);
-            S.matchMap = null;
-            S.rows = result.rows; S.cols = result.cols;
-            S.scoreMin = result.min; S.scoreMax = result.max;
-        }
-    } catch (err) {
-        if (statusEl) statusEl.textContent = `Error: ${err.message}`;
-        S.computing = false; return;
-    }
-    const ms = performance.now() - t0;
-    S.computing = false;
-    _dotBuildImage();
-    _dotFitView();
-    S.lastRow = S.lastCol = -1;
-    if (statusEl) statusEl.textContent = `${S.seqA.length} × ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
-}
-
-
-function _dotUpdateSpinScroll() {
-    const S = _dotPlotState;
+    S._frozen = false; S._frozenRow = S._frozenCol = undefined;
     const bar = document.getElementById('dotPlotSpinScroll');
-    if (!bar) return;
-    if (!S._frozen || S._frozenRow == null) { bar.style.display = 'none'; return; }
-    bar.style.display = 'block';
-    S._spinShiftA = S._spinShiftA || 0;
-    S._spinShiftB = S._spinShiftB || 0;
-
-    const maxNegA = S._frozenRow;
-    const maxPosA = S.rows - 1 - S._frozenRow;
-    const maxNegB = S._frozenCol;
-    const maxPosB = S.cols - 1 - S._frozenCol;
-
-    const slA = document.getElementById('spinSliderA');
-    if (slA) { slA.min = -maxNegA; slA.max = maxPosA; slA.value = S._spinShiftA; }
-    const slB = document.getElementById('spinSliderB');
-    if (slB) { slB.min = -maxNegB; slB.max = maxPosB; slB.value = S._spinShiftB; }
-    const lblA = document.getElementById('spinShiftA');
-    if (lblA) lblA.textContent = (S._spinShiftA > 0 ? '+' : '') + S._spinShiftA;
-    const lblB = document.getElementById('spinShiftB');
-    if (lblB) lblB.textContent = (S._spinShiftB > 0 ? '+' : '') + S._spinShiftB;
+    if (bar) bar.style.display = 'none';
 }
 
-function _dotUnfreeze() {
-    const S = _dotPlotState;
-    S._frozen = false; S._frozenRow = S._frozenCol = undefined; S._frozenSlider = undefined;
-    const sl = document.getElementById('dotPlotFreezeSlider');
-    if (sl) sl.style.display = 'none';
-    const fl = document.getElementById('dotPlotFreezeLabel');
-    if (fl) fl.style.display = 'none';
-}
-
-function _dotUpdateFreezeSlider() {
-    const S = _dotPlotState;
-    if (!S._frozen || S._frozenRow == null) return;
-    const maxNeg = Math.min(S._frozenRow, S._frozenCol);
-    const maxPos = Math.min(S.rows - 1 - S._frozenRow, S.cols - 1 - S._frozenCol);
-    const sl = document.getElementById('dotPlotFreezeSlider');
-    if (sl) {
-        sl.min = -maxNeg;
-        sl.max = maxPos;
-        sl.value = S._frozenSlider || 0;
-        sl.style.display = 'inline-block';
-    }
-    const fl = document.getElementById('dotPlotFreezeLabel');
-    if (fl) {
-        fl.textContent = 'Slider: 0';
-        fl.style.display = 'inline';
-    }
-}
 function _initDotPlotEvents() {
     const overlay = document.getElementById('dotPlotOverlay');
     const threshSlider = document.getElementById('dotPlotThreshold');
@@ -13679,8 +13555,8 @@ function _initDotPlotEvents() {
                 S.pinnedRow = row; S.pinnedCol = col;
                 _dotUpdateHoverInfo(row, col);
                 S._frozen = true;
-                S._frozenRow = row; S._frozenCol = col; S._frozenSlider = 0;
-                _dotUpdateSpinScroll();
+                S._frozenRow = row; S._frozenCol = col;
+                
                 _dotDrawOverlay(row, col);
                 showMessage('FROZEN \u2014 double-click to unfreeze.', 3000);
             }
@@ -13771,39 +13647,7 @@ function _initDotPlotEvents() {
         });
     }
 
-    // SPIN per-sequence sliders: shift sequence windows
-    ['spinSliderA','spinSliderB'].forEach(sliderId => {
-        const sl = document.getElementById(sliderId);
-        if (!sl) return;
-        const isA = sliderId === 'spinSliderA';
-        sl.addEventListener('input', () => {
-            const S = _dotPlotState;
-            if (!S._frozen || S._frozenRow == null) return;
-            const shift = parseInt(sl.value);
-            if (isA) S._spinShiftA = shift; else S._spinShiftB = shift;
-            if (S._spinLocked) {
-                // Locked: move both together
-                if (isA) S._spinShiftB = shift; else S._spinShiftA = shift;
-                const slOther = document.getElementById(isA ? 'spinSliderB' : 'spinSliderA');
-                if (slOther) slOther.value = shift;
-            }
-            // Update display: show alignment at shifted position
-            const r = S._frozenRow + (isA ? S._spinShiftA : S._spinShiftB);
-            const c = S._frozenCol + (isA ? S._spinShiftA : S._spinShiftB);
-            if (r >= 0 && c >= 0 && r < S.rows && c < S.cols) {
-                _dotUpdateHoverInfo(r, c);
-            }
-            _dotUpdateSpinScroll();
-        });
-    });
-    const lockBtn = document.getElementById('spinLockBtn');
-    if (lockBtn) lockBtn.addEventListener('click', () => {
-        const S = _dotPlotState;
-        S._spinLocked = !S._spinLocked;
-        lockBtn.innerHTML = S._spinLocked ? '&#128274; Locked' : '&#128275; Lock';
-        lockBtn.style.background = S._spinLocked ? '#d4edda' : '#f5f5f5';
-    });
-    const copyBtn = document.getElementById('dotPlotCopyRegion');
+const copyBtn = document.getElementById('dotPlotCopyRegion');
     if (copyBtn) {
         copyBtn.addEventListener('click', () => {
             const S = _dotPlotState;
