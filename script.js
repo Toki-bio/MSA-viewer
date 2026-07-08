@@ -13059,8 +13059,9 @@ function _dotUpdateHoverInfo(row, col) {
         // The diagonal IS the alignment: seqA[row+k] â†” seqB[col+k]
         // Extract equal-length slices centered on the hover position
         const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
-        const a0 = Math.max(0, row - context);
-        const b0 = Math.max(0, col - context);
+        const diag = col - row; let a0 = row - context; let b0 = col - context;
+        if (a0 < 0) { b0 += -a0; a0 = 0; }
+        if (b0 < 0) { a0 += -b0; b0 = 0; }
         const maxA = S.seqA.length - a0;
         const maxB = S.seqB.length - b0;
         const sliceLen = Math.min(context * 2 + 1, maxA, maxB);
@@ -13240,49 +13241,64 @@ function _dotFitView() {
 function _dotDetectRegions() {
     const S = _dotPlotState;
     if ((!S.scores && !S.matchMap)) return;
-    // Adaptive minRun: at least 6bp, up to 15, proportional to sequence length
-    const minRun = Math.max(6, Math.min(15, Math.floor(Math.min(S.rows, S.cols) * 0.12)));
-    const minScore = S.threshold * S.windowSize * 0.9;
     const regions = [];
 
-    for (let d = -(S.rows - 1); d < S.cols; d++) {
-        if (d === 0) continue; // skip self-match (main diagonal)
-        let runStart = -1, runSum = 0, runLen = 0;
-        const startR = d < 0 ? -d : 0;
-        const endR = Math.min(S.rows, S.cols - d);
-
-        for (let r = startR; r < endR; r++) {
-            const c = r + d;
-            if (c < 0 || c >= S.cols || r >= S.rows) continue;
-            const score = S.scores[r * S.cols + c];
-            if (score >= minScore) {
-                if (runStart < 0) runStart = r;
-                runSum += score;
-                runLen++;
-            } else {
-                if (runLen >= minRun) {
-                    regions.push({
-                        row: runStart, col: runStart + d,
-                        length: runLen,
-                        avgScore: runSum / (runLen * S.windowSize),
-                        diagonal: d
-                    });
+    if (S.spinMode && S.matchMap) {
+        // SPIN: find consecutive runs of word matches on each diagonal
+        const minRun = Math.max(4, Math.floor(Math.min(S.rows, S.cols) * 0.08));
+        for (let d = -(S.rows - 1); d < S.cols; d++) {
+            if (d === 0) continue;
+            let runStart = -1, runLen = 0;
+            const startR = d < 0 ? -d : 0;
+            const endR = Math.min(S.rows, S.cols - d);
+            for (let r = startR; r < endR; r++) {
+                const c = r + d;
+                if (c < 0 || c >= S.cols || r >= S.rows) continue;
+                if (S.matchMap[r * S.cols + c]) {
+                    if (runStart < 0) runStart = r;
+                    runLen++;
+                } else {
+                    if (runLen >= minRun) {
+                        regions.push({ row: runStart, col: runStart + d, length: runLen, avgScore: 1, diagonal: d });
+                    }
+                    runStart = -1; runLen = 0;
                 }
-                runStart = -1; runSum = 0; runLen = 0;
+            }
+            if (runLen >= minRun) {
+                regions.push({ row: runStart, col: runStart + d, length: runLen, avgScore: 1, diagonal: d });
             }
         }
-        if (runLen >= minRun) {
-            regions.push({
-                row: runStart, col: runStart + d,
-                length: runLen,
-                avgScore: runSum / (runLen * S.windowSize),
-                diagonal: d
-            });
+    } else if (S.scores) {
+        // Doter: find runs where sliding-window score exceeds threshold
+        const minRun = Math.max(6, Math.min(15, Math.floor(Math.min(S.rows, S.cols) * 0.12)));
+        const minScore = S.threshold * S.windowSize * 0.9;
+        for (let d = -(S.rows - 1); d < S.cols; d++) {
+            if (d === 0) continue;
+            let runStart = -1, runSum = 0, runLen = 0;
+            const startR = d < 0 ? -d : 0;
+            const endR = Math.min(S.rows, S.cols - d);
+            for (let r = startR; r < endR; r++) {
+                const c = r + d;
+                if (c < 0 || c >= S.cols || r >= S.rows) continue;
+                const score = S.scores[r * S.cols + c];
+                if (score >= minScore) {
+                    if (runStart < 0) runStart = r;
+                    runSum += score;
+                    runLen++;
+                } else {
+                    if (runLen >= minRun) {
+                        regions.push({ row: runStart, col: runStart + d, length: runLen, avgScore: runSum / (runLen * S.windowSize), diagonal: d });
+                    }
+                    runStart = -1; runSum = 0; runLen = 0;
+                }
+            }
+            if (runLen >= minRun) {
+                regions.push({ row: runStart, col: runStart + d, length: runLen, avgScore: runSum / (runLen * S.windowSize), diagonal: d });
+            }
         }
     }
 
-    // Sort by avgScore descending, take top 30
-    regions.sort((a, b) => b.avgScore - a.avgScore);
+    regions.sort((a, b) => b.length - a.length || b.avgScore - a.avgScore);
     S.regions = regions.slice(0, 30);
     _dotRenderRegionList();
 }
@@ -13545,7 +13561,13 @@ function _initDotPlotEvents() {
             }, { passive: false });
         }
     }
-    if (threshSlider) { _dotOnModeChange(); _dotOnModeChange();
+    if (threshSlider) { _dotOnModeChange();
+        threshSlider.addEventListener('input', () => {
+            threshVal.textContent = threshSlider.value + '%';
+            const S = _dotPlotState;
+            S.threshold = parseInt(threshSlider.value) / 100;
+            if (!S.spinMode && S.scores) { _dotBuildImage(); _dotRender(); }
+        }); _dotOnModeChange();
         threshSlider.addEventListener('input', () => {
             const v = parseInt(threshSlider.value);
             if (threshVal) threshVal.textContent = v + '%';
