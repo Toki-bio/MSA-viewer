@@ -2028,6 +2028,8 @@ body.codon-mode span.codon-nonsyn {
 
 /* AA translation rows */
 body.codon-mode .aa-row {
+    display: flex;
+    align-items: flex-start;
     font-size: 11px;
     line-height: 14px;
     color: #1a5276;
@@ -2035,6 +2037,34 @@ body.codon-mode .aa-row {
     border-bottom: 1px solid #d4efdf;
     padding: 1px 0;
     min-height: 16px;
+    font-family: 'Courier New', monospace;
+}
+
+body.codon-mode .aa-name {
+    flex: 0 0 auto;
+    min-width: calc(var(--nameLen) * 1ch + 16px);
+    width: calc(var(--nameLen) * 1ch + 16px);
+    max-width: calc(var(--nameLen) * 1ch + 16px);
+    text-align: right;
+    padding: 0 4px 0 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 9px;
+    font-weight: bold;
+    color: #95a5a6;
+    margin-left: -12px;
+    position: sticky;
+    left: -15px;
+    z-index: 45;
+}
+
+body.codon-mode .aa-data {
+    flex: 1 1 auto;
+    white-space: nowrap;
+    margin: 0;
+    padding: 0;
+    line-height: 1.0;
 }
 body.codon-mode .aa-row:empty { display: none; }
 

@@ -3445,14 +3445,16 @@ function renderAlignment(options = {}) {
                 aaRow.className = 'aa-row';
                 if (frameLabel !== null) aaRow.classList.add('aa-row-f' + frameLabel);
                 if (isBest) aaRow.classList.add('aa-row-best');
-                aaRow.style.cssText = 'padding-left:var(--nameLen)ch;font-family:monospace;font-size:11px;color:#1a5276;line-height:1;min-height:14px;';
-                // Frame label prefix
+                // Name column spacer - matches .seq-name width exactly
+                const nameCol = document.createElement('div');
+                nameCol.className = 'aa-name';
                 if (frameLabel !== null) {
-                    const labelSpan = document.createElement('span');
-                    labelSpan.style.cssText = 'display:inline-block;width:3ch;text-align:right;margin-right:1ch;color:#95a5a6;font-size:9px;font-weight:bold;';
-                    labelSpan.textContent = 'F' + frameLabel + ':';
-                    aaRow.appendChild(labelSpan);
+                    nameCol.textContent = 'F' + frameLabel + ':';
                 }
+                aaRow.appendChild(nameCol);
+                // Data column - matches .seq-data
+                const dataCol = document.createElement('div');
+                dataCol.className = 'aa-data';
                 if (aaSeqData) {
                     for (const entry of aaSeqData) {
                         const aa = entry.aa;
@@ -3461,9 +3463,10 @@ function renderAlignment(options = {}) {
                         aaSpan.style.cssText = 'width:3ch;display:inline-block;text-align:center;' + (aa==='*'?'color:#e74c3c;font-weight:bold;':'');
                         aaSpan.textContent = aa;
                         aaSpan.dataset.col = startCol;
-                        aaRow.appendChild(aaSpan);
+                        dataCol.appendChild(aaSpan);
                     }
                 }
+                aaRow.appendChild(dataCol);
                 return aaRow;
             };
 
