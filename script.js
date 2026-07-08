@@ -1,4 +1,4 @@
-// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+﻿// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // ViewAlign Ã¢â‚¬â€ browser-based multiple sequence alignment viewer & editor
 // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 //
@@ -13034,14 +13034,11 @@ function _dotOnModeChange() {
     S.spinMode = spinRadio ? spinRadio.checked : true;
     const slider = document.getElementById('dotPlotThreshold');
     const val = document.getElementById('dotPlotThreshVal');
-    const win = document.getElementById('dotPlotWindow');
     if (S.spinMode) {
-        if (win) { win.max = 20; win.min = 2; if (parseInt(win.value) > 20) win.value = 9; }
-        if (slider) slider.disabled = true;
+        if (slider) { slider.disabled = true; slider.style.opacity = '0.4'; }
         if (val) val.textContent = 'N/A';
     } else {
-        if (win) { win.max = 61; win.min = 1; }
-        if (slider) slider.disabled = false;
+        if (slider) { slider.disabled = false; slider.style.opacity = '1'; }
         if (slider && val) val.textContent = slider.value + '%';
     }
 }
@@ -13438,7 +13435,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S.alignMapB = m.alignMapB || _buildUngappedToAlignMap(m.alignedSeqB);
     const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
     S.spinMode = spinRadio ? spinRadio.checked : true;
-    S.windowSize = parseInt(document.getElementById('dotPlotWindow')?.value) || 9;
+    S.windowSize = parseInt(document.getElementById(S.spinMode ? 'dotPlotWindow' : 'dotPlotDoterWindow')?.value) || 9;
     S.threshold = (parseInt(document.getElementById('dotPlotThreshold')?.value) || 55) / 100;
     S.pinnedRow = S.pinnedCol = -1; // clear pinned position on new plot
 
@@ -13455,7 +13452,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     const titleEl = document.getElementById('dotPlotTitle');
     if (titleEl) titleEl.textContent = `Dot Plot: ${nameA} vs ${nameB}${revComp ? ' (rc)' : ''}`;
     const statusEl = document.getElementById('dotPlotStatus');
-    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} Ãƒâ€” ${S.seqB.length}...`;
+    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} × ${S.seqB.length}...`;
     _dotClearHoverInfo();
 
     S.computing = true;
@@ -13484,7 +13481,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     _dotBuildImage();
     _dotFitView();
     S.lastRow = S.lastCol = -1;
-    if (statusEl) statusEl.textContent = `${S.seqA.length} Ãƒâ€” ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
+    if (statusEl) statusEl.textContent = `${S.seqA.length} × ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
 }
 
 
@@ -13552,6 +13549,7 @@ function _initDotPlotEvents() {
                 const S = _dotPlotState;
                 if ((!S.scores && !S.matchMap)) return;
                 e.preventDefault();
+                e.stopPropagation();
 
                 // Compute sequence coordinate under cursor before zoom
                 const rect = viewport.getBoundingClientRect();
@@ -13577,21 +13575,15 @@ function _initDotPlotEvents() {
     }
     if (threshSlider) { _dotOnModeChange();
         threshSlider.addEventListener('input', () => {
-            threshVal.textContent = threshSlider.value + '%';
-            const S = _dotPlotState;
-            S.threshold = parseInt(threshSlider.value) / 100;
-            if (!S.spinMode && S.scores) { _dotBuildImage(); _dotRender(); }
-        }); _dotOnModeChange();
-        threshSlider.addEventListener('input', () => {
             const v = parseInt(threshSlider.value);
             if (threshVal) threshVal.textContent = v + '%';
-            _dotPlotState.threshold = v / 100;
-            if (_dotPlotState.scores) {
+            const S = _dotPlotState;
+            S.threshold = v / 100;
+            if (!S.spinMode && S.scores) {
                 _dotBuildImage();
                 _dotRender();
-                if (_dotPlotState.lastRow >= 0) {
-                    _dotDrawOverlay(_dotPlotState.lastRow, _dotPlotState.lastCol);
-                    _dotUpdateHoverInfo(_dotPlotState.lastRow, _dotPlotState.lastCol);
+                if (S.lastRow >= 0) {
+                    _dotDrawOverlay(S.lastRow, S.lastCol);
                 }
             }
         });
