@@ -13229,8 +13229,9 @@ function _dotFitView() {
     if ((!S.scores && !S.matchMap)) return;
     const vp = document.getElementById('dotPlotViewport');
     if (!vp) return;
-    const vw = (vp.clientWidth || 600) - DOT_AXIS_PAD - 20;
-    const vh = (vp.clientHeight || 400) - DOT_AXIS_PAD - 20;
+    // Use full viewport area, only reserve axis padding
+    const vw = vp.clientWidth - DOT_AXIS_PAD - 4;
+    const vh = vp.clientHeight - DOT_AXIS_PAD - 4;
     if (S.cols === 0 || S.rows === 0) return;
     const z = Math.min(vw / S.cols, vh / S.rows, 24);
     S.zoom = Math.max(0.5, Math.round(z * 10) / 10);
@@ -13544,16 +13545,29 @@ function _initDotPlotEvents() {
             _dotUpdateHoverInfo(row, col);
             showMessage(`Pinned: A${row + 1} / B${col + 1}. Click \"Copy Region\" to copy FASTA.`, 2500);
         });
-        // Mouse wheel zoom
+        // Mouse wheel zoom to focal point
         const viewport = document.getElementById('dotPlotViewport');
         if (viewport) {
             viewport.addEventListener('wheel', (e) => {
                 const S = _dotPlotState;
                 if ((!S.scores && !S.matchMap)) return;
                 e.preventDefault();
+
+                // Compute sequence coordinate under cursor before zoom
+                const rect = viewport.getBoundingClientRect();
+                const mx = e.clientX - rect.left + viewport.scrollLeft - DOT_AXIS_PAD;
+                const my = e.clientY - rect.top + viewport.scrollTop - DOT_AXIS_PAD;
+                const col = mx / S.zoom;
+                const row = my / S.zoom;
+
                 const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
                 S.zoom = Math.max(0.5, Math.min(24, Math.round(S.zoom * factor * 10) / 10));
-                _dotRender(); // image unchanged, only scale needs re-render
+                _dotRender();
+
+                // Scroll to keep the same sequence position under cursor
+                viewport.scrollLeft = DOT_AXIS_PAD + col * S.zoom - (e.clientX - rect.left);
+                viewport.scrollTop = DOT_AXIS_PAD + row * S.zoom - (e.clientY - rect.top);
+
                 if (S.lastRow >= 0) {
                     _dotDrawOverlay(S.lastRow, S.lastCol);
                     _dotUpdateHoverInfo(S.lastRow, S.lastCol);
