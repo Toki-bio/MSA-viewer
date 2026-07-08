@@ -13043,6 +13043,35 @@ function _dotOnModeChange() {
     }
 }
 
+// --- Populate sequence dropdowns ---
+function _dotPopulateSeqDropdowns(nameA, nameB) {
+    const selA = document.getElementById('dotPlotSeqASelect');
+    const selB = document.getElementById('dotPlotSeqBSelect');
+    if (!selA || !selB || !state.seqs || state.seqs.length === 0) return;
+
+    const options = state.seqs.map((s, i) =>
+        `<option value="${i}" ${s.header === nameA ? 'selected' : ''}>[${i+1}] ${s.header}</option>`
+    ).join('');
+    selA.innerHTML = options;
+    selB.innerHTML = options.replace(new RegExp(' ' + nameA.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "'"), ' ' + nameB + "'");
+    // Ensure B selects the right sequence
+    selB.value = state.seqs.findIndex(s => s.header === nameB).toString();
+}
+
+function _dotOnDropdownChange() {
+    const selA = document.getElementById('dotPlotSeqASelect');
+    const selB = document.getElementById('dotPlotSeqBSelect');
+    if (!selA || !selB || !state.seqs) return;
+    const idxA = parseInt(selA.value);
+    const idxB = parseInt(selB.value);
+    if (isNaN(idxA) || isNaN(idxB) || !state.seqs[idxA] || !state.seqs[idxB]) return;
+    const sA = state.seqs[idxA];
+    const sB = state.seqs[idxB];
+    openDotPlot(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header, {
+        rowIndexA: idxA, rowIndexB: idxB, alignedSeqA: sA.seq, alignedSeqB: sB.seq
+    });
+}
+
 function _dotUpdateHoverInfo(row, col) {
     const S = _dotPlotState;
     const hoverEl = document.getElementById('dotPlotHover');
@@ -13162,10 +13191,10 @@ function _dotRender() {
     const ctx = canvas.getContext('2d', { alpha: false });
     const dpr = window.devicePixelRatio || 1;
     const z = S.zoom;
-    const plotW = Math.round(S.cols * z);
-    const plotH = Math.round(S.rows * z);
-    const totalW = DOT_AXIS_PAD + plotW + 1;
-    const totalH = DOT_AXIS_PAD + plotH + 1;
+    const plotW = Math.ceil(S.cols * z);
+    const plotH = Math.ceil(S.rows * z);
+    const totalW = DOT_AXIS_PAD + plotW + 2;
+    const totalH = DOT_AXIS_PAD + plotH + 2;
     // HiDPI: scale backing store, keep CSS size at logical pixels
     canvas.width = totalW * dpr; canvas.height = totalH * dpr;
     canvas.style.width = totalW + 'px'; canvas.style.height = totalH + 'px';
@@ -13185,10 +13214,10 @@ function _dotRender() {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(tmp, DOT_AXIS_PAD, DOT_AXIS_PAD, plotW, plotH);
 
-    // Axes
+    // Axes — border drawn outside image so it doesn't clip edge dots
     ctx.font = '11px system-ui, sans-serif';
     ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
-    ctx.strokeRect(DOT_AXIS_PAD + 0.5, DOT_AXIS_PAD + 0.5, plotW, plotH);
+    ctx.strokeRect(DOT_AXIS_PAD - 1, DOT_AXIS_PAD - 1, plotW + 2, plotH + 2);
 
     const maxTicksX = Math.max(2, Math.floor(plotW / 50));
     const maxTicksY = Math.max(2, Math.floor(plotH / 40));
@@ -13332,14 +13361,18 @@ function _dotGoToRegion(idx) {
     const r = S.regions[idx];
     const vp = document.getElementById('dotPlotViewport');
     if (!vp) return;
-    // Scroll to center the region in the viewport
-    const cx = DOT_AXIS_PAD + (r.col + r.length / 2) * S.zoom;
-    const cy = DOT_AXIS_PAD + (r.row + r.length / 2) * S.zoom;
+
+    // Highlight the full diagonal region, centered on its middle
+    const midR = r.row + Math.floor(r.length / 2);
+    const midC = r.col + Math.floor(r.length / 2);
+    _dotDrawOverlay(midR, midC);
+    _dotUpdateHoverInfo(midR, midC);
+
+    // Scroll to center the region midpoint in the viewport
+    const cx = DOT_AXIS_PAD + (midC + 0.5) * S.zoom;
+    const cy = DOT_AXIS_PAD + (midR + 0.5) * S.zoom;
     vp.scrollLeft = Math.max(0, cx - vp.clientWidth / 2);
     vp.scrollTop = Math.max(0, cy - vp.clientHeight / 2);
-    // Highlight the region on overlay
-    _dotDrawOverlay(r.row, r.col);
-    _dotUpdateHoverInfo(r.row, r.col);
 }
 
 function _dotDrawOverlay(row, col) {
@@ -13348,9 +13381,9 @@ function _dotDrawOverlay(row, col) {
     if (!overlay) return;
     const oCtx = overlay.getContext('2d');
     const z = S.zoom;
-    const plotW = Math.round(S.cols * z), plotH = Math.round(S.rows * z);
-    const totalW = DOT_AXIS_PAD + plotW + 1;
-    const totalH = DOT_AXIS_PAD + plotH + 1;
+    const plotW = Math.ceil(S.cols * z), plotH = Math.ceil(S.rows * z);
+    const totalW = DOT_AXIS_PAD + plotW + 2;
+    const totalH = DOT_AXIS_PAD + plotH + 2;
     oCtx.clearRect(0, 0, totalW, totalH);
     if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
     const colW = plotW / S.cols, rowH = plotH / S.rows;
@@ -13362,10 +13395,10 @@ function _dotDrawOverlay(row, col) {
     oCtx.moveTo(DOT_AXIS_PAD, cy); oCtx.lineTo(DOT_AXIS_PAD + plotW, cy);
     oCtx.moveTo(cx, DOT_AXIS_PAD); oCtx.lineTo(cx, DOT_AXIS_PAD + plotH);
     oCtx.stroke();
-    // Diagonal trace â€” snap to pixel grid for crisp alignment with dot image
+    // Diagonal trace — snap to pixel grid, ceil size to cover full dot area
     const range = S.scoreMax - S.scoreMin || 1;
     oCtx.fillStyle = 'rgba(100,230,160,0.85)';
-    const pxSz = Math.max(1, Math.round(colW));
+    const pxSz = Math.ceil(colW); // ceil avoids hairline gaps between green and dot
     let r = row, c = col;
     if (S.spinMode && S.matchMap) {
         // SPIN: walk diagonal using binary matchMap
@@ -13449,8 +13482,12 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
 
     const modal = document.getElementById('dotPlotModal');
     if (modal) showExclusiveModal('dotPlotModal');
+
+    // Populate sequence dropdowns from current alignment
+    _dotPopulateSeqDropdowns(nameA, nameB);
+
     const titleEl = document.getElementById('dotPlotTitle');
-    if (titleEl) titleEl.textContent = `Dot Plot: ${nameA} vs ${nameB}${revComp ? ' (rc)' : ''}`;
+    if (titleEl) titleEl.textContent = `Dot Plot`;
     const statusEl = document.getElementById('dotPlotStatus');
     if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} × ${S.seqB.length}...`;
     _dotClearHoverInfo();
@@ -13518,9 +13555,9 @@ function _initDotPlotEvents() {
             const oCtx = overlay.getContext('2d');
             const S = _dotPlotState;
             const z = S.zoom;
-            const pW = Math.round(S.cols * z), pH = Math.round(S.rows * z);
-            const tw = DOT_AXIS_PAD + pW + 1;
-            const th = DOT_AXIS_PAD + pH + 1;
+            const pW = Math.ceil(S.cols * z), pH = Math.ceil(S.rows * z);
+            const tw = DOT_AXIS_PAD + pW + 2;
+            const th = DOT_AXIS_PAD + pH + 2;
             oCtx.clearRect(0, 0, tw, th);
             _dotPlotState.lastRow = _dotPlotState.lastCol = -1;
             _dotClearHoverInfo();
@@ -13696,6 +13733,12 @@ function _initDotPlotEvents() {
     document.querySelectorAll('input[name="dotPlotMode"]').forEach(r => {
         r.addEventListener('change', _dotOnModeChange);
     });
+
+    // Sequence dropdown change handlers
+    const selA = document.getElementById('dotPlotSeqASelect');
+    const selB = document.getElementById('dotPlotSeqBSelect');
+    if (selA) selA.addEventListener('change', _dotOnDropdownChange);
+    if (selB) selB.addEventListener('change', _dotOnDropdownChange);
 }
 
 // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
