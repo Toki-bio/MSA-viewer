@@ -13535,7 +13535,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     const titleEl = document.getElementById('dotPlotTitle');
     if (titleEl) titleEl.textContent = `Dot Plot: ${nameA} vs ${nameB}${revComp ? ' (rc)' : ''}`;
     const statusEl = document.getElementById('dotPlotStatus');
-    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} Ãƒâ€” ${S.seqB.length}...`;
+    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} x ${S.seqB.length}...`;
     _dotClearHoverInfo();
 
     S.computing = true;
@@ -13564,7 +13564,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     _dotBuildImage();
     _dotFitView();
     S.lastRow = S.lastCol = -1;
-    if (statusEl) statusEl.textContent = `${S.seqA.length} Ãƒâ€” ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
+    if (statusEl) statusEl.textContent = `${S.seqA.length} x ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
 }
 
 async function _dotUnfreeze() {
@@ -13813,6 +13813,15 @@ function _initDotPlotEvents() {
         closeBtn.addEventListener('click', () => {
             const modal = document.getElementById('dotPlotModal');
             if (modal) modal.style.display = 'none';
+        });
+    }
+
+    // Local help inside the dot plot modal
+    const helpBtn = document.getElementById('dotPlotHelpBtn');
+    const helpDiv = document.getElementById('dotPlotHelp');
+    if (helpBtn && helpDiv) {
+        helpBtn.addEventListener('click', () => {
+            helpDiv.style.display = (helpDiv.style.display === 'block') ? 'none' : 'block';
         });
     }
 
