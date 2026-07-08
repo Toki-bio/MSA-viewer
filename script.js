@@ -13227,6 +13227,24 @@ function _dotRender() {
     const colW = plotW / S.cols; // logical px per column
     const rowH = plotH / S.rows;
 
+    // Small nucleotide letters on match cells (non-white pixels)
+    if (colW >= 6 && rowH >= 6) {
+        const id = S.dotImage.data;
+        const fs = Math.max(7, Math.min(11, Math.floor(Math.min(colW, rowH) * 0.7)));
+        ctx.font = `bold ${fs}px monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        for (let i = 0; i < S.rows; i++) {
+            const y = DOT_AXIS_PAD + Math.floor((i + 0.5) * rowH);
+            for (let j = 0; j < S.cols; j++) {
+                const idx = (i * S.cols + j) * 4;
+                if (id[idx] > 240 && id[idx + 1] > 240 && id[idx + 2] > 240) continue;
+                const x = DOT_AXIS_PAD + Math.floor((j + 0.5) * colW);
+                const ch = S.seqA[i] || 'N';
+                ctx.fillStyle = '#fff';
+                ctx.fillText(ch, x, y);
+            }
+        }
+    }
 
     // Axes — border outside image area
     ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
