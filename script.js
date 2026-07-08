@@ -13080,33 +13080,21 @@ function _dotUpdateHoverInfo(row, col) {
 
     const norm = _dotNormAt(row, col);
 
-    // Compute context slice — always try to show full sequences when they fit
+    // Compute context slice centered on hover, clamped to sequence bounds
     const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
-    const maxWindow = context * 2 + 1;
     const diag = col - row;
     let a0 = row - context, b0 = col - context;
     if (a0 < 0) { b0 += -a0; a0 = 0; }
     if (b0 < 0) { a0 += -b0; b0 = 0; }
-    let sliceLen = Math.min(maxWindow, S.seqA.length - a0, S.seqB.length - b0);
-    // If window has spare room, extend left to show sequence start
-    let slack = maxWindow - sliceLen;
-    if (slack > 0 && a0 > 0) {
-        const ext = Math.min(slack, a0);
-        a0 -= ext; b0 -= ext; sliceLen += ext;
-        slack -= ext;
-    }
-    // If still has room, extend right to show sequence end
-    if (slack > 0) {
-        const ext = Math.min(slack, S.seqA.length - (a0 + sliceLen), S.seqB.length - (b0 + sliceLen));
-        sliceLen += ext;
-    }
+    const maxA = S.seqA.length - a0;
+    const maxB = S.seqB.length - b0;
+    const sliceLen = Math.min(context * 2 + 1, maxA, maxB);
 
     if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}  ⌒ ${a0+1}-${a0+sliceLen}/${S.seqA.length}`;
 
     if (panelEl) {
         // The diagonal IS the alignment: seqA[row+k] ↔ seqB[col+k]
-        // Extract equal-length slices centered on the hover position
-        const hoverPos = row - a0; // position of hover col within slice
+        const hoverPos = row - a0;
 
         const aSlice = S.seqA.slice(a0, a0 + sliceLen);
         const bSlice = S.seqB.slice(b0, b0 + sliceLen);
@@ -13228,6 +13216,31 @@ function _dotRender() {
     tmp.getContext('2d').putImageData(S.dotImage, 0, 0);
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(tmp, DOT_AXIS_PAD, DOT_AXIS_PAD, plotW, plotH);
+
+    // Draw nucleotide letters on non-white cells when zoomed in enough
+    if (colW >= 6 && rowH >= 6) {
+        const fs = Math.max(6, Math.min(12, Math.floor(Math.min(colW, rowH) * 0.75)));
+        ctx.font = `bold ${fs}px system-ui`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const imgData = S.dotImage.data;
+        for (let i = 0; i < S.rows; i++) {
+            const y = DOT_AXIS_PAD + Math.floor((i + 0.5) * rowH);
+            for (let j = 0; j < S.cols; j++) {
+                const idx = (i * S.cols + j) * 4;
+                // Only draw letters on non-white cells (where there's a dot/hit)
+                if (imgData[idx] === 255 && imgData[idx + 1] === 255 && imgData[idx + 2] === 255) continue;
+                const x = DOT_AXIS_PAD + Math.floor((j + 0.5) * colW);
+                // Show both nucleotides for the cell
+                const chA = (S.seqA[i] || 'N'); const chB = (S.seqB[j] || 'N');
+                const txt = chA + chB;
+                // Outline then fill
+                ctx.fillStyle = 'rgba(0,0,0,0.8)';
+                ctx.fillText(txt, x + 1, y + 1);
+                ctx.fillStyle = '#fff';
+                ctx.fillText(txt, x, y);
+            }
+        }
+    }
 
     // Axes — border outside image area
     ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
@@ -13450,29 +13463,6 @@ function _dotDrawOverlay(row, col) {
     oCtx.fillText(String(col + 1), cx, DOT_AXIS_PAD - 1);
     oCtx.textAlign = 'right'; oCtx.textBaseline = 'middle';
     oCtx.fillText(String(row + 1), DOT_AXIS_PAD - 2, cy);
-
-    // Draw nucleotide letters on dots when zoomed in enough (diagnostic + informative)
-    if (colW >= 6 && rowH >= 6) {
-        const fs = Math.max(8, Math.min(14, Math.floor(colW * 0.85)));
-        oCtx.font = `bold ${fs}px system-ui`;
-        oCtx.textAlign = 'center'; oCtx.textBaseline = 'middle';
-        // Draw letters on the main diagonal cells
-        const limit = Math.min(S.rows, S.cols);
-        for (let i = 0; i < limit; i++) {
-            const cxL = DOT_AXIS_PAD + Math.floor((i + 0.5) * colW);
-            const cyL = DOT_AXIS_PAD + Math.floor((i + 0.5) * rowH);
-            const ch = S.seqA[i] || 'N';
-            // Dark outline for readability on any background
-            oCtx.fillStyle = 'rgba(0,0,0,0.7)';
-            oCtx.fillText(ch, cxL + 0.8, cyL + 0.8);
-            oCtx.fillText(ch, cxL - 0.8, cyL + 0.8);
-            oCtx.fillText(ch, cxL + 0.8, cyL - 0.8);
-            oCtx.fillText(ch, cxL - 0.8, cyL - 0.8);
-            // Bright white fill
-            oCtx.fillStyle = '#fff';
-            oCtx.fillText(ch, cxL, cyL);
-        }
-    }
 
     // Draw pinned position marker (red crosshair) if set
     if (S.pinnedRow >= 0 && S.pinnedCol >= 0) {
