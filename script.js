@@ -13050,56 +13050,45 @@ function _dotOnModeChange() {
     }
 }
 
-function _dotSyncSliders(row, col) {
+function _dotApplyZoom(factor, anchorX, anchorY) {
     const S = _dotPlotState;
-    const sliderA = document.getElementById('dotPlotSeqASlider');
-    const sliderB = document.getElementById('dotPlotSeqBSlider');
-    const valA = document.getElementById('dotPlotSeqAVal');
-    const valB = document.getElementById('dotPlotSeqBVal');
-    if (!sliderA || !sliderB) return;
-    const safeRow = Math.max(0, Math.min(S.rows - 1, row));
-    const safeCol = Math.max(0, Math.min(S.cols - 1, col));
-    sliderA.value = String(safeRow + 1);
-    sliderB.value = String(safeCol + 1);
-    if (valA) valA.textContent = `${safeRow + 1} / ${S.rows}`;
-    if (valB) valB.textContent = `${safeCol + 1} / ${S.cols}`;
-}
+    const vp = document.getElementById('dotPlotViewport');
+    if (!vp || (!S.scores && !S.matchMap)) return;
 
-function _dotConfigureSliders() {
-    const S = _dotPlotState;
-    const wrap = document.getElementById('dotPlotSliders');
-    const sliderA = document.getElementById('dotPlotSeqASlider');
-    const sliderB = document.getElementById('dotPlotSeqBSlider');
-    if (!wrap || !sliderA || !sliderB || S.rows <= 0 || S.cols <= 0) return;
-    wrap.style.display = 'grid';
-    sliderA.min = '1';
-    sliderA.max = String(S.rows);
-    sliderA.step = '1';
-    sliderB.min = '1';
-    sliderB.max = String(S.cols);
-    sliderB.step = '1';
-    _dotSyncSliders(0, 0);
-}
+    const vpRect = vp.getBoundingClientRect();
+    const ax = anchorX != null ? anchorX : vpRect.left + vpRect.width / 2;
+    const ay = anchorY != null ? anchorY : vpRect.top + vpRect.height / 2;
+    const mx = ax - vpRect.left + vp.scrollLeft - DOT_AXIS_PAD;
+    const my = ay - vpRect.top + vp.scrollTop - DOT_AXIS_PAD;
+    const col = mx / S.zoom;
+    const row = my / S.zoom;
 
-function _dotSliderSelectCell() {
-    const S = _dotPlotState;
-    if ((!S.scores && !S.matchMap)) return;
-    const sliderA = document.getElementById('dotPlotSeqASlider');
-    const sliderB = document.getElementById('dotPlotSeqBSlider');
-    if (!sliderA || !sliderB) return;
-    const row = Math.max(0, Math.min(S.rows - 1, (parseInt(sliderA.value) || 1) - 1));
-    const col = Math.max(0, Math.min(S.cols - 1, (parseInt(sliderB.value) || 1) - 1));
-    S.pinnedRow = row;
-    S.pinnedCol = col;
-    if (S._frozen) {
-        S._frozenRow = row;
-        S._frozenCol = col;
+    S.zoom = Math.max(0.5, Math.min(24, Math.round(S.zoom * factor * 10) / 10));
+    _dotRender();
+
+    vp.scrollLeft = DOT_AXIS_PAD + col * S.zoom - (ax - vpRect.left);
+    vp.scrollTop = DOT_AXIS_PAD + row * S.zoom - (ay - vpRect.top);
+
+    if (S.lastRow >= 0) {
+        _dotDrawOverlay(S.lastRow, S.lastCol);
+        _dotUpdateHoverInfo(S.lastRow, S.lastCol, { force: S._frozen });
     }
-    S.lastRow = row;
-    S.lastCol = col;
-    _dotSyncSliders(row, col);
-    _dotDrawOverlay(row, col);
-    _dotUpdateHoverInfo(row, col, { force: true });
+}
+
+function _dotBindPlotWheel(el) {
+    if (!el || el._dotWheelBound) return;
+    el._dotWheelBound = true;
+    el.addEventListener('wheel', (e) => {
+        const S = _dotPlotState;
+        if ((!S.scores && !S.matchMap)) return;
+        e.stopPropagation();
+
+        if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+            _dotApplyZoom(factor, e.clientX, e.clientY);
+        }
+    }, { passive: false });
 }
 
 function _dotUpdateHoverInfo(row, col, options = {}) {
@@ -13174,19 +13163,13 @@ function _dotUpdateHoverInfo(row, col, options = {}) {
         };
     }
 
-    _dotSyncSliders(row, col);
     if (panelEl) panelEl.style.display = 'block';
 }
 
 
 function _dotClearHoverInfo() {
     const S = _dotPlotState;
-    if (S._frozen) {
-        const frozenRow = S._frozenRow >= 0 ? S._frozenRow : S.pinnedRow;
-        const frozenCol = S._frozenCol >= 0 ? S._frozenCol : S.pinnedCol;
-        if (frozenRow >= 0 && frozenCol >= 0) _dotSyncSliders(frozenRow, frozenCol);
-        return;
-    }
+    if (S._frozen) return;
     const hoverEl = document.getElementById('dotPlotHover');
     const metaEl = document.getElementById('dotPlotAlignMeta');
     const panelEl = document.getElementById('dotPlotAlignPanel');
@@ -13579,7 +13562,6 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     const ms = performance.now() - t0;
     S.computing = false;
     _dotBuildImage();
-    _dotConfigureSliders();
     _dotFitView();
     S.lastRow = S.lastCol = -1;
     if (statusEl) statusEl.textContent = `${S.seqA.length} Ãƒâ€” ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
@@ -13685,22 +13667,16 @@ function _initDotPlotEvents() {
                 showMessage('FROZEN — double-click to unfreeze.', 3000);
             }
         });
-        // Mouse wheel zoom
         const viewport = document.getElementById('dotPlotViewport');
-        if (viewport) {
-            viewport.addEventListener('wheel', (e) => {
-                const S = _dotPlotState;
-                if ((!S.scores && !S.matchMap)) return;
-                e.preventDefault();
-                const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-                S.zoom = Math.max(0.5, Math.min(24, Math.round(S.zoom * factor * 10) / 10));
-                _dotRender(); // image unchanged, only scale needs re-render
-                if (S.lastRow >= 0) {
-                    _dotDrawOverlay(S.lastRow, S.lastCol);
-                    _dotUpdateHoverInfo(S.lastRow, S.lastCol);
-                }
-            }, { passive: false });
-        }
+        _dotBindPlotWheel(viewport);
+        _dotBindPlotWheel(overlay);
+        const dotModal = document.getElementById('dotPlotModal');
+        const dotDialog = document.getElementById('dotPlotDialog');
+        [dotModal, dotDialog].forEach((el) => {
+            if (!el || el._dotWheelBound) return;
+            el._dotWheelBound = true;
+            el.addEventListener('wheel', (e) => { e.stopPropagation(); }, { passive: false, capture: true });
+        });
     }
     if (threshSlider) { _dotOnModeChange();
         threshSlider.addEventListener('input', () => {
@@ -13732,10 +13708,10 @@ function _initDotPlotEvents() {
             }
         });
     }
-    const sliderA = document.getElementById('dotPlotSeqASlider');
-    const sliderB = document.getElementById('dotPlotSeqBSlider');
-    if (sliderA) sliderA.addEventListener('input', _dotSliderSelectCell);
-    if (sliderB) sliderB.addEventListener('input', _dotSliderSelectCell);
+    const zoomInBtn = document.getElementById('dotPlotZoomIn');
+    const zoomOutBtn = document.getElementById('dotPlotZoomOut');
+    if (zoomInBtn) zoomInBtn.addEventListener('click', () => _dotApplyZoom(1.15));
+    if (zoomOutBtn) zoomOutBtn.addEventListener('click', () => _dotApplyZoom(1 / 1.15));
     if (recalcBtn) {
         recalcBtn.addEventListener('click', () => {
             const S = _dotPlotState;
