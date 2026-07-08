@@ -13248,7 +13248,8 @@ function _dotRender() {
             for (let j = 0; j < S.cols; j++) {
                 const x = DOT_AXIS_PAD + Math.floor((j + 0.5) * colW);
                 const idx = (i * S.cols + j) * 4;
-                if (id[idx] > 240 && id[idx+1] > 240 && id[idx+2] > 240) continue;
+                const isMatch = S.spinMode ? (S.matchMap && S.matchMap[i * S.cols + j]) : (id[idx] < 128);
+                if (!isMatch) continue;
                 const chA = S.seqA[i] || 'N', chB = S.seqB[j] || 'N';
                 const txt = chA + chB;
                 ctx.fillStyle = 'rgba(0,0,0,0.7)';
@@ -13656,6 +13657,28 @@ function _initDotPlotEvents() {
             _dotUpdateHoverInfo(row, col);
             showMessage(`Pinned: A${row + 1} / B${col + 1}. Click \"Copy Region\" to copy FASTA.`, 2500);
         });
+        // Double-click to freeze/unfreeze alignment panel
+        overlay.addEventListener('dblclick', (e) => {
+            const S = _dotPlotState;
+            if ((!S.scores && !S.matchMap)) return;
+            e.preventDefault();
+            const rect = overlay.getBoundingClientRect();
+            const col = Math.floor((e.clientX - rect.left - DOT_AXIS_PAD) / S.zoom);
+            const row = Math.floor((e.clientY - rect.top - DOT_AXIS_PAD) / S.zoom);
+            if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
+            if (S._frozen) {
+                _dotUnfreeze();
+                showMessage('Unfrozen.', 1500);
+            } else {
+                S.pinnedRow = row; S.pinnedCol = col;
+                _dotUpdateHoverInfo(row, col);
+                S._frozen = true;
+                S._frozenRow = row; S._frozenCol = col; S._frozenSlider = 0;
+                _dotUpdateSpinScroll();
+                _dotDrawOverlay(row, col);
+                showMessage('FROZEN \u2014 double-click to unfreeze.', 3000);
+            }
+        });
         // Wheel zoom: capture on dialog to prevent modal scroll, zoom on viewport
         const dotDialog = document.getElementById('dotPlotDialog');
         const dotViewport = document.getElementById('dotPlotViewport');
@@ -13741,6 +13764,36 @@ function _initDotPlotEvents() {
             a.click();
         });
     }
+    // SPIN-style scroll buttons for alignment display
+    ['spinScrollLL','spinScrollL','spinScrollR','spinScrollRR'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            const S = _dotPlotState;
+            if (!S._frozen || S._frozenRow == null) return;
+            const step = id.includes('LL') || id.includes('RR') ? 10 : 1;
+            const dir = id.includes('R') ? 1 : -1;
+            S._frozenSlider = (S._frozenSlider || 0) + step * dir;
+            const maxNeg = Math.min(S._frozenRow, S._frozenCol);
+            const maxPos = Math.min(S.rows - 1 - S._frozenRow, S.cols - 1 - S._frozenCol);
+            if (S._frozenSlider < -maxNeg) S._frozenSlider = -maxNeg;
+            if (S._frozenSlider > maxPos) S._frozenSlider = maxPos;
+            const r = S._frozenRow + S._frozenSlider;
+            const c = S._frozenCol + S._frozenSlider;
+            if (r >= 0 && c >= 0 && r < S.rows && c < S.cols) {
+                _dotDrawOverlay(r, c);
+                _dotUpdateHoverInfo(r, c);
+            }
+            _dotUpdateSpinScroll();
+        });
+    });
+    const lockBtn = document.getElementById('spinLockBtn');
+    if (lockBtn) lockBtn.addEventListener('click', () => {
+        const S = _dotPlotState;
+        S._spinLocked = !S._spinLocked;
+        lockBtn.innerHTML = S._spinLocked ? '&#128274;' : '&#128275;';
+        lockBtn.style.background = S._spinLocked ? '#d4edda' : '';
+    });
     const copyBtn = document.getElementById('dotPlotCopyRegion');
     if (copyBtn) {
         copyBtn.addEventListener('click', () => {
