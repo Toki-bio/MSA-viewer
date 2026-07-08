@@ -1,4 +1,4 @@
-// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+﻿// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // ViewAlign Ã¢â‚¬â€ browser-based multiple sequence alignment viewer & editor
 // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 //
@@ -13191,10 +13191,10 @@ function _dotRender() {
     const ctx = canvas.getContext('2d', { alpha: false });
     const dpr = window.devicePixelRatio || 1;
     const z = S.zoom;
-    const plotW = Math.ceil(S.cols * z);
-    const plotH = Math.ceil(S.rows * z);
-    const totalW = DOT_AXIS_PAD + plotW + 2;
-    const totalH = DOT_AXIS_PAD + plotH + 2;
+    const plotW = Math.round(S.cols * z);
+    const plotH = Math.round(S.rows * z);
+    const totalW = DOT_AXIS_PAD + plotW + 1;
+    const totalH = DOT_AXIS_PAD + plotH + 1;
     // HiDPI: scale backing store, keep CSS size at logical pixels
     canvas.width = totalW * dpr; canvas.height = totalH * dpr;
     canvas.style.width = totalW + 'px'; canvas.style.height = totalH + 'px';
@@ -13381,9 +13381,9 @@ function _dotDrawOverlay(row, col) {
     if (!overlay) return;
     const oCtx = overlay.getContext('2d');
     const z = S.zoom;
-    const plotW = Math.ceil(S.cols * z), plotH = Math.ceil(S.rows * z);
-    const totalW = DOT_AXIS_PAD + plotW + 2;
-    const totalH = DOT_AXIS_PAD + plotH + 2;
+    const plotW = Math.round(S.cols * z), plotH = Math.round(S.rows * z);
+    const totalW = DOT_AXIS_PAD + plotW + 1;
+    const totalH = DOT_AXIS_PAD + plotH + 1;
     oCtx.clearRect(0, 0, totalW, totalH);
     if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
     const colW = plotW / S.cols, rowH = plotH / S.rows;
@@ -13398,7 +13398,7 @@ function _dotDrawOverlay(row, col) {
     // Diagonal trace — snap to pixel grid, ceil size to cover full dot area
     const range = S.scoreMax - S.scoreMin || 1;
     oCtx.fillStyle = 'rgba(100,230,160,0.85)';
-    const pxSz = Math.ceil(colW); // ceil avoids hairline gaps between green and dot
+    const pxSz = Math.max(1, Math.round(colW)); // round to match dot rendering
     let r = row, c = col;
     if (S.spinMode && S.matchMap) {
         // SPIN: walk diagonal using binary matchMap
@@ -13555,9 +13555,9 @@ function _initDotPlotEvents() {
             const oCtx = overlay.getContext('2d');
             const S = _dotPlotState;
             const z = S.zoom;
-            const pW = Math.ceil(S.cols * z), pH = Math.ceil(S.rows * z);
-            const tw = DOT_AXIS_PAD + pW + 2;
-            const th = DOT_AXIS_PAD + pH + 2;
+            const pW = Math.round(S.cols * z), pH = Math.round(S.rows * z);
+            const tw = DOT_AXIS_PAD + pW + 1;
+            const th = DOT_AXIS_PAD + pH + 1;
             oCtx.clearRect(0, 0, tw, th);
             _dotPlotState.lastRow = _dotPlotState.lastCol = -1;
             _dotClearHoverInfo();
