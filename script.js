@@ -13361,7 +13361,7 @@ const filtered = regions.filter(r => {
     if (r.diagonal === 0 && isSelf && r.length >= S.rows * 0.8) return false;
     return true;
 });
-regions.sort((a, b) => b.length - a.length || b.avgScore - a.avgScore);
+filtered.sort((a, b) => b.length - a.length || b.avgScore - a.avgScore);
     S.regions = filtered.slice(0, 30);
     _dotRenderRegionList();
 }
