@@ -13080,15 +13080,26 @@ function _dotUpdateHoverInfo(row, col) {
 
     const norm = _dotNormAt(row, col);
 
-    // Compute context slice dimensions first (used by both hover info and panel)
+    // Compute context slice — always try to show full sequences when they fit
     const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
+    const maxWindow = context * 2 + 1;
     const diag = col - row;
     let a0 = row - context, b0 = col - context;
     if (a0 < 0) { b0 += -a0; a0 = 0; }
     if (b0 < 0) { a0 += -b0; b0 = 0; }
-    const maxA = S.seqA.length - a0;
-    const maxB = S.seqB.length - b0;
-    const sliceLen = Math.min(context * 2 + 1, maxA, maxB);
+    let sliceLen = Math.min(maxWindow, S.seqA.length - a0, S.seqB.length - b0);
+    // If window has spare room, extend left to show sequence start
+    let slack = maxWindow - sliceLen;
+    if (slack > 0 && a0 > 0) {
+        const ext = Math.min(slack, a0);
+        a0 -= ext; b0 -= ext; sliceLen += ext;
+        slack -= ext;
+    }
+    // If still has room, extend right to show sequence end
+    if (slack > 0) {
+        const ext = Math.min(slack, S.seqA.length - (a0 + sliceLen), S.seqB.length - (b0 + sliceLen));
+        sliceLen += ext;
+    }
 
     if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}  ⌒ ${a0+1}-${a0+sliceLen}/${S.seqA.length}`;
 
@@ -13440,14 +13451,26 @@ function _dotDrawOverlay(row, col) {
     oCtx.textAlign = 'right'; oCtx.textBaseline = 'middle';
     oCtx.fillText(String(row + 1), DOT_AXIS_PAD - 2, cy);
 
-    // Show nucleotide letters on main diagonal when zoomed in (diagnostic)
-    if (colW >= 4 && rowH >= 4 && S.seqA === S.seqB) {
-        oCtx.fillStyle = 'rgba(100,100,100,0.35)'; oCtx.font = `${Math.min(8, Math.floor(colW * 0.7))}px system-ui`;
+    // Draw nucleotide letters on dots when zoomed in enough (diagnostic + informative)
+    if (colW >= 6 && rowH >= 6) {
+        const fs = Math.max(8, Math.min(14, Math.floor(colW * 0.85)));
+        oCtx.font = `bold ${fs}px system-ui`;
         oCtx.textAlign = 'center'; oCtx.textBaseline = 'middle';
-        for (let i = 0; i < S.rows && i < S.cols; i++) {
-            const lx = DOT_AXIS_PAD + Math.floor((i + 0.5) * colW);
-            const ly = DOT_AXIS_PAD + Math.floor((i + 0.5) * rowH);
-            oCtx.fillText(S.seqA[i] || 'N', lx, ly);
+        // Draw letters on the main diagonal cells
+        const limit = Math.min(S.rows, S.cols);
+        for (let i = 0; i < limit; i++) {
+            const cxL = DOT_AXIS_PAD + Math.floor((i + 0.5) * colW);
+            const cyL = DOT_AXIS_PAD + Math.floor((i + 0.5) * rowH);
+            const ch = S.seqA[i] || 'N';
+            // Dark outline for readability on any background
+            oCtx.fillStyle = 'rgba(0,0,0,0.7)';
+            oCtx.fillText(ch, cxL + 0.8, cyL + 0.8);
+            oCtx.fillText(ch, cxL - 0.8, cyL + 0.8);
+            oCtx.fillText(ch, cxL + 0.8, cyL - 0.8);
+            oCtx.fillText(ch, cxL - 0.8, cyL - 0.8);
+            // Bright white fill
+            oCtx.fillStyle = '#fff';
+            oCtx.fillText(ch, cxL, cyL);
         }
     }
 
@@ -13644,6 +13667,16 @@ function _initDotPlotEvents() {
                 if (S.lastRow >= 0) {
                     _dotDrawOverlay(S.lastRow, S.lastCol);
                 }
+            }
+        });
+    }
+    // Context input: re-trigger panel update on change
+    const ctxInput = document.getElementById('dotPlotContextRadius');
+    if (ctxInput) {
+        ctxInput.addEventListener('input', () => {
+            const S = _dotPlotState;
+            if (S.lastRow >= 0 && S.lastCol >= 0) {
+                _dotUpdateHoverInfo(S.lastRow, S.lastCol);
             }
         });
     }
