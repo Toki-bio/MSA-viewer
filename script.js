@@ -13053,6 +13053,7 @@ function _dotUpdateHoverInfo(row, col) {
     const panelEl = document.getElementById('dotPlotAlignPanel');
 
     const norm = _dotNormAt(row, col);
+    console.log('hover row='+row+' col='+col+' a0='+a0+' b0='+b0+' zoom='+S.zoom);
     if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}`;
 
     if (panelEl) {
@@ -13231,8 +13232,8 @@ function _dotFitView() {
     if ((!S.scores && !S.matchMap)) return;
     const vp = document.getElementById('dotPlotViewport');
     if (!vp) return;
-    const vw = (vp.clientWidth || 600) - DOT_AXIS_PAD - 20;
-    const vh = (vp.clientHeight || 400) - DOT_AXIS_PAD - 20;
+    const vw = (vp.clientWidth || 600) - DOT_AXIS_PAD - 4;
+    const vh = (vp.clientHeight || 400) - DOT_AXIS_PAD - 4;
     if (S.cols === 0 || S.rows === 0) return;
     const z = Math.min(vw / S.cols, vh / S.rows, 24);
     S.zoom = Math.max(0.5, Math.round(z * 10) / 10);
@@ -13505,11 +13506,8 @@ function _initDotPlotEvents() {
             hoverRaf = requestAnimationFrame(() => {
                 hoverRaf = 0;
                 const rect = overlay.getBoundingClientRect();
-                const vp = document.getElementById('dotPlotViewport');
-                const sx = vp ? vp.scrollLeft : 0;
-                const sy = vp ? vp.scrollTop : 0;
-                const col = Math.floor((e.clientX - rect.left + sx - DOT_AXIS_PAD) / S.zoom);
-                const row = Math.floor((e.clientY - rect.top + sy - DOT_AXIS_PAD) / S.zoom);
+                const col = Math.floor((e.clientX - rect.left - DOT_AXIS_PAD) / S.zoom);
+                const row = Math.floor((e.clientY - rect.top - DOT_AXIS_PAD) / S.zoom);
                 if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) {
                     _dotClearHoverInfo();
                     return;
