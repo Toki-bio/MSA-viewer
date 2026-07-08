@@ -4448,9 +4448,16 @@ function setBlockSizeToScreen() {
     // Update slider and input
     const slider = el('blockSizeSlider');
     const input = el('blockSizeInput');
+    const prev = parseInt(slider?.value || '200', 10);
     if (slider) slider.value = chars;
     if (input) input.value = chars;
-    renderAlignment();
+    // Block size only affects Block mode. Canvas/Full/Compact don't reflow to it,
+    // so avoid a redundant second full render on load for those modes. In Block
+    // mode, re-render only when the computed size actually changed.
+    const inBlockMode = !!el('modeBlocks')?.checked;
+    if (inBlockMode && chars !== prev) {
+        renderAlignment();
+    }
 }
 function onShadeModeChange() {
     validateThresholds();
