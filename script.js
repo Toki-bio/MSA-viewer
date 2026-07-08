@@ -12978,7 +12978,8 @@ let _dotPlotState = {
     alignMapA: null,
     alignMapB: null,
     rowIndexA: -1,
-    rowIndexB: -1
+    rowIndexB: -1,
+    _frozen: false
 };
 const DOT_AXIS_PAD = 50;
 
@@ -13095,6 +13096,13 @@ function _dotUpdateHoverInfo(row, col) {
     if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}  A[${a0+1}-${a1}] B[${b0+1}-${b1}]`;
 
     if (panelEl) {
+        if (S._frozen) {
+            panelEl.style.border = "2px solid #4a9eff";
+            panelEl.style.background = "#f0f8ff";
+        } else {
+            panelEl.style.border = "1px solid #d8d8d8";
+            panelEl.style.background = "#f7f7f7";
+
         // Pad slices to align at cursor position
         const padA = Math.max(0, hoverB - hoverA);
         const padB = Math.max(0, hoverA - hoverB);
@@ -13122,6 +13130,8 @@ function _dotUpdateHoverInfo(row, col) {
             `B ${String(b0 + 1).padStart(5)}  ${bLine}`;
 
         S._copyRegion = { aSlice, bSlice, aStart: a0, bStart: b0, nameA: S.nameA, nameB: S.nameB };
+    
+        }
     }
 
     if (panelEl) panelEl.style.display = 'block';
@@ -13236,6 +13246,8 @@ function _dotRender() {
             const y = DOT_AXIS_PAD + Math.floor((i + 0.5) * rowH);
             for (let j = 0; j < S.cols; j++) {
                 const x = DOT_AXIS_PAD + Math.floor((j + 0.5) * colW);
+                const idx = (i * S.cols + j) * 4;
+                if (id[idx] > 240 && id[idx+1] > 240 && id[idx+2] > 240) continue;
                 const chA = S.seqA[i] || 'N', chB = S.seqB[j] || 'N';
                 const txt = chA + chB;
                 ctx.fillStyle = 'rgba(0,0,0,0.7)';
@@ -13558,6 +13570,33 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
 }
 
 
+function _dotUnfreeze() {
+    const S = _dotPlotState;
+    S._frozen = false; S._frozenRow = S._frozenCol = undefined; S._frozenSlider = undefined;
+    const sl = document.getElementById('dotPlotFreezeSlider');
+    if (sl) sl.style.display = 'none';
+    const fl = document.getElementById('dotPlotFreezeLabel');
+    if (fl) fl.style.display = 'none';
+}
+
+function _dotUpdateFreezeSlider() {
+    const S = _dotPlotState;
+    if (!S._frozen || S._frozenRow == null) return;
+    const maxNeg = Math.min(S._frozenRow, S._frozenCol);
+    const maxPos = Math.min(S.rows - 1 - S._frozenRow, S.cols - 1 - S._frozenCol);
+    const sl = document.getElementById('dotPlotFreezeSlider');
+    if (sl) {
+        sl.min = -maxNeg;
+        sl.max = maxPos;
+        sl.value = S._frozenSlider || 0;
+        sl.style.display = 'inline-block';
+    }
+    const fl = document.getElementById('dotPlotFreezeLabel');
+    if (fl) {
+        fl.textContent = 'Slider: 0';
+        fl.style.display = 'inline';
+    }
+}
 function _initDotPlotEvents() {
     const overlay = document.getElementById('dotPlotOverlay');
     const threshSlider = document.getElementById('dotPlotThreshold');
