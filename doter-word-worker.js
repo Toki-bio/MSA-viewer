@@ -1,7 +1,7 @@
-/* ── Doter Word-Match worker (SPIN/dottup style) ─────────────────
-   Exact k-mer (word) matching. For windowSize=9, wordSize defaults to 3.
-   Returns boolean matchMap (1=match, 0=no) plus diagonal info.
-   Much faster than sliding-window scoring.                             */
+/* Doter Word-Match worker (SPIN/dottup style)
+   Exact k-mer (word) matching. Returns boolean matchMap (1=match, 0=no).
+   Marks the full word extent along the diagonal — not just the start —
+   so diagonals are continuous with no gaps at word boundaries.          */
 self.addEventListener('message', (event) => {
   try {
     const { seqA, seqB, wordSize } = event.data;
@@ -16,19 +16,20 @@ self.addEventListener('message', (event) => {
       bMap.get(w).push(j);
     }
 
-    // For each word in seqA, mark matching positions
-    const matchMap = new Uint8Array(N * M); // 1 = exact word match at (i,j)
+    // For each word in seqA, mark matching positions — full word extent along diagonal
+    const matchMap = new Uint8Array(N * M);
     for (let i = 0; i <= N - W; i++) {
       const w = seqA.slice(i, i + W);
       const hits = bMap.get(w);
       if (!hits) continue;
       for (const j of hits) {
-        // Mark the START of the matching word
-        matchMap[i * M + j] = 1;
+        // Mark all W positions of the matching word along the diagonal
+        for (let k = 0; k < W; k++) {
+          if (i + k < N && j + k < M) matchMap[(i + k) * M + (j + k)] = 1;
+        }
       }
     }
 
-    // Transfer to main thread
     self.postMessage(
       { matchMap, rows: N, cols: M, wordSize: W },
       [matchMap.buffer]

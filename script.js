@@ -13079,18 +13079,22 @@ function _dotUpdateHoverInfo(row, col) {
     const panelEl = document.getElementById('dotPlotAlignPanel');
 
     const norm = _dotNormAt(row, col);
-    if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}`;
+
+    // Compute context slice dimensions first (used by both hover info and panel)
+    const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
+    const diag = col - row;
+    let a0 = row - context, b0 = col - context;
+    if (a0 < 0) { b0 += -a0; a0 = 0; }
+    if (b0 < 0) { a0 += -b0; b0 = 0; }
+    const maxA = S.seqA.length - a0;
+    const maxB = S.seqB.length - b0;
+    const sliceLen = Math.min(context * 2 + 1, maxA, maxB);
+
+    if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}  ⌒ ${a0+1}-${a0+sliceLen}/${S.seqA.length}`;
 
     if (panelEl) {
-        // The diagonal IS the alignment: seqA[row+k] â†” seqB[col+k]
+        // The diagonal IS the alignment: seqA[row+k] ↔ seqB[col+k]
         // Extract equal-length slices centered on the hover position
-        const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
-        const diag = col - row; let a0 = row - context; let b0 = col - context;
-        if (a0 < 0) { b0 += -a0; a0 = 0; }
-        if (b0 < 0) { a0 += -b0; b0 = 0; }
-        const maxA = S.seqA.length - a0;
-        const maxB = S.seqB.length - b0;
-        const sliceLen = Math.min(context * 2 + 1, maxA, maxB);
         const hoverPos = row - a0; // position of hover col within slice
 
         const aSlice = S.seqA.slice(a0, a0 + sliceLen);
@@ -13208,16 +13212,43 @@ function _dotRender() {
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, totalW, totalH);
 
-    const tmp = document.createElement('canvas');
-    tmp.width = S.cols; tmp.height = S.rows;
-    tmp.getContext('2d').putImageData(S.dotImage, 0, 0);
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(tmp, DOT_AXIS_PAD, DOT_AXIS_PAD, plotW, plotH);
+    const colW = plotW / S.cols; // column width in logical px
+    const rowH = plotH / S.rows;
 
-    // Axes — border drawn outside image so it doesn't clip edge dots
-    ctx.font = '11px system-ui, sans-serif';
+    // Draw dots directly — pixel-perfect, no drawImage nearest-neighbor artifacts
+    const imgData = S.dotImage.data;
+    for (let i = 0; i < S.rows; i++) {
+        const y = DOT_AXIS_PAD + Math.round(i * rowH);
+        const h = Math.max(1, Math.round((i + 1) * rowH) - Math.round(i * rowH));
+        // Batch consecutive same-colored pixels into horizontal runs
+        let runStart = DOT_AXIS_PAD;
+        let runColor = -1;
+        for (let j = 0; j < S.cols; j++) {
+            const idx = (i * S.cols + j) * 4;
+            const r = imgData[idx], g = imgData[idx + 1], b = imgData[idx + 2];
+            const hex = (r << 16) | (g << 8) | b;
+            const x = DOT_AXIS_PAD + Math.round(j * colW);
+            const w = Math.max(1, Math.round((j + 1) * colW) - Math.round(j * colW));
+            if (hex !== runColor) {
+                if (runColor >= 0) {
+                    ctx.fillStyle = '#' + runColor.toString(16).padStart(6, '0');
+                    ctx.fillRect(runStart, y, x - runStart, h);
+                }
+                runStart = x;
+                runColor = hex;
+            }
+        }
+        if (runColor >= 0) {
+            ctx.fillStyle = '#' + runColor.toString(16).padStart(6, '0');
+            const endX = DOT_AXIS_PAD + Math.round(S.cols * colW);
+            ctx.fillRect(runStart, y, endX - runStart, h);
+        }
+    }
+
+    // Axes — border outside image area
     ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
     ctx.strokeRect(DOT_AXIS_PAD - 1, DOT_AXIS_PAD - 1, plotW + 2, plotH + 2);
+    ctx.font = '11px system-ui, sans-serif';
 
     const maxTicksX = Math.max(2, Math.floor(plotW / 50));
     const maxTicksY = Math.max(2, Math.floor(plotH / 40));
@@ -13435,6 +13466,17 @@ function _dotDrawOverlay(row, col) {
     oCtx.fillText(String(col + 1), cx, DOT_AXIS_PAD - 1);
     oCtx.textAlign = 'right'; oCtx.textBaseline = 'middle';
     oCtx.fillText(String(row + 1), DOT_AXIS_PAD - 2, cy);
+
+    // Show nucleotide letters on main diagonal when zoomed in (diagnostic)
+    if (colW >= 4 && rowH >= 4 && S.seqA === S.seqB) {
+        oCtx.fillStyle = 'rgba(100,100,100,0.35)'; oCtx.font = `${Math.min(8, Math.floor(colW * 0.7))}px system-ui`;
+        oCtx.textAlign = 'center'; oCtx.textBaseline = 'middle';
+        for (let i = 0; i < S.rows && i < S.cols; i++) {
+            const lx = DOT_AXIS_PAD + Math.floor((i + 0.5) * colW);
+            const ly = DOT_AXIS_PAD + Math.floor((i + 0.5) * rowH);
+            oCtx.fillText(S.seqA[i] || 'N', lx, ly);
+        }
+    }
 
     // Draw pinned position marker (red crosshair) if set
     if (S.pinnedRow >= 0 && S.pinnedCol >= 0) {

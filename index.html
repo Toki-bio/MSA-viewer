@@ -832,22 +832,32 @@
                     <select id="dotPlotSeqBSelect" style="font-size:11px;max-width:180px;" title="Sequence B (X-axis)"></select>
                 <button id="dotPlotCloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;padding:0 4px;">✕</button>
             </div>
-            <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;font-size:12px;flex-shrink:0;flex-wrap:wrap;">
-                <div style="display:flex;gap:6px;align-items:center;border:1px solid #ddd;border-radius:4px;padding:4px 10px;background:#f8f8ff;">
-                    <label style="font-weight:bold;cursor:pointer;"><input type="radio" name="dotPlotMode" value="spin" checked onchange="_dotOnModeChange()"> SPIN</label>
-                    <label style="font-size:11px;color:#666;">Word: <input type="number" id="dotPlotWindow" value="9" min="2" max="20" style="width:42px;height:20px;font-size:11px;"></label>
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;font-size:12px;flex-shrink:0;flex-wrap:wrap;">
+                <div style="display:flex;align-items:center;border:1px solid #c8d6e5;border-radius:5px;padding:3px 10px;background:#f0f4ff;gap:8px;">
+                    <input type="radio" name="dotPlotMode" value="spin" id="dotPlotModeSpin" checked onchange="_dotOnModeChange()">
+                    <label for="dotPlotModeSpin" style="font-weight:bold;cursor:pointer;font-size:12px;">SPIN</label>
+                    <span style="color:#666;font-size:11px;">Word:</span>
+                    <input type="number" id="dotPlotWindow" value="9" min="2" max="20" style="width:44px;height:22px;font-size:11px;text-align:center;">
                 </div>
-                <div style="display:flex;gap:6px;align-items:center;border:1px solid #ddd;border-radius:4px;padding:4px 10px;background:#fff8f0;">
-                    <label style="font-weight:bold;cursor:pointer;"><input type="radio" name="dotPlotMode" value="doter" onchange="_dotOnModeChange()"> Doter</label>
-                    <label style="font-size:11px;color:#666;">Win: <input type="number" id="dotPlotDoterWindow" value="9" min="1" max="61" step="2" style="width:42px;height:20px;font-size:11px;"></label>
-                    <label style="font-size:11px;color:#666;">Thr: <input type="range" id="dotPlotThreshold" min="0" max="100" value="55" style="width:80px;vertical-align:middle;"><span id="dotPlotThreshVal">55%</span></label>
+                <div style="display:flex;align-items:center;border:1px solid #e8d5b0;border-radius:5px;padding:3px 10px;background:#fffaf0;gap:8px;">
+                    <input type="radio" name="dotPlotMode" value="doter" id="dotPlotModeDoter" onchange="_dotOnModeChange()">
+                    <label for="dotPlotModeDoter" style="font-weight:bold;cursor:pointer;font-size:12px;">Doter</label>
+                    <span style="color:#666;font-size:11px;">Win:</span>
+                    <input type="number" id="dotPlotDoterWindow" value="9" min="1" max="61" step="2" style="width:44px;height:22px;font-size:11px;text-align:center;">
+                    <span style="color:#666;font-size:11px;">Thr:</span>
+                    <input type="range" id="dotPlotThreshold" min="30" max="100" value="55" style="width:70px;vertical-align:middle;">
+                    <span id="dotPlotThreshVal" style="font-size:11px;min-width:30px;">55%</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:5px;border:1px solid #ddd;border-radius:5px;padding:3px 10px;">
+                    <span style="font-size:11px;color:#666;">Context:</span>
+                    <input type="number" id="dotPlotContextRadius" value="30" min="0" max="100" step="5" style="width:44px;text-align:center;font-size:11px;height:22px;" title="Bases around cursor to show in alignment">
+                    <span style="font-size:11px;color:#666;">bp</span>
                 </div>
                 <span style="flex:1;"></span>
-                <label>Context: <input type="number" id="dotPlotContextRadius" value="30" min="0" max="100" step="5" style="width:45px;" title="Extra bases around hover"> bp</label>
-                <label><input type="checkbox" id="dotPlotRevComp"> RevComp B</label>
-                <button id="dotPlotRecalc" style="font-size:11px;padding:3px 10px;cursor:pointer;">↻ Recalc</button>
-                <button id="dotPlotExport" style="font-size:11px;padding:3px 10px;cursor:pointer;">PNG</button>
-                <button id="dotPlotExportSvg" style="font-size:11px;padding:3px 10px;cursor:pointer;">SVG</button>
+                <label style="font-size:11px;cursor:pointer;"><input type="checkbox" id="dotPlotRevComp"> RC</label>
+                <button id="dotPlotRecalc" style="font-size:11px;padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #bbb;background:#f5f5f5;">↻ Recalc</button>
+                <button id="dotPlotExport" style="font-size:11px;padding:4px 10px;cursor:pointer;border-radius:4px;border:1px solid #bbb;background:#f5f5f5;">PNG</button>
+                <button id="dotPlotExportSvg" style="font-size:11px;padding:4px 10px;cursor:pointer;border-radius:4px;border:1px solid #bbb;background:#f5f5f5;">SVG</button>
             </div>
             <div style="display:flex;gap:8px;flex:1;min-height:260px;">
                 <div id="dotPlotViewport" style="overflow:auto;flex:1;min-width:300px;border:1px solid #ccc;position:relative;cursor:crosshair;">
@@ -944,7 +954,7 @@ B: —</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=55"></script>
+    <script src="script.js?v=56"></script>
     <script>
 // All functionality moved to script.js
 </script>
