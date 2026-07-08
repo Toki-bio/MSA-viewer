@@ -1820,7 +1820,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     alignmentContainer.style.position = 'relative';
     // Canvas mode needs explicit height since absolute canvas has no flow height
     const top = alignmentContainer.getBoundingClientRect().top;
-    alignmentContainer.style.height = (window.innerHeight - top - 28) + 'px';
+    alignmentContainer.style.height = (window.innerHeight - top - 28 + OVERVIEW_H) + 'px';
 
     const canvas = document.createElement('canvas');
     canvas.id = 'alignmentCanvas';
@@ -1835,7 +1835,27 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const CHAR_W = m.charW;
     const CHAR_H = m.charH;
     const NAME_W = nameLen * CHAR_W + 8;
+    // Glyph cache: pre-rendered (char, bg-color, fg-color) → off-screen canvas
+    // Turns fillRect()+fillText() into a single drawImage() per cell after warm-up
+    const _glyphCache = new Map();
+    function _makeGlyph(ch, bg, fg) {
+        const k = ch + '| ' + (bg||' ') + '| ' + fg;
+        let g = _glyphCache.get(k);
+        if (!g) {
+            g = document.createElement('canvas'); g.width = CHAR_W; g.height = CHAR_H;
+            const c2 = g.getContext('2d');
+            c2.font = '12px "Courier New", monospace'; c2.textBaseline = 'top';
+            if (bg) { c2.fillStyle = bg; c2.fillRect(0, 0, CHAR_W, CHAR_H); }
+            c2.fillStyle = fg; c2.fillText(ch, 0, 0);
+            _glyphCache.set(k, g);
+        }
+        return g;
+    }
+
     const nSeqs = state.seqs.length;
+    let _lastOffX = -1, _lastOffY = -1, _dirty = false;
+    function _markDirty() { _dirty = true; }
+
     const totalContentW = NAME_W + len * CHAR_W + 4;
     const totalContentH = nSeqs * CHAR_H + 4;
 
@@ -1850,7 +1870,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     }
     resize();
     draw(); // Initial render after resize
-    window.addEventListener('resize', () => { resize(); draw(); });
+    window.addEventListener('resize', () => { resize(); _markDirty(); draw(); });
     setAlignmentColorSchemeClass();
 
     // Clamp offsets
@@ -1864,6 +1884,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // Draw
     function draw() {
         clampOffsets();
+        // Skip if offset hasn't changed and not explicitly marked dirty
+        if (!_dirty && _canvasState.offsetX === _lastOffX && _canvasState.offsetY === _lastOffY) return;
+        _lastOffX = _canvasState.offsetX; _lastOffY = _canvasState.offsetY; _dirty = false;
         const w = parseInt(canvas.style.width) || 800;
         const h = parseInt(canvas.style.height) || 600;
         const ox = _canvasState.offsetX;
@@ -1895,7 +1918,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 ctx.restore();
             }
 
-            // Residues
+            // Residues (glyph-cached: 1 drawImage per cell vs fillRect+fillText)
             for (let p = firstCol; p <= lastCol; p++) {
                 const x = NAME_W + p * CHAR_W - ox;
                 const base = seq[p] || '-';
@@ -1922,12 +1945,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     bgFill = '#fff';
                 }
 
-                if (bgFill) {
-                    ctx.fillStyle = bgFill;
-                    ctx.fillRect(x, y, CHAR_W, CHAR_H);
-                }
-                ctx.fillStyle = textFill;
-                ctx.fillText(base, x, y);
+                // Single blit from glyph cache (eliminates fillStyle+fillRect+fillStyle+fillText)
+                ctx.drawImage(_makeGlyph(base, bgFill, textFill), x, y);
             }
 
             // Row separator
@@ -1938,7 +1957,78 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // Name column separator
         ctx.fillStyle = '#ddd';
         ctx.fillRect(NAME_W - ox - 2, 0, 1, totalContentH - oy);
+
+        // Update overview minimap visible-range rect
+        if (_ovBgCanvas) {
+            const oovw = parseInt(overviewCanvas.style.width) || 800;
+            const oh = OVERVIEW_H;
+            const ovctx = overviewCanvas.getContext('2d');
+            ovctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            // Redraw cached background + new rect
+            ovctx.clearRect(0, 0, oovw, oh);
+            ovctx.drawImage(_ovBgCanvas, 0, 0);
+            const visX = ox / totalContentW * oovw;
+            const visY = oy / totalContentH * oh;
+            const visW = w / totalContentW * oovw;
+            const visH = (h - OVERVIEW_H) / totalContentH * oh;
+            ovctx.strokeStyle = 'rgba(255,0,0,0.85)';
+            ovctx.lineWidth = 1.5;
+            ovctx.strokeRect(visX, visY, Math.max(visW, 2), Math.max(visH, 2));
+        }
     }
+
+    // Build overview minimap (runs once on init, cached as _ovBgCanvas)
+    const OVERVIEW_H = 40;
+    const overviewCanvas = document.createElement('canvas');
+    overviewCanvas.id = 'alignmentOverview';
+    overviewCanvas.style.cssText = 'display:block;position:absolute;bottom:0;left:0;width:100%;height:'+OVERVIEW_H+'px;background:#fafafa;border-top:1px solid #ccc;z-index:2;cursor:pointer;';
+    alignmentContainer.appendChild(overviewCanvas);
+
+    let _ovBgCanvas = null;
+    const dpr = window.devicePixelRatio || 1;
+    function _buildOverview() {
+        const ow = parseInt(overviewCanvas.style.width) || 800;
+        const oh = OVERVIEW_H;
+        _ovBgCanvas = document.createElement('canvas');
+        _ovBgCanvas.width = ow * dpr; _ovBgCanvas.height = oh * dpr;
+        const octx = _ovBgCanvas.getContext('2d');
+        octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const sx = len / ow, sy = nSeqs / oh;
+        octx.clearRect(0, 0, ow, oh);
+        for (let y = 0; y < oh; y++) {
+            const si = Math.floor(y * sy);
+            if (si >= nSeqs) continue;
+            const seq = state.seqs[si].seq;
+            for (let x = 0; x < ow; x++) {
+                const ci = Math.floor(x * sx);
+                if (ci >= len) continue;
+                const ch = (seq[ci] || '-').toUpperCase();
+                const schemeStyle = getResidueSchemeStyle(seq[ci]);
+                if (schemeStyle && schemeStyle.bg) {
+                    octx.fillStyle = schemeStyle.bg;
+                } else if (ch === '-' || ch === '.') {
+                    octx.fillStyle = '#e0e0e0';
+                } else {
+                    octx.fillStyle = '#ddd';
+                }
+                octx.fillRect(x, y, 1, 1);
+            }
+        }
+        // Setup display canvas size
+        overviewCanvas.width = ow * dpr; overviewCanvas.height = oh * dpr;
+        overviewCanvas.style.width = ow + 'px'; overviewCanvas.style.height = oh + 'px';
+    }
+    resize(); _buildOverview();
+
+    // Click on overview to navigate
+    overviewCanvas.addEventListener('click', (e) => {
+        const rect = overviewCanvas.getBoundingClientRect();
+        const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+        const ow = parseInt(overviewCanvas.style.width) || 800;
+        _canvasState.offsetX = (cx / ow) * totalContentW - (parseInt(canvas.style.width) || 800) / 2;
+        _canvasState.offsetY = (cy / OVERVIEW_H) * totalContentH - (parseInt(canvas.style.height) || 600) / 2;
+        _markDirty(); draw();
+    });
 
     // Scroll handling
     canvas.addEventListener('wheel', (e) => {
@@ -1958,6 +2048,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             dragOx = _canvasState.offsetX;
             dragOy = _canvasState.offsetY;
             canvas.style.cursor = 'grabbing';
+                   _markDirty();
         }
     });
     window.addEventListener('mousemove', (e) => {
