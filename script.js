@@ -13065,6 +13065,8 @@ function _dotUpdateHoverInfo(row, col) {
         const maxA = S.seqA.length - a0;
         const maxB = S.seqB.length - b0;
         const sliceLen = Math.min(context * 2 + 1, maxA, maxB);
+        // Show slice ranges in hover bar
+        if (hoverEl) hoverEl.textContent += ' \u2302 A'+(a0+1)+'-'+(a0+sliceLen)+' B'+(b0+1)+'-'+(b0+sliceLen);
         const hoverPos = row - a0; // position of hover col within slice
 
         const aSlice = S.seqA.slice(a0, a0 + sliceLen);
@@ -13503,8 +13505,11 @@ function _initDotPlotEvents() {
             hoverRaf = requestAnimationFrame(() => {
                 hoverRaf = 0;
                 const rect = overlay.getBoundingClientRect();
-                const col = Math.floor((e.clientX - rect.left - DOT_AXIS_PAD) / S.zoom);
-                const row = Math.floor((e.clientY - rect.top - DOT_AXIS_PAD) / S.zoom);
+                const vp = document.getElementById('dotPlotViewport');
+                const sx = vp ? vp.scrollLeft : 0;
+                const sy = vp ? vp.scrollTop : 0;
+                const col = Math.floor((e.clientX - rect.left + sx - DOT_AXIS_PAD) / S.zoom);
+                const row = Math.floor((e.clientY - rect.top + sy - DOT_AXIS_PAD) / S.zoom);
                 if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) {
                     _dotClearHoverInfo();
                     return;
