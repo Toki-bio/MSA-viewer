@@ -404,10 +404,9 @@
                                 <input type="checkbox" id="searchBothStrands" style="margin: 0;"> Search both strands
                             </label>
                             <button id="reSitePopupBtn" style="height: 22px; font-size: 11px; padding: 0 6px;" title="Search common restriction enzyme recognition sites">Restriction Sites</button>
-                            <button id="repeatFinderMenuButton" title="Find tandem, direct, and inverted repeats in sequences" style="height: 22px; font-size: 11px; padding: 0 6px;">Repeats</button>
                             <span id="reSiteLabel" style="font-size: 10px; color: #666;"></span>
                         </div>
-                        <div id="reSitePopup" style="display:none; position:fixed; z-index:10050; top:72px; left:50%; transform:translateX(-50%); padding:12px; background:#fff; border:1px solid #888; border-radius:6px; box-shadow:0 4px 18px rgba(0,0,0,0.35); width:900px; max-width:94vw; max-height:82vh; overflow:auto; font-size:11px;">
+                        <div id="reSitePopup" style="display:none; position:fixed; z-index:10050; top:72px; left:50%; transform:translateX(-50%); padding:12px; background:#fff; border:1px solid #888; border-radius:6px; box-shadow:0 4px 18px rgba(0,0,0,0.35); width:900px; max-width:94vw; max-height:82vh; overflow:hidden; font-size:11px;">
                             <div style="font-weight:bold; margin-bottom:5px;">Restriction enzyme sites</div>
                             <div style="display:flex; gap:6px; margin-bottom:4px;"><button id="reSiteSelectAllBtn" style="height:20px; font-size:10px; padding:0 8px;">Select All</button><button id="reSiteUnselectAllBtn" style="height:20px; font-size:10px; padding:0 8px;">Unselect All</button></div>
                             <div id="reSiteList" style="display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:4px 10px; padding:6px; border:1px solid #eee; background:#fafafa;"></div>
@@ -627,6 +626,7 @@
                             <div class="button-group">
                                 <button id="buildTreeButton" title="Build a phylogenetic tree from selected sequences">Tree</button>
                                 <button id="statsButton" title="Alignment statistics: distance matrix, pairwise identity, summary">Statistics</button>
+                                <button id="repeatFinderMenuButton" title="Find tandem, direct, and inverted repeats in sequences">Repeats</button>
                             </div>
                         </div>
                         <div class="action-section action-section-settings">
@@ -823,41 +823,24 @@
     </div>
 
     <!-- Dot-Plot Modal -->
-    <div id="dotPlotModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10002;overflow:hidden;">
-        <div id="dotPlotDialog" style="background:white;margin:16px auto;padding:14px;width:92vw;height:88vh;max-width:1400px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);position:relative;display:flex;flex-direction:column;overflow:hidden;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-shrink:0;">
-                <h3 style="margin:0;font-size:14px;" id="dotPlotTitle">Dot Plot</h3>
-                    <select id="dotPlotSeqASelect" style="font-size:11px;max-width:180px;" title="Sequence A (Y-axis)"></select>
-                    <span style="font-size:12px;color:#666;">vs</span>
-                    <select id="dotPlotSeqBSelect" style="font-size:11px;max-width:180px;" title="Sequence B (X-axis)"></select>
+    <div id="dotPlotModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10002;overflow:auto;">
+        <div id="dotPlotDialog" style="background:white;margin:30px auto;padding:16px;max-width:95vw;max-height:92vh;width:900px;min-width:560px;min-height:420px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);position:relative;display:flex;flex-direction:column;overflow:auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <h3 style="margin:0;" id="dotPlotTitle">Dot Plot</h3>
                 <button id="dotPlotCloseBtn" style="border:none;background:none;font-size:20px;cursor:pointer;padding:0 4px;">✕</button>
             </div>
-            <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;font-size:12px;flex-shrink:0;flex-wrap:wrap;">
-                <div style="display:flex;align-items:center;border:1px solid #c8d6e5;border-radius:5px;padding:3px 10px;background:#f0f4ff;gap:8px;">
-                    <input type="radio" name="dotPlotMode" value="spin" id="dotPlotModeSpin" checked onchange="_dotOnModeChange()">
-                    <label for="dotPlotModeSpin" style="font-weight:bold;cursor:pointer;font-size:12px;">SPIN</label>
-                    <span style="color:#666;font-size:11px;">Word:</span>
-                    <input type="number" id="dotPlotWindow" value="6" min="2" max="20" style="width:44px;height:22px;font-size:11px;text-align:center;">
-                </div>
-                <div style="display:flex;align-items:center;border:1px solid #e8d5b0;border-radius:5px;padding:3px 10px;background:#fffaf0;gap:8px;">
-                    <input type="radio" name="dotPlotMode" value="doter" id="dotPlotModeDoter" onchange="_dotOnModeChange()">
-                    <label for="dotPlotModeDoter" style="font-weight:bold;cursor:pointer;font-size:12px;">Doter</label>
-                    <span style="color:#666;font-size:11px;">Win:</span>
-                    <input type="number" id="dotPlotDoterWindow" value="9" min="1" max="61" step="2" style="width:44px;height:22px;font-size:11px;text-align:center;">
-                    <span style="color:#666;font-size:11px;">Thr:</span>
-                    <input type="range" id="dotPlotThreshold" min="30" max="100" value="55" style="width:70px;vertical-align:middle;">
-                    <span id="dotPlotThreshVal" style="font-size:11px;min-width:30px;">55%</span>
-                </div>
-                <div style="display:flex;align-items:center;gap:5px;border:1px solid #ddd;border-radius:5px;padding:3px 10px;">
-                    <span style="font-size:11px;color:#666;">Context:</span>
-                    <input type="number" id="dotPlotContextRadius" value="30" min="0" max="100" step="5" style="width:44px;text-align:center;font-size:11px;height:22px;" title="Bases around cursor to show in alignment">
-                    <span style="font-size:11px;color:#666;">bp</span>
-                </div>
-                <span style="flex:1;"></span>
-                <label style="font-size:11px;cursor:pointer;"><input type="checkbox" id="dotPlotRevComp"> RC</label>
-                <button id="dotPlotRecalc" style="font-size:11px;padding:4px 12px;cursor:pointer;border-radius:4px;border:1px solid #bbb;background:#f5f5f5;">↻ Recalc</button>
-                <button id="dotPlotExport" style="font-size:11px;padding:4px 10px;cursor:pointer;border-radius:4px;border:1px solid #bbb;background:#f5f5f5;">PNG</button>
-                <button id="dotPlotExportSvg" style="font-size:11px;padding:4px 10px;cursor:pointer;border-radius:4px;border:1px solid #bbb;background:#f5f5f5;">SVG</button>
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px;flex-wrap:wrap;">
+                <span style="font-weight:bold;">Mode:</span>
+                <label><input type="radio" name="dotPlotMode" value="spin" checked onchange="_dotOnModeChange()"> SPIN (word)</label>
+                <label><input type="radio" name="dotPlotMode" value="doter" onchange="_dotOnModeChange()"> Doter (window)</label>
+                <span style="border-left:1px solid #ccc;height:16px;display:inline-block;margin:0 4px;"></span>
+                <label>Word/Window: <input type="number" id="dotPlotWindow" value="6" min="1" max="61" step="2" style="width:45px;"></label>
+                <label>Threshold: <input type="range" id="dotPlotThreshold" min="0" max="100" value="55" style="width:100px;vertical-align:middle;"><span id="dotPlotThreshVal">55%</span></label>
+                <label>Context: <input type="number" id="dotPlotContextRadius" value="30" min="0" max="100" step="5" style="width:45px;" title="Extra bases to show around the hover position"> bp</label>
+                <label><input type="checkbox" id="dotPlotRevComp"> RevComp B</label>
+                <button id="dotPlotRecalc" style="font-size:11px;padding:2px 8px;">Recalculate</button>
+                <button id="dotPlotExport" style="font-size:11px;padding:2px 8px;">Export PNG</button>
+                <button id="dotPlotExportSvg" style="font-size:11px;padding:2px 8px;">Export SVG</button>
             </div>
             <div style="display:flex;gap:8px;flex:1;min-height:260px;">
                 <div id="dotPlotViewport" style="overflow:auto;flex:1;min-width:300px;border:1px solid #ccc;position:relative;cursor:crosshair;">
@@ -872,10 +855,11 @@
             <div id="dotPlotStatus" style="font-size:11px;color:#666;margin-top:4px;"></div>
             <div id="dotPlotHover" style="font-size:11px;color:#555;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;"></div>
             <div id="dotPlotAlignMeta" style="font-size:11px;color:#666;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;margin-top:2px;"></div>
-            <pre id="dotPlotAlignPanel" style="margin:4px 0 0;padding:8px;border-radius:6px;border:1px solid #d8d8d8;background:#f7f7f7;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;white-space:pre;overflow-x:auto;min-height:58px;">A: -
+            <pre id="dotPlotAlignPanel" style="margin:4px 0 0;padding:8px;border-radius:6px;border:1px solid #d8d8d8;background:#f7f7f7;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;white-space:pre;overflow-x:auto;min-height:58px;">A: —
    
-B: -</pre>
-            <div id="<div <div <div <div id="dotPlotSpinScroll" style="display:none;font-size:11px;color:#4a9eff;font-weight:bold;margin-top:3px;">Frozen — double-click to unfreeze</div>
+B: —</pre>
+                <button id="dotPlotCopyRegion" style="margin-top:6px;padding:4px 10px;font-size:12px;cursor:pointer;" title="Copy aligned region as FASTA">📋 Copy Region</button>
+        </div>
     </div>
 
     <!-- Repeat/TSD Finder Modal -->
@@ -953,7 +937,7 @@ B: -</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=70"></script>
+    <script src="script.js?v=71"></script>
     <script>
 // All functionality moved to script.js
 </script>
