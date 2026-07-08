@@ -948,6 +948,12 @@ B: —</pre>
                 <span style="color:#777;">Method:</span>
                 <label title="Unweighted Pair Group Method with Arithmetic Mean"><input type="radio" name="treeMethod" value="upgma" checked> UPGMA</label>
                 <label title="Neighbor-Joining — Saitou &amp; Nei 1987"><input type="radio" name="treeMethod" value="nj"> NJ</label>
+            <span style="color:#777;margin-left:16px;">Model:</span>
+            <select id="treeDistanceModel" style="font-size:11px;padding:0 2px;height:18px;" title="Distance correction model">
+                <option value="raw">p-distance (raw)</option>
+                <option value="jc69">Jukes-Cantor (JC69)</option>
+                <option value="k80">Kimura 2-param (K80)</option>
+            </select>
             </div>
             <textarea id="treeNewickOutput" readonly style="width:100%;height:130px;box-sizing:border-box;font-family:'Courier New',monospace;font-size:11px;white-space:pre;resize:vertical;"></textarea>
             <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;margin:8px 0;">
@@ -975,7 +981,7 @@ B: —</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=81"></script>
+    <script src="script.js?v=82"></script>
     <script>
 // All functionality moved to script.js
 </script>

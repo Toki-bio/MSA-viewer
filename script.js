@@ -7850,18 +7850,68 @@ function _treeIsBase(char) {
     return /^[ACGTU]$/i.test(char || '');
 }
 
-function _alignmentPairDistance(seqOne, seqTwo) {
+// Pairwise distance metrics for phylogenetic trees
+// Returns { pDistance, transitions, transversions, compared } for model corrections
+function _alignmentPairMetrics(seqOne, seqTwo) {
+    // Purine = A,G; Pyrimidine = C,T
+    const isPurine = c => c === 'A' || c === 'G';
+    const isPyrimidine = c => c === 'C' || c === 'T';
     const maxLen = Math.max(seqOne.length, seqTwo.length);
-    let compared = 0;
-    let mismatches = 0;
+    let compared = 0, mismatches = 0, transitions = 0, transversions = 0;
     for (let position = 0; position < maxLen; position++) {
-        const baseOne = (seqOne[position] || '-').toUpperCase().replace('U', 'T');
-        const baseTwo = (seqTwo[position] || '-').toUpperCase().replace('U', 'T');
-        if (!_treeIsBase(baseOne) || !_treeIsBase(baseTwo)) continue;
+        const b1 = (seqOne[position] || '-').toUpperCase().replace('U', 'T');
+        const b2 = (seqTwo[position] || '-').toUpperCase().replace('U', 'T');
+        if (!_treeIsBase(b1) || !_treeIsBase(b2)) continue;
         compared++;
-        if (baseOne !== baseTwo) mismatches++;
+        if (b1 !== b2) {
+            mismatches++;
+            if ((isPurine(b1) && isPurine(b2)) || (isPyrimidine(b1) && isPyrimidine(b2))) {
+                transitions++;
+            } else {
+                transversions++;
+            }
+        }
     }
-    return compared > 0 ? mismatches / compared : 1;
+    const p = compared > 0 ? mismatches / compared : 0;
+    return { p, compared, mismatches, transitions, transversions };
+}
+
+// Jukes-Cantor (JC69) correction for multiple hits
+// d = -3/4 * ln(1 - 4/3 * p)
+function _jc69Distance(p) {
+    if (p >= 0.75) return Infinity; // saturation
+    if (p <= 0) return 0;
+    return -0.75 * Math.log(1 - (4 / 3) * p);
+}
+
+// Kimura 2-parameter (K80) correction
+// P = transitions/compared, Q = transversions/compared
+// d = -0.5 * ln(1 - 2P - Q) - 0.25 * ln(1 - 2Q)
+function _k80Distance(P, Q) {
+    if (P < 0) P = 0; if (Q < 0) Q = 0;
+    const t1 = 1 - 2 * P - Q;
+    const t2 = 1 - 2 * Q;
+    if (t1 <= 0 || t2 <= 0) return Infinity; // saturation
+    return -0.5 * Math.log(t1) - 0.25 * Math.log(t2);
+}
+
+// Compute pairwise distance using the selected model
+function _modelPairDistance(seqOne, seqTwo, model) {
+    const m = _alignmentPairMetrics(seqOne, seqTwo);
+    if (m.compared === 0) return 1;
+    switch (model) {
+        case 'jc69': return _jc69Distance(m.p);
+        case 'k80':
+            const P = m.transitions / m.compared;
+            const Q = m.transversions / m.compared;
+            return _k80Distance(P, Q);
+        default: return m.p; // 'raw': uncorrected p-distance
+    }
+}
+
+// Backward-compat wrapper
+function _alignmentPairDistance(seqOne, seqTwo) {
+    return _alignmentPairMetrics(seqOne, seqTwo).p;
 }
 
 function _newickName(name) {
@@ -7894,7 +7944,8 @@ function _treeNodeToText(node, indent = '', isRoot = true) {
     return text;
 }
 
-function buildUPGMATreeFromAlignment(seqObjects) {
+function buildUPGMATreeFromAlignment(seqObjects, model) {
+    model = model || 'raw';
     const sequenceCount = seqObjects.length;
     const baseDistances = Array.from({ length: sequenceCount }, () => new Array(sequenceCount).fill(0));
     let distanceTotal = 0;
@@ -7904,7 +7955,7 @@ function buildUPGMATreeFromAlignment(seqObjects) {
 
     for (let firstIndex = 0; firstIndex < sequenceCount; firstIndex++) {
         for (let secondIndex = firstIndex + 1; secondIndex < sequenceCount; secondIndex++) {
-            const distance = _alignmentPairDistance(seqObjects[firstIndex].seq, seqObjects[secondIndex].seq);
+            const distance = _modelPairDistance(seqObjects[firstIndex].seq, seqObjects[secondIndex].seq, model);
             baseDistances[firstIndex][secondIndex] = distance;
             baseDistances[secondIndex][firstIndex] = distance;
             distanceTotal += distance;
@@ -7995,14 +8046,15 @@ function buildUPGMATreeFromAlignment(seqObjects) {
  * Neighbor-Joining tree from pairwise alignment distances.
  * Saitou & Nei (1987). Same distance matrix as UPGMA, different clustering.
  */
-function buildNJTreeFromAlignment(seqObjects) {
+function buildNJTreeFromAlignment(seqObjects, model) {
+    model = model || 'raw';
     const n = seqObjects.length;
     // Compute pairwise distances
     const baseDist = Array.from({ length: n }, () => new Array(n).fill(0));
     let distanceTotal = 0, distancePairs = 0, distanceMin = Infinity, distanceMax = 0;
     for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
-            const d = _alignmentPairDistance(seqObjects[i].seq, seqObjects[j].seq);
+            const d = _modelPairDistance(seqObjects[i].seq, seqObjects[j].seq, model);
             baseDist[i][j] = d;
             baseDist[j][i] = d;
             distanceTotal += d;
@@ -8145,19 +8197,22 @@ function openTreeBuilder() {
         return;
     }
     const method = document.querySelector('input[name="treeMethod"]:checked')?.value || 'upgma';
-    showMessage(`Building ${method.toUpperCase()} tree...`, 0);
+    const modelEl = document.getElementById('treeDistanceModel');
+    const model = modelEl ? modelEl.value : 'raw';
+    const modelName = model === 'raw' ? 'p-distance' : model.toUpperCase();
+    showMessage(`Building ${method.toUpperCase()} tree (${modelName})...`, 0);
     setTimeout(() => {
         try {
             const result = method === 'nj'
-                ? buildNJTreeFromAlignment(seqObjects)
-                : buildUPGMATreeFromAlignment(seqObjects);
+                ? buildNJTreeFromAlignment(seqObjects, model)
+                : buildUPGMATreeFromAlignment(seqObjects, model);
             const modal = document.getElementById('treeBuilderModal');
             const summary = document.getElementById('treeBuilderSummary');
             const newickOutput = document.getElementById('treeNewickOutput');
             const textOutput = document.getElementById('treeTextOutput');
             const scope = state.selectedRows.size >= 2 ? 'selected sequences' : 'all sequences';
             if (summary) {
-                summary.textContent = `${result.stats.count} ${scope} Ã‚Â· alignment p-distance Ã‚Â· ${method.toUpperCase()} Ã‚Â· avg ${result.stats.averageDistance.toFixed(4)} Ã‚Â· range ${result.stats.minDistance.toFixed(4)}-${result.stats.maxDistance.toFixed(4)}`;
+                summary.textContent = `${result.stats.count} ${scope} Ã‚Â· ${modelName} Ã‚Â· ${method.toUpperCase()} Ã‚Â· avg ${result.stats.averageDistance.toFixed(4)} Ã‚Â· range ${result.stats.minDistance.toFixed(4)}-${result.stats.maxDistance.toFixed(4)}`;
             }
             if (newickOutput) newickOutput.value = result.newick;
             if (textOutput) textOutput.textContent = result.text;
