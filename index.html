@@ -862,6 +862,34 @@
 B: —</pre>
             <div id="dotPlotSpinScroll" style="display:none;font-size:11px;color:#4a9eff;font-weight:bold;margin-top:3px;">Frozen - double-click to unfreeze</div>
                 <button id="dotPlotCopyRegion" style="margin-top:6px;padding:4px 10px;font-size:12px;cursor:pointer;" title="Copy aligned region as FASTA">📋 Copy Region</button>
+                <button id="dotPlotHelpBtn" style="margin-top:6px;padding:4px 10px;font-size:12px;cursor:pointer;" title="Local help for dot plot">?</button>
+            <div id="dotPlotHelp" style="display:none;margin-top:8px;border:1px solid #ddd;padding:10px;background:#fafafa;max-height:36vh;overflow:auto;font-size:11px;line-height:1.35;">
+                <div style="font-weight:bold;margin-bottom:6px;">Dot Plot Help (local)</div>
+                <p style="margin:0 0 8px;">
+                    This dot plot compares <b>Sequence A</b> (y-axis) and <b>Sequence B</b> (x-axis).
+                    A point/diagonal indicates similarity at those coordinates.
+                </p>
+                <p style="margin:0 0 8px;"><b>SPIN vs Dotter</b></p>
+                <ul style="margin:0 0 10px;padding-left:18px;">
+                    <li><b>SPIN (word)</b>: exact k-mer (“word”) matches. Small word sizes find fewer/stricter matches; larger word sizes are slower but more specific.</li>
+                    <li><b>Dotter (window)</b>: sliding-window identity scoring along diagonals. Threshold controls which similarities are shown as dots.</li>
+                </ul>
+                <p style="margin:0 0 8px;"><b>Controls</b></p>
+                <ul style="margin:0 0 10px;padding-left:18px;">
+                    <li><b>Word/Window</b>: use the SPIN word size or the Dotter window size (odd recommended).</li>
+                    <li><b>Threshold</b>: minimum similarity for dots/lines (percent).</li>
+                    <li><b>Context</b>: how many bases around the hover position are shown in the alignment panel.</li>
+                    <li><b>RevComp B</b>: compute the plot using the reverse-complement of sequence B.</li>
+                </ul>
+                <p style="margin:0 0 8px;"><b>Freeze, copy, navigate</b></p>
+                <ul style="margin:0;padding-left:18px;">
+                    <li><b>Move mouse</b> over the plot to preview the alignment slice.</li>
+                    <li><b>Double-click</b> a cell to <b>freeze</b> the alignment panel so it stays locked for copying. Double-click again to unfreeze.</li>
+                    <li><b>Copy Region</b>: copies the FASTA slice corresponding to the frozen/pinned match.</li>
+                    <li><b>Zoom</b>: use <b>Ctrl+wheel</b> (or +/- buttons) to zoom the plot only.</li>
+                    <li><b>Pan</b>: when zoomed, use the plot’s scrollbars (or wheel) to move around.</li>
+                </ul>
+            </div>
         </div>
     </div>
 
@@ -940,7 +968,7 @@ B: —</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=78"></script>
+    <script src="script.js?v=79"></script>
     <script>
 // All functionality moved to script.js
 </script>
