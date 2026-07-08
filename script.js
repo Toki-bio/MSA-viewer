@@ -13579,19 +13579,26 @@ function _initDotPlotEvents() {
             _dotUpdateHoverInfo(row, col);
             showMessage(`Pinned: A${row + 1} / B${col + 1}. Click \"Copy Region\" to copy FASTA.`, 2500);
         });
-        // Mouse wheel zoom to focal point
-        const viewport = document.getElementById('dotPlotViewport');
-        if (viewport) {
-            viewport.addEventListener('wheel', (e) => {
-                const S = _dotPlotState;
-                if ((!S.scores && !S.matchMap)) return;
+        // Wheel zoom: capture on dialog to prevent modal scroll, zoom on viewport
+        const dotDialog = document.getElementById('dotPlotDialog');
+        const dotViewport = document.getElementById('dotPlotViewport');
+        if (dotDialog) {
+            dotDialog.addEventListener('wheel', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                const S = _dotPlotState;
+                if ((!S.scores && !S.matchMap)) return;
+                if (!dotViewport) return;
+
+                // Check if cursor is over the viewport
+                const vpRect = dotViewport.getBoundingClientRect();
+                const overVp = e.clientX >= vpRect.left && e.clientX <= vpRect.right &&
+                               e.clientY >= vpRect.top && e.clientY <= vpRect.bottom;
+                if (!overVp) return;
 
                 // Compute sequence coordinate under cursor before zoom
-                const rect = viewport.getBoundingClientRect();
-                const mx = e.clientX - rect.left + viewport.scrollLeft - DOT_AXIS_PAD;
-                const my = e.clientY - rect.top + viewport.scrollTop - DOT_AXIS_PAD;
+                const mx = e.clientX - vpRect.left + dotViewport.scrollLeft - DOT_AXIS_PAD;
+                const my = e.clientY - vpRect.top + dotViewport.scrollTop - DOT_AXIS_PAD;
                 const col = mx / S.zoom;
                 const row = my / S.zoom;
 
@@ -13600,8 +13607,8 @@ function _initDotPlotEvents() {
                 _dotRender();
 
                 // Scroll to keep the same sequence position under cursor
-                viewport.scrollLeft = DOT_AXIS_PAD + col * S.zoom - (e.clientX - rect.left);
-                viewport.scrollTop = DOT_AXIS_PAD + row * S.zoom - (e.clientY - rect.top);
+                dotViewport.scrollLeft = DOT_AXIS_PAD + col * S.zoom - (e.clientX - vpRect.left);
+                dotViewport.scrollTop = DOT_AXIS_PAD + row * S.zoom - (e.clientY - vpRect.top);
 
                 if (S.lastRow >= 0) {
                     _dotDrawOverlay(S.lastRow, S.lastCol);
