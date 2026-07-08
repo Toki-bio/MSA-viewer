@@ -13885,9 +13885,14 @@ function _findRepeats(seq, minLen, maxDivPct, type) {
             for (let k = 0; k < maxExtend; k++) {
                 if (seqI[k] !== seqJ[k]) mismatches++;
                 matchLen++;
-                if (mismatches / matchLen > maxDiv && matchLen > minLen) break;
+                if (mismatches / matchLen > maxDiv && matchLen > minLen) {
+                    // Roll back the character that pushed us over threshold
+                    matchLen--;
+                    if (seqI[k] !== seqJ[k]) mismatches--;
+                    break;
+                }
             }
-            const finalDiv = mismatches / matchLen;
+            const finalDiv = matchLen > 0 ? mismatches / matchLen : 1;
             if (matchLen >= minLen && finalDiv <= maxDiv) {
                 // For direct repeats in the same strand, reject self-overlapping pairs
                 // to avoid trivial shifted-suffix artifacts.
