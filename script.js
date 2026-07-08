@@ -11866,30 +11866,40 @@ function getCanonicalPrefix(name, maxChars = 10) {
     return match ? match[1] : n;
 }
 
-function levenshteinDistance(a, b) {
-    if (a === b) return 0;
-    if (!a.length) return b.length;
-    if (!b.length) return a.length;
-    const dp = new Array(b.length + 1);
-    for (let j = 0; j <= b.length; j++) dp[j] = j;
-    for (let i = 1; i <= a.length; i++) {
-        let prev = dp[0];
-        dp[0] = i;
-        for (let j = 1; j <= b.length; j++) {
-            const tmp = dp[j];
-            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-            dp[j] = Math.min(
-                dp[j] + 1,
-                dp[j - 1] + 1,
-                prev + cost
-            );
-            prev = tmp;
+// Position-weighted n-gram Jaccard similarity for sequence name clustering.
+// Bigram + trigram with position boost (first 3 chars x2) handles
+// organism prefixes, element names, and subfamily suffixes robustly.
+function ngramJaccardSimilarity(a, b) {
+    if (a === b) return 1;
+    // Build weighted n-gram multiset for string s
+    const buildNgrams = (s) => {
+        const ngrams = new Map();
+        const add = (ng, w) => ngrams.set(ng, (ngrams.get(ng) || 0) + w);
+        // Bigrams (weight 1)
+        for (let i = 0; i < s.length - 1; i++) add(s.substring(i, i + 2), 1);
+        // Trigrams (weight 1.5 - more discriminative)
+        for (let i = 0; i < s.length - 2; i++) add(s.substring(i, i + 3), 1.5);
+        // Position boost: ngrams covering first 3 chars x2 (organism prefix)
+        for (const [ng, w] of ngrams) {
+            const idx = s.indexOf(ng);
+            if (idx >= 0 && idx <= 2) ngrams.set(ng, w * 2);
         }
+        return ngrams;
+    };
+    const na = buildNgrams(a), nb = buildNgrams(b);
+    let shared = 0, total = 0;
+    const all = new Set([...na.keys(), ...nb.keys()]);
+    for (const ng of all) {
+        const wa = na.get(ng) || 0, wb = nb.get(ng) || 0;
+        shared += Math.min(wa, wb);
+        total += Math.max(wa, wb);
     }
-    return dp[b.length];
+    return total > 0 ? shared / total : 0;
 }
 
-// Cluster sequences by normalized prefix
+// Cluster sequences by normalized prefix using position-weighted n-gram Jaccard.
+// Hard guarantee: identical normalized keys always share the same bucket.
+// Sensitivity 0 = strict (merge only >= 90% similar), 10 = loose (merge >= 40% similar).
 function clusterByName(seqNames, maxChars = 10, threshold = 3) {
     const nChars = Math.max(1, parseInt(maxChars, 10) || 10);
     const sensitivity = Math.max(0, Math.min(10, parseInt(threshold, 10) || 0));
@@ -11904,23 +11914,23 @@ function clusterByName(seqNames, maxChars = 10, threshold = 3) {
 
     const uniqueKeys = Array.from(keyToNames.keys()).sort((a, b) => a.localeCompare(b));
 
-    // 2) Sensitivity controls optional merge between near keys (never splitting identical keys).
-    //    threshold 0 = permissive (up to half of selected length), threshold 10 = strict (no merge).
-    const mergeCap = Math.floor(((10 - sensitivity) / 10) * Math.max(1, nChars) * 0.5);
+    // 2) Sensitivity controls optional merge between near keys.
+    //    sensitivity 0 = strict (0.90 similarity), sensitivity 10 = loose (0.40 similarity).
+    const minSim = 0.90 - (sensitivity / 10) * 0.50; // range: 0.90 -> 0.40
 
     const clusters = []; // [{ repKey, keys: [] }]
     for (const key of uniqueKeys) {
-        if (mergeCap <= 0) {
+        if (sensitivity >= 10 || minSim >= 1.0) {
             clusters.push({ repKey: key, keys: [key] });
             continue;
         }
 
         let bestCluster = -1;
-        let bestDist = Number.POSITIVE_INFINITY;
+        let bestSim = -1;
         for (let i = 0; i < clusters.length; i++) {
-            const dist = levenshteinDistance(key, clusters[i].repKey);
-            if (dist <= mergeCap && dist < bestDist) {
-                bestDist = dist;
+            const sim = ngramJaccardSimilarity(key, clusters[i].repKey);
+            if (sim >= minSim && sim > bestSim) {
+                bestSim = sim;
                 bestCluster = i;
             }
         }
@@ -12265,10 +12275,14 @@ function initColourSeqs() {
     }
 
     // Update threshold display
+    const updateThresholdLabel = () => {
+        const sens = parseInt(thresholdSlider.value) || 3;
+        const pct = Math.round((0.90 - (sens / 10) * 0.50) * 100);
+        el('colourThresholdValue').textContent = pct + '%';
+    };
     if (thresholdSlider) {
-        thresholdSlider.addEventListener('input', (e) => {
-            el('colourThresholdValue').textContent = e.target.value;
-        });
+        thresholdSlider.addEventListener('input', updateThresholdLabel);
+        updateThresholdLabel();
     }
 
     // Load initial presets list
