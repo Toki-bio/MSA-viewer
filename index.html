@@ -872,9 +872,13 @@
             <div id="dotPlotStatus" style="font-size:11px;color:#666;margin-top:4px;"></div>
             <div id="dotPlotHover" style="font-size:11px;color:#555;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;"></div>
             <div id="dotPlotAlignMeta" style="font-size:11px;color:#666;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;margin-top:2px;"></div>
-            <pre id="dotPlotAlignPanel" style="margin:4px 0 0;padding:8px;border-radius:6px;border:1px solid #d8d8d8;background:#f7f7f7;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;white-space:pre;overflow-x:auto;min-height:58px;">A: —
+            <pre id="dotPlotAlignPanel" style="margin:4px 0 0;padding:8px;border-radius:6px;border:1px solid #d8d8d8;background:#f7f7f7;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;white-space:pre;overflow-x:auto;min-height:58px;">A: -
    
-B: —</pre>
+B: -</pre>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
+                <span id="dotPlotFreezeLabel" style="display:none;font-size:11px;color:#4a9eff;font-weight:bold;">Slider: 0</span>
+                <input type="range" id="dotPlotFreezeSlider" style="display:none;flex:1;height:14px;" min="-50" max="50" value="0" title="Scroll along diagonal">
+            </div>
                 <button id="dotPlotCopyRegion" style="margin-top:6px;padding:4px 10px;font-size:12px;cursor:pointer;" title="Copy aligned region as FASTA">📋 Copy Region</button>
         </div>
     </div>
@@ -954,7 +958,7 @@ B: —</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=62"></script>
+    <script src="script.js?v=63"></script>
     <script>
 // All functionality moved to script.js
 </script>
