@@ -1,4 +1,4 @@
-﻿// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // ViewAlign Ã¢â‚¬â€ browser-based multiple sequence alignment viewer & editor
 // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 //
@@ -13080,39 +13080,46 @@ function _dotUpdateHoverInfo(row, col) {
 
     const norm = _dotNormAt(row, col);
 
-    // Compute context slice centered on hover, clamped to sequence bounds
+    // Context: show `context` bases around cursor on each sequence independently.
+    // If a sequence is shorter than context*2+1, the full sequence is shown.
     const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
-    const diag = col - row;
-    let a0 = row - context, b0 = col - context;
-    if (a0 < 0) { b0 += -a0; a0 = 0; }
-    if (b0 < 0) { a0 += -b0; b0 = 0; }
-    const maxA = S.seqA.length - a0;
-    const maxB = S.seqB.length - b0;
-    const sliceLen = Math.min(context * 2 + 1, maxA, maxB);
+    const a0 = Math.max(0, row - context);
+    const a1 = Math.min(S.seqA.length, row + context + 1);
+    const b0 = Math.max(0, col - context);
+    const b1 = Math.min(S.seqB.length, col + context + 1);
+    const aSlice = S.seqA.slice(a0, a1);
+    const bSlice = S.seqB.slice(b0, b1);
+    const hoverA = row - a0; // cursor position in A slice
+    const hoverB = col - b0; // cursor position in B slice
 
-    if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}  ⌒ ${a0+1}-${a0+sliceLen}/${S.seqA.length}`;
+    if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}  A[${a0+1}-${a1}] B[${b0+1}-${b1}]`;
 
     if (panelEl) {
-        // The diagonal IS the alignment: seqA[row+k] ↔ seqB[col+k]
-        const hoverPos = row - a0;
-
-        const aSlice = S.seqA.slice(a0, a0 + sliceLen);
-        const bSlice = S.seqB.slice(b0, b0 + sliceLen);
-
+        // Pad slices to align at cursor position
+        const padA = Math.max(0, hoverB - hoverA);
+        const padB = Math.max(0, hoverA - hoverB);
+        // Build guide: align slices at cursor, mark matching columns
         let guide = '';
-        for (let i = 0; i < sliceLen; i++) {
-            guide += aSlice[i] === bSlice[i] ? '|' : ' ';
+        const totalLen = Math.max(aSlice.length + padA, bSlice.length + padB);
+        for (let i = 0; i < totalLen; i++) {
+            const ai = i - padA, bi = i - padB;
+            if (ai >= 0 && ai < aSlice.length && bi >= 0 && bi < bSlice.length) {
+                guide += aSlice[ai] === bSlice[bi] ? '|' : ' ';
+            } else {
+                guide += ' ';
+            }
         }
-
-        // Mark the hover position
-        if (hoverPos >= 0 && hoverPos < guide.length) {
-            guide = guide.substring(0, hoverPos) + '^' + guide.substring(hoverPos + 1);
+        // Mark cursor
+        const cursorPos = Math.max(hoverA, hoverB);
+        if (cursorPos >= 0 && cursorPos < guide.length) {
+            guide = guide.substring(0, cursorPos) + '^' + guide.substring(cursorPos + 1);
         }
-
+        const aLine = ' '.repeat(padA) + aSlice;
+        const bLine = ' '.repeat(padB) + bSlice;
         panelEl.textContent =
-            `A ${String(a0 + 1).padStart(5)}  ${aSlice}\n` +
+            `A ${String(a0 + 1).padStart(5)}  ${aLine}\n` +
             `          ${guide}\n` +
-            `B ${String(b0 + 1).padStart(5)}  ${bSlice}`;
+            `B ${String(b0 + 1).padStart(5)}  ${bLine}`;
 
         S._copyRegion = { aSlice, bSlice, aStart: a0, bStart: b0, nameA: S.nameA, nameB: S.nameB };
     }
@@ -13217,24 +13224,18 @@ function _dotRender() {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(tmp, DOT_AXIS_PAD, DOT_AXIS_PAD, plotW, plotH);
 
-    // Draw nucleotide letters on non-white cells when zoomed in enough
+    // Draw nucleotide letter pairs in EVERY cell when zoomed in enough
     if (colW >= 6 && rowH >= 6) {
         const fs = Math.max(6, Math.min(12, Math.floor(Math.min(colW, rowH) * 0.75)));
         ctx.font = `bold ${fs}px system-ui`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        const imgData = S.dotImage.data;
         for (let i = 0; i < S.rows; i++) {
             const y = DOT_AXIS_PAD + Math.floor((i + 0.5) * rowH);
             for (let j = 0; j < S.cols; j++) {
-                const idx = (i * S.cols + j) * 4;
-                // Only draw letters on non-white cells (where there's a dot/hit)
-                if (imgData[idx] === 255 && imgData[idx + 1] === 255 && imgData[idx + 2] === 255) continue;
                 const x = DOT_AXIS_PAD + Math.floor((j + 0.5) * colW);
-                // Show both nucleotides for the cell
-                const chA = (S.seqA[i] || 'N'); const chB = (S.seqB[j] || 'N');
+                const chA = S.seqA[i] || 'N', chB = S.seqB[j] || 'N';
                 const txt = chA + chB;
-                // Outline then fill
-                ctx.fillStyle = 'rgba(0,0,0,0.8)';
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
                 ctx.fillText(txt, x + 1, y + 1);
                 ctx.fillStyle = '#fff';
                 ctx.fillText(txt, x, y);
