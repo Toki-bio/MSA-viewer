@@ -13579,14 +13579,6 @@ function _initDotPlotEvents() {
             _dotUpdateHoverInfo(row, col);
             showMessage(`Pinned: A${row + 1} / B${col + 1}. Click \"Copy Region\" to copy FASTA.`, 2500);
         });
-        // Block wheel on dialog to prevent resize/scroll from reaching browser
-        {
-            const dialog = document.getElementById('dotPlotDialog');
-            if (dialog) {
-                dialog.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
-            }
-        }
-        
         // Mouse wheel zoom to focal point
         const viewport = document.getElementById('dotPlotViewport');
         if (viewport) {
