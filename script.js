@@ -1819,6 +1819,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     alignmentContainer.style.overflow = 'hidden';
     alignmentContainer.style.position = 'relative';
     // Canvas mode needs explicit height since absolute canvas has no flow height
+    const OVERVIEW_H = 40;
     const top = alignmentContainer.getBoundingClientRect().top;
     alignmentContainer.style.height = (window.innerHeight - top - 28 + OVERVIEW_H) + 'px';
 
@@ -1978,7 +1979,6 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     }
 
     // Build overview minimap (runs once on init, cached as _ovBgCanvas)
-    const OVERVIEW_H = 40;
     const overviewCanvas = document.createElement('canvas');
     overviewCanvas.id = 'alignmentOverview';
     overviewCanvas.style.cssText = 'display:block;position:absolute;bottom:0;left:0;width:100%;height:'+OVERVIEW_H+'px;background:#fafafa;border-top:1px solid #ccc;z-index:2;cursor:pointer;';
