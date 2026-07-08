@@ -3158,7 +3158,10 @@ function renderAlignment(options = {}) {
 
     // Ã¢â€â‚¬Ã¢â€â‚¬ Auto-detect: Canvas for large alignments Ã¢â€â‚¬Ã¢â€â‚¬
     const TOTAL_RESIDUES = state.seqs.length * len;
+    // Disable span cache for large alignments (>80K residues) during view-only rendering
+    state._enableSpanCache = (TOTAL_RESIDUES <= 80000);
     const CANVAS_AUTO_THRESHOLD = 150000; // ~100 seq Ãƒâ€” 1500 col
+    let _renderStartTime = performance.now();
     const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
     const userPickedDom = document.getElementById('modeAutoCanvasDismissed')?.checked; // hidden flag
 
@@ -3382,56 +3385,16 @@ function renderAlignment(options = {}) {
         updateSourceInfo();
     }
     // Re-apply sequence name colours if any mappings exist
-    if (typeof applyColourToSeqNames === 'function' && colourState && colourState.mappings.size > 0) {
+    const _renderMs = performance.now() - _renderStartTime;
+    if (_renderMs > 50 && TOTAL_RESIDUES > 10000) console.warn('[PERF] render: '+_renderMs.toFixed(0)+'ms | '+TOTAL_RESIDUES.toLocaleString()+' residues');
+
+        if (typeof applyColourToSeqNames === 'function' && colourState && colourState.mappings.size > 0) {
         applyColourToSeqNames(colourState.mappings);
     }
 
-    // Post-process: apply diff-highlight dimming to columns that match consensus
-    if (state._diffColumns && state._diffColumns.size > 0) {
-        const allSpans = alignmentContainer.querySelectorAll('.seq-data > span[data-pos]');
-        allSpans.forEach(span => {
-            const pos = parseInt(span.dataset.pos);
-            if (state._diffColumns.has(pos)) {
-                span.classList.add('diff-highlight');
-            }
-        });
-    }
-
-    // Post-process: codon analysis overlay
+    // Post-process: AA translation rows (phase/stops now built inline)
     if (state._codonData) {
         const cd = state._codonData;
-        const allSpans = alignmentContainer.querySelectorAll('.seq-data > span[data-pos]');
-        allSpans.forEach(span => {
-            const pos = parseInt(span.dataset.pos);
-            const rowEl = span.closest('.seq-line');
-            const seqIdx = rowEl ? parseInt(rowEl.dataset.seqIndex) : -1;
-            if (seqIdx < 0) return;
-
-            // Codon phase coloring
-            if (cd.phase[seqIdx] && cd.phase[seqIdx][pos] >= 0) {
-                span.classList.add('codon-p' + cd.phase[seqIdx][pos]);
-            }
-
-            // Stop codon positions
-            if (cd.stops[seqIdx] && cd.stops[seqIdx].includes(pos)) {
-                span.classList.add('codon-stop');
-            }
-
-            // Frameshift positions
-            if (cd.frameShifts[seqIdx]) {
-                for (const fs of cd.frameShifts[seqIdx]) {
-                    if (fs.pos === pos && fs.type === 'incomplete') {
-                        span.classList.add('codon-fs');
-                    }
-                }
-            }
-
-            // Syn/non-syn annotations
-            if (cd.synNonSyn[seqIdx] && cd.synNonSyn[seqIdx][pos]) {
-                span.classList.add('codon-' + cd.synNonSyn[seqIdx][pos]);
-            }
-        });
-
         // Add AA translation rows below each sequence
         const seqRows = alignmentContainer.querySelectorAll('.seq-line');
         seqRows.forEach(rowEl => {
@@ -3979,19 +3942,38 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     };
 
     for (let pos = start; pos < end; pos++) {
-        const base = seq[pos] || '-';
-        const baseUp = base.toUpperCase();
-        const baseClass = getResidueAnnotationClasses(base, standard, ambiguous, effectiveColorScheme);
+            const base = seq[pos] || '-';
+            const baseUp = base.toUpperCase();
+            const baseClass = getResidueAnnotationClasses(base, standard, ambiguous, effectiveColorScheme);
 
-        const posData = conservationData[pos] || { hasData: false, hasValidCoverage: false };
-        let cls = applyConservationShadeClass(baseUp, posData, renderConfig);
+            const posData = conservationData[pos] || { hasData: false, hasValidCoverage: false };
+            let cls = applyConservationShadeClass(baseUp, posData, renderConfig);
 
-        const colSelected = selectedCols.has(pos) ? ' column-selected' : '';
-        const tsdDisplay = getTsdMarkDisplay(index, pos);
-        const finalClass = `${cls}${baseClass ? ' ' + baseClass : ''}${colSelected}${tsdDisplay.className}`;
-        htmlParts.push(`<span class="${finalClass}" data-pos="${pos}"${tsdDisplay.style}>${base}</span>`);
-    }
+            // Codon analysis classes built inline (avoids 160K-node DOM scan)
+            if (state._codonData && state._codonData.phase && state._codonData.phase[index]) {
+                const ph = state._codonData.phase[index][pos];
+                if (ph >= 0) cls += ' codon-p' + ph;
+            }
+            if (state._codonData && state._codonData.stops && state._codonData.stops[index]) {
+                if (state._codonData.stops[index].includes(pos)) cls += ' codon-stop';
+            }
+            if (state._codonData && state._codonData.frameShifts && state._codonData.frameShifts[index]) {
+                for (const fs of state._codonData.frameShifts[index]) {
+                    if (fs.pos === pos && fs.type === 'incomplete') { cls += ' codon-fs'; break; }
+                }
+            }
+            if (state._codonData && state._codonData.synNonSyn && state._codonData.synNonSyn[index]) {
+                if (state._codonData.synNonSyn[index][pos]) cls += ' codon-' + state._codonData.synNonSyn[index][pos];
+            }
+            if (state._diffColumns && state._diffColumns.has(pos)) {
+                cls += ' diff-highlight';
+            }
 
+            const colSelected = selectedCols.has(pos) ? ' column-selected' : '';
+            const tsdDisplay = getTsdMarkDisplay(index, pos);
+            const finalClass = `${cls}${baseClass ? ' ' + baseClass : ''}${colSelected}${tsdDisplay.className}`;
+            htmlParts.push(`<span class="${finalClass}" data-pos="${pos}"${tsdDisplay.style}>${base}</span>`);
+        }
     // Add sequence length at the end (only for last block)
     if (showLength) {
         const gaplessLength = gaplessPositions[gaplessPositions.length - 1] || 0;
@@ -4001,13 +3983,15 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
     // *** PERFORMANCE: Set innerHTML once instead of many appendChild calls ***
     dataSpan.innerHTML = htmlParts.join('');
 
-    // Register spans in cache for selection features
-    const spans = dataSpan.children;
-    for (let i = 0; i < spans.length; i++) {
-        const span = spans[i];
-        const pos = span.dataset.pos;
-        if (pos !== undefined) {
-            registerSpanInCache(index, parseInt(pos), span);
+    // Register spans in cache for selection features (skipped for large view-only renders)
+    if (state._enableSpanCache !== false) {
+        const spans = dataSpan.children;
+        for (let i = 0; i < spans.length; i++) {
+            const span = spans[i];
+            const pos = span.dataset.pos;
+            if (pos !== undefined) {
+                registerSpanInCache(index, parseInt(pos), span);
+            }
         }
     }
 
