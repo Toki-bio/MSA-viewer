@@ -13237,8 +13237,9 @@ function _dotRender() {
     const colW = plotW / S.cols; // logical px per column
     const rowH = plotH / S.rows;
 
-    // Draw nucleotide letter pairs in EVERY cell when zoomed in enough
+    // Draw nucleotide letter pairs in match cells when zoomed in enough
     if (colW >= 6 && rowH >= 6) {
+        const id = S.dotImage.data;
         const fs = Math.max(6, Math.min(12, Math.floor(Math.min(colW, rowH) * 0.75)));
         ctx.font = `bold ${fs}px system-ui`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -13385,7 +13386,8 @@ function _dotRenderRegionList() {
     if (!listEl || !itemsEl) return;
 
     if (!S.regions || S.regions.length === 0) {
-        listEl.style.display = 'none';
+        listEl.style.display = 'block';
+        itemsEl.innerHTML = '<div style="padding:6px;color:#999;font-style:italic;">No repeats found. Try lowering word size or testing with repeat-rich sequences.</div>';
         return;
     }
 
