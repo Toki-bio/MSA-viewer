@@ -296,7 +296,70 @@ function _buildServerButtons(servers) {
     });
 }
 
-async function checkSshServer() {
+async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
+    const S = _dotPlotState;
+    S.seqA = seqA.toUpperCase(); S.seqB = seqB.toUpperCase();
+    S.nameA = nameA; S.nameB = nameB;
+    S.meta = meta || S.meta || null;
+    const m = S.meta || {};
+    S.rowIndexA = Number.isInteger(m.rowIndexA) ? m.rowIndexA : -1;
+    S.rowIndexB = Number.isInteger(m.rowIndexB) ? m.rowIndexB : -1;
+    S.alignMapA = m.alignMapA || _buildUngappedToAlignMap(m.alignedSeqA);
+    S.alignMapB = m.alignMapB || _buildUngappedToAlignMap(m.alignedSeqB);
+    const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
+    S.spinMode = spinRadio ? spinRadio.checked : true;
+    S.windowSize = parseInt(document.getElementById('dotPlotWindow')?.value) || 9;
+    S.threshold = (parseInt(document.getElementById('dotPlotThreshold')?.value) || 55) / 100;
+    S.pinnedRow = S.pinnedCol = -1; // clear pinned position on new plot
+
+    const revComp = document.getElementById('dotPlotRevComp')?.checked;
+    if (revComp) {
+        const m = { A: 'T', C: 'G', G: 'C', T: 'A', U: 'A', N: 'N' };
+        S.seqB = [...S.seqB].reverse().map(b => m[b] ?? 'N').join('');
+        S.nameB = nameB + ' (RevComp)';
+        if (S.alignMapB) S.alignMapB = [...S.alignMapB].reverse();
+    }
+
+    const modal = document.getElementById('dotPlotModal');
+    if (modal) showExclusiveModal('dotPlotModal');
+    const titleEl = document.getElementById('dotPlotTitle');
+    if (titleEl) titleEl.textContent = `Dot Plot: ${nameA} vs ${nameB}${revComp ? ' (rc)' : ''}`;
+    const statusEl = document.getElementById('dotPlotStatus');
+    if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} ├â╞Æ├óΓé¼ΓÇ¥ ${S.seqB.length}...`;
+    _dotClearHoverInfo();
+
+    S.computing = true;
+    const t0 = performance.now();
+    try {
+        if (S.spinMode) {
+            const ws = Math.max(2, S.windowSize);
+            const result = await _dotComputeWord(S.seqA, S.seqB, ws);
+            S.matchMap = new Uint8Array(result.matchMap);
+            S.scores = null;
+            S.rows = result.rows; S.cols = result.cols;
+            S.scoreMin = 0; S.scoreMax = 1;
+        } else {
+            const result = await _dotCompute(S.seqA, S.seqB, S.windowSize, 'identity');
+            S.scores = new Int16Array(result.scores);
+            S.matchMap = null;
+            S.rows = result.rows; S.cols = result.cols;
+            S.scoreMin = result.min; S.scoreMax = result.max;
+        }
+    } catch (err) {
+        if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+        S.computing = false; return;
+    }
+    const ms = performance.now() - t0;
+    S.computing = false;
+    _dotBuildImage();
+    _dotFitView();
+    S.lastRow = S.lastCol = -1;
+    if (statusEl) statusEl.textContent = `${S.seqA.length} ├â╞Æ├óΓé¼ΓÇ¥ ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.`;
+}
+
+
+
+function checkSshServer() {
     try {
         const resp = await fetch('/api/ssh-servers', { signal: AbortSignal.timeout(2000) });
         if (resp.ok) {
