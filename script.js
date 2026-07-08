@@ -13053,7 +13053,6 @@ function _dotUpdateHoverInfo(row, col) {
     const panelEl = document.getElementById('dotPlotAlignPanel');
 
     const norm = _dotNormAt(row, col);
-    console.log('hover row='+row+' col='+col+' a0='+a0+' b0='+b0+' zoom='+S.zoom);
     if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}`;
 
     if (panelEl) {
