@@ -13224,6 +13224,9 @@ function _dotRender() {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(tmp, DOT_AXIS_PAD, DOT_AXIS_PAD, plotW, plotH);
 
+    const colW = plotW / S.cols; // logical px per column
+    const rowH = plotH / S.rows;
+
     // Draw nucleotide letter pairs in EVERY cell when zoomed in enough
     if (colW >= 6 && rowH >= 6) {
         const fs = Math.max(6, Math.min(12, Math.floor(Math.min(colW, rowH) * 0.75)));
@@ -13301,9 +13304,8 @@ function _dotDetectRegions() {
 
     if (S.spinMode && S.matchMap) {
         // SPIN: find consecutive runs of word matches on each diagonal
-        const minRun = Math.max(4, Math.floor(Math.min(S.rows, S.cols) * 0.08));
+        const minRun = Math.max(3, Math.floor(Math.min(S.rows, S.cols) * 0.06));
         for (let d = -(S.rows - 1); d < S.cols; d++) {
-            if (d === 0) continue;
             let runStart = -1, runLen = 0;
             const startR = d < 0 ? -d : 0;
             const endR = Math.min(S.rows, S.cols - d);
@@ -13326,10 +13328,9 @@ function _dotDetectRegions() {
         }
     } else if (S.scores) {
         // Doter: find runs where sliding-window score exceeds threshold
-        const minRun = Math.max(6, Math.min(15, Math.floor(Math.min(S.rows, S.cols) * 0.12)));
+        const minRun = Math.max(4, Math.min(12, Math.floor(Math.min(S.rows, S.cols) * 0.10)));
         const minScore = S.threshold * S.windowSize * 0.9;
         for (let d = -(S.rows - 1); d < S.cols; d++) {
-            if (d === 0) continue;
             let runStart = -1, runSum = 0, runLen = 0;
             const startR = d < 0 ? -d : 0;
             const endR = Math.min(S.rows, S.cols - d);
@@ -13354,8 +13355,14 @@ function _dotDetectRegions() {
         }
     }
 
-    regions.sort((a, b) => b.length - a.length || b.avgScore - a.avgScore);
-    S.regions = regions.slice(0, 30);
+    // Filter out trivial main-diagonal self-match (spans >80% of sequence in self-compare)
+const isSelf = S.seqA === S.seqB && S.rows === S.cols;
+const filtered = regions.filter(r => {
+    if (r.diagonal === 0 && isSelf && r.length >= S.rows * 0.8) return false;
+    return true;
+});
+regions.sort((a, b) => b.length - a.length || b.avgScore - a.avgScore);
+    S.regions = filtered.slice(0, 30);
     _dotRenderRegionList();
 }
 
