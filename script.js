@@ -7030,7 +7030,8 @@ function clusterSequences() {
         qualityLarge: clusterParams.qualityLarge,
         sizeSmallMedium: clusterParams.sizeSmallMedium,
         sizeMediumLarge: clusterParams.sizeMediumLarge,
-        minOccurrences: clusterParams.minOccurrences
+        minOccurrences: clusterParams.minOccurrences,
+        onProgress: (msg) => updateClusteringStatus(msg)
     });
 
     // Store results in state
