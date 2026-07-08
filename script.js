@@ -13212,38 +13212,11 @@ function _dotRender() {
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, totalW, totalH);
 
-    const colW = plotW / S.cols; // column width in logical px
-    const rowH = plotH / S.rows;
-
-    // Draw dots directly — pixel-perfect, no drawImage nearest-neighbor artifacts
-    const imgData = S.dotImage.data;
-    for (let i = 0; i < S.rows; i++) {
-        const y = DOT_AXIS_PAD + Math.round(i * rowH);
-        const h = Math.max(1, Math.round((i + 1) * rowH) - Math.round(i * rowH));
-        // Batch consecutive same-colored pixels into horizontal runs
-        let runStart = DOT_AXIS_PAD;
-        let runColor = -1;
-        for (let j = 0; j < S.cols; j++) {
-            const idx = (i * S.cols + j) * 4;
-            const r = imgData[idx], g = imgData[idx + 1], b = imgData[idx + 2];
-            const hex = (r << 16) | (g << 8) | b;
-            const x = DOT_AXIS_PAD + Math.round(j * colW);
-            const w = Math.max(1, Math.round((j + 1) * colW) - Math.round(j * colW));
-            if (hex !== runColor) {
-                if (runColor >= 0) {
-                    ctx.fillStyle = '#' + runColor.toString(16).padStart(6, '0');
-                    ctx.fillRect(runStart, y, x - runStart, h);
-                }
-                runStart = x;
-                runColor = hex;
-            }
-        }
-        if (runColor >= 0) {
-            ctx.fillStyle = '#' + runColor.toString(16).padStart(6, '0');
-            const endX = DOT_AXIS_PAD + Math.round(S.cols * colW);
-            ctx.fillRect(runStart, y, endX - runStart, h);
-        }
-    }
+    const tmp = document.createElement('canvas');
+    tmp.width = S.cols; tmp.height = S.rows;
+    tmp.getContext('2d').putImageData(S.dotImage, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tmp, DOT_AXIS_PAD, DOT_AXIS_PAD, plotW, plotH);
 
     // Axes — border outside image area
     ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
