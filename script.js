@@ -13049,49 +13049,71 @@ function _dotOnModeChange() {
 function _dotUpdateHoverInfo(row, col) {
     const S = _dotPlotState;
     const hoverEl = document.getElementById('dotPlotHover');
-    const metaEl = document.getElementById('dotPlotAlignMeta');
     const panelEl = document.getElementById('dotPlotAlignPanel');
 
     const norm = _dotNormAt(row, col);
-    if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}`;
+    const chA = S.seqA[row] || 'N', chB = S.seqB[col] || 'N';
 
+    // Hover bar: basic info
+    if (hoverEl) hoverEl.textContent = 'A:' + (row + 1) + '/' + S.rows + '  B:' + (col + 1) + '/' + S.cols + '  ' + (S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)) + '  ' + chA + ' vs ' + chB;
+
+    // Alignment panel: show context around cursor, aligned at cursor
     if (panelEl) {
-        // The diagonal IS the alignment: seqA[row+k] â†” seqB[col+k]
-        // Extract equal-length slices centered on the hover position
         const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
-        const diag = col - row; let a0 = row - context; let b0 = col - context;
-        if (a0 < 0) { b0 += -a0; a0 = 0; }
-        if (b0 < 0) { a0 += -b0; b0 = 0; }
-        const maxA = S.seqA.length - a0;
-        const maxB = S.seqB.length - b0;
-        const sliceLen = Math.min(context * 2 + 1, maxA, maxB);
+
+        // Each sequence gets its own window: row-context .. row+context for A, col-context .. col+context for B
+        const a0 = Math.max(0, row - context);
+        const a1 = Math.min(S.seqA.length, row + context + 1);
+        const b0 = Math.max(0, col - context);
+        const b1 = Math.min(S.seqB.length, col + context + 1);
+
+        const aSlice = S.seqA.substring(a0, a1);
+        const bSlice = S.seqB.substring(b0, b1);
+
         // Show slice ranges in hover bar
-        if (hoverEl) hoverEl.textContent += ' \u2302 A'+(a0+1)+'-'+(a0+sliceLen)+' B'+(b0+1)+'-'+(b0+sliceLen);
-        const hoverPos = row - a0; // position of hover col within slice
+        if (hoverEl) hoverEl.textContent += '  A[' + (a0+1) + '-' + a1 + '] B[' + (b0+1) + '-' + b1 + ']';
 
-        const aSlice = S.seqA.slice(a0, a0 + sliceLen);
-        const bSlice = S.seqB.slice(b0, b0 + sliceLen);
+        // Align at cursor: pad left side so cursor positions match
+        const cursA = row - a0; // cursor index within aSlice
+        const cursB = col - b0; // cursor index within bSlice
+        const padA = Math.max(0, cursB - cursA);
+        const padB = Math.max(0, cursA - cursB);
 
+        const aLine = ' '.repeat(padA) + aSlice;
+        const bLine = ' '.repeat(padB) + bSlice;
+
+        // Build guide: | where both have content and chars match
+        const totalLen = Math.max(aLine.length, bLine.length);
         let guide = '';
-        for (let i = 0; i < sliceLen; i++) {
-            guide += aSlice[i] === bSlice[i] ? '|' : ' ';
+        for (let i = 0; i < totalLen; i++) {
+            const ai = i - padA, bi = i - padB;
+            const ca = ai >= 0 && ai < aSlice.length ? aSlice[ai] : ' ';
+            const cb = bi >= 0 && bi < bSlice.length ? bSlice[bi] : ' ';
+            guide += (ca && cb && ca === cb) ? '|' : ' ';
         }
 
-        // Mark the hover position
-        if (hoverPos >= 0 && hoverPos < guide.length) {
-            guide = guide.substring(0, hoverPos) + '^' + guide.substring(hoverPos + 1);
+        // Cursor marker
+        const cp = Math.max(cursA, cursB) + Math.max(padA, padB);
+        if (cp >= 0 && cp < guide.length) {
+            guide = guide.substring(0, cp) + '^' + guide.substring(cp + 1);
         }
+
+        // Pad lines to same length
+        const maxW = Math.max(aLine.length, bLine.length);
+        const aPadded = aLine + ' '.repeat(maxW - aLine.length);
+        const bPadded = bLine + ' '.repeat(maxW - bLine.length);
 
         panelEl.textContent =
-            `A ${String(a0 + 1).padStart(5)}  ${aSlice}\n` +
-            `          ${guide}\n` +
-            `B ${String(b0 + 1).padStart(5)}  ${bSlice}`;
+            'A ' + String(a0 + 1).padStart(5) + '  ' + aPadded + '\n' +
+            '          ' + guide + '\n' +
+            'B ' + String(b0 + 1).padStart(5) + '  ' + bPadded;
 
         S._copyRegion = { aSlice, bSlice, aStart: a0, bStart: b0, nameA: S.nameA, nameB: S.nameB };
     }
 
     if (panelEl) panelEl.style.display = 'block';
 }
+
 
 function _dotClearHoverInfo() {
     const hoverEl = document.getElementById('dotPlotHover');
