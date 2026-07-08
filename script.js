@@ -13047,68 +13047,68 @@ function _dotOnModeChange() {
 }
 
 function _dotUpdateHoverInfo(row, col) {
-    const S = _dotPlotState;
-    const hoverEl = document.getElementById('dotPlotHover');
-    const panelEl = document.getElementById('dotPlotAlignPanel');
+    var S = _dotPlotState;
+    var hoverEl = document.getElementById('dotPlotHover');
+    var panelEl = document.getElementById('dotPlotAlignPanel');
 
-    const norm = _dotNormAt(row, col);
-    const chA = S.seqA[row] || 'N', chB = S.seqB[col] || 'N';
+    var norm = _dotNormAt(row, col);
+    var chA = S.seqA[row] || 'N', chB = S.seqB[col] || 'N';
 
-    // Hover bar: basic info
-    if (hoverEl) hoverEl.textContent = 'A:' + (row + 1) + '/' + S.rows + '  B:' + (col + 1) + '/' + S.cols + '  ' + (S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)) + '  ' + chA + ' vs ' + chB;
+    // Independent per-sequence context windows
+    var ctx = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
+    var a0 = Math.max(0, row - ctx);
+    var a1 = Math.min(S.seqA.length, row + ctx + 1);
+    var b0 = Math.max(0, col - ctx);
+    var b1 = Math.min(S.seqB.length, col + ctx + 1);
 
-    // Alignment panel: show context around cursor, aligned at cursor
+    // Extend left within context budget
+    var slackA = ctx - (row - a0);
+    var slackB = ctx - (col - b0);
+    if (slackA > 0 && a0 > 0) { var extA = Math.min(slackA, a0); a0 -= extA; slackA -= extA; }
+    if (slackB > 0 && b0 > 0) { var extB = Math.min(slackB, b0); b0 -= extB; }
+
+    // Extend right within context budget
+    var remainA = (ctx * 2 + 1) - (a1 - a0);
+    var remainB = (ctx * 2 + 1) - (b1 - b0);
+    if (remainA > 0) a1 = Math.min(S.seqA.length, a1 + remainA);
+    if (remainB > 0) b1 = Math.min(S.seqB.length, b1 + remainB);
+
+    var aSlice = S.seqA.substring(a0, a1);
+    var bSlice = S.seqB.substring(b0, b1);
+    var cursA = row - a0, cursB = col - b0;
+
+    if (hoverEl) hoverEl.textContent = 'A:' + (row+1) + '/' + S.rows + '  B:' + (col+1) + '/' + S.cols + '  ' + (S.spinMode ? 'match='+norm : 'score='+norm.toFixed(3)) + '  ' + chA + ' vs ' + chB + '  A[' + (a0+1) + '-' + a1 + '] B[' + (b0+1) + '-' + b1 + ']';
+
     if (panelEl) {
-        const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
+        var padA = Math.max(0, cursB - cursA);
+        var padB = Math.max(0, cursA - cursB);
+        var aLine = padA ? ' '.repeat(padA) + aSlice : aSlice;
+        var bLine = padB ? ' '.repeat(padB) + bSlice : bSlice;
+        var totalLen = Math.max(aLine.length, bLine.length);
 
-        // Each sequence gets its own window: row-context .. row+context for A, col-context .. col+context for B
-        const a0 = Math.max(0, row - context);
-        const a1 = Math.min(S.seqA.length, row + context + 1);
-        const b0 = Math.max(0, col - context);
-        const b1 = Math.min(S.seqB.length, col + context + 1);
-
-        const aSlice = S.seqA.substring(a0, a1);
-        const bSlice = S.seqB.substring(b0, b1);
-
-        // Show slice ranges in hover bar
-        if (hoverEl) hoverEl.textContent += '  A[' + (a0+1) + '-' + a1 + '] B[' + (b0+1) + '-' + b1 + ']';
-
-        // Align at cursor: pad left side so cursor positions match
-        const cursA = row - a0; // cursor index within aSlice
-        const cursB = col - b0; // cursor index within bSlice
-        const padA = Math.max(0, cursB - cursA);
-        const padB = Math.max(0, cursA - cursB);
-
-        const aLine = ' '.repeat(padA) + aSlice;
-        const bLine = ' '.repeat(padB) + bSlice;
-
-        // Build guide: | where both have content and chars match
-        const totalLen = Math.max(aLine.length, bLine.length);
-        let guide = '';
-        for (let i = 0; i < totalLen; i++) {
-            const ai = i - padA, bi = i - padB;
-            const ca = ai >= 0 && ai < aSlice.length ? aSlice[ai] : ' ';
-            const cb = bi >= 0 && bi < bSlice.length ? bSlice[bi] : ' ';
-            guide += (ca && cb && ca === cb) ? '|' : ' ';
+        var guide = '';
+        for (var i = 0; i < totalLen; i++) {
+            var ai = i - padA, bi = i - padB;
+            if (ai >= 0 && ai < aSlice.length && bi >= 0 && bi < bSlice.length)
+                guide += aSlice[ai] === bSlice[bi] ? '|' : ' ';
+            else
+                guide += ' ';
         }
 
-        // Cursor marker
-        const cp = Math.max(cursA, cursB) + Math.max(padA, padB);
-        if (cp >= 0 && cp < guide.length) {
+        var cp = Math.max(cursA + padA, cursB + padB);
+        if (cp >= 0 && cp < guide.length)
             guide = guide.substring(0, cp) + '^' + guide.substring(cp + 1);
-        }
 
-        // Pad lines to same length
-        const maxW = Math.max(aLine.length, bLine.length);
-        const aPadded = aLine + ' '.repeat(maxW - aLine.length);
-        const bPadded = bLine + ' '.repeat(maxW - bLine.length);
+        // Pad to same width
+        while (aLine.length < totalLen) aLine += ' ';
+        while (bLine.length < totalLen) bLine += ' ';
 
         panelEl.textContent =
-            'A ' + String(a0 + 1).padStart(5) + '  ' + aPadded + '\n' +
+            'A ' + String(a0 + 1).padStart(5) + '  ' + aLine + '\n' +
             '          ' + guide + '\n' +
-            'B ' + String(b0 + 1).padStart(5) + '  ' + bPadded;
+            'B ' + String(b0 + 1).padStart(5) + '  ' + bLine;
 
-        S._copyRegion = { aSlice, bSlice, aStart: a0, bStart: b0, nameA: S.nameA, nameB: S.nameB };
+        S._copyRegion = { aSlice: aSlice, bSlice: bSlice, aStart: a0, bStart: b0, nameA: S.nameA, nameB: S.nameB };
     }
 
     if (panelEl) panelEl.style.display = 'block';
@@ -13253,8 +13253,8 @@ function _dotFitView() {
     if ((!S.scores && !S.matchMap)) return;
     const vp = document.getElementById('dotPlotViewport');
     if (!vp) return;
-    const vw = (vp.clientWidth || 600) - DOT_AXIS_PAD - 4;
-    const vh = (vp.clientHeight || 400) - DOT_AXIS_PAD - 4;
+    const vw = (vp.clientWidth || 600) - DOT_AXIS_PAD - 20;
+    const vh = (vp.clientHeight || 400) - DOT_AXIS_PAD - 20;
     if (S.cols === 0 || S.rows === 0) return;
     const z = Math.min(vw / S.cols, vh / S.rows, 24);
     S.zoom = Math.max(0.5, Math.round(z * 10) / 10);
