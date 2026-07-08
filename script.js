@@ -1695,24 +1695,20 @@ for (const [codon, aa] of Object.entries(_GENETIC_CODE)) {
     }
 }
 
-// Compute per-position codon phase (0,1,2), stop codons, frameshifts, syn/non-syn
-function _computeCodonAnalysis(seqs, len) {
+// Compute per-position codon analysis for a single frame (frameOffset = 0,1,2 alignment columns)
+// Gaps are skipped during codon assembly (no frameshift on gaps); incomplete terminal codons flagged.
+// When frameOffset is omitted, defaults to 0 (backward-compatible single-frame mode).
+function _computeCodonAnalysis(seqs, len, frameOffset) {
+    frameOffset = frameOffset || 0;
     if (seqs.length < 1) return null;
-    // Check sequences look like nucleotides
     const ntRe = /^[ACGTUacgtuNn-]+$/;
     for (const s of seqs) {
         const cleaned = s.seq.replace(/[-.]/g, '');
         if (cleaned.length > 0 && !ntRe.test(cleaned)) return null;
     }
-    // Trim trailing incomplete codon columns
-    if (len % 3 !== 0) {
-        len -= len % 3;
-        if (len < 3) return null;
-    }
+    if (len % 3 !== 0) { len -= len % 3; if (len < 3) return null; }
 
     const activeCode = _getActiveCode();
-    const synCodons = _getSynCodons(activeCode);
-
     const nSeqs = seqs.length;
     const phase = new Array(nSeqs).fill(null).map(() => new Array(len).fill(-1));
     const stops = new Array(nSeqs).fill(null).map(() => []);
@@ -1720,15 +1716,12 @@ function _computeCodonAnalysis(seqs, len) {
     const synNonSyn = new Array(nSeqs).fill(null).map(() => new Array(len).fill(null));
     const aaSeq = new Array(nSeqs).fill(null).map(() => []);
 
-    // Build reference sequence (first non-ref seq with valid phase 0)
     const refIdx = 0;
     const refSeq = seqs[refIdx].seq;
-    const refGapless = refSeq.replace(/-/g, '').toUpperCase();
 
-    // For each sequence, walk codons tracking in-frame positions
     for (let i = 0; i < nSeqs; i++) {
         const seq = seqs[i].seq;
-        let codonPhase = 0; // 0,1,2 relative to alignment columns
+        let codonPhase = 0;
         let codonBuf = '';
         let codonCols = [];
 
@@ -1736,77 +1729,77 @@ function _computeCodonAnalysis(seqs, len) {
             const base = seq[pos];
             const isGap = base === '-' || base === '.';
 
-            if (codonPhase === -1) {
-                // Scanning for next in-frame codon
-                if (isGap) continue;
-                codonPhase = 0;
-                codonBuf = base.toUpperCase();
-                codonCols = [pos];
-                phase[i][pos] = 0;
-            } else {
-                if (isGap) {
-                    // Gap in middle of codon Ã¢â€ â€™ frameshift
-                    frameShifts[i].push({ pos, phase: codonPhase, type: 'gap' });
-                    codonPhase = -1;
-                    codonBuf = '';
-                    codonCols = [];
-                    continue;
+            // Skip alignment columns before frameOffset
+            if (pos < frameOffset) continue;
+
+            // Gaps are skipped (preserve reading frame); no frameshift on gaps
+            if (isGap) continue;
+
+            // Non-gap base - add to codon
+            phase[i][pos] = codonPhase;
+            codonBuf += base.toUpperCase();
+            codonCols.push(pos);
+            codonPhase++;
+
+            if (codonPhase >= 3) {
+                const codon = codonBuf.replace(/[Nn]/g, 'N');
+                const aa = activeCode[codon] || 'X';
+                aaSeq[i].push({ cols: codonCols.slice(), codon, aa });
+
+                if (aa === '*') {
+                    for (const c of codonCols) stops[i].push(c);
                 }
-                const oldPhase = codonPhase;
-                codonBuf += base.toUpperCase();
-                codonCols.push(pos);
-                phase[i][pos] = codonPhase;
-                codonPhase++;
 
-                if (codonPhase >= 3) {
-                    // Full codon assembled
-                    const codon = codonBuf.replace(/[Nn]/g, 'N');
-                    const aa = activeCode[codon] || 'X';
-                    aaSeq[i].push({ cols: codonCols, codon, aa });
-
-                    if (aa === '*') {
-                        // In-frame stop codon
-                        for (const c of codonCols) stops[i].push(c);
-                    }
-
-                    // Syn/non-syn check vs reference
-                    if (i !== refIdx) {
-                        const refCodon = codonCols.map(c => (refSeq[c] || '-').toUpperCase()).join('');
-                        const refAA = activeCode[refCodon] || 'X';
-                        if (aa === refAA && codon !== refCodon) {
-                            // Synonymous - all 3 positions get 'syn'
-                            for (const c of codonCols) synNonSyn[i][c] = 'syn';
-                        } else if (aa !== refAA) {
-                            // Non-synonymous - find which position(s) cause the change
-                            for (let k = 0; k < 3; k++) {
-                                const mutCodon = refCodon.substring(0,k) + codon[k] + refCodon.substring(k+1);
-                                const mutAA = activeCode[mutCodon] || 'X';
-                                if (mutAA !== refAA) {
-                                    synNonSyn[i][codonCols[k]] = 'nonsyn';
-                                } else {
-                                    synNonSyn[i][codonCols[k]] = 'syn';
-                                }
+                // Syn/non-syn check vs reference (frame 0 only for consistency)
+                if (i !== refIdx && frameOffset === 0) {
+                    const refCodon = codonCols.map(c => (refSeq[c] || '-').toUpperCase()).join('');
+                    const refAA = activeCode[refCodon] || 'X';
+                    if (aa === refAA && codon !== refCodon) {
+                        for (const c of codonCols) synNonSyn[i][c] = 'syn';
+                    } else if (aa !== refAA) {
+                        for (let k = 0; k < 3; k++) {
+                            const mutCodon = refCodon.substring(0,k) + codon[k] + refCodon.substring(k+1);
+                            const mutAA = activeCode[mutCodon] || 'X';
+                            if (mutAA !== refAA) {
+                                synNonSyn[i][codonCols[k]] = 'nonsyn';
+                            } else {
+                                synNonSyn[i][codonCols[k]] = 'syn';
                             }
                         }
                     }
-
-                    codonPhase = 0;
-                    codonBuf = '';
-                    codonCols = [];
                 }
+
+                codonPhase = 0;
+                codonBuf = '';
+                codonCols = [];
             }
         }
 
-        // Check for incomplete final codon (frameshift)
         if (codonPhase > 0 && codonPhase < 3) {
             frameShifts[i].push({ pos: len - 1, phase: codonPhase, type: 'incomplete' });
         }
     }
 
-    return { phase, stops, frameShifts, synNonSyn, aaSeq, refIdx };
+    return { phase, stops, frameShifts, synNonSyn, aaSeq, refIdx, frameOffset };
 }
 
-// =====================================================================
+// Compute codon analysis for all three reading frames
+// Returns { frames: [frame0, frame1, frame2], refIdx, bestFrame }
+function _computeMultiFrameCodonAnalysis(seqs, len) {
+    const frames = [];
+    for (let fr = 0; fr < 3; fr++) {
+        frames.push(_computeCodonAnalysis(seqs, len, fr));
+    }
+    // Auto-detect best frame: fewest total stop codons
+    const stopSums = frames.map((f, fi) => ({
+        frame: fi,
+        totalStops: f.stops.reduce((a, b) => a + b.length, 0)
+    }));
+    stopSums.sort((a, b) => a.totalStops - b.totalStops);
+    const bestFrame = stopSums[0].frame;
+    return { frames, refIdx: 0, bestFrame };
+}
+
 // CANVAS-BASED RENDERER - for large alignments
 // Draws only visible area, no per-residue DOM nodes
 // =====================================================================
@@ -3278,18 +3271,37 @@ function renderAlignment(options = {}) {
         document.body.classList.remove('var-sites-only');
     }
 
-    // Codon analysis
+// Codon analysis
     const codonAnalysis = document.getElementById('codonAnalysis')?.checked;
     if (codonAnalysis) {
-        state._codonData = _computeCodonAnalysis(state.seqs, len);
-        if (state._codonData) {
+        // Compute all three frames; select active frame based on codonFrame dropdown
+        state._codonFrames = _computeMultiFrameCodonAnalysis(state.seqs, len);
+        const frameSel = document.getElementById('codonFrame')?.value || 'auto';
+        if (state._codonFrames) {
+            let activeFrame;
+            if (frameSel === 'auto') {
+                activeFrame = state._codonFrames.bestFrame;
+            } else if (frameSel === 'all') {
+                activeFrame = -1; // special: show all frames in AA rows
+            } else {
+                activeFrame = parseInt(frameSel) || 0;
+            }
+            // Set backward-compat _codonData to the active frame (or frame 0 for 'all')
+            const displayFrame = activeFrame >= 0 ? activeFrame : 0;
+            state._codonData = state._codonFrames.frames[displayFrame];
+            state._codonActiveFrame = activeFrame;
             document.body.classList.add('codon-mode');
         } else {
+            state._codonFrames = null;
+            state._codonData = null;
+            state._codonActiveFrame = 0;
             document.body.classList.remove('codon-mode');
             showMessage('Codon analysis requires a nucleotide alignment', 4000);
         }
     } else {
         state._codonData = null;
+        state._codonFrames = null;
+        state._codonActiveFrame = 0;
         document.body.classList.remove('codon-mode');
     }
 
@@ -3425,27 +3437,51 @@ function renderAlignment(options = {}) {
         seqRows.forEach(rowEl => {
             const seqIdx = parseInt(rowEl.dataset.seqIndex);
             if (isNaN(seqIdx)) return;
-            // Check if already has AA row
+            // Check if already has AA rows
             if (rowEl.nextElementSibling?.classList.contains('aa-row')) return;
 
-            const aaRow = document.createElement('div');
-            aaRow.className = 'aa-row';
-            aaRow.style.cssText = 'padding-left:var(--nameLen)ch;font-family:monospace;font-size:11px;color:#1a5276;line-height:1;min-height:14px;';
-            if (cd.aaSeq[seqIdx]) {
-                for (const entry of cd.aaSeq[seqIdx]) {
-                    const aa = entry.aa;
-                    const startCol = entry.cols[0];
-                    // Create a 3-char wide AA label
-                    const aaSpan = document.createElement('span');
-                    aaSpan.style.cssText = `width:3ch;display:inline-block;text-align:center;${aa==='*'?'color:#e74c3c;font-weight:bold;':''}`;
-                    aaSpan.textContent = aa;
-                    aaSpan.dataset.col = startCol;
-                    aaRow.appendChild(aaSpan);
+            const buildAARow = (aaSeqData, frameLabel, isBest) => {
+                const aaRow = document.createElement('div');
+                aaRow.className = 'aa-row';
+                if (frameLabel !== null) aaRow.classList.add('aa-row-f' + frameLabel);
+                if (isBest) aaRow.classList.add('aa-row-best');
+                aaRow.style.cssText = 'padding-left:var(--nameLen)ch;font-family:monospace;font-size:11px;color:#1a5276;line-height:1;min-height:14px;';
+                // Frame label prefix
+                if (frameLabel !== null) {
+                    const labelSpan = document.createElement('span');
+                    labelSpan.style.cssText = 'display:inline-block;width:3ch;text-align:right;margin-right:1ch;color:#95a5a6;font-size:9px;font-weight:bold;';
+                    labelSpan.textContent = 'F' + frameLabel + ':';
+                    aaRow.appendChild(labelSpan);
                 }
+                if (aaSeqData) {
+                    for (const entry of aaSeqData) {
+                        const aa = entry.aa;
+                        const startCol = entry.cols[0];
+                        const aaSpan = document.createElement('span');
+                        aaSpan.style.cssText = 'width:3ch;display:inline-block;text-align:center;' + (aa==='*'?'color:#e74c3c;font-weight:bold;':'');
+                        aaSpan.textContent = aa;
+                        aaSpan.dataset.col = startCol;
+                        aaRow.appendChild(aaSpan);
+                    }
+                }
+                return aaRow;
+            };
+
+            if (state._codonFrames && state._codonActiveFrame === -1) {
+                // All-frames mode: show three AA rows
+                const best = state._codonFrames.bestFrame;
+                for (let fr = 2; fr >= 0; fr--) {
+                    const frData = state._codonFrames.frames[fr];
+                    const aaRow = buildAARow(frData.aaSeq[seqIdx], fr, fr === best);
+                    rowEl.insertAdjacentElement('afterend', aaRow);
+                }
+            } else {
+                // Single-frame mode (frame 0, 1, 2, or auto)
+                const activeFrame = state._codonActiveFrame >= 0 ? state._codonActiveFrame : 0;
+                const aaRow = buildAARow(cd.aaSeq[seqIdx], null, false);
+                rowEl.insertAdjacentElement('afterend', aaRow);
             }
-            rowEl.insertAdjacentElement('afterend', aaRow);
-        });
-    }
+        });    }
 }
 
 // Unified source info updater so counts stay accurate after deletions/insertions
@@ -10619,6 +10655,9 @@ function attachUIListeners() {
 
     const codonCode = el('codonCode');
     if (codonCode) codonCode.addEventListener('change', debounceRender);
+
+    const codonFrame = el('codonFrame');
+    if (codonFrame) codonFrame.addEventListener('change', debounceRender);
 
     const colorSchemeSelect = el('colorSchemeSelect');
     if (colorSchemeSelect) colorSchemeSelect.addEventListener('change', debounceRender);

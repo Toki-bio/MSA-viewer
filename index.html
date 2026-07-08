@@ -176,6 +176,13 @@
                             </div>
                             <div style="display:flex;align-items:center;gap:6px;margin-left:74px;">
                                 <label style="font-size:10px;"><input type="checkbox" id="codonAnalysis"> Codon analysis</label>
+                                <select id="codonFrame" style="font-size:10px;padding:0 2px;height:18px;" title="Reading frame">
+                                    <option value="auto" selected>Auto</option>
+                                    <option value="0">Frame 0</option>
+                                    <option value="1">Frame 1</option>
+                                    <option value="2">Frame 2</option>
+                                    <option value="all">All 3</option>
+                                </select>
                                 <select id="codonCode" style="font-size:10px;padding:0 2px;height:18px;">
                                     <option value="1">Standard</option>
                                     <option value="2">Vert Mito</option>
@@ -968,7 +975,7 @@ B: —</pre>
 
     <script src="cluster.js"></script>
     <script src="bam-parser.js"></script>
-    <script src="script.js?v=79"></script>
+    <script src="script.js?v=80"></script>
     <script>
 // All functionality moved to script.js
 </script>

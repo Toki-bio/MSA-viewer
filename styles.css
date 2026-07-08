@@ -2038,6 +2038,17 @@ body.codon-mode .aa-row {
 }
 body.codon-mode .aa-row:empty { display: none; }
 
+/* Frame-specific AA row styling */
+body.codon-mode .aa-row-f0 { color: #2980b9; background: #f0f8ff; }
+body.codon-mode .aa-row-f1 { color: #27ae60; background: #f0fff4; }
+body.codon-mode .aa-row-f2 { color: #e67e22; background: #fff8f0; }
+
+/* Best frame (auto-detected) highlight */
+body.codon-mode .aa-row-best {
+    font-weight: bold;
+    border-left: 3px solid #3498db;
+}
+
 /* Recent files dropdown */
 .recent-item:hover { background: #e8f0fe; }
 .recent-item:last-of-type { border-bottom: none !important; }
