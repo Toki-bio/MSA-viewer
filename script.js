@@ -13124,64 +13124,54 @@ function _dotUpdateHoverInfo(row, col, options = {}) {
     var norm = _dotNormAt(row, col);
     var chA = S.seqA[row] || 'N', chB = S.seqB[col] || 'N';
 
-    // Independent per-sequence context windows
+    // SPIN-style diagonal registration: column k shows A[row+k] above B[col+k]
     var ctx = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
-    var a0 = Math.max(0, row - ctx);
-    var a1 = Math.min(S.seqA.length, row + ctx + 1);
-    var b0 = Math.max(0, col - ctx);
-    var b1 = Math.min(S.seqB.length, col + ctx + 1);
+    var aLine = '', bLine = '', guide = '';
+    var aStart = Math.max(0, row - ctx);
+    var bStart = Math.max(0, col - ctx);
+    var aEnd = Math.min(S.seqA.length, row + ctx + 1);
+    var bEnd = Math.min(S.seqB.length, col + ctx + 1);
 
-    // Extend left within context budget
-    var slackA = ctx - (row - a0);
-    var slackB = ctx - (col - b0);
-    if (slackA > 0 && a0 > 0) { var extA = Math.min(slackA, a0); a0 -= extA; slackA -= extA; }
-    if (slackB > 0 && b0 > 0) { var extB = Math.min(slackB, b0); b0 -= extB; }
+    for (var k = -ctx; k <= ctx; k++) {
+        var ar = row + k;
+        var br = col + k;
+        var aCh = (ar >= 0 && ar < S.seqA.length) ? S.seqA[ar] : ' ';
+        var bCh = (br >= 0 && br < S.seqB.length) ? S.seqB[br] : ' ';
+        aLine += aCh;
+        bLine += bCh;
+        guide += (ar >= 0 && ar < S.seqA.length && br >= 0 && br < S.seqB.length && aCh === bCh) ? '|' : ' ';
+    }
 
-    // Extend right within context budget
-    var remainA = (ctx * 2 + 1) - (a1 - a0);
-    var remainB = (ctx * 2 + 1) - (b1 - b0);
-    if (remainA > 0) a1 = Math.min(S.seqA.length, a1 + remainA);
-    if (remainB > 0) b1 = Math.min(S.seqB.length, b1 + remainB);
+    var cursorCol = ctx;
+    if (cursorCol >= 0 && cursorCol < guide.length) {
+        guide = guide.substring(0, cursorCol) + '^' + guide.substring(cursorCol + 1);
+    }
 
-    var aSlice = S.seqA.substring(a0, a1);
-    var bSlice = S.seqB.substring(b0, b1);
-    var cursA = row - a0, cursB = col - b0;
-
-    if (hoverEl) hoverEl.textContent = 'A:' + (row+1) + '/' + S.rows + '  B:' + (col+1) + '/' + S.cols + '  ' + (S.spinMode ? 'match='+norm : 'score='+norm.toFixed(3)) + '  ' + chA + ' vs ' + chB + '  A[' + (a0+1) + '-' + a1 + '] B[' + (b0+1) + '-' + b1 + ']';
+    if (hoverEl) {
+        hoverEl.textContent = 'A:' + (row + 1) + '/' + S.rows + '  B:' + (col + 1) + '/' + S.cols + '  ' +
+            (S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)) + '  ' + chA + ' vs ' + chB +
+            '  A[' + (aStart + 1) + '-' + aEnd + '] B[' + (bStart + 1) + '-' + bEnd + ']';
+    }
 
     if (panelEl) {
         panelEl.style.border = S._frozen ? '2px solid #4a9eff' : '1px solid #d8d8d8';
         panelEl.style.background = S._frozen ? '#f0f8ff' : '#f7f7f7';
 
-        var padA = Math.max(0, cursB - cursA);
-        var padB = Math.max(0, cursA - cursB);
-        var aLine = padA ? ' '.repeat(padA) + aSlice : aSlice;
-        var bLine = padB ? ' '.repeat(padB) + bSlice : bSlice;
-        var totalLen = Math.max(aLine.length, bLine.length);
-
-        var guide = '';
-        for (var i = 0; i < totalLen; i++) {
-            var ai = i - padA, bi = i - padB;
-            if (ai >= 0 && ai < aSlice.length && bi >= 0 && bi < bSlice.length)
-                guide += aSlice[ai] === bSlice[bi] ? '|' : ' ';
-            else
-                guide += ' ';
-        }
-
-        var cp = Math.max(cursA + padA, cursB + padB);
-        if (cp >= 0 && cp < guide.length)
-            guide = guide.substring(0, cp) + '^' + guide.substring(cp + 1);
-
-        // Pad to same width
-        while (aLine.length < totalLen) aLine += ' ';
-        while (bLine.length < totalLen) bLine += ' ';
-
+        var aLabel = Math.max(1, row - ctx + 1);
+        var bLabel = Math.max(1, col - ctx + 1);
         panelEl.textContent =
-            'A ' + String(a0 + 1).padStart(5) + '  ' + aLine + '\n' +
+            'A ' + String(aLabel).padStart(5) + '  ' + aLine + '\n' +
             ' '.repeat(9) + guide + '\n' +
-            'B ' + String(b0 + 1).padStart(5) + '  ' + bLine;
+            'B ' + String(bLabel).padStart(5) + '  ' + bLine;
 
-        S._copyRegion = { aSlice: aSlice, bSlice: bSlice, aStart: a0, bStart: b0, nameA: S.nameA, nameB: S.nameB };
+        S._copyRegion = {
+            aSlice: S.seqA.substring(aStart, aEnd),
+            bSlice: S.seqB.substring(bStart, bEnd),
+            aStart: aStart,
+            bStart: bStart,
+            nameA: S.nameA,
+            nameB: S.nameB
+        };
     }
 
     _dotSyncSliders(row, col);
