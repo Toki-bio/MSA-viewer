@@ -855,9 +855,18 @@
             <div id="dotPlotStatus" style="font-size:11px;color:#666;margin-top:4px;"></div>
             <div id="dotPlotHover" style="font-size:11px;color:#555;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;"></div>
             <div id="dotPlotAlignMeta" style="font-size:11px;color:#666;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;margin-top:2px;"></div>
+            <div id="dotPlotSliders" style="display:none;grid-template-columns:auto 1fr auto;gap:4px 8px;align-items:center;margin-top:4px;font-size:11px;color:#555;">
+                <label for="dotPlotSeqASlider">A</label>
+                <input type="range" id="dotPlotSeqASlider" min="1" max="1" value="1" step="1" style="width:100%;">
+                <span id="dotPlotSeqAVal" style="font-family:monospace;min-width:72px;text-align:right;">1 / 1</span>
+                <label for="dotPlotSeqBSlider">B</label>
+                <input type="range" id="dotPlotSeqBSlider" min="1" max="1" value="1" step="1" style="width:100%;">
+                <span id="dotPlotSeqBVal" style="font-family:monospace;min-width:72px;text-align:right;">1 / 1</span>
+            </div>
             <pre id="dotPlotAlignPanel" style="margin:4px 0 0;padding:8px;border-radius:6px;border:1px solid #d8d8d8;background:#f7f7f7;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;white-space:pre;overflow-x:auto;min-height:58px;">A: —
    
 B: —</pre>
+            <div id="dotPlotSpinScroll" style="display:none;font-size:11px;color:#4a9eff;font-weight:bold;margin-top:3px;">Frozen - double-click to unfreeze</div>
                 <button id="dotPlotCopyRegion" style="margin-top:6px;padding:4px 10px;font-size:12px;cursor:pointer;" title="Copy aligned region as FASTA">📋 Copy Region</button>
         </div>
     </div>
