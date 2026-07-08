@@ -13081,8 +13081,7 @@ function _dotUpdateHoverInfo(row, col) {
 
     const norm = _dotNormAt(row, col);
 
-    // Context: show `context` bases around cursor on each sequence independently.
-    // If a sequence is shorter than context*2+1, the full sequence is shown.
+    // Context slice: each sequence gets its own window around cursor, independently clamped
     const context = parseInt(document.getElementById('dotPlotContextRadius')?.value) || 30;
     const a0 = Math.max(0, row - context);
     const a1 = Math.min(S.seqA.length, row + context + 1);
@@ -13090,47 +13089,49 @@ function _dotUpdateHoverInfo(row, col) {
     const b1 = Math.min(S.seqB.length, col + context + 1);
     const aSlice = S.seqA.slice(a0, a1);
     const bSlice = S.seqB.slice(b0, b1);
-    const hoverA = row - a0; // cursor position in A slice
-    const hoverB = col - b0; // cursor position in B slice
+    const hoverA = row - a0;
+    const hoverB = col - b0;
 
-    if (hoverEl) hoverEl.textContent = `A:${row + 1}/${S.rows}  B:${col + 1}/${S.cols}  ${S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)}  ${S.seqA[row] || 'N'} vs ${S.seqB[col] || 'N'}  A[${a0+1}-${a1}] B[${b0+1}-${b1}]`;
+    if (hoverEl) hoverEl.textContent = 'A:' + (row + 1) + '/' + S.rows + '  B:' + (col + 1) + '/' + S.cols + '  ' + (S.spinMode ? 'match=' + norm : 'score=' + norm.toFixed(3)) + '  ' + (S.seqA[row] || 'N') + ' vs ' + (S.seqB[col] || 'N') + '  A[' + (a0 + 1) + '-' + a1 + '] B[' + (b0 + 1) + '-' + b1 + ']';
 
     if (panelEl) {
-        if (S._frozen) {
-            panelEl.style.border = "2px solid #4a9eff";
-            panelEl.style.background = "#f0f8ff";
-        } else {
-            panelEl.style.border = "1px solid #d8d8d8";
-            panelEl.style.background = "#f7f7f7";
-
-        // Pad slices to align at cursor position
-        const padA = Math.max(0, hoverB - hoverA);
-        const padB = Math.max(0, hoverA - hoverB);
-        // Build guide: align slices at cursor, mark matching columns
-        let guide = '';
-        const totalLen = Math.max(aSlice.length + padA, bSlice.length + padB);
-        for (let i = 0; i < totalLen; i++) {
-            const ai = i - padA, bi = i - padB;
-            if (ai >= 0 && ai < aSlice.length && bi >= 0 && bi < bSlice.length) {
-                guide += aSlice[ai] === bSlice[bi] ? '|' : ' ';
-            } else {
-                guide += ' ';
+        try {
+            if (S._frozen) {
+                panelEl.style.border = '2px solid #4a9eff';
+                panelEl.style.background = '#f0f8ff';
+                return;
             }
-        }
-        // Mark cursor
-        const cursorPos = Math.max(hoverA, hoverB);
-        if (cursorPos >= 0 && cursorPos < guide.length) {
-            guide = guide.substring(0, cursorPos) + '^' + guide.substring(cursorPos + 1);
-        }
-        const aLine = ' '.repeat(padA) + aSlice;
-        const bLine = ' '.repeat(padB) + bSlice;
-        panelEl.textContent =
-            `A ${String(a0 + 1).padStart(5)}  ${aLine}\n` +
-            `          ${guide}\n` +
-            `B ${String(b0 + 1).padStart(5)}  ${bLine}`;
+            panelEl.style.border = '1px solid #d8d8d8';
+            panelEl.style.background = '#f7f7f7';
 
-        S._copyRegion = { aSlice, bSlice, aStart: a0, bStart: b0, nameA: S.nameA, nameB: S.nameB };
-    
+            // Align slices at cursor: pad left side so cursor positions line up
+            const padA = Math.max(0, hoverB - hoverA);
+            const padB = Math.max(0, hoverA - hoverB);
+            let guide = '';
+            const totalLen = Math.max(aSlice.length + padA, bSlice.length + padB);
+            for (let i = 0; i < totalLen; i++) {
+                const ai = i - padA, bi = i - padB;
+                if (ai >= 0 && ai < aSlice.length && bi >= 0 && bi < bSlice.length) {
+                    guide += aSlice[ai] === bSlice[bi] ? '|' : ' ';
+                } else {
+                    guide += ' ';
+                }
+            }
+            const cursorPos = Math.max(hoverA, hoverB);
+            if (cursorPos >= 0 && cursorPos < guide.length) {
+                guide = guide.substring(0, cursorPos) + '^' + guide.substring(cursorPos + 1);
+            }
+            const aLine = ' '.repeat(padA) + aSlice;
+            const bLine = ' '.repeat(padB) + bSlice;
+            panelEl.textContent =
+                'A ' + String(a0 + 1).padStart(5) + '  ' + aLine + '\n' +
+                '          ' + guide + '\n' +
+                'B ' + String(b0 + 1).padStart(5) + '  ' + bLine;
+
+            S._copyRegion = { aSlice, bSlice, aStart: a0, bStart: b0, nameA: S.nameA, nameB: S.nameB };
+        } catch (e) {
+            if (panelEl) panelEl.textContent = 'Error: ' + e.message;
+            console.error('_dotUpdateHoverInfo error:', e);
         }
     }
 
@@ -13248,7 +13249,7 @@ function _dotRender() {
             for (let j = 0; j < S.cols; j++) {
                 const x = DOT_AXIS_PAD + Math.floor((j + 0.5) * colW);
                 const idx = (i * S.cols + j) * 4;
-                const isMatch = S.spinMode ? (S.matchMap && S.matchMap[i * S.cols + j]) : (id[idx] < 128);
+                const isMatch = (S.spinMode && S.matchMap) ? Boolean(S.matchMap[i * S.cols + j]) : (id[idx] < 128 && id[idx+1] < 128 && id[idx+2] < 128);
                 if (!isMatch) continue;
                 const chA = S.seqA[i] || 'N', chB = S.seqB[j] || 'N';
                 const txt = chA + chB;
@@ -13573,6 +13574,30 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
 }
 
 
+function _dotUpdateSpinScroll() {
+    const S = _dotPlotState;
+    const bar = document.getElementById('dotPlotSpinScroll');
+    if (!bar) return;
+    if (!S._frozen || S._frozenRow == null) { bar.style.display = 'none'; return; }
+    bar.style.display = 'block';
+    S._spinShiftA = S._spinShiftA || 0;
+    S._spinShiftB = S._spinShiftB || 0;
+
+    const maxNegA = S._frozenRow;
+    const maxPosA = S.rows - 1 - S._frozenRow;
+    const maxNegB = S._frozenCol;
+    const maxPosB = S.cols - 1 - S._frozenCol;
+
+    const slA = document.getElementById('spinSliderA');
+    if (slA) { slA.min = -maxNegA; slA.max = maxPosA; slA.value = S._spinShiftA; }
+    const slB = document.getElementById('spinSliderB');
+    if (slB) { slB.min = -maxNegB; slB.max = maxPosB; slB.value = S._spinShiftB; }
+    const lblA = document.getElementById('spinShiftA');
+    if (lblA) lblA.textContent = (S._spinShiftA > 0 ? '+' : '') + S._spinShiftA;
+    const lblB = document.getElementById('spinShiftB');
+    if (lblB) lblB.textContent = (S._spinShiftB > 0 ? '+' : '') + S._spinShiftB;
+}
+
 function _dotUnfreeze() {
     const S = _dotPlotState;
     S._frozen = false; S._frozenRow = S._frozenCol = undefined; S._frozenSlider = undefined;
@@ -13764,24 +13789,27 @@ function _initDotPlotEvents() {
             a.click();
         });
     }
-    // SPIN-style scroll buttons for alignment display
-    ['spinScrollLL','spinScrollL','spinScrollR','spinScrollRR'].forEach(id => {
-        const btn = document.getElementById(id);
-        if (!btn) return;
-        btn.addEventListener('click', () => {
+
+    // SPIN per-sequence sliders: shift sequence windows
+    ['spinSliderA','spinSliderB'].forEach(sliderId => {
+        const sl = document.getElementById(sliderId);
+        if (!sl) return;
+        const isA = sliderId === 'spinSliderA';
+        sl.addEventListener('input', () => {
             const S = _dotPlotState;
             if (!S._frozen || S._frozenRow == null) return;
-            const step = id.includes('LL') || id.includes('RR') ? 10 : 1;
-            const dir = id.includes('R') ? 1 : -1;
-            S._frozenSlider = (S._frozenSlider || 0) + step * dir;
-            const maxNeg = Math.min(S._frozenRow, S._frozenCol);
-            const maxPos = Math.min(S.rows - 1 - S._frozenRow, S.cols - 1 - S._frozenCol);
-            if (S._frozenSlider < -maxNeg) S._frozenSlider = -maxNeg;
-            if (S._frozenSlider > maxPos) S._frozenSlider = maxPos;
-            const r = S._frozenRow + S._frozenSlider;
-            const c = S._frozenCol + S._frozenSlider;
+            const shift = parseInt(sl.value);
+            if (isA) S._spinShiftA = shift; else S._spinShiftB = shift;
+            if (S._spinLocked) {
+                // Locked: move both together
+                if (isA) S._spinShiftB = shift; else S._spinShiftA = shift;
+                const slOther = document.getElementById(isA ? 'spinSliderB' : 'spinSliderA');
+                if (slOther) slOther.value = shift;
+            }
+            // Update display: show alignment at shifted position
+            const r = S._frozenRow + (isA ? S._spinShiftA : S._spinShiftB);
+            const c = S._frozenCol + (isA ? S._spinShiftA : S._spinShiftB);
             if (r >= 0 && c >= 0 && r < S.rows && c < S.cols) {
-                _dotDrawOverlay(r, c);
                 _dotUpdateHoverInfo(r, c);
             }
             _dotUpdateSpinScroll();
@@ -13791,8 +13819,8 @@ function _initDotPlotEvents() {
     if (lockBtn) lockBtn.addEventListener('click', () => {
         const S = _dotPlotState;
         S._spinLocked = !S._spinLocked;
-        lockBtn.innerHTML = S._spinLocked ? '&#128274;' : '&#128275;';
-        lockBtn.style.background = S._spinLocked ? '#d4edda' : '';
+        lockBtn.innerHTML = S._spinLocked ? '&#128274; Locked' : '&#128275; Lock';
+        lockBtn.style.background = S._spinLocked ? '#d4edda' : '#f5f5f5';
     });
     const copyBtn = document.getElementById('dotPlotCopyRegion');
     if (copyBtn) {
