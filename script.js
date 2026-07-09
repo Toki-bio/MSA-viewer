@@ -1275,48 +1275,83 @@ function iupacToBases(code) {
 //  - Copy Selected Consensus
 // Options derive from current UI controls so all paths stay identical.
 // Returns full length consensus string (with gaps retained); caller can strip gaps if needed.
+function _getConsensusOptions() {
+    return {
+        threshold: clampConsensusPercent(el('consensusThreshold').value) / 100,
+        coverageMin: clampMinCoverage(el('consensusMinCoverage')?.value) / 100,
+        consType: document.querySelector('input[name="consensusType"]:checked').value,
+        fallbackMode: (document.getElementById('consensusFallback')?.value) || 'gap',
+    };
+}
+
+function _computeConsensusCharForColumn(seqArray, pos, opts) {
+    const { threshold, coverageMin, consType, fallbackMode } = opts;
+    const col = seqArray.map(s => (s[pos] || '-').toUpperCase());
+    const nonGapCol = col.filter(b => b !== '-' && b !== '.');
+    if (nonGapCol.length === 0) return '-';
+    const coverage = nonGapCol.length / seqArray.length;
+    if (coverage < coverageMin) return '-';
+    const counts = {};
+    nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
+    const maxCount = Math.max(...Object.values(counts));
+    const maxBases = Object.keys(counts).filter(b => counts[b] === maxCount);
+    const freq = maxCount / col.length; // denominator includes gaps for consistency with display
+    if (freq >= threshold) {
+        const stdTop = maxBases.map(b => (b === 'U' ? 'T' : b)).filter(b => ['A','C','G','T'].includes(b));
+        if (consType === 'ambiguous') {
+            if (stdTop.length >= 2) return iupacFromBases(stdTop);
+            if (stdTop.length === 1) return stdTop[0];
+            return maxBases.sort()[0];
+        }
+        const normalBases = ['A','C','G','T'].filter(b => counts[b]);
+        if (normalBases.length > 0) {
+            const maxNormal = Math.max(...normalBases.map(b => counts[b] || 0));
+            return normalBases.filter(b => (counts[b] || 0) === maxNormal).sort()[0];
+        }
+        return maxBases.sort()[0];
+    }
+    const presentStd = Object.keys(counts).map(b => (b === 'U' ? 'T' : b)).filter(b => ['A','C','G','T'].includes(b));
+    const uniqueStd = Array.from(new Set(presentStd));
+    if (fallbackMode === 'iupac' && uniqueStd.length >= 2) return iupacFromBases(uniqueStd);
+    if (fallbackMode === 'n' && uniqueStd.length >= 2) return 'N';
+    return '-';
+}
+
 function computeConsensusForSequences(seqArray) {
     if (!seqArray || seqArray.length === 0) return '';
     const len = Math.max(...seqArray.map(s => s.length));
-    const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100; // frequency threshold
-    const coverageMin = clampMinCoverage(el('consensusMinCoverage')?.value) / 100;
-    const consType = document.querySelector('input[name="consensusType"]:checked').value;
-    const fallbackMode = (document.getElementById('consensusFallback')?.value) || 'gap';
+    const opts = _getConsensusOptions();
     let out = '';
     for (let pos = 0; pos < len; pos++) {
-        const col = seqArray.map(s => (s[pos] || '-').toUpperCase());
-        const nonGapCol = col.filter(b => b !== '-' && b !== '.');
-        if (nonGapCol.length === 0) { out += '-'; continue; }
-        const coverage = nonGapCol.length / seqArray.length;
-        if (coverage < coverageMin) { out += '-'; continue; }
-        const counts = {};
-        nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
-        const maxCount = Math.max(...Object.values(counts));
-        const maxBases = Object.keys(counts).filter(b => counts[b] === maxCount);
-        const freq = maxCount / col.length; // denominator includes gaps for consistency with display
-        if (freq >= threshold) {
-            const stdTop = maxBases.map(b => (b === 'U' ? 'T' : b)).filter(b => ['A','C','G','T'].includes(b));
-            if (consType === 'ambiguous') {
-                if (stdTop.length >= 2) out += iupacFromBases(stdTop);
-                else if (stdTop.length === 1) out += stdTop[0];
-                else out += maxBases.sort()[0];
-            } else {
-                const normalBases = ['A','C','G','T'].filter(b => counts[b]);
-                if (normalBases.length > 0) {
-                    const maxNormal = Math.max(...normalBases.map(b => counts[b] || 0));
-                    const topNormal = normalBases.filter(b => (counts[b] || 0) === maxNormal).sort()[0];
-                    out += topNormal;
-                } else out += maxBases.sort()[0];
-            }
-        } else {
-            const presentStd = Object.keys(counts).map(b => (b === 'U' ? 'T' : b)).filter(b => ['A','C','G','T'].includes(b));
-            const uniqueStd = Array.from(new Set(presentStd));
-            if (fallbackMode === 'iupac' && uniqueStd.length >= 2) out += iupacFromBases(uniqueStd);
-            else if (fallbackMode === 'n' && uniqueStd.length >= 2) out += 'N';
-            else out += '-';
-        }
+        out += _computeConsensusCharForColumn(seqArray, pos, opts);
     }
     return out;
+}
+
+// Timesliced twin of computeConsensusForSequences, for the Canvas-mode
+// deferred path where consensus isn't displayed but is still computed lazily
+// for features like "Copy Consensus". Never blocks the main thread for more
+// than ~8ms per slice, regardless of alignment size.
+function computeConsensusForSequencesChunked(seqArray, onDone, token) {
+    if (!seqArray || seqArray.length === 0) { onDone(''); return; }
+    const len = Math.max(...seqArray.map(s => s.length));
+    const opts = _getConsensusOptions();
+    const chars = new Array(len);
+    let pos = 0;
+    function step() {
+        if (token && token.cancelled) return;
+        const t0 = performance.now();
+        while (pos < len && (performance.now() - t0) < 8) {
+            chars[pos] = _computeConsensusCharForColumn(seqArray, pos, opts);
+            pos++;
+        }
+        if (pos < len) {
+            setTimeout(step, 0);
+        } else {
+            onDone(chars.join(''));
+        }
+    }
+    step();
 }
 // PARSING FUNCTIONS
 
@@ -1804,6 +1839,10 @@ function _computeMultiFrameCodonAnalysis(seqs, len) {
 // Draws only visible area, no per-residue DOM nodes
 // =====================================================================
 const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen: 0, scheduleDraw: null };
+// Cancellation token for the Canvas mode's deferred (chunked) conservation/
+// consensus jobs; reassigned + old one cancelled on every render so a
+// superseded background job can't clobber a newer one's results.
+let _canvasDeferredToken = null;
 
 function _initCanvasMetrics(ctx) {
     if (_canvasState.metrics) return _canvasState.metrics;
@@ -1870,11 +1909,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
 
     let overviewCanvas = null;
     function getOverviewWidth() {
-        return Math.max(1, Math.floor(
+        // Clamp defensively: a stray layout/measurement glitch feeding an
+        // unbounded value here would blow up _buildOverview's pixel loop
+        // (it's a hard loop bound, not viewport-culled like the main draw()).
+        return Math.max(1, Math.min(4000, Math.floor(
             overviewCanvas?.getBoundingClientRect().width
             || alignmentContainer.clientWidth
             || 800
-        ));
+        )));
     }
 
     // Resize canvas to viewport
@@ -2016,46 +2058,58 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     overviewCanvas.style.cssText = 'display:block;position:absolute;bottom:0;left:0;width:100%;height:'+OVERVIEW_H+'px;background:#fafafa;border-top:1px solid #ccc;z-index:2;cursor:pointer;';
     alignmentContainer.appendChild(overviewCanvas);
 
+    // Builds the minimap incrementally, a few rows per timeslice, so a slow
+    // or unexpectedly wide measurement can never hold the main thread for
+    // more than ~8ms at a stretch (unlike a single monolithic ow*oh loop).
+    let _overviewBuildToken = 0;
     function _buildOverview() {
+        const myToken = ++_overviewBuildToken;
         const ow = getOverviewWidth();
         const oh = OVERVIEW_H;
-        _ovBgCanvas = document.createElement('canvas');
-        _ovBgCanvas.width = ow * dpr; _ovBgCanvas.height = oh * dpr;
-        const octx = _ovBgCanvas.getContext('2d');
+        const bg = document.createElement('canvas');
+        bg.width = ow * dpr; bg.height = oh * dpr;
+        const octx = bg.getContext('2d');
         octx.setTransform(dpr, 0, 0, dpr, 0, 0);
         const sx = len / ow, sy = nSeqs / oh;
         const ovScheme = getEffectiveColorScheme();
         octx.clearRect(0, 0, ow, oh);
-        for (let y = 0; y < oh; y++) {
-            const si = Math.floor(y * sy);
-            if (si >= nSeqs) continue;
-            const seq = state.seqs[si].seq;
-            for (let x = 0; x < ow; x++) {
-                const ci = Math.floor(x * sx);
-                if (ci >= len) continue;
-                const ch = (seq[ci] || '-').toUpperCase();
-                const schemeStyle = getResidueSchemeStyle(seq[ci], ovScheme);
-                if (schemeStyle && schemeStyle.bg) {
-                    octx.fillStyle = schemeStyle.bg;
-                } else if (ch === '-' || ch === '.') {
-                    octx.fillStyle = '#e0e0e0';
-                } else {
-                    octx.fillStyle = '#ddd';
+
+        let y = 0;
+        function buildRows() {
+            if (myToken !== _overviewBuildToken) return; // superseded by a newer render
+            const t0 = performance.now();
+            while (y < oh && (performance.now() - t0) < 8) {
+                const si = Math.floor(y * sy);
+                if (si < nSeqs) {
+                    const seq = state.seqs[si].seq;
+                    for (let x = 0; x < ow; x++) {
+                        const ci = Math.floor(x * sx);
+                        if (ci >= len) continue;
+                        const ch = (seq[ci] || '-').toUpperCase();
+                        const schemeStyle = getResidueSchemeStyle(seq[ci], ovScheme);
+                        if (schemeStyle && schemeStyle.bg) octx.fillStyle = schemeStyle.bg;
+                        else if (ch === '-' || ch === '.') octx.fillStyle = '#e0e0e0';
+                        else octx.fillStyle = '#ddd';
+                        octx.fillRect(x, y, 1, 1);
+                    }
                 }
-                octx.fillRect(x, y, 1, 1);
+                y++;
             }
+            if (y < oh) {
+                setTimeout(buildRows, 0);
+                return;
+            }
+            _ovBgCanvas = bg;
+            overviewCanvas.width = ow * dpr; overviewCanvas.height = oh * dpr;
+            overviewCanvas.style.height = oh + 'px';
+            _markDirty();
+            scheduleDraw();
         }
-        // Setup backing store size without forcing the CSS width from 100% to 100px.
-        overviewCanvas.width = ow * dpr; overviewCanvas.height = oh * dpr;
-        overviewCanvas.style.height = oh + 'px';
+        buildRows();
     }
     resize();
     draw(); // Initial alignment draw; overview is built off the critical path.
-    const buildOverview = () => {
-        _buildOverview();
-        _markDirty();
-        scheduleDraw();
-    };
+    const buildOverview = () => { _buildOverview(); };
     if (typeof requestIdleCallback === 'function') {
         requestIdleCallback(buildOverview, { timeout: 1000 });
     } else {
@@ -2449,55 +2503,77 @@ function generateScale(maxLength, interval = 10, startPos = 0) {
     return scaleArray.join('');
 }
 
-function preCalculateConservation(seqs, len, shadeMode) {
-    const conservationData = new Array(len);
-    const minCoverage = 0.3; // Require at least 30% non-gap sequences for coloring
-    const seqCount = seqs.length;
+const CONSERVATION_MIN_COVERAGE = 0.3; // Require at least 30% non-gap sequences for coloring
 
-    for (let pos = 0; pos < len; pos++) {
-        // Count bases directly without creating intermediate arrays
-        const counts = {};
-        let nonGapCount = 0;
+function _computeConservationForColumn(seqs, seqCount, pos, shadeMode) {
+    // Count bases directly without creating intermediate arrays
+    const counts = {};
+    let nonGapCount = 0;
 
-        for (let s = 0; s < seqCount; s++) {
-            const rawBase = seqs[s].seq[pos] || '-';
-            const base = rawBase.toUpperCase();
-            if (base !== '-' && base !== '.') {
-                counts[base] = (counts[base] || 0) + 1;
-                nonGapCount++;
-            }
-        }
-
-        if (nonGapCount > 0) {
-            // Find max count
-            let maxCount = 0;
-            for (const count of Object.values(counts)) {
-                if (count > maxCount) maxCount = count;
-            }
-
-            // Get all bases with max count
-            const consensusBases = new Set();
-            for (const [base, count] of Object.entries(counts)) {
-                if (count === maxCount) consensusBases.add(base);
-            }
-
-            const denominator = shadeMode === 'all' ? seqCount : nonGapCount;
-            const conservation = maxCount / denominator;
-            const coverage = nonGapCount / seqCount;
-            const hasValidCoverage = coverage >= minCoverage;
-
-            conservationData[pos] = {
-                consensusBases,
-                conservation,
-                hasData: true,
-                hasValidCoverage: hasValidCoverage
-            };
-        } else {
-            conservationData[pos] = { hasData: false, hasValidCoverage: false };
+    for (let s = 0; s < seqCount; s++) {
+        const rawBase = seqs[s].seq[pos] || '-';
+        const base = rawBase.toUpperCase();
+        if (base !== '-' && base !== '.') {
+            counts[base] = (counts[base] || 0) + 1;
+            nonGapCount++;
         }
     }
 
+    if (nonGapCount === 0) return { hasData: false, hasValidCoverage: false };
+
+    let maxCount = 0;
+    for (const count of Object.values(counts)) {
+        if (count > maxCount) maxCount = count;
+    }
+
+    const consensusBases = new Set();
+    for (const [base, count] of Object.entries(counts)) {
+        if (count === maxCount) consensusBases.add(base);
+    }
+
+    const denominator = shadeMode === 'all' ? seqCount : nonGapCount;
+    const conservation = maxCount / denominator;
+    const coverage = nonGapCount / seqCount;
+
+    return {
+        consensusBases,
+        conservation,
+        hasData: true,
+        hasValidCoverage: coverage >= CONSERVATION_MIN_COVERAGE
+    };
+}
+
+function preCalculateConservation(seqs, len, shadeMode) {
+    const conservationData = new Array(len);
+    const seqCount = seqs.length;
+    for (let pos = 0; pos < len; pos++) {
+        conservationData[pos] = _computeConservationForColumn(seqs, seqCount, pos, shadeMode);
+    }
     return conservationData;
+}
+
+// Same computation as preCalculateConservation, but spread across timeslices
+// (via setTimeout yields) so a very large alignment can never hold the main
+// thread for more than ~8ms at a stretch. Used by the Canvas mode deferred
+// shading pass, where the "freeze" reports came from.
+function preCalculateConservationChunked(seqs, len, shadeMode, onDone, token) {
+    const conservationData = new Array(len);
+    const seqCount = seqs.length;
+    let pos = 0;
+    function step() {
+        if (token && token.cancelled) return;
+        const t0 = performance.now();
+        while (pos < len && (performance.now() - t0) < 8) {
+            conservationData[pos] = _computeConservationForColumn(seqs, seqCount, pos, shadeMode);
+            pos++;
+        }
+        if (pos < len) {
+            setTimeout(step, 0);
+        } else {
+            onDone(conservationData);
+        }
+    }
+    step();
 }
 
 function getDeferredConservationData(len, shadeMode) {
@@ -3338,7 +3414,7 @@ function renderAlignment(options = {}) {
     // ── Canvas fast path (UGENE-style: first paint costs only the visible region) ──
     // Canvas shows no consensus row, so consensus is skipped entirely here.
     // Conservation shading is deferred: draw an unshaded frame immediately, then
-    // compute conservation off the critical path (idle) and repaint shaded.
+    // compute conservation off the critical path (idle, time-sliced) and repaint shaded.
     if (useCanvas) {
         const cachedConservation = (state.conservationDataCache?.len === len
             && state.conservationDataCache?.shadeMode === shadeMode)
@@ -3346,15 +3422,23 @@ function renderAlignment(options = {}) {
         _renderCanvasAlignment(len, cachedConservation || [], shadeMode, blackThresh, darkThresh, lightThresh,
             enableBlack, enableDark, enableLight, nameLen, stickyNames);
 
+        // Invalidate any still-running chunked jobs from a previous load/render
+        // so they don't write stale results (or fight over the main thread)
+        // once a new file/render supersedes them.
+        if (_canvasDeferredToken) _canvasDeferredToken.cancelled = true;
+        const myToken = { cancelled: false };
+        _canvasDeferredToken = myToken;
+
         if (!cachedConservation) {
             const computeShadingAndRepaint = () => {
+                if (myToken.cancelled) return;
                 if (!state.seqs || !state.seqs.length) return;
                 if (Math.max(...state.seqs.map(s => s.seq.length)) !== len) return; // alignment changed
-                state.conservationDataCache = {
-                    len, shadeMode,
-                    data: preCalculateConservation(state.seqs, len, shadeMode)
-                };
-                if (document.getElementById('modeCanvas')?.checked) renderAlignment(options);
+                preCalculateConservationChunked(state.seqs, len, shadeMode, (data) => {
+                    if (myToken.cancelled) return;
+                    state.conservationDataCache = { len, shadeMode, data };
+                    if (document.getElementById('modeCanvas')?.checked) renderAlignment(options);
+                }, myToken);
             };
             if (typeof requestIdleCallback === 'function') {
                 requestIdleCallback(computeShadingAndRepaint, { timeout: 1500 });
@@ -3363,15 +3447,20 @@ function renderAlignment(options = {}) {
             }
         }
 
-        // Consensus is not displayed in Canvas mode. Compute it lazily so features
-        // that consume it (Copy Consensus, etc.) still work without blocking paint.
+        // Consensus is not displayed in Canvas mode. Compute it lazily (time-sliced)
+        // so features that consume it (Copy Consensus, etc.) still work without
+        // blocking paint.
         if (showConsensus && state.consensusCache?.len !== len) {
             const computeConsensusIdle = () => {
+                if (myToken.cancelled) return;
                 if (!state.seqs || !state.seqs.length) return;
                 if (Math.max(...state.seqs.map(s => s.seq.length)) !== len) return;
-                const cons = computeConsensusForSequences(state.seqs.map(s => s.seq)).split('');
-                state.consensusCache = { len, values: cons.slice() };
-                state.consensusSeq = cons.join('').replace(/-/g, '');
+                computeConsensusForSequencesChunked(state.seqs.map(s => s.seq), (consStr) => {
+                    if (myToken.cancelled) return;
+                    const cons = consStr.split('');
+                    state.consensusCache = { len, values: cons.slice() };
+                    state.consensusSeq = consStr.replace(/-/g, '');
+                }, myToken);
             };
             if (typeof requestIdleCallback === 'function') {
                 requestIdleCallback(computeConsensusIdle, { timeout: 2000 });
