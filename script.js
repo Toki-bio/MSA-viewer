@@ -3238,6 +3238,11 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
 let _userDismissedAutoCanvas = false;
 
 function renderAlignment(options = {}) {
+    // Catch-all sync: covers every path that flips a mode radio programmatically
+    // (BAM load, snapshot/session restore, the auto-switch heuristic below,
+    // etc.) without going through onModeChange, so the top-bar quick switcher
+    // never drifts from whichever mode is actually about to render.
+    syncQuickModeSwitch();
     if (!state.seqs || state.seqs.length === 0) {
         alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
         return;
@@ -3308,6 +3313,7 @@ function renderAlignment(options = {}) {
     if (!userWantsCanvas && !_userDismissedAutoCanvas && TOTAL_RESIDUES > CANVAS_AUTO_THRESHOLD) {
         const canvasRadio = document.getElementById('modeCanvas');
         if (canvasRadio) canvasRadio.checked = true;
+        syncQuickModeSwitch(); // this bypasses onModeChange, so sync explicitly
         showMessage(
             `Auto-switched to Canvas mode for ${TOTAL_RESIDUES.toLocaleString()} residues. ` +
             `Switch back to Block/Full for editing.`,
@@ -4510,12 +4516,34 @@ function parseAndRender(isFromDrop = false) {
         el('sourceInfo').innerHTML = 'No file loaded';
     }
 }
+// Mirrors the canonical mode radios' checked state onto the always-visible
+// top-bar quick switcher. Called after any change to the real radios,
+// including ones the quick switcher itself didn't trigger (Display dropdown,
+// the auto-switch-to-Canvas heuristic, snapshot/session restore, etc).
+function syncQuickModeSwitch() {
+    const map = { modeSingle: 'qmSingle', modeBlocks: 'qmBlocks', modeCanvas: 'qmCanvas', modeReads: 'qmReads' };
+    for (const [canonicalId, quickId] of Object.entries(map)) {
+        const canonical = document.getElementById(canonicalId);
+        const quick = document.getElementById(quickId);
+        if (canonical && quick) quick.checked = canonical.checked;
+    }
+}
+
 function onModeChange() {
     // This only fires from a real user click on a mode radio (the auto-switch
     // heuristic in renderAlignment sets .checked programmatically, which does
     // not dispatch 'change'), so this is an unambiguous signal to stop
     // auto-switching back to Canvas for the rest of this file's session.
     _userDismissedAutoCanvas = true;
+    if (document.getElementById('modeCanvas')?.checked) {
+        // Entering Canvas mode: these caches are keyed only by length/shadeMode,
+        // so any same-length edit made while away from Canvas (residue edits,
+        // gap ops, sorts, realigns, etc.) would otherwise go undetected and
+        // Canvas would silently keep showing stale shading/consensus.
+        state.conservationDataCache = null;
+        state.consensusCache = null;
+    }
+    syncQuickModeSwitch();
     // Keep block size row visible but gray it out when not in Block mode - prevents layout jump
     const container = el('blockSizeContainer');
     const isBlocks = el('modeBlocks')?.checked;
@@ -10902,6 +10930,21 @@ function attachUIListeners() {
             radio.addEventListener('change', handler);
         });
     });
+
+    // Always-visible top-bar mode switcher (mirrors the canonical mode radios
+    // buried in the Display dropdown): clicking it drives the real radio +
+    // onModeChange; syncQuickModeSwitch() keeps it reflecting the real state
+    // whenever that changes from elsewhere (Display dropdown, auto-switch, etc).
+    document.querySelectorAll('#quickModeSwitch input[type="radio"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            const target = document.getElementById(radio.dataset.target);
+            if (target && !target.checked) {
+                target.checked = true;
+                onModeChange();
+            }
+        });
+    });
+    syncQuickModeSwitch();
 
     // Set up checkbox listeners
     const checkboxes = ['enableBlack', 'enableDark', 'enableLight', 'showConsensus',
