@@ -1136,6 +1136,10 @@ function toggleStickyNames() {
         name.classList.toggle('static', !sticky);
     });
     alignmentContainer.offsetHeight; // Force reflow
+    // DOM mode picks this up via the CSS class toggle above (no .seq-name
+    // elements exist in Canvas mode); Canvas bakes stickyNames into its
+    // render closure instead, so it needs an explicit re-render to take effect.
+    if (document.getElementById('modeCanvas')?.checked) debounceRender();
 }
 function calculateGaplessPositions(sequence) {
     const positions = [];
@@ -1898,6 +1902,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // staying pinned at a hardcoded size regardless of the zoom slider.
     const fontSizePx = parseFloat(getComputedStyle(alignmentContainer).fontSize) || 13;
     const fontStr = fontSizePx + 'px "Courier New", monospace';
+    const nameFontStr = 'bold ' + fontStr; // matches Normal mode's bold .seq-name
     const m = _initCanvasMetrics(ctx, fontSizePx);
     const CHAR_W = m.charW;
     const CHAR_H = m.charH;
@@ -1994,19 +1999,6 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             const seq = state.seqs[i].seq;
             const consPos = conservationData;
 
-            // Sequence name
-            if (ox < NAME_W) {
-                ctx.save();
-                ctx.beginPath();
-                ctx.rect(0, y, NAME_W, CHAR_H);
-                ctx.clip();
-                ctx.fillStyle = '#555';
-                const name = state.seqs[i].header || ('Seq' + (i + 1));
-                const displayName = name.length > nameLen ? name.substring(0, nameLen) + '\u2026' : name;
-                ctx.fillText(displayName, 4 - ox, y);
-                ctx.restore();
-            }
-
             // Residues (glyph-cached: 1 drawImage per cell vs fillRect+fillText)
             for (let p = firstCol; p <= lastCol; p++) {
                 const x = NAME_W + p * CHAR_W - ox;
@@ -2039,11 +2031,36 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 // Single blit from glyph cache (eliminates fillStyle+fillRect+fillStyle+fillText)
                 ctx.drawImage(_makeGlyph(base, bgFill, textFill), x, y, CHAR_W, CHAR_H);
             }
+
+            // Sequence name — drawn last so it sits on top of any residues that
+            // scrolled underneath it. Sticky mode pins it at a fixed screen x=0
+            // with an opaque backing (matching Normal mode's sticky name column,
+            // position:sticky + white background); non-sticky mode scrolls it
+            // away with the content, like .seq-name.static.
+            const name = state.seqs[i].header || ('Seq' + (i + 1));
+            const displayName = name.length > nameLen ? name.substring(0, nameLen) + '\u2026' : name;
+            ctx.font = nameFontStr;
+            if (stickyNames) {
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, y, NAME_W, CHAR_H);
+                ctx.fillStyle = '#333';
+                ctx.fillText(displayName, 4, y);
+            } else if (ox < NAME_W) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(0, y, NAME_W, CHAR_H);
+                ctx.clip();
+                ctx.fillStyle = '#333';
+                ctx.fillText(displayName, 4 - ox, y);
+                ctx.restore();
+            }
+            ctx.font = fontStr;
         }
 
-        // Name column separator
+        // Name column separator (fixed on-screen when sticky, scrolls with
+        // content otherwise, matching the name column's own behaviour above)
         ctx.fillStyle = '#ddd';
-        ctx.fillRect(NAME_W - ox - 2, 0, 1, totalContentH - oy);
+        ctx.fillRect((stickyNames ? NAME_W : NAME_W - ox) - 2, 0, 1, totalContentH - oy);
 
         // Canvas mode has no native scrollable DOM node, so notify the
         // persistent horizontal scrollbar to mirror our internal pan offset.
