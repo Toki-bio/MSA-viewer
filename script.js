@@ -1838,7 +1838,10 @@ function _computeMultiFrameCodonAnalysis(seqs, len) {
 // CANVAS-BASED RENDERER - for large alignments
 // Draws only visible area, no per-residue DOM nodes
 // =====================================================================
-const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen: 0, scheduleDraw: null };
+// totalContentW: current alignment's full pixel width (for the persistent scrollbar's thumb sizing).
+// onOffsetChange: optional callback (registered by setupPersistentScrollbar) invoked after each
+// draw() so the scrollbar can mirror wheel-scroll/drag-pan that didn't originate from the bar itself.
+const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen: 0, scheduleDraw: null, totalContentW: 0, onOffsetChange: null };
 // Cancellation token for the Canvas mode's deferred (chunked) conservation/
 // consensus jobs; reassigned + old one cancelled on every render so a
 // superseded background job can't clobber a newer one's results.
@@ -1925,6 +1928,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
 
     const totalContentW = NAME_W + len * CHAR_W + 4;
     const totalContentH = nSeqs * CHAR_H + 4;
+    // Exposed so the persistent horizontal scrollbar (a real DOM element,
+    // since Canvas mode's own content isn't natively scrollable) can size
+    // its thumb and mirror pan position.
+    _canvasState.totalContentW = totalContentW;
 
     // Resize canvas to viewport
     function resize() {
@@ -2032,15 +2039,15 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 // Single blit from glyph cache (eliminates fillStyle+fillRect+fillStyle+fillText)
                 ctx.drawImage(_makeGlyph(base, bgFill, textFill), x, y, CHAR_W, CHAR_H);
             }
-
-            // Row separator
-            ctx.fillStyle = '#eee';
-            ctx.fillRect(0, y + CHAR_H - 1, totalContentW - ox, 1);
         }
 
         // Name column separator
         ctx.fillStyle = '#ddd';
         ctx.fillRect(NAME_W - ox - 2, 0, 1, totalContentH - oy);
+
+        // Canvas mode has no native scrollable DOM node, so notify the
+        // persistent horizontal scrollbar to mirror our internal pan offset.
+        _canvasState.onOffsetChange?.();
     }
     resize();
     draw();
@@ -3224,6 +3231,12 @@ function renderCompactAlignment(len, conservationData, shadeMode, blackThresh, d
     if (typeof updateSourceInfo === 'function') updateSourceInfo();
 }
 
+// Set whenever the user explicitly picks a display mode (see onModeChange),
+// so the auto-switch-to-Canvas heuristic below stops overriding their choice
+// back to Canvas on every subsequent render. Reset per-file in parseAndRender
+// so a newly loaded large alignment still gets the initial suggestion.
+let _userDismissedAutoCanvas = false;
+
 function renderAlignment(options = {}) {
     if (!state.seqs || state.seqs.length === 0) {
         alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
@@ -3291,9 +3304,8 @@ function renderAlignment(options = {}) {
     const CANVAS_AUTO_THRESHOLD = 150000; // ~100 seq Ãƒâ€” 1500 col
     let _renderStartTime = performance.now();
     const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
-    const userPickedDom = document.getElementById('modeAutoCanvasDismissed')?.checked; // hidden flag
 
-    if (!userWantsCanvas && !userPickedDom && TOTAL_RESIDUES > CANVAS_AUTO_THRESHOLD) {
+    if (!userWantsCanvas && !_userDismissedAutoCanvas && TOTAL_RESIDUES > CANVAS_AUTO_THRESHOLD) {
         const canvasRadio = document.getElementById('modeCanvas');
         if (canvasRadio) canvasRadio.checked = true;
         showMessage(
@@ -4440,6 +4452,7 @@ function parseAndRender(isFromDrop = false) {
             state.currentFilePath = '';
         }
         state.seqs = parsed;
+        _userDismissedAutoCanvas = false; // fresh file: allow the Canvas suggestion again if it's large
         state.selectedRows.clear();
         state.selectedColumns.clear();
         state.selectedNucs.clear();
@@ -4498,6 +4511,11 @@ function parseAndRender(isFromDrop = false) {
     }
 }
 function onModeChange() {
+    // This only fires from a real user click on a mode radio (the auto-switch
+    // heuristic in renderAlignment sets .checked programmatically, which does
+    // not dispatch 'change'), so this is an unambiguous signal to stop
+    // auto-switching back to Canvas for the rest of this file's session.
+    _userDismissedAutoCanvas = true;
     // Keep block size row visible but gray it out when not in Block mode - prevents layout jump
     const container = el('blockSizeContainer');
     const isBlocks = el('modeBlocks')?.checked;
@@ -12490,28 +12508,52 @@ function initColourSeqs() {
     if (!alignment || !bar || !thumb) return;
 
     let syncing = false;
+    // Canvas mode's content is a single absolutely-positioned <canvas> panned via
+    // _canvasState.offsetX (alignment.scrollLeft/scrollWidth are meaningless there),
+    // so this bar drives that offset directly instead of the DOM scroll position.
+    const isCanvasMode = () => document.getElementById('modeCanvas')?.checked;
 
     function syncSizes() {
-        const w = alignment.scrollWidth || alignment.clientWidth;
-        thumb.style.width = Math.max(w, alignment.clientWidth + 1) + 'px';
         syncing = true;
-        bar.scrollLeft = alignment.scrollLeft;
+        if (isCanvasMode()) {
+            const w = _canvasState.totalContentW || alignment.clientWidth;
+            thumb.style.width = Math.max(w, alignment.clientWidth + 1) + 'px';
+            bar.scrollLeft = _canvasState.offsetX || 0;
+        } else {
+            const w = alignment.scrollWidth || alignment.clientWidth;
+            thumb.style.width = Math.max(w, alignment.clientWidth + 1) + 'px';
+            bar.scrollLeft = alignment.scrollLeft;
+        }
         syncing = false;
     }
 
     function onBarScroll() {
         if (syncing) return;
         syncing = true;
-        alignment.scrollLeft = bar.scrollLeft;
+        if (isCanvasMode()) {
+            _canvasState.offsetX = bar.scrollLeft;
+            _canvasState.scheduleDraw?.();
+        } else {
+            alignment.scrollLeft = bar.scrollLeft;
+        }
         syncing = false;
     }
 
     function onAlignmentScroll() {
-        if (syncing) return;
+        if (syncing || isCanvasMode()) return;
         syncing = true;
         bar.scrollLeft = alignment.scrollLeft;
         syncing = false;
     }
+
+    // Registered once; Canvas's draw() calls this after every repaint so wheel-
+    // scroll/drag-pan inside the canvas keeps the bar's thumb position in sync.
+    _canvasState.onOffsetChange = () => {
+        if (syncing || !isCanvasMode()) return;
+        syncing = true;
+        bar.scrollLeft = _canvasState.offsetX || 0;
+        syncing = false;
+    };
 
     syncSizes();
     bar.addEventListener('scroll', onBarScroll, { passive: true });
@@ -12540,7 +12582,12 @@ function initColourSeqs() {
         dragRaf = window.requestAnimationFrame(() => {
             const newScroll = startScroll - lastDx;
             syncing = true;
-            alignment.scrollLeft = newScroll;
+            if (isCanvasMode()) {
+                _canvasState.offsetX = newScroll;
+                _canvasState.scheduleDraw?.();
+            } else {
+                alignment.scrollLeft = newScroll;
+            }
             bar.scrollLeft = newScroll;
             syncing = false;
             dragRaf = null;
