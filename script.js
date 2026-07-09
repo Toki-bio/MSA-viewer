@@ -1929,6 +1929,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         ctx.font = '12px "Courier New", monospace';
         ctx.textBaseline = 'top';
 
+        // Resolve the colour scheme once per frame; getResidueSchemeStyle would
+        // otherwise recompute it (via isProteinAlignment) for every visible cell.
+        const drawScheme = getEffectiveColorScheme();
+
         for (let i = firstRow; i <= lastRow; i++) {
             const y = i * CHAR_H - oy;
             const seq = state.seqs[i].seq;
@@ -1953,7 +1957,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const base = seq[p] || '-';
                 const baseUp = base.toUpperCase();
                 const pd = consPos[p];
-                const schemeStyle = getResidueSchemeStyle(base);
+                const schemeStyle = getResidueSchemeStyle(base, drawScheme);
                 let textFill = '#333';
                 let bgFill = null;
 
@@ -2020,6 +2024,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const octx = _ovBgCanvas.getContext('2d');
         octx.setTransform(dpr, 0, 0, dpr, 0, 0);
         const sx = len / ow, sy = nSeqs / oh;
+        const ovScheme = getEffectiveColorScheme();
         octx.clearRect(0, 0, ow, oh);
         for (let y = 0; y < oh; y++) {
             const si = Math.floor(y * sy);
@@ -2029,7 +2034,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const ci = Math.floor(x * sx);
                 if (ci >= len) continue;
                 const ch = (seq[ci] || '-').toUpperCase();
-                const schemeStyle = getResidueSchemeStyle(seq[ci]);
+                const schemeStyle = getResidueSchemeStyle(seq[ci], ovScheme);
                 if (schemeStyle && schemeStyle.bg) {
                     octx.fillStyle = schemeStyle.bg;
                 } else if (ch === '-' || ch === '.') {
@@ -3830,11 +3835,20 @@ const RESIDUE_SCHEME_CLASS_PRIORITY = [
 ];
 let _proteinSchemeRemapWarned = false;
 
+let _proteinMemoArr = null, _proteinMemoType = null, _proteinMemoVal = false;
 function isProteinAlignment(seqs = state.seqs) {
     if (!seqs || seqs.length === 0) return false;
     const seqType = el('mafftSeqType')?.value;
     if (seqType === '0' || seqType === '1') return true;
-    return seqs.some(entry => _isProteinFastaSequence(entry.seq));
+    // Scanning every sequence is O(seqs Ã— cols). This runs once per glyph in the
+    // canvas hot loops, so memoize by array identity (a new array is created on
+    // load; edits mutate in place and never flip nucleotide/protein status).
+    if (seqs === _proteinMemoArr && seqType === _proteinMemoType) return _proteinMemoVal;
+    const value = seqs.some(entry => _isProteinFastaSequence(entry.seq));
+    _proteinMemoArr = seqs;
+    _proteinMemoType = seqType;
+    _proteinMemoVal = value;
+    return value;
 }
 
 function usesMonochromeShading(colorScheme = getAlignmentColorScheme()) {
