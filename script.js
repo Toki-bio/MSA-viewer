@@ -1844,15 +1844,31 @@ const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen
 // superseded background job can't clobber a newer one's results.
 let _canvasDeferredToken = null;
 
-function _initCanvasMetrics(ctx) {
-    if (_canvasState.metrics) return _canvasState.metrics;
-    ctx.font = '12px "Courier New", monospace';
+function _initCanvasMetrics(ctx, fontSizePx) {
+    // Cache is keyed on font size so zoom changes (which resize the DOM font)
+    // invalidate stale metrics instead of leaving Canvas mode stuck at 12px.
+    if (_canvasState.metrics && _canvasState.metrics.fontSizePx === fontSizePx) return _canvasState.metrics;
+    ctx.font = fontSizePx + 'px "Courier New", monospace';
     const m = ctx.measureText('X');
     const charH = (m.fontBoundingBoxAscent && m.fontBoundingBoxDescent)
         ? m.fontBoundingBoxAscent + m.fontBoundingBoxDescent
-        : 14;
-    _canvasState.metrics = { charW: Math.ceil(m.width), charH: Math.ceil(charH) };
+        : Math.ceil(fontSizePx * 1.15);
+    _canvasState.metrics = { charW: Math.ceil(m.width), charH: Math.ceil(charH), fontSizePx };
     return _canvasState.metrics;
+}
+
+// Reads the shading palette from the same CSS custom properties the DOM
+// renderer uses (customizable via the black/dark/light colour pickers), so
+// Canvas mode's conservation colours stay in sync with Normal mode instead
+// of drifting to a hardcoded, unrelated palette.
+function _getCanvasShadePalette() {
+    const rs = getComputedStyle(document.documentElement);
+    const v = (name, fallback) => (rs.getPropertyValue(name) || '').trim() || fallback;
+    return {
+        blackBg: v('--blackShading', '#000'), blackFg: v('--blackText', 'white'),
+        darkBg: v('--darkShading', '#555'), darkFg: v('--darkText', 'white'),
+        lightBg: v('--lightShading', '#ccc'), lightFg: v('--lightText', 'black'),
+    };
 }
 
 function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
@@ -1861,10 +1877,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     alignmentContainer.style.overflow = 'hidden';
     alignmentContainer.style.position = 'relative';
     // Canvas mode needs explicit height since absolute canvas has no flow height
-    const OVERVIEW_H = 40;
-    let _ovBgCanvas = null;
     const top = alignmentContainer.getBoundingClientRect().top;
-    alignmentContainer.style.height = (window.innerHeight - top - 28 + OVERVIEW_H) + 'px';
+    alignmentContainer.style.height = (window.innerHeight - top - 28) + 'px';
 
     const canvas = document.createElement('canvas');
     canvas.id = 'alignmentCanvas';
@@ -1876,7 +1890,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
 
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
-    const m = _initCanvasMetrics(ctx);
+    // Match the current zoom level so Canvas mode's text size tracks Normal
+    // mode's font-size (set on this same container by setZoom) instead of
+    // staying pinned at a hardcoded size regardless of the zoom slider.
+    const fontSizePx = parseFloat(getComputedStyle(alignmentContainer).fontSize) || 13;
+    const fontStr = fontSizePx + 'px "Courier New", monospace';
+    const m = _initCanvasMetrics(ctx, fontSizePx);
     const CHAR_W = m.charW;
     const CHAR_H = m.charH;
     const NAME_W = nameLen * CHAR_W + 8;
@@ -1892,7 +1911,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             g.height = Math.ceil(CHAR_H * dpr);
             const c2 = g.getContext('2d');
             c2.setTransform(dpr, 0, 0, dpr, 0, 0);
-            c2.font = '12px "Courier New", monospace'; c2.textBaseline = 'top';
+            c2.font = fontStr; c2.textBaseline = 'top';
             if (bg) { c2.fillStyle = bg; c2.fillRect(0, 0, CHAR_W, CHAR_H); }
             c2.fillStyle = fg; c2.fillText(ch, 0, 0);
             _glyphCache.set(k, g);
@@ -1906,18 +1925,6 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
 
     const totalContentW = NAME_W + len * CHAR_W + 4;
     const totalContentH = nSeqs * CHAR_H + 4;
-
-    let overviewCanvas = null;
-    function getOverviewWidth() {
-        // Clamp defensively: a stray layout/measurement glitch feeding an
-        // unbounded value here would blow up _buildOverview's pixel loop
-        // (it's a hard loop bound, not viewport-culled like the main draw()).
-        return Math.max(1, Math.min(4000, Math.floor(
-            overviewCanvas?.getBoundingClientRect().width
-            || alignmentContainer.clientWidth
-            || 800
-        )));
-    }
 
     // Resize canvas to viewport
     function resize() {
@@ -1946,9 +1953,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     function clampOffsets() {
         const w = parseInt(canvas.style.width) || 800;
         const h = parseInt(canvas.style.height) || 600;
-        const visibleH = Math.max(1, h - OVERVIEW_H);
         _canvasState.offsetX = Math.max(0, Math.min(_canvasState.offsetX, totalContentW - w));
-        _canvasState.offsetY = Math.max(0, Math.min(_canvasState.offsetY, totalContentH - visibleH));
+        _canvasState.offsetY = Math.max(0, Math.min(_canvasState.offsetY, totalContentH - h));
     }
 
     // Draw
@@ -1959,21 +1965,22 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         _lastOffX = _canvasState.offsetX; _lastOffY = _canvasState.offsetY; _dirty = false;
         const w = parseInt(canvas.style.width) || 800;
         const h = parseInt(canvas.style.height) || 600;
-        const visibleH = Math.max(1, h - OVERVIEW_H);
         const ox = _canvasState.offsetX;
         const oy = _canvasState.offsetY;
         const firstCol = Math.max(0, Math.floor((ox - NAME_W) / CHAR_W));
         const lastCol = Math.min(len - 1, Math.ceil((ox - NAME_W + w) / CHAR_W));
         const firstRow = Math.max(0, Math.floor(oy / CHAR_H));
-        const lastRow = Math.min(nSeqs - 1, Math.ceil((oy + visibleH) / CHAR_H));
+        const lastRow = Math.min(nSeqs - 1, Math.ceil((oy + h) / CHAR_H));
 
         ctx.clearRect(0, 0, w, h);
-        ctx.font = '12px "Courier New", monospace';
+        ctx.font = fontStr;
         ctx.textBaseline = 'top';
 
-        // Resolve the colour scheme once per frame; getResidueSchemeStyle would
-        // otherwise recompute it (via isProteinAlignment) for every visible cell.
+        // Resolve the colour scheme and shading palette once per frame, not per
+        // visible cell (getResidueSchemeStyle/getComputedStyle would otherwise be
+        // recomputed for every glyph).
         const drawScheme = getEffectiveColorScheme();
+        const pal = _getCanvasShadePalette();
 
         for (let i = firstRow; i <= lastRow; i++) {
             const y = i * CHAR_H - oy;
@@ -2000,7 +2007,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const baseUp = base.toUpperCase();
                 const pd = consPos[p];
                 const schemeStyle = getResidueSchemeStyle(base, drawScheme);
-                let textFill = '#333';
+                // Defaults match Normal mode's ".other"/".gap" CSS classes so
+                // unshaded residues render identically between the two modes.
+                let textFill = '#000';
                 let bgFill = null;
 
                 if (schemeStyle) {
@@ -2008,9 +2017,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     textFill = schemeStyle.fg;
                 } else if (pd && pd.hasData && pd.hasValidCoverage) {
                     if (baseUp !== '-' && baseUp !== '.' && pd.consensusBases && pd.consensusBases.has(baseUp)) {
-                        if (enableBlack && pd.conservation >= blackThresh) textFill = '#fff', bgFill = '#000';
-                        else if (enableDark && pd.conservation >= darkThresh) textFill = '#fff', bgFill = '#444';
-                        else if (enableLight && pd.conservation >= lightThresh) textFill = '#000', bgFill = '#888';
+                        if (enableBlack && pd.conservation >= blackThresh) textFill = pal.blackFg, bgFill = pal.blackBg;
+                        else if (enableDark && pd.conservation >= darkThresh) textFill = pal.darkFg, bgFill = pal.darkBg;
+                        else if (enableLight && pd.conservation >= lightThresh) textFill = pal.lightFg, bgFill = pal.lightBg;
                     } else if (baseUp === '-' || baseUp === '.') {
                         textFill = '#888';
                         bgFill = '#fff';
@@ -2032,99 +2041,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // Name column separator
         ctx.fillStyle = '#ddd';
         ctx.fillRect(NAME_W - ox - 2, 0, 1, totalContentH - oy);
-
-        // Update overview minimap visible-range rect
-        if (_ovBgCanvas) {
-            const oovw = getOverviewWidth();
-            const oh = OVERVIEW_H;
-            const ovctx = overviewCanvas.getContext('2d');
-            ovctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            // Redraw cached background + new rect
-            ovctx.clearRect(0, 0, oovw, oh);
-            ovctx.drawImage(_ovBgCanvas, 0, 0, oovw, oh);
-            const visX = ox / totalContentW * oovw;
-            const visY = oy / totalContentH * oh;
-            const visW = w / totalContentW * oovw;
-            const visH = visibleH / totalContentH * oh;
-            ovctx.strokeStyle = 'rgba(255,0,0,0.85)';
-            ovctx.lineWidth = 1.5;
-            ovctx.strokeRect(visX, visY, Math.max(visW, 2), Math.max(visH, 2));
-        }
-    }
-
-    // Build overview minimap (runs once on init, cached as _ovBgCanvas)
-    overviewCanvas = document.createElement('canvas');
-    overviewCanvas.id = 'alignmentOverview';
-    overviewCanvas.style.cssText = 'display:block;position:absolute;bottom:0;left:0;width:100%;height:'+OVERVIEW_H+'px;background:#fafafa;border-top:1px solid #ccc;z-index:2;cursor:pointer;';
-    alignmentContainer.appendChild(overviewCanvas);
-
-    // Builds the minimap incrementally, a few rows per timeslice, so a slow
-    // or unexpectedly wide measurement can never hold the main thread for
-    // more than ~8ms at a stretch (unlike a single monolithic ow*oh loop).
-    let _overviewBuildToken = 0;
-    function _buildOverview() {
-        const myToken = ++_overviewBuildToken;
-        const ow = getOverviewWidth();
-        const oh = OVERVIEW_H;
-        const bg = document.createElement('canvas');
-        bg.width = ow * dpr; bg.height = oh * dpr;
-        const octx = bg.getContext('2d');
-        octx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        const sx = len / ow, sy = nSeqs / oh;
-        const ovScheme = getEffectiveColorScheme();
-        octx.clearRect(0, 0, ow, oh);
-
-        let y = 0;
-        function buildRows() {
-            if (myToken !== _overviewBuildToken) return; // superseded by a newer render
-            const t0 = performance.now();
-            while (y < oh && (performance.now() - t0) < 8) {
-                const si = Math.floor(y * sy);
-                if (si < nSeqs) {
-                    const seq = state.seqs[si].seq;
-                    for (let x = 0; x < ow; x++) {
-                        const ci = Math.floor(x * sx);
-                        if (ci >= len) continue;
-                        const ch = (seq[ci] || '-').toUpperCase();
-                        const schemeStyle = getResidueSchemeStyle(seq[ci], ovScheme);
-                        if (schemeStyle && schemeStyle.bg) octx.fillStyle = schemeStyle.bg;
-                        else if (ch === '-' || ch === '.') octx.fillStyle = '#e0e0e0';
-                        else octx.fillStyle = '#ddd';
-                        octx.fillRect(x, y, 1, 1);
-                    }
-                }
-                y++;
-            }
-            if (y < oh) {
-                setTimeout(buildRows, 0);
-                return;
-            }
-            _ovBgCanvas = bg;
-            overviewCanvas.width = ow * dpr; overviewCanvas.height = oh * dpr;
-            overviewCanvas.style.height = oh + 'px';
-            _markDirty();
-            scheduleDraw();
-        }
-        buildRows();
     }
     resize();
-    draw(); // Initial alignment draw; overview is built off the critical path.
-    const buildOverview = () => { _buildOverview(); };
-    if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(buildOverview, { timeout: 1000 });
-    } else {
-        setTimeout(buildOverview, 0);
-    }
-
-    // Click on overview to navigate
-    overviewCanvas.addEventListener('click', (e) => {
-        const rect = overviewCanvas.getBoundingClientRect();
-        const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
-        const ow = getOverviewWidth();
-        _canvasState.offsetX = (cx / ow) * totalContentW - (parseInt(canvas.style.width) || 800) / 2;
-        _canvasState.offsetY = (cy / OVERVIEW_H) * totalContentH - (parseInt(canvas.style.height) || 600) / 2;
-        _markDirty(); scheduleDraw();
-    });
+    draw();
 
     // Scroll handling
     canvas.addEventListener('wheel', (e) => {
@@ -4424,6 +4343,10 @@ function setZoom(percent) {
     alignmentContainer.style.fontSize = size + 'px';
     el('zoomVal').textContent = percent + '%';
     el('zoomVal').classList.toggle('not-default', percent !== 100);
+    // DOM mode picks up the new font-size via CSS inheritance automatically,
+    // but Canvas mode measures/bakes glyphs at a fixed size on render, so it
+    // needs an explicit re-render to track the zoom slider.
+    if (document.getElementById('modeCanvas')?.checked) debounceRender();
 }
 function setZoomFromSlider() {
     const slider = el('zoomSlider');
