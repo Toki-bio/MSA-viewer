@@ -4544,6 +4544,18 @@ function syncQuickModeSwitch() {
         const quick = document.getElementById(quickId);
         if (canonical && quick) quick.checked = canonical.checked;
     }
+
+    // Only surface this switcher once you've actually left Full/Block (i.e. as
+    // a way back from a "special" mode) - it stays out of the way otherwise.
+    const isReadsMode = document.getElementById('modeReads')?.checked;
+    const isCanvasMode = document.getElementById('modeCanvas')?.checked;
+    const switchEl = document.getElementById('quickModeSwitch');
+    if (switchEl) switchEl.style.display = (isCanvasMode || isReadsMode) ? '' : 'none';
+
+    // Reads is only a real option once a reads (BAM/SAM) file has actually
+    // been loaded - it's not a mode you'd otherwise want to switch into blind.
+    const readsLabel = document.getElementById('qmReadsLabel');
+    if (readsLabel) readsLabel.style.display = (bamState?.reads?.length > 0 || isReadsMode) ? '' : 'none';
 }
 
 function onModeChange() {
