@@ -2370,12 +2370,21 @@ function _sanitizeFastaSequence(rawSeq, isProtein) {
     return compact.replace(/[^ACGTUNRYMKSWHBVD.-]/gi, 'N');
 }
 
+function _finalizeSequenceObject(header, fullHeader, rawSeq) {
+    const isProtein = _isProteinFastaSequence(rawSeq);
+    const processedSeq = _sanitizeFastaSequence(rawSeq, isProtein);
+    return {
+        header: (header || 'unnamed').split(/\s+/)[0] || 'unnamed',
+        fullHeader: fullHeader || header || 'unnamed',
+        seq: processedSeq,
+        gaplessPositions: calculateGaplessPositions(processedSeq)
+    };
+}
+
 function _pushParsedFastaSequence(seqs, header, seq) {
     const cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ');
     const displayHeader = cleanHeader.split(/\s+/)[0] || 'unnamed';
-    const processedSeq = _sanitizeFastaSequence(seq, _isProteinFastaSequence(seq));
-    const gaplessPositions = calculateGaplessPositions(processedSeq);
-    seqs.push({ header: displayHeader, fullHeader: cleanHeader, seq: processedSeq, gaplessPositions: gaplessPositions });
+    seqs.push(_finalizeSequenceObject(displayHeader, cleanHeader, seq));
 }
 
 function parseFasta(text) {
@@ -4527,6 +4536,8 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
 
         // Determine display case from column conservation (consensus STRING stays uppercase)
         let displayBase = base;
+        let freq = 1;
+        let threshold = 1;
         if (!options.deferConservation && base !== '-' && base !== '.') {
             const col = state.seqs.map(s => (s.seq[pos] || '-').toUpperCase());
             const nonGapCol = col.filter(b => b !== '-' && b !== '.');
@@ -4534,8 +4545,8 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
                 const counts = {};
                 nonGapCol.forEach(b => counts[b] = (counts[b] || 0) + 1);
                 const maxCount = Math.max(...Object.values(counts));
-                const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
-                const freq = maxCount / col.length;
+                threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
+                freq = maxCount / col.length;
                 displayBase = freq >= threshold ? baseUp : baseUp.toLowerCase();
             }
         }
@@ -4544,6 +4555,9 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
         span.className = baseClass;
         span.dataset.pos = String(pos);
         span.textContent = displayBase;
+        if (displayBase !== baseUp && baseUp !== '-' && baseUp !== '.') {
+            span.title = `Consensus ${baseUp} below threshold (${Math.round(freq * 100)}% < ${Math.round(threshold * 100)}%)`;
+        }
 
         // Apply trim region coloring
         if (pos <= leftTrimEnd) {
@@ -9690,7 +9704,7 @@ async function addSequencesJustAdd() {
         const trimmed = line.trim();
         if (trimmed.startsWith('>')) {
             if (currentHeader !== null) {
-                newSeqs.push({ header: currentHeader.split(/\s+/)[0], fullHeader: currentHeader, seq: currentSeq });
+                newSeqs.push(_finalizeSequenceObject(currentHeader.split(/\s+/)[0], currentHeader, currentSeq));
             }
             currentHeader = trimmed.substring(1).trim();
             currentSeq = '';
@@ -9699,7 +9713,7 @@ async function addSequencesJustAdd() {
         }
     }
     if (currentHeader !== null) {
-        newSeqs.push({ header: currentHeader.split(/\s+/)[0], fullHeader: currentHeader, seq: currentSeq });
+        newSeqs.push(_finalizeSequenceObject(currentHeader.split(/\s+/)[0], currentHeader, currentSeq));
     }
 
     if (newSeqs.length === 0) {

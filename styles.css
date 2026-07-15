@@ -908,11 +908,11 @@ body.row-reorder-active .seq-name.drag-source:hover {
     overflow: visible;
 }
 
-/* Residue case toggle (GeneDoc-style) */
-.residue-case-upper .seq-data,
-.residue-case-upper .gap { text-transform: uppercase; }
-.residue-case-lower .seq-data,
-.residue-case-lower .gap { text-transform: lowercase; }
+/* Residue case toggle (GeneDoc-style); consensus line keeps its own mixed-case encoding */
+.residue-case-upper .seq-line:not(.consensus-line) .seq-data,
+.residue-case-upper .seq-line:not(.consensus-line) .gap { text-transform: uppercase; }
+.residue-case-lower .seq-line:not(.consensus-line) .seq-data,
+.residue-case-lower .seq-line:not(.consensus-line) .gap { text-transform: lowercase; }
 
 .seq-length {
     display: inline-block;
