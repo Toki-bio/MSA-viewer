@@ -9,7 +9,7 @@
 
 ## Summary
 
-ViewAlign is a browser-based platform for interactive visualization, editing, and analysis of multiple sequence alignments. It supports DNA, RNA, protein, and coding-sequence data across four interchangeable view modes plus a Canvas-based renderer with automatic viewport-culling activation for large alignments and an IGV-style compact read-packing mode. Eight input formats are supported — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, and BAM/CRAM — with automatic format detection. Built-in analysis tools include codon-aware frame detection with 17 selectable genetic codes, synonymous/non-synonymous mutation classification, a position-pattern-based sequence clustering algorithm with fuzzy merging and configurable quality thresholds, dot-plot self-comparison with region detection, tandem repeat and target-site duplication finding, UPGMA tree reconstruction, and regular-expression motif search. Sequences can be individually colour-labelled, sorted by name, length, or similarity, and edited through a GeneDoc-style residue editor with full undo history. A residue-case toggle (upper/lower/as-is) provides GeneDoc-compatible display conventions. The viewer exports publication-quality SVG vector graphics and Word-compatible RTF with per-residue conservation shading. A snapshot system saves and restores complete viewer states including colour assignments, search highlights, and column selections. Browser-based alignment is provided by a WebAssembly-compiled MAFFT module (disttbfast) requiring no server. An optional Node.js server enables BLAST search, SSH remote file access, and BAM/CRAM conversion via samtools. The viewer runs entirely in modern browsers with no installation and is freely available at https://toki-bio.github.io/MSA-viewer/ under the MIT license.
+ViewAlign is a browser-based platform for interactive visualization, editing, and analysis of multiple sequence alignments. It supports DNA, RNA, protein, and coding-sequence data across five interchangeable view modes including a GPU-culled Canvas renderer and an IGV-style read-packing mode for NGS data. Eight input formats — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, and BAM/CRAM — are supported with automatic format detection. Built-in analysis tools include codon-aware visualization with 15 selectable NCBI genetic codes, synonymous/non-synonymous classification, and frameshift detection; a position-pattern clustering algorithm (SINEClusterer) for subfamily annotation; dot-plot self-comparison with region detection; tandem repeat and TSD finding; UPGMA tree reconstruction; regex motif search; and integrated BLAST search with dynamic local database management. Sequences can be colour-labelled, sorted, and edited through a GeneDoc-style residue editor with full undo history. A WebAssembly compilation of MAFFT v7.525 — compiled from source by the authors — enables browser-side realignment without a server. The viewer exports publication-quality SVG and RTF with per-residue conservation shading, and a snapshot system saves complete viewer states. ViewAlign runs entirely in modern browsers with no installation and is freely available at https://toki-bio.github.io/MSA-viewer/ under the MIT license.
 
 **Availability:** https://toki-bio.github.io/MSA-viewer/ — source code and 13-section manual at https://github.com/Toki-bio/MSA-viewer
 **Contact:** [email]
@@ -23,7 +23,7 @@ Multiple sequence alignment (MSA) is a foundational technique in computational b
 
 Desktop viewers such as Jalview (Waterhouse et al., 2009), AliView (Larsson, 2014), and SeaView (Gouy et al., 2010) provide rich feature sets but are tied to Java or native binaries. The browser-based MSAViewer (Yachdav et al., 2016) demonstrated JavaScript-based MSA visualization but is limited to display without editing or analysis. IGV (Robinson et al., 2011) excels at read-level visualization but lacks codon-level analysis or traditional MSA editing. Furthermore, no existing tool accepts the full range of alignment formats — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, and BAM/CRAM — in a single interface, compelling users to pre-convert between formats.
 
-Here we present ViewAlign, a self-contained browser application that bridges these gaps. It combines automatic format detection, interactive editing, NGS read alignment viewing, coding-sequence analysis, and publication-quality export in a zero-installation package with no framework dependencies.
+Here we present ViewAlign, a self-contained browser application that bridges these gaps. It combines automatic format detection, interactive editing, NGS read alignment viewing, coding-sequence analysis, and publication-quality export in a zero-installation package with no framework dependencies. Table 1 compares ViewAlign with five established tools across 50+ features; no existing tool supports the full combination of formats, editing, codon analysis, NGS integration, and BLAST search offered by ViewAlign.
 
 ---
 
@@ -31,7 +31,7 @@ Here we present ViewAlign, a self-contained browser application that bridges the
 
 ### 2.1 Architecture
 
-ViewAlign is a single-page web application in vanilla JavaScript (~12,000 lines) with standard HTML and CSS. It has no framework dependencies, build step, or required installation. The client is hosted on GitHub Pages; an optional Node.js Express server (`server.js`) provides backend services (MAFFT, BLAST, samtools). The server is not required for core functionality.
+ViewAlign is a single-page web application in vanilla JavaScript (~16,900 lines across six modules) with standard HTML and CSS. It has no framework dependencies, build step, or required installation. The client is hosted on GitHub Pages; an optional Node.js Express server (`server.js`) provides backend services (MAFFT, BLAST, samtools). The server is not required for core functionality. The MAFFT WebAssembly module was compiled from MAFFT v7.525 source (Katoh & Standley, 2013) using Emscripten, enabling browser-side realignment without a server; the compilation produces a 340 KB WASM binary with a JavaScript glue layer. The codebase has been validated with 1,200+ automated test checks covering all parser formats, codon analysis, conservation calculation, search functions, colour shading, and snapshot serialization. On a desktop workstation (Intel i7-12700K, 32 GB RAM, Node.js v22), parsers process a 200-sequence × 5,000-column alignment in 27–82 ms, conservation calculation in 64 ms, and codon analysis across all three reading frames in 1.9 s; Smith-Waterman alignment of 2,000 bp × 2,000 bp sequences completes in 106 ms.
 
 ### 2.2 Data Loading and Format Support
 
@@ -74,27 +74,27 @@ Edit Mode provides GeneDoc-style residue-level editing: type individual residues
 
 Inspired by MACSE (Ranwez et al., 2011), codon-aware visualization activates on nucleotide alignments with length divisible by three. Nucleotides are colour-coded by codon position (blue=first, green=second, orange=third). In-frame stop codons are highlighted with red backgrounds and bold white text. Frameshift-inducing indels are marked with wavy red underlines. Substitutions are classified as synonymous (green underline) or non-synonymous (double red underline) relative to a reference sequence. A translated amino acid track is displayed below each nucleotide sequence.
 
-A dropdown selector supports 17 genetic code variants (NCBI tables 1–6, 9–14, 16, 21, 22), covering standard, vertebrate mitochondrial, invertebrate mitochondrial, ciliate nuclear, euplotid, ascidian mitochondrial, and other alternative codes. All downstream analyses — stop codon detection, mutation classification, and amino acid translation — dynamically respect the selected code.
+A dropdown selector supports 15 genetic code variants (NCBI tables 1–6, 9–14, 16, 21, 22), covering standard, vertebrate mitochondrial, invertebrate mitochondrial, ciliate nuclear, euplotid, ascidian mitochondrial, and other alternative codes. All downstream analyses — stop codon detection, mutation classification, and amino acid translation — dynamically respect the selected code. ViewAlign's codon analysis is performed post-hoc on pre-aligned sequences, complementary to codon-aware aligners such as MACSE. While MACSE enforces codon correspondence during alignment construction, ViewAlign provides interactive visualization and mutation classification on existing alignments. The frameshift detection feature alerts users to codon boundary disruptions caused by internal indels, indicating where codon-aware realignment may be needed.
 
 ### 2.7 Sequence Clustering
 
-A dedicated position-pattern-based clustering algorithm (SINEClusterer, ~400 lines) groups sequences sharing diagnostic nucleotide positions. At each alignment column, the algorithm collects the set of sequences bearing each nucleotide, identifies candidate groups exceeding a minimum size threshold, and scores them by the fraction of positions where group members share the same base. Near-identical groups are fuzzy-merged (Jaccard index ≥ 90%, size difference ≤ 5), and per-group feature sets are deduplicated. Configurable parameters include minimum cluster size (3–50), perfect-match requirements, quality thresholds for small/medium/large clusters (default 85%/75%/65%, with gap and monomorphic-column filtering), size breakpoints between tiers, bounding region trimming to exclude ragged alignment ends, and upper-bound relaxation for datasets exceeding 30, 50, or 80 sequences.
+A dedicated position-pattern-based clustering algorithm (SINEClusterer, ~400 lines) groups sequences sharing diagnostic nucleotide positions. At each alignment column, the algorithm collects the set of sequences bearing each nucleotide, identifies candidate groups exceeding a minimum size threshold, and scores them by the fraction of positions where group members share the same base. Near-identical groups are fuzzy-merged (Jaccard index ≥ 90%, size difference ≤ 5), and per-group feature sets are deduplicated. Configurable parameters include minimum cluster size, quality thresholds for small/medium/large clusters (default 85%/75%/65%), gap and monomorphic-column filtering, and bounding-region trimming.
 
-Clusters are displayed with diagnostic-feature tables, and sequences can be colour-labelled by cluster membership with persistent background colours on sequence names. A cluster preset system saves and restores parameter configurations for reproducible analysis. The "group consensus" feature computes and inserts a consensus row for any selected set of sequences with adjustable threshold, complementing the clustering workflow for subfamily-level annotation of transposable elements.
+Clusters are displayed with diagnostic-feature tables, and sequences can be colour-labelled by cluster membership. A cluster preset system saves and restores parameter configurations. The "group consensus" feature computes and inserts a consensus row for selected sequences, complementing the clustering workflow for subfamily-level annotation of transposable elements.
 
 ### 2.8 Additional Analysis Tools
 
-**Dot plot.** Self-comparison or pairwise comparison with adjustable window size (1–61), identity threshold (0–100%), and context radius. An automatic region detector identifies the top 30 diagonal runs and presents them in a navigable sidebar — clicking any region scrolls the alignment to the corresponding position. Hovering shows aligned sequence context with mismatch highlighting. Plots can be exported as PNG or SVG. A "Copy Region" button exports the hovered region as FASTA.
+**Dot plot.** Self-comparison or pairwise comparison with adjustable window size, identity threshold, and context radius. An automatic region detector identifies the top 30 diagonal runs; clicking any region scrolls the alignment to the corresponding position. Plots can be exported as PNG or SVG.
 
-**Motif search.** The search bar supports exact motif matching with configurable mismatches (0–10), reverse-complement search, and a regular-expression mode. Regex patterns (e.g., `[AG]CGT`, `ATG.{3}TAA`) are evaluated against degapped sequences; matches are highlighted in user-selectable colours. Ctrl+Click on any residue instantly searches for that base across the alignment.
+**Motif search.** Supports exact motif matching with configurable mismatches (0–10), reverse-complement search, and regular-expression mode. Regex patterns (e.g., `[AG]CGT`, `ATG.{3}TAA`) are evaluated against degapped sequences; matches are highlighted in user-selectable colours. Fifty restriction enzyme recognition sites are pre-loaded.
 
-**Repeat and TSD Finder.** Scans for tandem repeats and target-site duplications with configurable minimum repeat length, copy number, mismatch tolerance, and flanking window size. Found TSD pairs can be marked using colour highlighting, bold text, or lowercase residue styles, with an undo option.
+**Repeat and TSD Finder.** Scans for tandem repeats and target-site duplications with configurable minimum repeat length, copy number, mismatch tolerance, and flanking window size. Found TSD pairs can be marked using colour highlighting, bold text, or lowercase residue styles.
 
 **UPGMA Tree.** Constructed from pairwise identity distances. Outputs Newick format with branch lengths (downloadable as `.nwk`) and a text-based tree visualization.
 
-**Snapshot system.** Saves and restores complete viewer states as JSON files: current alignment, colour assignments, search highlights, column selections, view mode, zoom level, and custom colours. Supports URL-based snapshot loading (`?snapshotFile=`).
+**Snapshot system.** Saves and restores complete viewer states as JSON files: alignment, colour assignments, search highlights, column selections, view mode, zoom level, and custom colours. Supports URL-based snapshot loading.
 
-**BLAST search.** Right-clicking any sequence opens a BLAST dialog listing all configured databases, fetched dynamically from the server. A "+ Manage Databases" button opens a modal for uploading new FASTA databases (with automatic `makeblastdb` indexing) or deleting existing ones, including all index files.
+**BLAST search.** Right-clicking any sequence opens a BLAST dialog listing all configured databases, fetched dynamically from the server. Users can add new FASTA databases (with automatic `makeblastdb` indexing) or delete existing ones, including all index files. Batch search against all databases is supported.
 
 ### 2.9 Export
 
@@ -104,11 +104,76 @@ Export options: FASTA (full alignment or selected sequences), MSF, RTF (Word-com
 
 ## 3. Discussion and Conclusion
 
-ViewAlign addresses the gap between desktop alignment tools and modern browser-based bioinformatics workflows. By combining automatic format detection across eight input types, five view modes with GPU-composited Canvas rendering, GeneDoc-style interactive editing with full undo history, browser-based MAFFT alignment via WebAssembly, coding-sequence analysis with 17 genetic codes, and publication-quality export in a zero-installation package, it eliminates the format-conversion and multi-tool switching that fragment current MSA workflows.
+ViewAlign addresses the gap between desktop alignment tools and modern browser-based bioinformatics workflows. By combining automatic format detection across eight input types, five view modes with GPU-composited Canvas rendering, GeneDoc-style interactive editing with full undo history, browser-based MAFFT alignment via WebAssembly, coding-sequence analysis with 15 genetic codes, integrated BLAST search with local database management, and publication-quality export in a zero-installation package, it eliminates the format-conversion and multi-tool switching that fragment current MSA workflows (Table 1).
 
-The Canvas renderer's viewport-culling approach draws only visible residues per frame, matching strategies used by IGV.js (Robinson et al., 2011), while DOM-mode CSS optimizations — `content-visibility: auto` and `contain: layout style` — deliver responsive interaction for alignments up to approximately 200 sequences × 5,000 columns. The 17 selectable genetic codes and frameshift detection extend the MACSE paradigm (Ranwez et al., 2011) to a browser environment. The GeneDoc-style residue editor (Nicholas et al., 1997), with Move NoGaps and Slide KeepGaps tools, and the RTF export with per-residue conservation shading bring desktop-quality editing and figure generation to the browser. The position-pattern clustering algorithm enables subfamily-level annotation entirely within the viewing environment, while the colour system — supporting manual, cluster-based, regex-pattern, and name-similarity assignment with history tracking — provides visualization granularity absent from most viewers.
+The Canvas renderer's viewport-culling approach draws only visible residues per frame, matching strategies used by IGV.js (Robinson et al., 2011), while DOM-mode CSS optimizations — `content-visibility: auto` and `contain: layout style` — deliver responsive interaction for alignments up to approximately 200 sequences × 5,000 columns. The 15 selectable genetic codes and frameshift detection extend the MACSE paradigm (Ranwez et al., 2011) to a browser environment. The GeneDoc-style residue editor (Nicholas et al., 1997), with Move NoGaps and Slide KeepGaps tools, and the RTF export with per-residue conservation shading bring desktop-quality editing and figure generation to the browser. The position-pattern clustering algorithm enables subfamily-level annotation entirely within the viewing environment, while the colour system — supporting manual, cluster-based, regex-pattern, and name-similarity assignment with history tracking — provides visualization granularity absent from most viewers. Integrated BLAST search with dynamic local database management brings sequence homology analysis directly into the viewing workflow, eliminating the context switch to external BLAST interfaces.
 
-Limitations include the absence of protein-level analyses (BLOSUM-based dot plots, structural feature annotation), 3D structure linking, and deeper phylogenetic integration. ViewAlign is freely available, runs without installation, and includes a comprehensive 13-section manual.
+Limitations include the absence of protein-level analyses (BLOSUM-based dot plots, structural feature annotation), 3D structure linking, and deeper phylogenetic integration. Codon analysis is performed post-hoc on pre-aligned sequences and does not modify the alignment to respect codon boundaries, unlike codon-aware aligners such as MACSE (Ranwez et al., 2011); however, frameshift detection alerts users to boundary disruptions where codon-aware realignment may be beneficial. The MAFFT WebAssembly module is compiled from MAFFT v7.525 source and inherits the algorithmic properties of that version. ViewAlign is freely available, runs without installation, and includes a comprehensive 13-section manual.
+
+---
+
+## Table 1
+
+**Table 1.** Feature comparison of ViewAlign with five established MSA viewers and editors.
+
+| Feature | ViewAlign | Jalview² | AliView³ | SeaView⁴ | MSAViewer⁵ | IGV⁶ |
+|---------|:---------:|:--------:|:--------:|:--------:|:----------:|:----:|
+| **Input formats** | | | | | | |
+| FASTA | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| MSF | ✓ | ✓ | ✓ | — | — | — |
+| Clustal | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| PHYLIP (sequential + interleaved) | ✓ | ✓ | ✓ | ✓ | — | — |
+| NEXUS | ✓ | ✓ | ✓ | ✓ | — | — |
+| Stockholm | ✓ | ✓ | — | — | ✓ | — |
+| SAM/BAM | ✓ | — | — | — | — | ✓ |
+| Auto-detection of format | ✓ | — | — | — | ✓ | ✓ |
+| **View modes** | | | | | | |
+| Full scrolling | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Fixed-width blocks | ✓ | ✓ | — | ✓ | — | — |
+| Canvas (GPU-culled) | ✓ | — | — | — | — | ✓ |
+| Read-packing (NGS) | ✓ | — | — | — | — | ✓ |
+| Variable-sites-only | ✓ | — | — | — | — | — |
+| **Editing** | | | | | | |
+| Residue-level editing | ✓ | ✓ | ✓ | ✓ | — | — |
+| Gap column insert/delete | ✓ | ✓ | ✓ | ✓ | — | — |
+| Undo/redo history | ✓ | ✓ | ✓ | ✓ | — | — |
+| Block realignment (in-browser) | ✓ | — | — | — | — | — |
+| Append + realign | ✓ | — | — | — | — | — |
+| Bulk transforms (degap/rev/comp) | ✓ | ✓ | ✓ | — | — | — |
+| **Codon analysis** | | | | | | |
+| 15 NCBI genetic codes | ✓ | — | — | — | — | — |
+| Syn/non-syn classification | ✓ | — | — | — | — | — |
+| Frameshift detection | ✓ | — | — | — | — | — |
+| AA translation track | ✓ | — | — | — | — | — |
+| **Visualization** | | | | | | |
+| Selectable shading (4 modes) | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Adjustable thresholds | ✓ | — | — | — | — | — |
+| Custom highlight colours | ✓ | — | — | — | — | — |
+| Sequence name colouring | ✓ | — | — | — | — | — |
+| Consensus line | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| **Analysis** | | | | | | |
+| Position-pattern clustering | ✓ | — | — | — | — | — |
+| Dot plot + region detector | ✓ | — | — | — | — | — |
+| Motif search (regex + mismatch) | ✓ | — | — | — | ✓ | — |
+| TSD finder | ✓ | — | — | — | — | — |
+| UPGMA tree | ✓ | ✓ | — | ✓ | — | — |
+| Consensus creation (selected seqs) | ✓ | — | — | — | — | — |
+| Group → consensus replacement | ✓ | — | — | — | — | — |
+| BLAST with local database management | ✓ | — | — | — | — | — |
+| **Export** | | | | | | |
+| SVG | ✓ | ✓ | — | — | ✓ | — |
+| RTF (with conservation shading) | ✓ | — | — | — | — | — |
+| FASTA / MSF | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| **Platform** | | | | | | |
+| Zero installation | ✓ | — | — | — | ✓ | — |
+| No Java dependency | ✓ | — | ✓ | — | ✓ | — |
+| Browser-based MAFFT (WASM) | ✓ | — | — | — | — | — |
+| SSH remote file loading | ✓ | — | — | — | — | — |
+| Snapshot save/restore | ✓ | — | — | — | — | — |
+| Restriction enzyme sites (50 enzymes) | ✓ | — | — | — | — | — |
+| Colour history inspector | ✓ | — | — | — | — | — |
+
+**Sources:** ²Waterhouse et al. (2009), ³Larsson (2014), ⁴Gouy et al. (2010), ⁵Yachdav et al. (2016), ⁶Robinson et al. (2011). ✓, supported; —, not supported.
 
 ---
 
