@@ -1,6 +1,83 @@
 # Pre-submission audit prompt (ViewAlign / Bioinformatics Application Note)
 
-Use this prompt with a fresh AI session that has read access to the repository at `https://github.com/Toki-bio/MSA-viewer` (branch `main`, tag **v132** or later).
+Use this prompt with a fresh AI session that has read access to the repository:
+
+- **GitHub:** https://github.com/Toki-bio/MSA-viewer (branch `main`, commit **f32b852** or later, `BUILD_TAG` **v132**+)
+- **Local clone (example):** `c:\work\MSA-viewer\` or `./MSA-viewer/`
+- **Live app (static):** https://toki-bio.github.io/MSA-viewer/
+- **Live manual:** https://toki-bio.github.io/MSA-viewer/manual.html
+- **Local server:** `node server.js` → http://localhost:3000
+
+---
+
+## Repository file locations (read these first)
+
+### Submission documents (audit targets)
+
+| File | Repo path | Notes |
+|------|-----------|-------|
+| Manuscript draft | `manuscript.md` | Main Application Note; remove `> Revision note` block before submission |
+| Cover letter | `cover-letter.md` | Editor summary; must match manuscript claims |
+| This audit prompt | `presubmission-audit-prompt.md` | Procedure only — not submitted |
+| Journal research notes | `msa-viewer-journal-research-report.md` | Background only |
+
+### Application entry points
+
+| File | Repo path | Notes |
+|------|-----------|-------|
+| Main HTML shell | `index.html` | UI controls, mode radios, script cache-bust `script.js?v=132` |
+| Client logic | `script.js` | ~16,300 lines; `BUILD_TAG` at line 3 |
+| Styles | `styles.css` | Layout, `contain: layout style` |
+| User manual | `manual.html` | 13 sections (lines ~311–1242); sidebar TOC at top |
+| Package metadata | `package.json` | `npm start` → `node server.js` |
+
+### Server (optional backend)
+
+| File | Repo path | Notes |
+|------|-----------|-------|
+| Express server | `server.js` | BLAST registry, SSH, samtools, MAFFT server route |
+| SSH config template | `ssh-servers.example.json` | Copy to `ssh-servers.json` (gitignored) |
+| SSH setup guide | `REMOTE_PUSH_TO_LOAD_GUIDE.md` | Remote MC / queue workflow |
+| Deployment guide | `deployment.md` | Public server setup (lowercase filename) |
+| Start/stop scripts | `start-server.bat`, `stop-server.bat` | Windows |
+
+### Analysis modules & workers
+
+| File | Repo path | Notes |
+|------|-----------|-------|
+| Clustering algorithm | `cluster.js` | `SINEClusterer` class (~450 lines) |
+| BLAST Web Worker | `blast-worker.js` | Smith–Waterman + IndexedDB cache |
+| MAFFT WASM | `mafft-wasm.js` | Browser alignment engine |
+| Dot plot workers | `doter-worker.js`, `doter-word-worker.js` | Dotter / SPIN modes |
+| BAM parsing | `bam-parser.js` | Client-side BAM helpers |
+| Tree drawing | `tree-draw.js` | UPGMA visualization |
+
+### User data & private config (gitignored — not in public repo)
+
+| Path | Listed in | Notes |
+|------|-----------|-------|
+| `blast_dbs.json` | `.gitignore` | Local BLAST database registry |
+| `blast_dbs/` | `.gitignore` | User-uploaded FASTA databases |
+| `ssh-servers.json` | `.gitignore` | SSH server credentials |
+| `snapshots/*.json` | `.gitignore` | User snapshot files (`snapshots/README.md` is tracked) |
+| `*.nhr`, `*.nin`, `*.nsq` | `.gitignore` | BLAST index files |
+
+### Example / bundled data (may be in repo)
+
+| File | Repo path | Notes |
+|------|-----------|-------|
+| SINEBase sample | `SINEBase.nr95.fa` | Default BLAST DB entry in `server.js` |
+| Snake/Gekko SINEs | `snake_gekko_SINEs_cons.fas` | Default BLAST DB |
+| Test alignment | `test_alignment.fa` | Small test file |
+
+### Tests & misc (low priority for manuscript audit)
+
+| File | Repo path |
+|------|-----------|
+| `consensus-realign-test.js`, `test-realign-real.js` | Node test scripts |
+| `layout-test.html` | UI experiments |
+| `MSA-errors.md` | Internal bug report (untracked locally) |
+| `todo.md` | Dev notes |
 
 ---
 
@@ -43,25 +120,59 @@ For **each** major claim in Summary and Section 2, locate the implementing code 
 - **Unverified** — cannot find in code
 - **Wrong** — contradicts code
 
-**Must-verify items (v132 baseline):**
+**Must-verify items (v132 baseline)** — use these exact paths and symbols:
 
-| Claim area | Where to look |
-|------------|----------------|
-| View modes (Full, Block, Canvas, Reads) | `index.html` mode radios; `renderAlignment()` in `script.js` |
-| Auto-Canvas threshold (150k residues) | `CANVAS_AUTO_THRESHOLD` in `script.js` |
-| Input formats (9 incl. GenBank flatfile) | `parseAndRender()`, parsers; **no** NCBI accession API |
-| Conservation shading (Black/Dark/Light) | `index.html` sliders; `preCalculateConservation()` |
-| Residue colour schemes | `colorSchemeSelect`, `ALIGNMENT_COLOR_SCHEMES` |
-| Codon analysis + 17 genetic codes | `codonCode` dropdown, `_CODE_VARIANTS` |
-| Clustering (SINEClusterer) | `cluster.js`, clustering UI in `index.html` |
-| Motif search (regex, mismatches, rev comp) | `searchMotif()`; **not** in Canvas/Reads |
-| BLAST | `blast-worker.js`, `/api/blast-db` in `server.js`, `fetchDatabases()` |
-| Snapshots | `_buildSnapshotPayload()`, `?snapshotFile=` handling |
-| MAFFT WASM | `mafft-wasm.js`, alignment menu |
-| BAM/CRAM | `POST /api/bam2sam`, Reads mode |
-| Dot plot top-30 regions | `_dotPlotState.regions.slice(0, 30)` |
-| Ctrl+Shift+R block realign | `handleKeyDown` — only when ≥2 columns selected |
-| Export (FASTA, MSF, RTF, SVG) | export functions in `script.js` |
+| Claim area | File(s) | Symbol / location |
+|------------|---------|-------------------|
+| Version tag | `script.js:3` | `BUILD_TAG = 'v132'` |
+| Cache bust | `index.html` | `<script src="script.js?v=132">` |
+| View modes UI | `index.html` | `#modeSingle`, `#modeBlocks`, `#modeCanvas`, `#modeReads` |
+| View routing | `script.js:3582` | `renderAlignment()` |
+| Reads renderer | `script.js:3055` | `renderReadsAlignment()` |
+| Canvas renderer | `script.js:2169` | `_renderCanvasAlignment()` |
+| Auto-Canvas (150k) | `script.js:3657` | `CANVAS_AUTO_THRESHOLD = 150000` |
+| Load pipeline | `script.js:5092` | `parseAndRender()` |
+| FASTA parser | `script.js:2563` | `parseFasta()` |
+| MSF parser | `script.js:2590` | `parseMsf()` |
+| Clustal parser | `script.js:2425` | `parseClustal()` |
+| PHYLIP parser | `script.js:2449` | `parsePhylip()` |
+| NEXUS parser | `script.js:2486` | `parseNexus()` |
+| Stockholm parser | `script.js:2513` | `parseStockholm()` |
+| GenBank parser | `script.js:1651` | `parseGenBank()` — flatfile only |
+| SAM parser | `script.js:1782` | `parseSamToAlignment()` |
+| Conservation shading | `index.html` | `#blackSlider`, `#darkSlider`, `#lightSlider`; `script.js` `preCalculateConservation()` |
+| Shade denominator | `index.html` | `input[name="shadeMode"]` (nongap / all) |
+| Residue colour schemes | `index.html` | `#colorSchemeSelect`; `script.js:4290` `ALIGNMENT_COLOR_SCHEMES` |
+| Codon toggle + codes | `index.html` | `#codonAnalysis`, `#codonCode`, `#codonFrame` |
+| Genetic code tables | `script.js:1863` | `_GENETIC_CODE`, `_CODE_VARIANTS` |
+| Name-similarity colour | `script.js:13087` | `ngramJaccardSimilarity()` |
+| Clustering run | `script.js:8166` | `clusterSequences()` |
+| Clustering algorithm | `cluster.js` | `class SINEClusterer` |
+| Clustering UI | `index.html` | `#clustering-controls`, `#clusteringStatus` |
+| Cluster visuals re-apply | `script.js:151` | `applyClusterVisualsFromState()` |
+| Motif search | `script.js:7765` | `searchMotif()`; guard `isMotifSearchSupported()` ~7746 |
+| Search re-apply | `script.js:136` | `reapplySearchHighlights()` |
+| BLAST dialog | `script.js` | `showBlastSearchModal()`, `fetchDatabases()` ~13843 |
+| BLAST worker | `blast-worker.js` | `ensureDb()`, `searchDatabase()` |
+| BLAST server API | `server.js:582` | `GET /api/blast-db` → `blastDbStatus()`, `dbPublicUrl()` |
+| BLAST DB registry | `server.js:43` | `DB_REGISTRY_FILE` = `blast_dbs.json` |
+| Snapshots save | `script.js:6709` | `_buildSnapshotPayload()` |
+| Snapshots load | `script.js` | `_applySnapshotView()`, `_applySnapshotColourState()` |
+| Snapshot URL | `index.html` / `script.js` | `?snapshotFile=snapshots/...` |
+| MAFFT WASM | `mafft-wasm.js` | loaded from `index.html` |
+| MAFFT server | `server.js:688` | `POST /api/mafft` |
+| BAM/CRAM | `server.js:1010` | `POST /api/bam2sam` |
+| Reads mode | `bam-parser.js`, `script.js:3055` | BAM state + `renderReadsAlignment()` |
+| Dot plot regions (top 30) | `script.js` | `_dotPlotState.regions.slice(0, 30)` ~14771 |
+| Dot plot UI | `index.html` | `#dotPlotModal`, `#dotPlotRegionList` |
+| UPGMA tree | `script.js:9095` | `buildUPGMATreeFromAlignment()` |
+| Block realign shortcut | `script.js:5696` | `handleKeyDown()` → `realignSelectedBlock()` ~9579 |
+| Repeat/TSD finder | `index.html` | `#repeatFinderModal` |
+| Export RTF/SVG/FASTA | `script.js` | search `export`, `download`, `RTF` |
+| Manual §1–13 | `manual.html:311–1242` | `<h2>1. Getting Started</h2>` … `<h2>13. Credits` |
+| Manual BLAST | `manual.html` | `#al-blast`, `#al-blast-db` |
+| Manual BAM | `manual.html` | `#in-sam`, `#sv-bam` |
+| Credits / attribution | `manual.html:1242` | Section 13 |
 
 ### 3. Mode-specific limitations (common reviewer trap)
 
@@ -79,9 +190,25 @@ Document any mode restrictions missing from the Limitations paragraph.
 
 Distinguish three deployment contexts:
 
-1. **GitHub Pages** (`index.html` only) — no `/api/*`
-2. **localhost:3000** (`node server.js`) — BLAST DB registry, SSH, samtools
-3. **User's private databases** — `blast_dbs.json` and `blast_dbs/` are gitignored
+1. **GitHub Pages** — serves repo root statically; **no** `server.js`; **no** `/api/*`
+2. **localhost:3000** — run `node server.js` from repo root (`package.json` → `"start": "node server.js"`)
+3. **User's private databases** — `blast_dbs.json` and `blast_dbs/` (gitignored, local only)
+
+**Server API routes** (all in `server.js`):
+
+| Route | Line (approx.) | Purpose |
+|-------|----------------|---------|
+| `GET /api/viewer-info` | 24 | Build tag, script version |
+| `GET /api/blast-db` | 582 | List BLAST databases + FASTA URLs |
+| `POST /api/blast-db` | 592 | Upload new database |
+| `DELETE /api/blast-db/:name` | 630 | Remove database |
+| `POST /api/blast` | 425 | Single-query BLAST / SW fallback |
+| `POST /api/blast-all` | 510 | Batch BLAST |
+| `POST /api/bam2sam` | 1010 | BAM/CRAM → SAM via samtools |
+| `POST /api/mafft` | 688 | Server-side MAFFT |
+| `GET /api/snapshots` | 770 | List `snapshots/*.json` |
+| `GET /api/ssh-cat` | 948 | SSH remote file fetch |
+| `GET /api/ssh-servers` | 851 | List configured SSH servers |
 
 Verify manuscript and cover letter do **not** imply BLAST or BAM/CRAM work on GitHub Pages without a server.
 
@@ -89,10 +216,14 @@ Verify manuscript and cover letter do **not** imply BLAST or BAM/CRAM work on Gi
 
 Check alignment across:
 
-- `manuscript.md` Summary ↔ Section 2 ↔ Section 3 ↔ Limitations
-- `cover-letter.md` ↔ manuscript (format count, view modes, BLAST description)
-- `manual.html` section list (13 sections) ↔ manuscript Availability
-- Version string: `BUILD_TAG` in `script.js` vs cache-bust `?v=` in `index.html`
+| Document A | Document B | What to compare |
+|------------|------------|-----------------|
+| `manuscript.md` Summary | `manuscript.md` §2–3 | Format count, view modes, BLAST, limitations |
+| `manuscript.md` | `cover-letter.md` | Same claims in editor letter |
+| `manuscript.md` | `manual.html` | Every user-facing feature in manual appears correctly in paper |
+| `manuscript.md` Availability table | `README.md`, `deployment.md` | URLs, dependencies |
+| `script.js:3` `BUILD_TAG` | `index.html` `script.js?v=` | Version sync |
+| `manual.html` §13 | `script.js` header comments | Third-party attribution |
 
 ### 6. References and attribution
 
@@ -169,13 +300,22 @@ Manuscript mentions "1 comparison table" in Target but none is present. Flag as 
 
 ## Optional live checks (if environment allows)
 
+From repository root (`MSA-viewer/`):
+
 ```bash
-node server.js   # port 3000
-curl http://localhost:3000/api/blast-db
-curl http://localhost:3000/api/viewer-info
+node --check script.js
+node --check server.js
+node server.js                    # listens on http://localhost:3000
 ```
 
-Confirm `/api/blast-db` returns `url` and `available` per database. Open `http://localhost:3000`, hard-refresh, verify version shows **v132+**.
+```bash
+curl http://localhost:3000/api/viewer-info
+curl http://localhost:3000/api/blast-db
+```
+
+Confirm `/api/blast-db` returns `url` and `available` per database. Open http://localhost:3000, hard-refresh (**Ctrl+Shift+R**), verify footer/version shows **v132+**.
+
+Static-only check (no server): open `index.html` or https://toki-bio.github.io/MSA-viewer/ — BLAST dialog should show "Server not available".
 
 ---
 
