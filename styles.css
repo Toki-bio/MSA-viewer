@@ -2165,6 +2165,13 @@ body.codon-mode span.codon-fs {
     border-bottom: 3px wavy #e74c3c;
 }
 
+/* Internal frameshift (gap indel not multiple of 3) */
+body.codon-mode span.codon-fs-internal {
+    border-left: 2px solid #e74c3c;
+    border-right: 2px solid #e74c3c;
+    background-color: rgba(231, 76, 60, 0.15) !important;
+}
+
 /* Synonymous mutations */
 body.codon-mode span.codon-syn {
     text-decoration: underline;
@@ -2247,6 +2254,29 @@ body.codon-mode .aa-row-best {
 
 /* Variable sites only — hide fully-conserved columns */
 body.var-sites-only .seq-data > span[data-pos]:not(.diff-highlight) { display: none !important; }
+body.var-sites-only .seq-data > span[data-pos]:not(.diff-highlight).var-site-hidden { display: none !important; }
+
+/* Variable sites — breakpoint markers */
+.col-breakpoint {
+    display: inline-block;
+    width: 0.6em;
+    min-width: 8px;
+    text-align: center;
+    background: #d0d0d0;
+    color: #666;
+    font-size: 0.85em;
+    cursor: default;
+    user-select: none;
+    -webkit-user-select: none;
+    border-left: 1px solid #b0b0b0;
+    border-right: 1px solid #b0b0b0;
+    line-height: 1.2;
+}
+.col-breakpoint:hover {
+    background: #c0c0c0;
+    color: #333;
+}
+body.var-sites-only.hide-breakpoints .col-breakpoint { display: none !important; }
 
 /* Keyboard shortcut displays — key column must not wrap */
 #infoModal > div strong,

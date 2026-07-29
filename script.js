@@ -1583,7 +1583,10 @@ function _isSamInput(text) {
     if (lines.length < 2) return false;
     const headerLines = lines.filter(l => l.startsWith('@'));
     if (headerLines.length > 0) {
-        return headerLines.some(l => l.startsWith('@HD') || l.startsWith('@SQ') || l.startsWith('@PG'));
+        if (headerLines.some(l => l.startsWith('@HD') || l.startsWith('@SQ') || l.startsWith('@PG') || l.startsWith('@RG') || l.startsWith('@CO') || l.startsWith('@PG'))) {
+            return true;
+        }
+        // Fall through to CIGAR check for unrecognised headers
     }
     const nonHeader = lines.filter(l => !l.startsWith('@'));
     if (nonHeader.length === 0) return false;
@@ -1941,15 +1944,6 @@ function _getSynCodons(code) {
         }
     }
     return syn;
-}
-
-// Synonymous mutation check for each codon position
-const _SYN_CODONS = {}; // codon -> Set of synonymous codons
-for (const [codon, aa] of Object.entries(_GENETIC_CODE)) {
-    if (!_SYN_CODONS[codon]) _SYN_CODONS[codon] = new Set();
-    for (const [c2, a2] of Object.entries(_GENETIC_CODE)) {
-        if (a2 === aa && c2 !== codon) _SYN_CODONS[codon].add(c2);
-    }
 }
 
 // Compute per-position codon analysis for a single frame (frameOffset = 0,1,2 alignment columns)
@@ -2462,13 +2456,18 @@ function parsePhylip(text) {
             if (name && seq) entries.push({ name, seq });
         }
     }
-    // Handle interleaved blocks
+    // Handle interleaved blocks (strict PHYLIP: no names in continuation lines)
     if (entries.length === nSeqs) {
         let blockStart = 1 + nSeqs;
         while (blockStart < lines.length) {
             for (let k = 0; k < nSeqs && blockStart + k < lines.length; k++) {
                 const l = lines[blockStart + k];
-                const seq = l.replace(/^\s*\S+\s*/, '').replace(/\s/g, '');
+                // Some non-standard PHYLIP variants repeat names in continuation lines;
+                // detect this: if the first 10 chars match a known name, strip it
+                const nameCandidate = l.substring(0, 10).trim();
+                const hasName = entries.some(e => e.name === nameCandidate);
+                const seqPart = hasName ? l.substring(10) : l;
+                const seq = seqPart.replace(/\s/g, '');
                 if (seq) entries[k].seq += seq;
             }
             blockStart += nSeqs;
@@ -2517,7 +2516,7 @@ function parseStockholm(text) {
     for (const line of lines) {
         const t = line.trim();
         if (t === '//') break;
-        if (t === '# STOCKHOLM 1.0' || t.startsWith('#=GF')) { inAlign = true; continue; }
+        if (/^# STOCKHOLM\b/.test(t) || t.startsWith('#=GF')) { inAlign = true; continue; }
         if (t.startsWith('#=GR') || t.startsWith('#=GC') || t.startsWith('#')) continue;
         if (!inAlign || !t) continue;
         const m = t.match(/^(\S+)\s+(.+)$/);
@@ -2561,7 +2560,8 @@ function _pushParsedFastaSequence(seqs, header, seq) {
 }
 
 function parseFasta(text) {
-    const lines = text.trim().split(/\r?\n/);
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip BOM
+    const lines = text.split(/\r\n|\r|\n/);
     const seqs = [];
     let seq = '', header = '';
     try {
@@ -2569,16 +2569,16 @@ function parseFasta(text) {
             line = line.trim();
             if (!line) continue;
             if (line.startsWith('>')) {
-                if (seq) {
+                if (header) {
                     _pushParsedFastaSequence(seqs, header, seq);
                     seq = '';
                 }
                 header = line;
             } else {
-                seq += line.replace(/[^A-Za-z*.\-]/g, '');
+                seq += line.replace(/[^A-Za-z*.\-]/g, '').replace(/_/g, '-');
             }
         }
-        if (header && seq) {
+        if (header) {
             _pushParsedFastaSequence(seqs, header, seq);
         }
     } catch (err) {
@@ -2763,6 +2763,23 @@ function generateScale(maxLength, interval = 10, startPos = 0) {
     return scaleArray.join('');
 }
 
+// Generate scale ruler as HTML spans with data-pos for var-sites compatibility
+function generateScaleHTML(maxLength, interval, startPos, showBrk, brkBeforePos, brkInfo) {
+    const scaleText = generateScale(maxLength, interval, startPos);
+    const parts = [];
+    for (let i = 0; i < maxLength; i++) {
+        const absPos = startPos + i;
+        if (showBrk && brkBeforePos.has(absPos)) {
+            const r = brkInfo[absPos];
+            const title = `${r.count} column${r.count > 1 ? 's' : ''} hidden (positions ${r.start + 1}\u2013${r.end + 1})`;
+            parts.push(`<span class="col-breakpoint" data-break="${r.start}-${r.end}" title="${title}" style="pointer-events:none;">\u22EE</span>`);
+        }
+        const ch = scaleText[i] || ' ';
+        parts.push(`<span data-pos="${absPos}">${ch}</span>`);
+    }
+    return parts.join('');
+}
+
 /** Scale tick spacing for Canvas mode: wider intervals when zoomed out so labels stay readable. */
 function _canvasScaleInterval(charW) {
     if (charW >= 8) return 10;
@@ -2892,7 +2909,7 @@ async function handleBamFile(event) {
         let buf;
 
         if (ext === 'sam') {
-            // SAM is plain text - parse directly
+            // SAM is plain text - parse into pseudo-buffer
             const text = await file.text();
             buf = parseSAMToBuffer(text);
         } else {
@@ -2900,8 +2917,21 @@ async function handleBamFile(event) {
             buf = await BamParser.decompressBAM(file);
         }
 
-        // Parse header
-        const header = BamParser.parseBAMHeader(buf);
+        // Parse header (SAM pseudo-buffer or real BAM)
+        let header, records, exceededLimit, totalReads;
+        if (buf._isSAM) {
+            header = { refNames: buf._refNames, refLengths: buf._refLengths, headerEndOffset: 0 };
+            const MAX = BamParser.MAX_READS;
+            totalReads = buf._records.length;
+            exceededLimit = totalReads > MAX;
+            records = exceededLimit ? buf._records.slice(0, MAX) : buf._records;
+        } else {
+            header = BamParser.parseBAMHeader(buf);
+            const parsed = BamParser.parseBAMRecords(buf, header.headerEndOffset);
+            records = parsed.records;
+            exceededLimit = parsed.exceededLimit;
+            totalReads = parsed.totalReads;
+        }
 
         // Check reference match
         const loadedSeqs = state.seqs.map(s => ({ name: s.name, seq: s.seq }));
@@ -2919,9 +2949,6 @@ async function handleBamFile(event) {
                 'Load a reference FASTA first.', 5000);
             return;
         }
-
-        // Parse records (stops at MAX_READS + 1)
-        const { records, exceededLimit, totalReads } = BamParser.parseBAMRecords(buf, header.headerEndOffset);
 
         if (exceededLimit) {
             statusMessage.style.display = 'none';
@@ -3026,26 +3053,84 @@ function computeReadSpan(cigar) {
  * In practice, we parse SAM as text and build record objects directly.
  */
 function parseSAMToBuffer(text) {
-    // Parse SAM as plain text - we'll build a pseudo-BAM buffer
-    // This is simpler than trying to create binary BAM from SAM
+    // Parse SAM text into BAM-like records for the reads view pipeline.
+    // Returns a pseudo-buffer object with header and records compatible with
+    // BamParser.parseBAMHeader and BamParser.parseBAMRecords.
     const lines = text.split('\n').filter(l => l.trim());
-    const headerLines = [];
-    const readLines = [];
+    const headerLines = lines.filter(l => l.startsWith('@'));
+    const readLines = lines.filter(l => !l.startsWith('@'));
 
-    for (const line of lines) {
-        if (line.startsWith('@')) {
-            headerLines.push(line);
-        } else {
-            readLines.push(line);
+    // Parse @SQ headers to get reference names and lengths
+    const refNames = [];
+    const refLengths = [];
+    for (const line of headerLines) {
+        if (line.startsWith('@SQ')) {
+            const fields = line.split('\t');
+            let name = '', len = 0;
+            for (const f of fields) {
+                if (f.startsWith('SN:')) name = f.substring(3);
+                else if (f.startsWith('LN:')) len = parseInt(f.substring(3)) || 0;
+            }
+            if (name) { refNames.push(name); refLengths.push(len); }
         }
     }
 
-    // Build a synthetic BAM-like header buffer
-    // We'll create a minimal BAM header + encode records manually
-    throw new Error(
-        'SAM text input is not yet supported. ' +
-        'Please convert to BAM first: samtools view -bS file.sam > file.bam'
-    );
+    // Parse alignment records
+    const records = [];
+    for (const line of readLines) {
+        const f = line.split('\t');
+        if (f.length < 11) continue;
+        const flag = parseInt(f[1]) || 0;
+        if (flag & 0x904) continue; // unmapped or secondary/supplementary
+        if (!f[5] || f[5] === '*' || !f[9] || f[9] === '*') continue;
+
+        const rname = f[2];
+        const refID = refNames.indexOf(rname);
+        const pos = parseInt(f[3]) - 1; // 0-based
+        const mapq = parseInt(f[4]) || 0;
+        const cigarStr = f[5];
+        const seq = f[9];
+        const tlen = parseInt(f[8]) || 0;
+        const nextRef = f[6] === '=' ? refID : (f[6] !== '*' ? refNames.indexOf(f[6]) : -1);
+        const nextPos = f[7] !== '*' && f[7] !== '=' ? parseInt(f[7]) - 1 : (f[7] === '=' ? pos : -1);
+
+        // Parse CIGAR string into ops array
+        const cigarOps = [];
+        const cigarMatches = cigarStr.match(/\d+[MIDNSHP=X]/g) || [];
+        for (const cm of cigarMatches) {
+            cigarOps.push({ len: parseInt(cm), op: cm[cm.length - 1] });
+        }
+
+        // Parse optional tags
+        const tags = {};
+        for (let i = 11; i < f.length; i++) {
+            const tagMatch = f[i].match(/^([A-Z][A-Z]):([AifZHB]):(.*)$/);
+            if (tagMatch) {
+                const [, tag, type, value] = tagMatch;
+                if (type === 'i' || type === 'I') tags[tag] = parseInt(value);
+                else if (type === 'f') tags[tag] = parseFloat(value);
+                else tags[tag] = value;
+            }
+        }
+
+        records.push({
+            name: f[0],
+            refID,
+            pos,
+            mapq,
+            flag,
+            seq,
+            qual: f[10] || '',
+            cigar: cigarOps,
+            tlen,
+            next_refID: nextRef,
+            next_pos: nextPos,
+            tags,
+        });
+    }
+
+    // Return a pseudo-buffer object compatible with the BAM pipeline
+    return { _isSAM: true, _refNames: refNames, _refLengths: refLengths, _records: records };
 }
 
 /**
@@ -3809,22 +3894,46 @@ function renderAlignment(options = {}) {
     // Highlight-diffs + Var-sites: mark columns that differ from consensus
     const highlightDiffs = document.getElementById('highlightDiffs')?.checked;
     const varSites = document.getElementById('varSitesOnly')?.checked;
+    const varThresholdPct = parseInt(document.getElementById('varSitesThreshold')?.value) || 0;
+    const nSeq = state.seqs.length;
+    const varThreshold = varThresholdPct === 0 ? 0 : Math.ceil((varThresholdPct / 100) * nSeq);
+    const showBreakpoints = document.getElementById('varSitesBreakpoints')?.checked !== false;
     if ((highlightDiffs || varSites) && state.seqs.length > 1) {
         const diffCols = new Set();
         // Pre-compute consensus for diff detection
         const consSeq = consensus.length > 0 ? consensus : computeConsensusForSequences(state.seqs.map(s => s.seq)).split('');
         for (let pos = 0; pos < len; pos++) {
             const consBase = (consSeq[pos] || '-').toUpperCase();
-            let isDiff = false;
-            for (let i = 0; i < state.seqs.length && !isDiff; i++) {
+            let diffCount = 0;
+            for (let i = 0; i < state.seqs.length; i++) {
                 const base = (state.seqs[i].seq[pos] || '-').toUpperCase();
                 if (base !== '-' && base !== '.' && consBase !== '-' && consBase !== '.' && base !== consBase) {
-                    isDiff = true;
+                    diffCount++;
                 }
             }
-            if (isDiff) diffCols.add(pos);
+            if (varThreshold === 0 || diffCount >= varThreshold) diffCols.add(pos);
         }
         state._diffColumns = diffCols;
+        // Build hidden ranges for breakpoint markers (only in var-sites mode)
+        if (varSites) {
+            const hiddenRanges = [];
+            let hiddenStart = -1;
+            for (let pos = 0; pos < len; pos++) {
+                if (!diffCols.has(pos)) {
+                    if (hiddenStart === -1) hiddenStart = pos;
+                } else {
+                    if (hiddenStart !== -1) {
+                        hiddenRanges.push({ start: hiddenStart, end: pos - 1, count: pos - hiddenStart });
+                        hiddenStart = -1;
+                    }
+                }
+            }
+            if (hiddenStart !== -1) hiddenRanges.push({ start: hiddenStart, end: len - 1, count: len - hiddenStart });
+            state._varSiteHiddenRanges = hiddenRanges;
+            document.body.classList.toggle('hide-breakpoints', !showBreakpoints);
+        } else {
+            state._varSiteHiddenRanges = null;
+        }
         if (highlightDiffs) {
             document.body.classList.add('highlight-diffs');
             document.body.classList.remove('var-sites-only');
@@ -3835,8 +3944,25 @@ function renderAlignment(options = {}) {
         }
     } else {
         state._diffColumns = null;
+        state._varSiteHiddenRanges = null;
         document.body.classList.remove('highlight-diffs');
         document.body.classList.remove('var-sites-only');
+        document.body.classList.remove('hide-breakpoints');
+    }
+
+    // Build breakpoint lookup for rendering (used by createSequenceLine and addConsensusLine)
+    const _varSitesActive = document.body.classList.contains('var-sites-only');
+    const _showBrk = _varSitesActive && !document.body.classList.contains('hide-breakpoints');
+    state._brkBeforePos = new Set();
+    state._brkInfo = {};
+    if (_showBrk && state._varSiteHiddenRanges && state._diffColumns) {
+        for (const r of state._varSiteHiddenRanges) {
+            const afterPos = r.end + 1;
+            if (state._diffColumns.has(afterPos)) {
+                state._brkBeforePos.add(afterPos);
+                state._brkInfo[afterPos] = r;
+            }
+        }
     }
 
 // Codon analysis
@@ -3903,8 +4029,12 @@ function renderAlignment(options = {}) {
             scaleNameDiv.textContent = '';
             const scaleDataDiv = document.createElement('div');
             scaleDataDiv.className = 'seq-data';
-            const scaleText = generateScale(blockLen, 10, start);
-            scaleDataDiv.textContent = scaleText;
+            const _showBrkRuler = state._brkBeforePos && state._brkBeforePos.size > 0;
+            if (_showBrkRuler) {
+                scaleDataDiv.innerHTML = generateScaleHTML(blockLen, 10, start, true, state._brkBeforePos, state._brkInfo);
+            } else {
+                scaleDataDiv.textContent = generateScale(blockLen, 10, start);
+            }
             scaleDiv.appendChild(scaleNameDiv);
             scaleDiv.appendChild(scaleDataDiv);
             blockDiv.appendChild(scaleDiv);
@@ -3932,8 +4062,12 @@ function renderAlignment(options = {}) {
         scaleNameDiv.textContent = '';
         const scaleDataDiv = document.createElement('div');
         scaleDataDiv.className = 'seq-data';
-        const scaleText = generateScale(len);
-        scaleDataDiv.textContent = scaleText;
+        const _showBrkRulerFull = state._brkBeforePos && state._brkBeforePos.size > 0;
+        if (_showBrkRulerFull) {
+            scaleDataDiv.innerHTML = generateScaleHTML(len, 10, 0, true, state._brkBeforePos, state._brkInfo);
+        } else {
+            scaleDataDiv.textContent = generateScale(len);
+        }
         scaleDiv.appendChild(scaleNameDiv);
         scaleDiv.appendChild(scaleDataDiv);
         alignmentContainer.appendChild(scaleDiv);
@@ -4643,7 +4777,18 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
         colorScheme, effectiveColorScheme
     };
 
+    // Var-sites: check if breakpoints are active for this render
+    const showBrk = state._brkBeforePos && state._brkBeforePos.size > 0;
+    const brkBeforePos = state._brkBeforePos || new Set();
+    const brkInfo = state._brkInfo || {};
+
     for (let pos = start; pos < end; pos++) {
+            // Insert breakpoint marker before this position if needed
+            if (showBrk && brkBeforePos.has(pos)) {
+                const r = brkInfo[pos];
+                const title = `${r.count} column${r.count > 1 ? 's' : ''} hidden (positions ${r.start + 1}\u2013${r.end + 1})`;
+                htmlParts.push(`<span class="col-breakpoint" data-break="${r.start}-${r.end}" title="${title}" style="pointer-events:none;">\u22EE</span>`);
+            }
             const base = seq[pos] || '-';
             const baseUp = base.toUpperCase();
             const baseClass = getResidueAnnotationClasses(base, standard, ambiguous, effectiveColorScheme);
@@ -4661,8 +4806,12 @@ function createSequenceLine(index, start, end, nameLen, stickyNames, standard, a
             }
             if (state._codonData && state._codonData.frameShifts && state._codonData.frameShifts[index]) {
                 for (const fs of state._codonData.frameShifts[index]) {
-                    if (fs.pos === pos && (fs.type === 'incomplete' || fs.type === 'indel')) {
+                    if (fs.pos === pos && fs.type === 'incomplete') {
                         cls += ' codon-fs';
+                        break;
+                    }
+                    if (fs.pos === pos && fs.type === 'indel') {
+                        cls += ' codon-fs-internal';
                         break;
                     }
                 }
@@ -4726,7 +4875,22 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
     const leftTrimEnd = trimBounds.leftTrimEnd !== undefined ? trimBounds.leftTrimEnd : -1;
     const rightTrimStart = trimBounds.rightTrimStart !== undefined ? trimBounds.rightTrimStart : Infinity;
 
+    const showBrk = state._brkBeforePos && state._brkBeforePos.size > 0;
+    const brkBeforePos = state._brkBeforePos || new Set();
+    const brkInfo = state._brkInfo || {};
+
     for (let pos = start; pos < end; pos++) {
+        // Insert breakpoint marker before this position if var-sites active
+        if (showBrk && brkBeforePos.has(pos)) {
+            const r = brkInfo[pos];
+            const brkSpan = document.createElement('span');
+            brkSpan.className = 'col-breakpoint';
+            brkSpan.dataset.break = `${r.start}-${r.end}`;
+            brkSpan.title = `${r.count} column${r.count > 1 ? 's' : ''} hidden (positions ${r.start + 1}\u2013${r.end + 1})`;
+            brkSpan.style.pointerEvents = 'none';
+            brkSpan.textContent = '\u22EE';
+            dataSpan.appendChild(brkSpan);
+        }
         const base = pos < consensus.length ? consensus[pos] : '-';
         const baseUp = base.toUpperCase();
         const baseClass = getResidueAnnotationClasses(base);
@@ -5174,6 +5338,23 @@ async function parseAndRender(isFromDrop = false) {
         state.pendingNucStart = null;
         state.lastSelectedIndex = null;
         state.groupConsensusCount = 0;
+        // --- Audit C3: comprehensive state reset on new file load ---
+        state.diffColumns = null;
+        state.searchResults = null;
+        state.searchHistory = [];
+        state.colourState = { mappings: new Map(), history: new Map() };
+        state.manuallyColoured = new Set();
+        state.dragStartCol = null;
+        state.dragStartRow = null;
+        state.isDragging = false;
+        state.dragMode = null;
+        state.selRect = null;
+        state.ctrlPressed = false;
+        state.altPressed = false;
+        state.shiftPressed = false;
+        state._codonData = null;
+        state._columnConservationScores = null;
+        state._columnConservationCache = null;
 
         // Update name length slider range based on loaded sequences
         // This will set the slider to maximum actual name length
@@ -6603,11 +6784,11 @@ function savePreset() {
         enableLight: el('enableLight').checked,
         stickyNames: el('stickyNames').checked
     };
-    localStorage.setItem('qwen_msa_viewer_preset_v44', JSON.stringify(preset));
+    localStorage.setItem('msaviewer_preset_v44', JSON.stringify(preset));
     showMessage("Preset saved!", 2000);
 }
 function loadPreset() {
-    const saved = localStorage.getItem('qwen_msa_viewer_preset_v44');
+    const saved = localStorage.getItem('msaviewer_preset_v44');
     if (!saved) {
         showMessage("No saved preset found.", 3000);
         return;
@@ -6618,7 +6799,7 @@ function loadPreset() {
     } catch (e) {
         console.error('Preset JSON corrupted:', e);
         showMessage('Saved preset is corrupted and was reset.', 4000);
-        localStorage.removeItem('qwen_msa_viewer_preset_v44');
+        localStorage.removeItem('msaviewer_preset_v44');
         return;
     }
     ['black','dark','light','zoom','blockSize','nameLen','consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(k => {
@@ -11892,9 +12073,26 @@ function attachUIListeners() {
             if (id === 'highlightDiffs') {
                 document.body.classList.toggle('highlight-diffs', elRef.checked);
             }
+            if (id === 'varSitesOnly') {
+                const ctrls = document.getElementById('varSitesControls');
+                if (ctrls) ctrls.style.display = elRef.checked ? 'inline-flex' : 'none';
+            }
             debounceRender();
         });
     });
+
+    // Var-sites threshold slider
+    const varThreshold = el('varSitesThreshold');
+    if (varThreshold) {
+        varThreshold.addEventListener('input', () => {
+            const label = document.getElementById('varSitesThresholdLabel');
+            if (label) label.textContent = `\u2265${varThreshold.value}% diff`;
+        });
+        varThreshold.addEventListener('change', debounceRender);
+    }
+    // Var-sites breakpoints toggle
+    const varBrk = el('varSitesBreakpoints');
+    if (varBrk) varBrk.addEventListener('change', debounceRender);
 
     const codonCode = el('codonCode');
     if (codonCode) codonCode.addEventListener('change', debounceRender);
@@ -12007,6 +12205,16 @@ function attachUIListeners() {
     // Use capture phase so shortcuts like Ctrl+H override browser built-ins
     document.addEventListener('keydown', handleKeyDown, true);
     document.addEventListener('keyup', handleKeyUp, true);
+    // Reset stuck modifier keys and drag state when window loses focus
+    window.addEventListener('blur', () => {
+        state.ctrlPressed = false;
+        state.altPressed = false;
+        state.shiftPressed = false;
+        state.isDragging = false;
+        state.dragMode = null;
+        state.dragStartCol = null;
+        state.dragStartRow = null;
+    });
     document.addEventListener('copy', (e) => {
         if (!state.selectedNucs.size) return;
         const text = buildNucCopyText();
@@ -13022,6 +13230,7 @@ function sortSequencesByColor() {
     });
 
     // Update state and re-render
+    pushUndo('sort-by-color');
     state.seqs = sortedSeqs;
     state.selectedRows.clear();
     renderAlignment();
@@ -13042,6 +13251,7 @@ function groupColoredSequencesAtTop() {
     });
 
     // Combine: colored at top, then ungrouped
+    pushUndo('group-colored');
     state.seqs = [...coloredSeqs, ...ungroupedSeqs];
     state.selectedRows.clear();
     renderAlignment();
