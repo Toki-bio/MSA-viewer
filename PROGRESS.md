@@ -11,23 +11,24 @@
 - Phase 7a: Canvas codon analysis — all-frames 3-row layout (frames 2/1/0 top-to-bottom matching DOM), AA row name labels ("Pos N:") in name column, `rowPitch` accounts for `aaRowCount` AA rows, single-frame and all-frames modes both work (commit pending)
 - Phase 7b: TSD marking in Canvas mode — `draw()` renders TSD marks (color/bold styles) by checking `state.tsdMarks` per visible cell; `_scrollToColumn()` made Canvas-aware (pans via `_canvasState.offsetX` instead of `container.scrollLeft`); 'lowercase' style works via sequence modification (commit pending)
 - Phase 7c: Breakpoint marker hover — var-sites computation extracted to `_computeVarSites(len)` called before Canvas path; `draw()` renders breakpoint markers (brkStyle color+symbol) at `state._brkBeforePos` positions; canvas mousemove shows tooltip with hidden-column info (commit pending)
+- Phase 7d: Search-hit highlighting — `_computeSearchHitsForRow`/`_getSearchHitsForRow` mirror `_paintSearchEntryOnAlignment` logic; `draw()` applies search-hit background/text colors per cell; cache invalidated on re-render and on sequence/search-history change (commit pending)
 
 ## Current phase
-Phase 7d (not started)
-Search-hit highlighting/click-to-scroll — search hits are CSS classes on DOM spans; Canvas mode needs to draw them in `draw()`.
+All phases complete.
 
 ## Notes for the next run
-Phase 7c is complete. Breakpoint markers are now drawn in Canvas mode:
-- The var-sites computation (`_computeVarSites(len)`) was extracted into a standalone function and called before the Canvas path's early `return`, so `state._diffColumns`, `state._brkBeforePos`, and `state._brkInfo` are available in Canvas mode.
-- The original inline var-sites computation block (after the Canvas return) was replaced with a comment — the function handles it for all modes now.
-- Canvas mode's `draw()` renders breakpoint markers at each position in `state._brkBeforePos` using `brkStyle.color` as background and `brkStyle.symbol` as the glyph, drawn on top of the residue at that position.
-- The canvas `mousemove` handler checks for breakpoint markers before residue tooltips — if the hovered column has a breakpoint, it shows a tooltip with "N columns hidden (positions X–Y)" matching DOM mode's `.col-breakpoint` title attribute.
+All phases (0–7d) are complete. Canvas mode now has full editing parity with Full/Block mode.
 
-Known limitation: Canvas mode does NOT hide conserved columns in var-sites mode (it draws all columns). The breakpoint markers overlay the residue at the breakpoint position rather than replacing hidden columns. Full var-sites column hiding in Canvas mode would require a visual-to-column mapping that affects hit-testing, selection, and scrolling — left for a future phase if needed.
+Phase 7d implementation notes:
+- `_computeSearchHitsForRow(rowIndex)` mirrors `_paintSearchEntryOnAlignment`'s logic: builds degapped display string, finds fuzzy/regex matches, maps match positions back to alignment columns, returns Map(col -> color).
+- `_getSearchHitsForRow(rowIndex)` caches per-row results, invalidated when the sequence string reference or search history length changes (handles edits and search add/remove without a full re-render).
+- `_canvasSearchHitsCache` is also invalidated at the start of `_renderCanvasAlignment` (mode switch, file load, etc.).
+- In `draw()`, search hits override bgFill/textFill after TSD marks and before the glyph blit, matching DOM mode's CSS `!important` priority (search hits > TSD marks > conservation shading).
+- Click-to-scroll from the search results panel already works via `_scrollToColumn`, which is already Canvas-aware (pans via `_canvasState.offsetX`).
+- Search is still initiated from Full/Block mode (search controls are disabled in Canvas mode); search hits are preserved in `state.searchHistory` and rendered when switching to Canvas.
 
-Remaining Phase 7 sub-phases:
-- 7d: Search-hit highlighting/click-to-scroll — search hits are CSS classes on DOM spans; Canvas mode needs to draw them in `draw()`.
-
-Known limitation from Phase 5: the "Rename sequence" context menu item doesn't work in Canvas mode because `showContextMenu` uses `e.target` (the canvas element) to create an inline input — it tries `e.target.innerHTML = ''` and `e.target.appendChild(input)` on the canvas. This could be fixed by using a prompt/modal or by temporarily switching to Full mode for rename.
-
-Note: In Canvas mode, a plain click on a residue does nucleotide selection (two-click system from Phase 1), NOT residue-typing mode entry. In DOM mode, a plain click auto-enters residue-typing mode. This is an intentional design difference — to enter edit mode in Canvas, use the Edit toggle button.
+Known limitations (carried forward from previous phases):
+- Canvas mode does NOT hide conserved columns in var-sites mode (it draws all columns). The breakpoint markers overlay the residue at the breakpoint position rather than replacing hidden columns.
+- The "Rename sequence" context menu item doesn't work in Canvas mode because `showContextMenu` uses `e.target` (the canvas element) to create an inline input.
+- In Canvas mode, a plain click on a residue does nucleotide selection (two-click system from Phase 1), NOT residue-typing mode entry. In DOM mode, a plain click auto-enters residue-typing mode. This is an intentional design difference — to enter edit mode in Canvas, use the Edit toggle button.
+- Existing DOM-mode bug: forward search hits with bothStrands=true are not re-applied correctly after re-render because the label includes "(fwd)" which is not stripped by the `replace(/\s*\(rev comp\)\s*$/i, '')` regex. This affects both DOM and Canvas mode equally.
