@@ -61,14 +61,20 @@ Key existing building blocks to reuse, not reinvent:
 3. **Commit at the end of every phase** with `git add -A && git commit -m
    "..."` — a clear, specific message (what interaction was added, what
    file/function it touches). Never `--amend`. Never touch git history.
-4. **Only edit `script.js` and `PROGRESS.md`. Never open, touch, or ask to
-   add `styles.css`, `index.html`, `manual.html`, or any other file** — not
-   even for a cursor change. For cursor/hover feedback, set it inline in
-   JS (`canvas.style.cursor = '...'`, exactly like the existing pan code
-   already does a few lines above where you're editing) instead of adding
-   a CSS rule. This isn't a style preference: adding any file not already
-   in the chat mid-run forces a second, much more expensive turn that
-   resends everything already sent once — confirmed this alone was enough
+4. **Only edit the two files already given to you in this chat session.
+   Do not open, reference by name, or ask to add any other file in this
+   repository, for any reason, including for a cursor style** (set that
+   inline in JS instead, exactly like the existing pan code already does a
+   few lines above where you're editing). Do not even type the name of
+   another file in this repo in your reply — this doc intentionally avoids
+   naming them for the same reason: any exact filename that appears
+   anywhere in this conversation, even inside a sentence telling you NOT to
+   touch it, gets auto-added to your context. That silently doubled or
+   tripled how much you had to read on the run that discovered this, and
+   is what actually caused every failed run so far — not file size alone.
+   This isn't a style preference: adding any file not already given to you
+   forces a second, much more expensive turn that resends everything
+   already sent once — confirmed this alone was enough
    to blow past the model's context ceiling and silently crash the entire
    run with zero work saved. Do not bump `BUILD_TAG`.
 5. **If a phase turns out to be bigger than expected**, stop at a safe
