@@ -5,20 +5,20 @@
 - Phase 1: click-to-select single residue — canvas mousedown does selection on hit-test, highlight rect in draw() (commit pending)
 - Phase 2: drag-range selection — `handleMouseMove` nuc-branch made Canvas-aware, uses `_canvasHitTest` + `_canvasState.scheduleDraw()` (commit 72b640c)
 - Phase 3: column and row selection — added `_canvasHitTestRuler`/`_canvasHitTestName` + `_canvasRowFromClientY`/`_canvasColFromClientX` helpers; canvas mousedown handles Ctrl+Alt column select and Ctrl/Shift row select; `handleMouseMove` col/row branches made Canvas-aware; `draw()` renders selected columns and rows as semi-transparent strips (commit pending)
+- Phase 4: hover tooltip — canvas mousemove listener shows `showTooltipAt` tooltip with "header: gaplessPos" for non-gap residues, mirroring DOM mode's `.seq-data > span[data-pos]` mouseover handler; tooltip hidden on mouseleave from canvas (commit pending)
 
 ## Current phase
-Phase 4 (not started)
+Phase 5 (not started)
 
 ## Notes for the next run
-Phase 4 should:
-- Wire the Phase 0 hover-cell tracking (`_canvasHoverCell`) to the tooltip
-  mechanism Full/Block mode uses (`showTooltipAt`). Show the same info
-  (residue, position, sequence name) on hover in Canvas mode.
-- The canvas already has a `mousemove` listener that updates
-  `_canvasHoverCell`. Phase 4 needs to add tooltip display logic to that
-  listener (or a separate one).
-- Look at how DOM mode's `alignmentContainer.addEventListener('mouseover', ...)`
-  shows tooltips for `.seq-data > span[data-pos]` elements — mirror that
-  info (sequence header, gapless position, base) for the canvas hit-tested
-  cell.
-- Remember to hide the tooltip on mouseout from the canvas.
+Phase 5 should:
+- On the canvas, right-click at a hit-tested cell should open the same
+  context menu Full/Block mode opens (`showContextMenu`), positioned at
+  the click point, operating on whatever cell/selection is under the cursor.
+- Look at how DOM mode's `alignmentContainer.addEventListener('contextmenu', ...)`
+  calls `showContextMenu(e, index)` — mirror that for Canvas mode, using
+  `_canvasHitTest` to get the row index and `e.clientX/e.clientY` for
+  positioning.
+- Also consider right-click on the name column (should open context menu
+  for that sequence's row) and right-click on the ruler (may not need a
+  context menu, or could select the column).
