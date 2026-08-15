@@ -4,8 +4,28 @@ Written 2026-08-15. This document scopes the harder, higher-ceiling
 alternative so it's ready to pick up later without re-deriving the
 tradeoffs from scratch.
 
-**Status of Option A as of 2026-08-15 (v172): viewing AND editing are both
-fast now, in all three DOM-based modes.** Block mode is now windowed too
+**Status of Option A as of 2026-08-15 (v173): viewing AND editing are both
+fast now, in all three DOM-based modes, and the scroll/render machinery
+behind Full and Block windowing is now one shared implementation instead
+of two parallel copies.** v173 extracted `_createWindowedScrollController`
+(rAF-coalescing, suppress-next-scroll-event, bind-once-per-container) and
+`_removeNodesBetweenSpacers` (the between-two-spacers DOM swap) out of the
+duplicated Full-mode and Block-mode scroll listeners into one shared
+implementation each mode instantiates. This doesn't change behavior - the
+full 46-check regression suite (including both 40M-residue stress tests)
+passed byte-for-byte identically before and after - but it removes the
+main risk this triplication created: any future fix to the rAF-coalescing
+or scroll-suppression logic (both areas that have already had real,
+subtle bugs surface in this session) previously had to be applied and
+re-verified in two places by hand, with no compiler or test catching a
+missed spot. What v173 did NOT do: merge the row-window vs block-window
+*rendering* logic itself (what gets built for each visible unit) into one
+function - Full mode's per-row + per-column windowing and Block mode's
+per-block windowing are different enough in shape (2D vs 1D) that forcing
+them into one code path would trade real clarity for a forced abstraction,
+not gain any actual duplication removal, so the two `_buildBlockElement`
+vs `createSequenceLine`-in-a-loop rendering paths remain intentionally
+separate. Block mode is now windowed too
 (v172) - it renders only the column-chunk block(s) currently scrolled into
 view (+ overscan), backed by the same top/bottom-spacer pattern as Full
 mode's row windowing, rather than every block for the whole alignment up
