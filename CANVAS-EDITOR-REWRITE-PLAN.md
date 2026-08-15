@@ -4,8 +4,22 @@ Written 2026-08-15. This document scopes the harder, higher-ceiling
 alternative so it's ready to pick up later without re-deriving the
 tradeoffs from scratch.
 
-**Status of Option A as of 2026-08-15 (v171): viewing AND editing are both
-fast now.** Row windowing (v167/v168) and column windowing (v169) mean Full
+**Status of Option A as of 2026-08-15 (v172): viewing AND editing are both
+fast now, in all three DOM-based modes.** Block mode is now windowed too
+(v172) - it renders only the column-chunk block(s) currently scrolled into
+view (+ overscan), backed by the same top/bottom-spacer pattern as Full
+mode's row windowing, rather than every block for the whole alignment up
+front. On the same 40M-residue synthetic file that hung past 60s before,
+it now completes in ~11s (matching Full mode's own first-paint conservation
+cost at that scale) and keeps the DOM bounded to 2 blocks/~4,000 rows
+instead of ~334 blocks/~668,000 rows. One real bug surfaced and got fixed
+during this: the initial (pre-measurement) fallback height estimate for
+"how tall is one block" was borrowed from Full mode's per-row fallback
+(16px) - correct order of magnitude for a single row, wildly wrong for a
+block that contains every row stacked together, which made the very first
+windowed render think dozens of blocks fit in the viewport instead of ~1
+and build all of them. Fixed by estimating from sequence count instead
+until a real block has been measured. Row windowing (v167/v168) and column windowing (v169) mean Full
 mode windows rows and columns together, so alignments large in either or
 both dimensions stay responsive to scroll. Edit-mode reshading (v170) is
 now genuinely incremental (recomputes only the edited columns, not the
