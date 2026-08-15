@@ -4,25 +4,21 @@
 - Phase 0: hit-testing foundation — `_canvasHitTest()` + hover tracking (commit pending)
 - Phase 1: click-to-select single residue — canvas mousedown does selection on hit-test, highlight rect in draw() (commit pending)
 - Phase 2: drag-range selection — `handleMouseMove` nuc-branch made Canvas-aware, uses `_canvasHitTest` + `_canvasState.scheduleDraw()` (commit 72b640c)
+- Phase 3: column and row selection — added `_canvasHitTestRuler`/`_canvasHitTestName` + `_canvasRowFromClientY`/`_canvasColFromClientX` helpers; canvas mousedown handles Ctrl+Alt column select and Ctrl/Shift row select; `handleMouseMove` col/row branches made Canvas-aware; `draw()` renders selected columns and rows as semi-transparent strips (commit pending)
 
 ## Current phase
-Phase 3 (not started)
+Phase 4 (not started)
 
 ## Notes for the next run
-Phase 3 should:
-- Add column selection: clicking the scale ruler area (top row, above the
-  data) in Canvas mode should select the whole column, mirroring
-  `handleColumnSelectMouseDown`'s state mutations (Ctrl+Alt+click in DOM
-  mode).
-- Add row selection: clicking the name column (left side) in Canvas mode
-  should select the whole row, mirroring `handleRowSelectMouseDown`'s state
-  mutations (Ctrl+click in DOM mode).
-- Both need hit-testing to distinguish the ruler area and name column from
-  the data area. The canvas mousedown handler already uses `_canvasHitTest`
-  for the data area; Phase 3 needs separate hit-tests for the ruler and
-  name column regions (or extend `_canvasHitTest` to return a region
-  indicator).
-- draw() currently only draws `state.selectedNucs` and
-  `state.pendingNucStart` highlights. Phase 3 needs to add drawing steps
-  for `state.selectedColumns` (highlight the column) and
-  `state.selectedRows` (highlight the row's name/background).
+Phase 4 should:
+- Wire the Phase 0 hover-cell tracking (`_canvasHoverCell`) to the tooltip
+  mechanism Full/Block mode uses (`showTooltipAt`). Show the same info
+  (residue, position, sequence name) on hover in Canvas mode.
+- The canvas already has a `mousemove` listener that updates
+  `_canvasHoverCell`. Phase 4 needs to add tooltip display logic to that
+  listener (or a separate one).
+- Look at how DOM mode's `alignmentContainer.addEventListener('mouseover', ...)`
+  shows tooltips for `.seq-data > span[data-pos]` elements — mirror that
+  info (sequence header, gapless position, base) for the canvas hit-tested
+  cell.
+- Remember to hide the tooltip on mouseout from the canvas.
