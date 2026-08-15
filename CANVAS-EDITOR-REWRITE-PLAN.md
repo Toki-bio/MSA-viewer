@@ -14,6 +14,40 @@ incremental (recompute only the edited column) instead of the current
 bulk-recompute. Those are the next steps if more headroom is still needed
 before reaching for Option B below.
 
+## Prior art (researched 2026-08-15)
+
+- **Jalview** (the field-standard desktop MSA editor, 20+ years of
+  development) still has a documented hang on rapid scroll past ~10,000
+  columns per its own changelog - real confirmation this is a genuinely
+  hard problem class, not something this codebase uniquely got wrong.
+  Its actual source lives on a self-hosted Bitbucket/Crucible instance
+  (University of Dundee), not readily fetchable; github.com/jalview/jalview
+  is an empty mirror.
+- **AlignmentViewer2.0** (sanderlab, React + TypeScript, actively
+  maintained, tested on ~23,000-sequence alignments) is the most directly
+  comparable prior art - same problem, same web/DOM constraints. Two
+  things worth noting:
+  - It validates the exact approach taken here: "a virtualized matrix
+    together with virtual scrollbars... we only insert the portion of the
+    MSA that is visible at any given time." Same core idea as
+    `renderFullModeWindowedRows`/`_refreshFullModeWindowOnScroll`.
+  - **No third-party virtualization library** (no react-window,
+    react-virtualized, etc.) - `package.json` shows a hand-built
+    virtualized grid, matching this project's own hand-built approach.
+    Confirms that generic single-axis list-virtualization libraries don't
+    fit an alignment's specific needs (2D grid, sticky name column) well
+    enough that reaching for one would have saved real effort.
+  - For the *zoomed-out overview* case specifically (not the main editing
+    view), it renders via **PixiJS (WebGL) as tiled images** rather than
+    DOM or canvas 2D - avoiding both DOM bloat and browser single-image
+    size limits. Not relevant to Option A/B as scoped here, but a genuine,
+    separate idea worth considering if an alignment overview/minimap
+    feature is ever wanted - `C:/work/SINE_pixel_viewer` (verified:
+    `src/viewer.ts` "filters, sorts, windows, and renders alignment data to
+    a canvas heatmap") is an existing, unrelated project that already does
+    exactly this kind of dense pixel-per-residue canvas rendering, worth a
+    look if that path is taken.
+
 ## Why this exists
 
 Option A (windowing the existing DOM renderer) fixes the actual bottleneck
