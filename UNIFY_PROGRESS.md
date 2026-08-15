@@ -4,9 +4,10 @@
 - Phase 0: design note for unifying Full/Block windowed DOM rendering
 - Phase 1: built unified windowed-render functions additively, not yet wired (commit ea8529c)
 - Phase 2: wired Full mode to `renderUnifiedWindowedDom` (commit pending)
+- Phase 3: wired Block mode to `renderUnifiedWindowedDom` (commit pending)
 
 ## Current phase
-Phase 3 (not started)
+Phase 4 (not started)
 
 ## Phase 2 trace (Full mode equivalence)
 - Old path: ruler + consensus built externally in `renderAlignment()`, then
@@ -42,16 +43,69 @@ Phase 3 (not started)
   targeting `.block-block` causes visual issues in Full mode, a CSS file
   change may be needed (ground rule 3). Noted for human testing.
 
+## Phase 3 trace (Block mode equivalence)
+- Old path: `renderBlockModeWindowedBlocks` creates `numBlocks = ceil(len /
+  blockWidth)` blocks. Two `block-mode-spacer` divs for block-level windowing.
+  `_buildBlockElement` builds each visible block with ruler + optional
+  consensus + ALL rows + optional consensus. No row windowing within blocks.
+  No column windowing within blocks.
+- New path: `renderUnifiedWindowedDom(container, len, blockWidth, ...)` creates
+  `numBlocks = ceil(len / blockWidth)` (same). Two `unified-mode-spacer` divs
+  for block-level windowing. `_buildUnifiedBlock` builds each visible block
+  with ruler + optional consensus + 2 `unified-row-spacer` divs + windowed
+  rows + optional consensus.
+- Block range: both compute `blockStart`/`blockEnd` from `scrollTop /
+  blockHeightPx` with overscan=1. Equivalent.
+- Row windowing: old renders ALL rows per visible block; new windows rows
+  within each block (rowStart/rowEnd from visTop/visBottom relative to
+  rowAreaTop, with 15-row overscan). This is a behavioral difference but
+  strictly an improvement: the old path built off-screen rows that were
+  never visible, the new path skips them. Visual output is identical. The
+  row windowing is bounded by the block's own vertical extent
+  (`visBottom = min(scrollTop + clientHeight, blockTop + blockHeightPx)`),
+  so it never renders rows from adjacent blocks.
+- Column windowing: old renders all columns in each block; new only applies
+  column windowing when the block is wider than the viewport
+  (`needsColWindow = colStart > start || colEnd < end - 1`). For typical
+  Block mode (block width 40-80 cols, viewport wider), `needsColWindow` is
+  false, so all columns are rendered — same as old behavior. When the block
+  IS wider than the viewport (e.g. user sets a very large block width),
+  column windowing kicks in, which is an improvement over the old path.
+- Spacer structure: old has 2 `block-mode-spacer` divs as direct children of
+  container; new has 2 `unified-mode-spacer` divs (block-level) + 2
+  `unified-row-spacer` divs inside each block. Inner row spacers serve the
+  same purpose as the old spacers did for block-level windowing, but at the
+  row level within blocks.
+- Scroll refresh: old `_refreshBlockModeWindowOnScroll` rebuilds only blocks
+  between spacers; new `_refreshUnifiedWindowOnScroll` also rebuilds only
+  blocks between spacers, but each block rebuild includes ruler + consensus
+  + row spacers + windowed rows. Slightly more work per scroll tick, but
+  ruler + consensus are small DOM and scroll is rAF-coalesced. Acceptable.
+- Scroll controller: `_unifiedScrollController` is already active for both
+  `modeSingle` and `modeBlocks` (isActiveFn checks both). Since the call
+  site now points to `renderUnifiedWindowedDom`, `_blockModeScrollController`
+  is never bound (its `bind` is only called from `_setupBlockModeScrollListener`,
+  which is only called from `renderBlockModeWindowedBlocks`, which is no
+  longer called). No double-fire on fresh page load. Phase 4 will collapse
+  the controllers formally.
+- CSS note: unified path wraps content in `div.block-block`, same class as
+  the old Block mode path used. No CSS change needed.
+
 ## Notes for the next run
-- Phase 3: wire Block mode to `renderUnifiedWindowedDom` instead of
-  `renderBlockModeWindowedBlocks`. Pass `blockWidth` from the slider.
-- In `renderAlignment()`'s Block mode branch, replace the
-  `renderBlockModeWindowedBlocks(...)` call with
-  `renderUnifiedWindowedDom(alignmentContainer, len, blockWidth, ...)`.
-  Leave the non-windowed path (small alignments, `_buildBlockElement` loop)
-  unchanged for now — Phase 5 will unify that.
-- After wiring, trace Block mode equivalence in UNIFY_PROGRESS.md.
-- Leave `renderBlockModeWindowedBlocks` in place (dead code, not yet deleted).
+- Phase 4: collapse `_fullModeScrollController` and `_blockModeScrollController`
+  into the single `_unifiedScrollController`. Since the old controllers are
+  never bound (their setup functions are never called), they can be removed
+  or left as dead code. The `_unifiedScrollController` already handles both
+  modes. Check if `_fullModeScrollController` and `_blockModeScrollController`
+  are still referenced anywhere; if not, they can be deleted in Phase 6.
+- Phase 5: unify the non-windowed (small-alignment) loops. The `else` branch
+  in both Full and Block mode (the `for` loop building all rows/blocks
+  directly) can share a helper. For Block mode, the non-windowed path uses
+  `_buildBlockElement` in a loop; for Full mode, it builds ruler + consensus
+  + rows directly. Apply the "Block with unbounded width" insight: Full mode
+  is Block mode with `blockWidth = len`, so the non-windowed Block loop with
+  `blockWidth = len` produces one block = one ruler + one consensus + all
+  rows, which is exactly what Full mode does.
 - Phase 1 implementation details:
   - New functions: `renderUnifiedWindowedDom`, `_buildUnifiedBlock`,
     `_refreshUnifiedWindowOnScroll`, `_setupUnifiedScrollListener`
