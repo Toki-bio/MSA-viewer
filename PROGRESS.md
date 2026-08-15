@@ -3,31 +3,26 @@
 ## Done
 - Phase 0: hit-testing foundation — `_canvasHitTest()` + hover tracking (commit pending)
 - Phase 1: click-to-select single residue — canvas mousedown does selection on hit-test, highlight rect in draw() (commit pending)
+- Phase 2: drag-range selection — `handleMouseMove` nuc-branch made Canvas-aware, uses `_canvasHitTest` + `_canvasState.scheduleDraw()` (commit 72b640c)
 
 ## Current phase
-Phase 2 (not started)
+Phase 3 (not started)
 
 ## Notes for the next run
-Phase 1 added:
-- Canvas mousedown handler now calls `_canvasHitTest`; if it returns a cell,
-  selection state is mutated mirroring `handleNucleotideSelectMouseDown`
-  (full two-click system: first click sets `pendingNucStart`, second click
-  on same row completes range). If hit-test returns null, panning proceeds
-  as before.
-- `handleNucleotideSelectMouseDown` now returns false (instead of showing a
-  message) in Canvas/Reads mode, letting the canvas handler own selection.
-- `draw()` in `_renderCanvasAlignment` now draws a highlight rect for every
-  cell in `state.selectedNucs` (semi-transparent blue fill + border), and a
-  dashed border for `state.pendingNucStart`.
-- Selection state is shared with Full/Block mode: selecting in Canvas then
-  switching to Full shows the same selection (and vice versa).
-
-Phase 2 should:
-- Extend the canvas mousedown into a mousedown+mousemove+mouseup drag that
-  selects a rectangular range, mirroring `handleMouseMove`'s `dragMode ===
-  'nuc'` branch. The drag should update `state.selectedNucs` live and
-  redraw via `scheduleDraw()` (throttled to rAF).
-- The existing document-level `handleMouseMove` tries to find DOM spans
-  (which don't exist in Canvas mode) — Phase 2 needs a canvas-specific
-  mousemove handler for drag-range, or the existing handler needs to be
-  made Canvas-aware.
+Phase 3 should:
+- Add column selection: clicking the scale ruler area (top row, above the
+  data) in Canvas mode should select the whole column, mirroring
+  `handleColumnSelectMouseDown`'s state mutations (Ctrl+Alt+click in DOM
+  mode).
+- Add row selection: clicking the name column (left side) in Canvas mode
+  should select the whole row, mirroring `handleRowSelectMouseDown`'s state
+  mutations (Ctrl+click in DOM mode).
+- Both need hit-testing to distinguish the ruler area and name column from
+  the data area. The canvas mousedown handler already uses `_canvasHitTest`
+  for the data area; Phase 3 needs separate hit-tests for the ruler and
+  name column regions (or extend `_canvasHitTest` to return a region
+  indicator).
+- draw() currently only draws `state.selectedNucs` and
+  `state.pendingNucStart` highlights. Phase 3 needs to add drawing steps
+  for `state.selectedColumns` (highlight the column) and
+  `state.selectedRows` (highlight the row's name/background).
