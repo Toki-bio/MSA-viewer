@@ -5,9 +5,10 @@
 - Phase 1: built unified windowed-render functions additively, not yet wired (commit ea8529c)
 - Phase 2: wired Full mode to `renderUnifiedWindowedDom` (commit pending)
 - Phase 3: wired Block mode to `renderUnifiedWindowedDom` (commit pending)
+- Phase 4: unified scroll controllers — `_unifiedScrollController` is the single active controller; old controllers are dead code (commit pending)
 
 ## Current phase
-Phase 4 (not started)
+Phase 5 (not started)
 
 ## Phase 2 trace (Full mode equivalence)
 - Old path: ruler + consensus built externally in `renderAlignment()`, then
@@ -91,13 +92,35 @@ Phase 4 (not started)
 - CSS note: unified path wraps content in `div.block-block`, same class as
   the old Block mode path used. No CSS change needed.
 
+## Phase 4 trace (scroll controller unification)
+- The `_unifiedScrollController` (created in Phase 1) already serves as the
+  single collapsed controller instance. Its `isActiveFn` checks both
+  `modeSingle` and `modeBlocks` (plus `isCrazy`), and its `refreshFn`
+  (`_refreshUnifiedWindowOnScroll`) reads `_unifiedWindowRenderParams`
+  which is set by `renderUnifiedWindowedDom` with the correct `blockWidth`
+  for whichever mode is active (len for Full, slider value for Block).
+- The old controllers are dead code:
+  - `_fullModeScrollController`: only bound via `_setupFullModeScrollListener`,
+    which is only called from `renderFullModeWindowedRows` (no longer called
+    from `renderAlignment()`). Its `suppressNextEvent()` is also only called
+    from `renderFullModeWindowedRows`.
+  - `_blockModeScrollController`: same — only bound via
+    `_setupBlockModeScrollListener`, called from `renderBlockModeWindowedBlocks`
+    (no longer called). Its `suppressNextEvent()` is only called from there.
+- No double-binding: `_createWindowedScrollController.bind()` is idempotent
+  (`if (boundContainer === container) return`), and both modes use the same
+  `alignmentContainer` element, so switching Full<->Block on a crazy alignment
+  doesn't re-bind — the unified controller stays attached and simply picks
+  up the new `_unifiedWindowRenderParams` on the next render.
+- Mode-switch safety: when switching to Canvas/Reads, `isActiveFn` returns
+  false (neither mode radio checked), so scroll events are ignored. When
+  switching back to Full/Block on a crazy alignment, `renderAlignment()` ->
+  `renderUnifiedWindowedDom()` -> `_setupUnifiedScrollListener()` re-binds
+  (no-op if already bound) and refreshes `_unifiedWindowRenderParams`.
+- The old controllers, their setup functions, and the old render/refresh
+  functions are all dead code. They will be deleted in Phase 6.
+
 ## Notes for the next run
-- Phase 4: collapse `_fullModeScrollController` and `_blockModeScrollController`
-  into the single `_unifiedScrollController`. Since the old controllers are
-  never bound (their setup functions are never called), they can be removed
-  or left as dead code. The `_unifiedScrollController` already handles both
-  modes. Check if `_fullModeScrollController` and `_blockModeScrollController`
-  are still referenced anywhere; if not, they can be deleted in Phase 6.
 - Phase 5: unify the non-windowed (small-alignment) loops. The `else` branch
   in both Full and Block mode (the `for` loop building all rows/blocks
   directly) can share a helper. For Block mode, the non-windowed path uses
@@ -106,6 +129,24 @@ Phase 4 (not started)
   is Block mode with `blockWidth = len`, so the non-windowed Block loop with
   `blockWidth = len` produces one block = one ruler + one consensus + all
   rows, which is exactly what Full mode does.
+- Phase 6: delete confirmed-dead code. The following are all dead code
+  (no remaining call sites after Phases 2-5):
+  - `renderFullModeWindowedRows`, `renderBlockModeWindowedBlocks`
+  - `_refreshFullModeWindowOnScroll`, `_refreshBlockModeWindowOnScroll`
+  - `_fullModeScrollController`, `_blockModeScrollController`
+  - `_setupFullModeScrollListener`, `_setupBlockModeScrollListener`
+  - `_fullModeWindowRenderParams`, `_blockModeWindowRenderParams`
+  - `_fullModeRowHeightPx`, `_fullModeCharWidthPx`, `_fullModeNameColWidthPx`
+  - `_blockModeBlockHeightPx`, `_blockModeFallbackHeightPx`
+  - `_measureFullModeRowHeight`, `_measureFullModeColumnMetrics`
+  - `_measureBlockModeBlockHeight`
+  - `getVisibleRowColumnRange` (only called by dead Full-mode functions;
+    unified path computes its own ranges inline in `_buildUnifiedBlock`)
+  - NOT dead code (do NOT delete): `_applyColumnWindowStyle` (used by
+    `_buildUnifiedBlock`), `_removeNodesBetweenSpacers` (used by
+    `_refreshUnifiedWindowOnScroll`), `_createWindowedScrollController`
+    (used by `_unifiedScrollController`), `_buildBlockElement` (used by
+    non-windowed Block path, will be unified in Phase 5)
 - Phase 1 implementation details:
   - New functions: `renderUnifiedWindowedDom`, `_buildUnifiedBlock`,
     `_refreshUnifiedWindowOnScroll`, `_setupUnifiedScrollListener`
