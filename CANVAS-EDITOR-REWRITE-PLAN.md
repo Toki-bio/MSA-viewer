@@ -1,9 +1,18 @@
 # Option B: canvas-based rendering (scoped future project)
 
-Written 2026-08-15, alongside Option A (DOM virtualization, in progress —
-see `AIDER-PLAYBOOK.md` and the `column-windowing` branch). This document
-scopes the harder, higher-ceiling alternative so it's ready to pick up later
-without re-deriving the tradeoffs from scratch.
+Written 2026-08-15. This document scopes the harder, higher-ceiling
+alternative so it's ready to pick up later without re-deriving the
+tradeoffs from scratch.
+
+**Status of Option A as of 2026-08-15 (v169): both dimensions done.** Row
+windowing (v167/v168) and column windowing (v169) are both shipped and
+stress-tested — Full mode now windows rows and columns together, so
+alignments large in either or both dimensions stay responsive. What's
+*not* done yet: unifying Block/Canvas/Full into one always-windowed,
+always-editable renderer, and making consensus/conservation computation
+incremental (recompute only the edited column) instead of the current
+bulk-recompute. Those are the next steps if more headroom is still needed
+before reaching for Option B below.
 
 ## Why this exists
 
