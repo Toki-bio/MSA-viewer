@@ -4,15 +4,18 @@ Written 2026-08-15. This document scopes the harder, higher-ceiling
 alternative so it's ready to pick up later without re-deriving the
 tradeoffs from scratch.
 
-**Status of Option A as of 2026-08-15 (v169): both dimensions done.** Row
-windowing (v167/v168) and column windowing (v169) are both shipped and
-stress-tested — Full mode now windows rows and columns together, so
-alignments large in either or both dimensions stay responsive. What's
-*not* done yet: unifying Block/Canvas/Full into one always-windowed,
-always-editable renderer, and making consensus/conservation computation
-incremental (recompute only the edited column) instead of the current
-bulk-recompute. Those are the next steps if more headroom is still needed
-before reaching for Option B below.
+**Status of Option A as of 2026-08-15 (v170): viewing AND editing are both
+fast now.** Row windowing (v167/v168) and column windowing (v169) mean Full
+mode windows rows and columns together, so alignments large in either or
+both dimensions stay responsive to scroll. Edit-mode reshading (v170) is
+now genuinely incremental (recomputes only the edited columns, not the
+whole alignment) - exiting edit mode after a small edit on the real
+5.97M-residue test file dropped from ~655ms to ~13-16ms, verified
+byte-for-byte identical to a full recompute. What's *not* done yet:
+unifying Block/Canvas/Full into one always-windowed, always-editable
+renderer (they're still three separate code paths with three different
+performance profiles). That's the next step if more headroom is still
+needed before reaching for Option B below.
 
 ## Prior art (researched 2026-08-15)
 
