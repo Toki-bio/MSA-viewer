@@ -10,23 +10,22 @@
 - Phase 6: GeneDoc edit-mode tools in Canvas mode — `isEditModeSupported()` allows edit mode in Canvas; canvas mousedown handles move/slide/gap/residue/selectColumn tools; `startGeneDocMoveDrag` uses canvas metrics for charWidth; `repaintGeneDocDragRow`/`handleGeneDocEditDragEnd`/`handleGeneDocEditDragMove` (selectColumn) are Canvas-aware; `updateEditActiveCell`/`fastUpdateEditCellAt` schedule canvas redraws; active edit cell drawn as red rect in `draw()` (commit pending)
 - Phase 7a: Canvas codon analysis — all-frames 3-row layout (frames 2/1/0 top-to-bottom matching DOM), AA row name labels ("Pos N:") in name column, `rowPitch` accounts for `aaRowCount` AA rows, single-frame and all-frames modes both work (commit pending)
 - Phase 7b: TSD marking in Canvas mode — `draw()` renders TSD marks (color/bold styles) by checking `state.tsdMarks` per visible cell; `_scrollToColumn()` made Canvas-aware (pans via `_canvasState.offsetX` instead of `container.scrollLeft`); 'lowercase' style works via sequence modification (commit pending)
+- Phase 7c: Breakpoint marker hover — var-sites computation extracted to `_computeVarSites(len)` called before Canvas path; `draw()` renders breakpoint markers (brkStyle color+symbol) at `state._brkBeforePos` positions; canvas mousemove shows tooltip with hidden-column info (commit pending)
 
 ## Current phase
-Phase 7c (not started)
-Breakpoint marker hover — breakpoint markers in DOM mode have hover tooltips; Canvas mode doesn't draw them yet.
+Phase 7d (not started)
+Search-hit highlighting/click-to-scroll — search hits are CSS classes on DOM spans; Canvas mode needs to draw them in `draw()`.
 
 ## Notes for the next run
-Phase 7b is complete. TSD marks are drawn in Canvas mode's `draw()` function:
-- 'color' style: overrides bgFill with TSD color and textFill with '#111', uses existing glyph cache
-- 'bold' style: draws text directly in bold (bypassing glyph cache which uses non-bold font), restores fontStr after
-- 'lowercase' style: modifies `state.seqs` directly, Canvas mode draws modified sequence as-is
+Phase 7c is complete. Breakpoint markers are now drawn in Canvas mode:
+- The var-sites computation (`_computeVarSites(len)`) was extracted into a standalone function and called before the Canvas path's early `return`, so `state._diffColumns`, `state._brkBeforePos`, and `state._brkInfo` are available in Canvas mode.
+- The original inline var-sites computation block (after the Canvas return) was replaced with a comment — the function handles it for all modes now.
+- Canvas mode's `draw()` renders breakpoint markers at each position in `state._brkBeforePos` using `brkStyle.color` as background and `brkStyle.symbol` as the glyph, drawn on top of the residue at that position.
+- The canvas `mousemove` handler checks for breakpoint markers before residue tooltips — if the hovered column has a breakpoint, it shows a tooltip with "N columns hidden (positions X–Y)" matching DOM mode's `.col-breakpoint` title attribute.
 
-`_scrollToColumn()` now works in Canvas mode by setting `_canvasState.offsetX` and scheduling a redraw, instead of setting `container.scrollLeft` (which is meaningless in Canvas mode's absolutely-positioned canvas layout).
-
-Known limitation: Canvas mode doesn't respect the residue case toggle (`residue-case-upper`/`residue-case-lower` CSS classes). This affects 'lowercase' TSD style if the user has case override active. This is a pre-existing Canvas mode limitation, not TSD-specific.
+Known limitation: Canvas mode does NOT hide conserved columns in var-sites mode (it draws all columns). The breakpoint markers overlay the residue at the breakpoint position rather than replacing hidden columns. Full var-sites column hiding in Canvas mode would require a visual-to-column mapping that affects hit-testing, selection, and scrolling — left for a future phase if needed.
 
 Remaining Phase 7 sub-phases:
-- 7c: Breakpoint marker hover — breakpoint markers in DOM mode have hover tooltips; Canvas mode doesn't draw them yet.
 - 7d: Search-hit highlighting/click-to-scroll — search hits are CSS classes on DOM spans; Canvas mode needs to draw them in `draw()`.
 
 Known limitation from Phase 5: the "Rename sequence" context menu item doesn't work in Canvas mode because `showContextMenu` uses `e.target` (the canvas element) to create an inline input — it tries `e.target.innerHTML = ''` and `e.target.appendChild(input)` on the canvas. This could be fixed by using a prompt/modal or by temporarily switching to Full mode for rename.
