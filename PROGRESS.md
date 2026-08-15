@@ -10,11 +10,29 @@
 - Phase 6: GeneDoc edit-mode tools in Canvas mode — `isEditModeSupported()` allows edit mode in Canvas; canvas mousedown handles move/slide/gap/residue/selectColumn tools; `startGeneDocMoveDrag` uses canvas metrics for charWidth; `repaintGeneDocDragRow`/`handleGeneDocEditDragEnd`/`handleGeneDocEditDragMove` (selectColumn) are Canvas-aware; `updateEditActiveCell`/`fastUpdateEditCellAt` schedule canvas redraws; active edit cell drawn as red rect in `draw()` (commit pending)
 
 ## Current phase
-Phase 7 (not started)
+Phase 7a (in progress)
+
+### What's done
+- Extracted codon analysis computation into `_updateCodonAnalysisState(len)` helper function
+- Canvas mode now calls `_updateCodonAnalysisState(len)` instead of clearing codon data to `null`
+- Added `rowPitch` (CHAR_H + AA row height) to `_canvasState` and all Canvas rendering calculations
+- Canvas `draw()` now renders AA translation rows below each sequence when codon analysis is active
+- All hit-testing functions (`_canvasHitTest`, `_canvasHitTestName`, `_canvasRowFromClientY`) updated to use `rowPitch`
+- Selection highlights (rows, nucs, pending nuc, edit cell) updated to use `rowPitch` for y-positioning
+- `codon-mode` body class is now active in Canvas mode (was previously cleared)
+- `syncCodonModePanel()` shows the frame switcher panel in Canvas mode
+
+### What's left for 7a
+- Click-to-jump: clicking an AA row in Canvas mode should scroll to the corresponding nucleotide column (not yet implemented)
+- All-frames mode (`state._codonActiveFrame === -1`): currently draws only the best frame's AA row; DOM mode draws 3 AA rows (frames 0, 1, 2). The `rowPitch` only accounts for 1 AA row.
+- AA row name label ("Pos 1:") not drawn in Canvas mode (DOM mode shows it in the name column)
 
 ## Notes for the next run
-Phase 7 — remaining parity items (do as sub-phases 7a, 7b, 7c, 7d, one per run):
-- 7a: Codon-analysis click-to-jump — in DOM mode, clicking a codon-analysis row jumps to the corresponding nucleotide. Canvas mode doesn't draw codon rows yet.
+Phase 7a is partially complete. The drawing foundation is in place. The remaining items (click-to-jump, all-frames 3-row layout, AA row labels) can be done in a follow-up run or deferred to a later sub-phase.
+
+For all-frames mode: would need `aaRowCount = state._codonActiveFrame === -1 ? 3 : 1` and `rowPitch = CHAR_H + aaRowCount * aaRowH`. Draw 3 AA rows per sequence using `state._codonFrames.frames[fr].aaSeq[i]` for frames 0, 1, 2.
+
+Remaining Phase 7 sub-phases:
 - 7b: TSD marking clicks — TSD marks are drawn on DOM spans; Canvas mode needs to draw them in `draw()`.
 - 7c: Breakpoint marker hover — breakpoint markers in DOM mode have hover tooltips; Canvas mode doesn't draw them yet.
 - 7d: Search-hit highlighting/click-to-scroll — search hits are CSS classes on DOM spans; Canvas mode needs to draw them in `draw()`.
