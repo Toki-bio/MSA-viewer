@@ -7,11 +7,26 @@
 - Phase 3: bordered bars with cap marks, alternating track shading, click-to-highlight, hover tooltips
 - Phase 4: diff vs bases display toggle with per-base rendering inside bars
 - Phase 5: soft-clip/insertion/deletion visual treatment + low-zoom thin-line rendering
+- Phase 6: gated SAM/BAM button behind single-reference eligibility, added "Clear reads" control (JS-created), reset bamState on new file load
 
 ## Current phase
-Phase 6 (not started)
+Phase 7 (not started)
 
 ## Notes for the next run
+- Phase 6 added `updateBamButtonVisibility()` (checks `state.seqs.length === 1`),
+  `ensureClearReadsButton()` (creates "Clear reads" button from JS, inserted after
+  `bamButton`), and `clearReadsData()` (resets bamState, switches to Block mode).
+- The BAM button is assumed to have id `bamButton` (not visible in the JS file; if the
+  human tester finds the button visibility isn't toggling, the actual HTML id may differ
+  and `updateBamButtonVisibility` should be updated to match).
+- `bamState` is now reset in `parseAndRender` when loading a new file, and if the user
+  was in Reads mode, they're switched back to Block mode automatically.
+- `handleBamFile` already auto-switches to Reads mode and shows a status message
+  (done in Phase 1); Phase 6 just added the `updateBamButtonVisibility()` call after.
+- Phase 7 should remove dead code: `_getReadBasesByRefPos` (no longer called in the
+  render loop, replaced by `_getReadCigarFeatures` in Phase 5) and `renderCompactAlignment`
+  (the dead mode's renderer — no radio button routes to it, `assignReadTracks` is still
+  needed by `renderReadsAlignment` so keep that).
 - Phase 5 added `_getReadCigarFeatures(read, refSeq)` which returns
   {bases, deletions, insertions, softClipLeft, softClipRight}. This replaces the direct
   use of `_getReadBasesByRefPos` in the rendering loop (which is still available for other
@@ -26,6 +41,3 @@ Phase 6 (not started)
   visible. The `cellW >= 7` threshold matches the existing gate from Phase 4.
 - `_getReadBasesByRefPos` is still defined but no longer called in the render loop; it can
   be removed in Phase 7 if no other callers exist.
-- Phase 6 needs: gate SAM/BAM button behind reference eligibility (hidden by default, only
-  show when a single reference sequence is loaded), auto-switch to Reads mode on BAM attach,
-  "Clear reads" control created from JS, status message with read count and ref name.
