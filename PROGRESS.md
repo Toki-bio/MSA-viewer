@@ -5,26 +5,29 @@
 - Phase 1: compute per-read genomic start/end and assign packed tracks in handleBamFile
 - Phase 2: replaced per-read DOM row loop with SVG track-band layout in renderReadsAlignment
 - Phase 3: bordered bars with cap marks, alternating track shading, click-to-highlight, hover tooltips
+- Phase 4: diff vs bases display toggle with per-base rendering inside bars
 
 ## Current phase
-Phase 4 (not started)
+Phase 5 (not started)
 
 ## Notes for the next run
-- `renderReadsAlignment()` now draws each read as a bordered rect (`stroke: #4a7fa8`,
-  `stroke-width: 1.5`) with start/end cap marks (vertical lines, `stroke: #2c5d80`,
-  `stroke-width: 2`, full track height). Track backgrounds alternate (`#f0f4f8` even,
-  `#ffffff` odd). Clicking a bar highlights it (`stroke: #d9402b`, `stroke-width: 3`) and
-  shows read info in a status line div (`id=readsStatusLine`) above the SVG. Hovering
-  shows a tooltip via `showTooltipAt()` with name/pos/cigar/mapq.
-- Module-level `_readsHighlightedBar` tracks the currently selected bar; reset to null
-  on every `renderReadsAlignment()` call.
-- Bar geometry: `rh = TRACK_H - 4 = 12px`, bar y offset `ry + 2` to center in track.
-  Cap marks span full `TRACK_H = 16px` for visibility above/below bar.
-- `read.cigar` is an array of `{len, op}` objects; format with
-  `read.cigar.map(c => c.len + c.op).join('')`.
-- Phase 4 needs: diff vs bases display toggle (checkbox created from JS), mismatch
-  letters inside bars in diff mode, colored bases inside bars in bases mode using
-  existing `baseColorRef()` palette. State for the toggle should be module-level
-  (not on `state` core alignment fields). The `columns` array in `bamState` has
-  per-read CIGAR-expanded typed entries — use those to determine match/mismatch/
-  insertion/deletion/soft-clip per position.
+- Phase 4 added `_readsDisplayMode` module-level variable ('diff' default, 'bases' alternative).
+- `ensureReadsDisplayToggle()` creates a "Show bases" checkbox from JS, inserted after the
+  quick mode switcher. Visibility toggled in `syncQuickModeSwitch()` based on `isReadsMode`.
+- `_getReadBasesByRefPos(read, refSeq)` walks the CIGAR and returns a Map of
+  refPos -> {base, type} for M/=/X positions. Insertions/deletions/skips/soft-clips are
+  not in the map (no reference column to draw in). This is self-contained and does not
+  depend on `bamState.columns` / `BamParser.expandCigar` (whose exact property names are
+  unknown since BamParser is not in this file).
+- Per-base text drawn as SVG `<text>` elements with `pointer-events: none`,
+  `dominant-baseline: middle`, font-size 9, monospace. Mismatches in 'diff' mode are
+  red (#e74c3c). All bases in 'bases' mode use `baseColorRef()`.
+- `cellW >= 7` gate prevents drawing text when cells are too narrow (Phase 5 will add
+  thin-line fallback below this threshold).
+- `read.cigar` is an array of `{len, op}` objects; `read.seq` is the read sequence string;
+  `read.pos` is 0-based genomic position; `bamState.refSeq` is indexed by absolute
+  genomic position.
+- Phase 5 needs: soft-clip (lighter fill, dashed stroke on clipped portion), insertion
+  (vertical tick/extension), deletion (grey gap segment inside bar), low-zoom
+  thin-line-plus-mismatch-ticks rendering with cap marks still visible. Use
+  `_getReadBasesByRefPos` or walk CIGAR directly for per-position types.
