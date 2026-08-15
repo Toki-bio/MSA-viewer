@@ -44,11 +44,15 @@ Key existing building blocks to reuse, not reinvent:
 ## Ground rules (non-negotiable, every phase)
 
 1. **Never break Full, Block, or view-only Canvas.** Every phase must leave
-   the app in a working state for every existing mode. If you're not sure
-   an existing test still passes, don't guess — the auto-test harness runs
-   `node -c script.js` after every edit (catches syntax errors only, not
-   behavior) — treat that as a minimum bar, not sufficient proof of
-   correctness.
+   the app in a working state for every existing mode. `script.js` is large
+   enough that a single turn already uses most of your available context —
+   there is no budget for an in-conversation self-check turn, so get it
+   right in one pass: re-read the exact SEARCH text before writing each
+   block, and mentally trace the edit rather than relying on a retry loop.
+   A wrapper script runs `node -c script.js` after you exit and will
+   automatically revert your commit (and note it in `PROGRESS.md` under
+   `## BLOCKED`) if it doesn't pass — a caught syntax error costs the whole
+   run's work, not just a warning.
 2. **One phase per run.** Do not attempt Phase N+1 in the same invocation
    where you finished Phase N. Finish the current phase, update
    `PROGRESS.md`, commit, and stop. A separate invocation will pick up the
@@ -57,9 +61,16 @@ Key existing building blocks to reuse, not reinvent:
 3. **Commit at the end of every phase** with `git add -A && git commit -m
    "..."` — a clear, specific message (what interaction was added, what
    file/function it touches). Never `--amend`. Never touch git history.
-4. **Only edit `script.js`, `style.css` (if a new cursor/hover style is
-   genuinely needed), and `PROGRESS.md`.** Do not touch `index.html`,
-   `manual.html`, or any other file. Do not bump `BUILD_TAG`.
+4. **Only edit `script.js` and `PROGRESS.md`. Never open, touch, or ask to
+   add `styles.css`, `index.html`, `manual.html`, or any other file** — not
+   even for a cursor change. For cursor/hover feedback, set it inline in
+   JS (`canvas.style.cursor = '...'`, exactly like the existing pan code
+   already does a few lines above where you're editing) instead of adding
+   a CSS rule. This isn't a style preference: adding any file not already
+   in the chat mid-run forces a second, much more expensive turn that
+   resends everything already sent once — confirmed this alone was enough
+   to blow past the model's context ceiling and silently crash the entire
+   run with zero work saved. Do not bump `BUILD_TAG`.
 5. **If a phase turns out to be bigger than expected**, stop at a safe
    sub-point, note exactly where you stopped and why in `PROGRESS.md`
    under "Phase N (in progress)", commit what compiles and works, and end
