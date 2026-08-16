@@ -4,12 +4,12 @@
 - Run 1: Added instrumentation inside _historyManager.add/load/save, toggleStickyNames, and end of parseAndRender to pinpoint exact hang location
 - Run 2: Confirmed root cause via trace output, fixed setBlockSizeToScreen and toggleStickyNames, removed all HANGTRACE instrumentation
 
-## Current phase
-Run 3: Adding fresh instrumentation to trace exact hang point. Previous fix
-(setBlockSizeToScreen >80K skip, toggleStickyNames >80K skip) was confirmed
-NOT sufficient by browser check. Adding console.log with performance.now()
-timestamps at every step in parseAndRender and renderAlignment to pinpoint
-the exact hang location. Waiting for browser check output.
+Run 3: Fixed the actual root cause - container.clientWidth read inside the
+>80K early-return path of setBlockSizeToScreen(). The run 2 fix only skipped
+the re-render but still read container.clientWidth, which forces a synchronous
+layout reflow over 3.6M DOM spans (taking 30+ seconds). Replaced with
+window.innerWidth which doesn't trigger reflow on the container's children.
+HANGTRACE instrumentation still present - will remove once browser check passes.
 
 ## Instrumentation findings
 Run 1 trace (300x12000 = 3.6M residues, isCrazy=false so full DOM render):
@@ -23,26 +23,27 @@ Run 1 trace (300x12000 = 3.6M residues, isCrazy=false so full DOM render):
 Total: ~86s (run 1) / ~56s (run 2), both far exceeding the 30s browser check timeout.
 
 ## Root cause
-setBlockSizeToScreen() calls getBoundingClientRect() on sample DOM spans to measure
-character width. With 3.6M rendered spans in the container, this forces a synchronous
-layout reflow costing ~60 seconds. It then calls renderAlignment() again (another 14.5s)
-if the computed block size differs from the previous value. Since 3.6M < ALIGN_CRAZY_VOLUME
-(5M), isCrazy=false, so the windowed renderer is not used and the full 3.6M-span DOM is
-built. The total ~75s spent in setBlockSizeToScreen alone exceeds the 30s timeout.
+setBlockSizeToScreen() reads `container.clientWidth` inside the >80K early-return
+path. While the run 2 fix correctly skipped the re-render for large alignments,
+it still read `container.clientWidth` to compute the block size slider value.
+Reading `clientWidth` on a container with 3.6M just-rendered child spans forces
+the browser to synchronously compute layout for ALL of them, taking 30+ seconds
+and causing parseAndRender to exceed the 30s timeout.
 
-A secondary issue: toggleStickyNames() (called via setTimeout(0) after every render)
-forces a reflow via `alignmentContainer.offsetHeight` for non-crazy alignments, adding
-another multi-second block after the promise resolves.
+The run 1 trace confirmed this: a 42-second gap between `setBlockSizeToScreen: entry`
+and `setBlockSizeToScreen: >80K skip`, with only `container.clientWidth` between
+those two log points.
 
 ## Fix
-1. setBlockSizeToScreen: For alignments >80K residues (matching the existing span-cache
-   threshold), use a zoom-based char-width estimate instead of getBoundingClientRect(),
-   and skip the re-render. The initial render already used a reasonable block size from
-   the slider's current value; the user can adjust manually if needed.
-2. toggleStickyNames: Extended the reflow skip from isCrazy-only to all alignments
-   >80K residues, preventing the forced reflow on large DOM trees.
-3. Removed all HANGTRACE instrumentation from _historyManager, toggleStickyNames,
-   renderAlignment, and parseAndRender.
+1. setBlockSizeToScreen: Replaced `container.clientWidth` with `window.innerWidth`
+   in the >80K early-return path. `window.innerWidth` does not trigger a reflow on
+   the alignment container's children, so the block size slider value is computed
+   instantly. The approximation is fine since this path skips the re-render anyway -
+   the slider value is just a default the user can adjust later.
+2. (From run 2, kept) toggleStickyNames: Extended the reflow skip from isCrazy-only
+   to all alignments >80K residues.
+3. HANGTRACE instrumentation still present - will remove once browser check confirms
+   the fix works.
 
 ## Notes for the next run
 - The 80K threshold matches state._enableSpanCache's threshold, so the two guards
