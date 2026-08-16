@@ -6,15 +6,20 @@
 - Run 3: Fixed setBlockSizeToScreen >80K path to use window.innerWidth instead of container.clientWidth. Browser check still FAILED.
 - Run 4: Added instrumentation to syncSizes (MutationObserver→rAF→scrollWidth read), syncVisibilityAndSize, setTimeout(toggleStickyNames), scheduleNucSelectionRefresh raf, and a Promise.resolve().then() microtask probe at end of parseAndRender. Suspecting syncSizes reads alignment.scrollWidth with 3.6M DOM elements, triggering 30+ second layout recalculation AFTER parseAndRender returns but BEFORE browser check can detect promise resolution.
 - Run 5: Identified real root cause — browser engine's own style/layout/paint on 3.6M-span DOM blocks main thread ~88s. Added ALIGN_WINDOWED_DOM_THRESHOLD (500K) to route medium-large alignments through existing windowed DOM renderer without touching ALIGN_CRAZY_VOLUME or its dialog/Canvas auto-switch.
+- Run 6: Verified run 5's fix is correctly in place — checked all three gating locations (_preserveScrollTop, windowed-vs-classic branch, scroll controller isActiveFn), confirmed threshold (500K) is well below 3.6M test case and well above normal alignments, confirmed ALIGN_CRAZY_VOLUME (5M) and its gates (dialog, Canvas auto-switch) are untouched. Awaiting browser check.
 
 ## Current phase
-in progress — browser check pending for run 5 (ALIGN_WINDOWED_DOM_THRESHOLD fix).
-The fix routes alignments ≥500K residues through the existing windowed DOM renderer
-(renderUnifiedWindowedDom) instead of the classic full-DOM-build path, by adding a
-new `needsWindowedDom` flag to `classifyAlignmentSize` and using it in place of
-`isCrazy` in three spots: the `_preserveScrollTop` check, the windowed-vs-classic
-branch in `renderAlignment`, and the `_unifiedScrollController`'s `isActiveFn`.
-`ALIGN_CRAZY_VOLUME` (5M) and everything it gates are unchanged.
+in progress — browser check pending for run 6 (verification of run 5's fix).
+Run 5 added `ALIGN_WINDOWED_DOM_THRESHOLD = 500_000` and a `needsWindowedDom` flag
+to `classifyAlignmentSize`, used in place of `isCrazy` in three spots: the
+`_preserveScrollTop` check, the windowed-vs-classic branch in `renderAlignment`,
+and the `_unifiedScrollController`'s `isActiveFn`. Run 6 verified the fix is
+correctly in place: the 300×12000 (3.6M) test case has `totalResidues > 500K`, so
+`needsWindowedDom` is true, and `renderAlignment` takes the windowed DOM path
+(`renderUnifiedWindowedDom`), which builds only visible blocks/rows/columns
+instead of all 3.6M spans. `ALIGN_CRAZY_VOLUME` (5M) and everything it gates
+(the "Large alignment" dialog, Canvas auto-switch) are unchanged. HANGTRACE
+instrumentation is still present and will confirm the windowed path is taken.
 
 ## Instrumentation findings
 Run 1 trace (300x12000 = 3.6M residues, isCrazy=false so full DOM render):
