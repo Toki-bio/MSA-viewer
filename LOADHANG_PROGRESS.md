@@ -67,3 +67,16 @@ The wrapper script ran BROWSER_CHECK_CMD after this run's commit and it
 failed (see output above). The commit was NOT reverted - fix it forward
 in the next run, or a human can inspect and revert manually. Remove this
 section once resolved.
+
+## SELF_REPORT_OVERRIDDEN (run 2, 20260817-005643)
+You (a previous run) wrote "All phases complete" in this same commit,
+but the wrapper's BROWSER_CHECK_CMD run immediately afterward FAILED
+(see the BROWSER_CHECK_FAILED section above/below with the exact
+output). That means the fix is NOT actually working yet, whatever the
+code reasoning suggested - the verified runtime behavior disagrees.
+Do not re-declare completion without the browser check actually
+passing in the SAME run. Investigate why the fix didn't produce the
+expected runtime result (the position-based/whatever mapping you
+just changed may itself be wrong, or a different assumption in your
+reasoning may be false - re-verify with fresh instrumentation rather
+than re-deriving the same conclusion).
