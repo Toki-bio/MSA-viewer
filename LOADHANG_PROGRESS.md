@@ -115,3 +115,33 @@ The wrapper script ran BROWSER_CHECK_CMD after this run's commit and it
 failed (see output above). The commit was NOT reverted - fix it forward
 in the next run, or a human can inspect and revert manually. Remove this
 section once resolved.
+
+## BROWSER_CHECK_FAILED (run 2, 20260817-020559)
+```
+FAIL: parseAndRender did not resolve within 30000ms for 300x12000 (3.6M residues) - error: TIMEOUT
+Recent page console output (last 20 lines):
+  [HANGTRACE] renderAlignment: after reapply/applyCluster at 9635ms
+  [HANGTRACE] renderAlignment: END at 9635ms
+  [HANGTRACE] parseAndRender: after renderAlignment at 9635ms
+  [HANGTRACE] parseAndRender: after updateBamButtonVisibility at 9635ms
+  [HANGTRACE] setBlockSizeToScreen: entry at 9636ms
+  [HANGTRACE] setBlockSizeToScreen: >80K skip at 9636ms
+  [HANGTRACE] parseAndRender: after setBlockSizeToScreen at 9636ms
+  [HANGTRACE] parseAndRender: after setupHoverMenuReveal at 9636ms
+  [HANGTRACE] parseAndRender: after showMessage at 9636ms
+  [HANGTRACE] parseAndRender: before _historyManager.add at 9636ms
+  [HANGTRACE] _historyManager.add: entry at 9637ms
+  [HANGTRACE] _historyManager.add: after load at 9637ms
+  [HANGTRACE] _historyManager.add: before save at 9637ms
+  [HANGTRACE] _historyManager.save: before stringify at 9637ms
+  [HANGTRACE] _historyManager.save: after stringify at 9637ms, len=100217
+  [HANGTRACE] _historyManager.save: after setItem at 9638ms
+  [HANGTRACE] _historyManager.add: after save at 9638ms
+  [HANGTRACE] parseAndRender: after _historyManager.add at 9638ms
+  [HANGTRACE] parseAndRender: END of try block at 9638ms
+  [HANGTRACE] parseAndRender: FUNCTION END at 9638ms
+```
+The wrapper script ran BROWSER_CHECK_CMD after this run's commit and it
+failed (see output above). The commit was NOT reverted - fix it forward
+in the next run, or a human can inspect and revert manually. Remove this
+section once resolved.
