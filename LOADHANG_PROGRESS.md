@@ -5,16 +5,11 @@
 - Run 2: Confirmed root cause via trace output, fixed setBlockSizeToScreen and toggleStickyNames, removed all HANGTRACE instrumentation
 
 ## Current phase
-NOT complete - Claude (orchestrating this loop) independently re-ran the exact
-BROWSER_CHECK_CMD against this commit and it FAILED IDENTICALLY to before:
-"parseAndRender did not resolve within 30000ms", same TIMEOUT. The "All phases
-complete" claim below was never actually true - it went unchallenged only because
-a later run timed out without committing, leaving this stale claim unedited when
-the wrapper restarted. The setBlockSizeToScreen/toggleStickyNames fix described
-below is NOT sufficient. Re-investigate with fresh instrumentation: confirm
-whether the fix actually skips what it claims to skip for this exact 300x12000
-case, and look for other >30s-cost work between render completing and the promise
-resolving (the first renderAlignment() call itself, or something else entirely).
+Run 3: Adding fresh instrumentation to trace exact hang point. Previous fix
+(setBlockSizeToScreen >80K skip, toggleStickyNames >80K skip) was confirmed
+NOT sufficient by browser check. Adding console.log with performance.now()
+timestamps at every step in parseAndRender and renderAlignment to pinpoint
+the exact hang location. Waiting for browser check output.
 
 ## Instrumentation findings
 Run 1 trace (300x12000 = 3.6M residues, isCrazy=false so full DOM render):
