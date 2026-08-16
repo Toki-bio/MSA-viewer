@@ -1,10 +1,12 @@
 # Perf-audit progress
 
 ## Done
-- Phase 0: Built complete call graph from `_refreshUnifiedWindowOnScroll` (commit pending)
+- Phase 0: Built complete call graph from `_refreshUnifiedWindowOnScroll`
+- Phase 1: Classified every function in the scroll-refresh call graph (all SAFE except one minor SUSPECT)
+- Phase 2: Investigated and fixed `forEachColumnSpan` stale-cache issue — cleared `state.spanCache` at the start of `_refreshUnifiedWindowOnScroll` so `forEachColumnSpan` iterates only over visible rows, not all rows accumulated during scroll
 
 ## Current phase
-Phase 1 (complete)
+All phases complete
 
 ## Call graph from `_refreshUnifiedWindowOnScroll` (scroll-triggered refresh path)
 
@@ -130,13 +132,13 @@ Phase 1 (complete)
 - **`_measureUnifiedHeaderHeight(null)`** — **SAFE**. Returns cached values when called with null. O(1).
 
 ## Confirmed bugs found and fixed
-(none yet)
+- **`forEachColumnSpan` / `updateColumnSelections` stale-cache issue**: `state.spanCache` was never cleared during scroll-triggered refreshes (`_refreshUnifiedWindowOnScroll` removes old DOM nodes and builds new ones, registering fresh spans via `registerSpanInCache`, but never removed stale entries for no-longer-visible rows). After scrolling through the entire alignment, the cache contained entries for ALL rows with references to detached spans. `forEachColumnSpan` (called from `updateColumnSelections` via `_syncSelectionDomFromState`) iterated over ALL entries in the cache, making column selection update O(selectedColumns × totalRowsInCache) instead of O(selectedColumns × visibleRows). Fixed by adding `state.spanCache = new Map();` at the start of `_refreshUnifiedWindowOnScroll`, before `_removeNodesBetweenSpacers`. The new blocks immediately re-register their spans, so the cache only contains currently-visible rows when `_syncSelectionDomFromState` runs. This is the "full row count, not window" variant of the bug class: cost depended on total row count, not the visible row window.
 
 ## Suspects investigated and ruled out (false positives)
 (none yet)
 
 ## Needs human verification
-- **`forEachColumnSpan` / `updateColumnSelections` stale-cache issue**: The span cache (`state.spanCache`) is NOT cleared during scroll-triggered refreshes (`_refreshUnifiedWindowOnScroll` only removes old DOM nodes via `_removeNodesBetweenSpacers` and builds new ones, registering new spans via `registerSpanInCache` — but never removes stale entries for no-longer-visible rows). After extensive scrolling, the cache can contain entries for ALL rows, with references to detached spans. `forEachColumnSpan` iterates over ALL entries in the cache, making `updateColumnSelections` O(selectedColumns × totalRowsInCache) instead of O(selectedColumns × visibleRows). This is NOT the "full width, not window" bug class — it's a stale-cache issue bounded by selection size, not alignment width. Each iteration is very cheap (Map.get + classList.add on a detached span). The cache IS cleared on every full `renderAlignment()` call (mode change, zoom, file load, etc.), so it only grows during pure scroll sessions. Needs human verification to determine if this causes measurable scroll jank when many columns are selected on a very tall alignment after extensive scrolling.
+(none — all suspects resolved)
 
 ## Notes for the next run
-Phase 1 is complete. All functions in the scroll-refresh call graph have been classified. The only SUSPECT is `forEachColumnSpan` / `updateColumnSelections` (stale span cache growing during scroll), which is a minor issue bounded by selection size, not the "full width" bug class. Next phase (Phase 2): investigate the `forEachColumnSpan` stale-cache issue and decide whether to fix it (e.g., clear stale entries on scroll-refresh by resetting `state.spanCache` at the start of `_refreshUnifiedWindowOnScroll` and rebuilding from the new blocks) or document it as a false positive (cost is bounded by selection size, each iteration is very cheap, and the cache is reset on any full render). If ruled out, mark all phases complete.
+All phases complete. The only SUSPECT from Phase 1 (`forEachColumnSpan` / `updateColumnSelections` stale-cache issue) has been investigated and fixed in Phase 2. The fix clears `state.spanCache` at the start of `_refreshUnifiedWindowOnScroll` so the cache only contains visible rows when `_syncSelectionDomFromState` runs. All functions in the scroll-refresh call graph are now confirmed SAFE (bounded by the windowed range or by selection size, not by full alignment width or row count).
