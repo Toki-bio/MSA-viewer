@@ -8,9 +8,10 @@
 - Phase 4: unified scroll controllers — `_unifiedScrollController` is the single active controller; old controllers are dead code (commit pending)
 - Phase 5: unified non-windowed (small-alignment) loops — both Full and Block non-crazy paths now use the same `_buildBlockElement` loop with `effectiveBlockWidth` (commit pending)
 - Phase 6: deleted all confirmed-dead code — `getVisibleRowColumnRange`, `renderFullModeWindowedRows`, `renderBlockModeWindowedBlocks`, `_refreshFullModeWindowOnScroll`, `_refreshBlockModeWindowOnScroll`, `_fullModeScrollController`, `_blockModeScrollController`, `_setupFullModeScrollListener`, `_setupBlockModeScrollListener`, `_fullModeWindowRenderParams`, `_blockModeWindowRenderParams`, `_fullModeRowHeightPx`, `_fullModeCharWidthPx`, `_fullModeNameColWidthPx`, `_blockModeBlockHeightPx`, `_blockModeFallbackHeightPx`, `_measureFullModeRowHeight`, `_measureFullModeColumnMetrics`, `_measureBlockModeBlockHeight` (commit pending)
+- Phase 7: final cleanup pass — removed stale comments referencing deleted functions, removed unused `useSingle` variable, updated comments describing old two-path architecture (commit pending)
 
 ## Current phase
-Phase 7 (not started)
+All phases complete.
 
 ## Phase 2 trace (Full mode equivalence)
 - Old path: ruler + consensus built externally in `renderAlignment()`, then
