@@ -5,6 +5,16 @@
 - Run 2: Confirmed root cause via trace output, fixed setBlockSizeToScreen and toggleStickyNames, removed all HANGTRACE instrumentation
 - Run 3: Fixed setBlockSizeToScreen >80K path to use window.innerWidth instead of container.clientWidth. Browser check still FAILED.
 - Run 4: Added instrumentation to syncSizes (MutationObserver→rAF→scrollWidth read), syncVisibilityAndSize, setTimeout(toggleStickyNames), scheduleNucSelectionRefresh raf, and a Promise.resolve().then() microtask probe at end of parseAndRender. Suspecting syncSizes reads alignment.scrollWidth with 3.6M DOM elements, triggering 30+ second layout recalculation AFTER parseAndRender returns but BEFORE browser check can detect promise resolution.
+- Run 5: Identified real root cause — browser engine's own style/layout/paint on 3.6M-span DOM blocks main thread ~88s. Added ALIGN_WINDOWED_DOM_THRESHOLD (500K) to route medium-large alignments through existing windowed DOM renderer without touching ALIGN_CRAZY_VOLUME or its dialog/Canvas auto-switch.
+
+## Current phase
+in progress — browser check pending for run 5 (ALIGN_WINDOWED_DOM_THRESHOLD fix).
+The fix routes alignments ≥500K residues through the existing windowed DOM renderer
+(renderUnifiedWindowedDom) instead of the classic full-DOM-build path, by adding a
+new `needsWindowedDom` flag to `classifyAlignmentSize` and using it in place of
+`isCrazy` in three spots: the `_preserveScrollTop` check, the windowed-vs-classic
+branch in `renderAlignment`, and the `_unifiedScrollController`'s `isActiveFn`.
+`ALIGN_CRAZY_VOLUME` (5M) and everything it gates are unchanged.
 
 ## Instrumentation findings
 Run 1 trace (300x12000 = 3.6M residues, isCrazy=false so full DOM render):
@@ -34,36 +44,55 @@ Run 4 (current): Added instrumentation to:
 Awaiting browser check output to identify which deferred callback blocks.
 
 ## Root cause
-setBlockSizeToScreen() reads `container.clientWidth` inside the >80K early-return
-path. While the run 2 fix correctly skipped the re-render for large alignments,
-it still read `container.clientWidth` to compute the block size slider value.
-Reading `clientWidth` on a container with 3.6M just-rendered child spans forces
-the browser to synchronously compute layout for ALL of them, taking 30+ seconds
-and causing parseAndRender to exceed the 30s timeout.
-
-The run 1 trace confirmed this: a 42-second gap between `setBlockSizeToScreen: entry`
-and `setBlockSizeToScreen: >80K skip`, with only `container.clientWidth` between
-those two log points.
+The 300×12000 (3.6M residue) alignment is below ALIGN_CRAZY_VOLUME (5M), so
+`isCrazy` is false and it renders via the OLDER non-windowed DOM path — building
+all ~3.6 million individual `<span>` elements into the DOM in one go. The
+browser engine's own internal processing (style recalculation, layout, paint,
+and internal bookkeeping) of a DOM tree containing 3.6M raw elements
+synchronously blocks the main thread for ~88 seconds. This is NOT attributable
+to any single JS statement: parseAndRender's try block completes at ~10s, its
+promise resolves at ~9s, but an unrelated setTimeout(toggleStickyNames, 0)
+queued during the same render doesn't fire until ~98s — and a trivial
+browser-automation command issued around the same time is also blocked for
+that same ~88s window. The DOM tree itself is simply too large for the browser
+to process quickly, regardless of what JS code touches it.
 
 ## Fix
-1. setBlockSizeToScreen: Replaced `container.clientWidth` with `window.innerWidth`
-   in the >80K early-return path. `window.innerWidth` does not trigger a reflow on
-   the alignment container's children, so the block size slider value is computed
-   instantly. The approximation is fine since this path skips the re-render anyway -
-   the slider value is just a default the user can adjust later.
-2. (From run 2, kept) toggleStickyNames: Extended the reflow skip from isCrazy-only
-   to all alignments >80K residues.
-3. HANGTRACE instrumentation still present - will remove once browser check confirms
-   the fix works.
+Added `ALIGN_WINDOWED_DOM_THRESHOLD = 500_000` (distinct from
+`ALIGN_CRAZY_VOLUME = 5_000_000`). Added a `needsWindowedDom` flag to
+`classifyAlignmentSize` that is true when `isCrazy || totalResidues >
+ALIGN_WINDOWED_DOM_THRESHOLD`. Replaced `state.alignmentIndex?.isCrazy` with
+`state.alignmentIndex?.needsWindowedDom` in exactly three places that gate
+the windowed-vs-classic DOM rendering decision:
+1. `_preserveScrollTop` computation in `renderAlignment` (controls container
+   height/overflow setup for windowed mode).
+2. The windowed-vs-classic branch in `renderAlignment` (chooses
+   `renderUnifiedWindowedDom` vs the full `_buildBlockElement` loop).
+3. `_unifiedScrollController`'s `isActiveFn` (enables/disables the scroll-driven
+   windowed refresh listener).
+
+`ALIGN_CRAZY_VOLUME` and everything it gates (the "Large alignment, proceed?"
+dialog, the Canvas auto-switch threshold, `onModeChange` mode-switch dialogs)
+are completely unchanged. Alignments below 500K residues keep the classic
+full-DOM-build path exactly as before. Alignments at/above 5M keep the exact
+same behavior they had (windowed DOM + crazy dialog + Canvas auto-switch).
+Only the 500K–5M range changes: it now gets windowed DOM rendering silently,
+without any new dialog.
 
 ## Notes for the next run
-- The 80K threshold matches state._enableSpanCache's threshold, so the two guards
-  are consistent: above 80K, both the span cache and the getBoundingClientRect
-  measurement are skipped.
-- If the browser check still fails, check whether the first renderAlignment() itself
-  exceeds 30s for 3.6M residues (it took ~11.5s in run 1, but could vary).
-- The toggleStickyNames setTimeout(0) fires after parseAndRender resolves, so it
-  doesn't affect the 30s resolution check, but it does block the main thread afterward.
+- The 500K threshold is a starting point. If the browser check still fails, the
+  threshold may need to be lowered (e.g., 200K–300K). The windowed path is proven
+  fast up to 100M+ residues, so lowering the threshold has no performance downside.
+- `needsWindowedDom` is computed at load time in `classifyAlignmentSize` and stored
+  in `state.alignmentIndex`. If an alignment grows past 500K through editing (not
+  reloading), it would still use the classic path until the next load. This matches
+  the existing behavior for `isCrazy` (also computed at load time).
+- The `toggleStickyNames` reflow skip already checks `!(isCrazy) && _totalRes <= 80000`,
+  so it correctly skips for the 3.6M case regardless of `needsWindowedDom`.
+- The `setBlockSizeToScreen` >80K early-return path already uses `window.innerWidth`,
+  so it's unaffected by this change.
+- HANGTRACE instrumentation is still present throughout — remove once the browser
+  check confirms the fix.
 
 ## BROWSER_CHECK_FAILED (run 2, 20260817-005643)
 ```
