@@ -191,34 +191,42 @@ All phases complete.
   - `_buildBlockElement` (used by non-windowed path in `renderAlignment()`
     for both Full and Block modes)
 
-## Notes for the next run
-- Phase 7: final pass — re-read the fully unified render path top to bottom
-  for stale comments referencing deleted functions, leftover mode-specific
-  special-casing that's no longer needed, naming that still says "Full" or
-  "Block" where it's now generic. Clean up. Update comments describing the
-  old two-path architecture.
+## Phase 7 trace (final cleanup)
+- Removed stale comment "Phase 1: additive only — not yet called from any
+  live code path" — the unified function IS now called from live code paths.
+- Updated comment in `renderUnifiedWindowedDom` that referenced deleted
+  functions `renderFullModeWindowedRows` and `renderBlockModeWindowedBlocks`.
+- Updated comment in `_refreshUnifiedWindowOnScroll` that referenced deleted
+  functions `_refreshFullModeWindowOnScroll` and
+  `_refreshBlockModeWindowOnScroll`.
+- Updated comment in `renderAlignment` about `_preserveScrollTop` that
+  referenced deleted functions `getVisibleRowColumnRange` and
+  `renderFullModeWindowedRows`.
+- Updated comment about `alignmentContainer.style.height` from "Windowed Full
+  mode" to "Windowed mode" since both Full and Block now use the unified
+  windowed path.
+- Updated comment above `_createWindowedScrollController` from describing
+  "Full-mode row windowing and Block-mode block windowing" (old two-path
+  architecture) to describing the unified windowed render machinery.
+- Updated comment above `_buildBlockElement` from "non-windowed Block-mode
+  loop" to generic description since it's now used by both Full and Block
+  modes.
+- Updated comment in `_buildUnifiedBlock` from "same as current Block mode"
+  to "same as Block mode" (removed stale "current" qualifier).
+- Removed unused `useSingle` variable from `renderAlignment` (declared but
+  never referenced after the unification — `useBlocks` is still needed to
+  compute `effectiveBlockWidth`).
+
+## Notes
+- All phases complete. Full and Block modes now share a single unified
+  windowed DOM renderer (`renderUnifiedWindowedDom` / `_buildUnifiedBlock` /
+  `_refreshUnifiedWindowOnScroll`) and a single scroll controller
+  (`_unifiedScrollController`). The non-windowed (small-alignment) path also
+  shares a single loop via `_buildBlockElement` with `effectiveBlockWidth`.
+  No references to deleted functions remain in the codebase.
 - The following were deliberately KEPT (still referenced by live code):
   - `_applyColumnWindowStyle` (used by `_buildUnifiedBlock`)
   - `_removeNodesBetweenSpacers` (used by `_refreshUnifiedWindowOnScroll`)
   - `_createWindowedScrollController` (used by `_unifiedScrollController`)
-  - `_buildBlockElement` (used by non-windowed path for both Full and Block modes)
-- Phase 1 implementation details:
-  - New functions: `renderUnifiedWindowedDom`, `_buildUnifiedBlock`,
-    `_refreshUnifiedWindowOnScroll`, `_setupUnifiedScrollListener`
-  - New variables: `_unifiedRowHeightPx`, `_unifiedBlockHeightPx`,
-    `_unifiedCharWidthPx`, `_unifiedNameColWidthPx`, `_unifiedWindowRenderParams`
-  - New measurement helpers: `_measureUnifiedRowHeight`,
-    `_measureUnifiedColumnMetrics`, `_unifiedFallbackBlockHeightPx`,
-    `_measureUnifiedBlockHeight`
-  - Spacer classes: `unified-mode-spacer` (block-level), `unified-row-spacer`
-    (row-level within blocks)
-  - Scroll controller: `_unifiedScrollController` (isActiveFn checks both
-    modeSingle and modeBlocks)
-  - Row windowing overscan: 15 rows (same as Full mode)
-  - Column windowing overscan: 20 cols (same as Full mode)
-  - Block-level windowing overscan: 1 (same as Block mode)
-  - Column windowing within blocks: only applied when block is wider than
-    viewport (`colStart > start || colEnd < end - 1`); otherwise all columns
-    rendered (same as current Block mode)
-  - Guard: if `colStart > colEnd` (block entirely past viewport horizontally),
-    falls back to rendering all columns in the block
+  - `_buildBlockElement` (used by non-windowed path in `renderAlignment()`
+    for both Full and Block modes)
