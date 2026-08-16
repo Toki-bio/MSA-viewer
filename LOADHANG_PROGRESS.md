@@ -28,3 +28,25 @@ The wrapper script ran BROWSER_CHECK_CMD after this run's commit and it
 failed (see output above). The commit was NOT reverted - fix it forward
 in the next run, or a human can inspect and revert manually. Remove this
 section once resolved.
+# Load-hang bug progress
+
+## Done
+- Run 1: Added instrumentation inside _historyManager.add/load/save, toggleStickyNames, and end of parseAndRender to pinpoint exact hang location (commit pending)
+
+## Current phase
+in progress - diagnosing
+
+## Instrumentation findings
+(pending browser check output)
+
+## Root cause (fill in once found)
+(pending)
+
+## Fix
+(pending)
+
+## Notes for the next run
+- Existing [HANGTRACE] logs already in parseAndRender and renderAlignment should show which line is last to fire
+- Key suspects: _historyManager.add() (localStorage write with 100KB text), toggleStickyNames() setTimeout(0) (forced reflow on 3.6M spans)
+- 300x12000 = 3.6M residues, which is below ALIGN_CRAZY_VOLUME (5M), so isCrazy=false, no Canvas auto-switch, no windowing - full DOM render with 3.6M spans
+- setBlockSizeToScreen() calls renderAlignment() again if in Block mode and block size changed - this is the second [PERF] log
