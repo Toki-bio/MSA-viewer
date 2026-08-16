@@ -7,9 +7,10 @@
 - Phase 3: wired Block mode to `renderUnifiedWindowedDom` (commit pending)
 - Phase 4: unified scroll controllers — `_unifiedScrollController` is the single active controller; old controllers are dead code (commit pending)
 - Phase 5: unified non-windowed (small-alignment) loops — both Full and Block non-crazy paths now use the same `_buildBlockElement` loop with `effectiveBlockWidth` (commit pending)
+- Phase 6: deleted all confirmed-dead code — `getVisibleRowColumnRange`, `renderFullModeWindowedRows`, `renderBlockModeWindowedBlocks`, `_refreshFullModeWindowOnScroll`, `_refreshBlockModeWindowOnScroll`, `_fullModeScrollController`, `_blockModeScrollController`, `_setupFullModeScrollListener`, `_setupBlockModeScrollListener`, `_fullModeWindowRenderParams`, `_blockModeWindowRenderParams`, `_fullModeRowHeightPx`, `_fullModeCharWidthPx`, `_fullModeNameColWidthPx`, `_blockModeBlockHeightPx`, `_blockModeFallbackHeightPx`, `_measureFullModeRowHeight`, `_measureFullModeColumnMetrics`, `_measureBlockModeBlockHeight` (commit pending)
 
 ## Current phase
-Phase 6 (not started)
+Phase 7 (not started)
 
 ## Phase 2 trace (Full mode equivalence)
 - Old path: ruler + consensus built externally in `renderAlignment()`, then
@@ -156,25 +157,50 @@ Phase 6 (not started)
 - The `useBlocks` variable is still needed to compute `effectiveBlockWidth`.
   `useSingle` is now unused but left in place for Phase 7 cleanup.
 
+## Phase 6 trace (dead code deletion)
+- Verified all items listed as dead code in the Phase 6 plan have no
+  remaining call sites from any live code path:
+  - `getVisibleRowColumnRange`: only called by `renderFullModeWindowedRows`
+    and `_refreshFullModeWindowOnScroll` (both dead).
+  - `renderFullModeWindowedRows`: not called from `renderAlignment()` or
+    anywhere else (replaced by `renderUnifiedWindowedDom` in Phase 2).
+  - `renderBlockModeWindowedBlocks`: same (replaced in Phase 3).
+  - `_refreshFullModeWindowOnScroll`: only referenced by
+    `_fullModeScrollController` (dead).
+  - `_refreshBlockModeWindowOnScroll`: only referenced by
+    `_blockModeScrollController` (dead).
+  - `_fullModeScrollController` / `_blockModeScrollController`: only bound
+    by `_setupFullModeScrollListener` / `_setupBlockModeScrollListener`
+    (both dead), which are only called from the dead render functions.
+  - `_fullModeWindowRenderParams` / `_blockModeWindowRenderParams`: only
+    used by the dead render/refresh functions.
+  - `_fullModeRowHeightPx` / `_fullModeCharWidthPx` /
+    `_fullModeNameColWidthPx`: only used by dead Full-mode measure/render
+    functions and `_blockModeFallbackHeightPx` (also dead).
+  - `_blockModeBlockHeightPx` / `_blockModeFallbackHeightPx`: only used by
+    dead Block-mode measure/render functions.
+  - `_measureFullModeRowHeight` / `_measureFullModeColumnMetrics`: only
+    called by dead Full-mode render/refresh functions.
+  - `_measureBlockModeBlockHeight`: only called by dead Block-mode
+    render/refresh functions.
+- Deliberately KEPT (still referenced by live code):
+  - `_applyColumnWindowStyle` (used by `_buildUnifiedBlock`)
+  - `_removeNodesBetweenSpacers` (used by `_refreshUnifiedWindowOnScroll`)
+  - `_createWindowedScrollController` (used by `_unifiedScrollController`)
+  - `_buildBlockElement` (used by non-windowed path in `renderAlignment()`
+    for both Full and Block modes)
+
 ## Notes for the next run
-- Phase 6: delete confirmed-dead code. The following are all dead code
-  (no remaining call sites after Phases 2-5):
-  - `renderFullModeWindowedRows`, `renderBlockModeWindowedBlocks`
-  - `_refreshFullModeWindowOnScroll`, `_refreshBlockModeWindowOnScroll`
-  - `_fullModeScrollController`, `_blockModeScrollController`
-  - `_setupFullModeScrollListener`, `_setupBlockModeScrollListener`
-  - `_fullModeWindowRenderParams`, `_blockModeWindowRenderParams`
-  - `_fullModeRowHeightPx`, `_fullModeCharWidthPx`, `_fullModeNameColWidthPx`
-  - `_blockModeBlockHeightPx`, `_blockModeFallbackHeightPx`
-  - `_measureFullModeRowHeight`, `_measureFullModeColumnMetrics`
-  - `_measureBlockModeBlockHeight`
-  - `getVisibleRowColumnRange` (only called by dead Full-mode functions;
-    unified path computes its own ranges inline in `_buildUnifiedBlock`)
-  - NOT dead code (do NOT delete): `_applyColumnWindowStyle` (used by
-    `_buildUnifiedBlock`), `_removeNodesBetweenSpacers` (used by
-    `_refreshUnifiedWindowOnScroll`), `_createWindowedScrollController`
-    (used by `_unifiedScrollController`), `_buildBlockElement` (used by
-    non-windowed path for both Full and Block modes)
+- Phase 7: final pass — re-read the fully unified render path top to bottom
+  for stale comments referencing deleted functions, leftover mode-specific
+  special-casing that's no longer needed, naming that still says "Full" or
+  "Block" where it's now generic. Clean up. Update comments describing the
+  old two-path architecture.
+- The following were deliberately KEPT (still referenced by live code):
+  - `_applyColumnWindowStyle` (used by `_buildUnifiedBlock`)
+  - `_removeNodesBetweenSpacers` (used by `_refreshUnifiedWindowOnScroll`)
+  - `_createWindowedScrollController` (used by `_unifiedScrollController`)
+  - `_buildBlockElement` (used by non-windowed path for both Full and Block modes)
 - Phase 1 implementation details:
   - New functions: `renderUnifiedWindowedDom`, `_buildUnifiedBlock`,
     `_refreshUnifiedWindowOnScroll`, `_setupUnifiedScrollListener`
