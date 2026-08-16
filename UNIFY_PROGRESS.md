@@ -6,9 +6,10 @@
 - Phase 2: wired Full mode to `renderUnifiedWindowedDom` (commit pending)
 - Phase 3: wired Block mode to `renderUnifiedWindowedDom` (commit pending)
 - Phase 4: unified scroll controllers — `_unifiedScrollController` is the single active controller; old controllers are dead code (commit pending)
+- Phase 5: unified non-windowed (small-alignment) loops — both Full and Block non-crazy paths now use the same `_buildBlockElement` loop with `effectiveBlockWidth` (commit pending)
 
 ## Current phase
-Phase 5 (not started)
+Phase 6 (not started)
 
 ## Phase 2 trace (Full mode equivalence)
 - Old path: ruler + consensus built externally in `renderAlignment()`, then
@@ -120,15 +121,42 @@ Phase 5 (not started)
 - The old controllers, their setup functions, and the old render/refresh
   functions are all dead code. They will be deleted in Phase 6.
 
+## Phase 5 trace (non-windowed loop unification)
+- Old path: `renderAlignment()` had two separate `else` branches for non-crazy
+  alignments:
+  - Block mode: `for (let start = 0; start < len; start += blockWidth)` calling
+    `_buildBlockElement(start, end, ...)`, appending each `div.block-block` to
+    `alignmentContainer`.
+  - Full mode: inline code building ruler + optional top consensus + all rows
+    + optional bottom consensus, appended directly to `alignmentContainer`
+    (no `div.block-block` wrapper).
+- New path: both branches collapsed into one. `effectiveBlockWidth = useBlocks
+  ? blockWidth : len` determines the block width. The same `for` loop calling
+  `_buildBlockElement` handles both cases. Full mode (non-crazy) now produces
+  one block with `start=0, end=len`, which is structurally identical to the old
+  inline code except for the `div.block-block` wrapper.
+- Equivalence verification:
+  - `_buildBlockElement(0, len, len, ...)` produces: `div.block-block` > ruler
+    (scale-ruler-line with `generateScale(len, 10, 0)` or
+    `generateScaleHTML(len, 10, 0)`) + optional top consensus + all sequence
+    rows + optional bottom consensus.
+  - Old Full mode inline code produces: ruler (scale-ruler-line with
+    `generateScale(len)` or `generateScaleHTML(len, 10, 0)`) + optional top
+    consensus + all sequence rows + optional bottom consensus, as direct
+    children of `alignmentContainer`.
+  - `generateScale(len)` === `generateScale(len, 10, 0)` (interval defaults
+    to 10, startPos defaults to 0) ✓
+  - `generateScaleHTML(len, 10, 0)` === `generateScaleHTML(len, 10, 0)` ✓
+  - `isLastBlock = (0 + len >= len) || len >= len` = `true`, matching Full
+    mode's hardcoded `true` for `showLength` ✓
+  - `addConsensusLine` and `createSequenceLine` receive the same arguments
+    (start=0, end=len) ✓
+  - Only difference: `div.block-block` wrapper. Same difference already
+    accepted in Phase 2 (windowed Full mode). Consistent.
+- The `useBlocks` variable is still needed to compute `effectiveBlockWidth`.
+  `useSingle` is now unused but left in place for Phase 7 cleanup.
+
 ## Notes for the next run
-- Phase 5: unify the non-windowed (small-alignment) loops. The `else` branch
-  in both Full and Block mode (the `for` loop building all rows/blocks
-  directly) can share a helper. For Block mode, the non-windowed path uses
-  `_buildBlockElement` in a loop; for Full mode, it builds ruler + consensus
-  + rows directly. Apply the "Block with unbounded width" insight: Full mode
-  is Block mode with `blockWidth = len`, so the non-windowed Block loop with
-  `blockWidth = len` produces one block = one ruler + one consensus + all
-  rows, which is exactly what Full mode does.
 - Phase 6: delete confirmed-dead code. The following are all dead code
   (no remaining call sites after Phases 2-5):
   - `renderFullModeWindowedRows`, `renderBlockModeWindowedBlocks`
@@ -146,7 +174,7 @@ Phase 5 (not started)
     `_buildUnifiedBlock`), `_removeNodesBetweenSpacers` (used by
     `_refreshUnifiedWindowOnScroll`), `_createWindowedScrollController`
     (used by `_unifiedScrollController`), `_buildBlockElement` (used by
-    non-windowed Block path, will be unified in Phase 5)
+    non-windowed path for both Full and Block modes)
 - Phase 1 implementation details:
   - New functions: `renderUnifiedWindowedDom`, `_buildUnifiedBlock`,
     `_refreshUnifiedWindowOnScroll`, `_setupUnifiedScrollListener`
