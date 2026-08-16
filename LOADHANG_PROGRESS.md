@@ -48,3 +48,22 @@ another multi-second block after the promise resolves.
   exceeds 30s for 3.6M residues (it took ~11.5s in run 1, but could vary).
 - The toggleStickyNames setTimeout(0) fires after parseAndRender resolves, so it
   doesn't affect the 30s resolution check, but it does block the main thread afterward.
+
+## BROWSER_CHECK_FAILED (run 2, 20260817-005643)
+```
+FAIL: parseAndRender did not resolve within 30000ms for 300x12000 (3.6M residues) - error: TIMEOUT
+Recent page console output (last 20 lines):
+  [Clustering] Preset list updated: 0 presets
+  Failed to load resource: the server responded with a status of 404 (Not Found)
+  Failed to load resource: the server responded with a status of 404 (Not Found)
+  Failed to load resource: the server responded with a status of 404 (Not Found)
+  Failed to load resource: the server responded with a status of 404 (Not Found)
+  [Clustering] Preset list updated: 1 presets
+  [Clustering] Loaded preset: optimal {name: optimal, trimming: Object, clustering: Object, timestamp: 2026-08-16T20:16:45.664Z}
+  [Clustering] Created optimal preset: {name: optimal, trimming: Object, clustering: Object, timestamp: 2026-08-16T20:16:45.664Z}
+  [PERF] render: 8098ms | 3,600,000 residues
+```
+The wrapper script ran BROWSER_CHECK_CMD after this run's commit and it
+failed (see output above). The commit was NOT reverted - fix it forward
+in the next run, or a human can inspect and revert manually. Remove this
+section once resolved.
