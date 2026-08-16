@@ -3,13 +3,8 @@
 ## Done
 - Run 1: Added instrumentation inside _historyManager.add/load/save, toggleStickyNames, and end of parseAndRender to pinpoint exact hang location
 - Run 2: Confirmed root cause via trace output, fixed setBlockSizeToScreen and toggleStickyNames, removed all HANGTRACE instrumentation
-
-Run 3: Fixed the actual root cause - container.clientWidth read inside the
->80K early-return path of setBlockSizeToScreen(). The run 2 fix only skipped
-the re-render but still read container.clientWidth, which forces a synchronous
-layout reflow over 3.6M DOM spans (taking 30+ seconds). Replaced with
-window.innerWidth which doesn't trigger reflow on the container's children.
-HANGTRACE instrumentation still present - will remove once browser check passes.
+- Run 3: Fixed setBlockSizeToScreen >80K path to use window.innerWidth instead of container.clientWidth. Browser check still FAILED.
+- Run 4: Added instrumentation to syncSizes (MutationObserver→rAF→scrollWidth read), syncVisibilityAndSize, setTimeout(toggleStickyNames), scheduleNucSelectionRefresh raf, and a Promise.resolve().then() microtask probe at end of parseAndRender. Suspecting syncSizes reads alignment.scrollWidth with 3.6M DOM elements, triggering 30+ second layout recalculation AFTER parseAndRender returns but BEFORE browser check can detect promise resolution.
 
 ## Instrumentation findings
 Run 1 trace (300x12000 = 3.6M residues, isCrazy=false so full DOM render):
@@ -21,6 +16,22 @@ Run 1 trace (300x12000 = 3.6M residues, isCrazy=false so full DOM render):
 - _historyManager.add took ~2ms (NOT the culprit)
 - parseAndRender reached FUNCTION END (no infinite hang, just >30s timeout)
 Total: ~86s (run 1) / ~56s (run 2), both far exceeding the 30s browser check timeout.
+
+Run 2 trace (after setBlockSizeToScreen fix):
+- parseAndRender FUNCTION END at 9638ms (function body completed!)
+- But browser check still says TIMEOUT
+- Key mystery: function body completes but promise doesn't resolve
+- Hypothesis: something blocks main thread AFTER parseAndRender returns,
+  preventing browser check from detecting promise resolution
+
+Run 4 (current): Added instrumentation to:
+- syncSizes (persistent scrollbar MutationObserver → rAF → reads scrollWidth)
+- syncVisibilityAndSize (vertical scrollbar MutationObserver → rAF)
+- setTimeout(toggleStickyNames) callback
+- scheduleNucSelectionRefresh rAF callback
+- Promise.resolve().then() microtask probe at end of parseAndRender
+- setTimeout(100) callback at end of parseAndRender
+Awaiting browser check output to identify which deferred callback blocks.
 
 ## Root cause
 setBlockSizeToScreen() reads `container.clientWidth` inside the >80K early-return
