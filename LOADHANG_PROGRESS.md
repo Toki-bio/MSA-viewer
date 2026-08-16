@@ -84,3 +84,33 @@ expected runtime result (the position-based/whatever mapping you
 just changed may itself be wrong, or a different assumption in your
 reasoning may be false - re-verify with fresh instrumentation rather
 than re-deriving the same conclusion).
+
+## BROWSER_CHECK_FAILED (run 1, 20260817-014420)
+```
+FAIL: parseAndRender did not resolve within 30000ms for 300x12000 (3.6M residues) - error: TIMEOUT
+Recent page console output (last 20 lines):
+  [HANGTRACE] parseAndRender: after renderAlignment at 10096ms
+  [HANGTRACE] parseAndRender: after updateBamButtonVisibility at 10096ms
+  [HANGTRACE] setBlockSizeToScreen: entry at 10096ms
+  [HANGTRACE] setBlockSizeToScreen: >80K skip at 52073ms
+  [HANGTRACE] parseAndRender: after setBlockSizeToScreen at 52073ms
+  [HANGTRACE] parseAndRender: after setupHoverMenuReveal at 52073ms
+  [HANGTRACE] parseAndRender: after showMessage at 52073ms
+  [HANGTRACE] parseAndRender: before _historyManager.add at 52074ms
+  [HANGTRACE] _historyManager.add: entry at 52074ms
+  [HANGTRACE] _historyManager.add: after load at 52074ms
+  [HANGTRACE] _historyManager.add: before save at 52074ms
+  [HANGTRACE] _historyManager.save: before stringify at 52074ms
+  [HANGTRACE] _historyManager.save: after stringify at 52075ms, len=100217
+  [HANGTRACE] _historyManager.save: after setItem at 52075ms
+  [HANGTRACE] _historyManager.add: after save at 52075ms
+  [HANGTRACE] parseAndRender: after _historyManager.add at 52075ms
+  [HANGTRACE] parseAndRender: END of try block at 52076ms
+  [HANGTRACE] parseAndRender: FUNCTION END at 52076ms
+  [HANGTRACE] toggleStickyNames: entry at 89612ms
+  [HANGTRACE] toggleStickyNames: exit at 89886ms
+```
+The wrapper script ran BROWSER_CHECK_CMD after this run's commit and it
+failed (see output above). The commit was NOT reverted - fix it forward
+in the next run, or a human can inspect and revert manually. Remove this
+section once resolved.
