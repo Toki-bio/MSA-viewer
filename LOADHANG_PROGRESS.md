@@ -50,3 +50,33 @@ in progress - diagnosing
 - Key suspects: _historyManager.add() (localStorage write with 100KB text), toggleStickyNames() setTimeout(0) (forced reflow on 3.6M spans)
 - 300x12000 = 3.6M residues, which is below ALIGN_CRAZY_VOLUME (5M), so isCrazy=false, no Canvas auto-switch, no windowing - full DOM render with 3.6M spans
 - setBlockSizeToScreen() calls renderAlignment() again if in Block mode and block size changed - this is the second [PERF] log
+
+## BROWSER_CHECK_FAILED (run 1, 20260817-003455)
+```
+FAIL: parseAndRender did not resolve within 30000ms for 300x12000 (3.6M residues) - error: TIMEOUT
+Recent page console output (last 20 lines):
+  [HANGTRACE] after setBlockSizeToScreen 56084.19999998808
+  [HANGTRACE] before setupHoverMenuReveal 56084.19999998808
+  [HANGTRACE] after setupHoverMenuReveal 56084.30000001192
+  [HANGTRACE] before showMessage 56084.30000001192
+  [HANGTRACE] after showMessage 56084.39999997616
+  [HANGTRACE] before _historyManager.add 56084.5
+  [HANGTRACE] _historyManager.add START 56084.69999998808
+  [HANGTRACE] _historyManager.load START 56084.89999997616
+  [HANGTRACE] _historyManager.load rawLen= undefined 56085
+  [HANGTRACE] _historyManager.load END items.length= 0 56085.10000002384
+  [HANGTRACE] _historyManager.add after load 56085.10000002384
+  [HANGTRACE] _historyManager.add before save, items.length= 1 textLen= 100000 56085.19999998808
+  [HANGTRACE] _historyManager.save START 56085.30000001192
+  [HANGTRACE] _historyManager.save jsonLen= 100217 56085.69999998808
+  [HANGTRACE] _historyManager.save END 56086.30000001192
+  [HANGTRACE] _historyManager.add END 56086.39999997616
+  [HANGTRACE] after _historyManager.add 56086.39999997616
+  [HANGTRACE] before setTimeout 56086.5
+  [HANGTRACE] parseAndRender try block complete 56086.5
+  [HANGTRACE] parseAndRender FUNCTION END 56086.60000002384
+```
+The wrapper script ran BROWSER_CHECK_CMD after this run's commit and it
+failed (see output above). The commit was NOT reverted - fix it forward
+in the next run, or a human can inspect and revert manually. Remove this
+section once resolved.
