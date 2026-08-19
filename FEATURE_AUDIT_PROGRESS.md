@@ -14,6 +14,7 @@ Visualization & Rendering (next)
 
 ## Claims confirmed accurate
 - Recent files history: localStorage-backed, 100KB cap (substring(0,100000)), adjustable 1-50 (Math.max(1,Math.min(50,n))), one-click reload, survives restarts. All accurate.
+- Cross-mode Highlight Diffs + Variable Sites Only: Both use the same diffCols set computed once in _computeVarSites(). Highlight Diffs adds .highlight-diffs body class, Variable Sites Only adds .var-sites-only body class. Structure accurate, but opacity was wrong (document said 25%, CSS is 0.4/40% — corrected).
 
 ## Needs human decision
 (none)
