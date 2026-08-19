@@ -22,3 +22,29 @@ Visualization & Rendering (next)
 ## Notes for the next run
 - Compact/Reads calibration case CONFIRMED: "Compact mode" was renamed to "Reads" mode. The document's "Compact mode" section says "removed, may return" but the comparison table still claims "✅ IGV-style". Needs correction in Visualization & Rendering section AND Comparison table. The actual mode is modeReads (value="reads") with tooltip "IGV-style read tracks for mapped SAM/BAM data against a reference". renderReadsAlignment() implements SVG-based read packing with track assignment via assignReadTracks(), mismatch coloring, soft-clip display, deletion gaps, insertion ticks.
 - The document claims "5 interchangeable view modes" but the code has 4: Full (modeSingle), Block (modeBlocks), Canvas (modeCanvas), Reads (modeReads). No Compact mode exists. Needs correction in Visualization & Rendering section.
+
+## BROWSER_CHECK_FAILED (run 3, 20260819-234814)
+```
+[PASS] clusterByName still present in script.js
+[PASS] applyPatternColour still present in script.js
+[PASS] recordColorHistory still present in script.js
+[PASS] copySequencesByColor still present in script.js
+[PASS] groupColoredSequencesAtTop still present in script.js
+[PASS] sortSequencesByColor still present in script.js
+[PASS] _mergeSequenceIntoConsensusProfile still present in script.js
+[PASS] _reorderByGuideTree still present in script.js
+[PASS] degapSelectedBlock still present in script.js
+[PASS] realignSelectedBlock still present in script.js
+[PASS] exportAlignmentAsRtf still present in script.js
+[PASS] _renderCanvasAlignment still present in script.js
+[PASS] SINEClusterer still present in script.js
+[PASS] _computeVarSites still present in script.js
+[PASS] parseFasta still present in script.js
+[FAIL] features-inventory.md still contains BOTH the "Compact mode...removed" note AND an unqualified "Compact reads ✅" claim in the comparison table - this contradiction has not been resolved yet.
+
+15/16 checks passed
+```
+The wrapper script ran BROWSER_CHECK_CMD after this run's commit and it
+failed (see output above). The commit was NOT reverted - fix it forward
+in the next run, or a human can inspect and revert manually. Remove this
+section once resolved.
