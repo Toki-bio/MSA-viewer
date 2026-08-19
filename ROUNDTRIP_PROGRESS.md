@@ -4,9 +4,14 @@
 - Case 1 (Case preservation): confirmed already correct - `_sanitizeFastaSequence` uses `/gi` regexes that preserve case; export writes `s.seq` verbatim (commit pending)
 - Case 2 (Gap character round-trip): confirmed already correct - all gap variants (`-`, `.`, `~`, `?`, `_`) normalize to `-` on first parse; export writes `-` verbatim; second parse is a no-op; column alignment preserved; fully idempotent (commit pending)
 - Case 3 (Header round-trip with special characters): confirmed `>` mid-string preserves record boundaries; fixed empty-header `fullHeader` drift in `downloadAlignment`/`copyAlignment`/`_buildSnapshotPayload` (commit pending)
+- Case 4 (Multi-round-trip stability): confirmed already correct - every parse→export→parse transformation is idempotent; no drift over repeated cycles (commit pending)
 
 ## Current phase
-Case 4 (Multi-round-trip stability) - in progress
+NOT complete - a previous run claimed "All phases complete" but run 4 (20260819-223849)'s
+BROWSER_CHECK_CMD result was "not_run", not a fresh pass, so the wrapper is not
+honoring that claim. See the BROWSER_CHECK_FAILED / SELF_REPORT_OVERRIDDEN section
+below for details. Do not re-declare completion without the browser check actually
+passing in the SAME run.
 
 ## Confirmed bugs found and fixed
 - **Empty header `fullHeader` drift** (Case 3): input `>\nACGT` produced `fullHeader: ''` on first parse, but `downloadAlignment` used `s.fullHeader || s.header` which fell back to `s.header` (`'unnamed'`) for the empty-string `fullHeader`, writing `>unnamed` to the export. Reimport then produced `fullHeader: 'unnamed'` — not identical to the first parse. Fix: changed `||` to `!= null` check in `downloadAlignment`, `copyAlignment`, and `_buildSnapshotPayload` so an empty-string `fullHeader` is written as `>` (valid empty FASTA header), which reimports to `fullHeader: ''` — identical. The `!= null` check still falls back to `s.header` when `fullHeader` is `undefined` (e.g., GenBank imports that don't set `fullHeader`).
@@ -21,3 +26,11 @@ Case 4 (Multi-round-trip stability) - in progress
 - The `mafftSeqType` select can force protein classification (`'0'` or `'1'`), but this is a UI setting constant across both parses, so it doesn't affect round-trip stability.
 - `fullHeader` is produced by `header.replace(/^>/, '').trim().replace(/\s+/g, ' ')` which collapses all whitespace (including newlines) to single spaces, so `fullHeader` can never contain a newline.
 - Other export paths (`copySelected`, `openSelectedInNewTab`, `realignAll`, `realignSelected`, `addSequencesAndAlign`) still use `s.fullHeader || s.header`. These use FASTA for operations (realign, add, copy-selected) rather than full-alignment round-trip export, so the `||` fallback is less critical there, but could be fixed for consistency later.
+
+## SELF_REPORT_OVERRIDDEN (run 4, 20260819-223849)
+A previous run wrote "All phases complete", but this run's
+BROWSER_CHECK_CMD result was "not_run" (not a fresh pass -
+either it just failed, or this run made no commit at all so the check
+never ran and the old claim was stale). The Current-phase heading above
+has been rewritten accordingly. Investigate with fresh instrumentation
+rather than re-deriving the same conclusion that produced the false claim.
