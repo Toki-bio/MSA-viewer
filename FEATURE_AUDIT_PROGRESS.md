@@ -8,9 +8,10 @@
 - Analysis Tools: Cluster presets, UPGMA tree, Consensus engine (corrections 21-23)
 - Analysis Tools: SINEClusterer numbers corrected (correction 24)
 - Analysis Tools: Dot plot, Repeat/TSD Finder, Regex motif search, BLAST search (corrections 25-27)
+- Export & Publishing section audited and applied (corrections 28-29)
 
 ## Current phase
-Export & Publishing (next)
+Novelty Spotlight (next)
 
 ## IMPORTANT correction to this progress log (Claude, at merge time)
 Corrections 1-4 below (Input & Format Support) were investigated correctly
@@ -61,6 +62,8 @@ as the fix existing.**
 25. "Dot plot with region detection": Corrected "context radius (5–100 bp)" to "context radius (0–100 bp)" — HTML input has min=0, not min=5.
 26. "Repeat & TSD Finder with undo marking": Removed "copy number" from configurable parameters — no copy number UI control exists; minimum copies is hardcoded at ≥2 in _findTandemRepeats. Clarified that TSD marking undo is a dedicated mechanism (separate from main stack for colour/bold; lowercase uses main stack).
 27. "Regex motif search": Removed "Ctrl+Click any residue to instantly search for that base" — no such functionality exists in the code. Ctrl+Click is used for nucleotide selection, not search.
+28. "RTF export with per-residue conservation shading": Corrected "Consensus line at bottom" to "Consensus line at top (after ruler, before sequences)" — exportAlignmentAsRtf() renders ruler → consensus → sequences, so consensus is at the top, not the bottom.
+29. "Copy variants": Corrected "Copy alignment — full alignment as plain text" to "full alignment as FASTA" and "Copy consensus — consensus sequence as plain text" to "consensus sequence as FASTA" — both copyAlignment() and copyConsensus() output FASTA format (with >headers), not plain text.
 
 ## Claims confirmed accurate
 - Recent files history: localStorage-backed, 100KB cap (substring(0,100000)), adjustable 1-50 (Math.max(1,Math.min(50,n))), one-click reload, survives restarts. All accurate.
@@ -86,15 +89,21 @@ as the fix existing.**
 - Repeat/TSD Finder: Tandem repeat detection (_findTandemRepeats) with configurable min length (repeatMinLen) and mismatch tolerance (repeatMaxDiv). TSD detection (_findTSD) with flanking window (tsdFlankSize), min/max length (tsdMinLen/tsdMaxLen), max mismatches (tsdMaxDiv). TSD marking with colour/bold/lowercase styles (tsdMarkStyle select). Undo via undoTsdMarking() / tsdUndoMarkBtn. All confirmed. Copy number NOT configurable (hardcoded ≥2 — corrected). Separate from repeat search results confirmed.
 - Regex motif search: Exact motifs with 0-10 mismatches (maxMismatches input min=0 max=10). Regex via .* checkbox (searchRegex). Matches against degapped sequences (displayString built from non-gap spans). Match-length-aware highlighting (uses m.len). All confirmed. "Ctrl+Click to search base" NOT found — corrected (removed).
 - BLAST search: Right-click → BLAST dialog (showBlastDialog from context menu). Databases fetched from GET /api/blast-db (fetchDatabases). Checkboxes for target selection. Unavailable databases greyed out (disabled checkbox + grey text). Manage Databases modal (showDbManagementModal) with List/Add/Delete CRUD. Client-side confirmed; server-side behavior (makeblastdb, blast_dbs.json, index file cleanup) not verifiable from client code.
+- Export & Publishing — Two-mode SVG export: _exportAlignmentAsSvg('viewport') and _exportAlignmentAsSvg('full') confirmed. Both walk rendered spans, read getComputedStyle for colours/shading, build SVG with rects + text. Accurate.
+- Export & Publishing — Snapshot system: _buildSnapshotPayload() saves fasta, view settings, colour mappings, search history, selected rows/columns, scroll position. createSnapshot() generates .json + .html downloads. URL loading via ?snapshotFile= and ?snapshot= confirmed in initializeAppUI(). Accurate.
+- Export & Publishing — Copy variants: copySequences(gapped, isFasta, index), copySelectedColumns(), copyAlignment(), copyConsensus(), copySequencesByColor(), copyTreeNewick() all confirmed. Format corrections noted above (alignment and consensus are FASTA, not plain text).
 
 ## Needs human decision
 (none)
 
 ## Notes for the next run
-- Analysis Tools section COMPLETE. All subsections verified: Codon analysis (18-20), Cluster presets (21), UPGMA tree (22), Consensus engine (23), SINEClusterer (24), Dot plot (25), Repeat/TSD Finder (26), Regex motif search (27), BLAST search (confirmed).
-- Next section: Export & Publishing.
-- Novelty Spotlight item 1 says "17 genetic codes" — needs correction to 15 when that section is reached.
-- Novelty Spotlight item 8 still says "IGV-style compact read packing" with "paired-end connection lines, diffs-only mode, coverage histogram" — needs correction in that phase (coverage histogram and paired-end lines don't exist).
+- Export & Publishing section COMPLETE. All subsections verified: RTF export (correction 28: consensus at top not bottom), Two-mode SVG export (confirmed), Snapshot system (confirmed), Copy variants (correction 29: alignment and consensus are FASTA not plain text).
+- Next section: Novelty Spotlight numbered list.
+- Novelty Spotlight item 1 says "17 genetic codes" — needs correction to 15 (already corrected in Analysis Tools section, but the Novelty Spotlight still has the old number).
+- Novelty Spotlight item 2 says "SAM/BAM/CRAM reader" — CRAM not supported, needs correction.
+- Novelty Spotlight item 5 says "Levenshtein clustering" — should be "position-weighted n-gram Jaccard similarity" (already corrected in Sequence Colouring section, but Novelty Spotlight still has old text).
+- Novelty Spotlight item 8 says "IGV-style compact read packing" with "paired-end connection lines, diffs-only mode, coverage histogram" — coverage histogram and paired-end lines don't exist, needs correction.
+- Novelty Spotlight item 13 says "8-format automatic content detection" — should be 9 (already corrected in Input section, but Novelty Spotlight still has old number).
 - Comparison table "Canvas large-align" row says "auto threshold" without a number — fine for the table, but verify other comparison table claims in the final phase.
 - The "Reads mode" row in the comparison table was updated to resolve the BROWSER_CHECK contradiction, but the full comparison table audit is still pending (last phase).
 - WARNING: SINEClusterer is ~400 lines. Prior runs hit token limit trying to trace it. Pick ONE specific claim/number to verify at a time, not the whole algorithm.
