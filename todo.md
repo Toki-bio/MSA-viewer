@@ -22,3 +22,31 @@
 
 ## 📋 Remaining
 - [ ] **Full GB (GenBank) format** — parse GenBank flatfile format, display annotations on alignment
+
+## Performance / Architecture — Future Work (from JBrowse2 source study, 2026-08-19)
+
+Both ideas are large architectural changes, not tweaks — flagged for later
+consideration, not scheduled. Full research write-up and verified code
+citations: `C:\work\glm-harness\out\jbrowse-rendering-tricks.json`.
+
+- [ ] **GPU-instanced rendering for dense alignment views.** JBrowse2 has a
+  `GpuAlignmentsRenderer` alongside its Canvas2D one: instead of one
+  `fillRect`/DOM-node per residue, it packs every cell's position+color into
+  a single typed array and draws the whole pileup with one or two instanced
+  WebGL draw calls. Would let a huge alignment render as fast as a small one
+  regardless of residue count, but means abandoning DOM `<span>`-per-residue
+  for a canvas/WebGL surface — loses native text selection/CSS styling on
+  individual residues, so it's a genuine tradeoff, not a pure win. Current
+  windowed-DOM approach (added this session) already gets most of the
+  practical benefit for realistic alignment sizes; this would matter most
+  for extreme cases or if Canvas mode's read-only limitation ever needs
+  lifting.
+- [ ] **Worker/RPC offloading for parsing + layout.** JBrowse2 moves data
+  parsing, layout computation, AND pixel rendering into a Web Worker, main
+  thread only blits the finished image back. For ViewAlign, moving FASTA/
+  alignment parsing and conservation/layout computation off the main thread
+  is directly adaptable today (independent of the GPU idea above) and could
+  reduce input-lag on large-file load. Actual DOM construction would still
+  need to happen on the main thread either way, since DOM APIs aren't
+  available in workers — this only fully pays off combined with the GPU/
+  canvas rendering switch above.
