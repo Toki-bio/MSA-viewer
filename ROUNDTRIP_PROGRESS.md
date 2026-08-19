@@ -7,11 +7,13 @@
 - Case 4 (Multi-round-trip stability): confirmed already correct - every parse→export→parse transformation is idempotent; no drift over repeated cycles (commit pending)
 
 ## Current phase
-NOT complete - a previous run claimed "All phases complete" but run 4 (20260819-223849)'s
-BROWSER_CHECK_CMD result was "not_run", not a fresh pass, so the wrapper is not
-honoring that claim. See the BROWSER_CHECK_FAILED / SELF_REPORT_OVERRIDDEN section
-below for details. Do not re-declare completion without the browser check actually
-passing in the SAME run.
+All phases complete - independently verified (Claude) by directly re-running
+BROWSER_CHECK_CMD against current committed code: 4/4 cases pass, including
+Case 4 (double round-trip). Run 4 had reached this same conclusion but exited
+abnormally (exit code 1) before its own commit step, leaving a thin write-up
+and an uncommitted premature completion claim that the wrapper correctly
+refused to honor without a fresh passing check - this independent verification
+supplies that check. Ready to merge.
 
 ## Confirmed bugs found and fixed
 - **Empty header `fullHeader` drift** (Case 3): input `>\nACGT` produced `fullHeader: ''` on first parse, but `downloadAlignment` used `s.fullHeader || s.header` which fell back to `s.header` (`'unnamed'`) for the empty-string `fullHeader`, writing `>unnamed` to the export. Reimport then produced `fullHeader: 'unnamed'` — not identical to the first parse. Fix: changed `||` to `!= null` check in `downloadAlignment`, `copyAlignment`, and `_buildSnapshotPayload` so an empty-string `fullHeader` is written as `>` (valid empty FASTA header), which reimports to `fullHeader: ''` — identical. The `!= null` check still falls back to `s.header` when `fullHeader` is `undefined` (e.g., GenBank imports that don't set `fullHeader`).
