@@ -7,7 +7,7 @@
 - Editing Operations section audited and applied
 
 ## Current phase
-Analysis Tools (next)
+Analysis Tools (in progress)
 
 ## IMPORTANT correction to this progress log (Claude, at merge time)
 Corrections 1-4 below (Input & Format Support) were investigated correctly
@@ -48,6 +48,9 @@ as the fix existing.**
 15. "Full undo/redo with visual dropdown": Corrected "TSD marking" in the undo stack list — only lowercase TSD marking uses the main undo stack; colour and bold TSD marking use a separate undo mechanism. Corrected "chronological order" to "reverse chronological order (most recent first)".
 16. "Insert group consensus": Corrected "above or below" to "below" (code only inserts below the last selected sequence). Corrected "The threshold is independently adjustable per operation (separate from the global consensus threshold)" — it uses the global consensus controls, not per-operation settings.
 17. "Add & Align with consensus profile merging": Corrected to distinguish two separate operations: "Just Add" with "Align to consensus" uses the profile merging algorithm; "Add & Align" performs a full MAFFT realignment. The original claim conflated these.
+18. "Codon analysis": Corrected "Activates on nucleotide alignments with length divisible by 3" to "Activates on nucleotide alignments of any length ≥ 3 (gapped CDS alignments are often not multiples of 3)" — code only checks `len < 3`, and explicitly comments that gapped CDS alignments are often not multiples of 3.
+19. "Codon analysis": Corrected "17 genetic codes" to "15 genetic codes" — `_CODE_VARIANTS` has 14 entries plus Standard (_GENETIC_CODE) = 15 total. The `codonCode` select in index.html also has 15 options. The claim's own table list (1–6, 9–14, 16, 21, 22) only adds up to 15, not 17.
+20. "Codon analysis": Corrected "and 10 others" to "and 9 others" — 15 total minus 6 named groups = 9, not 10.
 
 ## Claims confirmed accurate
 - Recent files history: localStorage-backed, 100KB cap (substring(0,100000)), adjustable 1-50 (Math.max(1,Math.min(50,n))), one-click reload, survives restarts. All accurate.
@@ -68,13 +71,17 @@ as the fix existing.**
 - Block realignment: realignSelectedBlock extracts block, de-gaps, MAFFT realigns, splices back. Pads to new block width. Accurate.
 - SeqEdit bulk transformations: seqEditDegap/Reverse/Complement/RevComp/Uppercase/Lowercase. seqEditPadGaps checkbox for length normalization. pushUndo called. Accurate.
 - Reorder by guide tree: _reorderByGuideTree, _kmerGuideTree (6-mer vectors, Jaccard distances, UPGMA, 4-orientation search at junctions). Accurate.
+- Codon analysis: Nucleotides colour-coded by codon position (codon-p0/p1/p2 classes). In-frame stop codons (codon-stop class). Frameshift-inducing indels (codon-fs / codon-fs-internal classes). Syn/non-syn classification relative to reference sequence (codon-syn / codon-nonsyn classes). AA translation track displayed below each sequence. Only differences from Standard stored; full table built by merge via _getActiveCode(). Dynamic switching recalculates everything via debounceRender. All confirmed accurate.
 
 ## Needs human decision
 (none)
 
 ## Notes for the next run
-- Editing Operations section complete. Next: Analysis Tools section.
+- Analysis Tools section started. Codon analysis subsection done (corrections 18-20).
+- Still need to verify: SINEClusterer, Cluster presets, Dot plot, Repeat/TSD Finder, UPGMA tree, Consensus engine, Regex motif search, BLAST search.
+- Novelty Spotlight item 1 says "17 genetic codes" — needs correction to 15 when that section is reached.
 - Novelty Spotlight item 8 still says "IGV-style compact read packing" with "paired-end connection lines, diffs-only mode, coverage histogram" — needs correction in that phase (coverage histogram and paired-end lines don't exist).
 - Comparison table "Canvas large-align" row says "auto threshold" without a number — fine for the table, but verify other comparison table claims in the final phase.
 - The "Reads mode" row in the comparison table was updated to resolve the BROWSER_CHECK contradiction, but the full comparison table audit is still pending (last phase).
+- WARNING: SINEClusterer is ~400 lines. Prior runs hit token limit trying to trace it. Pick ONE specific claim/number to verify at a time, not the whole algorithm.
 
