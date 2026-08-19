@@ -3,24 +3,32 @@
 ## Done
 - Edge case 1 (Mixed line endings): confirmed already correct, no fix needed (pending commit)
 - Edge case 2 (Empty/whitespace-only sequence): fixed `_isProteinFastaSequence` misclassifying empty sequences as protein (commit pending)
+- Edge case 3 (Single-sequence file): confirmed already correct, no fix needed (pending commit)
+- Edge case 4 (Non-standard IUPAC ambiguity codes): fixed `?` and `~` being silently stripped from FASTA sequence lines, breaking alignment length (commit pending)
 
 ## Current phase
-in progress - edge case 3 complete, ready for edge case 4 next run
+in progress - edge case 4 complete, ready for edge case 5 next run
 
 ## Confirmed bugs found and fixed
 - **Empty sequence misclassified as protein** (edge case 2): `_isProteinFastaSequence('')` returned `true` because `FASTA_NUCLEOTIDE_CHARS` regex uses `+` (doesn't match empty string), and `!false` = `true`. This caused `isProteinAlignment()` to return `true` for the entire alignment if any sequence was empty, misapplying protein color schemes and disabling codon analysis for nucleotide alignments. Fix: added `if (!letters) return false` guard so empty sequences don't influence the protein/nucleotide classification.
+- **`?` and `~` silently stripped from FASTA sequences** (edge case 4): `parseFasta`'s regex `[^A-Za-z*.\-]` stripped `?` (gap placeholder used by some tools) and `~` (gap character used in MSF format) from sequence lines, silently shortening sequences and breaking alignment length. For an alignment like `>seq1\nACGTACGTAC\n>seq2\nACGT??GTAC`, seq2 lost 2 chars and became 8 long while seq1 stayed 10 — alignment broken. Fix: changed the pre-strip replacement from `/_/g` to `/[_?~]/g`, converting `?` and `~` to standard gap `-` before the strip regex runs. This preserves sequence length and is consistent with `parseMsf` (which already converts `~` to `-`) and `isAlignmentGapChar`/`GENEDOC_GAP_CHAR` (which already treat `~` as a gap).
 
 ## Cases checked and already correct (false positives)
 - **Edge case 1: Mixed line endings** — `parseFasta()` splits on `/\r\n|\r|\n/` with `\r\n` first in the alternation, so Windows CRLF is consumed as one separator (not as `\r` + `\n` producing a phantom empty line). This handles `\r\n`, `\n`, `\r`, and any mixture correctly. Each line is then `trim()`-ed, removing any residual `\r` or whitespace. Traced input `>seq1\r\nACGT\r\n>seq2\nTGCA\n` through the split and loop: produces exactly `['>seq1','ACGT','>seq2','TGCA','']`, the trailing empty string is skipped by `if (!line) continue`, and both sequences are pushed correctly. No data loss, no crash.
 - **Empty sequence parsing** (edge case 2, parser itself): `parseFasta` correctly handles `>seq1\n>seq2\nACGT` — seq1 gets `seq: ''`, which is a valid object. The empty sequence renders as all gaps via `seq[pos] || '-'` in `createSequenceLine`. `gaplessPositions` is `[]`, handled safely by `|| 0` fallback patterns. Whitespace-only sequence lines are skipped by `if (!line) continue` after `trim()`, producing the same empty-sequence result. No crash, no data loss.
 - **Edge case 3: Single-sequence file** — traced every code path that touches `state.seqs` after parsing. `parseFasta` correctly returns a 1-element array for `>seq1\nACGT`. `renderAlignment` renders 1 sequence line with ruler and optional consensus (consensus = the sequence itself, conservation = 100%, both correct for 1 sequence). All operations requiring 2+ sequences show appropriate messages: clustering ("Need at least 3 sequences"), tree building ("Need at least two sequences"), statistics ("Need at least two sequences"), realignment ("Need at least 2 sequences"), group consensus ("Select at least 2 sequences"). `deleteSelected` and `deleteSequence` both guard with `state.seqs.length === 1` → "Cannot delete the last sequence". `sortBySimilarity` returns early with `< 2` check. `_computeVarSites` skips diff computation with `state.seqs.length > 1` check. `updateBamButtonVisibility` intentionally shows the BAM button with exactly 1 sequence (reference for read mapping). Canvas mode (`_renderCanvasAlignment`) sets `nSeqs = 1`, draw loop runs for at most 1 row, hit testing checks `row >= nSeqs`. No division by `seqs.length - 1` or similar anywhere. No crash, no data loss, no confusing behavior.
+- **`*` (stop codon) in protein sequences** (edge case 4): `parseFasta`'s regex `[^A-Za-z*.\-]` explicitly allows `*`, so stop codons are preserved in the sequence string. `_isProteinFastaSequence` detects `*` via `FASTA_PROTEIN_ONLY_CHARS = /[EFILPQZXJO*]/i` and classifies the sequence as protein. `_sanitizeFastaSequence` for protein allows `*` in its regex `[^ACDEFGHIKLMNPQRSTVWYBXZJUO*.-]`. Traced `>seq1\nMKT*AIK` through the full pipeline: `*` survives every stage, final `seq: 'MKT*AIK'`. No data loss, correct behavior.
+- **Stray digits in sequence lines** (edge case 4): `parseFasta`'s regex `[^A-Za-z*.\-]` strips digits, which are never valid sequence characters. Traced `>seq1\nACGT5GTAC`: digit `5` is stripped, result is `ACGTGTAC`. Stripping is the correct behavior — digits in sequences are errors. (Note: this is silent, but adding a warning is out of scope for this fix.)
+- **Standard IUPAC ambiguity codes** (edge case 4): `FASTA_NUCLEOTIDE_CHARS = /^[ACGTUNRYMKSWHBVD.-]+$/i` includes all standard IUPAC codes (R, Y, M, K, S, W, H, B, V, D, N). `_sanitizeFastaSequence` for nucleotides allows all of these in its regex `[^ACGTUNRYMKSWHBVD.-]`. Traced `>seq1\nACGTRYSWKMBDHVN` through the full pipeline: all ambiguity codes preserved. No data loss.
 
 ## Needs human judgment
 (none yet)
 
 ## Notes for the next run
-- Edge case 4 is "Non-standard IUPAC ambiguity codes" — check characters beyond ACGTU/acgtu and RYSWKMBDHVN, e.g. stray digits, `*` (stop codon), `?` (gap placeholder), or other non-alphabetic characters in sequence lines. Focus on `parseFasta`'s regex `[^A-Za-z*.\-]` (strips non-alphabetic chars except `*`, `.`, `-`) and `_sanitizeFastaSequence`'s replacement regexes (replace invalid chars with `N` or `X`).
-- The FASTA parser is `parseFasta()` in script.js, called from `parseAndRender()`.
-- `_pushParsedFastaSequence` and `_sanitizeFastaSequence` are the per-sequence helpers.
-- `parseAndRender` also handles format detection and calls other parsers (GenBank, Clustal, etc).
+- Edge case 5 is "Very long / unicode headers" — check header processing in `parseFasta` (header lines starting with `>`), `_pushParsedFastaSequence` (which cleans headers), and downstream consumers (display, export, search, tree building). Focus on: (a) non-ASCII characters in headers (accented letters, CJK, emoji) — does `String.replace`/`trim` handle them correctly? (b) very long headers (500+ chars) — does `nameLengthSlider`/display truncate correctly? Does export handle them? (c) the `displayHeader = cleanHeader.split(/\s+/)[0]` split — does it work with unicode whitespace?
+- The header cleaning in `_pushParsedFastaSequence` is: `cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ')` then `displayHeader = cleanHeader.split(/\s+/)[0] || 'unnamed'`.
+- `updateNameLengthSliderRange` uses `s.header.length` (the display header, first token only) to set the slider range.
+- `createSequenceLine` truncates the display name with `displayName.slice(0, nameLenInt) + '...'`.
+- Export functions use `s.fullHeader || s.header` for FASTA output.
+- Search uses `state.seqs[index].header` for matching.
 - The browser check runs automatically after commit; its output is appended here if it fails.
