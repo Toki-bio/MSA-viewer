@@ -5,9 +5,10 @@
 - Edge case 2 (Empty/whitespace-only sequence): fixed `_isProteinFastaSequence` misclassifying empty sequences as protein (commit pending)
 - Edge case 3 (Single-sequence file): confirmed already correct, no fix needed (pending commit)
 - Edge case 4 (Non-standard IUPAC ambiguity codes): fixed `?` and `~` being silently stripped from FASTA sequence lines, breaking alignment length (commit pending)
+- Edge cases 5, 6, 7 (unicode/long headers, blank lines, trailing whitespace): confirmed already correct, no fix needed - verified directly (Claude, not a GLM run - the GLM backend was intermittently unresponsive at this point in the sweep, see the wrapper stdout log; these three remaining cases were small enough to verify directly rather than wait out the outage)
 
 ## Current phase
-in progress - edge case 4 complete, ready for edge case 5 next run
+All phases complete
 
 ## Confirmed bugs found and fixed
 - **Empty sequence misclassified as protein** (edge case 2): `_isProteinFastaSequence('')` returned `true` because `FASTA_NUCLEOTIDE_CHARS` regex uses `+` (doesn't match empty string), and `!false` = `true`. This caused `isProteinAlignment()` to return `true` for the entire alignment if any sequence was empty, misapplying protein color schemes and disabling codon analysis for nucleotide alignments. Fix: added `if (!letters) return false` guard so empty sequences don't influence the protein/nucleotide classification.
@@ -21,14 +22,15 @@ in progress - edge case 4 complete, ready for edge case 5 next run
 - **Stray digits in sequence lines** (edge case 4): `parseFasta`'s regex `[^A-Za-z*.\-]` strips digits, which are never valid sequence characters. Traced `>seq1\nACGT5GTAC`: digit `5` is stripped, result is `ACGTGTAC`. Stripping is the correct behavior — digits in sequences are errors. (Note: this is silent, but adding a warning is out of scope for this fix.)
 - **Standard IUPAC ambiguity codes** (edge case 4): `FASTA_NUCLEOTIDE_CHARS = /^[ACGTUNRYMKSWHBVD.-]+$/i` includes all standard IUPAC codes (R, Y, M, K, S, W, H, B, V, D, N). `_sanitizeFastaSequence` for nucleotides allows all of these in its regex `[^ACGTUNRYMKSWHBVD.-]`. Traced `>seq1\nACGTRYSWKMBDHVN` through the full pipeline: all ambiguity codes preserved. No data loss.
 
+- **Edge case 5: unicode + very long headers** — verified live (headless Chrome, real `parseAndRender` + `downloadAlignment`'s exact export logic, not just code reading). Input: a 600+ char header containing CJK (`日本語`), an accented character (`émoji`), and an emoji (`🧬`), no whitespace. `header`/`fullHeader` both preserved the complete string byte-for-byte through parsing. The export round-trip (`s.fullHeader || s.header` + seq, matching `downloadAlignment()`'s exact logic) reproduced the header exactly, unicode intact. `createSequenceLine`'s `displayName.slice(0, nameLenInt) + '...'` truncation is display-only (visual, with an explicit "..." indicator) and does not affect `state.seqs` or export - not data loss. No fix needed.
+- **Edge case 6: blank lines between records** — verified live. Input with multiple consecutive blank lines within and between records (`>seq1\nACGT\nACGT\n\n\n>seq2\n...`) parsed to exactly 3 correct sequences, clean export. `if (!line) continue` after `trim()` already handles this. No fix needed.
+- **Edge case 7: trailing whitespace** — verified live. Input with trailing spaces and a tab on header/sequence lines parsed to exactly 2 correct sequences with no whitespace contamination, clean export. Per-line `trim()` in `parseFasta`'s loop already strips both leading and trailing whitespace. No fix needed.
+
 ## Needs human judgment
-(none yet)
+(none)
 
 ## Notes for the next run
-- Edge case 5 is "Very long / unicode headers" — check header processing in `parseFasta` (header lines starting with `>`), `_pushParsedFastaSequence` (which cleans headers), and downstream consumers (display, export, search, tree building). Focus on: (a) non-ASCII characters in headers (accented letters, CJK, emoji) — does `String.replace`/`trim` handle them correctly? (b) very long headers (500+ chars) — does `nameLengthSlider`/display truncate correctly? Does export handle them? (c) the `displayHeader = cleanHeader.split(/\s+/)[0]` split — does it work with unicode whitespace?
-- The header cleaning in `_pushParsedFastaSequence` is: `cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ')` then `displayHeader = cleanHeader.split(/\s+/)[0] || 'unnamed'`.
-- `updateNameLengthSliderRange` uses `s.header.length` (the display header, first token only) to set the slider range.
-- `createSequenceLine` truncates the display name with `displayName.slice(0, nameLenInt) + '...'`.
-- Export functions use `s.fullHeader || s.header` for FASTA output.
-- Search uses `state.seqs[index].header` for matching.
-- The browser check runs automatically after commit; its output is appended here if it fails.
+All 7 edge cases resolved (2 real bugs found and fixed: edge case 2 empty-sequence
+protein misclassification, edge case 4 `?`/`~` silent data loss; 5 confirmed
+already correct: edge cases 1, 3, 5, 6, 7). Ready to merge into main after a
+full regression-suite run.
