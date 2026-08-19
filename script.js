@@ -3861,6 +3861,7 @@ function _isProteinFastaSequence(rawSeq) {
     const seqType = el('mafftSeqType')?.value;
     if (seqType === '0' || seqType === '1') return true;
     const letters = String(rawSeq || '').replace(/[^A-Za-z*.-]/g, '');
+    if (!letters) return false; // empty sequence: don't classify as protein
     return FASTA_PROTEIN_ONLY_CHARS.test(letters) || !FASTA_NUCLEOTIDE_CHARS.test(letters);
 }
 
@@ -3896,7 +3897,7 @@ function parseFasta(text) {
                 }
                 header = line;
             } else {
-                seq += line.replace(/_/g, '-').replace(/[^A-Za-z*.\-]/g, '');
+                seq += line.replace(/[_?~]/g, '-').replace(/[^A-Za-z*.\-]/g, '');
             }
         }
         if (header) {
