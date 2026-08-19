@@ -7,9 +7,10 @@
 - Editing Operations section audited and applied
 - Analysis Tools: Cluster presets, UPGMA tree, Consensus engine (corrections 21-23)
 - Analysis Tools: SINEClusterer numbers corrected (correction 24)
+- Analysis Tools: Dot plot, Repeat/TSD Finder, Regex motif search, BLAST search (corrections 25-27)
 
 ## Current phase
-Analysis Tools (in progress)
+Export & Publishing (next)
 
 ## IMPORTANT correction to this progress log (Claude, at merge time)
 Corrections 1-4 below (Input & Format Support) were investigated correctly
@@ -57,6 +58,9 @@ as the fix existing.**
 22. "UPGMA tree with optimal leaf ordering": Renamed to "Phylogenetic tree builder" and corrected to mention NJ support and three distance models (p-distance, JC69, K80) which the code supports but the doc omitted. Removed "orientation-optimized leaf ordering" from the tree builder — that optimization is in the separate `_reorderByGuideTree` guide-tree feature, not in `buildUPGMATreeFromAlignment`.
 23. "Multi-mode consensus engine": Corrected "gap or keep-best" fallback to "gap (default), N (unknown), or IUPAC (no gaps)" — the actual `consensusFallback` select has three options (gap/n/iupac), not "keep-best".
 24. "Position-pattern clustering (SINEClusterer)": Four corrections: (a) "Prunes outliers matching <50%" → "<30% (or <2 matches for groups with ≤5 features)" — code uses `Math.ceil(occurrences.length * 0.30)` and min 2 for small groups; (b) "decay from 4 to 1 over 20 iterations" → "decay from 5 to 1 over 10 iterations at UI defaults" — UI defaults are minPerfect=5, maxIterations=10, not the _makeOptions internal defaults of 4/20; (c) "small ≤10 seqs at 85%, medium 11–20 at 75%, large >20 at 65%" → "small <11 seqs at 80%, medium 11–19 at 70%, large ≥20 at 60%" — UI defaults are 80/70/60, and size ranges are <11, 11-19, ≥20; (d) "cap at 15% of dataset" → "cap at 50% of available sequences" — code uses `Math.floor(availableSeqs.length * 0.50)`.
+25. "Dot plot with region detection": Corrected "context radius (5–100 bp)" to "context radius (0–100 bp)" — HTML input has min=0, not min=5.
+26. "Repeat & TSD Finder with undo marking": Removed "copy number" from configurable parameters — no copy number UI control exists; minimum copies is hardcoded at ≥2 in _findTandemRepeats. Clarified that TSD marking undo is a dedicated mechanism (separate from main stack for colour/bold; lowercase uses main stack).
+27. "Regex motif search": Removed "Ctrl+Click any residue to instantly search for that base" — no such functionality exists in the code. Ctrl+Click is used for nucleotide selection, not search.
 
 ## Claims confirmed accurate
 - Recent files history: localStorage-backed, 100KB cap (substring(0,100000)), adjustable 1-50 (Math.max(1,Math.min(50,n))), one-click reload, survives restarts. All accurate.
@@ -78,14 +82,17 @@ as the fix existing.**
 - SeqEdit bulk transformations: seqEditDegap/Reverse/Complement/RevComp/Uppercase/Lowercase. seqEditPadGaps checkbox for length normalization. pushUndo called. Accurate.
 - Reorder by guide tree: _reorderByGuideTree, _kmerGuideTree (6-mer vectors, Jaccard distances, UPGMA, 4-orientation search at junctions). Accurate.
 - Codon analysis: Nucleotides colour-coded by codon position (codon-p0/p1/p2 classes). In-frame stop codons (codon-stop class). Frameshift-inducing indels (codon-fs / codon-fs-internal classes). Syn/non-syn classification relative to reference sequence (codon-syn / codon-nonsyn classes). AA translation track displayed below each sequence. Only differences from Standard stored; full table built by merge via _getActiveCode(). Dynamic switching recalculates everything via debounceRender. All confirmed accurate.
+- Dot plot: Region detector finds top 30 diagonal runs (S.regions = filtered.slice(0, 30) in _dotDetectRegions). Window 1-61 odd (HTML min=1 max=61 step=2). Identity threshold 0-100% (HTML min=0 max=100). RevComp axis B confirmed (dotPlotRevComp checkbox). Click region to scroll confirmed (_dotGoToRegion). Hover alignment context confirmed (_dotUpdateHoverInfo). Copy Region exports FASTA confirmed. PNG and SVG export confirmed. All accurate except context radius min (corrected above).
+- Repeat/TSD Finder: Tandem repeat detection (_findTandemRepeats) with configurable min length (repeatMinLen) and mismatch tolerance (repeatMaxDiv). TSD detection (_findTSD) with flanking window (tsdFlankSize), min/max length (tsdMinLen/tsdMaxLen), max mismatches (tsdMaxDiv). TSD marking with colour/bold/lowercase styles (tsdMarkStyle select). Undo via undoTsdMarking() / tsdUndoMarkBtn. All confirmed. Copy number NOT configurable (hardcoded ≥2 — corrected). Separate from repeat search results confirmed.
+- Regex motif search: Exact motifs with 0-10 mismatches (maxMismatches input min=0 max=10). Regex via .* checkbox (searchRegex). Matches against degapped sequences (displayString built from non-gap spans). Match-length-aware highlighting (uses m.len). All confirmed. "Ctrl+Click to search base" NOT found — corrected (removed).
+- BLAST search: Right-click → BLAST dialog (showBlastDialog from context menu). Databases fetched from GET /api/blast-db (fetchDatabases). Checkboxes for target selection. Unavailable databases greyed out (disabled checkbox + grey text). Manage Databases modal (showDbManagementModal) with List/Add/Delete CRUD. Client-side confirmed; server-side behavior (makeblastdb, blast_dbs.json, index file cleanup) not verifiable from client code.
 
 ## Needs human decision
 (none)
 
 ## Notes for the next run
-- Analysis Tools section in progress. Done: Codon analysis (18-20), Cluster presets (21), UPGMA tree (22), Consensus engine (23), SINEClusterer (24).
-- Still need to verify: Dot plot, Repeat/TSD Finder, Regex motif search, BLAST search.
-- SINEClusterer verified and corrected (correction 24). cluster.js is now in the chat.
+- Analysis Tools section COMPLETE. All subsections verified: Codon analysis (18-20), Cluster presets (21), UPGMA tree (22), Consensus engine (23), SINEClusterer (24), Dot plot (25), Repeat/TSD Finder (26), Regex motif search (27), BLAST search (confirmed).
+- Next section: Export & Publishing.
 - Novelty Spotlight item 1 says "17 genetic codes" — needs correction to 15 when that section is reached.
 - Novelty Spotlight item 8 still says "IGV-style compact read packing" with "paired-end connection lines, diffs-only mode, coverage histogram" — needs correction in that phase (coverage histogram and paired-end lines don't exist).
 - Comparison table "Canvas large-align" row says "auto threshold" without a number — fine for the table, but verify other comparison table claims in the final phase.
