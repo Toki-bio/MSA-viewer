@@ -11,7 +11,7 @@
 - Export & Publishing section audited and applied (corrections 28-29)
 
 ## Current phase
-Novelty Spotlight (next)
+Comparison table (next)
 
 ## IMPORTANT correction to this progress log (Claude, at merge time)
 Corrections 1-4 below (Input & Format Support) were investigated correctly
@@ -64,8 +64,24 @@ as the fix existing.**
 27. "Regex motif search": Removed "Ctrl+Click any residue to instantly search for that base" — no such functionality exists in the code. Ctrl+Click is used for nucleotide selection, not search.
 28. "RTF export with per-residue conservation shading": Corrected "Consensus line at bottom" to "Consensus line at top (after ruler, before sequences)" — exportAlignmentAsRtf() renders ruler → consensus → sequences, so consensus is at the top, not the bottom.
 29. "Copy variants": Corrected "Copy alignment — full alignment as plain text" to "full alignment as FASTA" and "Copy consensus — consensus sequence as plain text" to "consensus sequence as FASTA" — both copyAlignment() and copyConsensus() output FASTA format (with >headers), not plain text.
+30. Novelty Spotlight item 1: Corrected "17 genetic codes" to "15 genetic codes" — same correction as #19, applied to the Novelty Spotlight list which still had the old number.
+31. Novelty Spotlight item 2: Corrected "SAM/BAM/CRAM reader" to "SAM/BAM reader" (CRAM not supported), "11 CIGAR operations" to "9 CIGAR operations" (M, I, D, N, S, H, P, =, X), and "compact paired-end read visualization" to "IGV-style read track visualization" (paired-end connection lines don't exist, "compact" was renamed to "Reads").
+32. Novelty Spotlight item 5: Corrected "Levenshtein clustering" to "n-gram Jaccard clustering" — code uses ngramJaccardSimilarity(), not Levenshtein distance.
+33. Novelty Spotlight item 8: Corrected "compact read packing" to "read packing", removed "paired-end connection lines" and "coverage histogram" (neither exists in code), added actual features: "soft-clip display, deletion gaps, insertion ticks" and clarified "diffs-only mode" as "diffs-only mode with 'Show bases' toggle".
+34. Novelty Spotlight item 13: Corrected "8-format" to "9-format" and "BAM/CRAM" to "BAM, GenBank" (GenBank added, CRAM removed — same as correction #1).
+35. Analysis Tools codon analysis (retroactive fix): Applied corrections 19-20 that were noted in progress log but never written to features-inventory.md — "17 genetic codes" → "15 genetic codes" and "10 others" → "9 others".
 
 ## Claims confirmed accurate
+- Novelty Spotlight item 3 (SINEClusterer): Gap filtering, monomorphic-column skipping, fuzzy merging, outlier pruning, progressive relaxation, configurable quality tiers — all confirmed in prior runs (corrections 24a-d).
+- Novelty Spotlight item 4 (Select→compress→insert consensus): replaceSelectedWithConsensus confirmed in prior runs.
+- Novelty Spotlight item 6 (Colour-as-selection-metadata): copy by colour, group by colour, sort by colour all confirmed.
+- Novelty Spotlight item 7 (Canvas renderer with auto threshold): Auto-activation at 5M residues confirmed (correction 6). "10× larger" is a relative claim — left as is.
+- Novelty Spotlight item 9 (Block realignment with in-place splicing): realignSelectedBlock confirmed.
+- Novelty Spotlight item 10 (Guide tree reordering): _reorderByGuideTree with 4-orientation search confirmed.
+- Novelty Spotlight item 11 (GeneDoc-style RTF export): exportAlignmentAsRtf confirmed.
+- Novelty Spotlight item 12 (Snapshot system with search + colour state): _buildSnapshotPayload confirmed.
+- Novelty Spotlight item 14 (Save/load sequence order): exportOrder/importOrder confirmed.
+- Novelty Spotlight item 15 (Browser-based BLAST database CRUD): showDbManagementModal confirmed.
 - Recent files history: localStorage-backed, 100KB cap (substring(0,100000)), adjustable 1-50 (Math.max(1,Math.min(50,n))), one-click reload, survives restarts. All accurate.
 - Cross-mode Highlight Diffs + Variable Sites Only: Both use the same diffCols set computed once in _computeVarSites(). Highlight Diffs adds .highlight-diffs body class, Variable Sites Only adds .var-sites-only body class. Structure accurate, but opacity was wrong (document said 25%, CSS is 0.4/40% — corrected).
 - Canvas renderer: viewport culling confirmed (draw() computes firstCol/lastCol/firstRow/lastRow from offsets). Auto-activation confirmed (renderAlignment checks TOTAL_RESIDUES > CANVAS_AUTO_THRESHOLD). Mouse wheel + click-drag panning confirmed. User override via _userDismissedAutoCanvas confirmed.
@@ -94,17 +110,14 @@ as the fix existing.**
 - Export & Publishing — Copy variants: copySequences(gapped, isFasta, index), copySelectedColumns(), copyAlignment(), copyConsensus(), copySequencesByColor(), copyTreeNewick() all confirmed. Format corrections noted above (alignment and consensus are FASTA, not plain text).
 
 ## Needs human decision
-(none)
+- Novelty Spotlight item 16 says "12,000 lines" for script.js — the file is clearly much larger at BUILD_TAG v179, but exact line count not verified. Needs human decision on whether to update the number and to what.
 
 ## Notes for the next run
-- Export & Publishing section COMPLETE. All subsections verified: RTF export (correction 28: consensus at top not bottom), Two-mode SVG export (confirmed), Snapshot system (confirmed), Copy variants (correction 29: alignment and consensus are FASTA not plain text).
-- Next section: Novelty Spotlight numbered list.
-- Novelty Spotlight item 1 says "17 genetic codes" — needs correction to 15 (already corrected in Analysis Tools section, but the Novelty Spotlight still has the old number).
-- Novelty Spotlight item 2 says "SAM/BAM/CRAM reader" — CRAM not supported, needs correction.
-- Novelty Spotlight item 5 says "Levenshtein clustering" — should be "position-weighted n-gram Jaccard similarity" (already corrected in Sequence Colouring section, but Novelty Spotlight still has old text).
-- Novelty Spotlight item 8 says "IGV-style compact read packing" with "paired-end connection lines, diffs-only mode, coverage histogram" — coverage histogram and paired-end lines don't exist, needs correction.
-- Novelty Spotlight item 13 says "8-format automatic content detection" — should be 9 (already corrected in Input section, but Novelty Spotlight still has old number).
-- Comparison table "Canvas large-align" row says "auto threshold" without a number — fine for the table, but verify other comparison table claims in the final phase.
-- The "Reads mode" row in the comparison table was updated to resolve the BROWSER_CHECK contradiction, but the full comparison table audit is still pending (last phase).
+- Novelty Spotlight section COMPLETE. All 16 items checked. Corrections made to items 1, 2, 5, 8, 13. Items 3, 4, 6, 7, 9-12, 14-16 confirmed accurate.
+- Also fixed unapplied corrections 19-20 in Analysis Tools section (codon analysis: "17 genetic codes" → "15", "10 others" → "9 others") — these were noted in progress log but never actually written to features-inventory.md, same silent failure as corrections 1-4.
+- Item 16 says "12,000 lines" — script.js is clearly much larger at v179, but exact line count not verified. Needs human decision on whether to update the number.
+- Next section: Comparison table (final phase).
+- Comparison table "Canvas large-align" row says "auto threshold" without a number — fine for the table, but verify other comparison table claims.
+- The "Reads mode" row in the comparison table was updated to resolve the BROWSER_CHECK contradiction, but the full comparison table audit is still pending.
 - WARNING: SINEClusterer is ~400 lines. Prior runs hit token limit trying to trace it. Pick ONE specific claim/number to verify at a time, not the whole algorithm.
 
