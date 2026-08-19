@@ -258,6 +258,9 @@ Manuscript mentions "1 comparison table" in Target but none is present. Flag as 
 ## Critical findings (must fix before submission)
 | ID | Location | Claim | Evidence | Recommended fix |
 |----|----------|-------|----------|-----------------|
+| C1 | `script.js:3` vs `manuscript.md` | Manuscript revision note says "v132"; audit prompt expects `BUILD_TAG = 'v132'` | `script.js` line 3: `const BUILD_TAG = 'v179';`. Codebase has advanced 47 build tags past the manuscript's last revision. All feature claims must be re-verified against v179 code, not v132. | Re-audit all manuscript claims against current code (this audit does so). Update manuscript revision note to reflect the actual build being submitted. |
+| C2 | `manuscript.md` §2.3 vs `script.js` | "Canvas...activates itself above 150,000 residues" | `script.js`: `const ALIGN_CRAZY_VOLUME = 5_000_000;` and `const CANVAS_AUTO_THRESHOLD = ALIGN_CRAZY_VOLUME;` — auto-Canvas threshold is 5,000,000, not 150,000. Code comment confirms: "Was 150,000...a holdover from before DOM mode had windowing at all." | Update manuscript §2.3 to state 5,000,000 (or describe it as "multi-million residue" if exact number is undesirable). |
+| C3 | `manuscript.md` §3 (Limitations) vs `script.js` | "DOM-based Full and Block modes stay responsive to roughly 200 sequences × 5,000 columns, beyond which Canvas is required" | `script.js`: `ALIGN_WINDOWED_DOM_THRESHOLD = 500_000` triggers windowed DOM rendering (not Canvas) between 500K and 5M residues. Canvas auto-switch is at 5M. The manuscript's "beyond which Canvas is required" is wrong for the 500K–5M range, where windowed DOM keeps Full/Block responsive. | Correct Limitations to state that windowed DOM extends Full/Block responsiveness to ~500K residues, with Canvas recommended above ~5M. |
 
 ## Major findings (should fix)
 | ID | Location | Claim | Evidence | Recommended fix |
