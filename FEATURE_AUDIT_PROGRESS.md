@@ -3,9 +3,10 @@
 ## Done
 - Input & Format Support section audited (pending commit)
 - Visualization & Rendering section audited (pending commit)
+- Sequence Colouring System section audited (pending commit)
 
 ## Current phase
-Sequence Colouring System (next)
+Editing Operations (next)
 
 ## Corrections made
 1. "8-format automatic detection" → "9-format": Added GenBank (auto-detected by LOCUS header, was completely missing from the doc). Removed CRAM (not supported in code). Clarified BAM is detected by file extension, not content inspection. Updated format count and novelty text.
