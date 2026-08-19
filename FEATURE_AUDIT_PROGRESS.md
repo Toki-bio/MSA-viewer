@@ -5,6 +5,8 @@
 - Visualization & Rendering section audited and applied
 - Sequence Colouring System section audited and applied
 - Editing Operations section audited and applied
+- Analysis Tools: Cluster presets, UPGMA tree, Consensus engine (corrections 21-23)
+- Analysis Tools: SINEClusterer numbers corrected (correction 24)
 
 ## Current phase
 Analysis Tools (in progress)
@@ -51,6 +53,10 @@ as the fix existing.**
 18. "Codon analysis": Corrected "Activates on nucleotide alignments with length divisible by 3" to "Activates on nucleotide alignments of any length ≥ 3 (gapped CDS alignments are often not multiples of 3)" — code only checks `len < 3`, and explicitly comments that gapped CDS alignments are often not multiples of 3.
 19. "Codon analysis": Corrected "17 genetic codes" to "15 genetic codes" — `_CODE_VARIANTS` has 14 entries plus Standard (_GENETIC_CODE) = 15 total. The `codonCode` select in index.html also has 15 options. The claim's own table list (1–6, 9–14, 16, 21, 22) only adds up to 15, not 17.
 20. "Codon analysis": Corrected "and 10 others" to "and 9 others" — 15 total minus 6 named groups = 9, not 10.
+21. "Cluster presets + colour by cluster": Corrected "Hover a cluster row to highlight all members" to "A 'Highlight in alignment' button in the results panel highlights all member sequences with 20% opacity background colour" — code uses a click button (`highlightCluster()`), not hover, and applies 20% opacity background colour. Also corrected "show perfect vs. imperfect features" to "show perfect features per cluster; imperfect features are used for alignment highlighting but not listed in the results modal" — the results modal only displays `perfectFeatures`.
+22. "UPGMA tree with optimal leaf ordering": Renamed to "Phylogenetic tree builder" and corrected to mention NJ support and three distance models (p-distance, JC69, K80) which the code supports but the doc omitted. Removed "orientation-optimized leaf ordering" from the tree builder — that optimization is in the separate `_reorderByGuideTree` guide-tree feature, not in `buildUPGMATreeFromAlignment`.
+23. "Multi-mode consensus engine": Corrected "gap or keep-best" fallback to "gap (default), N (unknown), or IUPAC (no gaps)" — the actual `consensusFallback` select has three options (gap/n/iupac), not "keep-best".
+24. "Position-pattern clustering (SINEClusterer)": Four corrections: (a) "Prunes outliers matching <50%" → "<30% (or <2 matches for groups with ≤5 features)" — code uses `Math.ceil(occurrences.length * 0.30)` and min 2 for small groups; (b) "decay from 4 to 1 over 20 iterations" → "decay from 5 to 1 over 10 iterations at UI defaults" — UI defaults are minPerfect=5, maxIterations=10, not the _makeOptions internal defaults of 4/20; (c) "small ≤10 seqs at 85%, medium 11–20 at 75%, large >20 at 65%" → "small <11 seqs at 80%, medium 11–19 at 70%, large ≥20 at 60%" — UI defaults are 80/70/60, and size ranges are <11, 11-19, ≥20; (d) "cap at 15% of dataset" → "cap at 50% of available sequences" — code uses `Math.floor(availableSeqs.length * 0.50)`.
 
 ## Claims confirmed accurate
 - Recent files history: localStorage-backed, 100KB cap (substring(0,100000)), adjustable 1-50 (Math.max(1,Math.min(50,n))), one-click reload, survives restarts. All accurate.
@@ -77,8 +83,9 @@ as the fix existing.**
 (none)
 
 ## Notes for the next run
-- Analysis Tools section started. Codon analysis subsection done (corrections 18-20).
-- Still need to verify: SINEClusterer, Cluster presets, Dot plot, Repeat/TSD Finder, UPGMA tree, Consensus engine, Regex motif search, BLAST search.
+- Analysis Tools section in progress. Done: Codon analysis (18-20), Cluster presets (21), UPGMA tree (22), Consensus engine (23), SINEClusterer (24).
+- Still need to verify: Dot plot, Repeat/TSD Finder, Regex motif search, BLAST search.
+- SINEClusterer verified and corrected (correction 24). cluster.js is now in the chat.
 - Novelty Spotlight item 1 says "17 genetic codes" — needs correction to 15 when that section is reached.
 - Novelty Spotlight item 8 still says "IGV-style compact read packing" with "paired-end connection lines, diffs-only mode, coverage histogram" — needs correction in that phase (coverage histogram and paired-end lines don't exist).
 - Comparison table "Canvas large-align" row says "auto threshold" without a number — fine for the table, but verify other comparison table claims in the final phase.
