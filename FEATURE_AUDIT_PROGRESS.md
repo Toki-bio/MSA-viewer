@@ -17,12 +17,23 @@ Editing Operations (next)
 6. "Canvas renderer with automatic activation": Changed threshold from 150,000 to 5,000,000 (code: CANVAS_AUTO_THRESHOLD = ALIGN_CRAZY_VOLUME = 5_000_000). Removed "GPU-composited" (standard Canvas 2D context). Changed "toast notification" to "status message".
 7. "Compact mode (IGV-style read packing) — removed, may return" → "Reads mode (IGV-style read packing)": Complete rewrite. Compact was renamed to Reads (modeReads). renderReadsAlignment() implements SVG track packing, mismatch coloring, soft-clip display, deletion gaps, insertion ticks, "Show bases" toggle. Coverage histogram and paired-end connection lines do NOT exist in code — removed. Added accurate features (cap marks, click-to-highlight, status line info).
 8. Comparison table "Compact reads" → "Reads mode" and "View modes | 5" → "4" to resolve the Compact/Reads contradiction.
+9. "Manual colour assignment" subsection removed entirely: No per-sequence colour picker UI exists. Colours are only assigned via pattern matching, auto-similarity clustering, or preset loading. The claim described a feature (individual sequence colour picker) that does not exist in the code.
+10. "Auto-colour by name similarity": Changed "Levenshtein distance" to "position-weighted n-gram Jaccard similarity" — code uses `ngramJaccardSimilarity()`, not Levenshtein.
+11. "Auto-colour by name similarity": Changed "0 = permissive, 10 = strict" to "0 = strict 90% threshold, 10 = permissive 40% threshold" — code has `minSim = 0.90 - (sensitivity/10) * 0.50`, so 0 is strictest and 10 is loosest (opposite of what the doc said).
+12. "Cluster-based colouring": Changed "Hovering a cluster row in the results panel highlights all member sequences with glow effect" to "A 'Highlight in alignment' button in the results panel highlights all member sequences" — code uses a click button (`highlightCluster()`), not hover, and applies 20% opacity background colour, not a glow effect.
+13. "Colour history inspector": Changed method tags from "(Manual, Auto-Similarity, Pattern, Cluster)" to "(Pattern, Auto-Similarity)" — only `applyPatternColour()` and `autoColourBySimilarity()` call `recordColorHistory()`. No "Manual" tag (manual assignment doesn't exist) and no "Cluster" tag (cluster colouring doesn't call `recordColorHistory`).
 
 ## Claims confirmed accurate
 - Recent files history: localStorage-backed, 100KB cap (substring(0,100000)), adjustable 1-50 (Math.max(1,Math.min(50,n))), one-click reload, survives restarts. All accurate.
 - Cross-mode Highlight Diffs + Variable Sites Only: Both use the same diffCols set computed once in _computeVarSites(). Highlight Diffs adds .highlight-diffs body class, Variable Sites Only adds .var-sites-only body class. Structure accurate, but opacity was wrong (document said 25%, CSS is 0.4/40% — corrected).
 - Canvas renderer: viewport culling confirmed (draw() computes firstCol/lastCol/firstRow/lastRow from offsets). Auto-activation confirmed (renderAlignment checks TOTAL_RESIDUES > CANVAS_AUTO_THRESHOLD). Mouse wheel + click-drag panning confirmed. User override via _userDismissedAutoCanvas confirmed.
 - Reads mode: renderReadsAlignment() confirmed. assignReadTracks() greedy packing confirmed. Soft-clip display, deletion gaps, insertion ticks, mismatch coloring, "Show bases" toggle all confirmed in code. Coverage histogram NOT found. Paired-end connection lines NOT found (SAM pair data stored in _samPair but never drawn).
+- Pattern-based colouring: `applyPatternColour()` creates regex with 'i' flag, tests headers, assigns colour, records history with 'Pattern' tag. Accurate.
+- Copy by colour: `copySequencesByColor(colour, ungapped, asFasta)` filters by colour from `colourState.mappings`, available in context menu. Accurate.
+- Group/sort by colour: `groupColoredSequencesAtTop()` and `sortSequencesByColor()` work as described. Accurate.
+- Auto-colour discrete mode: ColorBrewer/Tableau-inspired 12-colour palette + golden-ratio hue distribution for >12 clusters. Accurate.
+- Auto-colour gradient mode: HSL shading by normalized key with varying lightness. Accurate.
+- "Guarantees identical-prefix sequences always share the same colour": Hard guarantee via `keyToNames` map in `clusterByName()`. Accurate.
 
 ## Needs human decision
 (none)
