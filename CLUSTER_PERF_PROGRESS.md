@@ -1,26 +1,17 @@
 # Clustering responsiveness fix progress
 
 ## Done
-- Made findBestGroup async with 8ms time-based yield points in column scan, fuzzy merge, and quality scoring loops; optimized d.seq.includes() to Set lookups; propagated async through _clusterIteration, cluster, clusterChunked; updated analyzeClusterability to await cluster() (commit pending)
+- Made findBestGroup async with yield points in column scan, fuzzy merge, and quality scoring loops; optimized d.seq.includes() to Set lookups; propagated async through _clusterIteration, cluster, clusterChunked; updated analyzeClusterability to await cluster()
+- Reduced yield overhead: switched from setTimeout(0) to MessageChannel for near-zero-delay yields; increased chunk size from 8ms to 16ms; cached global max sizes per position; precomputed column char counts for O(1) outside lookups; precomputed candidate Sets for O(1) fuzzy merge intersection (commit pending)
 
 ## Current phase
 in progress
 
 ## Notes for the next run
-- Changes made: findBestGroup yields every ~8ms during its three hot loops (column scan, fuzzy merge, quality scoring), checks shouldCancel at each yield
-- Also optimized O(n) d.seq.includes(i) to O(1) Set.has(i) in quality scoring and pruning re-validation
-- Passed shouldCancel through go object to findBestGroup for mid-round cancellation
-- Need to verify: node -c syntax checks pass, clustering stays responsive on heavy alignment, Stop button works promptly
-# Clustering responsiveness fix progress
-
-## Done
-- Added findBestGroupAsync() with yield points in column scan (every 200 cols), fuzzy merge (every 30 candidates), and quality scoring (every 5 groups). Made _clusterIteration and cluster() async. Updated clusterChunked and analyzeClusterability to await. (commit pending)
-
-## Current phase
-in progress
-
-## Notes for the next run
-Changes applied, need to verify syntax with node -c and run the check. If it passes, mark as complete. If it fails, read the failure output and fix.
+- Changes made: findBestGroup now uses MessageChannel-based yield (_yieldToBrowser) with 16ms chunks instead of setTimeout(0) with 8ms chunks; global max sizes cached per position to avoid recomputing global patterns every round; column char counts precomputed once for O(1) outside counts in quality scoring and pruning; candidate Sets precomputed for O(1) intersection in fuzzy merge
+- Previous run: page was responsive (maxUnresponsiveStretch=0ms) but clustering took 91.5s, exceeding 90s timeout. Yield overhead was the bottleneck.
+- Expected improvement: MessageChannel reduces per-yield overhead from ~4ms to ~1ms; 16ms chunks halve yield frequency; algorithmic optimizations reduce per-round work
+- Need to verify: node -c syntax checks pass, clustering finishes within 90s while staying responsive, Stop button works promptly
 
 ## BROWSER_CHECK_FAILED (run 1, 20260821-021421)
 ```
