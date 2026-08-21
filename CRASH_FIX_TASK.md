@@ -53,6 +53,36 @@ tab. Confirmed empirically:
   are the most likely candidates given they're the parts of the pipeline
   known to run in slices/chunks for large alignments.
 
+## IMPORTANT UPDATE - your first attempt did not actually fix the crash
+
+A previous set of commits on this branch (already applied - you'll see them
+in the file) added: (1) a real fix for the leading-garbage parsing bug
+(confirmed working - the corrupted file's first sequence now comes out at
+the correct length, no more silent corruption), (2) a length-mismatch
+warning (confirmed working correctly on a genuine mismatch test), and (3) a
+fallback that computes `state.alignmentIndex` from parsed sequences if the
+pre-parse scan returns null, intended to make sure the windowed-DOM
+rendering path still kicks in for a large alignment even when the initial
+scan fails.
+
+**That third fix does not actually prevent the crash.** Careful, repeated
+re-testing (multiple runs, explicit crash-event monitoring, not just a
+single quick check) confirms the real repro file still reliably crashes
+the browser tab - sometimes within a couple seconds, sometimes after
+`parseAndRender` itself has already resolved and even a *subsequent*
+`page.evaluate()` call just to read `state.alignmentIndex` crashes the
+page. This means either: the `alignmentIndex` fallback isn't actually
+computing what it should (check `classifyAlignmentSize` - does it
+correctly compute `needsWindowedDom` for a ~1919-row, ~1920-column
+alignment, and does something downstream actually gate on that flag before
+choosing the DOM-per-residue vs windowed-DOM render path?), or the crash is
+in something else entirely that doesn't care about that flag at all.
+
+Do not trust a single quick check run as confirmation of a fix - re-run the
+real repro file's check multiple times, and specifically watch whether a
+crash happens well AFTER `parseAndRender` resolves (not just during it),
+since that's the actual observed pattern.
+
 ## Your job, in order
 
 1. **Find the actual crash mechanism.** Somewhere in `script.js`'s
