@@ -23,6 +23,7 @@
 
 ## 📋 Remaining
 - [ ] **Full GB (GenBank) format** — parse GenBank flatfile format, display annotations on alignment
+- [ ] **Option: prefix `RC_` on reverse-complemented sequences** — when the "adjust direction" alignment option is set (sequences get reverse-complemented to align consistently), add an option to prepend `RC_` to the header/name of any sequence that was flipped, so it's visible in the sequence list which ones were reoriented.
 
 ## Performance / Architecture — Future Work (from JBrowse2 source study, 2026-08-19)
 
