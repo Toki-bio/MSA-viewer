@@ -18,11 +18,18 @@
 in progress
 
 ## Notes for the next run
-Previous fixes (parseFasta leading-garbage, length-mismatch warning, alignmentIndex fallback, length normalization) are all verified in place. The crash STILL happens because renderAlignment() gates the windowed-DOM path on `state.alignmentIndex?.needsWindowedDom`, which can be false/null if the pre-parse scan returned incorrect values or if state.alignmentIndex was not properly set. The non-windowed path then creates ~4M DOM spans synchronously for a 3.7M-residue alignment, crashing the tab.
+Root cause found and fixed: the previous run added `const _needsWindowed` to compute
+windowing need directly from TOTAL_RESIDUES, but placed it AFTER its first use in
+`_preserveScrollTop`, creating a temporal-dead-zone (TDZ) ReferenceError that threw
+on every `renderAlignment()` call. This caused all rendering to fail silently (caught
+by `parseAndRender`'s try/catch on initial load, but unhandled in scroll/mode-switch
+event handlers). The BROWSER_CHECK_FAILED output confirmed this directly:
+`ReferenceError: Cannot access '_needsWindowed' before initialization at renderAlignment`.
 
-Fix applied this run: compute `_needsWindowed` DIRECTLY from `TOTAL_RESIDUES > ALIGN_WINDOWED_DOM_THRESHOLD` in renderAlignment(), independent of state.alignmentIndex. Store in `state._needsWindowedDom` for the scroll controller. Added safety net in the non-windowed path to show a message instead of creating millions of nodes if the threshold is exceeded.
-
-Key insight: TOTAL_RESIDUES is already computed in renderAlignment() as `state.seqs.length * len` where `len = Math.max(...state.seqs.map(s => s.seq.length))`. This is the authoritative measure of alignment size, computed from the actual parsed sequences, not from a pre-parse scan that might fail or return wrong values.
+Fix: moved `len`, `TOTAL_RESIDUES`, and `_needsWindowed` declarations before
+`_preserveScrollTop` (their first use), and removed the duplicate declarations later
+in the function. The parseFasta leading-garbage fix, length-mismatch warning, and
+length normalization from previous runs are all still in place and correct.
 
 ## BROWSER_CHECK_FAILED (run 2, 20260821-112311)
 ```
