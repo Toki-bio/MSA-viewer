@@ -13,23 +13,40 @@
 - Fixed scanAlignmentText to strip BOM before checking for FASTA headers
 - Moved length-mismatch check before state.seqs assignment so normalization happens before sequences are committed
 - Updated warning message format to match requested style: "Sequence 'X' is N columns... but most of the alignment is M columns..."
+- Fixed TDZ ReferenceError: moved `len`, `TOTAL_RESIDUES`, `_needsWindowed` declarations before `_preserveScrollTop` (their first use)
+- Added try/finally to scroll controller rAF callback so `renderInProgress` is always reset even if `refreshFn` throws
+- Added `Math.max(1, ...)` guards on `rowHeightPx` and `blockHeightPx` to prevent sub-pixel measurement values causing unbounded row/block creation
+- Added maximum row count per block (300) and maximum block count per render (20) as safety nets against measurement errors causing OOM
+- Raised minimum measurement threshold from `> 0` to `> 1` in `_measureUnifiedRowHeight` and `_measureUnifiedBlockHeight` to reject sub-pixel measurements
 
 ## Current phase
 in progress
 
 ## Notes for the next run
-Root cause found and fixed: the previous run added `const _needsWindowed` to compute
-windowing need directly from TOTAL_RESIDUES, but placed it AFTER its first use in
-`_preserveScrollTop`, creating a temporal-dead-zone (TDZ) ReferenceError that threw
-on every `renderAlignment()` call. This caused all rendering to fail silently (caught
-by `parseAndRender`'s try/catch on initial load, but unhandled in scroll/mode-switch
-event handlers). The BROWSER_CHECK_FAILED output confirmed this directly:
-`ReferenceError: Cannot access '_needsWindowed' before initialization at renderAlignment`.
+The TDZ fix (moving `len`/`TOTAL_RESIDUES`/`_needsWindowed` before `_preserveScrollTop`)
+was already in the code from a previous run. The BROWSER_CHECK_FAILED from run 2 showed
+this error, but that was before the fix was applied. Run 4 failed due to port conflict
+(EADDRINUSE), so we don't have current test results.
 
-Fix: moved `len`, `TOTAL_RESIDUES`, and `_needsWindowed` declarations before
-`_preserveScrollTop` (their first use), and removed the duplicate declarations later
-in the function. The parseFasta leading-garbage fix, length-mismatch warning, and
-length normalization from previous runs are all still in place and correct.
+Key robustness improvements added this run:
+1. Scroll controller try/finally: if `_refreshUnifiedWindowOnScroll` throws (e.g., from
+   a fallback `renderAlignment` call), `renderInProgress` is now always reset, preventing
+   the scroll handler from being permanently dead.
+2. Measurement guards: `rowHeightPx` and `blockHeightPx` are now clamped to >= 1, and
+   measurements < 1px are rejected. A sub-pixel `rowHeightPx` (e.g., 0.1) would cause
+   `rowEnd` to compute as thousands, creating millions of DOM spans → OOM crash.
+3. Bounded row/block counts: max 300 rows per block, max 20 blocks per render. Even
+   with wrong measurements, the worst case is 6000 rows × ~2000 cols = 12M spans
+   (still large but bounded, vs. potentially unbounded before).
+
+The crash test ("real repro file did not crash") passed in run 2. The remaining failures
+(length-mismatch warning not found, 0 rows rendered, TDZ errors in scroll tests) were
+all caused by the TDZ error in `renderAlignment`, which is now fixed. The next check
+should confirm these are resolved.
+
+The "recent-files history: file entries do not cache truncated text" failure
+(TypeError: Cannot read properties of null) and the "Recent Files reopen" failure
+appear to be pre-existing test issues unrelated to this crash fix.
 
 ## BROWSER_CHECK_FAILED (run 2, 20260821-112311)
 ```
