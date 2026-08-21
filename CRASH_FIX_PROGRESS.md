@@ -99,3 +99,37 @@ The wrapper script ran BROWSER_CHECK_CMD after this run's commit and it
 failed (see output above). The commit was NOT reverted - fix it forward
 in the next run, or a human can inspect and revert manually. Remove this
 section once resolved.
+
+## BROWSER_CHECK_FAILED (run 4, 20260821-114629)
+```
+node:events:487
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use :::3193
+    at Server.setupListenHandle [as _listen2] (node:net:2009:16)
+    at listenInCluster (node:net:2066:12)
+    at Server.listen (node:net:2171:7)
+    at C:\work\MSA-viewer-crash-fix\tests\lib\static-server.js:27:12
+    at new Promise (<anonymous>)
+    at start (C:\work\MSA-viewer-crash-fix\tests\lib\static-server.js:15:10)
+    at attemptOnce (C:\work\glm-harness\checks\crash-fix-check.js:23:37)
+    at main (C:\work\glm-harness\checks\crash-fix-check.js:93:22)
+    at Object.<anonymous> (C:\work\glm-harness\checks\crash-fix-check.js:160:1)
+    at Module._compile (node:internal/modules/cjs/loader:1871:14)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2045:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '::',
+  port: 3193
+}
+
+Node.js v24.18.0
+```
+The wrapper script ran BROWSER_CHECK_CMD after this run's commit and it
+failed (see output above). The commit was NOT reverted - fix it forward
+in the next run, or a human can inspect and revert manually. Remove this
+section once resolved.
