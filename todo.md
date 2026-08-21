@@ -3,6 +3,7 @@
 ## 🚨 Active Bugs
 - [ ] **Consensus:bottom** — debug logging added, awaiting F12 Console test. Check for `[consensus]` log messages.
 - [ ] **Compact mode glitch** — overflow changed to `'auto'`, needs testing
+- [ ] **Realigning with MAFFT changes nucleotide case** — re-running an alignment through MAFFT from within the viewer alters the case (upper/lower) of nucleotides in the result; undesired, case should be preserved through a realign round-trip. Not yet investigated (no root cause identified).
 
 ## ✅ Recent Fixes
 - [x] Horizontal scrollbar (content-visibility:auto removed)
