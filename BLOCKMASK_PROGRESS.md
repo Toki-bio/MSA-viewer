@@ -64,14 +64,3 @@ JSON) and stage 2 (block-mask.js computeBlockMask output — same schema).
   no edits emitted. Loop abandoned.
 - supervisor (2026-09-10): wrote block-mask.js + tests/blockmask/parity.js
   directly; 3/3 parity + V1/V5 cross-check pass; committed.
-
-## BROWSER_CHECK_FAILED (run 5, 20260910-215603)
-```
-PASS parity.js
-PASS mask-url.test.js
-FAIL sliders: no panel input references for WIN, MOSAIC_STD, BG_MARGIN, MIN_ZONE_W, ZONE_BRIDGE, ROW_MIN_GROUP, ROW_MIN_GAP_ABS, MIN_BLOCK_W
-```
-The wrapper script ran BROWSER_CHECK_CMD after this run's commit and it
-failed (see output above). The commit was NOT reverted - fix it forward
-in the next run, or a human can inspect and revert manually. Remove this
-section once resolved.
