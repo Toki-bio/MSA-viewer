@@ -121,7 +121,7 @@ Limitations. Some capabilities are deliberately out of scope, and users needing 
 13. Henikoff, S. & Henikoff, J.G. (1992) Amino acid substitution matrices from protein blocks. *Proc. Natl. Acad. Sci. USA*, 89, 10915–10919.
 14. Camacho, C. et al. (2009) BLAST+: architecture and applications. *BMC Bioinformatics*, 10, 421.
 15. Sarkar, I.N. et al. (2008) CAOS software for use in character-based DNA barcoding. *Mol. Ecol. Resour.*, 8, 1256–1259.
-16. Fedosov, A.E. et al. (2022) MolD: a software for automated compilation of DNA diagnoses. *Mol. Ecol. Resour.*, 22, 2038–2053.
+16. Fedosov, A.E. et al. (2022) MolD, a novel software to compile accurate and reliable DNA diagnoses for taxonomic descriptions. *Mol. Ecol. Resour.*, 22, 2038–2053.
 17. Saitou, N. & Nei, M. (1987) The neighbor-joining method: a new method for reconstructing phylogenetic trees. *Mol. Biol. Evol.*, 4, 406–425.
 18. Staden, R., Beal, K.F. & Bonfield, J.K. (2000) The Staden package, 1998. *Methods Mol. Biol.*, 132, 115–130.
 19. Sonnhammer, E.L.L. & Durbin, R. (1995) A dot-matrix program with dynamic threshold control suited for genomic DNA and protein sequence analysis. *Gene*, 167, GC1–GC10.
