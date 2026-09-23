@@ -36,7 +36,7 @@ visualization, editing, and analysis".*
 |------|----------|
 | User manual (13 sections, with full parameter ranges for the clustering, dot plot, and repeat/TSD tools) | `manual.html` |
 | Feature inventory | `features-inventory.md` |
-| Example datasets in each supported format | repository root |
+| Example datasets in each supported format, format edge cases, and real-world files with expected results | `examples/` |
 | Server deployment guide | `deployment.md` |
 | SSH remote-loading guide | `REMOTE_PUSH_TO_LOAD_GUIDE.md` |
 
