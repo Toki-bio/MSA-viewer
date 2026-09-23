@@ -9,13 +9,14 @@
 > Round 6 (2026-09-23, against `main` at build v187): Canvas auto-switch is 5 million residues, not 150,000; Full and Block use a windowed display above about 500,000 residues. Dropped the line-count, which had already drifted twice. The auto-switch message names the residue count; it does not tell the user to return to Full or Block.
 > Round 7: Shading is three enableable levels, not GeneDoc's two-to-four. Canvas draws the amino-acid translation track; codon-position, stop, frameshift, and synonymy marks stay in Full and Block. Export says trees, not only UPGMA. Consensus frequency is described as including gaps, without claiming it always matches the shading denominator.
 > Round 8: Named methods that are reimplemented, not copied: SPIN (Staden et al., 2000), Dotter (Sonnhammer & Durbin, 1995), and alignment statistics in the style of Easel esl-alistat / esl-alipid (Eddy, 2011). EMBOSS and HMMER stay out of the note; their credits are in the manual.
+> Round 9: Introduction no longer compares ViewAlign with IGV. The opening now treats the contribution as one adjustable workspace for the operations a comparison needs together; lack of installation is how that workspace is reached, not the claim itself. Robinson et al. (2011) dropped from the reference list. Supplementary Table S1 still describes IGV in its own notes.
 
 ## Target
 **Bioinformatics (Oxford) — Application Note**
 - Journal limit: **4 pages maximum ≈ 2,600 words** (per OUP author guidelines)
 - No in-text figure or table; the comparison table is Supplementary Table S1, so the full budget is available to the text
 - Supplementary material is referred to in the Summary, as the Application Note format requires
-- 21 references
+- 20 references
 
 ---
 
@@ -35,9 +36,9 @@ Multiple sequence alignment viewing, editing, and downstream analysis are typica
 
 Multiple sequence alignment (MSA) is foundational to phylogenetic inference, motif detection, and comparative genomics. Mature construction tools exist — MAFFT (Katoh & Standley, 2013), Clustal Omega (Sievers et al., 2011), MUSCLE (Edgar, 2004) — but the downstream viewing and editing of alignments remains fragmented across desktop applications requiring platform-specific installation.
 
-Desktop viewers such as Jalview (Waterhouse et al., 2009), AliView (Larsson, 2014), and SeaView (Gouy et al., 2010) are rich but tied to Java or native binaries, and each reads only a subset of the common formats. Integrated toolkits go further: UGENE (Okonechnikov et al., 2012) combines broad format support, editing, translation, dot plots, repeat and restriction-site search, tree building, and BLAST in one application, and MEGA (Kumar et al., 2018) couples editing to phylogenetic inference — but both must be installed. In the browser, MSAViewer (Yachdav et al., 2016) demonstrated JavaScript MSA visualization without interactive editing, and its reference implementation has been unmaintained since 2022; IGV (Robinson et al., 2011) excels at read-level visualization but offers neither codon analysis nor MSA editing (Supplementary Table S1). The gap is therefore not feature count but delivery: the analytical breadth of an installed toolkit has not previously been available without installation.
+Desktop viewers such as Jalview (Waterhouse et al., 2009), AliView (Larsson, 2014), and SeaView (Gouy et al., 2010) are rich but tied to Java or native binaries, and each reads only a subset of the common formats. Integrated toolkits go further: UGENE (Okonechnikov et al., 2012) combines broad format support, editing, translation, dot plots, repeat and restriction-site search, tree building, and BLAST in one application, and MEGA (Kumar et al., 2018) couples editing to phylogenetic inference. In the browser, MSAViewer (Yachdav et al., 2016) demonstrated JavaScript MSA visualization without interactive editing, and its reference implementation has been unmaintained since 2022 (Supplementary Table S1). Intake, editing, codon inspection, grouping, motif search, and a shaded figure remain split across programs, and their settings cannot be retuned together.
 
-We present ViewAlign, a self-contained browser application that closes this gap, combining automatic format detection, interactive editing, NGS read viewing, coding-sequence analysis, and publication-quality export with no framework dependencies. The individual capabilities are not unprecedented. Multi-tier conservation shading and shading-preserving RTF export originate with GeneDoc (Nicholas et al., 1997) and BoxShade; frameshift-aware treatment of coding alignments with MACSE (Ranwez et al., 2011); Jalview classifies synonymous and missense variants imported from Ensembl or VCF; and character-based diagnosis of groups by shared nucleotide positions is established in DNA barcoding (Sarkar et al., 2008; Fedosov et al., 2022). The contribution is the combination, delivered without installation, together with the way inherited capabilities are operated (Section 3).
+We present ViewAlign as one umbrella for the operations our own sequence comparisons kept needing at once. Those operations share a single alignment, and each stays adjustable: a threshold, a colour, a genetic code, or a grouping rule is changed by inspection rather than taken as a preset. That this runs in the browser, without installation, is how the workspace is reached, not the claim itself. The individual capabilities are not unprecedented. Multi-tier conservation shading and shading-preserving RTF export originate with GeneDoc (Nicholas et al., 1997) and BoxShade; frameshift-aware treatment of coding alignments with MACSE (Ranwez et al., 2011); Jalview classifies synonymous and missense variants imported from Ensembl or VCF; and character-based diagnosis of groups by shared nucleotide positions is established in DNA barcoding (Sarkar et al., 2008; Fedosov et al., 2022). How those inherited capabilities are operated is taken up in Section 3.
 
 ---
 
@@ -109,21 +110,20 @@ Limitations. Some capabilities are deliberately out of scope, and users needing 
 4. Waterhouse, A.M. et al. (2009) Jalview Version 2 — a multiple sequence alignment editor and analysis workbench. *Bioinformatics*, 25, 1189–1191.
 5. Larsson, A. (2014) AliView: a fast and lightweight alignment viewer and editor for large datasets. *Bioinformatics*, 30, 3276–3278.
 6. Gouy, M., Guindon, S. & Gascuel, O. (2010) SeaView Version 4: a multiplatform graphical user interface for sequence alignment and phylogenetic tree building. *Mol. Biol. Evol.*, 27, 221–224.
-7. Robinson, J.T. et al. (2011) Integrative genomics viewer. *Nat. Biotechnol.*, 29, 24–26.
-8. Yachdav, G. et al. (2016) MSAViewer: interactive JavaScript visualization of multiple sequence alignments. *Bioinformatics*, 32, 3501–3503.
-9. Ranwez, V. et al. (2011) MACSE: Multiple Alignment of Coding SEquences accounting for frameshifts and stop codons. *PLoS ONE*, 6, e22594.
-10. Kumar, S. et al. (2018) MEGA X: Molecular Evolutionary Genetics Analysis across computing platforms. *Mol. Biol. Evol.*, 35, 1547–1549.
-11. Okonechnikov, K. et al. (2012) Unipro UGENE: a unified bioinformatics toolkit. *Bioinformatics*, 28, 1166–1167.
-12. Li, H. et al. (2009) The Sequence Alignment/Map format and SAMtools. *Bioinformatics*, 25, 2078–2079.
-13. Nicholas, K.B. et al. (1997) GeneDoc: analysis and visualization of genetic variation. *EMBNEW.NEWS*, 4, 14.
-14. Henikoff, S. & Henikoff, J.G. (1992) Amino acid substitution matrices from protein blocks. *Proc. Natl. Acad. Sci. USA*, 89, 10915–10919.
-15. Camacho, C. et al. (2009) BLAST+: architecture and applications. *BMC Bioinformatics*, 10, 421.
-16. Sarkar, I.N. et al. (2008) CAOS software for use in character-based DNA barcoding. *Mol. Ecol. Resour.*, 8, 1256–1259.
-17. Fedosov, A.E. et al. (2022) MolD: a software for automated compilation of DNA diagnoses. *Mol. Ecol. Resour.*, 22, 2038–2053.
-18. Saitou, N. & Nei, M. (1987) The neighbor-joining method: a new method for reconstructing phylogenetic trees. *Mol. Biol. Evol.*, 4, 406–425.
-19. Staden, R., Beal, K.F. & Bonfield, J.K. (2000) The Staden package, 1998. *Methods Mol. Biol.*, 132, 115–130.
-20. Sonnhammer, E.L.L. & Durbin, R. (1995) A dot-matrix program with dynamic threshold control suited for genomic DNA and protein sequence analysis. *Gene*, 167, GC1–GC10.
-21. Eddy, S.R. (2011) Accelerated profile HMM searches. *PLoS Comput. Biol.*, 7, e1002195.
+7. Yachdav, G. et al. (2016) MSAViewer: interactive JavaScript visualization of multiple sequence alignments. *Bioinformatics*, 32, 3501–3503.
+8. Ranwez, V. et al. (2011) MACSE: Multiple Alignment of Coding SEquences accounting for frameshifts and stop codons. *PLoS ONE*, 6, e22594.
+9. Kumar, S. et al. (2018) MEGA X: Molecular Evolutionary Genetics Analysis across computing platforms. *Mol. Biol. Evol.*, 35, 1547–1549.
+10. Okonechnikov, K. et al. (2012) Unipro UGENE: a unified bioinformatics toolkit. *Bioinformatics*, 28, 1166–1167.
+11. Li, H. et al. (2009) The Sequence Alignment/Map format and SAMtools. *Bioinformatics*, 25, 2078–2079.
+12. Nicholas, K.B. et al. (1997) GeneDoc: analysis and visualization of genetic variation. *EMBNEW.NEWS*, 4, 14.
+13. Henikoff, S. & Henikoff, J.G. (1992) Amino acid substitution matrices from protein blocks. *Proc. Natl. Acad. Sci. USA*, 89, 10915–10919.
+14. Camacho, C. et al. (2009) BLAST+: architecture and applications. *BMC Bioinformatics*, 10, 421.
+15. Sarkar, I.N. et al. (2008) CAOS software for use in character-based DNA barcoding. *Mol. Ecol. Resour.*, 8, 1256–1259.
+16. Fedosov, A.E. et al. (2022) MolD: a software for automated compilation of DNA diagnoses. *Mol. Ecol. Resour.*, 22, 2038–2053.
+17. Saitou, N. & Nei, M. (1987) The neighbor-joining method: a new method for reconstructing phylogenetic trees. *Mol. Biol. Evol.*, 4, 406–425.
+18. Staden, R., Beal, K.F. & Bonfield, J.K. (2000) The Staden package, 1998. *Methods Mol. Biol.*, 132, 115–130.
+19. Sonnhammer, E.L.L. & Durbin, R. (1995) A dot-matrix program with dynamic threshold control suited for genomic DNA and protein sequence analysis. *Gene*, 167, GC1–GC10.
+20. Eddy, S.R. (2011) Accelerated profile HMM searches. *PLoS Comput. Biol.*, 7, e1002195.
 
 ---
 
