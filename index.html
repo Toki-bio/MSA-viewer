@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>ViewAlign</title>
-    <link rel="stylesheet" href="styles.css?v=137">
+    <link rel="stylesheet" href="styles.css?v=141">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -465,19 +465,44 @@
                                 <div class="cluster-actions">
                                     <button id="biclusterComputeButton" style="flex: 1; background: #0d9488; color: white; border: none; border-radius: 2px; cursor: pointer;" title="Draw row × column rectangles. If groups exist, each rectangle is tagged as supporting a group, sitting inside one, or disagreeing.">Show 2D</button>
                                     <button id="biclusterClearButton" title="Remove the 2D rectangle overlay. Name and letter colours stay until you Clear them in k-mer groups or Diagnostic SNPs.">Clear</button>
-                                    <button id="biclusterGroupRowsButton" title="Click a colored rectangle to stack those sequences (including scattered copies). Undoable.">Group rows</button>
+                                    <button id="biclusterGroupRowsButton" title="Alt+click a colored rectangle to stack those sequences (including scattered copies). Undoable.">Group rows</button>
                                 </div>
-                                <div class="cluster-actions">
-                                    <select id="biclusterPaintMode" title="How to draw copies of a pattern that are not sitting in one contiguous stack. Does not change alignment order.">
-                                        <option value="local_one" title="One rectangle covers every sequence that has this pattern, even if those rows are not next to each other.">All copies, one box</option>
-                                        <option value="local_two" title="The contiguous stack is one rectangle; scattered copies get a second, paler layer.">Stack + copies</option>
-                                        <option value="strict" title="Paint only the contiguous stack. Scattered copies of the same pattern are left unpainted.">Stack only</option>
-                                    </select>
-                                    <label class="cluster-opacity" title="How solid the 2D rectangles are drawn over the alignment.">Opacity
+                                <div class="bicluster-knobs">
+                                    <div class="bicluster-selects">
+                                        <select id="biclusterPaintMode" title="How to draw copies of a pattern that are not sitting in one contiguous stack. Does not change alignment order.">
+                                            <option value="local_one" title="One rectangle covers every sequence that has this pattern, even if those rows are not next to each other.">All copies, one box</option>
+                                            <option value="local_two" title="The contiguous stack is one rectangle; scattered copies get a second, paler layer.">Stack + copies</option>
+                                            <option value="strict" title="Paint only the contiguous stack. Scattered copies of the same pattern are left unpainted.">Stack only</option>
+                                        </select>
+                                        <select id="biclusterHingeFill" title="When a 1-column conserved letter sits inside a rectangle (AAAGAAA), fill it as part of the box or leave a hole.">
+                                            <option value="fill">Conserved: fill</option>
+                                            <option value="hole">Conserved: hole</option>
+                                        </select>
+                                    </div>
+                                    <label class="bicluster-knob" title="How much in-rectangle disagreement is allowed before an adjacent column or extra row is left unboxed. 0% = only perfect edges. Mean over cells vs that rectangle's consensus. Existing bands are not merged.">
+                                        <span class="bicluster-knob-name">Max dirt</span>
+                                        <input type="range" id="biclusterDirt" min="0" max="20" step="1" value="0">
+                                        <span class="bicluster-knob-val"><span id="biclusterDirtVal">0</span>%</span>
+                                    </label>
+                                    <div class="bicluster-knob" title="Which way expansion spends the dirt budget. The mark in the middle is even. Cols spends it on width. Rows spends it on height.">
+                                        <span class="bicluster-knob-name">Expand</span>
+                                        <span class="bicluster-balance">
+                                            <span class="bicluster-end">Cols</span>
+                                            <span class="bicluster-slider">
+                                                <span class="bicluster-tick" aria-hidden="true"></span>
+                                                <input type="range" id="biclusterAxisBias" min="0" max="100" step="10" value="50">
+                                            </span>
+                                            <span class="bicluster-end bicluster-end-rows">Rows</span>
+                                        </span>
+                                        <span class="bicluster-knob-val" id="biclusterAxisBiasVal">even</span>
+                                    </div>
+                                    <label class="bicluster-knob" title="How solid the 2D rectangles are drawn over the alignment.">
+                                        <span class="bicluster-knob-name">Opacity</span>
                                         <input type="range" id="blockMaskOpacity" min="0.1" max="0.9" step="0.05" value="0.45">
+                                        <span class="bicluster-knob-val" id="blockMaskOpacityVal">45%</span>
                                     </label>
                                 </div>
-                                <div id="blockMaskStatus" class="cluster-progress" style="font-size: 10px; color: #555; margin-top: 4px;"></div>
+                                <div id="blockMaskStatus" class="cluster-progress"></div>
                                 <details style="margin-top: 6px;">
                                     <summary style="font-size: 10px; color: #555; cursor: pointer;">Legacy squint mask</summary>
                                     <div style="font-size: 10px; color: #555; margin: 4px 0;">Older overlay. Showing it replaces the current 2D rectangles.</div>
@@ -1238,10 +1263,10 @@ B: -</pre>
     <script src="ab1-parser.js?v=1"></script>
     <script src="chromatogram-viewer.js?v=1"></script>
     <script src="realign-region.js?v=2"></script>
-    <script src="script.js?v=228"></script>
+    <script src="script.js?v=248"></script>
     <script src="tree-draw.js?v=164"></script>
     <script src="block-mask.js?v=1"></script>
-    <script src="block-bicluster.js?v=17"></script>
+    <script src="block-bicluster.js?v=43"></script>
     <script>
     // All functionality moved to script.js
     </script>

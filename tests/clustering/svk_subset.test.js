@@ -147,6 +147,28 @@ function ok(name, cond, detail) {
         tagged.some(t => t.kind === 'inside' || t.kind === 'supports'),
         JSON.stringify(tagged.slice(0, 8)));
 
+    const i564 = sub.findIndex(s => /564/.test(s.id));
+    const motif = 'CCAGAGCTG';
+    function motifAt(b) {
+        const s = b.supporting_bases || '';
+        if (b.col_start === 110 && b.col_end === 118) return s;
+        if (b.col_start <= 110 && b.col_end >= 118) return s.slice(110 - b.col_start, 119 - b.col_start);
+        return '';
+    }
+    const ccag = diag.filter(b => motifAt(b) === motif || (b.supporting_bases || '') === motif ||
+        (b.col_start <= 110 && b.col_end >= 118 && (b.rows || []).length > 0 &&
+            (b.rows || []).every(i => sub[i].seq.slice(110, 119) === motif)));
+    const haveMotif = sub.map((s, i) => s.seq.slice(110, 119) === motif ? i : -1).filter(i => i >= 0);
+    ok('CCAGAGCTG rectangle exists', ccag.length >= 1,
+        'diag=' + typed.slice(0, 8).map(t => t.cols[0] + '-' + t.cols[1] + ' n=' + t.n).join('; '));
+    ok('CCAGAGCTG rectangle does not include K1_input_564',
+        i564 >= 0 && ccag.every(b => (b.rows || []).indexOf(i564) < 0),
+        ccag.map(b => (b.rows || []).map(ri => sub[ri].id).join(',')).join(' | '));
+    ok('CCAGAGCTG rectangle is the sequences that have that motif',
+        ccag.some(b => haveMotif.every(i => (b.rows || []).indexOf(i) >= 0) &&
+            (b.rows || []).every(i => haveMotif.indexOf(i) >= 0)),
+        'want ' + haveMotif.join(',') + ' got ' + ccag.map(b => (b.rows || []).join(',')).join(' | '));
+
     const auto4 = cctx.SINEClusterer.suggestGroupCount(
         [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.20, 0.21, 0.22], 10);
     ok('suggestGroupCount cuts at the similarity jump (k=4)', auto4 === 4, 'k=' + auto4);

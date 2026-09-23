@@ -44,8 +44,19 @@
     sizeSmallMedium: 11,
     sizeMediumLarge: 20,
     minOccurrences: 3,
-    FEATURE_BRIDGE: 2,       // small gaps in the diagnostic-column list may join one rectangle; a longer break ends it
-    CONSERVED_PURITY: 0.8    // full-height conserved run: same cutoff Cluster Now uses to skip a column as non-diagnostic
+    FEATURE_BRIDGE: 2,       // small gaps in the diagnostic-column list may join one rectangle; a longer break ends it. A conserved column between two long different-base runs is a hinge (demo 27); interior conserved letters in a short mixed motif stay in one box (CCAGAGCTG).
+    CONSERVED_PURITY: 0.8,   // full-height conserved run: same cutoff Cluster Now uses to skip a column as non-diagnostic
+    paintConservedFlanks: false, // Show 2D: uniform columns stay unpainted (no green full-height bands)
+    MOTIF_SCAN_MAX_WIDTH: 20,   // exact shared literal windows (SVK CCAGAGCTG spans conserved column breaks)
+    MOTIF_SCAN_MAX_OUTPUT: 40,  // cap motif rectangles so Show 2D stays readable on long alignments
+    maxRectDirt: 0,             // Show 2D: max mean cell-disagreement vs rect consensus (0 = tight, no edge expansion)
+    gapDirtPenalty: 2,          // in-span gap vs a base costs this many mismatch units; nuc vs nuc is 1
+    expandRowWeight: 0.5        // 0 = columns only, 1 = rows only; 0.5 = cheaper dirt step wins, then the other axis if budget remains
+    // Motif scan stops at globally conserved columns (GTA does not swallow GTAGT).
+    // Dirt expansion may walk through conserved glue to pick up unboxed columns
+    // (GTA left-joins onto A). It will not merge two existing bands (twin windows
+    // through TTTTT stay separate) and will not grow into a column already boxed
+    // on intersecting rows (AAC must not stack under the taller C).
   };
   var STATE_LETTER = 'ACGT-';
 
@@ -1795,7 +1806,31 @@
     return _sortedRows(rows).join(',');
   }
 
-  function _growFeatureRanges(feats, minW, bridge) {
+  function _diagnosticGapIsConservedHinge(A, allRows, spans, featA, featB) {
+    if (!A || !allRows || !spans || !featA || !featB) return false;
+    if (featA.state === featB.state) return false;
+    for (var c = featA.col + 1; c < featB.col; c++) {
+      if (_columnAllSame(A, allRows, c, spans)) return true;
+    }
+    return false;
+  }
+
+  // Split a bridged run at a conserved different-base hinge only when BOTH
+  // sides still meet minW (demo 27: 7A | 6G). Short mixed motifs with
+  // interior conserved letters (CCAGAGCTG) stay one rectangle.
+  function _splitLongHingeRuns(feats, minW, A, allRows, spans) {
+    if (!feats || feats.length < minW * 2) return [feats];
+    for (var i = 1; i < feats.length; i++) {
+      if (!_diagnosticGapIsConservedHinge(A, allRows, spans, feats[i - 1], feats[i])) continue;
+      if (i >= minW && feats.length - i >= minW) {
+        return _splitLongHingeRuns(feats.slice(0, i), minW, A, allRows, spans)
+          .concat(_splitLongHingeRuns(feats.slice(i), minW, A, allRows, spans));
+      }
+    }
+    return [feats];
+  }
+
+  function _growFeatureRanges(feats, minW, bridge, A, allRows, spans) {
     if (!feats || !feats.length) return [];
     var byCol = feats.slice().sort(function (a, b) { return a.col - b.col; });
     var runs = [];
@@ -1808,8 +1843,15 @@
       }
     }
     if (run.length >= minW) runs.push(run);
-    return runs.map(function (r) {
-      return { colStart: r[0].col, colEnd: r[r.length - 1].col, feats: r };
+    var out = [];
+    for (var r = 0; r < runs.length; r++) {
+      var parts = _splitLongHingeRuns(runs[r], minW, A, allRows, spans);
+      for (var p = 0; p < parts.length; p++) {
+        if (parts[p].length >= minW) out.push(parts[p]);
+      }
+    }
+    return out.map(function (part) {
+      return { colStart: part[0].col, colEnd: part[part.length - 1].col, feats: part };
     });
   }
 
@@ -1852,25 +1894,237 @@
     return o;
   }
 
-  function _addRect(rects, seen, A, rows, colStart, colEnd, spans, P, kind, feats) {
+  function _lettersFromFeats(A, rows, feats, spans) {
+    var s = '';
+    for (var i = 0; i < feats.length; i++) {
+      var c = feats[i].col, counts = [0, 0, 0, 0, 0], covered = 0;
+      for (var k = 0; k < rows.length; k++) {
+        var st = _stateAt(A, rows[k], c, spans);
+        if (st < 0) continue;
+        counts[st]++;
+        covered++;
+      }
+      if (!covered) { s += '?'; continue; }
+      var best = feats[i].state;
+      s += STATE_LETTER.charAt(best);
+    }
+    return s;
+  }
+
+  function _diagnosticFeatsForGroup(A, rows, colStart, colEnd, spans, background, opts) {
+    var gsize = rows.length;
+    if (gsize < opts.minSize) return [];
+    var thresh = _qualityThresh(gsize, opts);
+    var gSet = {};
+    for (var i = 0; i < rows.length; i++) gSet[rows[i]] = true;
+    var feats = [];
+    for (var col = colStart; col <= colEnd; col++) {
+      var counts = [0, 0, 0, 0, 0], covered = 0;
+      for (var k = 0; k < rows.length; k++) {
+        var st = _stateAt(A, rows[k], col, spans);
+        if (st < 0) continue;
+        counts[st]++;
+        covered++;
+      }
+      if (covered < opts.minSize) continue;
+      var state = 0;
+      for (var s = 1; s < 5; s++) if (counts[s] > counts[state]) state = s;
+      var inside = counts[state];
+      var inP = (inside / gsize) * 100;
+      var outside = 0, outsidePool = 0;
+      for (var b = 0; b < background.length; b++) {
+        var j = background[b];
+        if (gSet[j]) continue;
+        var st2 = _stateAt(A, j, col, spans);
+        if (st2 < 0) continue;
+        outsidePool++;
+        if (st2 === state) outside++;
+      }
+      if (outsidePool < 1) continue;
+      var outP = (outside / outsidePool) * 100;
+      var qual = Math.max(0, inP - outP);
+      if (outside === 0 && inP >= thresh) feats.push({ col: col, state: state });
+      else if (outside > 0 && qual >= thresh) feats.push({ col: col, state: state });
+    }
+    feats.sort(function (a, b) { return a.col - b.col; });
+    return feats;
+  }
+
+  function _inGroupFeatColumns(A, rows, c0, c1, spans, minH, frac) {
+    var feats = [];
+    for (var col = c0; col <= c1; col++) {
+      var cs = _stretchColumnStats(A, rows, col, spans);
+      if (cs.covered < minH || cs.dominant < 0) continue;
+      if (cs.dominantCount / cs.covered >= frac) feats.push({ col: col, state: cs.dominant });
+    }
+    return feats;
+  }
+
+  function _rowsMatchingDiagnostic(A, pool, feats, spans, frac, minH) {
+    var need = feats.length;
+    var minHits = Math.ceil(need * frac);
+    var out = [];
+    for (var k = 0; k < pool.length; k++) {
+      var i = pool[k];
+      var hits = 0, n = 0;
+      for (var f = 0; f < feats.length; f++) {
+        var st = _stateAt(A, i, feats[f].col, spans);
+        if (st < 0) continue;
+        n++;
+        if (st === feats[f].state) hits++;
+      }
+      if (n < need) continue;
+      if (hits >= minHits && hits / n >= frac) out.push(i);
+    }
+    if (out.length < minH) return null;
+    return out;
+  }
+
+  function _literalBases(A, rows, c0, c1, spans) {
+    var s = '';
+    for (var c = c0; c <= c1; c++) {
+      var st0 = _stateAt(A, rows[0], c, spans);
+      if (st0 < 0) return '';
+      for (var i = 1; i < rows.length; i++) {
+        if (_stateAt(A, rows[i], c, spans) !== st0) return '';
+      }
+      s += STATE_LETTER.charAt(st0);
+    }
+    return s;
+  }
+
+  function _addRect(rects, seen, A, rows, colStart, colEnd, spans, P, kind, feats, meta) {
     if (!rows || rows.length < 2) return;
     var minH = Math.max(2, P.minSize || P.MIN_BLOCK_ROWS || 3);
     if (rows.length < minH) return;
     if (colEnd < colStart) return;
-    var key = _rowKey(rows) + ':' + colStart + '-' + colEnd;
+    meta = meta || {};
+    var paintFeats = feats || [];
+    var outC0 = meta.literalColStart != null ? meta.literalColStart : colStart;
+    var outC1 = meta.literalColEnd != null ? meta.literalColEnd : colEnd;
+    if (paintFeats.length && meta.literalColStart == null) {
+      outC0 = paintFeats[0].col;
+      outC1 = paintFeats[paintFeats.length - 1].col;
+    }
+    var key = _rowKey(rows) + ':' + outC0 + '-' + outC1;
     if (seen[key]) return;
     seen[key] = true;
-    var coh = blockCoherence(A, rows, colStart, colEnd, spans, P);
-    if (kind !== 'conserved' && (coh == null || coh < 0.7)) return;
+    var diagCols = paintFeats.length ? paintFeats.map(function (f) { return f.col; }) : null;
+    var coh = diagCols
+      ? _columnListCoherence(A, rows, diagCols, spans, P)
+      : blockCoherence(A, rows, outC0, outC1, spans, P);
+    var sb = meta.literalBases || '';
+    if (!sb && paintFeats.length) sb = _lettersFromFeats(A, rows, paintFeats, spans);
+    else if (!sb) sb = _dominantLetters(A, rows, outC0, outC1, spans);
     rects.push({
       rows: _sortedRows(rows),
-      colStart: colStart,
-      colEnd: colEnd,
+      colStart: outC0,
+      colEnd: outC1,
       kind: kind,
-      feats: feats || [],
+      feats: paintFeats,
       coherence: coh,
-      supporting_bases: _dominantLetters(A, rows, colStart, colEnd, spans)
+      supporting_bases: sb
     });
+  }
+
+  function _stateAt(A, row, col, spans) {
+    var sp = spans[row];
+    if (sp[0] === -1 || col < sp[0] || col > sp[1]) return -1;
+    var v = A[row][col];
+    return (v === GAP) ? 4 : v;
+  }
+
+  function _patternFromSeed(A, seed, colStart, colEnd, spans, minCover) {
+    var pattern = [];
+    for (var c = colStart; c <= colEnd; c++) {
+      var counts = [0, 0, 0, 0, 0], covered = 0;
+      for (var k = 0; k < seed.length; k++) {
+        var st = _stateAt(A, seed[k], c, spans);
+        if (st < 0) continue;
+        counts[st]++;
+        covered++;
+      }
+      if (covered < minCover) { pattern.push(-1); continue; }
+      var best = 0;
+      for (var s = 1; s < 5; s++) if (counts[s] > counts[best]) best = s;
+      pattern.push(best);
+    }
+    return pattern;
+  }
+
+  function _rowsMatchingStretch(A, pool, colStart, colEnd, pattern, spans, frac, minH, minCover) {
+    var out = [];
+    for (var k = 0; k < pool.length; k++) {
+      var i = pool[k];
+      var n = 0, hits = 0;
+      for (var c = colStart; c <= colEnd; c++) {
+        var pat = pattern[c - colStart];
+        if (pat < 0) continue;
+        var st = _stateAt(A, i, c, spans);
+        if (st < 0) continue;
+        n++;
+        if (st === pat) hits++;
+      }
+      if (n >= minCover && (hits / n) >= frac) out.push(i);
+    }
+    if (out.length < minH) return null;
+    return out;
+  }
+
+  // Stretch membership may treat an in-span deletion as the pattern.
+  // columnStats refuses gap-as-dominant (split-and-merge coherence);
+  // a shared internal gap run is a real 2D rectangle.
+  function _stretchColumnStats(A, rows, col, spans) {
+    var counts = [0, 0, 0, 0, 0], covered = 0;
+    for (var k = 0; k < rows.length; k++) {
+      var st = _stateAt(A, rows[k], col, spans);
+      if (st < 0) continue;
+      counts[st]++;
+      covered++;
+    }
+    if (!covered) return { covered: 0, dominant: -1, dominantCount: 0 };
+    var best = 0;
+    for (var s = 1; s < 5; s++) if (counts[s] > counts[best]) best = s;
+    return { covered: covered, dominant: best, dominantCount: counts[best] };
+  }
+
+  function _columnMeetsQuality(A, rows, col, spans, minH, frac) {
+    var cs = _stretchColumnStats(A, rows, col, spans);
+    if (cs.covered < minH || cs.dominant < 0) return false;
+    return (cs.dominantCount / cs.covered) >= frac;
+  }
+
+  function _trimStretch(A, rows, colStart, colEnd, spans, minH, frac, minW) {
+    while (colStart <= colEnd && !_columnMeetsQuality(A, rows, colStart, spans, minH, frac)) colStart++;
+    while (colEnd >= colStart && !_columnMeetsQuality(A, rows, colEnd, spans, minH, frac)) colEnd--;
+    if (colEnd - colStart + 1 < minW) return null;
+    return { colStart: colStart, colEnd: colEnd };
+  }
+
+  // In-group agrees on these columns; outsiders do not. Rows must match
+  // on every diagnostic column (not the whole bridged window).
+  function _localRectangleFromStretch(A, seed, pool, colStart, colEnd, spans, P, allRows) {
+    var opts = _clusterOptsFrom(P);
+    var minH = opts.minSize;
+    var minW = opts.minPerfect || 5;
+    if (!seed || seed.length < minH || colEnd < colStart || !allRows) return null;
+    var diag = _diagnosticFeatsForGroup(A, seed, colStart, colEnd, spans, allRows, opts);
+    if (diag.length < minW) return null;
+    var frac = _qualityThresh(seed.length, opts) / 100;
+    if (frac < 0.99) frac = Math.max(frac, 0.85);
+    var rows = _rowsMatchingDiagnostic(A, pool, diag, spans, frac, minH);
+    if (!rows) return null;
+    diag = _diagnosticFeatsForGroup(A, rows, colStart, colEnd, spans, allRows, opts);
+    if (diag.length < minW) return null;
+    rows = _rowsMatchingDiagnostic(A, rows, diag, spans, frac, minH);
+    if (!rows) return null;
+    var c0 = diag[0].col, c1 = diag[diag.length - 1].col;
+    return {
+      rows: _sortedRows(rows),
+      colStart: c0,
+      colEnd: c1,
+      feats: diag
+    };
   }
 
   function _emitGroupRanges(rects, seen, A, group, spans, P, kind, allRows) {
@@ -1878,16 +2132,733 @@
     var bridge = P.FEATURE_BRIDGE != null ? P.FEATURE_BRIDGE : 2;
     var opts = _clusterOptsFrom(P);
     var nCols = A[0].length;
-    var feats = _expandGroupFeatures(A, group, 0, nCols - 1, spans, allRows, opts);
-    var nuc = [];
-    for (var fi = 0; fi < feats.length; fi++) {
-      if (feats[fi].state !== GAP && feats[fi].state !== 4) nuc.push(feats[fi]);
+    var lo = nCols - 1, hi = 0;
+    var gf = group.feats || [];
+    for (var gi = 0; gi < gf.length; gi++) {
+      if (gf[gi].col < lo) lo = gf[gi].col;
+      if (gf[gi].col > hi) hi = gf[gi].col;
     }
-    if (nuc.length < minW) return;
-    var ranges = _growFeatureRanges(nuc, minW, bridge);
+    if (gf.length) {
+      lo = Math.max(0, lo - bridge);
+      hi = Math.min(nCols - 1, hi + bridge);
+    } else {
+      lo = 0;
+      hi = nCols - 1;
+    }
+    var diag = _diagnosticFeatsForGroup(A, group.rows, lo, hi, spans, allRows, opts);
+    if (!diag || diag.length < minW) return;
+    var ranges = _growFeatureRanges(diag, minW, bridge, A, allRows, spans);
+    var cap = Math.ceil(allRows.length * 0.8);
     for (var i = 0; i < ranges.length; i++) {
-      _addRect(rects, seen, A, group.rows, ranges[i].colStart, ranges[i].colEnd, spans, P, kind, ranges[i].feats);
+      var local = _localRectangleFromStretch(A, group.rows, allRows,
+        ranges[i].colStart, ranges[i].colEnd, spans, P, allRows);
+      if (!local || local.rows.length >= cap) continue;
+      _addRect(rects, seen, A, local.rows, local.colStart, local.colEnd, spans, P, kind, local.feats);
     }
+  }
+
+  function _literalExclusive(A, rows, c0, c1, spans, allRows) {
+    var lit = _literalBases(A, rows, c0, c1, spans);
+    if (!lit || lit.length !== (c1 - c0 + 1)) return false;
+    var gSet = {};
+    for (var i = 0; i < rows.length; i++) gSet[rows[i]] = true;
+    for (var b = 0; b < allRows.length; b++) {
+      var j = allRows[b];
+      if (gSet[j]) continue;
+      var other = '';
+      var ok = true;
+      for (var c = c0; c <= c1; c++) {
+        var st = _stateAt(A, j, c, spans);
+        if (st < 0) { ok = false; break; }
+        other += STATE_LETTER.charAt(st);
+      }
+      if (ok && other === lit) return false;
+    }
+    return true;
+  }
+
+  function _trimConservedEnds(A, allRows, spans, c0, c1) {
+    while (c1 > c0 && _columnAllSame(A, allRows, c1, spans)) c1--;
+    while (c0 < c1 && _columnAllSame(A, allRows, c0, spans)) c0++;
+    return { c0: c0, c1: c1 };
+  }
+
+  function _bestMotifWindow(A, rows, c0, c1, spans, allRows, P) {
+    var opts = _clusterOptsFrom(P);
+    var minW = P.minPerfect || 5;
+    var bridge = P.FEATURE_BRIDGE != null ? P.FEATURE_BRIDGE : 2;
+    var best = null;
+    for (var end = c0 + minW - 1; end <= c1; end++) {
+      for (var start = c0; start <= end - minW + 1; start++) {
+        var lit = _literalBases(A, rows, start, end, spans);
+        if (!lit || lit.length < minW) continue;
+        var diag = _diagnosticFeatsForGroup(A, rows, start, end, spans, allRows, opts);
+        if (diag.length < minW) continue;
+        var maxGap = 0;
+        for (var gi = 1; gi < diag.length; gi++) {
+          var g = diag[gi].col - diag[gi - 1].col - 1;
+          if (g > maxGap) maxGap = g;
+        }
+        if (maxGap > bridge) continue;
+        var litLen = end - start + 1;
+        var need = Math.min(litLen, Math.max(minW, Math.ceil(litLen * 0.55)));
+        if (diag.length < need) continue;
+        var score = diag.length * 1000 - litLen;
+        if (!best || score > best.score) best = { start: start, end: end, diag: diag, lit: lit, score: score };
+      }
+    }
+    return best;
+  }
+
+  function _tryAddMotifRect(A, allRows, spans, P, rects, seen, seed, c0, c1) {
+    var minH = Math.max(2, P.minSize || P.MIN_BLOCK_ROWS || 3);
+    var minW = P.minPerfect || 5;
+    var cap = Math.ceil(allRows.length * 0.8);
+    if (seed.length < minH || seed.length >= allRows.length || seed.length >= cap) return;
+    var opts = _clusterOptsFrom(P);
+    var bridge = P.FEATURE_BRIDGE != null ? P.FEATURE_BRIDGE : 2;
+    var trimmed = _trimConservedEnds(A, allRows, spans, c0, c1);
+    if ((P.minPerfect || 5) <= 3 &&
+        trimmed.c1 - trimmed.c0 + 1 >= minW &&
+        _literalExclusive(A, seed, trimmed.c0, trimmed.c1, spans, allRows)) {
+      var feats = [];
+      for (var tc = trimmed.c0; tc <= trimmed.c1; tc++) {
+        var tst = _stateAt(A, seed[0], tc, spans);
+        if (tst < 0) { feats = []; break; }
+        feats.push({ col: tc, state: tst });
+      }
+      if (feats.length >= minW) {
+        _addRect(rects, seen, A, seed, trimmed.c0, trimmed.c1, spans, P, 'motif', feats, {
+          literalColStart: trimmed.c0,
+          literalColEnd: trimmed.c1,
+          literalBases: _literalBases(A, seed, trimmed.c0, trimmed.c1, spans)
+        });
+        return;
+      }
+    }
+    var win = _bestMotifWindow(A, seed, c0, c1, spans, allRows, P);
+    if (win && win.diag.length >= minW && seed.length >= minH && seed.length < cap) {
+      _addRect(rects, seen, A, seed, win.start, win.end, spans, P, 'motif', win.diag, {
+        literalColStart: win.start,
+        literalColEnd: win.end,
+        literalBases: win.lit
+      });
+      return;
+    }
+    var local = _localRectangleFromStretch(A, seed, allRows, c0, c1, spans, P, allRows);
+    if (!local || local.rows.length >= cap) return;
+    var frac = _qualityThresh(local.rows.length, opts) / 100;
+    if (frac < 0.99) frac = Math.max(frac, 0.85);
+    if (!local.feats || local.feats.length < minW) return;
+    var litFull = _literalBases(A, local.rows, c0, c1, spans);
+    if (litFull && litFull.length >= minW) {
+      var diagInLit = [];
+      for (var di = 0; di < local.feats.length; di++) {
+        if (local.feats[di].col >= c0 && local.feats[di].col <= c1) diagInLit.push(local.feats[di]);
+      }
+      var maxGap = 0;
+      for (var gi = 1; gi < diagInLit.length; gi++) {
+        var gap = diagInLit[gi].col - diagInLit[gi - 1].col - 1;
+        if (gap > maxGap) maxGap = gap;
+      }
+      var litLen = c1 - c0 + 1;
+      var needDiag = Math.min(litLen, Math.max(minW, Math.ceil(litLen * 0.55)));
+      if (maxGap <= bridge && diagInLit.length >= minW && diagInLit.length >= needDiag) {
+        _addRect(rects, seen, A, local.rows, c0, c1, spans, P, 'motif', diagInLit, {
+          literalColStart: c0,
+          literalColEnd: c1,
+          literalBases: litFull
+        });
+        return;
+      }
+    }
+    var bands = _growFeatureRanges(local.feats, minW, bridge, A, allRows, spans);
+    for (var bi = 0; bi < bands.length; bi++) {
+      var band = bands[bi];
+      var rC0 = band.colStart;
+      var rC1 = band.colEnd;
+      litLen = rC1 - rC0 + 1;
+      if (band.feats.length < minW) continue;
+      needDiag = Math.min(litLen, Math.max(minW, Math.ceil(litLen * 0.55)));
+      if (band.feats.length < needDiag) continue;
+      var lit = _literalBases(A, local.rows, rC0, rC1, spans);
+      if (!lit || lit.length < minW) continue;
+      _addRect(rects, seen, A, local.rows, rC0, rC1, spans, P, 'motif', band.feats, {
+        literalColStart: rC0,
+        literalColEnd: rC1,
+        literalBases: lit
+      });
+    }
+  }
+
+  function _featColKey(feats) {
+    if (!feats || !feats.length) return '';
+    return feats.map(function (f) { return f.col + ':' + f.state; }).join(',');
+  }
+
+  /** One painted layer per row-set × diagnostic columns; motif loses to diagnostic. */
+  function _dedupePaintRectangles(rects) {
+    var rank = { diagnostic: 3, nested: 2, leftover: 1, motif: 0 };
+    var bestIdx = {};
+    for (var i = 0; i < rects.length; i++) {
+      var r = rects[i];
+      if (r.kind === 'conserved') continue;
+      var key = _rowKey(r.rows) + '|' + _featColKey(r.feats);
+      var prevI = bestIdx[key];
+      if (prevI == null || (rank[r.kind] || 0) > (rank[rects[prevI].kind] || 0)) bestIdx[key] = i;
+    }
+    var keep = {};
+    Object.keys(bestIdx).forEach(function (k) { keep[bestIdx[k]] = true; });
+    var out = [];
+    for (var j = 0; j < rects.length; j++) {
+      if (rects[j].kind === 'conserved' || keep[j]) out.push(rects[j]);
+    }
+    return out;
+  }
+
+  function _featColSet(feats) {
+    var s = {};
+    if (!feats) return s;
+    for (var i = 0; i < feats.length; i++) s[feats[i].col] = true;
+    return s;
+  }
+
+  /** Motif layers that repeat a diagnostic find add clutter only. */
+  function _dropMotifsCoveredByDiagnostic(rects) {
+    var diag = [];
+    for (var i = 0; i < rects.length; i++) {
+      var k = rects[i].kind;
+      if (k === 'diagnostic' || k === 'nested') diag.push(rects[i]);
+    }
+    return rects.filter(function (r) {
+      if (r.kind !== 'motif') return true;
+      var rk = _rowKey(r.rows);
+      var mCols = _featColSet(r.feats);
+      var mKeys = Object.keys(mCols);
+      if (!mKeys.length) return true;
+      for (var d = 0; d < diag.length; d++) {
+        if (_rowKey(diag[d].rows) !== rk) continue;
+        var dCols = _featColSet(diag[d].feats);
+        var inter = 0;
+        for (var mi = 0; mi < mKeys.length; mi++) {
+          if (dCols[mKeys[mi]]) inter++;
+        }
+        if (inter / mKeys.length >= 0.85) return false;
+      }
+      return true;
+    });
+  }
+
+  /** Fewer rows whose columns sit mostly inside a taller find: tag+GTA on 3 La
+   *  rows under the 8-row GTA, not a second type. A longer nested C×G on a
+   *  subset (demo 04) extends well past the parent, so it is kept. */
+  function _dropContainedRowSubsetRects(rects) {
+    return rects.filter(function (a) {
+      if (a.kind === 'conserved' || a.rows === 'all' || !Array.isArray(a.rows)) return true;
+      var wa = a.colEnd - a.colStart + 1;
+      if (wa < 1) return true;
+      for (var i = 0; i < rects.length; i++) {
+        var b = rects[i];
+        if (b === a || b.kind === 'conserved' || !Array.isArray(b.rows)) continue;
+        if (!_isProperSubset(a.rows, b.rows)) continue;
+        var lo = Math.max(a.colStart, b.colStart);
+        var hi = Math.min(a.colEnd, b.colEnd);
+        if (hi < lo) continue;
+        var ov = hi - lo + 1;
+        if (ov >= wa * 0.75) return false;
+      }
+      return true;
+    });
+  }
+
+  // Mosaic partners (AAA vs GTG, C vs A) may differ by a hinge column and
+  // must co-occur. A minSize exclusive motif that is only shifted by a tag
+  // column in a locus already claimed by a larger find (TTTA vs GTA/AAC)
+  // is a competing split for another threshold, not a second type.
+  function _dropShiftedLocusCompetitors(rects, minH) {
+    minH = minH || 3;
+    return rects.filter(function (a) {
+      if (a.kind !== 'motif' || a.rows === 'all' || !Array.isArray(a.rows)) return true;
+      if (a.rows.length > minH) return true;
+      var wa = a.colEnd - a.colStart + 1;
+      if (wa < 1) return true;
+      for (var i = 0; i < rects.length; i++) {
+        var b = rects[i];
+        if (b === a || b.kind === 'conserved' || !Array.isArray(b.rows)) continue;
+        if (b.rows.length <= a.rows.length) continue;
+        if (_intersectRows(a.rows, b.rows).length) continue;
+        var lo = Math.max(a.colStart, b.colStart);
+        var hi = Math.min(a.colEnd, b.colEnd);
+        if (hi < lo) continue;
+        if (a.colStart === b.colStart && a.colEnd === b.colEnd) continue;
+        var ov = hi - lo + 1;
+        if (ov >= wa * 0.75) return false;
+      }
+      return true;
+    });
+  }
+
+  // Same rows and overlapping columns are one locus painted twice
+  // (SVK: CCAGAGCTG emitted as a wide leftover plus two shifted motifs).
+  // Disjoint windows on those rows stay. Keep the wider span.
+  function _dropSameRowOverlaps(rects) {
+    var drop = {};
+    for (var i = 0; i < rects.length; i++) {
+      var a = rects[i];
+      if (drop[i] || a.kind === 'conserved' || a.rows === 'all' || !Array.isArray(a.rows)) continue;
+      var wa = a.colEnd - a.colStart + 1;
+      var keyA = _rowKey(a.rows);
+      for (var j = i + 1; j < rects.length; j++) {
+        if (drop[j]) continue;
+        var b = rects[j];
+        if (b.kind === 'conserved' || b.rows === 'all' || !Array.isArray(b.rows)) continue;
+        if (_rowKey(b.rows) !== keyA) continue;
+        var lo = Math.max(a.colStart, b.colStart);
+        var hi = Math.min(a.colEnd, b.colEnd);
+        if (hi < lo) continue;
+        var wb = b.colEnd - b.colStart + 1;
+        var ov = hi - lo + 1;
+        if (ov < Math.min(wa, wb) * 0.5) continue;
+        var lose = wa !== wb ? (wa < wb ? i : j) : ((a.coherence || 0) >= (b.coherence || 0) ? j : i);
+        drop[lose] = true;
+        if (lose === i) break;
+      }
+    }
+    if (!Object.keys(drop).length) return rects;
+    return rects.filter(function (_r, idx) { return !drop[idx]; });
+  }
+
+  /** Fewer rows + 1–2 extra edge columns = ragged edge of the wider group, not a new type. */
+  function _dropRaggedRowSubsetRects(rects) {
+    return rects.filter(function (a) {
+      if (a.kind === 'conserved') return true;
+      for (var i = 0; i < rects.length; i++) {
+        var b = rects[i];
+        if (b === a || b.kind === 'conserved') continue;
+        if (!_isProperSubset(a.rows, b.rows)) continue;
+        if (a.colStart > b.colStart || a.colEnd < b.colEnd) continue;
+        var extra = (b.colStart - a.colStart) + (a.colEnd - b.colEnd);
+        if (extra >= 1 && extra <= 2 && (b.colEnd - b.colStart + 1) >= 5) return false;
+      }
+      return true;
+    });
+  }
+
+  function _isTightLiteralMotif(m) {
+    var sb = m.supporting_bases || '';
+    var w = m.colEnd - m.colStart + 1;
+    return sb.length === w && w >= 3 && w <= 14 && m.rows.length >= 3 && m.rows.length <= 14;
+  }
+
+  function _pruneMotifRectangles(rects, maxOut) {
+    var motifs = [];
+    var tightMotifs = [];
+    var rest = [];
+    for (var i = 0; i < rects.length; i++) {
+      if (rects[i].kind === 'motif') {
+        if (_isTightLiteralMotif(rects[i])) tightMotifs.push(rects[i]);
+        else motifs.push(rects[i]);
+      } else rest.push(rects[i]);
+    }
+    motifs.sort(function (a, b) {
+      var sa = a.rows.length * (a.colEnd - a.colStart + 1);
+      var sb = b.rows.length * (b.colEnd - b.colStart + 1);
+      return sb - sa;
+    });
+    var kept = [];
+    for (var mi = 0; mi < motifs.length; mi++) {
+      var m = motifs[mi];
+      var mKey = _rowKey(m.rows);
+      var dropWide = false;
+      for (var oi = 0; oi < motifs.length; oi++) {
+        var o = motifs[oi];
+        if (o === m || _rowKey(o.rows) !== mKey) continue;
+        // Same row-set: prefer the tighter column span (readable paint, keeps CCAGAGCTG).
+        if (m.colStart <= o.colStart && m.colEnd >= o.colEnd &&
+            (m.colEnd - m.colStart) > (o.colEnd - o.colStart)) {
+          dropWide = true;
+          break;
+        }
+      }
+      if (!dropWide) kept.push(m);
+    }
+    var deduped = [];
+    kept.sort(function (a, b) {
+      var wa = a.colEnd - a.colStart + 1;
+      var wb = b.colEnd - b.colStart + 1;
+      if (wa !== wb) return wb - wa;
+      return (b.rows.length - a.rows.length);
+    });
+    for (var ki = 0; ki < kept.length; ki++) {
+      var cand = kept[ki];
+      var cKey = _rowKey(cand.rows);
+      var overlap = false;
+      for (var di = 0; di < deduped.length; di++) {
+        var d = deduped[di];
+        if (_rowKey(d.rows) !== cKey) continue;
+        var lo = Math.max(cand.colStart, d.colStart);
+        var hi = Math.min(cand.colEnd, d.colEnd);
+        if (hi < lo) continue;
+        var ov = hi - lo + 1;
+        var wc = cand.colEnd - cand.colStart + 1;
+        var wd = d.colEnd - d.colStart + 1;
+        if (ov >= Math.min(wc, wd) * 0.5) { overlap = true; break; }
+      }
+      if (!overlap) deduped.push(cand);
+    }
+    kept = deduped;
+    function highValueMotif(m) {
+      var w = m.colEnd - m.colStart + 1;
+      var minW = 5;
+      if (m.rows.length < 3 || w < minW) return false;
+      if (m.rows.length > 14) return false;
+      return (m.feats || []).length >= minW;
+    }
+    var out = kept.slice();
+    if (maxOut > 0 && out.length > maxOut) {
+      out.sort(function (a, b) {
+        var sa = a.rows.length * (a.colEnd - a.colStart + 1) * (a.coherence || 1);
+        var sb = b.rows.length * (b.colEnd - b.colStart + 1) * (b.coherence || 1);
+        return sb - sa;
+      });
+      var head = out.slice(0, maxOut);
+      var pin = [];
+      for (var pi = maxOut; pi < out.length; pi++) {
+        if (!highValueMotif(out[pi])) continue;
+        var dup = head.some(function (h) {
+          return h.colStart === out[pi].colStart && h.colEnd === out[pi].colEnd &&
+            _rowKey(h.rows) === _rowKey(out[pi].rows);
+        });
+        if (!dup) pin.push(out[pi]);
+      }
+      out = head.concat(pin);
+    }
+    var tightSeen = {};
+    var tightOut = [];
+    tightMotifs.sort(function (a, b) {
+      var wa = a.colEnd - a.colStart + 1;
+      var wb = b.colEnd - b.colStart + 1;
+      if (wa !== wb) return wb - wa;
+      return (b.rows.length - a.rows.length);
+    });
+    for (var ti = 0; ti < tightMotifs.length; ti++) {
+      var tm = tightMotifs[ti];
+      var tk = _rowKey(tm.rows) + ':' + tm.colStart + '-' + tm.colEnd;
+      if (tightSeen[tk]) continue;
+      var contained = false;
+      for (var tj = 0; tj < tightOut.length; tj++) {
+        var longer = tightOut[tj];
+        if (_rowKey(longer.rows) !== _rowKey(tm.rows)) continue;
+        if (longer.colStart <= tm.colStart && longer.colEnd >= tm.colEnd &&
+            (longer.colEnd - longer.colStart) > (tm.colEnd - tm.colStart)) {
+          contained = true;
+          break;
+        }
+      }
+      if (contained) continue;
+      tightSeen[tk] = true;
+      tightOut.push(tm);
+    }
+    return rest.concat(out).concat(tightOut);
+  }
+
+  function _rowsShareLiteral(A, seed, c0, width, spans) {
+    if (c0 + width > A[0].length) return false;
+    for (var c = c0; c < c0 + width; c++) {
+      var st0 = _stateAt(A, seed[0], c, spans);
+      if (st0 < 0) return false;
+      for (var i = 1; i < seed.length; i++) {
+        if (_stateAt(A, seed[i], c, spans) !== st0) return false;
+      }
+    }
+    return true;
+  }
+
+  function _rowsWithFullLiteral(A, seed, c0, c1, spans) {
+    if (!seed.length) return seed;
+    var out = [seed[0]];
+    for (var i = 1; i < seed.length; i++) {
+      var r = seed[i];
+      var ok = true;
+      for (var c = c0; c <= c1; c++) {
+        var a = _stateAt(A, seed[0], c, spans);
+        var b = _stateAt(A, r, c, spans);
+        if (a < 0 || b < 0 || a !== b) { ok = false; break; }
+      }
+      if (ok) out.push(r);
+    }
+    return out;
+  }
+
+  // One emit per (start column, row-set): grow literal width, then diagnostic-localize.
+  function _scanSharedMotifRectangles(A, allRows, spans, P, rects, seen) {
+    var minH = Math.max(2, P.minSize || P.MIN_BLOCK_ROWS || 3);
+    var minW = P.minPerfect || 5;
+    var maxW = P.MOTIF_SCAN_MAX_WIDTH != null ? P.MOTIF_SCAN_MAX_WIDTH : 20;
+    var nCols = A[0].length;
+    for (var c0 = 0; c0 + minW <= nCols; c0++) {
+      var c1min = c0 + minW - 1;
+      var seedHasCons = false;
+      for (var sc = c0; sc <= c1min; sc++) {
+        if (_columnAllSame(A, allRows, sc, spans)) { seedHasCons = true; break; }
+      }
+      // A 5-mer that already includes a conserved hinge (AAAA+G) would
+      // then grow into the next contrasting run. Diagnostic paint still
+      // recovers mixed motifs (CCAGAGCTG) whose interior letters are conserved.
+      if (seedHasCons) continue;
+      var byKey = {};
+      for (var ri = 0; ri < allRows.length; ri++) {
+        var r = allRows[ri];
+        var key = '';
+        var ok = true;
+        for (var c = c0; c <= c1min; c++) {
+          var st = _stateAt(A, r, c, spans);
+          if (st < 0) { ok = false; break; }
+          key += STATE_LETTER.charAt(st);
+        }
+        if (!ok) continue;
+        if (!byKey[key]) byKey[key] = [];
+        byKey[key].push(r);
+      }
+      var keys = Object.keys(byKey);
+      for (var ki = 0; ki < keys.length; ki++) {
+        var seed = byKey[keys[ki]];
+        if (seed.length < minH) continue;
+        var w = minW;
+        var tight = _rowsWithFullLiteral(A, seed, c0, c0 + w - 1, spans);
+        if (tight.length < minH) continue;
+        while (w < maxW && c0 + w < nCols) {
+          if (_columnAllSame(A, allRows, c0 + w, spans)) break;
+          var nextTight = _rowsWithFullLiteral(A, seed, c0, c0 + w, spans);
+          if (nextTight.length < minH || !_rowsShareLiteral(A, nextTight, c0, w + 1, spans)) break;
+          w++;
+          tight = nextTight;
+        }
+        var c1lit = c0 + w - 1;
+        tight = _rowsWithFullLiteral(A, seed, c0, c1lit, spans);
+        if (tight.length < minH) continue;
+        _tryAddMotifRect(A, allRows, spans, P, rects, seen, tight, c0, c1lit);
+      }
+    }
+  }
+
+  // Grow a found rectangle onto adjacent non-conserved columns (and, when
+  // expandRowWeight > 0, onto extra rows) while mean cell-dirt stays under
+  // maxRectDirt. Default 0 dirt: no growth. Terminal padding is skipped;
+  // in-span gap vs a base costs gapDirtPenalty (default 2). Conserved
+  // columns may be walked as glue but two existing bands are never merged.
+  var MAX_EXPAND_SIDE = 3;
+  var MAX_EXPAND_ROWS = 4;
+  var MIN_EXPAND_COL_PURITY = 0.5;
+
+  function _columnAllSame(A, rows, col, spans) {
+    var first = -2, n = 0;
+    for (var k = 0; k < rows.length; k++) {
+      var st = _stateAt(A, rows[k], col, spans);
+      if (st < 0) continue;
+      n++;
+      if (first === -2) first = st;
+      else if (st !== first) return false;
+    }
+    return n >= 2;
+  }
+
+  function _outsiderContrast(A, rows, col, spans, allRows, inState) {
+    var gSet = {};
+    for (var i = 0; i < rows.length; i++) gSet[rows[i]] = true;
+    for (var b = 0; b < allRows.length; b++) {
+      var j = allRows[b];
+      if (gSet[j]) continue;
+      var st = _stateAt(A, j, col, spans);
+      if (st < 0) continue;
+      if (st !== inState) return true;
+    }
+    return false;
+  }
+
+  function _rectMeanDirt(A, rows, c0, c1, spans, gapPenalty) {
+    var dirt = 0, n = 0;
+    if (gapPenalty == null) gapPenalty = 2;
+    for (var c = c0; c <= c1; c++) {
+      var cs = _stretchColumnStats(A, rows, c, spans);
+      if (cs.covered < 1 || cs.dominant < 0) continue;
+      var cons = cs.dominant;
+      for (var k = 0; k < rows.length; k++) {
+        var st = _stateAt(A, rows[k], c, spans);
+        if (st < 0) continue;
+        n++;
+        if (st === cons) continue;
+        dirt += (st === GAP || cons === GAP) ? gapPenalty : 1;
+      }
+    }
+    return n ? dirt / n : 1;
+  }
+
+  function _expandCandidate(A, rows, col, spans, allRows, minH) {
+    if (col < 0 || col >= A[0].length) return null;
+    if (_columnAllSame(A, allRows, col, spans)) return null;
+    var cs = _stretchColumnStats(A, rows, col, spans);
+    if (cs.covered < minH || cs.dominant < 0 || cs.dominant > 3) return null;
+    if (cs.dominantCount / cs.covered < MIN_EXPAND_COL_PURITY) return null;
+    if (!_outsiderContrast(A, rows, col, spans, allRows, cs.dominant)) return null;
+    return cs;
+  }
+
+  function _coveredByIntersectingRect(rects, self, col) {
+    for (var i = 0; i < rects.length; i++) {
+      var r = rects[i];
+      if (r === self || r.kind === 'conserved') continue;
+      if (col < r.colStart || col > r.colEnd) continue;
+      if (!_intersectRows(self.rows, r.rows).length) continue;
+      return true;
+    }
+    return false;
+  }
+
+  function _walkDirtTarget(A, rect, dir, rects, spans, allRows, minH, cap, gapPen) {
+    var nCols = A[0].length;
+    var col = (dir < 0 ? rect.colStart : rect.colEnd) + dir;
+    var glue = [];
+    var run = [];
+    var guard = 0;
+    while (col >= 0 && col < nCols && guard++ < 24) {
+      if (_coveredByIntersectingRect(rects, rect, col)) {
+        return run.length ? { col: run[run.length - 1].col, cs: run[run.length - 1].cs, glue: glue, run: run } : null;
+      }
+      if (_columnAllSame(A, allRows, col, spans)) {
+        if (run.length) break;
+        var gst = _stateAt(A, rect.rows[0], col, spans);
+        if (gst < 0) return null;
+        glue.push({ col: col, state: gst });
+        col += dir;
+        continue;
+      }
+      var cs = _expandCandidate(A, rect.rows, col, spans, allRows, minH);
+      if (!cs) break;
+      var far = col;
+      var near0 = dir < 0 ? Math.min(far, rect.colStart) : rect.colStart;
+      var near1 = dir < 0 ? rect.colEnd : Math.max(far, rect.colEnd);
+      if (_rectMeanDirt(A, rect.rows, near0, near1, spans, gapPen) > cap) break;
+      run.push({ col: col, cs: cs });
+      if (run.length >= MAX_EXPAND_SIDE) break;
+      col += dir;
+    }
+    if (!run.length) return null;
+    var last = run[run.length - 1];
+    return { col: last.col, cs: last.cs, glue: glue, run: run };
+  }
+
+  function _applyDirtHit(rect, hit, dir) {
+    if (!rect.feats) rect.feats = [];
+    var add = hit.glue.slice();
+    var run = hit.run && hit.run.length ? hit.run : [{ col: hit.col, cs: hit.cs }];
+    for (var ri = 0; ri < run.length; ri++) {
+      add.push({ col: run[ri].col, state: run[ri].cs.dominant });
+    }
+    add.sort(function (a, b) { return a.col - b.col; });
+    for (var i = 0; i < add.length; i++) {
+      var f = add[i];
+      if (rect.feats.some(function (x) { return x.col === f.col; })) continue;
+      rect.feats.push(f);
+    }
+    rect.feats.sort(function (a, b) { return a.col - b.col; });
+    if (dir < 0) rect.colStart = hit.col;
+    else rect.colEnd = hit.col;
+    var sb = '';
+    for (var k = 0; k < rect.feats.length; k++) sb += STATE_LETTER.charAt(rect.feats[k].state);
+    rect.supporting_bases = sb;
+  }
+
+  function _rowBlockedByOtherRect(rects, self, row) {
+    for (var i = 0; i < rects.length; i++) {
+      var r = rects[i];
+      if (r === self || r.kind === 'conserved' || !Array.isArray(r.rows)) continue;
+      if (r.rows.indexOf(row) < 0) continue;
+      if (r.colEnd < self.colStart || r.colStart > self.colEnd) continue;
+      return true;
+    }
+    return false;
+  }
+
+  // bias 0 = columns cheap, 1 = rows cheap, 0.5 = raw dirt (cheaper axis wins).
+  function _axisScore(kind, dirt, bias) {
+    var colW = 0.5 + bias;
+    var rowW = 0.5 + (1 - bias);
+    return dirt * (kind === 'row' ? rowW : colW);
+  }
+
+  function _columnHitDirt(A, rect, hit, dir, spans, gapPen) {
+    var c0 = dir < 0 ? hit.col : rect.colStart;
+    var c1 = dir < 0 ? rect.colEnd : hit.col;
+    return _rectMeanDirt(A, rect.rows, c0, c1, spans, gapPen);
+  }
+
+  function _tryAddDirtRow(A, rect, rects, spans, allRows, cap, gapPen) {
+    var inSet = {};
+    for (var i = 0; i < rect.rows.length; i++) inSet[rect.rows[i]] = true;
+    var best = -1, bestDirt = cap + 1;
+    for (var j = 0; j < allRows.length; j++) {
+      var row = allRows[j];
+      if (inSet[row]) continue;
+      if (_rowBlockedByOtherRect(rects, rect, row)) continue;
+      var trial = rect.rows.concat([row]);
+      var d = _rectMeanDirt(A, trial, rect.colStart, rect.colEnd, spans, gapPen);
+      if (d <= cap && d < bestDirt) { best = row; bestDirt = d; }
+    }
+    if (best < 0) return null;
+    return { row: best, dirt: bestDirt };
+  }
+
+  function _expandRectsByDirt(A, rects, spans, allRows, P) {
+    var cap = P.maxRectDirt;
+    if (!(cap > 0)) return rects;
+    var minH = Math.max(2, P.minSize || P.MIN_BLOCK_ROWS || 3);
+    var gapPen = P.gapDirtPenalty != null ? P.gapDirtPenalty : 2;
+    var bias = P.expandRowWeight;
+    if (bias == null || isNaN(bias)) bias = 0.5;
+    if (bias < 0) bias = 0;
+    if (bias > 1) bias = 1;
+    var doCols = bias < 0.999;
+    var doRows = bias > 0.001;
+    for (var i = 0; i < rects.length; i++) {
+      var rect = rects[i];
+      if (rect.kind === 'conserved') continue;
+      var leftN = 0, rightN = 0, rowN = 0, grew = true;
+      while (grew) {
+        grew = false;
+        var leftHit = (doCols && leftN < MAX_EXPAND_SIDE)
+          ? _walkDirtTarget(A, rect, -1, rects, spans, allRows, minH, cap, gapPen) : null;
+        var rightHit = (doCols && rightN < MAX_EXPAND_SIDE)
+          ? _walkDirtTarget(A, rect, 1, rects, spans, allRows, minH, cap, gapPen) : null;
+        var rowHit = (doRows && rowN < MAX_EXPAND_ROWS)
+          ? _tryAddDirtRow(A, rect, rects, spans, allRows, cap, gapPen) : null;
+        var options = [];
+        if (leftHit) options.push({ take: 'left', kind: 'col', dirt: _columnHitDirt(A, rect, leftHit, -1, spans, gapPen) });
+        if (rightHit) options.push({ take: 'right', kind: 'col', dirt: _columnHitDirt(A, rect, rightHit, 1, spans, gapPen) });
+        if (rowHit) options.push({ take: 'row', kind: 'row', dirt: rowHit.dirt });
+        if (!options.length) break;
+        options.sort(function (a, b) {
+          var d = _axisScore(a.kind, a.dirt, bias) - _axisScore(b.kind, b.dirt, bias);
+          if (d) return d;
+          var preferRow = bias > 0.5;
+          function rank(t) {
+            if (t === 'row') return preferRow ? 0 : 2;
+            if (t === 'left') return preferRow ? 1 : 0;
+            return preferRow ? 2 : 1;
+          }
+          return rank(a.take) - rank(b.take);
+        });
+        var take = options[0].take;
+        if (take === 'left') { _applyDirtHit(rect, leftHit, -1); leftN++; grew = true; }
+        else if (take === 'right') { _applyDirtHit(rect, rightHit, 1); rightN++; grew = true; }
+        else if (take === 'row') {
+          rect.rows = _sortedRows(rect.rows.concat([rowHit.row]));
+          rowN++;
+          grew = true;
+        }
+      }
+    }
+    return rects;
   }
 
   // Extract overlapping similarity rectangles: Cluster Now groups plus a
@@ -1911,89 +2882,78 @@
       isCons[col] = cov.length >= minH && cs.covered >= minH && cs.dominant >= 0 && (cs.dominantCount / cs.covered) >= consP;
       consCover[col] = isCons[col] ? _coverKey(cov) : '';
     }
-    var c0 = -1;
-    for (col = 0; col <= nCols; col++) {
-      var on = col < nCols && isCons[col];
-      if (c0 >= 0 && (!on || consCover[col] !== consCover[c0])) {
-        var c1 = col - 1;
-        if (c1 >= c0 && (c1 - c0 + 1) >= minW) {
-          var consRows = _coveringRows(allRows, c0, spans);
-          var consFeats = [];
-          for (var cc = c0; cc <= c1; cc++) {
-            var ccs = columnStats(A, consRows, cc, spans);
-            consFeats.push({ col: cc, state: ccs.dominant });
+    if (P.paintConservedFlanks) {
+      var c0 = -1;
+      for (col = 0; col <= nCols; col++) {
+        var on = col < nCols && isCons[col];
+        if (c0 >= 0 && (!on || consCover[col] !== consCover[c0])) {
+          var c1 = col - 1;
+          if (c1 >= c0 && (c1 - c0 + 1) >= minW) {
+            var consRows = _coveringRows(allRows, c0, spans);
+            var consFeats = [];
+            for (var cc = c0; cc <= c1; cc++) {
+              var ccs = columnStats(A, consRows, cc, spans);
+              consFeats.push({ col: cc, state: ccs.dominant });
+            }
+            _addRect(rects, seen, A, consRows, c0, c1, spans, P, 'conserved', consFeats);
           }
-          _addRect(rects, seen, A, consRows, c0, c1, spans, P, 'conserved', consFeats);
+          c0 = -1;
         }
-        c0 = -1;
+        if (on && c0 < 0) c0 = col;
       }
-      if (on && c0 < 0) c0 = col;
     }
 
     function collectFrom(rowPool, colStart, colEnd, kind) {
       if (rowPool.length < minH || colEnd - colStart + 1 < minW) return;
       var avail = rowPool.slice();
-      var opts = _clusterOptsFrom(P, { returnAll: false, relaxUpperBound: false });
+      // Cluster Now caps candidates at half the pool; 2D still needs types
+      // that are a majority in a column window (e.g. A-rich onlyG+bg vs C both+onlyC).
+      var opts = _clusterOptsFrom(P, { returnAll: false, relaxUpperBound: true });
+      var usedRowGroups = {};
       for (var round = 0; round < maxIter && avail.length >= minH; round++) {
-        var group = _findBestDiagnosticGroup(A, allRows, avail, colStart, colEnd, spans, P, opts);
+        opts.returnAll = true;
+        var candidates = _findBestDiagnosticGroup(A, allRows, avail, colStart, colEnd, spans, P, opts);
+        opts.returnAll = false;
+        if (!candidates || !candidates.length) break;
+        candidates.sort(function (a, b) { return b.score - a.score; });
+        var group = null;
+        for (var ci = 0; ci < candidates.length; ci++) {
+          var tryKey = _rowKey(candidates[ci].rows);
+          if (usedRowGroups[tryKey]) continue;
+          group = candidates[ci];
+          break;
+        }
         if (!group) break;
         group = _pruneDiagnosticGroup(A, group, allRows, spans, opts);
         if (!group || group.rows.length < minH) break;
         if (group.rows.length === allRows.length) break;
         if (group.rows.length >= Math.ceil(allRows.length * 0.8)) break;
+        usedRowGroups[_rowKey(group.rows)] = true;
         if (group.rows.length >= avail.length) {
           if ((group.good || 0) < (P.minPerfect || 5)) break;
           _emitGroupRanges(rects, seen, A, group, spans, P, kind, allRows);
           break;
         }
         _emitGroupRanges(rects, seen, A, group, spans, P, kind, allRows);
-        var drop = {};
-        for (var d = 0; d < group.rows.length; d++) drop[group.rows[d]] = true;
-        avail = avail.filter(function (idx) { return !drop[idx]; });
       }
     }
 
     collectFrom(allRows, 0, nCols - 1, 'diagnostic');
 
-    c0 = -1;
-    for (col = 0; col <= nCols; col++) {
-      var open = col < nCols && !isCons[col];
-      if (open && c0 < 0) c0 = col;
-      if (!open && c0 >= 0) {
-        collectFrom(allRows, c0, col - 1, 'diagnostic');
-        c0 = -1;
-      }
-    }
-
-    var diag = [];
-    for (var r = 0; r < rects.length; r++) if (rects[r].kind !== 'conserved') diag.push(rects[r]);
-    for (var i = 0; i < diag.length; i++) {
-      for (var j = i + 1; j < diag.length; j++) {
-        var inter = _intersectRows(diag[i].rows, diag[j].rows);
-        if (inter.length < minH) continue;
-        if (inter.length === diag[i].rows.length && inter.length === diag[j].rows.length) continue;
-        var a0 = diag[i].colStart, a1 = diag[i].colEnd, b0 = diag[j].colStart, b1 = diag[j].colEnd;
-        var gap = (a1 < b0) ? (b0 - a1 - 1) : (b1 < a0) ? (a0 - b1 - 1) : 0;
-        if (gap > bridge) continue;
-        var u0 = Math.min(a0, b0), u1 = Math.max(a1, b1);
-        var thresh = _qualityThresh(inter.length, _clusterOptsFrom(P));
-        var support = 0;
-        var nFeats = [];
-        for (var uc = u0; uc <= u1; uc++) {
-          var ucs = columnStats(A, inter, uc, spans);
-          if (ucs.covered < minH || ucs.dominant < 0) continue;
-          var inP = (ucs.dominantCount / ucs.covered) * 100;
-          if (inP >= thresh) {
-            support++;
-            nFeats.push({ col: uc, state: ucs.dominant });
-          }
+    if (P.paintConservedFlanks) {
+      c0 = -1;
+      for (col = 0; col <= nCols; col++) {
+        var open = col < nCols && !isCons[col];
+        if (open && c0 < 0) c0 = col;
+        if (!open && c0 >= 0) {
+          collectFrom(allRows, c0, col - 1, 'diagnostic');
+          c0 = -1;
         }
-        if (support >= minW) _addRect(rects, seen, A, inter, u0, u1, spans, P, 'nested', nFeats);
       }
     }
 
     var covered = {};
-    for (r = 0; r < rects.length; r++) {
+    for (var r = 0; r < rects.length; r++) {
       if (rects[r].kind === 'conserved') continue;
       for (var rr = 0; rr < rects[r].rows.length; rr++) covered[rects[r].rows[rr]] = true;
     }
@@ -2029,6 +2989,45 @@
       avail = avail.filter(function (idx) { return !drop[idx]; });
     }
 
+    // Nested C×G (and the like) after leftover so a G-block found only
+    // as leftover can still form the both-rectangle with the C-block.
+    var diag = [];
+    for (r = 0; r < rects.length; r++) if (rects[r].kind !== 'conserved') diag.push(rects[r]);
+    for (var i = 0; i < diag.length; i++) {
+      for (var j = i + 1; j < diag.length; j++) {
+        var inter = _intersectRows(diag[i].rows, diag[j].rows);
+        if (inter.length < minH) continue;
+        if (inter.length === diag[i].rows.length && inter.length === diag[j].rows.length) continue;
+        var a0 = diag[i].colStart, a1 = diag[i].colEnd, b0 = diag[j].colStart, b1 = diag[j].colEnd;
+        var gap = (a1 < b0) ? (b0 - a1 - 1) : (b1 < a0) ? (a0 - b1 - 1) : 0;
+        if (gap > bridge) continue;
+        var u0 = Math.min(a0, b0), u1 = Math.max(a1, b1);
+        var thresh = _qualityThresh(inter.length, _clusterOptsFrom(P));
+        var support = 0;
+        for (var uc = u0; uc <= u1; uc++) {
+          var ucs = _stretchColumnStats(A, inter, uc, spans);
+          if (ucs.covered < minH || ucs.dominant < 0) continue;
+          var inP = (ucs.dominantCount / ucs.covered) * 100;
+          if (inP >= thresh) support++;
+        }
+        if (support >= minW) {
+          var nested = _localRectangleFromStretch(A, inter, allRows, u0, u1, spans, P, allRows);
+          if (nested) _addRect(rects, seen, A, nested.rows, nested.colStart, nested.colEnd, spans, P, 'nested', nested.feats);
+        }
+      }
+    }
+
+    _scanSharedMotifRectangles(A, allRows, spans, P, rects, seen);
+    var motifCap = P.MOTIF_SCAN_MAX_OUTPUT != null ? P.MOTIF_SCAN_MAX_OUTPUT : 40;
+    rects = _pruneMotifRectangles(rects, motifCap);
+
+    rects = _dedupePaintRectangles(rects);
+    rects = _dropMotifsCoveredByDiagnostic(rects);
+    rects = _dropRaggedRowSubsetRects(rects);
+    rects = _dropContainedRowSubsetRects(rects);
+    rects = _dropShiftedLocusCompetitors(rects, minH);
+    rects = _dropSameRowOverlaps(rects);
+
     rects = rects.filter(function (a) {
       if (a.rows.length < minH) return false;
       for (var k = 0; k < rects.length; k++) {
@@ -2038,6 +3037,11 @@
       }
       return true;
     });
+
+    rects = _expandRectsByDirt(A, rects, spans, allRows, P);
+    rects = _dropContainedRowSubsetRects(rects);
+    rects = _dropShiftedLocusCompetitors(rects, minH);
+    rects = _dropSameRowOverlaps(rects);
 
     rects.sort(function (a, b) {
       if (a.colStart !== b.colStart) return a.colStart - b.colStart;
@@ -2072,7 +3076,8 @@
         col_end: leaf.colEnd,
         coherence: leaf.coherence,
         kind: leaf.kind,
-        supporting_bases: leaf.supporting_bases || ''
+        supporting_bases: leaf.supporting_bases || '',
+        feats: leaf.feats || []
       };
     });
 

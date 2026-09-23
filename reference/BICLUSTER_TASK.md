@@ -99,10 +99,27 @@ size-tiered (small/medium/large %), same idea as Clustering §4.3.
 Internal gap vs terminal padding: same rule as Display → Variable sites
 (`_computeVarSites`).
 
-**Column extent:** the rectangle's columns are the supporting features
-grown/trimmed to a contiguous range (small gaps in the feature list may
-bridge; a long break ends the rectangle). **Min Features** is the
-minimum number of supporting columns, same role as Cluster Now.
+**Strict rule — when a column is *not* evidence (e.g. demo 04 middle T):**
+Fix a column `j` and a row-set `G` (|G| ≥ Min Size). Let outsiders be
+every other row that has sequence at `j`. Column `j` counts as
+**diagnostic for G** only if there is at least one outsider at `j` and
+either (i) **exclusive:** no outsider shares G's dominant state at `j`,
+with ≥ quality% of G on that state, or (ii) **margin:** (in-group % on
+that state) − (outside % on that state) ≥ the size-tier quality %.
+If **every** row that covers `j` shows the **same** state (full
+agreement at `j`), then for any proper subset G the outsiders who cover
+`j` show that same state too → margin ≈ 0 and exclusivity fails → `j`
+is **never** diagnostic and **must not** be painted for any subset
+rectangle at `j`. That is why a single shared T between an A-block and
+a C-block is not boxed: it is conserved across the whole slice, not
+“these rows vs those rows” at that column.
+
+**Column extent:** the rectangle is those rows × the **diagnostic**
+columns that support the find (contiguous runs may be merged for
+drawing; small gaps in the feature list may bridge; a long break ends
+the band). **Min Features** is the minimum number of diagnostic
+columns, same role as Cluster Now. Row membership is checked on the
+same diagnostic set (not on unrelated columns in a wide window).
 
 **Knobs (must be user-visible, same nature as Clustering):**
 
@@ -294,7 +311,103 @@ Cache: `block-bicluster.js?v=16`, `script.js?v=201`. Checks:
 
 User later confirmed g1–g5, sine-crop, and v7 overlays match.
 
+### Extractive ladder + diagnostic paint (2026-09-20)
+
+Engine: `extractSimilarityRectangles` / `_diagnosticFeatsForGroup` /
+`collectFrom` (overlapping row-sets; groups may exceed half the rows when
+`relaxUpperBound`). Overlay paints **diagnostic columns only** (merged
+bands, not per-letter stripes). Mechanical ladder: `scratch/run_demo_progression.js`
+on `scratch/bicluster_demo_*.fa` (01–10). Demo 04 (`04_nested`):
+A cols 9–15 on `onlyG`+`bg` (A-rich vs C rows), C on `both`+`onlyC`, T/G
+on 3′ runs — middle col 17 T unboxed per strict rule above. Demos 07–10
+add double hinges, a G-bridge between windows, a U-gut splitting bands, and
+quad nested + uniform A-spine; demos **11–15** drop shared ACGT flanks and test
+min-width / border / stagger; **16–20** plant `Tcat`/`K1` headers for
+sequence purity vs Cluster-Now type agreement (inside / supports / discordant).
+Demos **21–30** step up size (32–40 rows), triple windows, nested 28/30,
+gaps, interleave, five-stripe stress, CCAG-shaped motif plant (`29`). **32**
+(`bicluster_demo_32_bridge_ladder.fa`): 16-row isolation — twin windows,
+uniform bridges unpainted, ≤6 overlay layers (readability gate). **33**
+(`bicluster_demo_33_hinge_inside.fa`) is the next defect, not more rows:
+same layout as 32, one conserved G inside the left A/C band. Overlay must
+leave a hole at that column and stay ≤8 layers (SVK CCAGAGCTG hinge in
+miniature). Difficulty rungs after 21/32 are *defect types*, not size:
+hinge-inside → SNP-inside → ragged edge → decoy k-mer → short real CCAG
+crop → full `svk_k4_subset`. Regenerate:
+`node scratch/build_bicluster_demos_21_30.js`. Open blockers: `scratch/BICLUSTER_DEMO_HARD.md`. **Real data:** demo **31** /
+`tests/fixtures/clustering/svk_k4_subset.fa` — `node scratch/run_real_svk.js`;
+motif scan pass for CCAGAGCTG (cols 111–119). Full fixture: `svk_subset.fa` next.
+Show 2D does **not** paint uniform columns
+(no green conserved bands; `paintConservedFlanks: false`). Progression asserts
+uniform cols ∉ diagnostic feats. SVK /
+planted eye regressions tracked in `scratch/check_extractive_rectangles.js`
+and `tests/clustering/svk_subset.test.js` (not all green on this date).
+
 A small **real** gappy SINE crop (`scratch/cropped_*.fa`) is next for the eye, not more planted cartoons.
+
+### GTA window, dirt glue, competing layers (2026-09-21)
+
+User: GTA at demo-35 cols 5–7 must enter a rectangle **at some setting**,
+and the two valid reads must not be silent defaults — they are
+**alternative knobs**, not two boxes on one overlay.
+
+| Setting | What Show 2D should paint at cols 5–7 |
+|---------|----------------------------------------|
+| Defaults (Min Features 5, dirt 0) | GTA unboxed (too short) |
+| Min Features **3**, dirt 0 | 8-row La GTA, own block; conserved GTAGT not swallowed |
+| dirt **5%**, Min Features 5 | GTA left-joins through GTAGT onto the A box (`gtagtagtaaaaaa`); right-hand G vs T stay separate |
+
+Viewer URLs (local `:8765`): `?minfeat=3&dirt=0&show2d=1`,
+`?dirt=5&show2d=1`, `?minfeat=3&dirt=5&show2d=1`, and
+`?dirt=5&axis=100&show2d=1` on `scratch/bicluster_demo_35_ragged_edge.fa`.
+`script.js` applies those query knobs after load. The Clustering
+“optimal” preset timeout must **not** overwrite `?minfeat=` / `?dirt=` /
+`?axis=`.
+
+Engine (cache `block-bicluster.js?v=43`, `script.js?v=248`):
+
+- Motif grow **stops** at a globally conserved column (GTA does not eat
+  GTAGT). Exclusive k-mer emit only if Min Features ≤ 3.
+- Dirt expansion may walk conserved **glue** then absorb a contrast run
+  as one step. It will not merge two **existing** bands (twin windows
+  through TTTTT stay separate). Grow also aborts if the far column is
+  already boxed on **intersecting** rows (AAC 5-row must not stack under
+  the 8-row C at dirt 5% + Min Features 3). After dirt expand, contained
+  row-subset and shifted-locus competitor drops run again.
+- **Expand** slider (cols ← → rows, default 50): `expandRowWeight`.
+  0 = columns only, 100 = rows only. In between, each step is scored by
+  how much dirt it adds, weighted toward the chosen axis, so 50 takes
+  the cheaper step. If budget remains, the other axis can still follow.
+  A row is refused only when another rectangle already covers it on
+  these columns (a row in a different window can still join). URL
+  `?axis=0..100`. Demo 39 at dirt 15% is the conflict: axis 0 or 50
+  widens the C box; axis 80 adds the fuzzy row F0 and does not widen.
+- Conserved hinge between two **long different-base** runs (demo 27:
+  AAAAAAA | G | GGGGGG) splits only when **both** sides still meet Min
+  Features. Short mixed motifs with interior conserved letters
+  (`CCAGAGCTG`) stay one rectangle.
+- Motif scan will not start a seed window that already contains a
+  conserved column (otherwise `AAAAG` grows into the G-run).
+- Layers on the **same cells** are not a product: drop row-subset
+  boxes whose columns sit mostly inside a taller find (`GGTA` on 3 La
+  under 8-row GTA). The same row-set with overlapping columns is one
+  locus, not two paints: keep the wider span (`_dropSameRowOverlaps`).
+  On `svk_k4_subset` that removes the shifted copies of the 7-row
+  `CCAGAGCTG` window (cols 92–119) and the near-duplicate gap runs.
+  A minSize exclusive motif **shifted by a tag
+  column** in a locus already claimed by a larger find (`TTTA` vs GTA
+  / AAC) is the other knob, not a co-occurring type. Same-span
+  disjoint finds (AAA vs GTG, GTA vs AAC) may co-occur — that is
+  mosaic, not overlap.
+
+Progression: `scratch/run_demo_progression.js` (includes
+`35_gta_separate`, `35_gta_join`, `35_dirt_no_stack`, `35_axis_rows`,
+`39_axis_cols` / `39_axis_cheap` / `39_axis_rows`, tightened
+`27_adjacent_runs`). `check_extractive_rectangles.js` still fails
+conserved-flank cartoons (`paintConservedFlanks: false`, pre-existing).
+
+Not done: dirt default 0 vs 5%; orphans inner C; gap penalty already 2;
+full `svk_subset.fa` overlay. Do not treat those as this log’s next cartoon.
 
 ---
 
@@ -308,11 +421,21 @@ The rectangles are not the end product. They are how to **read the 3′
 copies never sit one under another in the current list, so no contiguous
 stack is visible.
 
+**Operational definition for SINEderella (user, 2026-09-18):** mosaicism
+is when orphans **do not match between types**. Stack type A, then type
+B: if the leftover members are different sets, those types disagree on
+row order. If that disagreement stays **above a threshold** (too many
+members remain orphans in any one order), the copies **cannot** be
+treated as one collinear family arrangement — that is mosaic. If the
+*same* copies are leftovers no matter which type you stack, that is
+list-order noise (a few misplaced copies), not mosaic.
+
 | Outcome | Meaning |
 |---------|---------|
 | **Ends** | Coverage drops; no more real sequence |
-| **Mosaic in contiguous blocks** | Types sit in stacks (v2, v6). Engine paints these today |
-| **Mosaic a-b-a-b** | Same types exist, but row order interleaves them. Looks like no blocks |
+| **Mosaic in contiguous stacks** | Types sit in stacks (v2, v6). Engine paints these today |
+| **Mosaicism (orphan mismatch)** | Stacking one type leaves another type’s members orphaned, above threshold |
+| **Mosaic a-b-a-b** | Same types exist, but row order interleaves them. Looks like no stacks. Rare |
 | **Various lengths** | Same cassette, shrinking height (g4) |
 
 **Same type, wrong place in the list** — paint modes (user, 2026-09-12;
