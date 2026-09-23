@@ -8,13 +8,14 @@
 > Round 5: Summary rebuilt around shading, consensus, and multi-motif search; dropped Canvas threshold, read tracks, genetic-code count, and the GeneDoc-style framing. Trees corrected to UPGMA and NJ with distance models (ref 18 added). Reads mode reframed to its actual case (one long sequence vs many short overlapping ones). Internal class name removed from Section 2.8. Discussion: UGENE concession corrected after checking its conservation highlighting (single threshold, fixed colours) and row grouping (identical rows only); GeneDoc reduced to one mention.
 > Round 6 (2026-09-23, against `main` at build v187): Canvas auto-switch is 5 million residues, not 150,000; Full and Block use a windowed display above about 500,000 residues. Dropped the line-count, which had already drifted twice. The auto-switch message names the residue count; it does not tell the user to return to Full or Block.
 > Round 7: Shading is three enableable levels, not GeneDoc's two-to-four. Canvas draws the amino-acid translation track; codon-position, stop, frameshift, and synonymy marks stay in Full and Block. Export says trees, not only UPGMA. Consensus frequency is described as including gaps, without claiming it always matches the shading denominator.
+> Round 8: Named methods that are reimplemented, not copied: SPIN (Staden et al., 2000), Dotter (Sonnhammer & Durbin, 1995), and alignment statistics in the style of Easel esl-alistat / esl-alipid (Eddy, 2011). EMBOSS and HMMER stay out of the note; their credits are in the manual.
 
 ## Target
 **Bioinformatics (Oxford) — Application Note**
 - Journal limit: **4 pages maximum ≈ 2,600 words** (per OUP author guidelines)
 - No in-text figure or table; the comparison table is Supplementary Table S1, so the full budget is available to the text
 - Supplementary material is referred to in the Summary, as the Application Note format requires
-- 18 references
+- 21 references
 
 ---
 
@@ -82,7 +83,7 @@ A position-pattern clustering algorithm groups sequences by shared diagnostic po
 
 ### 2.9 Additional Analysis Tools
 
-The remaining tools are documented in full in the manual and summarised here. A **dot plot** performs self- or pairwise comparison in word-match (SPIN) or sliding-window (Dotter) modes; an automatic detector ranks the strongest diagonal runs into a navigable list, so a repeat structure is inspected by clicking through candidates rather than by scanning the plot. **Motif search** accumulates rather than replaces: successive searches coexist on the same alignment, each assigned its own highlight colour, individually clearable, and preserved in saved sessions, so several motifs can be compared in one view. Queries accept mismatch tolerance, both strands, and regular expressions evaluated against degapped sequences, and fifty restriction enzyme sites are pre-loaded. A **repeat and TSD finder** locates tandem, direct, and inverted repeats and target-site duplications, marking the pairs it finds reversibly. **Trees** are built by UPGMA or Neighbor-Joining (Saitou & Nei, 1987) over p-distance, Jukes-Cantor, or Kimura two-parameter distances, and export as Newick with branch lengths. **Snapshots** store the alignment together with colour assignments, search highlights, and selections, and reopen from a URL. **BLAST** runs in a browser Web Worker against databases registered on the optional server, caching database FASTA in IndexedDB, with optional `blastn` acceleration where BLAST+ is installed (Camacho et al., 2009); it is unavailable on the static deployment.
+The remaining tools are documented in full in the manual and summarised here. A **dot plot** performs self- or pairwise comparison in word-match (SPIN; Staden et al., 2000) or sliding-window (Dotter; Sonnhammer & Durbin, 1995) modes; an automatic detector ranks the strongest diagonal runs. **Alignment statistics** give length, gap content, and pairwise identity in the style of esl-alistat and esl-alipid (Eddy, 2011). **Motif search** accumulates rather than replaces: successive searches coexist on the same alignment, each assigned its own highlight colour, individually clearable, and preserved in saved sessions. Queries accept mismatch tolerance, both strands, and regular expressions evaluated against degapped sequences, and fifty restriction enzyme sites are pre-loaded. A **repeat and TSD finder** locates tandem, direct, and inverted repeats and target-site duplications, marking the pairs it finds reversibly. **Trees** are built by UPGMA or Neighbor-Joining (Saitou & Nei, 1987) over p-distance, Jukes-Cantor, or Kimura two-parameter distances, and export as Newick with branch lengths. **Snapshots** store the alignment together with colour assignments, search highlights, and selections, and reopen from a URL. **BLAST** runs in a browser Web Worker against databases registered on the optional server, caching database FASTA in IndexedDB, with optional `blastn` acceleration where BLAST+ is installed (Camacho et al., 2009); it is unavailable on the static deployment.
 
 ### 2.10 Export
 
@@ -120,6 +121,9 @@ Limitations. Some capabilities are deliberately out of scope, and users needing 
 16. Sarkar, I.N. et al. (2008) CAOS software for use in character-based DNA barcoding. *Mol. Ecol. Resour.*, 8, 1256–1259.
 17. Fedosov, A.E. et al. (2022) MolD: a software for automated compilation of DNA diagnoses. *Mol. Ecol. Resour.*, 22, 2038–2053.
 18. Saitou, N. & Nei, M. (1987) The neighbor-joining method: a new method for reconstructing phylogenetic trees. *Mol. Biol. Evol.*, 4, 406–425.
+19. Staden, R., Beal, K.F. & Bonfield, J.K. (2000) The Staden package, 1998. *Methods Mol. Biol.*, 132, 115–130.
+20. Sonnhammer, E.L.L. & Durbin, R. (1995) A dot-matrix program with dynamic threshold control suited for genomic DNA and protein sequence analysis. *Gene*, 167, GC1–GC10.
+21. Eddy, S.R. (2011) Accelerated profile HMM searches. *PLoS Comput. Biol.*, 7, e1002195.
 
 ---
 
