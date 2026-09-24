@@ -1,0 +1,102 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "11",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 14519,
+          "code": "        if (rcScore > fwdScore) {"
+        },
+        {
+          "file": "script.js",
+          "line": 14520,
+          "code": "            result.push(`>${s.header}\\n${_reverseComplement(s.seq)}`);"
+        },
+        {
+          "file": "script.js",
+          "line": 14521,
+          "code": "            flipped.add(s.header);"
+        },
+        {
+          "file": "script.js",
+          "line": 15553,
+          "code": "    if (adjustDir && seqType === '2') {"
+        },
+        {
+          "file": "script.js",
+          "line": 15554,
+          "code": "        const adj = _adjustDirection(fasta);"
+        },
+        {
+          "file": "index.html",
+          "line": 649,
+          "code": "                                        <option value=\"2\" selected>Nucleotide</option>"
+        }
+      ],
+      "detail": "adjustDir runs only when seqType==='2' (Nucleotide, per index.html line 649) and is invoked before MAFFT alignment; _adjustDirection scores each sequence (rcScore vs fwdScore voting) and reverse-complements via _reverseComplement when rcScore>fwdScore. The exact 6-mer counting inside _adjustDirection was not line-quoted (body output trimmed), but the voting/nucleotide-only/reverse-complement-before-aligning details are confirmed."
+    },
+    {
+      "claim_id": "12",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 14536,
+          "code": "// Core of the guide tree: 6-mer distances plus UPGMA, returning the leaf order used for"
+        },
+        {
+          "file": "script.js",
+          "line": 14541,
+          "code": "function _kmerGuideTree(seqs, k) {"
+        },
+        {
+          "file": "script.js",
+          "line": 14576,
+          "code": "    // UPGMA guide tree construction -> extract leaf order"
+        },
+        {
+          "file": "script.js",
+          "line": 14619,
+          "code": "        // Update distances (average linkage / UPGMA)"
+        },
+        {
+          "file": "script.js",
+          "line": 12418,
+          "code": "    const v = parseInt(el('guideTreeK')?.value, 10);"
+        },
+        {
+          "file": "script.js",
+          "line": 12419,
+          "code": "    return (Number.isFinite(v) && v >= 3 && v <= 12) ? v : 6;"
+        },
+        {
+          "file": "script.js",
+          "line": 14601,
+          "code": "    // Pre-alignment: reorder by guide tree (6-mer distances) like MAFFT --reorder"
+        },
+        {
+          "file": "script.js",
+          "line": 15603,
+          "code": "    if (reorder) {"
+        },
+        {
+          "file": "script.js",
+          "line": 15604,
+          "code": "        const reordered = _reorderByGuideTree(fasta);"
+        },
+        {
+          "file": "script.js",
+          "line": 15549,
+          "code": "    if (seqType !== '2') extraArgs.push('-E', seqType);"
+        }
+      ],
+      "detail": "Reorder uses a 6-mer UPGMA guide tree (_kmerGuideTree, k defaults to 6 via _guideTreeK) producing a leaf order; it is applied as a PRE-alignment step (_reorderByGuideTree rewrites fasta before _mafftAlignWithUi). extraArgs only gets '-E' seqType pushed, never '--reorder', confirming it is the viewer's analogue, not a MAFFT flag during WASM alignment."
+    }
+  ],
+  "counts": {
+    "verdicts": 2
+  },
+  "note": "Both claims audited. Claim 11 MATCH: adjustDir gated on seqType==='2' (Nucleotide), called before MAFFT, scores rcScore vs fwdScore and reverse-complements; 6-mer counting inside body inferred from codebase context (body output was trimmed, not line-quoted). Claim 12 MATCH: reorder uses _kmerGuideTree (k default 6) + UPGMA leaf order applied pre-alignment via _reorderByGuideTree; extraArgs never includes --reorder."
+}

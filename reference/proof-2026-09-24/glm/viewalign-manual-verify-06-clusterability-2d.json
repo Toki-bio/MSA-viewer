@@ -1,0 +1,78 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "31",
+      "verdict": "UNCLEAR",
+      "evidence": [
+        {
+          "file": "index.html",
+          "line": 400,
+          "code": "<label for=\"clusterMinSizeInput\" ... title=\"Minimum sequences a group needs\">Min Size:</label>"
+        },
+        {
+          "file": "index.html",
+          "line": 404,
+          "code": "<label for=\"clusterMinPerfectInput\" ... title=\"Minimum exclusive SNP columns a group must have\">Min Features:</label>"
+        },
+        {
+          "file": "index.html",
+          "line": 385,
+          "code": "<button id=\"clusterNowButton\" ... title=\"Find sequence groups from exclusive SNP columns. Leftovers stay unassigned. ...\">Find SNP groups</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 455,
+          "code": "<button id=\"clusteringProbeButton\" title=\"Survey a range of SNP-grouping settings. Does not apply them.\">Clusterability</button>"
+        },
+        {
+          "file": "script.js",
+          "line": 13010,
+          "code": "const clusterParams = getClusteringParameters();"
+        },
+        {
+          "file": "script.js",
+          "line": 12867,
+          "code": "const base = getClusteringParameters();"
+        },
+        {
+          "file": "script.js",
+          "line": 7128,
+          "code": "function computeAndShowBicluster() {"
+        },
+        {
+          "file": "script.js",
+          "line": 17498,
+          "code": "'biclusterComputeButton': computeAndShowBicluster,"
+        }
+      ],
+      "detail": "CONFIRMED: thresholds (Min Size=clusterMinSizeInput, Min Features=clusterMinPerfectInput, read by getClusteringParameters) apply to SNP grouping (_clusterSequencesNow line 13010 calls getClusteringParameters) and Clusterability (analyzeClusterability line 12867 calls getClusteringParameters). NOT CONFIRMED: I located computeAndShowBicluster (Show 2D) at line 7128 but could not read its body to verify it reads Min Size/Min Features when deciding which local patterns to box. That one detail could not be established, so overall UNCLEAR."
+    },
+    {
+      "claim_id": "34",
+      "verdict": "UNCLEAR",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 7128,
+          "code": "function computeAndShowBicluster() {"
+        },
+        {
+          "file": "script.js",
+          "line": 17498,
+          "code": "'biclusterComputeButton': computeAndShowBicluster,"
+        }
+      ],
+      "detail": "I located computeAndShowBicluster (Show 2D) but did not find/read renderBlockMaskOverlay or blockMaskOpacity, so I could not establish the stated details: translucent rectangles over local-pattern stretches, no row-order change, Full and Block modes supported, Canvas mode not supported. No evidence found either way."
+    },
+    {
+      "claim_id": "35",
+      "verdict": "UNCLEAR",
+      "evidence": [],
+      "detail": "Did not run the prescribed greps for blockMaskPreset / bmKnob in index.html, nor locate the preset table in script.js/block-mask.js. No evidence found for the V1-V5 squint coarseness presets, the eight exposed parameters, or the 'releasing any slider recomputes the mask' behavior. Could not establish the claim."
+    }
+  ],
+  "counts": {
+    "verdicts": 3
+  },
+  "note": "Submitted 3 verdicts. Claim 31: UNCLEAR (thresholds apply to SNP grouping and Clusterability confirmed via getClusteringParameters; Show 2D reads Min Size/Min Features not confirmed). Claim 34: UNCLEAR (computeAndShowBicluster located but renderBlockMaskOverlay/blockMaskOpacity and the stated mode/row-order behaviors not found). Claim 35: UNCLEAR (blockMaskPreset/bmKnob and preset table not searched; stopped reading per directive)."
+}

@@ -1,0 +1,87 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "53",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 10167,
+          "code": "    const filename = (state.currentFilename || 'alignment').replace(/\\.[^.]+$/, '') + '.fasta';"
+        },
+        {
+          "file": "script.js",
+          "line": 10239,
+          "code": "    const filename = base + suffix + '.fasta';"
+        },
+        {
+          "file": "script.js",
+          "line": 11438,
+          "code": "    a.download = `${safeName || 'alignment'}.rtf`;"
+        },
+        {
+          "file": "script.js",
+          "line": 11290,
+          "code": "    a.download = `${safeBaseName || 'alignment'}_${fullMode ? 'full' : 'viewport'}.svg`;"
+        },
+        {
+          "file": "script.js",
+          "line": 15098,
+          "code": "    const suffix = method === 'nj' ? '.nj.nwk' : '.upgma.nwk';"
+        },
+        {
+          "file": "script.js",
+          "line": 10991,
+          "code": "    a.download = `${safeBaseName || 'alignment_snapshot'}_snapshot.html`;"
+        },
+        {
+          "file": "script.js",
+          "line": 19801,
+          "code": "            const validExtensions = ['.fasta', '.fa', '.msf', '.aln', '.clustal', '.txt'];"
+        }
+      ],
+      "detail": "Every stated output format is written by the viewer: FASTA (.fasta, lines 10167/10239), RTF (.rtf, line 11438), SVG (.svg, line 11290), Newick with the .nwk extension (.nj.nwk/.upgma.nwk, line 15098), and a standalone HTML snapshot (_snapshot.html, line 10991). MSF is input only: line 19801 lists '.msf' among input validExtensions, and every other 'msf'/'MSF' reference in the code is parsing/validation (e.g. lines 4920-4921, 8407, 8719-8722) with NO MSF writer/export function. (PNG exports come from the Tree/Dot-plot windows and the order-JSON from a separate 'Save sequence order' feature, both outside section 2.7's 'Save / Export Alignment' scope.)"
+    },
+    {
+      "claim_id": "56",
+      "verdict": "MISMATCH",
+      "evidence": [
+        {
+          "file": "package.json",
+          "line": 23,
+          "code": "  \"dependencies\": {"
+        },
+        {
+          "file": "package.json",
+          "line": 26,
+          "code": "  \"devDependencies\": {"
+        },
+        {
+          "file": "package.json",
+          "line": 29,
+          "code": "}"
+        },
+        {
+          "file": "server.js",
+          "line": 77,
+          "code": "    const exists = !!(info?.path && fs.existsSync(info.path));"
+        },
+        {
+          "file": "server.js",
+          "line": 113,
+          "code": "        timeout: options.timeout ?? 60000,"
+        },
+        {
+          "file": "server.js",
+          "line": 114,
+          "code": "        stdio: options.stdio ?? 'pipe',"
+        }
+      ],
+      "detail": "The stated 'Node.js >= 16' does not match the code. package.json (29 lines) has NO 'engines' field, so no Node minimum is declared there (only name/version/description/main/scripts/keywords/author/license/homepage/repository/bugs/dependencies/devDependencies). The only version-sensitive syntax in server.js is optional chaining '?.' (lines 77, 83, 832) and nullish coalescing '??' (lines 113, 114), both stable unflagged since Node.js 14.0.0 - i.e. the code requires Node >= 14, not >= 16. A grep for Node 16+-only features (??=, ||=, &&=, .at(), Object.hasOwn, structuredClone, crypto.randomUUID, findLast, Promise.any, Array.fromAsync) found none in server.js. The stated minimum (16) differs from the code's actual minimum (14)."
+    }
+  ],
+  "counts": {
+    "verdicts": 2
+  },
+  "note": "Verified 2 claims. Claim 53 (MATCH): the viewer writes FASTA (.fasta, script.js:10167/10239), RTF (.rtf, 11438), SVG (.svg, 11290), Newick with .nwk extension (.nj.nwk/.upgma.nwk, 15098), and standalone HTML snapshots (_snapshot.html, 10991); MSF appears only as input (validExtensions line 19801, no MSF export function). Claim 56 (MISMATCH): package.json has no 'engines' field; server.js uses only ?. and ?? (Node >= 14, not >= 16), and no Node 16+-only syntax is present."
+}

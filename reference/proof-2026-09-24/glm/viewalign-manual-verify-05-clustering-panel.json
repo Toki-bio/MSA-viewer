@@ -1,0 +1,89 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "23",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "index.html",
+          "line": 367,
+          "code": "<button type=\"button\" class=\"cluster-button\" id=\"clusterGuideTreeButton\" title=\"Group every sequence by its overall resemblance to the others, using a k-mer guide tree. Every sequence gets a group colour. Replaces diagnostic-SNP colours, but survives SNP grouping via Split existing groups.\">Group by k-mer</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 385,
+          "code": "<button type=\"button\" class=\"cluster-button\" id=\"clusterNowButton\" title=\"Find sequence groups defined by SNP columns the rest of the alignment does not have. Sequences without such SNPs stay unassigned. Replaces k-mer colours unless Split existing groups is checked (then it looks for SNP subgroups inside each current group, or only the selected group).\">Find SNP groups</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 465,
+          "code": "<button type=\"button\" class=\"cluster-button\" id=\"biclusterComputeButton\" title=\"Co-cluster rows and columns at the same time and show the result as a grid of row x column rectangles. Useful for spotting conserved/variable blocks.\">Show 2D</button>"
+        },
+        {
+          "file": "script.js",
+          "line": 17491,
+          "code": "'clusterGuideTreeButton': clusterByGuideTree,"
+        },
+        {
+          "file": "script.js",
+          "line": 17498,
+          "code": "'biclusterComputeButton': computeAndShowBicluster,"
+        }
+      ],
+      "detail": "All three instruments exist as separate buttons: 'Group by k-mer' (id clusterGuideTreeButton, title states every sequence gets a group colour by overall resemblance), 'Find SNP groups' (id clusterNowButton, title states exclusive SNP columns, sequences without stay unassigned), and 'Show 2D' (id biclusterComputeButton, title states row x column rectangles). Each is wired to a distinct handler in the action map."
+    },
+    {
+      "claim_id": "25",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 12402,
+          "code": "// Sequences as the clusterer wants them, respecting soft trim if active. Shared with the"
+        },
+        {
+          "file": "script.js",
+          "line": 12403,
+          "code": "// clusterability probe so the two can never disagree about what was clustered."
+        },
+        {
+          "file": "script.js",
+          "line": 12404,
+          "code": "function getSeqsForClustering() {"
+        },
+        {
+          "file": "script.js",
+          "line": 12405,
+          "code": "    const stb = state.softTrimBoundaries;"
+        }
+      ],
+      "detail": "getSeqsForClustering() respects state.softTrimBoundaries, and the comment states it is shared with the clusterability probe; thus SNP grouping and Clusterability use soft-trimmed sequences. The bicluster (Show 2D) path instead calls applyBiclusterLive/applyBlockMaskLive operating on the alignment directly (not via getSeqsForClustering), so Show 2D uses the full sequences including soft-trimmed columns. Hard trim permanently deletes columns (Undo reverses) while soft only hides them from these two instruments — consistent with the soft trim state only being consulted in getSeqsForClustering."
+    },
+    {
+      "claim_id": "27",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "index.html",
+          "line": 389,
+          "code": "                                        <label class=\"cluster-split-label\" title=\"When checked, Find SNP groups looks for exclusive SNPs inside existing groups instead of scanning the whole alignment. Groups that have no such SNPs stay as they are. If you select sequences, only the group(s) those rows belong to are split; with nothing selected, every current group is tried.\">"
+        },
+        {
+          "file": "index.html",
+          "line": 390,
+          "code": "                                        <input type=\"checkbox\" id=\"clusterWithinTypes\" style=\"margin: 0;\"> Split existing groups"
+        },
+        {
+          "file": "script.js",
+          "line": 12626,
+          "code": "async function _clusterDiagnosticWithinTypes(allSeqs, clusterParams, update) {"
+        }
+      ],
+      "detail": "The checkbox 'Split existing groups' has id clusterWithinTypes and is unchecked by default (no checked attribute). Its title text exactly states 'When checked, Find SNP groups looks for exclusive SNPs inside existing groups instead of scanning the whole alignment', and script.js has _clusterDiagnosticWithinTypes which performs the within-group SNP search when the option is enabled."
+    }
+  ],
+  "counts": {
+    "verdicts": 3
+  },
+  "note": "Verified 3 claims (23, 25, 27) against index.html button/checkbox markup and script.js handler/trim logic. Claim 23: three separate clustering instruments exist and are wired to distinct handlers. Claim 25: getSeqsForClustering respects softTrimBoundaries (used by SNP grouping + clusterability) while Show 2D/bicluster operates on the full alignment, not via that function. Claim 27: 'Split existing groups' checkbox (id clusterWithinTypes) is unchecked by default and, when checked, calls _clusterDiagnosticWithinTypes to search within each existing group."
+}

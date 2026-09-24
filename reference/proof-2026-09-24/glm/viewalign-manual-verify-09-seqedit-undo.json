@@ -1,0 +1,92 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "43",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "index.html",
+          "line": 1005,
+          "code": "                <button id=\"seqEditDegap\" title=\"Remove all gap characters (- and .)\" style=\"font-size: 11px; padding: 3px 8px;\">Degap</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 1006,
+          "code": "                <button id=\"seqEditReverse\" title=\"Reverse the sequence (5'->3' becomes 3'->5')\" style=\"font-size: 11px; padding: 3px 8px;\">Reverse</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 1007,
+          "code": "                <button id=\"seqEditComplement\" title=\"Complement bases (A<->T, C<->G)\" style=\"font-size: 11px; padding: 3px 8px;\">Complement</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 1008,
+          "code": "                <button id=\"seqEditRevComp\" title=\"Reverse Complement\" style=\"font-size: 11px; padding: 3px 8px;\">Rev Comp</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 1009,
+          "code": "                <button id=\"seqEditUppercase\" title=\"Convert to uppercase\" style=\"font-size: 11px; padding: 3px 8px;\">Uppercase</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 1010,
+          "code": "                <button id=\"seqEditLowercase\" title=\"Convert to lowercase\" style=\"font-size: 11px; padding: 3px 8px;\">Lowercase</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 1019,
+          "code": "                    <input type=\"checkbox\" id=\"seqEditPadGaps\" checked title=\"Add or remove trailing gaps so the edited sequence keeps the alignment's column width\"> Pad/trim to alignment length"
+        },
+        {
+          "file": "script.js",
+          "line": 16453,
+          "code": "const _complementMap = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.',"
+        },
+        {
+          "file": "script.js",
+          "line": 16582,
+          "code": "                seq = seq.padEnd(alignLen, '-');"
+        },
+        {
+          "file": "script.js",
+          "line": 16584,
+          "code": "                seq = seq.substring(0, alignLen);"
+        }
+      ],
+      "detail": "All listed transformations exist: Degap, Reverse, Complement, Rev Comp, Uppercase, Lowercase buttons (index.html:1005-1010) plus the 'Pad/trim to alignment length' checkbox (index.html:1019). 'Complement (DNA)' is a DNA complement: seqEditComplement uses _complementMap with A<->T, C<->G (script.js:16453). 'auto-adjust length on apply' holds: when seqEditPadGaps is checked, seqEditApply pads shorter sequences with '-' (padEnd(alignLen,'-')) and trims longer ones (substring(0,alignLen)) to the alignment length (script.js:16582,16584)."
+    },
+    {
+      "claim_id": "44",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 19392,
+          "code": "        const toolLabel = drag.tool === 'slideKeepGaps' ? 'SlideText' : 'MoveText';"
+        },
+        {
+          "file": "script.js",
+          "line": 19393,
+          "code": "        const columns = Math.abs(drag.moved);"
+        },
+        {
+          "file": "script.js",
+          "line": 19395,
+          "code": "        const rowName = fullName.length > 22 ? fullName.slice(0, 21) + '…' : fullName;"
+        },
+        {
+          "file": "script.js",
+          "line": 19404,
+          "code": "            `${toolLabel} ${columns} col ${drag.moved > 0 ? 'right' : 'left'} · ${rowName}`"
+        }
+      ],
+      "detail": "Drag undo label is built as `${toolLabel} ${columns} col ${drag.moved > 0 ? 'right' : 'left'} · ${rowName}` (script.js:19404): toolLabel is 'MoveText' (or 'SlideText' for slideKeepGaps), columns = Math.abs(drag.moved) (how far), and rowName is the sequence header truncated to 21 chars + '…' (which sequence). This produces e.g. 'MoveText 4 col right · NW_004567116.1…', naming the tool, the move distance/direction, and the sequence, exactly as claimed."
+    }
+  ],
+  "counts": {
+    "verdicts": 2
+  },
+  "note": "Both claims verified against source code.\n\nClaim 43 (MATCH): index.html:1005-1010 define the SeqEdit modal buttons Degap, Reverse, Complement, Rev Comp, Uppercase, Lowercase; index.html:1019 the 'Pad/trim to alignment length' checkbox. Complement is a DNA complement (_complementMap A<->T, C<->G, script.js:16453), matching 'Complement (DNA)'. seqEditApply auto-adjusts length on apply: pads with '-' (script.js:16582) or trims (script.js:16584) to the alignment length when seqEditPadGaps is checked.\n\nClaim 44 (MATCH): script.js:19392-19404 build the drag undo label as `${toolLabel} ${columns} col ${drag.moved > 0 ? 'right' : 'left'} · ${rowName}` with toolLabel 'MoveText'/'SlideText', columns = Math.abs(drag.moved), and rowName the (truncated) sequence header, producing the example 'MoveText 4 col right · <name>…' naming the tool, the move distance/direction, and the sequence."
+}

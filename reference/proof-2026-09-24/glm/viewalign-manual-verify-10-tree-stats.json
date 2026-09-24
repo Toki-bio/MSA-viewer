@@ -1,0 +1,154 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "46",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 15047,
+          "code": "    const method = document.querySelector('input[name=\"treeMethod\"]:checked')?.value || 'upgma';"
+        },
+        {
+          "file": "script.js",
+          "line": 15050,
+          "code": "    const modelName = model === 'raw' ? 'p-distance' : model.toUpperCase();"
+        },
+        {
+          "file": "script.js",
+          "line": 15054,
+          "code": "            const result = method === 'nj'"
+        },
+        {
+          "file": "script.js",
+          "line": 15055,
+          "code": "                ? buildNJTreeFromAlignment(seqObjects, model)"
+        },
+        {
+          "file": "script.js",
+          "line": 15056,
+          "code": "                : buildUPGMATreeFromAlignment(seqObjects, model);"
+        },
+        {
+          "file": "script.js",
+          "line": 14751,
+          "code": "        case 'jc69': return _jc69Distance(m.p);"
+        },
+        {
+          "file": "script.js",
+          "line": 14752,
+          "code": "        case 'k80':"
+        },
+        {
+          "file": "script.js",
+          "line": 14756,
+          "code": "        default: return m.p; // 'raw': uncorrected p-distance"
+        },
+        {
+          "file": "script.js",
+          "line": 15294,
+          "code": "    document.querySelectorAll('input[name=\"treeMethod\"]').forEach(radio => {"
+        },
+        {
+          "file": "script.js",
+          "line": 15300,
+          "code": "    if (modelSelect) modelSelect.addEventListener('change', rebuildIfOpen);"
+        }
+      ],
+      "detail": "openTreeBuilder reads treeMethod (upgma/nj) and treeDistanceModel, calls buildNJTreeFromAlignment/buildUPGMATreeFromAlignment; _modelPairDistance switch handles 'jc69' (JC69), 'k80' (K80) and default 'raw' (p-distance) - three models. Both the treeMethod radios (line 15294-15295) and the treeDistanceModel select (line 15300) attach 'change' listeners to rebuildIfOpen which calls openTreeBuilder(), so switching UPGMA/NJ or model in the modal rebuilds the tree. Display name maps raw->p-distance, jc69->JC69, k80->K80 (line 15050)."
+    },
+    {
+      "claim_id": "47",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "tree-draw.js",
+          "line": 686,
+          "code": "        '<button type=\"button\" class=\"tree-tool\" data-act=\"zoom-out\" title=\"Zoom out\">&minus;</button>' +"
+        },
+        {
+          "file": "tree-draw.js",
+          "line": 688,
+          "code": "        '<button type=\"button\" class=\"tree-tool\" data-act=\"zoom-in\" title=\"Zoom in\">+</button>' +"
+        },
+        {
+          "file": "tree-draw.js",
+          "line": 689,
+          "code": "        '<button type=\"button\" class=\"tree-tool\" data-act=\"zoom-fit\" title=\"Fit to width\">Fit</button>' +"
+        },
+        {
+          "file": "tree-draw.js",
+          "line": 742,
+          "code": "      if (act === 'zoom-in') st.zoom = Math.min(4, st.zoom * 1.25);"
+        },
+        {
+          "file": "tree-draw.js",
+          "line": 743,
+          "code": "      else if (act === 'zoom-out') st.zoom = Math.max(0.25, st.zoom / 1.25);"
+        },
+        {
+          "file": "tree-draw.js",
+          "line": 744,
+          "code": "      else if (act === 'zoom-fit') st.zoom = 1;"
+        },
+        {
+          "file": "tree-draw.js",
+          "line": 546,
+          "code": "    var scale = 2;                                   // 2x so the raster stands up to print"
+        }
+      ],
+      "detail": "Toolbar has Zoom buttons minus/+/Fit (lines 686-689). zoom-in clamps to Math.min(4,...) = 400%, zoom-out clamps to Math.max(0.25,...) = 25%, and zoom-fit sets st.zoom = 1 = 100%. PNG export uses scale = 2 (line 546), i.e. rasterised at 2x. All details match."
+    },
+    {
+      "claim_id": "48",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 15236,
+          "code": "    const dmControls = `<div style=\"margin:4px 0;\"><button id=\"copyDistanceMatrixBtn\" style=\"font-size:11px;padding:2px 8px;\">Copy distance matrix</button></div>`;"
+        },
+        {
+          "file": "script.js",
+          "line": 15237,
+          "code": "    const dmContent = `<details style=\"margin-top:6px;\"><summary style=\"cursor:pointer;font-weight:bold;font-size:11px;\">Distance Matrix (p-distance)</summary>${dmControls}<pre style=\"font-size:10px;white-space:pre;overflow:auto;max-height:200px;\">${dm}</pre></details>`;"
+        },
+        {
+          "file": "script.js",
+          "line": 15251,
+          "code": "    const imControls = `<div style=\"margin:4px 0;\"><button id=\"copyIdentityMatrixBtn\" style=\"font-size:11px;padding:2px 8px;\">Copy identity matrix</button></div>`;"
+        },
+        {
+          "file": "script.js",
+          "line": 15252,
+          "code": "    const imContent = `<details style=\"margin-top:4px;\"><summary style=\"cursor:pointer;font-weight:bold;font-size:11px;\">Pairwise Identity (%)</summary>${imControls}<pre style=\"font-size:10px;white-space:pre;overflow:auto;max-height:200px;\">${im}</pre></details>`;"
+        },
+        {
+          "file": "script.js",
+          "line": 15266,
+          "code": "function copyStatsMatrix(kind) {"
+        },
+        {
+          "file": "script.js",
+          "line": 15272,
+          "code": "    navigator.clipboard.writeText(text)"
+        },
+        {
+          "file": "script.js",
+          "line": 15282,
+          "code": "        if (target?.id === 'copyDistanceMatrixBtn') copyStatsMatrix('distance');"
+        },
+        {
+          "file": "script.js",
+          "line": 15283,
+          "code": "        if (target?.id === 'copyIdentityMatrixBtn') copyStatsMatrix('identity');"
+        }
+      ],
+      "detail": "The stats modal renders a 'Distance Matrix (p-distance)' block with a 'Copy distance matrix' button (line 15236) and a 'Pairwise Identity (%)' block with a 'Copy identity matrix' button (line 15251). copyStatsMatrix uses navigator.clipboard.writeText (line 15272) and the buttons are wired in initStatsTabs (lines 15282-15283). Full pairwise p-distance and identity matrices both have copy-to-clipboard buttons. All details match."
+    }
+  ],
+  "counts": {
+    "verdicts": 3
+  },
+  "note": "All three claims verified against source code. Claim 46 (MATCH): openTreeBuilder reads treeMethod (upgma/nj) and treeDistanceModel, _modelPairDistance supports raw(p-distance)/jc69/k80, and both method radios and model select attach change->rebuildIfOpen listeners. Claim 47 (MATCH): zoom-in caps at 4 (400%), zoom-out floors at 0.25 (25%), zoom-fit sets 1 (100%); PNG export scale=2 (2x). Claim 48 (MATCH): stats modal has 'Copy distance matrix' (p-distance) and 'Copy identity matrix' buttons wired to copyStatsMatrix via navigator.clipboard."
+}

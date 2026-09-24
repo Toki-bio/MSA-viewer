@@ -1,0 +1,65 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "41",
+      "verdict": "MISMATCH",
+      "evidence": [
+        {
+          "file": "index.html",
+          "line": 876,
+          "code": "<button id=\"editResidueButton\" class=\"edit-tool-button\" data-edit-tool=\"residue\" title=\"GeneDoc Edit Mode: click a cell, then type a residue or gap\">Type</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 861,
+          "code": "<button id=\"editMoveNoGapsButton\" class=\"edit-tool-button\" data-edit-tool=\"moveNoGaps\" ...>Move NoGaps</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 862,
+          "code": "<button id=\"editSlideKeepGapsButton\" class=\"edit-tool-button\" data-edit-tool=\"slideKeepGaps\" ...>Slide KeepGaps</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 867,
+          "code": "<button id=\"editRecalcConsButton\" class=\"edit-command-button\" ... onclick=\"_recalcConservation()\">R Cons</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 869,
+          "code": "<button id=\"editInsertGapButton\" class=\"edit-tool-button\" data-edit-tool=\"insertGapSeq\" ...>Ins Gap Seq</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 870,
+          "code": "<button id=\"editDeleteGapButton\" class=\"edit-tool-button\" data-edit-tool=\"deleteGapSeq\" ...>Del Gap Seq</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 877,
+          "code": "<button id=\"editSelectColumnButton\" class=\"edit-tool-button\" data-edit-tool=\"selectColumn\" ...>Select Col</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 879,
+          "code": "<button id=\"editClearGapColumnsButton\" class=\"edit-command-button\" ...>Clear Gap Cols</button>"
+        },
+        {
+          "file": "index.html",
+          "line": 880,
+          "code": "<button id=\"editSeqEditorButton\" class=\"edit-command-button\" title=\"Open the sequence text editor\">SeqEdit</button>"
+        },
+        {
+          "file": "script.js",
+          "line": 19541,
+          "code": "    if (e.key.length !== 1 || !/^[A-Za-z.-]$/.test(e.key)) return false;"
+        }
+      ],
+      "detail": "All named tools exist in the editToolPanel (Move NoGaps 861, Slide KeepGaps 862, R Cons 867, Ins/Del Gap Seq/Other/All 869-874, Type 876, Select Col 877, Clear Gap Cols 879, SeqEdit 880). MISMATCH on the Type detail: the claim says it accepts 'a residue letter (A, C, G, T, N) or - for a gap', but handleGeneDocResidueKey accepts ANY letter. Line 19541 regex is /^[A-Za-z.-]$/ (any A-Z/a-z letter plus '.' and '-'), and line 19553 does `chars[pos] = (e.key === '.' || e.key === '-') ? GENEDOC_FILLER : e.key.toUpperCase();` with GENEDOC_FILLER='-' (line 18465). So the code accepts all 26 letters (uppercased), not just A,C,G,T,N, and accepts both '.' and '-' as gaps (claim names only '-')."
+    }
+  ],
+  "counts": {
+    "verdicts": 1
+  },
+  "note": "Claim 41 verdict: MISMATCH. All named edit tools exist in the editToolPanel block of index.html (lines 861-880): Move NoGaps, Slide KeepGaps, R Cons, Ins/Del Gap Seq/Other/All (869-874), Type, Select Col, Clear Gap Cols, SeqEdit. The mismatch is in the Type detail: the claim says Type accepts 'a residue letter (A, C, G, T, N) or - for a gap', but handleGeneDocResidueKey (script.js:19477) accepts any A-Z letter. Line 19541 uses regex /^[A-Za-z.-]$/ (any letter plus '.' and '-'), and line 19553 converts '.' and '-' to GENEDOC_FILLER ('-', line 18465) and uppercases any other letter. So the code accepts all 26 letters, not just A,C,G,T,N, and accepts both '.' and '-' as gaps (claim names only '-')."
+}

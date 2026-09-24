@@ -1,0 +1,104 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "37",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "index.html",
+          "line": 527,
+          "code": "                                <label title=\"Interpret search as regular expression\"><input type=\"checkbox\" id=\"searchRegex\" style=\"width:14px;height:14px;vertical-align:middle;\"> .*</label>"
+        },
+        {
+          "file": "script.js",
+          "line": 11835,
+          "code": "    const useRegex = options.useRegex ?? el('searchRegex')?.checked;"
+        },
+        {
+          "file": "script.js",
+          "line": 11942,
+          "code": "                    const re = new RegExp(normalizedMotif, 'gi');"
+        },
+        {
+          "file": "script.js",
+          "line": 11944,
+          "code": "                    while ((m = re.exec(normalizedDisplay)) !== null) {"
+        }
+      ],
+      "detail": "There is a '.*' regex checkbox (id searchRegex, title 'Interpret search as regular expression'); when checked the motif is compiled with new RegExp(...,'gi') and executed, so the search accepts regular expressions such as the examples given."
+    },
+    {
+      "claim_id": "38",
+      "verdict": "MISMATCH",
+      "evidence": [
+        {
+          "file": "index.html",
+          "line": 528,
+          "code": "                                <input type=\"number\" id=\"maxMismatches\" min=\"0\" max=\"10\" value=\"0\" style=\"width: 40px; height: 22px; padding: 2px; font-size: 12px;\" title=\"Allowed mismatches (0 = exact match). Literal search only; ignored when regex is on\">"
+        },
+        {
+          "file": "script.js",
+          "line": 11507,
+          "code": "        if (mismatches <= maxMismatches) {"
+        },
+        {
+          "file": "script.js",
+          "line": 11953,
+          "code": "                const fuzzyMatches = findFuzzyMatches(normalizedDisplay, normalizedMotif, maxMismatches);"
+        },
+        {
+          "file": "script.js",
+          "line": 11939,
+          "code": "            if (useRegex) {"
+        },
+        {
+          "file": "script.js",
+          "line": 11942,
+          "code": "                    const re = new RegExp(normalizedMotif, 'gi');"
+        }
+      ],
+      "detail": "The input range (0-10) and 'up to 2 differences' (mismatches <= maxMismatches) match, BUT the claim that it 'Works with both literal and regex search modes' is false. maxMismatches is only used in the literal else-branch via findFuzzyMatches; in the regex branch (useRegex) the value is ignored (title explicitly says 'Literal search only; ignored when regex is on')."
+    },
+    {
+      "claim_id": "36",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 11923,
+          "code": "                if (ch !== '-' && ch !== '.') {"
+        },
+        {
+          "file": "script.js",
+          "line": 11929,
+          "code": "            const displayString = displayedChars.join('');"
+        },
+        {
+          "file": "script.js",
+          "line": 11846,
+          "code": "    const fwdMotif = fwdMotifRaw.replace(/U/g, 'T');"
+        },
+        {
+          "file": "script.js",
+          "line": 11933,
+          "code": "            const normalizedDisplay = displayString.replace(/U/g, 'T');"
+        },
+        {
+          "file": "script.js",
+          "line": 11831,
+          "code": "    const motif = raw.trim().replace(/\\s+/g, '').toUpperCase();"
+        },
+        {
+          "file": "script.js",
+          "line": 11922,
+          "code": "                const ch = (spans[si].textContent || '').toUpperCase();"
+        }
+      ],
+      "detail": "Search builds a degapped string by skipping '-' and '.' chars (displayString); U is replaced by T in both the motif (line 11846) and the display string (line 11933); case-insensitivity is via toUpperCase() on both the motif (line 11831) and each visible span char (line 11922)."
+    }
+  ],
+  "counts": {
+    "verdicts": 3
+  },
+  "note": "Audited 3 claims. Claim 37 (regex search via \".*\" checkbox): MATCH. Claim 38 (Mismatches input 0-10, budget of 2 = up to 2 diffs, works with both literal and regex): MISMATCH — mismatches only apply to literal search, ignored in regex mode (HTML title states this; findFuzzyMatches is only called in the non-regex else branch). Claim 36 (search against degapped seqs, U/T equivalent, case-insensitive): MATCH."
+}

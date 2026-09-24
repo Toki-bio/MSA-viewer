@@ -1,0 +1,102 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "13",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 9652,
+          "code": "                    if (state.selectedColumns.size >= 2) {"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 9653,
+          "code": "                        realignSelectedBlock();"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 15446,
+          "code": "    const runs = RealignRegion.columnRuns(state.selectedColumns);"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 15448,
+          "code": "        showMessage(\"Select at least one span of 2+ columns to realign.\", 3000);"
+        },
+        {
+          "file": "C:/work/MSA-viewer/realign-region.js",
+          "line": 125,
+          "code": "            if (last && c === last.end + 1) last.end = c;"
+        },
+        {
+          "file": "C:/work/MSA-viewer/realign-region.js",
+          "line": 128,
+          "code": "        return runs.filter(function (r) { return r.end - r.start + 1 >= 2; });"
+        },
+        {
+          "file": "C:/work/MSA-viewer/realign-region.js",
+          "line": 443,
+          "code": "                var ug = ungapped(s.seq.substring(co.start, co.end + 1));"
+        },
+        {
+          "file": "C:/work/MSA-viewer/realign-region.js",
+          "line": 457,
+          "code": "                var raw = await mafftAlign(toFasta(recs), extraArgs);"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 15507,
+          "code": "        state.seqs = result.seqs.map(r => {"
+        }
+      ],
+      "detail": "All stated details match: Ctrl+Shift+R triggers realignSelectedBlock() only when >=2 columns selected; columnRuns groups contiguous columns then filters to runs of length>=2 so single isolated columns are ignored (line 128); each run is extracted and degapped via ungapped() (line 443) and sent to MAFFT independently per run (mafftAlign called inside the per-run loop at line 457); the result is spliced back by replacing state.seqs (line 15507)."
+    },
+    {
+      "claim_id": "14",
+      "verdict": "MISMATCH",
+      "evidence": [
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 15800,
+          "code": "async function addSequencesJustAdd() {"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 15833,
+          "code": "    const alignToCons = document.getElementById('addSeqAlignCons')?.checked;"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 15848,
+          "code": "        const alignedProfile = await alignSequenceToConsensusProfile(ns.seq, currentConsensus, consensusArgs);"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 15881,
+          "code": "                ns.seq = ns.seq.padEnd(alignLen, '-');"
+        },
+        {
+          "file": "C:/work/MSA-viewer/mafft-wasm.js",
+          "line": 135,
+          "code": "   * Since the full MAFFT --add pipeline requires multiple binaries"
+        },
+        {
+          "file": "C:/work/MSA-viewer/mafft-wasm.js",
+          "line": 137,
+          "code": "   * combine existing and new sequences, strip all gaps, and re-align."
+        },
+        {
+          "file": "C:/work/MSA-viewer/mafft-wasm.js",
+          "line": 143,
+          "code": "    const combined = this._stripGaps(existingFasta) + '\\n' + this._stripGaps(newFasta);"
+        }
+      ],
+      "detail": "The 'Just Add' (padEnd with '-' at line 15881) and 'Align to consensus' (alignSequenceToConsensusProfile at line 15848) details match. However 'Add & Align - realign the full alignment with MAFFT using add-keep-length mode' does NOT match: the browser MAFFT path (mafft-wasm.js addAndAlign) explicitly does NOT use the --add/keep-length pipeline. It states 'the full MAFFT --add pipeline requires multiple binaries... we use a simpler approach: combine existing and new sequences, strip all gaps, and re-align' (lines 135-137), and _stripGaps both inputs then re-aligns (line 143). This strips gaps and re-aligns rather than preserving alignment length via add-keep-length mode."
+    }
+  ],
+  "counts": {
+    "verdicts": 2
+  },
+  "note": "Audited 2 claims (13, 14). Claim 13 (Realign Block) = MATCH: Ctrl+Shift+R->realignSelectedBlock, columnRuns filters runs to length>=2 (single isolated columns ignored), per-run extract+degap+independent MAFFT call, splice-back via state.seqs. Claim 14 (Add sequence modes) = MISMATCH: Just Add (padEnd '-') and Align-to-consensus (alignSequenceToConsensusProfile) match, but Add & Align does NOT use add-keep-length mode in the browser path — mafft-wasm.js addAndAlign explicitly avoids the --add pipeline, strips gaps and re-aligns (not --keeplength)."
+}

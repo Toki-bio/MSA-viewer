@@ -1,0 +1,50 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "13k",
+      "verdict": "MISMATCH",
+      "evidence": [
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 9651,
+          "code": "// Ctrl+Shift+R is browser hard refresh — only hijack when columns are selected"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 9652,
+          "code": "if (state.selectedColumns.size >= 2) {"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 9653,
+          "code": "realignSelectedBlock();"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 9654,
+          "code": "e.preventDefault();"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 15447,
+          "code": "if (!runs.length) {"
+        },
+        {
+          "file": "C:/work/MSA-viewer/script.js",
+          "line": 15448,
+          "code": "showMessage(\"Select at least one span of 2+ columns to realign.\", 3000);"
+        },
+        {
+          "file": "C:/work/MSA-viewer/realign-region.js",
+          "line": 128,
+          "code": "return runs.filter(function (r) { return r.end - r.start + 1 >= 2; });"
+        }
+      ],
+      "detail": "Most details match: Ctrl+Shift+R (e.shiftKey) calls realignSelectedBlock(); isolated single columns are skipped because columnRuns filters to runs of 2+ columns (realign-region.js:128); and realignSelectedBlock requires at least one span of 2+ columns (script.js:15447-15448). The mismatch is 'otherwise the browser's hard-refresh applies': the handleKeyDown guard that decides preventDefault/hard-refresh is `state.selectedColumns.size >= 2` — a TOTAL selected-column count (script.js:9652), not a contiguous-span check. When two or more NON-adjacent isolated single columns are selected (no span of 2+ columns), the guard still passes, e.preventDefault() fires (so NO browser hard-refresh), and realignSelectedBlock instead shows the toast 'Select at least one span of 2+ columns to realign.' and returns. The browser hard-refresh actually applies only when fewer than 2 total columns are selected, so the stated hard-refresh behaviour does not match the code in the isolated-single-columns case the claim describes."
+    }
+  ],
+  "counts": {
+    "verdicts": 1
+  },
+  "note": "Claim 13k verdicted MISMATCH. The Ctrl+Shift+R shortcut, the \"isolated single columns are skipped\" behavior (columnRuns filter for runs of 2+), and the \"need at least one span of 2+ columns\" requirement (realignSelectedBlock toast) all match. However, the claim ties 'otherwise the browser's hard-refresh applies' to 'need at least one span of 2+ columns', but the handleKeyDown guard deciding preventDefault is `state.selectedColumns.size >= 2` (total count, script.js:9652), not a span check. With 2+ non-adjacent isolated single columns selected, preventDefault fires (no hard-refresh) and a toast is shown instead; the browser hard-refresh applies only when <2 total columns are selected."
+}

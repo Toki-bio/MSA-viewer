@@ -1,0 +1,65 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "15",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 20712,
+          "code": "        blastWorkerPool.push(new Worker('./blast-worker.js'));"
+        },
+        {
+          "file": "blast-worker.js",
+          "line": 686,
+          "code": "const IDB_NAME    = 'blast-db-cache-v1';"
+        },
+        {
+          "file": "blast-worker.js",
+          "line": 771,
+          "code": "        self.postMessage({ type: 'progress', requestId, dbName, stage: 'downloading (first time only)' });"
+        },
+        {
+          "file": "blast-worker.js",
+          "line": 777,
+          "code": "                await idbPut(idb, dbName, text);"
+        },
+        {
+          "file": "blast-worker.js",
+          "line": 765,
+          "code": "            self.postMessage({ type: 'progress', requestId, dbName, stage: 'loading from cache' });"
+        },
+        {
+          "file": "blast-worker.js",
+          "line": 170,
+          "code": "function smithWatermanAffine(query, subject) {"
+        },
+        {
+          "file": "blast-worker.js",
+          "line": 214,
+          "code": "        X[rowBase] = NEG; Y[rowBase] = NEG; M[rowBase] = 0;"
+        },
+        {
+          "file": "blast-worker.js",
+          "line": 227,
+          "code": "            // M: match/mismatch, or restart (local alignment) — inlined, not scoreOf(), for speed"
+        },
+        {
+          "file": "blast-worker.js",
+          "line": 230,
+          "code": "            let best = 0, dir = 0;"
+        },
+        {
+          "file": "blast-worker.js",
+          "line": 611,
+          "code": "                    : smithWatermanAffine(querySeq, window);"
+        }
+      ],
+      "detail": "All stated details match. (1) Web Worker: blast-worker.js is instantiated as a Worker at script.js:20712, and its header (line 4) says it runs as a Web Worker. (2) Downloads and caches in IndexedDB: ensureDb() fetches the FASTA on first use (line 772 fetch(dbUrl), with the 'downloading (first time only)' progress message) and stores it in IndexedDB via idbPut (lines 777-778); subsequent lookups read from the IDB cache ('loading from cache' line 765, 'loading cached index' line 751). (3) First query slower than subsequent ones: first query downloads+indexes; later queries hit the cache (DB_SEQS short-circuits at line 724, cached text/index reuse). (4) Smith-Waterman local alignment: scoring uses smithWatermanAffine()/smithWatermanAffineBanded() (lines 170, 309), actually invoked in the search path (lines 611, 629); the DP is local — M[rowBase]=0 reset (line 214) and 'best=0, dir=0' local restart (line 230) with the comment 'restart (local alignment)' (line 227). The Gotoh affine-gap refinement is a standard Smith-Waterman variant, consistent with the manual's general 'Smith-Waterman local alignment' wording."
+    }
+  ],
+  "counts": {
+    "verdicts": 1
+  },
+  "note": "Claim 15 verified as MATCH: blast-worker.js runs as a Web Worker (script.js:20712), downloads FASTA on first use and caches it (plus the built index) in IndexedDB (IDB_NAME='blast-db-cache-v1'; fetch at line 772, idbPut at 777-778; cache reads at 765/751), making the first query slower than subsequent cached ones, and scoring uses smithWatermanAffine/smithWatermanAffineBanded which implement local alignment via the M[rowBase]=0 reset and best=0/dir=0 local restart (lines 214, 227, 230)."
+}

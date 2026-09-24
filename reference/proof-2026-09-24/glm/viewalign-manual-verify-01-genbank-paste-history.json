@@ -1,0 +1,97 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "3",
+      "verdict": "MATCH",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 8688,
+          "code": "        } else if (/^LOCUS\\s+/mi.test(inputText)) {"
+        },
+        {
+          "file": "script.js",
+          "line": 8689,
+          "code": "            parsed = parseGenBank(inputText);"
+        },
+        {
+          "file": "script.js",
+          "line": 3136,
+          "code": "        if (inFeatures) {"
+        },
+        {
+          "file": "script.js",
+          "line": 3143,
+          "code": "                if (/^(source|CDS|gene|mRNA|tRNA|rRNA|misc_feature|repeat_region|STS|primer_bind|promoter|exon|intron|misc_RNA|regulatory|LTR|misc_binding|misc_signal|misc_difference|variation|misc_recomb|mobile_element|oriT|protein_bind|stem_loop|sig_peptide|mat_peptide|transit_peptide|3'UTR|5'UTR|polyA_site|D-loop|TATA_signal|RBS|enhancer|CAAT_signal|GC_signal|terminator|rep_origin|D_segment|J_segment|V_segment|C_region|N_region|S_region|gap|assembly_gap|centromere|telomere|operon|iDNA|misc_structure)\\b/.test(fline)) {"
+        },
+        {
+          "file": "script.js",
+          "line": 3166,
+          "code": "        if (trimmed.startsWith('ORIGIN')) {"
+        },
+        {
+          "file": "script.js",
+          "line": 3172,
+          "code": "            const seq = trimmed.replace(/^\\d+\\s*/, '').replace(/\\s+/g, '');"
+        },
+        {
+          "file": "script.js",
+          "line": 3187,
+          "code": "    const name = locus || accession || 'GenBank_import';"
+        }
+      ],
+      "detail": "Pasted text reaches parseAndRender, which detects records beginning with LOCUS (`/^LOCUS\\s+/mi`, line 8688) and calls parseGenBank (8689). parseGenBank parses header metadata (locus/accession/organism/definition -> name, line 3187), FEATURES (inFeatures block + feature-key regex, lines 3136/3143), and the ORIGIN sequence (trimmed.startsWith('ORIGIN'), line 3166; sequence extracted line 3172). Every stated detail matches."
+    },
+    {
+      "claim_id": "8",
+      "verdict": "MISMATCH",
+      "evidence": [
+        {
+          "file": "script.js",
+          "line": 566,
+          "code": "            const raw = localStorage.getItem('msaviewer_history');"
+        },
+        {
+          "file": "script.js",
+          "line": 586,
+          "code": "        try { localStorage.setItem('msaviewer_history', JSON.stringify({ max: this.maxItems, items: store })); } catch(e) {}"
+        },
+        {
+          "file": "script.js",
+          "line": 592,
+          "code": "            type, // 'file' or 'clipboard'"
+        },
+        {
+          "file": "script.js",
+          "line": 594,
+          "code": "            timestamp: Date.now(),"
+        },
+        {
+          "file": "script.js",
+          "line": 595,
+          "code": "            nSeqs: data.nSeqs || 0,"
+        },
+        {
+          "file": "script.js",
+          "line": 8845,
+          "code": "        _historyManager.add("
+        },
+        {
+          "file": "script.js",
+          "line": 683,
+          "code": "                    parseAndRender(false);"
+        },
+        {
+          "file": "script.js",
+          "line": 690,
+          "code": "                showMessage('Original file not available - re-open the file to load it.', 3000);"
+        }
+      ],
+      "detail": "Several stated details differ. (1) BLAST is NOT tracked: the only _historyManager.add() call is at line 8845 inside parseAndRender, and the type field only stores 'file' or 'clipboard' (line 592); BLAST results are copied as FASTA to the clipboard rather than loaded as an alignment through parseAndRender, so they never enter history. (2) 'Click any entry to reload it instantly' is false for file entries lacking a captured handle - the handler falls back to showMessage('Original file not available - re-open the file to load it.', 3000) (line 690). What does match: history persists via localStorage 'msaviewer_history' (lines 566/586) and entries store timestamp (594) and nSeqs (595)."
+    }
+  ],
+  "counts": {
+    "verdicts": 2
+  },
+  "note": "Audited 2 claims. Claim 3: MATCH (LOCUS detection at line 8688, parseGenBank parses header metadata/FEATURES/ORIGIN). Claim 8: MISMATCH (BLAST is not tracked - only one _historyManager.add call inside parseAndRender with type 'file'/'clipboard'; click-to-reload falls back to 'not available' for handle-less files; localStorage persistence and timestamp/nSeqs storage do match)."
+}
