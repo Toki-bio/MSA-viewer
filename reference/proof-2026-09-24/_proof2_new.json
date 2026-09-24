@@ -1,0 +1,37 @@
+{
+ "label": "NEW",
+ "inputInDotterMode": {
+  "min": "1",
+  "max": "61",
+  "step": "1",
+  "value": "6",
+  "valid": true,
+  "afterStepUp": "7",
+  "afterStepDown": "5"
+ },
+ "spinZoomOutDiagonal": {
+  "cellsWithDotOnRepeat": "80/80",
+  "pixelsOnRepeat": 80,
+  "pixelsLit": 47
+ },
+ "edgeDots": {
+  "edgeDotRate": "0.0010",
+  "interiorDotRate": "0.0077",
+  "edge": 10,
+  "mid": 1844
+ },
+ "thresholdMeaning": {
+  "dotAt30_thr70": true,
+  "dotAt30_thr75": false,
+  "rawScoreAt30": 8,
+  "scoreRange": [
+   0,
+   11
+  ]
+ },
+ "canvasLimit": {
+  "32000x100": "255,0,0,255",
+  "48051x48051": "0,0,0,0",
+  "12051x12051": "255,0,0,255"
+ }
+}

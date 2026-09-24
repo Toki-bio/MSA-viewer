@@ -1,0 +1,77 @@
+{
+ "label": "OLD 16a7d39",
+ "served": "C:\\work\\MSA-viewer-proof-old",
+ "inputAtLoad": {
+  "min": "2",
+  "max": "20",
+  "step": "2",
+  "value": "6",
+  "valid": true,
+  "tooltip": "Word length (SPIN) or sliding window length (Doter), odd, 1-61"
+ },
+ "nBlock_spin": {
+  "dotsInsideNBlock": 89970,
+  "of": 90000
+ },
+ "nBlock_doter": {
+  "dotsInsideNBlock": 88794,
+  "of": 90000
+ },
+ "uVsT": {
+  "rows": 200,
+  "cols": 200,
+  "dots": 0,
+  "regions": 0
+ },
+ "unrelated": {
+  "rows": 500,
+  "cols": 500,
+  "dots": 2050,
+  "regions": 11
+ },
+ "repeat200in6kb": {
+  "rows": 6000,
+  "cols": 6000,
+  "dots": 15634,
+  "regions": 0,
+  "len": 6000
+ },
+ "zoom24": {
+  "canvasWidth": 48051,
+  "canvasHeight": 48051,
+  "pixelAt60": [
+   0,
+   0,
+   0,
+   0
+  ]
+ },
+ "zoomedOutDiagonal": {
+  "pixelsOnDiagonal": 40,
+  "dark": 40
+ },
+ "copyRegionAfterNewPlot": {
+  "regionBefore": true,
+  "regionAfterNewPlot": "kept from previous plot"
+ },
+ "copyPinnedSpin": {
+  "threw": "Uncaught TypeError: Cannot read properties of null (reading '1505')"
+ },
+ "svg": {
+  "bytes": 18299,
+  "containsImageElement": true,
+  "lineElements": 0
+ },
+ "png": {
+  "width": 451,
+  "height": 451
+ },
+ "plot12000": {
+  "ms": 13492,
+  "rows": 12000,
+  "status": "12000 x 12000 in 119 ms."
+ },
+ "pageErrors": [
+  "Cannot read properties of null (reading '1505')"
+ ]
+}

@@ -1,0 +1,75 @@
+{
+ "label": "NEW 5b7ba15",
+ "served": "C:\\work\\MSA-viewer",
+ "inputAtLoad": {
+  "min": "2",
+  "max": "20",
+  "step": "1",
+  "value": "6",
+  "valid": true,
+  "tooltip": "Word length for SPIN exact matches (2-20). Shorter words find more, and noisier, matches"
+ },
+ "nBlock_spin": {
+  "dotsInsideNBlock": 0,
+  "of": 90000
+ },
+ "nBlock_doter": {
+  "dotsInsideNBlock": 0,
+  "of": 90000
+ },
+ "uVsT": {
+  "rows": 200,
+  "cols": 200,
+  "dots": 9992,
+  "regions": 30
+ },
+ "unrelated": {
+  "rows": 500,
+  "cols": 500,
+  "dots": 1854,
+  "regions": 1
+ },
+ "repeat200in6kb": {
+  "rows": 6000,
+  "cols": 6000,
+  "dots": 15634,
+  "regions": 16,
+  "len": 6000
+ },
+ "zoom24": {
+  "canvasWidth": 668,
+  "canvasHeight": 541,
+  "pixelAt60": [
+   255,
+   255,
+   255,
+   255
+  ]
+ },
+ "zoomedOutDiagonal": {
+  "pixelsOnDiagonal": 40,
+  "dark": 40
+ },
+ "copyRegionAfterNewPlot": {
+  "regionBefore": true,
+  "regionAfterNewPlot": null
+ },
+ "copyPinnedSpin": {
+  "threw": null
+ },
+ "svg": {
+  "bytes": 29963,
+  "containsImageElement": false,
+  "lineElements": 363
+ },
+ "png": {
+  "width": 1652,
+  "height": 1652
+ },
+ "plot12000": {
+  "ms": 306,
+  "rows": 0,
+  "status": "Too large to plot: 12,000 x 12,000 positions (limit 100,000,000 cells, about 10,000 x 10,0"
+ },
+ "pageErrors": []
+}
