@@ -22,7 +22,9 @@
 - [ ] **Realigning with MAFFT changes nucleotide case** — re-running an alignment through MAFFT from within the viewer alters the case (upper/lower) of nucleotides in the result; undesired, case should be preserved through a realign round-trip. Not yet investigated (no root cause identified).
 
 ## ✅ Recent Fixes
-- [x] Horizontal scrollbar (content-visibility:auto removed)
+- [x] Horizontal scrollbar (content-visibility:auto removed) — its 1em-wide placeholder broke scrollWidth.
+      2026-09-27: reintroduced on `.seq-data` only, placeholder = columns x 1ch; scroll width
+      and the persistent scrollbar checked identical with/without it (Block + Full).
 - [x] Consensus position radio re-render (added to radioGroups)
 - [x] Compact mode overflow:auto
 - [x] Letter coloring backgrounds (was invisible on dark shading bg)
