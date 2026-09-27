@@ -12,6 +12,8 @@
   - [ ] Shade colour picker: a redraw per change that may be redundant (GLM, unverified).
 - [ ] Problems reported from SINEderella use (add below as they come).
   - [x] 2026-09-27 Rename box shifted the name, Esc did not cancel (it saved), slow on big files (v205).
+  - [x] 2026-09-27 Vertical scrollbar jumped back when dragged: both persistent bars scrolled the
+        wrong way (-1 px per px); now thumb-like in all modes (v206).
 - [ ] Before freeze: corresponding author, e-mail, funding, co-author consent; release tag +
       Zenodo DOI; one figure; decide Application Note vs full length.
 
