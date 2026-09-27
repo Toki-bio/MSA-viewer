@@ -73,14 +73,50 @@ Audits
 - Tree probe: `dev-tools/tree-audit/run-audit.js` (all three original defects fixed).
 - Manuscript 2.7 corrected to the new codon display.
 
-Tests: `bash tests/run-regression.sh` (44 browser checks + compat 77 files + oracles),
+Tests: `bash tests/run-regression.sh` (44 browser checks then; 48 after the perf pass + compat 77 files + oracles),
 `node tests/functional/run-all.js` (5). Every fix above has a check that fails on the
 previous code.
+
+## Performance pass (2026-09-27)
+
+Measured with `dev-tools/perf/bench-interactions.js` (real mouse input in Chrome; baseline
+`bench-2026-09-27-rsi.json` / `-syn.json`, after: `bench-2026-09-27-after.json`).
+rsi_subfam_input_30k, 601 x 524, 316,050 residue spans:
+
+| action | before | after |
+|---|---|---|
+| Ctrl-click a name (row) | 180-620 ms | ~85 ms |
+| Shift-click 150 rows | 1.0-1.75 s | 0.33 s |
+| Ctrl+Alt-click a column | 1.4-2.1 s | ~170 ms |
+| 201-column range | 2.1-4.7 s | 0.52 s |
+| click a residue | 1.6 s | 0.15 s |
+| Highlight diffs on / off | 8-12 s | 1.0-1.2 s |
+| zoom step | 5-13 s | 1.2-1.3 s |
+| sort by name | 7-9.5 s | 1.6 s |
+| full redraw | 5.6 s | 1.4 s |
+
+Causes found (Chrome traces: `dev-tools/perf/trace-clicks.js`, `trace-actions.js`) and fixes:
+- Every residue span had `position:relative; z-index:1`: 316k paint layers, hit-tested on each
+  mouse press/move/release. Removed (screenshots byte-identical).
+- Rows: a document-wide query per selected row -> one pass, toggle only what changed.
+- Columns: a `<style>` rule listing every selected column, re-matched against all spans ->
+  class toggled on the changed columns' spans only. Fixed on the way: clearing after a redraw
+  left columns highlighted.
+- Each full layout of 316k spans cost ~2 s: rows off screen now skip style/layout/paint
+  (`content-visibility` on `.seq-data` in non-windowed blocks, placeholder = columns x 1ch,
+  1em). Geometry and screenshots identical at top/middle/bottom (`dev-tools/perf/verify-content-visibility.js`).
+- Highlight diffs and its threshold: class toggle in place instead of a redraw (screenshots
+  identical to a redraw). Zoom: no 0.1 s font-size transition on big views.
+- Redraws predicted to take > 1 s show "Redrawing the alignment..." first. No Stop button on
+  redraws (half a redraw leaves a broken view); Stop needs chunked or worker work.
+- GLM perf audit (8 tasks, `C:/work/glm-harness/out/viewalign-perf-*.json`): tasks 1-5 useful
+  and matched the measurements; the render-call batches were unreliable.
 
 ## Conventions
 
 - Release: bump `?v=` for changed js/css in index.html and `BUILD_TAG` (script.js line 3);
-  commit; `bash update-version-json.sh`; amend with the Co-Authored-By trailer; push.
+  commit with the Co-Authored-By trailer in the message; `bash update-version-json.sh` makes its
+  own commit: amend that one with the trailer too; push.
 - Line endings in git: `styles.css` is stored CRLF (add with `git -c core.autocrlf=false`),
   everything else LF. Check `git diff --cached --numstat` before committing.
 - GLM: read-only glm.js tasks, one question each, on a frozen `git worktree add --detach`
@@ -89,7 +125,7 @@ previous code.
 
 ## Next
 
-1. Performance pass on big alignments (row and column selection are slow; find other slow
-   spots) and a progress notice with Cancel for anything over ~1 s. See `todo.md`.
+1. Remaining perf items and the Stop button (todo.md, "Now"); the performance pass itself is
+   done (above).
 2. Fix problems found during real use.
 3. Freeze, preprint, journal (above).

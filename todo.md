@@ -1,10 +1,15 @@
 # ViewAlign TODO
 
 ## Now (2026-09-27): real-use testing, then freeze — see HANDOFF.md
-- [ ] **Performance on big alignments**: selecting several sequences (rows) and selecting
-      columns can take long; profile, find other slow operations, speed them up.
-- [ ] **Progress notice with Cancel** for any operation over ~1 s (say what it is working on).
-      Long synchronous work must be split into chunks to be cancellable.
+- [x] **Performance on big alignments** (2026-09-27, numbers in HANDOFF.md): row/column
+      selection, residue click, Highlight diffs, zoom, sort and redraw all 4-15x faster.
+- [~] **Progress notice** for operations over ~1 s: done for redraws (predicted from the last
+      measured one) and sorts. Still to do:
+  - [ ] Zoom on big span views (~1.2 s, no notice yet; it is a CSS change, not a redraw).
+  - [ ] Stop button: only work that runs in chunks or a worker can honour it (MAFFT has one).
+        Candidates to split into chunks: statistics matrices, k-mer grouping, tree building.
+  - [ ] Windowed mode (> 500k residues): a scroll step still costs ~0.3-0.6 s (GLM perf-5).
+  - [ ] Shade colour picker: a redraw per change that may be redundant (GLM, unverified).
 - [ ] Problems reported from SINEderella use (add below as they come).
 - [ ] Before freeze: corresponding author, e-mail, funding, co-author consent; release tag +
       Zenodo DOI; one figure; decide Application Note vs full length.
