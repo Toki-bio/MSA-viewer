@@ -11,6 +11,7 @@
   - [ ] Windowed mode (> 500k residues): a scroll step still costs ~0.3-0.6 s (GLM perf-5).
   - [ ] Shade colour picker: a redraw per change that may be redundant (GLM, unverified).
 - [ ] Problems reported from SINEderella use (add below as they come).
+  - [x] 2026-09-27 Rename box shifted the name, Esc did not cancel (it saved), slow on big files (v205).
 - [ ] Before freeze: corresponding author, e-mail, funding, co-author consent; release tag +
       Zenodo DOI; one figure; decide Application Note vs full length.
 
