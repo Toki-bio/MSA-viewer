@@ -1,3 +1,7 @@
+> **Update 2026-09-27:** authors set; plan is now bioRxiv first, then Bioinformatics
+> Application Note or a full-length NAR Web Server paper, after real-use testing and a
+> freeze. Current state and open items: `HANDOFF.md`. The text below is the 2026-09-23 plan.
+
 # Submission plan — Bioinformatics Application Note
 
 Snapshot is `main` (commit `5b93334`, build v187). The uncommitted 2D

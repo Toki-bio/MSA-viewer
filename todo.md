@@ -1,5 +1,15 @@
 # ViewAlign TODO
 
+## Now (2026-09-27): real-use testing, then freeze — see HANDOFF.md
+- [ ] **Performance on big alignments**: selecting several sequences (rows) and selecting
+      columns can take long; profile, find other slow operations, speed them up.
+- [ ] **Progress notice with Cancel** for any operation over ~1 s (say what it is working on).
+      Long synchronous work must be split into chunks to be cancellable.
+- [ ] Problems reported from SINEderella use (add below as they come).
+- [ ] Before freeze: corresponding author, e-mail, funding, co-author consent; release tag +
+      Zenodo DOI; one figure; decide Application Note vs full length.
+
+
 ## 🚨 Active Bugs
 - [ ] **Consensus:bottom** — debug logging added, awaiting F12 Console test. Check for `[consensus]` log messages.
 - [ ] **Compact mode glitch** — overflow changed to `'auto'`, needs testing
