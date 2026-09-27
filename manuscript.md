@@ -1,5 +1,14 @@
 # ViewAlign: a browser-based platform for multiple sequence alignment visualisation, editing, and analysis
 
+<!-- authors: read by dev-tools/build_manuscript_docx.js; names and affiliation as in Genes 2026, 17(9), doi:10.3390/genes17091117 -->
+Sergei A. Kosushkin^1^, Darya V. Zakirova^1^, Alisher A. Abdullaev^1^
+
+^1^Center for Advanced Technologies, Talabalar Street, Tashkent 100174, Uzbekistan
+
+ORCID: Sergei A. Kosushkin 0000-0001-7629-0153; Darya V. Zakirova 0009-0007-2225-4457; Alisher A. Abdullaev 0000-0002-8268-7699
+<!-- /authors -->
+
+
 > **Revision note (v132, 2026-07-29) — DELETE THIS BLOCK BEFORE SUBMISSION.**
 > Round 1: draft aligned with the current viewer (`script.js` v132) — view-mode naming, nine input formats, conservation vs residue colour schemes, browser-based BLAST worker, Canvas description, snapshot/shortcut caveats.
 > Round 2 (post-audit): removed unsubstantiated test-count and benchmark claims; corrected zoom (200%), block width (40–300), CIGAR ops (nine), Highlight-diffs opacity (40%), clustering parameters (2–20, 80/70/60, retry-based cap relaxation), TSD parameters, and module line count (~18,000). Removed MSF from export list. Cited refs 10–12/14 and added Camacho (BLAST+) as ref 15. Summary cut to ~145 words. Limitations extended (name colouring, protein-analysis asymmetry, DOM size ceiling).
