@@ -112,6 +112,15 @@ Causes found (Chrome traces: `dev-tools/perf/trace-clicks.js`, `trace-actions.js
 - GLM perf audit (8 tasks, `C:/work/glm-harness/out/viewalign-perf-*.json`): tasks 1-5 useful
   and matched the measurements; the render-call batches were unreliable.
 
+## GLM audit of Repeat Finder + dot plot (started 2026-09-28)
+
+- 16 narrow glm.js tasks (9 Repeat Finder/TSD, 7 dot plot) against a frozen snapshot of v210:
+  worktree C:/work/MSA-viewer-glm-audit2 at e0e6204.
+- Generator: C:/work/glm-harness/make_viewalign_repeat_dot_audit_tasks.py;
+  runner: run_viewalign_repeat_dot_audit.sh (resumes, skips done tasks);
+  outputs: glm-harness/out/viewalign-rdaudit-*.json.
+- Every finding is checked against the code (quote exists, input reproduces) before any fix.
+
 ## Conventions
 
 - Release: bump `?v=` for changed js/css in index.html and `BUILD_TAG` (script.js line 3);
