@@ -14,6 +14,13 @@
   - [x] 2026-09-27 Rename box shifted the name, Esc did not cancel (it saved), slow on big files (v205).
   - [x] 2026-09-27 Vertical scrollbar jumped back when dragged: both persistent bars scrolled the
         wrong way (-1 px per px); now thumb-like in all modes (v206).
+  - [x] 2026-09-28 Undo history list off screen when scrolled, entries "undefined" / "redo-snapshot" (v207).
+  - [x] 2026-09-28 Repeat Finder redesign; TSD Auto edge sat on the TSDs (29 -> 66 of 100 on tim top100);
+        repeat highlights painted every row (v207).
+  - [x] 2026-09-28 Alignment menu button layout; dot plot "?"/Copy region full width, window not resizable (v207).
+  - [ ] Dot plot "jerking when the mouse moves over it": not reproduced yet (hover, 6 kb x 6 kb, zoomed,
+        DPR 1.5, 1280-1920 px, context 30-100, resize sweep all steady). Needs his conditions.
+  - [ ] TSD "Reference row" mode picks very short bodies on SINEderella plates (472-510 on tim top100): check.
 - [ ] Before freeze: corresponding author, e-mail, funding, co-author consent; release tag +
       Zenodo DOI; one figure; decide Application Note vs full length.
 
