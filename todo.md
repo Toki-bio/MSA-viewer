@@ -21,6 +21,9 @@
   - [ ] Dot plot "jerking when the mouse moves over it": not reproduced yet (hover, 6 kb x 6 kb, zoomed,
         DPR 1.5, 1280-1920 px, context 30-100, resize sweep all steady). Needs his conditions.
   - [ ] TSD "Reference row" mode picks very short bodies on SINEderella plates (472-510 on tim top100): check.
+  - [x] 2026-09-28 Dot plot: smooth run-based dots, maximize + edge resize, Full view, live recalculation,
+        split halves (different settings below the diagonal, self-plots) (v208).
+  - [x] 2026-09-28 Number-box slider never went away; menus stayed open after a click in the alignment (v209).
 - [ ] Before freeze: corresponding author, e-mail, funding, co-author consent; release tag +
       Zenodo DOI; one figure; decide Application Note vs full length.
 
