@@ -120,6 +120,25 @@ Causes found (Chrome traces: `dev-tools/perf/trace-clicks.js`, `trace-actions.js
   runner: run_viewalign_repeat_dot_audit.sh (resumes, skips done tasks);
   outputs: glm-harness/out/viewalign-rdaudit-*.json.
 - Every finding is checked against the code (quote exists, input reproduces) before any fix.
+- Result (all 16 tasks ran; 3 needed a rerun after HTTP 429). Fixed in v211, each covered by the
+  "Audit fixes" regression check, which fails on v210:
+  - Dot: SPIN region ends were w-1 too long (the word worker marks every cell of a word);
+    a newer plot could get the older plot's worker result (both listeners took the first reply;
+    now a new job terminates the busy worker, and openDotPlot drops stale generations);
+    closing the window did not cancel a pending live recalculation (it reopened);
+    left-edge resize went off screen; go-to-region centred on the row span; context radius 0/negative;
+    fit floor 0.01 px/cell too high for lopsided plots (now 0.001); exact-cell image capped at 4e6
+    cells; threshold sliders redraw once per frame; X never matches in nucleotide plots.
+  - Repeats: inverted pairs listed twice (mirror); U did not pair with A, IUPAC complements forced
+    to N; tandem arrays listed once per shifted start and per multiple of the unit; 0% divergence
+    was read as 15 (repeats) / 20 (TSD), TSD pre-SINE end 0 read as 30; negative Min length hung
+    the tab; Clear highlights redrew with the current radio mode; lowercase TSD marks wiped all
+    soft-masking; copied TSD table lacked the "note" column for misses.
+  - Rejected (checked, not real): Fit leaves the crosshair behind (Full view handler redraws it);
+    1 GB exact image at 300 kb (cell limit makes it impossible).
+  - Left open (judgement calls): N/N in TSD flanks counts 0.5 mismatch; conservation needs >= 3
+    rows; TSD results keyed by row index go stale after row edits until re-run; undo of lowercase
+    marks restores by row index; reference-row name regex matches inside words.
 
 ## Conventions
 
