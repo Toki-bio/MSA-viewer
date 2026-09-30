@@ -216,6 +216,16 @@ hard to find and not covering all kinds; Ins Gap Other took ~2 s.
 - Author's answer (2026-09-30): clear. v214: a new file clears name colours and their history
   (presets kept); snapshots still restore theirs. Check "Name colours: cleared ..." fails on v213.
 
+## Colouring / marking conflict study (2026-09-30, awaiting decisions)
+
+- Read dev-tools/colour-conflicts/STUDY.md. Browser probes: probe.js (136 layer pairs, both
+  orders, clears, redraw, Canvas), anchor-probe.js (marks through 7 kinds of edit).
+- Headline: three drawing mechanisms (class !important, inline !important, painted once)
+  decide who wins by accident. Selections invisible under SNP letters and colour schemes; TSD
+  colour marks invisible on shaded residues (DOM only); repeat highlights lost on any redraw;
+  TSD marks and residue selections land on another sequence after a row delete/move.
+- Section 7 of the study lists the decisions needed before changing anything.
+
 ## Conventions
 
 - Release: bump `?v=` for changed js/css in index.html and `BUILD_TAG` (script.js line 3);
