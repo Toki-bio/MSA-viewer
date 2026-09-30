@@ -216,6 +216,26 @@ hard to find and not covering all kinds; Ins Gap Other took ~2 s.
 - Author's answer (2026-09-30): clear. v214: a new file clears name colours and their history
   (presets kept); snapshots still restore theirs. Check "Name colours: cleared ..." fails on v213.
 
+## Touchpad scroll jump-back and TSD flanks (2026-09-30, v217)
+
+- Horizontal two-finger scrolling (Full view, 50%, B.aln.fa 201 x 2019) jumped back / stalled.
+  Cause: the persistent scroll bar and the alignment echoed each other (alignment scroll ->
+  bar.scrollLeft = x -> bar scroll event, one frame later -> alignment.scrollLeft = bar.scrollLeft).
+  The `syncing` guard only covered the synchronous part. Every scroll step became a programmatic
+  scroll, which cancels the browser's smooth/inertial scrolling. Reproduced with a compositor
+  gesture (CDP Input.synthesizeScrollGesture, gestureSourceType 'mouse'; 'touch' does not scroll
+  in headless): swipe of 2700 px stopped at 1036-1547 px with 9-51 write-backs; now completes,
+  0 writes. Wheel events do not reproduce it (main thread only). Fix: `makeBarInputGuard` -
+  a bar's scroll event drives the view only within 350 ms of real input on the bar (wheel,
+  press, touch, key); alignment -> bar never writes an equal value; same for the vertical bar and
+  for Canvas (offsetX/offsetY had the same echo). The setupMenuScrollBehavior handler (forced
+  layout per name cell on every scroll) is disabled, not the cause.
+- TSD results: 3 bases on each side of both copies, small grey (`_tsdFlanks`, stored with each
+  result at analysis time). Not added to Copy table (format unchanged).
+- Check "Touchpad-style horizontal scroll ..." fails on v216 (swipe stops at 577 of 1200 px).
+  "Horizontal scrollbar follows zoom" now dispatches a wheel event first (a bare bar.scrollLeft
+  write is our own mirror, not user input).
+
 ## Colouring / marking conflict study (2026-09-30, awaiting decisions)
 
 - Read dev-tools/colour-conflicts/STUDY.md. Browser probes: probe.js (136 layer pairs, both
