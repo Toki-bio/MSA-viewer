@@ -171,6 +171,51 @@ hard to find and not covering all kinds; Ins Gap Other took ~2 s.
 - Checks (fail on v211): search highlights through edits + drag overlay; windowed/restriction/
   regex; gap tool in-place == full redraw; Selections panel round trip.
 
+## GLM audit of v212 (started 2026-09-30)
+
+- 18 narrow glm.js tasks (6 search layer, 4 in-place gap patch, 7 Selections panel, 1 Canvas
+  redraw) against a frozen snapshot: worktree C:/work/MSA-viewer-glm-audit3 at 6113f85 (v212).
+- Generator: C:/work/glm-harness/make_viewalign_v212_audit_tasks.py; runner:
+  run_viewalign_v212_audit.sh (resumes, skips done tasks); outputs:
+  glm-harness/out/viewalign-v212audit-*.json; run log glm-harness/v212-audit-run.log.
+- Every finding gets checked against the code (quote exists, input reproduces) before any fix.
+- Tasks 1-9 (canvas, patch 1-4, search 1-4) checked. Fixed (check "v212 audit fixes" fails on v212):
+  mismatch-search hits painted at cols[idx+pos] (findFuzzyMatches gives absolute positions; the
+  old redraw path had the same shift); empty regex matches painted/counted; lowercase u in regex;
+  invalid regex (message overwritten, mangled rev-comp entry stored, unvalidated with no rows);
+  regex + both strands complemented the regex text (now forward only, said in the message);
+  both-strand message counted a sequence twice; legacy snapshots lost mismatches (now from
+  view.maxMismatches) and regex-ness (now from metacharacters); gap edit inside the trailing
+  filler run reported as a change; in-place patch guard now checks every row's span cache;
+  residue-selection classes restored after each idle repaint slice / scroll completion.
+- Rejected: seq-length label stale (gap edits keep residue counts; equivalence check covers it);
+  mixed shading between idle slices and missing-cache/row-identity risks (every path that could
+  cause them renders, which cancels pending work); left-slide contract (unreachable); captured
+  canvas scheduleDraw (no caller stores it); duplicate hexToRgb (pre-v212, out of scope).
+- Tasks 10-15 (search 5-6, sel 1-4). Fixed: Canvas bold TSD mark hid the search colour; drag
+  overlay start hits now recorded at drag start; TSD/repeat/name-colour off/on replaced instead
+  of merging (a second off lost the first batch; on dropped marks made while off), TSD stash
+  aliased the live Map, repeats toggle threw with no repeat state, their "(+N off)" counts;
+  Undo bundle kept rows/residues by index (now by sequence object); observer null guard;
+  duplicate columns in the range formatter. Check "Selections off/on merges ..." fails on v212.
+- Rejected: "undo does not repaint repeats" (renderAlignment's row builder applies them);
+  CSS in swatch colour (escaped, colours come from pickers/palettes); pending residue anchor
+  dropped on off/on (intended). Go-to cursor math GLM could not read: checked by hand, correct.
+- Tasks 16-18 (sel 5-7). Fixed: snapshot load kept the previous session's name colours, TSD
+  marks and repeats when the snapshot had none (now restored exactly; fresh file load also
+  clears TSD marks/repeats, which are keyed by row index); restored columns past the width;
+  switched-off rows/residues and the Undo bundle were orphaned by data undo/redo and column
+  deletion (state.seqs replaced by copies; now matched again by sequence name); switched-off
+  columns not shifted by Insert gap column / Delete columns; Esc in a Type-mode cell cleared
+  the selection (now leaves the cell); a focused checkbox swallowed the first Esc (only text
+  fields count as open); duplicate context-menu label line. Checks "... merges ..." and
+  "... survive undo ..." fail on v212.
+- Rejected: Esc with the (non-blocking) Statistics window open clears the selection (design:
+  Esc does not close that window, the clear is undoable); Ctrl+A selecting switched-off rows
+  (select all means all; the stash stays); no-op Move up pushes undo (pre-v212, out of scope).
+- Open question for the author: loading a new file keeps name colours (the reset at the load
+  writes state.colourState, which nothing reads, instead of colourState). Keep or clear?
+
 ## Conventions
 
 - Release: bump `?v=` for changed js/css in index.html and `BUILD_TAG` (script.js line 3);
