@@ -140,6 +140,37 @@ Causes found (Chrome traces: `dev-tools/perf/trace-clicks.js`, `trace-actions.js
     rows; TSD results keyed by row index go stale after row edits until re-run; undo of lowercase
     marks restores by row index; reference-row name regex matches inside words.
 
+## Search highlights, fast gap tools, Selections panel (v212, 2026-09-30)
+
+Reported in real use: after editing, search-shaded residues were shifted; "Clear selection"
+hard to find and not covering all kinds; Ins Gap Other took ~2 s.
+
+- Search highlights are now a layer derived from state (`_getSearchHitsForRow`, cached per row
+  by sequence string + `_searchLayerVersion`). Rows are built with their hit classes
+  (createSequenceLine) and every in-place path (`repaintResidueSpan`) recomputes them. Causes
+  found: (1) classes were painted onto spans once and in-place repaints either dropped them or
+  left them on the old columns (Move/Slide drag overlay showed the old highlights through);
+  (2) redraws re-ran each search from its *label*, so both-strand ("X (fwd)") and restriction
+  ("EcoRI GAATTC") highlights vanished after any redraw; (3) windowed scroll never painted
+  them; (4) match counts came from the rendered spans (off-screen rows missed); (5) regex was
+  upper-cased (\w became \W). Entries now store searchValue/useRegex/maxMismatches/enabled;
+  old snapshots are read (restriction keys too).
+- Gap tools (Ins/Del Gap Seq/Other/All, single gap) patch the DOM in place
+  (`patchColumnsInPlace`): one appended span per row when the width grows, ruler/`--cols`
+  updated, conservation + consensus recomputed from the edit column, consensus line rebuilt;
+  on-screen cells repainted at once, other rows in idle slices (`_staleRows`), a scroll
+  finishes rows it reveals. Falls back to renderAlignment for windowed DOM, codon/diff/trim/
+  cluster/repeat/blockmask views, or a full last block in Block mode. 200 x 1000 Full mode:
+  ~1.3 s -> ~0.3 s to first paint (trace). Equivalence to a full redraw is a regression check.
+- Selections panel (top menu, appears when anything is listed; detachable like other menus):
+  rows, columns, residues, each search, TSD marks, repeat highlights, name colours. On/off
+  (off = moved to `state.selectionStash`, so no command sees it; rows/residues stashed by
+  sequence object), go-to (steps), remove, Clear selection, Clear all, Hide/Show all, Undo of
+  the last removal. Esc with no menu/dialog open clears rows/columns/residues. Saved in
+  snapshots (`selections` in the payload).
+- Checks (fail on v211): search highlights through edits + drag overlay; windowed/restriction/
+  regex; gap tool in-place == full redraw; Selections panel round trip.
+
 ## Conventions
 
 - Release: bump `?v=` for changed js/css in index.html and `BUILD_TAG` (script.js line 3);
