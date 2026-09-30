@@ -213,8 +213,8 @@ hard to find and not covering all kinds; Ins Gap Other took ~2 s.
 - Rejected: Esc with the (non-blocking) Statistics window open clears the selection (design:
   Esc does not close that window, the clear is undoable); Ctrl+A selecting switched-off rows
   (select all means all; the stash stays); no-op Move up pushes undo (pre-v212, out of scope).
-- Open question for the author: loading a new file keeps name colours (the reset at the load
-  writes state.colourState, which nothing reads, instead of colourState). Keep or clear?
+- Author's answer (2026-09-30): clear. v214: a new file clears name colours and their history
+  (presets kept); snapshots still restore theirs. Check "Name colours: cleared ..." fails on v213.
 
 ## Conventions
 
