@@ -18,6 +18,64 @@ check('loads without console errors', async (page) => {
   return { pass: true };
 });
 
+check('FASTA preamble beyond 200 lines preserves preflight sizing and pads short rows', async (page) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+
+  const count = 501;
+  const width = 1200;
+  const shortWidth = width - 13;
+  const firstSequence = 'A'.repeat(width);
+  const expectedShortSequence = 'A'.repeat(shortWidth) + '-'.repeat(width - shortWidth);
+  const rawResidues = (count - 1) * width + shortWidth;
+  let fasta = Array.from({ length: 201 }, () => 'A:').join('\n') + '\n';
+  for (let index = 0; index < count; index++) {
+    const isShort = index === count - 1;
+    const name = isShort ? 'short' : `seq${index}`;
+    const sequence = isShort ? firstSequence.slice(0, shortWidth) : firstSequence;
+    fasta += `>${name}\n${sequence}\n`;
+  }
+
+  await loadFasta(page, fasta);
+  const result = await page.evaluate(({ width }) => {
+    const message = document.getElementById('statusMessage')?.textContent || '';
+    const visibleRows = document.querySelectorAll('.seq-line[data-seq-index]').length;
+    return {
+      count: state.seqs.length,
+      firstSequence: state.seqs[0]?.seq,
+      shortSequence: state.seqs.at(-1)?.seq,
+      normalizedLengths: state.seqs.every(seq => seq.seq.length === width),
+      warningVisible: document.getElementById('statusMessage')?.style.display !== 'none',
+      warningMentionsOnlyShortRow: message.includes("Sequence 'short' is 1187 columns (-13)")
+        && message.includes('most of the alignment is 1200 columns')
+        && !message.includes("Sequence 'seq0'"),
+      scannedResidues: state.alignmentIndex?.totalResidues,
+      scannedRows: state.alignmentIndex?.nSeqs,
+      windowed: state._needsWindowedDom,
+      visibleRows,
+    };
+  }, { width });
+
+  const pass = errors.length === 0
+    && result.count === count
+    && result.firstSequence === firstSequence
+    && result.shortSequence === expectedShortSequence
+    && result.normalizedLengths
+    && result.warningVisible
+    && result.warningMentionsOnlyShortRow
+    && result.scannedResidues === rawResidues
+    && result.scannedRows === count
+    && result.windowed
+    && result.visibleRows > 0
+    && result.visibleRows < 150;
+  return {
+    pass,
+    detail: pass
+      ? `${result.count} rows, ${rawResidues} preflight residues, short row padded to ${width} columns`
+      : JSON.stringify({ ...result, pageErrors: errors }),
+  };
+});
+
 check('mode switching: full/block/canvas all render rows', async (page) => {
   await loadFasta(page, makeFasta(20, 500));
   for (const mode of ['full', 'block', 'canvas']) {

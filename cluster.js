@@ -1,23 +1,5 @@
-// Module-level yield helper using MessageChannel for near-zero-delay yielding.
-// setTimeout(0) has a minimum delay of ~4ms in some browsers; MessageChannel
-// fires on the next event loop turn with no artificial delay, cutting yield
-// overhead roughly in half.
-let _yieldResolver = null;
-const _yieldChannel = typeof MessageChannel !== 'undefined' ? new MessageChannel() : null;
-if (_yieldChannel) {
-    _yieldChannel.port1.onmessage = () => {
-        if (_yieldResolver) { const r = _yieldResolver; _yieldResolver = null; r(); }
-    };
-}
 function _yieldToBrowser() {
-    return new Promise(r => {
-        if (_yieldChannel) {
-            _yieldResolver = r;
-            _yieldChannel.port2.postMessage(null);
-        } else {
-            setTimeout(r, 0);
-        }
-    });
+    return new Promise(resolve => setTimeout(resolve, 0));
 }
 
 class SINEClusterer {
@@ -29,6 +11,8 @@ class SINEClusterer {
         this._allSeqIndices = Array.from({length: this.nSeqs}, (_, i) => i);
         this._globalMaxSizeCache = null;
         this._columnCharCounts = null;
+        this._candidateCachePool = null;
+        this._mergedCandidateCache = new Map();
     }
 
     getPositionPatterns(pos, availableSeqs) {
@@ -74,6 +58,7 @@ class SINEClusterer {
         const _yieldNow = _yieldToBrowser;
         let _lastYield = performance.now();
         const _CHUNK_MS = 16;
+        if (_shouldCancel()) return null;
 
         // Lazy precompute column character counts (total across ALL sequences).
         // Used to compute outside counts in O(1) instead of O(nSeqs) per feature.
@@ -88,105 +73,156 @@ class SINEClusterer {
                     }
                 }
                 this._columnCharCounts.set(pos, counts);
+                if (performance.now() - _lastYield >= _CHUNK_MS) {
+                    await _yieldNow();
+                    if (_shouldCancel()) {
+                        this._columnCharCounts = null;
+                        return null;
+                    }
+                    _lastYield = performance.now();
+                }
             }
         }
 
-        const candidates = new Map();
+        const cachePool = [minSize, startPos, endPos, availableSeqs.join(',')].join('|');
+        if (cachePool !== this._candidateCachePool) {
+            this._candidateCachePool = cachePool;
+            this._mergedCandidateCache.clear();
+        }
+        let merged = this._mergedCandidateCache.get(upperBound);
+        if (!merged) {
+            const candidates = new Map();
+            let maxPatternSize = 0;
 
-        // Loop only within valid trimmed region
-        for (let pos = startPos; pos < endPos; pos++) {
-            const patterns = this.getPositionPatterns(pos, availableSeqs);
+            // Обходим только колонки внутри заданных границ.
+            for (let pos = startPos; pos < endPos; pos++) {
+                if (performance.now() - _lastYield >= _CHUNK_MS) {
+                    await _yieldNow();
+                    if (_shouldCancel()) return null;
+                    _lastYield = performance.now();
+                }
+                const patterns = this.getPositionPatterns(pos, availableSeqs);
 
-            // Skip positions where a single nucleotide dominates the WHOLE alignment
-            // (>80% of all sequences, not just the remaining pool) - a conserved,
-            // non-diagnostic column. Checking against availableSeqs alone made a
-            // perfectly clean remaining cluster look "non-diagnostic" once an earlier
-            // cluster was removed and the pool became internally homogeneous, even
-            // though it was 100% distinct from the removed cluster.
-            let maxGlobalSize;
-            if (this._globalMaxSizeCache?.has(pos)) {
-                maxGlobalSize = this._globalMaxSizeCache.get(pos);
-            } else {
-                const globalPatterns = this.getPositionPatterns(pos, this._allSeqIndices);
-                maxGlobalSize = Math.max(0, ...Object.values(globalPatterns).map(s => s.size));
-                if (!this._globalMaxSizeCache) this._globalMaxSizeCache = new Map();
-                this._globalMaxSizeCache.set(pos, maxGlobalSize);
+                // Пропускаем колонки, где один символ занимает более 80% всего выравнивания.
+                // Проверка только оставшихся строк скрывала диагностические позиции
+                // после удаления ранее найденного кластера.
+                let maxGlobalSize;
+                if (this._globalMaxSizeCache?.has(pos)) {
+                    maxGlobalSize = this._globalMaxSizeCache.get(pos);
+                } else {
+                    const globalPatterns = this.getPositionPatterns(pos, this._allSeqIndices);
+                    maxGlobalSize = Math.max(0, ...Object.values(globalPatterns).map(s => s.size));
+                    if (!this._globalMaxSizeCache) this._globalMaxSizeCache = new Map();
+                    this._globalMaxSizeCache.set(pos, maxGlobalSize);
+                }
+                if (maxGlobalSize / this.nSeqs > 0.8) continue;
+
+                for (const [ch, set] of Object.entries(patterns)) {
+                    const size = set.size;
+                    maxPatternSize = Math.max(maxPatternSize, size);
+
+                    if (size >= minSize && size <= upperBound) {
+                        const arr = Array.from(set).sort((a,b)=>a-b);
+                        const key = arr.join(',');
+                        if (!candidates.has(key)) candidates.set(key, {seq: arr, feats: []});
+                        candidates.get(key).feats.push({pos, ch});
+                    }
+                }
+
             }
-            if (maxGlobalSize / this.nSeqs > 0.8) continue;
 
-            for (const [ch, set] of Object.entries(patterns)) {
-                const size = set.size;
+            const bitWords = Math.ceil(this.nSeqs / 32);
+            const candidateEntries = [];
+            let prepared = 0;
+            for (const data of candidates.values()) {
+                const bits = new Uint32Array(bitWords);
+                for (const seqIndex of data.seq) bits[seqIndex >>> 5] |= 1 << (seqIndex & 31);
+                candidateEntries.push({ data, bits, size: data.seq.length });
+                if ((++prepared & 255) === 0 && performance.now() - _lastYield >= _CHUNK_MS) {
+                    await _yieldNow();
+                    if (_shouldCancel()) return null;
+                    _lastYield = performance.now();
+                }
+            }
+            merged = new Map();
+            const done = new Uint8Array(candidateEntries.length);
+            let comparisons = 0;
+            for (let first = 0; first < candidateEntries.length; first++) {
+                const { data: d1, bits: bits1, size: n1 } = candidateEntries[first];
+                if (done[first]) continue;
+                let list = [d1];
+                for (let second = 0; second < candidateEntries.length; second++) {
+                    if (first === second || done[second]) continue;
+                    const { data: d2, bits: bits2, size: n2 } = candidateEntries[second];
+                    if (Math.abs(n1 - n2) <= 5 && Math.min(n1, n2) / Math.max(n1, n2) >= 0.90) {
+                        let inter = 0;
+                        for (let word = 0; word < bitWords; word++) {
+                            let value = bits1[word] & bits2[word];
+                            value -= (value >>> 1) & 0x55555555;
+                            value = (value & 0x33333333) + ((value >>> 2) & 0x33333333);
+                            inter += (((value + (value >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
+                        }
+                        if (inter / (n1 + n2 - inter) >= 0.90) {
+                            list.push(d2);
+                            done[second] = 1;
+                        }
+                    }
+                    if ((++comparisons & 1023) === 0 && performance.now() - _lastYield >= _CHUNK_MS) {
+                        await _yieldNow();
+                        if (_shouldCancel()) return null;
+                        _lastYield = performance.now();
+                    }
+                }
+                const best = list.reduce((a,b)=> a.seq.length > b.seq.length ? a : b);
+                const key = best.seq.join(',');
+                if (!merged.has(key)) merged.set(key, {seq: best.seq, feats: []});
+                for (const g of list) merged.get(key).feats.push(...g.feats);
+                done[first] = 1;
 
-                if (size >= minSize && size <= upperBound) {
-                    const arr = Array.from(set).sort((a,b)=>a-b);
-                    const key = arr.join(',');
-                    if (!candidates.has(key)) candidates.set(key, {seq: arr, feats: []});
-                    candidates.get(key).feats.push({pos, ch});
+                if (performance.now() - _lastYield >= _CHUNK_MS) {
+                    await _yieldNow();
+                    if (_shouldCancel()) return null;
+                    _lastYield = performance.now();
                 }
             }
 
-            if (performance.now() - _lastYield >= _CHUNK_MS) {
-                await _yieldNow();
-                if (_shouldCancel()) return null;
-                _lastYield = performance.now();
-            }
-        }
-
-        // fuzzy merge near-identical groups
-        // Precompute Sets for O(1) membership tests (avoids O(n) .includes per pair)
-        const candidateSets = new Map();
-        for (const [k, d] of candidates) {
-            candidateSets.set(k, new Set(d.seq));
-        }
-        const merged = new Map();
-        const done = new Set();
-        for (const [k1, d1] of candidates) {
-            if (done.has(k1)) continue;
-            let list = [d1];
-            for (const [k2, d2] of candidates) {
-                if (k1===k2 || done.has(k2)) continue;
-                const d2Set = candidateSets.get(k2);
-                const inter = d1.seq.filter(x => d2Set.has(x)).length;
-                const union = d1.seq.length + d2.seq.length - inter;
-                if (inter/union >= 0.90 && Math.abs(d1.seq.length - d2.seq.length) <= 5) {
-                    list.push(d2);
-                    done.add(k2);
+            // Удаляем повторяющиеся признаки.
+            for (const d of merged.values()) {
+                const seen = new Set();
+                d.feats = d.feats.filter(f => {
+                    const sig = f.pos+':'+f.ch;
+                    if (seen.has(sig)) return false;
+                    seen.add(sig);
+                    return true;
+                });
+                if (performance.now() - _lastYield >= _CHUNK_MS) {
+                    await _yieldNow();
+                    if (_shouldCancel()) return null;
+                    _lastYield = performance.now();
                 }
             }
-            const best = list.reduce((a,b)=> a.seq.length > b.seq.length ? a : b);
-            const key = best.seq.join(',');
-            if (!merged.has(key)) merged.set(key, {seq: best.seq, feats: []});
-            for (const g of list) merged.get(key).feats.push(...g.feats);
-            done.add(k1);
-
-            if (performance.now() - _lastYield >= _CHUNK_MS) {
-                await _yieldNow();
-                if (_shouldCancel()) return null;
-                _lastYield = performance.now();
+            this._mergedCandidateCache.set(upperBound, merged);
+            if (maxPatternSize <= upperBound) {
+                this._mergedCandidateCache.set(availableSeqs.length, merged);
             }
-        }
-
-        // dedup feats
-        for (const d of merged.values()) {
-            const seen = new Set();
-            d.feats = d.feats.filter(f => {
-                const sig = f.pos+':'+f.ch;
-                if (seen.has(sig)) return false;
-                seen.add(sig);
-                return true;
-            });
         }
 
         let best = null;
         let bestScore = -1;
 
         for (const d of merged.values()) {
+            if (performance.now() - _lastYield >= _CHUNK_MS) {
+                await _yieldNow();
+                if (_shouldCancel()) return null;
+                _lastYield = performance.now();
+            }
             if (d.feats.length < minOcc) continue;
             const gsize = d.seq.length;
             const thresh = gsize < breakSM ? qSmall : gsize < breakML ? qMed : qLarge;
             let good = 0;
             let score = 0;
             const validFeats = [];
+            let scoredFeatures = 0;
 
             for (const {pos, ch} of d.feats) {
                 let inside = 0;
@@ -209,6 +245,11 @@ class SINEClusterer {
                     good++;
                     score += 1;
                     validFeats.push({pos, ch});
+                }
+                if ((++scoredFeatures & 63) === 0 && performance.now() - _lastYield >= _CHUNK_MS) {
+                    await _yieldNow();
+                    if (_shouldCancel()) return null;
+                    _lastYield = performance.now();
                 }
             }
 
@@ -916,6 +957,7 @@ class SINEClusterer {
             await yieldNow();
             if (shouldCancel()) { cancelled = true; break; }
             const step = await this._clusterIteration(avail, clusters, o, it);
+            if (shouldCancel()) { cancelled = true; break; }
             if (!step.group) continue;
             clusters.push(step.group);
             avail = step.avail;
