@@ -23,7 +23,6 @@
 - Added safety fallback in _buildUnifiedBlock: if rowEnd < rowStart (inverted visible area), render a small window from the top
 - Added safety fallback in renderUnifiedWindowedDom: if blockEnd < blockStart, render at least one block
 - Added safety fallback in _refreshUnifiedWindowOnScroll: same block windowing safety as renderUnifiedWindowedDom
-- Добавлена браузерная регрессия: преамбула из 201 строк, отличающаяся длина одной последовательности, дополнение разрывами, предупреждение и включение оконного рендера
 
 ## Current phase
 in progress
