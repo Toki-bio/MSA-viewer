@@ -7,6 +7,8 @@
     "start": "node server.js",
     "dev": "node server.js",
     "test": "node tests/regression/run-all.js",
+    "test:clustering-heavy": "node tests/clustering/heavy_responsiveness.test.js",
+    "test:clustering-heavy-planted": "node tests/clustering/heavy_responsiveness.test.js --planted",
     "test:benchmark": "node tests/benchmark/run-all.js"
   },
   "keywords": ["msa", "alignment", "sequence", "blast", "mafft", "bioinformatics", "viewer", "editor"],

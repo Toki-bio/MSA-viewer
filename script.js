@@ -14168,6 +14168,7 @@ async function _clusterDiagnosticWithinTypes(allSeqs, clusterParams, update) {
                 if (update) update(b.name + ': ' + msg);
             }
         });
+        if (state.clusterCancelled || subResults.cancelled) return null;
         if (!subResults.summary.nClusters) {
             merged.push(_clusterFromIndices(allSeqs, b.indices, b.name));
             continue;
@@ -14567,6 +14568,11 @@ async function _clusterSequencesNow(update) {
         });
     }
 
+    if (state.clusterCancelled || clusterResults.cancelled) {
+        updateClusteringStatus('');
+        showMessage('Clustering stopped.', 3000);
+        return;
+    }
     clusterer.attachCharacterization(clusterResults.clusters, { unionCloudy: true });
     debugLog(`Diagnostic types: ${clusterResults.summary.nClusters} found, ${clusterResults.summary.nAssigned} assigned, ${clusterResults.summary.nUnassigned} unassigned`);
     _commitTypeResults(clusterResults, source, sourceLabel);
