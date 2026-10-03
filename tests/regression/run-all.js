@@ -18,6 +18,53 @@ check('loads without console errors', async (page) => {
   return { pass: true };
 });
 
+check('FASTA с преамбулой и разной длиной строк безопасно загружается', async (page) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+
+  const count = 501;
+  const width = 1200;
+  const shortWidth = width - 13;
+  const firstSequence = 'A' + '-'.repeat(width - 1);
+  let fasta = Array.from({ length: 201 }, () => 'A:').join('\n') + '\n';
+  for (let index = 0; index < count; index++) {
+    const isShort = index === count - 1;
+    const name = isShort ? 'short' : `seq${index}`;
+    const sequence = isShort ? firstSequence.slice(0, shortWidth) : firstSequence;
+    fasta += `>${name}\n${sequence}\n`;
+  }
+
+  await loadFasta(page, fasta);
+  const result = await page.evaluate(({ count, width, firstSequence }) => {
+    const message = document.getElementById('statusMessage')?.textContent || '';
+    const visibleRows = document.querySelectorAll('.seq-line[data-seq-index]').length;
+    return {
+      count: state.seqs.length,
+      firstSequence: state.seqs[0]?.seq,
+      normalizedLengths: state.seqs.every(seq => seq.seq.length === width),
+      warningMentionsOnlyShortRow: message.includes("Sequence 'short'") && !message.includes("Sequence 'seq0'"),
+      windowed: state._needsWindowedDom,
+      visibleRows,
+      expectedFirst: firstSequence,
+    };
+  }, { count, width, firstSequence });
+
+  const pass = errors.length === 0
+    && result.count === count
+    && result.firstSequence === result.expectedFirst
+    && result.normalizedLengths
+    && result.warningMentionsOnlyShortRow
+    && result.windowed
+    && result.visibleRows > 0
+    && result.visibleRows < 150;
+  return {
+    pass,
+    detail: pass
+      ? `${result.count} строк, преамбула отброшена, короткая строка дополнена до ${width} колонок`
+      : JSON.stringify({ ...result, pageErrors: errors }),
+  };
+});
+
 check('mode switching: full/block/canvas all render rows', async (page) => {
   await loadFasta(page, makeFasta(20, 500));
   for (const mode of ['full', 'block', 'canvas']) {
