@@ -437,6 +437,13 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
 
   <h3 id="gs-updates">1.6 Recent Updates</h3>
+  <p><strong>Version 1.33.2</strong> (build v242):</p>
+  <ul>
+    <li><strong>Protein trees</strong> - distances on a protein alignment now compare amino acids; before, only columns where both residues were A, C, G or T were compared, so most amino-acid differences were ignored. JC69 and K80 fall back to p-distance on protein, and the tree summary says so (§9.4).</li>
+    <li><strong>Protein searches</strong> - <em>Search both strands</em> searches the forward strand only on a protein alignment (an amino-acid motif has no reverse complement) (§7.1).</li>
+    <li><strong>Protein labels</strong> - the file line gives lengths in <code>aa</code> for a protein alignment; the Repeat/TSD finder says it is meant for nucleotide sequences.</li>
+    <li><strong>Find SNP groups</strong> - a note on groups that arise by chance (§4.3).</li>
+  </ul>
   <p><strong>Version 1.33.1</strong> (build v241):</p>
   <ul>
     <li><strong>MAFFT protein types</strong> - Protein (JTT 200PAM) and Protein (BLOSUM62) realignment now send the scoring matrix to MAFFT (<code>-j 200</code> / <code>-b 62</code>); before, JTT returned empty rows and BLOSUM62 silently forced FFT-NS-1 (§3.2).</li>
@@ -501,6 +508,17 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     of the first few sequences. Protein FASTA input is preserved as amino-acid data; unknown
     protein characters are normalised to <code>X</code> rather than converted to nucleotide
     ambiguity characters.
+  </p>
+  <p>
+    <strong>Protein alignments.</strong> Display, shading, consensus, motif search
+    (forward strand), statistics, trees (p-distance over amino acids), editing, MAFFT
+    realignment (Seq Type <em>Protein</em>) and export all work on protein. The dot plot,
+    SNP and k-mer grouping, the Repeat/TSD finder and codon analysis were designed for
+    nucleotides: they run on amino-acid letters, but strand options, inverted repeats
+    and TSDs have no meaning there. In-browser MAFFT drops a terminal <code>*</code>, and a
+    sequence containing <code>U</code> (selenocysteine) or <code>O</code> (pyrrolysine) makes
+    it return no alignment (the viewer says so and keeps the alignment); replace them with
+    <code>X</code> before realigning.
   </p>
   <p>
     GenBank flatfiles can also be pasted directly. Records beginning with <code>LOCUS</code>
@@ -895,6 +913,20 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     Sequences without such SNPs stay unassigned. Names and exclusive/shared
     letters are coloured. Row order is unchanged.
   </p>
+  <div class="tip">
+    <strong>Check small groups against chance.</strong> Find SNP groups reports
+    no significance. With the default settings (Min Size 3, Min Features 5) it
+    also splits <em>random</em> sequences into groups of three: on uniformly
+    random DNA, 12 sequences gave 4 groups at 150, 500 and 2,000 bp, and
+    20 sequences of 2,000 bp gave 6. Columns where three sequences share a
+    base by chance become more frequent as the alignment gets longer, and
+    raising <strong>Min Features</strong> does not remove them reliably
+    (12 random sequences of 2,000 bp still gave 4 groups with Min Features 15).
+    Treat groups of three or four sequences as suggestions, and run the same
+    settings on a copy of the alignment with the residues of each column
+    shuffled between sequences: any group found there is noise, and a group in
+    the real alignment is only convincing if it is clearly stronger than those.
+  </div>
   <p>
     <strong>Split existing groups</strong> (off by default) does not add extra
     groups on top. When checked, Find SNP groups looks for exclusive SNPs
@@ -1487,7 +1519,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li>The popup includes 50 commonly used enzymes, each labelled with its recognition sequence.</li>
     <li>Use <strong>Manual enzymes/sites</strong> for additional enzymes. Enter comma-separated values such as <code>BspQI:GCTCTTC, GAATTC</code>.</li>
     <li>IUPAC ambiguity codes are supported in recognition sites, for example <code>GANTC</code>.</li>
-    <li>Enable <strong>Search both strands</strong> to include reverse-complement matches.</li>
+    <li>Enable <strong>Search both strands</strong> to include reverse-complement matches (nucleotide alignments; a regular expression or a protein alignment is searched on the forward strand only, and the result message says so).</li>
     <li>Results are highlighted in the alignment and reported as unique sites, affected sequences, and raw row matches.</li>
   </ul>
 
@@ -1773,7 +1805,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Tool</th><th>Description</th></tr>
     <tr><td><strong>Repeats</strong></td><td>Opens the Repeat Finder (§9.8), whose fourth mode, <strong>TSD (SINE)</strong>, is the TSD Finder (§9.9)</td></tr>
-    <tr><td><strong>Tree</strong></td><td>Build UPGMA or Neighbor-Joining trees from selected sequences. Three distance correction models are available: p-distance (raw), Jukes-Cantor (JC69), and Kimura 2-parameter (K80). Switching UPGMA/NJ or model in the modal rebuilds the tree. A pair with no aligned position where both have A/C/G/T/U has no distance, and a JC69/K80 pair differing too much for the correction is saturated; the first is set to the largest defined distance, the second to twice that, and the summary line says so in red (hover it for the pairs). Neighbor-Joining breaks tied scores in favour of the closer pair, so identical sequences stay together. Outputs a drawn tree (see below), a text view, and Newick with Copy Newick and Download .nwk options</td></tr>
+    <tr><td><strong>Tree</strong></td><td>Build UPGMA or Neighbor-Joining trees from selected sequences. Three distance correction models are available: p-distance (raw), Jukes-Cantor (JC69), and Kimura 2-parameter (K80). Switching UPGMA/NJ or model in the modal rebuilds the tree. On a protein alignment the distance compares amino acids (not X, B, Z, J, stops or gaps), and JC69/K80, which are nucleotide models, fall back to p-distance with a note in the summary. A pair with no aligned position where both have A/C/G/T/U (an amino acid, for protein) has no distance, and a JC69/K80 pair differing too much for the correction is saturated; the first is set to the largest defined distance, the second to twice that, and the summary line says so in red (hover it for the pairs). Neighbor-Joining breaks tied scores in favour of the closer pair, so identical sequences stay together. Outputs a drawn tree (see below), a text view, and Newick with Copy Newick and Download .nwk options</td></tr>
     <tr><td><strong>Statistics</strong></td><td>Reimplements Easel <code>esl-alistat</code> and <code>esl-alipid</code>. The <strong>Alignment</strong> card shows what esl-alistat prints: number of sequences, alignment length, total residues, smallest, largest and average unaligned length, and average identity; <strong>Gaps</strong> is a ViewAlign addition. The <strong>Pairwise identity</strong> card gives the mean, minimum and maximum (naming the pair or pairs; click one to find it in the matrix). Hover a field name for what it is and how it is calculated, with the passage from the Easel documentation or source. Identity follows esl-alipid by default: identical residues divided by the shorter unaligned length (0 when that is 0); <strong>over: shared columns</strong> divides by the columns where both sequences have a residue instead, a definition the esl-alipid manual warns can be spuriously high for barely overlapping fragments. The esl-alistat average uses the esl-alipid definition over all pairs; esl-alistat itself averages 1,000 random pairs when there are more, and prints a whole percent. With two or more rows selected, only those rows are used. <strong>Distance</strong> / <strong>Identity %</strong> switches the matrix (distance = 1 &minus; identity/100). Row names and column labels stay in view while scrolling; <strong>Find row</strong> / <strong>Find column</strong> jump to a sequence by part of its name (Enter for the next match); <strong>Labels</strong> sets how column names are shown and the longest name shown. <strong>Heatmap</strong> colours the cells by value: choose a palette (yellow&ndash;red, viridis, blue&ndash;white&ndash;red, greens), reverse it, and set the value range, or leave it on Auto (the matrix's own minimum and maximum); values outside the range take the end colours, the diagonal stays grey, and the button then shows the colour legend. With colours on, selected columns are outlined and the pair filter dims the pairs that do not match. Click column names to select columns (Ctrl-click adds, Shift-click takes a range, Esc clears); <strong>Copy</strong> then copies only those columns, otherwise the whole matrix, as a tab-separated table with full names; <strong>Save matrix</strong> writes CSV, TSV or Excel. <strong>Pairs with &ge;/&le; value</strong> highlights the pairs past a threshold in the shown matrix and counts them; <strong>Pair list</strong> lists them, and <strong>Save pairs</strong> writes a pair table, the sequence names, or the sequences (as aligned or without gaps, FASTA). The window moves by its title bar, resizes from any edge or corner, minimises, maximises (button or double-click on the title), or docks (&#9707;) as a panel on the right whose width you drag at its left edge; the alignment narrows to fit beside it. See Credits.</td></tr>
   </table>
 

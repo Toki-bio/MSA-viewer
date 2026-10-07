@@ -2,8 +2,8 @@
 // ViewAlign - browser-based multiple sequence alignment viewer & editor
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
-const RELEASE_VERSION = '1.33.1';
-const BUILD_TAG = 'v241';
+const RELEASE_VERSION = '1.33.2';
+const BUILD_TAG = 'v242';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -9520,7 +9520,9 @@ function updateSourceInfo() {
         : '';
 
     const fullPath = state.currentFilePath || '';
-    const summaryHtml = `${filenameHtml}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> bp`;
+    // Residue unit: amino acids for a protein alignment (it said "bp" for both)
+    const unit = isProteinAlignment() ? 'aa' : 'bp';
+    const summaryHtml = `${filenameHtml}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> ${unit}`;
     infoEl.innerHTML = summaryHtml;
     infoEl.dataset.fullFilename = fullFilename;
     infoEl.dataset.fullPath = fullPath;
@@ -9532,7 +9534,7 @@ function updateSourceInfo() {
     const titleParts = [];
     if (fullFilename) titleParts.push(fullFilename);
     if (fullPath) titleParts.push(fullPath);
-    titleParts.push(`${seqCount} seq, ${aliLength} col, ${lengthRange} bp`);
+    titleParts.push(`${seqCount} seq, ${aliLength} col, ${lengthRange} ${unit}`);
     infoEl.title = titleParts.join('\n');
 
     const fileNameEl = infoEl.querySelector('.source-file-name');
@@ -14341,8 +14343,10 @@ function searchMotif(options = {}) {
     // A regex is not a sequence: complementing its text letter by letter turns [AT] into
     // N...N. Restriction sites build their own reverse-complement regex instead.
     const bothStrandsAsked = options.bothStrands ?? (checkboxEl && checkboxEl.checked);
-    const bothStrands = bothStrandsAsked && !useRegex;
-    const regexSingleStrand = bothStrandsAsked && useRegex;
+    // A protein has no reverse strand: complementing KRQ gave NYM and searched for that.
+    const protein = isProteinAlignment();
+    const bothStrands = bothStrandsAsked && !useRegex && !protein;
+    const regexSingleStrand = bothStrandsAsked && (useRegex || protein);
 
     debugLog('=== SEARCH MOTIF STARTED ===');
     debugLog('Input motif:', motif);
@@ -14451,7 +14455,7 @@ function searchMotif(options = {}) {
             );
         } else {
             showMessage(`Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} in ${fwdSeqs.size} sequence${fwdSeqs.size !== 1 ? 's' : ''}`
-                + (regexSingleStrand ? ' (regex: forward strand only)' : '') + (coverNote ? '. ' + coverNote : ''),
+                + (regexSingleStrand ? (protein ? ' (protein: forward strand only)' : ' (regex: forward strand only)') : '') + (coverNote ? '. ' + coverNote : ''),
                 (regexSingleStrand || coverNote) ? 5000 : 2000);
         }
     }
@@ -17536,18 +17540,28 @@ function _treeIsBase(char) {
     return /^[ACGTU]$/i.test(char || '');
 }
 
+// A residue a protein p-distance can compare: the 20 amino acids plus U (selenocysteine)
+// and O (pyrrolysine); not X, the ambiguity codes B/Z/J, stops or gaps. Protein trees
+// used _treeIsBase, so only columns where both residues were A, C, G or T were compared
+// and every other amino-acid difference was ignored.
+function _treeIsAminoAcid(char) {
+    return /^[ACDEFGHIKLMNPQRSTVWYUO]$/i.test(char || '');
+}
+
 // Pairwise distance metrics for phylogenetic trees
 // Returns { p, compared, mismatches, transitions, transversions } for model corrections
-function _alignmentPairMetrics(seqOne, seqTwo) {
-    // Purine = A,G; Pyrimidine = C,T
+function _alignmentPairMetrics(seqOne, seqTwo, protein = false) {
+    // Purine = A,G; Pyrimidine = C,T (transitions/transversions are only used for nucleotides)
     const isPurine = c => c === 'A' || c === 'G';
     const isPyrimidine = c => c === 'C' || c === 'T';
+    const isResidue = protein ? _treeIsAminoAcid : _treeIsBase;
     const maxLen = Math.max(seqOne.length, seqTwo.length);
     let compared = 0, mismatches = 0, transitions = 0, transversions = 0;
     for (let position = 0; position < maxLen; position++) {
-        const b1 = (seqOne[position] || '-').toUpperCase().replace('U', 'T');
-        const b2 = (seqTwo[position] || '-').toUpperCase().replace('U', 'T');
-        if (!_treeIsBase(b1) || !_treeIsBase(b2)) continue;
+        let b1 = (seqOne[position] || '-').toUpperCase();
+        let b2 = (seqTwo[position] || '-').toUpperCase();
+        if (!protein) { b1 = b1.replace('U', 'T'); b2 = b2.replace('U', 'T'); }   // U is selenocysteine in a protein
+        if (!isResidue(b1) || !isResidue(b2)) continue;
         compared++;
         if (b1 !== b2) {
             mismatches++;
@@ -17584,8 +17598,8 @@ function _k80Distance(P, Q) {
 // Compute pairwise distance using the selected model
 // NaN when the pair shares no aligned base: there is nothing to compare, so no distance.
 // (It used to return 1 for every model, as if the two were completely different.)
-function _modelPairDistance(seqOne, seqTwo, model) {
-    const m = _alignmentPairMetrics(seqOne, seqTwo);
+function _modelPairDistance(seqOne, seqTwo, model, protein = false) {
+    const m = _alignmentPairMetrics(seqOne, seqTwo, protein);
     if (m.compared === 0) return NaN;
     switch (model) {
         case 'jc69': return _jc69Distance(m.p);
@@ -17637,12 +17651,14 @@ function _treeNodeToText(node, indent = '', isRoot = true) {
 // distances only.
 function _treeDistanceMatrix(seqObjects, model) {
     const n = seqObjects.length;
+    // (guarded: dev-tools/tree-audit loads the tree code without the rest of the viewer)
+    const protein = typeof isProteinAlignment === 'function' && isProteinAlignment(seqObjects);
     const D = Array.from({ length: n }, () => new Array(n).fill(0));
     const noOverlap = [], saturated = [];
     let total = 0, pairs = 0, min = Infinity, max = -Infinity;
     for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
-            const d = _modelPairDistance(seqObjects[i].seq, seqObjects[j].seq, model);
+            const d = _modelPairDistance(seqObjects[i].seq, seqObjects[j].seq, model, protein);
             if (Number.isNaN(d)) noOverlap.push([i, j]);
             else if (!Number.isFinite(d)) saturated.push([i, j]);
             else { total += d; pairs++; min = Math.min(min, d); max = Math.max(max, d); }
@@ -17651,7 +17667,9 @@ function _treeDistanceMatrix(seqObjects, model) {
     }
     if (n > 1 && pairs === 0) {
         throw new Error(noOverlap.length
-            ? 'no two of these sequences share an aligned base (A/C/G/T/U), so no distance can be computed'
+            ? (protein
+                ? 'no two of these sequences share an aligned amino acid, so no distance can be computed'
+                : 'no two of these sequences share an aligned base (A/C/G/T/U), so no distance can be computed')
             : 'every pairwise distance is saturated under this model; try p-distance');
     }
     // If every defined distance is 0 (all comparable pairs identical), an unknown pair must
@@ -17896,7 +17914,11 @@ function openTreeBuilder() {
     }
     const method = document.querySelector('input[name="treeMethod"]:checked')?.value || 'upgma';
     const modelEl = document.getElementById('treeDistanceModel');
-    const model = modelEl ? modelEl.value : 'raw';
+    let model = modelEl ? modelEl.value : 'raw';
+    // JC69 and K80 are nucleotide models (four states; transitions vs transversions):
+    // on a protein alignment they gave numbers with no meaning. Use p-distance and say so.
+    const proteinFallback = model !== 'raw' && isProteinAlignment();
+    if (proteinFallback) model = 'raw';
     const modelName = model === 'raw' ? 'p-distance' : model.toUpperCase();
     showMessage(`Building ${method.toUpperCase()} tree (${modelName})...`, 0);
     setTimeout(() => {
@@ -17911,7 +17933,7 @@ function openTreeBuilder() {
             const scope = state.selectedRows.size >= 2 ? 'selected sequences' : 'all sequences';
             if (summary) {
                 const st = result.stats;
-                summary.textContent = `${st.count} ${scope} | ${modelName} | ${method.toUpperCase()} | avg ${st.averageDistance.toFixed(4)} | range ${st.minDistance.toFixed(4)}-${st.maxDistance.toFixed(4)}`;
+                summary.textContent = `${st.count} ${scope} | ${modelName}${proteinFallback ? ' (protein: JC69/K80 are nucleotide models)' : ''} | ${method.toUpperCase()} | avg ${st.averageDistance.toFixed(4)} | range ${st.minDistance.toFixed(4)}-${st.maxDistance.toFixed(4)}`;
                 // Pairs without a usable distance were set to the largest one: say which
                 if (st.filledWith !== null) {
                     const parts = [];
@@ -27867,6 +27889,11 @@ function openRepeatFinder(seqIndex, preferredMode = null) {
     document.getElementById('repeatResults').textContent = mode === 'tsd'
         ? 'The SINE body is found automatically (or set it under Manual); press Find to search both flanks of every copy.'
         : 'Choose what to find, then press Find.';
+    // Inverted repeats and TSDs are DNA ideas (reverse complement, target-site duplication)
+    if (isProteinAlignment()) {
+        document.getElementById('repeatResults').textContent +=
+            ' This is a protein alignment: the finder is designed for nucleotide sequences, and inverted repeats and TSDs have no meaning for amino acids.';
+    }
 }
 
 function _initRepeatFinderDrag() {

@@ -541,6 +541,39 @@ check('MAFFT protein types: JTT and BLOSUM62 realign keeps every residue; one -E
     return { pass: true, detail: details.join(' / ') };
 });
 
+// Nucleotide-only ideas applied to a protein alignment: "bp" in the info line, the reverse
+// complement of an amino-acid motif (KRQ -> NYM was searched), JC69/K80 trees.
+check('Protein alignment: info line in aa, motif search forward strand only, tree uses amino-acid p-distance', async (page) => {
+    await loadFasta(page, '>p1\nMKTAYIAKRQAISFVKSHFSRQLEERLG\n>p2\nMKTAYIAKRQAISFVKSHFSRQLEERLG\n>p3\nMKTAYIANYMAISFVKSHFSRQLEERLG\n');
+    const r = await page.evaluate(async () => {
+        const info = document.getElementById('sourceInfo').textContent;
+        document.getElementById('searchInput').value = 'KRQ';
+        document.getElementById('searchRegex').checked = false;
+        document.getElementById('searchBothStrands').checked = true;
+        const res = searchMotif({ maxMismatches: 0 });
+        const msg = document.getElementById('statusMessage').textContent;
+        // NYM (the "reverse complement" of KRQ) is in p3: it must not be found
+        const hitRows = new Set((res?.results || []).flatMap(x => x.sequenceIndices));
+        const revMatches = res?.revMatches;
+        const rawRes = JSON.stringify(res);
+        document.getElementById('searchBothStrands').checked = false;
+        document.getElementById('treeDistanceModel').value = 'k80';
+        openTreeBuilder();
+        await new Promise(res => setTimeout(res, 400));
+        const summary = document.getElementById('treeBuilderSummary').textContent;
+        return { info, msg, hitRows: [...hitRows], revMatches, summary, rawRes };
+    });
+    if (!/\baa\b/.test(r.info) || /\bbp\b/.test(r.info)) return { pass: false, detail: `info line: "${r.info}"` };
+    if (!/protein: forward strand only/.test(r.msg)) return { pass: false, detail: `search message: "${r.msg}"` };
+    if (r.hitRows.includes(2) || r.revMatches) return { pass: false, detail: `reverse-complement hits: rows ${r.hitRows}, rev ${r.revMatches}` };
+    if (r.hitRows.length !== 2) return { pass: false, detail: `expected KRQ in p1 and p2, rows ${r.hitRows}; ${r.msg}; ${r.rawRes}` };
+    if (!/p-distance \(protein: JC69\/K80 are nucleotide models\)/.test(r.summary)) return { pass: false, detail: `tree summary: "${r.summary}"` };
+    // p3 differs from p1/p2 at 3 of 28 amino acids (KRQ/NYM): p = 0.1071. Protein trees used to
+    // compare only columns where both residues were A/C/G/T, which gave 0 here.
+    if (!/range 0\.0000-0\.1071/.test(r.summary)) return { pass: false, detail: `protein p-distance wrong: "${r.summary}"` };
+    return { pass: true, detail: `${r.info} | ${r.msg} | ${r.summary}` };
+});
+
 // Typing a residue in Edit mode repaints only its span; the codon rows (translation box,
 // syn/non-syn marks) stayed stale after Edit mode ended because the exit took the
 // in-place reshade shortcut instead of a render.
