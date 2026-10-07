@@ -328,8 +328,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     ViewAlign is a browser-based application for viewing, editing, and analysing
     multiple sequence alignments. It handles DNA, RNA, protein, and coding sequence (CDS)
     data - from a handful of sequences to thousands. No installation is required; the viewer
-    runs entirely in your browser. An optional local Node.js server adds MAFFT realignment,
-    BLAST search, and SSH remote access.
+    runs entirely in your browser. An optional local Node.js server adds sequence-database
+    hosting for similarity search, SSH remote access and a scripted MAFFT endpoint.
   </p>
   <p>Key capabilities:</p>
   <ul>
@@ -381,7 +381,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>NEXUS</td><td><code>.nex</code>, <code>.nexus</code></td><td>NEXUS <code>DATA</code> or <code>CHARACTERS</code> block, sequential or interleaved; <code>[comments]</code> are ignored and quoted taxon names may contain spaces</td></tr>
     <tr><td>Stockholm</td><td><code>.sto</code>, <code>.stockholm</code></td><td>Pfam/Rfam Stockholm, sequential or interleaved; <code>#=GF</code>/<code>#=GS</code>/<code>#=GR</code>/<code>#=GC</code> lines are skipped</td></tr>
     <tr><td>GenBank</td><td><code>.gb</code>, <code>.gbk</code></td><td>Flatfile import from <code>LOCUS</code>/<code>FEATURES</code>/<code>ORIGIN</code>; every record in a multi-record file loads as its own row; records can also be fetched by accession (1.2)</td></tr>
+    <tr><td>AB1</td><td><code>.ab1</code></td><td>Sanger chromatogram (dropped or picked, also in Add Sequences): the called bases become one row, and right-click → <strong>View Chromatogram...</strong> shows the trace. Recognised by content</td></tr>
   </table>
+  <p>A3M (lowercase insert states expanded into columns) and PIR/NBRF files are read as FASTA variants. EMBL flatfiles are not supported and are refused ("No valid sequences found").</p>
 
   <h3 id="gs-interface">1.4 Interface Layout</h3>
   <p>
@@ -392,22 +394,24 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>The menu bar is organised into dropdown sections:</p>
   <table>
     <tr><th>Menu</th><th>Purpose</th></tr>
-    <tr><td><strong>Input</strong></td><td>Load, save, import, export - file handling and snapshots</td></tr>
-    <tr><td><strong>Alignment</strong></td><td>MAFFT realignment, BLAST, add sequences, degap</td></tr>
-    <tr><td><strong>Clustering</strong></td><td>Trim ends, k-mer groups, diagnostic SNP groups, 2D rectangles</td></tr>
-    <tr><td><strong>Groups</strong></td><td>Appears after a grouping run. Docks the Group explorer (membership, colours, copy FASTA)</td></tr>
-    <tr><td><strong>Colour Names</strong></td><td>Colour sequence labels by name pattern or name similarity; sort by colour</td></tr>
+    <tr><td><strong>Input</strong></td><td>Load, snapshots, SVG / RTF export - file handling. Next to it: <strong>+</strong> (add sequences), the <strong>Copy</strong>, <strong>Save</strong> (FASTA) and <strong>SAM/BAM</strong> buttons, the undo/redo arrows, the <strong>Edit</strong> toggle (GeneDoc-style editing tools, §8.3) and <strong>Degap</strong></td></tr>
     <tr><td><strong>Shade</strong></td><td>Black/Dark/Light conservation shading thresholds and colours, and the All/Non-Gap conservation calculation mode (§5.3)</td></tr>
     <tr><td><strong>Display</strong></td><td>View mode, zoom, name length and Sticky names, codon toggle, variable sites filter with percentage threshold and breakpoint markers, letter case and colour scheme</td></tr>
     <tr><td><strong>Consensus</strong></td><td>Consensus line settings, group consensus computation</td></tr>
-    <tr><td><strong>Search</strong></td><td>Motif search with regex and mismatch support</td></tr>
-    <tr><td><strong>Edit...</strong></td><td>Edit mode toggle, degap button, GeneDoc-style editing tools</td></tr>
-    <tr><td><strong>Actions</strong></td><td>Selection, sorting, analysis (dot plot, TSD finder, tree), colour schemes, export</td></tr>
+    <tr><td><strong>Annotation</strong></td><td>BED annotation track: load from file or URL, show/hide, clear (§6.4)</td></tr>
+    <tr><td><strong>Clustering</strong></td><td>Trim ends, k-mer groups, diagnostic SNP groups, 2D rectangles</td></tr>
+    <tr><td><strong>Search</strong></td><td>Motif search with regex and mismatch support, restriction sites</td></tr>
+    <tr><td><strong>Colour Names</strong></td><td>Colour sequence labels by name pattern or name similarity; sort by colour</td></tr>
+    <tr><td><strong>Alignment</strong></td><td>MAFFT and codon-aware realignment, add sequences, degap block</td></tr>
+    <tr><td><strong>Groups</strong></td><td>Appears after a grouping run. Docks the Group explorer (membership, colours, copy FASTA)</td></tr>
+    <tr><td><strong>Selections</strong></td><td>Appears when anything is selected or highlighted: one list of rows, columns, residues, searches and marks (§7.6)</td></tr>
+    <tr><td><strong>Keys</strong></td><td>Hover for the keyboard shortcut sheet</td></tr>
+    <tr><td><strong>Actions</strong></td><td>Selection, sorting, analysis (tree, statistics, repeats/TSD), presets, info, manual; the dot plot is reached from the right-click menu</td></tr>
   </table>
   <p>
-    Clustering, Display, Shade, and the Group explorer can be <strong>detached</strong>
-    with the grip at the top of the panel and dragged; the dock button puts them back
-    in the menu bar.
+    Every menu except Input, Actions and Groups can be <strong>detached</strong>
+    with the grip at the top of its panel and dragged; the dock button puts it back
+    in the menu bar. The Group explorer has its own detach/dock handle.
   </p>
   <p>
     The top-right corner shows the current application version and the loaded file name.
@@ -433,7 +437,25 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
 
   <h3 id="gs-updates">1.6 Recent Updates</h3>
-  <p>Recent updates added or improved the following features:</p>
+  <p><strong>Version 1.33.1</strong> (build v241):</p>
+  <ul>
+    <li><strong>MAFFT protein types</strong> - Protein (JTT 200PAM) and Protein (BLOSUM62) realignment now send the scoring matrix to MAFFT (<code>-j 200</code> / <code>-b 62</code>); before, JTT returned empty rows and BLOSUM62 silently forced FFT-NS-1 (§3.2).</li>
+    <li><strong>Codon marks after editing</strong> - the translation track and its stop, synonymous and non-synonymous marks are refreshed when Edit mode ends, so a residue typed in Edit mode is reflected at once (§5.4, §8.3).</li>
+  </ul>
+  <p><strong>Version 1.33.0</strong> (builds v227 to v240):</p>
+  <ul>
+    <li><strong>Codon-aware alignment</strong> - Sequence type <em>Coding sequence</em> realigns protein-coding sequences with a JavaScript port of MACSE v2.07 <code>alignSequences</code> that gives MACSE's alignments (checked on 2,636 genes) and runs on several cores, plus a fast reference-based approximation (§3.2.2).</li>
+    <li><strong>Annotation track (BED)</strong> - genes, exons, repeats or primers drawn above the alignment from a BED file, a URL or <code>?bed=</code>; coordinates follow the gaps; click a feature to select its columns; saved in snapshots (§6.4).</li>
+    <li><strong>Codon analysis by gene</strong> - with CDS features in the annotation track, each gene is translated in its own frame and strand and nothing outside the genes; a mitochondrial annotation switches the code to Vert Mito and says so. <strong>Frameshifts vs: Row 1</strong> judges frameshifts against the first sequence instead of the majority (§5.4).</li>
+    <li><strong>Group by k-mer</strong> - <em>Method: peel (diagnostic columns)</em> peels groups off one at a time by the columns that diagnose them; <em>Linkage: chain</em>; <em>ignore strand</em> for k-mer distances (§4.2).</li>
+    <li><strong>Statistics window</strong> rebuilt: esl-alistat / esl-alipid summary with documented tooltips, one switchable distance/identity matrix with heat-map colouring, pair filter and list, CSV / TSV / Excel export, movable, resizable and dockable (§9.4).</li>
+    <li><strong>Smooth scrolling</strong> of large alignments in Full and Block (buffered windows, in-place column patching); translation rows in the windowed renderer.</li>
+    <li><strong>Parsers</strong> - A3M and PIR read as FASTA variants; EMBL refused rather than loaded as garbage; UTF-16 and legacy encodings; truncated BAM/CRAM reported (§1.3).</li>
+    <li><strong>AB1 chromatograms</strong> - an AB1 file loads as one sequence and right-click → View Chromatogram... shows the trace (§1.3).</li>
+    <li><strong>Accessibility</strong> - a colour-blind-safe nucleotide scheme (§5.3); menus and windows can be operated from the keyboard (Tab to a menu, Enter to open, Esc to close).</li>
+    <li><strong>Protein consensus</strong> - the consensus returns the true majority residue in protein and N-rich columns, with X/B/Z/J fallbacks (§6.2); protein residues are shaded correctly in Monochrome.</li>
+  </ul>
+  <p>Earlier updates added or improved the following features:</p>
   <ul>
     <li><strong>k-mer groups fixed</strong> - the number of groups no longer jumps with k: Auto picks the most stable count instead of the root jump, a number of groups means groups of at least <em>Min size</em> (lone sequences are set aside), and a new <em>Distance: aligned columns</em> option does not depend on k at all. Grouping is also about 200 times faster (330 sequences: 20 s to 0.1 s). See §4.2.</li>
     <li><strong>Highlight diffs / Variable sites only</strong> - now do something when ticked (a column is variable when at least one sequence differs; set the threshold to 0 to turn the filter off), and pause each other with a message instead of silently (§5.2).</li>
@@ -497,8 +519,10 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="in-url">2.3 URL Loading</h3>
   <p>
     Paste a URL to a raw alignment file (e.g., a GitHub raw link or a public server path)
-    and click <strong>Load URL</strong>. The viewer fetches the file via <code>fetch()</code>
-    with CORS restrictions.
+    into the Input box and click <strong>Load</strong> (or press <kbd>Ctrl+L</kbd>); a pasted
+    <code>http(s)://</code> address is recognised as a location rather than data. The viewer
+    fetches the file via <code>fetch()</code> with CORS restrictions. The same file can be
+    opened directly with <code>?url=</code> in the page address (1.2).
   </p>
 
   <h3 id="in-ssh">2.4 SSH Remote Loading</h3>
@@ -548,7 +572,11 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     it. It holds no alignment data.</li>
     <li><strong>Load Preset</strong> (<kbd>Ctrl+O</kbd>) - applies the saved preset</li>
     <li>The snapshot dropdown lists snapshot files offered by the server (<code>/api/snapshots</code>) or,
-    on GitHub Pages, listed in <code>snapshots/index.json</code>; click to preview, double-click to load</li>
+    on GitHub Pages, listed in <code>snapshots/index.json</code>; pick one and click <strong>Open</strong>
+    (<strong>Refresh</strong> reloads the list). <strong>Open Path</strong> opens a snapshot file by its path
+    (as <code>?snapshotFile=</code> does)</li>
+    <li><strong>Create</strong> downloads the current state as a JSON snapshot and as a standalone HTML page,
+    and copies a <code>?snapshot=</code> URL to the clipboard</li>
   </ul>
   <p>Snapshots themselves are files (JSON, or a standalone HTML page); they are not kept in
   <code>localStorage</code>.</p>
@@ -559,7 +587,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="in-saveload">2.7 Save / Export Alignment</h3>
   <p>
-    Save the current alignment to a file from the Actions menu (see §9.8).
+    Save the current alignment as FASTA with the <strong>Save</strong> button in the toolbar (next to
+    Input); <strong>SVG</strong>, <strong>RTF</strong>, <strong>Full SVG</strong> and <strong>Create</strong>
+    (JSON + standalone HTML snapshot) are in the Input menu; Newick comes from the Tree window (see §9.10).
     Supported output formats: FASTA, RTF, SVG, Newick (<code>.nwk</code>), and standalone HTML snapshots.
     MSF is supported for input only; save as FASTA and convert if you need MSF output.
   </p>
@@ -598,7 +628,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>The Alignment menu options below apply to in-browser MAFFT WASM.</p>
   <table>
     <tr><th>Option</th><th>Effect</th></tr>
-    <tr><td>Seq Type</td><td>Nucleotide, Protein (BLOSUM62) or Protein (JTT 200PAM) scoring</td></tr>
+    <tr><td>Seq Type</td><td>Nucleotide, Protein (BLOSUM62) or Protein (JTT 200PAM) scoring (MAFFT's <code>--bl 62</code> / <code>--jtt 200</code>), or Coding sequence (§3.2.2)</td></tr>
     <tr><td>Gap Open</td><td>Cost of opening a gap (default 1.53, MAFFT's <code>--op</code>)</td></tr>
     <tr><td>Gap Ext</td><td>Gap extension penalty / offset (default 0.0, MAFFT's <code>--ep</code>)</td></tr>
     <tr><td>Speed</td><td>How many times the guide tree is built (MAFFT's <code>--retree</code>): <strong>Fast</strong> = 1 (FFT-NS-1), <strong>Standard</strong> = 2 (FFT-NS-2, MAFFT's default), <strong>Extra</strong> = 3</td></tr>
@@ -689,8 +719,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <h3 id="al-addseq">3.3 Adding Sequences</h3>
   <p>
-    Click <strong>+ Add Seq</strong> to open the "Add Sequences" modal. Paste one or more
-    FASTA sequences. Options:
+    Click the <strong>+</strong> button beside Input, or <strong>Add &amp; Align…</strong> in the
+    Alignment menu, to open the "Add Sequences" modal. Paste one or more FASTA sequences, or
+    <strong>Browse Files</strong> for sequence files (any format in 1.3, including AB1). Options:
   </p>
   <ul>
     <li><strong>Just Add</strong> - append sequences padded with gaps at the end</li>
@@ -701,8 +732,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="al-blast">3.4 BLAST Search</h3>
   <p>
-    Run BLAST directly from the viewer. Right-click a sequence name and select
-    <strong>BLAST</strong>, or use the Alignment dropdown.
+    Run a similarity search directly from the viewer. Right-click a sequence name and select
+    <strong>BLAST Search</strong> (there is no button for it in the menus).
   </p>
   <p>
     Search runs in the browser. The dialog lists the databases registered on the optional
@@ -714,9 +745,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     Batch search against every registered database at once is also supported.
   </p>
   <ul>
-    <li><strong>Optional acceleration</strong> - if the NCBI BLAST+ suite is installed on the
-        server, databases can be indexed with <code>makeblastdb</code> and queried with
-        <code>blastn</code> instead of the in-browser worker</li>
+    <li><strong>Not NCBI BLAST</strong> - the search always runs in the browser worker; the viewer
+        never queries <code>blastn</code>. Adding a database from the viewer (§3.5) runs
+        <code>makeblastdb</code> on the server, so that step needs the NCBI BLAST+ suite installed</li>
     <li><strong>Server required</strong> - BLAST needs the Node.js server running. On the
         static GitHub Pages deployment the dialog reports
         &quot;Server not available - no BLAST databases&quot;</li>
@@ -742,9 +773,11 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="al-degap">3.6 Degap Alignment</h3>
   <p>
-    The <strong>Degap</strong> button removes all gap columns from the alignment.
+    The <strong>Degap</strong> button (toolbar, next to Edit) removes all gap-only columns from the alignment.
     This is useful for extracting ungapped sequence blocks for downstream analysis.
-    The operation is undoable (<kbd>Ctrl+Z</kbd>).
+    The operation is undoable (<kbd>Ctrl+Z</kbd>). In the Alignment menu, <strong>Degap block ←</strong> /
+    <strong>Degap block →</strong> remove the gaps inside the selected column block only and pack the
+    residues to the left or to the right.
   </p>
 
   <h3 id="al-realign-consensus">3.7 Re-align Against Consensus</h3>
@@ -836,15 +869,21 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <table>
     <tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr>
+    <tr><td>Method</td><td>tree cut</td><td><em>Tree cut</em> splits the similarity tree at the height that fits best (the settings below). <em>Peel (diagnostic columns)</em> is for alignments of chunk consensi or subfamilies: it repeatedly takes the group that differs most clearly from the rest (the most diagnostic columns, where the group is almost fixed for one base that almost no other sequence has), sets it aside, continues with the rest, then looks inside each peeled group. Peel needs an alignment (all rows the same length; otherwise the tree cut is used) and groups of at least 3. While peel is selected, Distance, Linkage, ignore strand and Groups/auto are disabled; Min size still applies</td></tr>
+    <tr><td>Min diagnostic columns</td><td>2</td><td>Peel only (the box next to Method, 1–50): the smallest number of diagnostic columns a group needs. Lower finds more, weaker groups (2 is the loosest sensible value); higher keeps only well-supported groups</td></tr>
     <tr><td>Distance</td><td>aligned columns</td><td><em>Aligned columns</em> compares two sequences by the differences in the alignment columns where both have a base. It uses the alignment, does not depend on k, and is not thrown off by sequences that cover different parts of the alignment (chunks, truncated copies). <em>k-mer</em> compares shared words of length k without the alignment (the same tree as Reorder by similarity)</td></tr>
     <tr><td>k</td><td>6</td><td>Oligonucleotide length for the k-mer distance (3–12); greyed out for aligned columns. A very short k cannot tell sequences apart and a very long k leaves diverged sequences with no words in common: the explorer says so</td></tr>
+    <tr><td>Linkage</td><td>average</td><td>How groups grow. <em>Average</em>: a sequence joins a group when it is close to the group on average (compact groups). <em>Chain</em> (single linkage): it joins when it is close to <em>any</em> member, so fragments or chunks that cover different parts of one element are linked through the ones between them (best for chunk consensi on aligned columns; can join groups through a single close pair)</td></tr>
+    <tr><td>ignore strand</td><td>off</td><td>k-mer distance only: a word and its reverse complement count as the same, so a sequence and its reverse-complemented copy group together. Leave off for same-strand data (with a very short k it can blur real differences); greyed out for aligned columns</td></tr>
     <tr><td>Groups</td><td>auto</td><td>The <em>auto</em> box (ticked) lets the tree choose how many groups: the number that stays the same over the widest range of the tree (not the largest single jump). The explorer shows how stable it is and which other counts are also stable. Type a number, or untick auto, to ask for that many groups; tick auto again to go back</td></tr>
     <tr><td>Min size</td><td>2</td><td>Find the requested number of groups that each have <em>at least</em> this many sequences. Smaller groups (a lone sequence, a pair...) are not counted: their sequences are listed as unassigned. If the tree has fewer such groups than asked for, you are told how many exist</td></tr>
   </table>
   <p>
-    Use this when you want a first split by overall resemblance (the four K
-    groups in the starter file). Use Diagnostic SNPs when you care which
-    columns actually distinguish those groups. <strong>Clear</strong> next to
+    Use this when you want a first split by overall resemblance (a first split of
+    the starter file by subfamily: with the default settings it gives three groups,
+    because K1 and K2 are close and are not separated by a tree cut; Auto also lists
+    4 as an alternative count). Use Diagnostic SNPs when you care which
+    columns actually distinguish those groups, or to separate groups the tree keeps together. <strong>Clear</strong> next to
     this button removes the shared name/letter colour layer (same layer as SNP
     grouping). 2D rectangles stay.
   </p>
@@ -983,8 +1022,6 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>All copies, one box</td><td>One rectangle covers every sequence with that pattern, even if those rows are not next to each other</td></tr>
     <tr><td>Stack + copies</td><td>The contiguous stack is one rectangle; scattered copies get a second, paler layer</td></tr>
     <tr><td>Stack only</td><td>Paint only the contiguous stack. Scattered copies of the same pattern are left unpainted</td></tr>
-    <tr><td>Interior conserved: fill / hole</td><td>When a one-column conserved letter sits inside a rectangle (for example AAAGAAA), fill it as part of the box or leave a hole</td></tr>
-    <tr><td>Max dirt</td><td>How much in-rectangle disagreement is allowed before an adjacent column is left unboxed. 0% = only perfect edges. Mean over cells versus that rectangle’s consensus; globally conserved columns are never added. Range 0–20%</td></tr>
     <tr><td>Opacity</td><td>How solid the rectangles are drawn</td></tr>
   </table>
   <p>
@@ -1008,7 +1045,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     After k-mer or SNP grouping, the <strong>Group explorer</strong> lists every
     group in the same top-to-bottom order as the alignment. A <strong>Groups</strong>
     menu appears in the menu bar; the dock button parks the explorer there
-    (the same detach/dock handle is on Clustering, Display, and Shade).
+    (the other menus, except Input, Actions and Groups, have the same detach/dock handle).
   </p>
   <ul>
     <li>Expand a group for copy buttons: names, FASTA, ungapped FASTA, ungapped consensus</li>
@@ -1078,9 +1115,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
     <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block.</td></tr>
-    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40–300 chars). Sequence names repeat per block.</td></tr>
+    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40–300 chars; <strong>Screen</strong> fits the block to the window width). Sequence names repeat per block.</td></tr>
     <tr><td><strong>Canvas</strong></td><td>Massive alignments (>= 5,000,000 residues)</td><td>Auto-activates above 5 million residues and reports the switch. From about 500,000 residues, Full and Block already draw a window rather than every cell.</td></tr>
-    <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5).</td></tr>
+    <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5). A <strong>Show bases</strong> checkbox next to the mode switch draws every base of each read instead of mismatches only.</td></tr>
   </table>
   <p>
     Mode switching is instant - no re-render delay. The Block Size slider adjusts
@@ -1223,7 +1260,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <p><strong>Conservation calculation mode</strong> (the <strong>All</strong>/<strong>Non-Gap</strong>
     radio buttons next to <strong>Shade By</strong> - in the separate <strong>Shade</strong> menu,
-    not this Display menu, alongside the Black/Dark/Light shading sliders):</p>
+    not this Display menu, alongside the Black/Dark/Light shading sliders; each tier there has
+    a checkbox to switch it off and a <strong>Reset</strong> for its colour):</p>
   <table>
     <tr><th>Mode</th><th>Behaviour</th></tr>
     <tr><td>All (default)</td><td>Conservation is measured against every sequence in the alignment; a gap counts against conservation, the same way most MSA viewers compute percent identity. A column where most sequences are gapped cannot score highly conserved just because the few sequences that do have a base happen to agree.</td></tr>
@@ -1251,7 +1289,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     feature counts as a CDS when its description column starts with <code>CDS</code>, or, without a
     description, when its name is not a tRNA, rRNA, origin or control-region name. Loading an annotation
     that looks mitochondrial (tRNAs, rRNAs, ND/COX/ATP/CYTB: at least 10 such features, or every feature,
-    as in a one-gene file) while the code is Standard switches the <strong>Code</strong> to Vertebrate Mito and says so. <strong>Copy AA</strong> and <strong>Save AA</strong>
+    as in a one-gene file) while the code is Standard switches the <strong>Code</strong> to Vert Mito and says so. <strong>Copy AA</strong> and <strong>Save AA</strong>
     then give one record per sequence and gene, each read in the gene's direction. A codon with IUPAC
     ambiguity letters translates to the amino acid all its readings share (<code>CCN</code> = P), else X.
     Checked against GenBank: the 13 CDS of NC_069019.1 translate exactly to the record's own
@@ -1261,7 +1299,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Code</th><th>NCBI Table</th><th>Key Differences from Standard</th></tr>
     <tr><td>Standard</td><td>1</td><td>-</td></tr>
-    <tr><td>Vertebrate Mito</td><td>2</td><td>AGA/AGG = Stop, ATA = Met, TGA = Trp</td></tr>
+    <tr><td>Vert Mito</td><td>2</td><td>AGA/AGG = Stop, ATA = Met, TGA = Trp</td></tr>
     <tr><td>Yeast Mito</td><td>3</td><td>ATA = Met, CTN = Thr, TGA = Trp</td></tr>
     <tr><td>Mold Mito</td><td>4</td><td>TGA = Trp</td></tr>
     <tr><td>Invert Mito</td><td>5</td><td>AGA/AGG = Ser, ATA = Met, TGA = Trp</td></tr>
@@ -1288,6 +1326,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>
     A sequence that starts after the frame start is read from wherever its first base falls in
     the alignment's codon grid; the bases of a codon it only partly covers get no amino acid.
+    A residue typed in Edit mode is reflected in the translation and the marks when Edit mode ends.
   </p>
   <figure style="margin: 12px 0;">
     <img src="img/codon-example.png" alt="Codon analysis on examples/synthetic/synth_msa.fa, columns 1 to 60, with the translation under each row."
@@ -1324,6 +1363,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     full; the slider is then disabled, and unticking returns to its value. Presets and
     snapshots remember both. This only affects display, not the underlying data.
   </p>
+</section>
 
 <!-- ════════════════════════════════════════ -->
 <section id="consensus-menu">
@@ -1398,7 +1438,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     are reported.
   </p>
   <p>Search is case-insensitive and searches against degapped sequences
-  (gaps are stripped before comparison).</p>
+  (gaps are stripped before comparison). <strong>Reverse complement query</strong> replaces the
+  text in the search box with its reverse complement.</p>
 
   <h3 id="se-regex">7.2 Regex Search</h3>
   <p>
@@ -1424,7 +1465,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     Use the colour picker to choose the highlight colour for search results.
     Multiple searches (with <strong>Find</strong> not <strong>Clear Last</strong>)
     accumulate highlights. Use <strong>Clear Last</strong> (<kbd>Ctrl+Shift+F</kbd>)
-    to remove the most recent search highlights. Each search in the
+    to remove the most recent search highlights and <strong>Clear All</strong> (<kbd>Ctrl+Alt+F</kbd>)
+    to remove every search highlight. Each search in the
     <strong>Active searches</strong> list (and in the Selections panel, §7.6) has a
     checkbox to hide it without losing it.
   </p>
@@ -1496,16 +1538,16 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 <section id="edit-menu">
   <h2>8. Editing</h2>
   <p>
-    The Edit menu and toolbar provide sequence editing capabilities with full
-    undo/redo support.
+    The toolbar's <strong>Edit</strong> button, the Actions menu, keyboard shortcuts and the
+    right-click menu provide sequence editing capabilities with full undo/redo support.
   </p>
 
   <h3 id="ed-row">8.1 Row Operations</h3>
   <table>
     <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
     <tr><td>Select all</td><td><kbd>Ctrl+A</kbd></td><td>Select or deselect all sequences</td></tr>
-    <tr><td>Copy names</td><td><kbd>Ctrl+C</kbd></td><td>Copy selected sequence names to clipboard</td></tr>
-    <tr><td>Copy sequences</td><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy selected sequences as FASTA</td></tr>
+    <tr><td>Copy</td><td><kbd>Ctrl+C</kbd></td><td>Copy the selected bases, or the selected sequences as ungapped FASTA (names are copied from the Group explorer's <em>Copy names</em>, §4.5)</td></tr>
+    <tr><td>Copy sequences</td><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy selected sequences as ungapped FASTA (same as Ctrl+C with no bases selected)</td></tr>
     <tr><td>Delete</td><td><kbd>Ctrl+Del</kbd></td><td>Remove selected sequences (undoable)</td></tr>
     <tr><td>Duplicate</td><td><kbd>Ctrl+U</kbd></td><td>Duplicate selected sequences (undoable)</td></tr>
     <tr><td>Reverse complement</td><td><kbd>Ctrl+R</kbd></td><td>Reverse and complement selected DNA sequences</td></tr>
@@ -1525,15 +1567,16 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>Realign block</td><td><kbd>Ctrl+Shift+R</kbd></td><td>Realign each selected column span with MAFFT and splice back (in-browser WASM). Isolated single columns are skipped; need at least one span of 2+ columns, otherwise the browser's hard-refresh applies. Honours Adjust direction, Reorder, and Reorder only — see §3.2.1</td></tr>
   </table>
   <p>
-    <strong>Select columns</strong> by <kbd>Ctrl+Click</kbd> on any residue.
-    Drag to select column ranges. <kbd>Ctrl</kbd>-click additional residues to add
-    disjoint spans. Selected columns appear with a green background.
+    <strong>Select columns</strong> by <kbd>Ctrl+Alt+Click</kbd> on any residue.
+    <kbd>Ctrl+Alt</kbd>-drag to select column ranges, and <kbd>Ctrl+Alt</kbd>-click further
+    residues to add disjoint spans. Selected columns appear with a green background.
+    (<kbd>Ctrl+Click</kbd> without Alt selects residues in one row, not columns.)
   </p>
 
   <h3 id="ed-editmode">8.3 GeneDoc-Style Edit Mode</h3>
   <p>
-    Toggle <strong>Edit Mode</strong> from the Edit menu or the toolbar.
-    When active, these edit tools appear:
+    Toggle <strong>Edit Mode</strong> with the <strong>Edit</strong> button in the toolbar
+    (next to the undo/redo arrows). When active, these edit tools appear:
   </p>
   <ul>
     <li>
@@ -1635,8 +1678,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="ed-seqedit">8.5 Sequence Text Editor</h3>
   <p>
-    Open the full-sequence text editor from the Edit menu. This provides a textarea
-    with the raw sequence for the selected row, plus quick transformations:
+    Open the full-sequence text editor with <strong>SeqEdit</strong> (Actions → Editing, or the
+    edit tool bar of §8.3) or with <strong>Edit Sequence...</strong> in the right-click menu.
+    This provides a textarea with the raw sequence for the selected row, plus quick transformations:
   </p>
   <ul>
     <li><strong>Degap</strong> - remove all gaps from the sequence</li>
@@ -1696,9 +1740,18 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
     <tr><td>Select All</td><td><kbd>Ctrl+A</kbd></td><td>Select or deselect all rows</td></tr>
-    <tr><td>Invert Selection</td><td>-</td><td>Swap selected and unselected rows</td></tr>
-    <tr><td>Select by Name</td><td>-</td><td>Select rows whose names match a pattern</td></tr>
+    <tr><td>Copy Sel</td><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy the selected sequences as FASTA</td></tr>
+    <tr><td>Copy Align</td><td>-</td><td>Copy the whole alignment as FASTA (also the toolbar <strong>Copy</strong> button)</td></tr>
+    <tr><td>Delete Sel</td><td><kbd>Ctrl+Del</kbd></td><td>Delete the selected sequences (undoable)</td></tr>
+    <tr><td>New Tab</td><td><kbd>Alt+T</kbd></td><td>Open the selected sequences in a new browser tab</td></tr>
   </table>
+  <p>
+    The <strong>Order</strong> group holds Up / Down / To Top / To Bottom and the sorts (§9.2) and
+    order files (§9.3); <strong>Editing</strong> holds RevComp (<kbd>Ctrl+R</kbd>), <strong>RevComp All</strong>
+    (reverse-complements every sequence), Duplicate (<kbd>Ctrl+U</kbd>) and SeqEdit (§8.5);
+    <strong>Columns</strong> holds Copy Cols (<kbd>Ctrl+Shift+V</kbd>). To select rows by name, use
+    <em>Find</em> in the Group explorer (§4.5) or Colour Names (§9.11) followed by Sort by Color.
+  </p>
 
   <h3 id="ac-sort">9.2 Sort Functions</h3>
   <table>
@@ -1710,8 +1763,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="ac-order">9.3 Save / Load Order</h3>
   <p>
-    The <strong>Exp</strong> (Export Order) button saves the current sequence order
-    as a JSON file. <strong>Imp</strong> (Import Order) loads a previously saved order
+    The <strong>Export</strong> button (Order group) saves the current sequence order
+    as a JSON file. <strong>Import</strong> loads a previously saved order
     and reorders the sequences to match. This is useful for applying a curated ordering
     across multiple sessions or sharing ordering between collaborators.
   </p>
@@ -1719,8 +1772,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="ac-tools">9.4 Analysis Tools</h3>
   <table>
     <tr><th>Tool</th><th>Description</th></tr>
-    <tr><td><strong>New Tab</strong></td><td>Open selected sequences in a new browser tab (<kbd>Alt+T</kbd>)</td></tr>
-    <tr><td><strong>TSD Finder</strong></td><td>Find target site duplications around SINE insertion boundaries</td></tr>
+    <tr><td><strong>Repeats</strong></td><td>Opens the Repeat Finder (§9.8), whose fourth mode, <strong>TSD (SINE)</strong>, is the TSD Finder (§9.9)</td></tr>
     <tr><td><strong>Tree</strong></td><td>Build UPGMA or Neighbor-Joining trees from selected sequences. Three distance correction models are available: p-distance (raw), Jukes-Cantor (JC69), and Kimura 2-parameter (K80). Switching UPGMA/NJ or model in the modal rebuilds the tree. A pair with no aligned position where both have A/C/G/T/U has no distance, and a JC69/K80 pair differing too much for the correction is saturated; the first is set to the largest defined distance, the second to twice that, and the summary line says so in red (hover it for the pairs). Neighbor-Joining breaks tied scores in favour of the closer pair, so identical sequences stay together. Outputs a drawn tree (see below), a text view, and Newick with Copy Newick and Download .nwk options</td></tr>
     <tr><td><strong>Statistics</strong></td><td>Reimplements Easel <code>esl-alistat</code> and <code>esl-alipid</code>. The <strong>Alignment</strong> card shows what esl-alistat prints: number of sequences, alignment length, total residues, smallest, largest and average unaligned length, and average identity; <strong>Gaps</strong> is a ViewAlign addition. The <strong>Pairwise identity</strong> card gives the mean, minimum and maximum (naming the pair or pairs; click one to find it in the matrix). Hover a field name for what it is and how it is calculated, with the passage from the Easel documentation or source. Identity follows esl-alipid by default: identical residues divided by the shorter unaligned length (0 when that is 0); <strong>over: shared columns</strong> divides by the columns where both sequences have a residue instead, a definition the esl-alipid manual warns can be spuriously high for barely overlapping fragments. The esl-alistat average uses the esl-alipid definition over all pairs; esl-alistat itself averages 1,000 random pairs when there are more, and prints a whole percent. With two or more rows selected, only those rows are used. <strong>Distance</strong> / <strong>Identity %</strong> switches the matrix (distance = 1 &minus; identity/100). Row names and column labels stay in view while scrolling; <strong>Find row</strong> / <strong>Find column</strong> jump to a sequence by part of its name (Enter for the next match); <strong>Labels</strong> sets how column names are shown and the longest name shown. <strong>Heatmap</strong> colours the cells by value: choose a palette (yellow&ndash;red, viridis, blue&ndash;white&ndash;red, greens), reverse it, and set the value range, or leave it on Auto (the matrix's own minimum and maximum); values outside the range take the end colours, the diagonal stays grey, and the button then shows the colour legend. With colours on, selected columns are outlined and the pair filter dims the pairs that do not match. Click column names to select columns (Ctrl-click adds, Shift-click takes a range, Esc clears); <strong>Copy</strong> then copies only those columns, otherwise the whole matrix, as a tab-separated table with full names; <strong>Save matrix</strong> writes CSV, TSV or Excel. <strong>Pairs with &ge;/&le; value</strong> highlights the pairs past a threshold in the shown matrix and counts them; <strong>Pair list</strong> lists them, and <strong>Save pairs</strong> writes a pair table, the sequence names, or the sequences (as aligned or without gaps, FASTA). The window moves by its title bar, resizes from any edge or corner, minimises, maximises (button or double-click on the title), or docks (&#9707;) as a panel on the right whose width you drag at its left edge; the alignment narrows to fit beside it. See Credits.</td></tr>
   </table>
@@ -1753,9 +1805,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </figure>
 
   <h3 id="ac-colour">9.5 Colour &amp; Shading</h3>
-  <p><strong>Conservation shading thresholds</strong> (Display menu):</p>
+  <p><strong>Conservation shading thresholds</strong> (Shade menu):</p>
   <p>
-    Threshold sliders in the Display menu control darkness for the Monochrome colour scheme:
+    Threshold sliders in the Shade menu control darkness for the Monochrome colour scheme:
     Black (highly conserved), Dark (moderately conserved), Light (weakly conserved).
     These thresholds apply only to the Monochrome scheme. Other colour schemes
     (Nucleotide, Purine/Pyrimidine, etc.) use their own fixed colour mappings — see §5.3.
@@ -1781,7 +1833,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   diverged copies).</p>
   <table>
     <tr><th>Parameter</th><th>Description</th></tr>
-    <tr><td>Word / window size</td><td>Word length in SPIN mode (2-20, default 6); sliding window length in Dotter mode (1-61, default 11). Shorter words find more matches, including chance ones</td></tr>
+    <tr><td>Word / window size</td><td>Word length in SPIN mode (2-20, default 6); sliding window length in Dotter mode (1-61). The value is kept when you switch modes, so a plot switched from SPIN to Dotter keeps window 6 unless you change it; a value outside the new range is reset (6 for SPIN, 11 for Dotter). Shorter words find more matches, including chance ones</td></tr>
     <tr><td>Threshold</td><td>Dotter only: minimum identity of a window, as a percent of the window length, for a dot (0-100%). A window cut short at a sequence end counts its missing positions as mismatches</td></tr>
     <tr><td>Context radius</td><td>Nucleotide context shown on hover (5-100 bp)</td></tr>
     <tr><td>RevComp B</td><td>Reverse-complement axis B to find inverted repeats</td></tr>
@@ -1823,8 +1875,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="ac-repeat-finder">9.8 Repeat Finder</h3>
   <p>
-    The Repeat Finder searches for tandem, direct, and inverted repeats within loaded sequences.
-    Access it from the Actions menu or right-click a sequence and select <strong>Find repeats</strong>.
+    The Repeat Finder searches for tandem, direct, and inverted repeats within loaded sequences
+    (its fourth mode, TSD (SINE), is described in §9.9). Open it with <strong>Repeats</strong> in the
+    Actions menu or right-click a sequence and select <strong>Find repeats</strong>.
   </p>
   <table>
     <tr><th>Repeat Type</th><th>Description</th></tr>
@@ -1842,8 +1895,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
 
   <h3 id="ac-tsd-finder">9.9 TSD Finder</h3>
   <p>
-    The TSD (Target Site Duplication) Finder locates short duplications flanking SINE/TE
-    insertion boundaries in aligned sequences. For each sequence it compares a short window
+    The TSD (Target Site Duplication) Finder, the <strong>TSD (SINE)</strong> mode of the Repeat Finder
+    (Actions → <strong>Repeats</strong>, or right-click → <strong>Find TSD (SINE)</strong>), locates short
+    duplications flanking SINE/TE insertion boundaries in aligned sequences. For each sequence it compares a short window
     just upstream of the insertion against a short window just downstream, trying a small
     range of nearby offsets and lengths, and keeps the best-scoring near-match as the TSD.
   </p>
@@ -1876,11 +1930,11 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="ac-export">9.10 Export &amp; Share</h3>
   <table>
     <tr><th>Format</th><th>Use</th><th>Notes</th></tr>
-    <tr><td>FASTA</td><td>Downstream tools</td><td>Full alignment or selected sequences only</td></tr>
-    <tr><td>RTF</td><td>Microsoft Word</td><td>Monospace, per-residue shading, scale ruler, consensus line</td></tr>
-    <tr><td>SVG</td><td>Publication figures</td><td>Vector graphics. <em>Viewport</em> saves what is on screen, overlays included; <em>Full</em> draws every sequence and column from the data in the screen's colours (ruler, names, consensus; search and annotation overlays are not included), in any view mode</td></tr>
-    <tr><td>Newick (<code>.nwk</code>)</td><td>Phylogenetics tools</td><td>UPGMA or Neighbor-Joining tree with branch lengths, whichever the Tree window last built</td></tr>
-    <tr><td>Standalone HTML</td><td>Sharing</td><td>Self-contained HTML snapshot page with embedded alignment</td></tr>
+    <tr><td>FASTA</td><td>Downstream tools</td><td>Toolbar <strong>Save</strong> button (full alignment); selected sequences by Copy Sel / New Tab</td></tr>
+    <tr><td>RTF</td><td>Microsoft Word</td><td>Input menu <strong>RTF</strong>. Monospace, per-residue shading, scale ruler, consensus line</td></tr>
+    <tr><td>SVG</td><td>Publication figures</td><td>Input menu <strong>SVG</strong> / <strong>Full SVG</strong>. Vector graphics. <em>Viewport</em> saves what is on screen, overlays included; <em>Full</em> draws every sequence and column from the data in the screen's colours (ruler, names, consensus; search and annotation overlays are not included), in any view mode</td></tr>
+    <tr><td>Newick (<code>.nwk</code>)</td><td>Phylogenetics tools</td><td>Tree window <strong>Download .nwk</strong>: UPGMA or Neighbor-Joining tree with branch lengths, whichever the Tree window last built</td></tr>
+    <tr><td>Standalone HTML</td><td>Sharing</td><td>Input menu <strong>Create</strong>: a JSON snapshot plus a self-contained HTML snapshot page with embedded alignment, and a <code>?snapshot=</code> URL on the clipboard (§2.6)</td></tr>
     <tr><td>New tab</td><td>Quick copy</td><td>Selected sequences as plain FASTA text in a new browser tab (<kbd>Alt+T</kbd>)</td></tr>
     <tr><td>Copy Selected</td><td>Clipboard</td><td>FASTA of selected sequences (<kbd>Ctrl+Shift+C</kbd>)</td></tr>
     <tr><td>Copy Columns</td><td>Clipboard</td><td>FASTA of selected columns (<kbd>Ctrl+Shift+V</kbd>)</td></tr>
@@ -2031,12 +2085,12 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
   <table>
     <tr><th>Action</th><th>Result</th></tr>
     <tr><td>Click sequence name</td><td>Select row</td></tr>
-    <tr><td>Ctrl+Click name</td><td>Toggle row selection</td></tr>
-    <tr><td>Ctrl+Click residue</td><td>Select column / search for that base</td></tr>
-    <tr><td>Drag residue</td><td>Select column range</td></tr>
+    <tr><td>Ctrl+Click name</td><td>Toggle row selection (Shift+Click selects the range from the last selected row)</td></tr>
+    <tr><td>Click / Ctrl+Click residue</td><td>Select residues (bases) in that row; a second click in the same row extends to a range, or drag. In Edit mode, Ctrl is required (a plain click is for the edit tools)</td></tr>
+    <tr><td>Ctrl+Alt+Click residue</td><td>Select column; Ctrl+Alt+drag selects a column range (§8.2)</td></tr>
     <tr><td>Drag sequence name</td><td>Reorder rows</td></tr>
-    <tr><td>Right-click alignment</td><td>Context menu with 15+ options: Copy as FASTA (gapped/ungapped), Copy as plain text (gapped/ungapped), Copy by colour (gapped/ungapped), Edit Sequence, Reverse complement, Rename, Replace with consensus, Add consensus below, Delete, Clear selection, Move to Top/Bottom, Insert/Remove gap, BLAST, Re-align against consensus, Dot-plot (self), Find repeats</td></tr>
-    <tr><td>Middle-click + drag</td><td>Pan viewport</td></tr>
+    <tr><td>Right-click alignment</td><td>Context menu with 15+ options: Copy as FASTA (gapped/ungapped), Copy as plain text (gapped/ungapped), Copy by colour (gapped/ungapped), Edit Sequence, View Chromatogram (AB1 rows), Reverse complement, Rename, Replace with consensus, Add consensus below, Delete, Clear selection, Move to Top/Bottom, Insert/Remove gap, BLAST Search, Re-align against consensus, Dot-plot (self) or Dot-plot (A vs B) with two rows selected, Find repeats, Find TSD (SINE)</td></tr>
+    <tr><td>Right-button drag on empty space</td><td>Pan viewport (the context menu is suppressed after a drag)</td></tr>
     <tr><td>Scroll wheel</td><td>Vertical scroll</td></tr>
     <tr><td>Shift + scroll wheel</td><td>Horizontal scroll</td></tr>
   </table>
@@ -2067,6 +2121,8 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><td><code>CORS_ORIGIN</code></td><td>Allowed origin for cross-origin requests (default: localhost only)</td></tr>
     <tr><td><code>SSH_KEY_PATH</code></td><td>Path to SSH private key for remote access</td></tr>
     <tr><td><code>MAFFT_BIN</code></td><td>Path to the native MAFFT binary used by <code>POST /api/mafft</code></td></tr>
+    <tr><td><code>PORT</code>, <code>HOST</code></td><td>Port (default 3000) and bind address (default <code>127.0.0.1</code>; set <code>HOST=0.0.0.0</code> to accept other machines)</td></tr>
+    <tr><td><code>ALLOWED_HOSTS</code>, <code>TAILSCALE_IP</code></td><td>Host names (comma-separated) or a Tailscale address, besides <code>localhost</code>, that requests may use; blocks DNS-rebinding pages</td></tr>
   </table>
 
   <h3 id="sv-mafft">11.2 MAFFT Integration</h3>
@@ -2085,8 +2141,10 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     to the browser - no temporary files on disk.
   </p>
   <div class="note">
-    <strong>Security:</strong> Path traversal (<code>..</code>), tilde expansion,
-    and shell metacharacters are blocked. Only absolute paths are accepted.
+    <strong>Security:</strong> Paths may contain letters, digits, spaces and
+    <code>_ @ % + = : , . / ~ -</code> only, and may be absolute, relative, or start with
+    <code>~</code> (expanded on the remote host). Blocked: a <code>..</code> segment, quotes,
+    <code>$</code>, backticks, backslashes, newlines, redirections and a leading <code>-</code>.
   </div>
 
   <h3 id="sv-bam">11.4 BAM/CRAM Support</h3>
@@ -2120,7 +2178,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
   <ul>
     <!-- Compact mode removed -->
     <li>Turn on <strong>Highlight Diffs</strong> to visually compress conserved regions</li>
-    <li>Use <strong>Block mode</strong> with smaller block sizes (20-30 columns) for very wide alignments</li>
+    <li>Use <strong>Block mode</strong> with smaller block sizes (40-60 columns; the minimum is 40) for very wide alignments</li>
     <li>From about 500,000 residues, <strong>Full</strong> and <strong>Block</strong> draw a window of the alignment. <strong>Canvas</strong> auto-activates above 5 million residues and reports the switch</li>
     <li>For extremely large files (&gt; 500 sequences x 5,000 columns), consider splitting the input</li>
     <li>Use <strong>Variable sites only</strong> with the <strong>threshold slider</strong> to strip conserved columns and focus on variation. Set the threshold to ≥20% or higher to highlight only the most polymorphic sites.</li>
@@ -2177,8 +2235,8 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><th>Software</th><th>How Used</th><th>License</th><th>Citation</th></tr>
     <tr>
       <td><strong>MAFFT</strong></td>
-      <td>Alignment engine compiled to WebAssembly (<code>disttbfast.js</code>). Also callable via native binary on the optional server.</td>
-      <td>BSD</td>
+      <td>Alignment engine compiled to WebAssembly (<code>disttbfast.js</code>, v7.525). Also callable via native binary on the optional server. The Emscripten runtime glue inside <code>disttbfast.js</code> is MIT (Emscripten authors).</td>
+      <td>BSD (MAFFT); MIT (Emscripten runtime)</td>
       <td>Katoh K, Standley DM (2013) <em>Mol Biol Evol</em> 30:772-780</td>
     </tr>
     <tr>
@@ -2189,7 +2247,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     </tr>
     <tr>
       <td><strong>@gmod/cram</strong></td>
-      <td>CRAM decoding in the browser (<code>vendor/gmod-cram</code>, v14.1.1, unmodified)</td>
+      <td>CRAM decoding in the browser (<code>vendor/gmod-cram</code>, v14.1.1, unmodified); the bundle includes is-buffer (Feross Aboukhadijeh, MIT)</td>
       <td>MIT</td>
       <td>Diesh C et al. (2023) <em>Genome Biol</em> 24:74</td>
     </tr>
@@ -2201,7 +2259,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     </tr>
     <tr>
       <td><strong>NCBI BLAST</strong></td>
-      <td>Sequence similarity search (server-side)</td>
+      <td><code>makeblastdb</code> indexing of databases added through the optional server (§3.5); the viewer's own search (§3.4) runs in the browser and does not call BLAST</td>
       <td>Public Domain</td>
       <td>Camacho C et al. (2009) <em>BMC Bioinformatics</em> 10:421</td>
     </tr>
@@ -2258,7 +2316,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr>
       <td><strong>Easel</strong> <code>esl-alistat</code> / <code>esl-alipid</code></td>
       <td>Alignment summary (the values esl-alistat prints) and pairwise identity, reimplemented from the Easel manual pages and source (<code>esl_dst_XPairId</code>, <code>esl_dst_XAverageId</code>): identity is identical residues over the shorter unaligned length, as esl-alipid, or optionally over shared columns. No Easel or HMMER code is included. Easel is BSD and is distributed with HMMER.</td>
-      <td>Eddy SR (2011) <em>PLoS Comput Biol</em> 7:e1002195; <a href="http://eddylab.org/software/easel/" target="_blank">eddylab.org/software/easel</a></td>
+      <td>Eddy SR (2011) <em>PLoS Comput Biol</em> 7:e1002195; <a href="https://github.com/EddyRivasLab/easel" target="_blank">github.com/EddyRivasLab/easel</a></td>
     </tr>
   </table>
 
@@ -2274,7 +2332,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
   </ul>
 
   <p style="margin-top:16px;font-size:13px;color:var(--muted);">
-    MAFFT is included as a compiled WebAssembly binary under the BSD license, and MAFFT's own copyright applies to that binary. The JBrowse CRAM reader (@gmod/cram) is included unmodified in <code>vendor/gmod-cram</code> under the MIT license, with its licence file. samtools and BLAST+ are optional external programs and are not in this repository. GeneDoc, SPIN, Dotter, EMBOSS, Easel, and HMMER are cited for methods or formats; their source is not included.
+    MAFFT is included as a compiled WebAssembly binary under the BSD license (<code>LICENSE-MAFFT</code>), and MAFFT's own copyright applies to that binary; the Emscripten runtime generated inside <code>disttbfast.js</code> is MIT. The JBrowse CRAM reader (@gmod/cram) is included unmodified in <code>vendor/gmod-cram</code> under the MIT license, with its licence file; the bundle contains is-buffer (MIT). <code>THIRD_PARTY_NOTICES.md</code> in the repository lists every bundled component and data set. samtools and BLAST+ are optional external programs and are not in this repository. GeneDoc, SPIN, Dotter, EMBOSS, Easel, and HMMER are cited for methods or formats; their source is not included.
     The MACSE port (<code>macse-align.js</code>, <code>macse-worker.js</code>, <code>macse-dp-wasm.js</code>) is distributed under MACSE's CeCILL 2.1 licence (<code>LICENSE-MACSE</code>); it runs in its own worker and exchanges only messages with the rest of ViewAlign.
     The rest of the ViewAlign source code is released under the <strong>MIT License</strong>.
   </p>
