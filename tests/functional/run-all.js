@@ -499,6 +499,83 @@ check('Codon-aware: protein input is refused with a clear message, alignment unc
     return { pass: true, detail: msg };
 });
 
+// The protein types used to be sent to disttbfast as a second "-E <type>" (the guide-tree
+// count): JTT (-E 0) returned "(null)" for every row, BLOSUM62 (-E 1) silently forced FFT-NS-1.
+check('MAFFT protein types: JTT and BLOSUM62 realign keeps every residue; one -E, matrix flag set', async (page) => {
+    const prot = [
+        '>p1', 'MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKR',
+        '>p2', 'MKTAYIAKQRQISFVKSHFSRQEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKR',
+        '>p3', 'MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKW',
+        '>p4', 'MKTAYIAKQRQIAFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKR', ''
+    ].join('\n');
+    const expect = { '0': ['-j', '200'], '1': ['-b', '62'] };
+    const details = [];
+    for (const type of ['0', '1']) {
+        await loadFasta(page, prot);
+        const r = await page.evaluate(async (type) => {
+            const sel = document.getElementById('mafftSeqType');
+            sel.value = type;
+            sel.dispatchEvent(new Event('change'));
+            const args = getMafftExtraArgs().args;
+            const before = state.seqs.map(s => s.seq.replace(/-/g, ''));
+            await realignAll();
+            return {
+                args,
+                n: state.seqs.length,
+                seqs: state.seqs.map(s => s.seq),
+                residuesKept: state.seqs.every((s, i) => s.seq.replace(/-/g, '') === before[i]),
+                msg: document.getElementById('statusMessage').textContent
+            };
+        }, type);
+        const eCount = r.args.filter(a => a === '-E').length;
+        const [flag, val] = expect[type];
+        const fi = r.args.indexOf(flag);
+        if (eCount !== 1) return { pass: false, detail: `type ${type}: ${eCount} "-E" flags in ${r.args.join(' ')}` };
+        if (fi < 0 || r.args[fi + 1] !== val) return { pass: false, detail: `type ${type}: expected "${flag} ${val}" in ${r.args.join(' ')}` };
+        if (r.n !== 4) return { pass: false, detail: `type ${type}: ${r.n} sequences after realign` };
+        if (r.seqs.some(s => /null/i.test(s))) return { pass: false, detail: `type ${type}: "(null)" rows: ${r.seqs.join('|')}` };
+        if (!r.residuesKept) return { pass: false, detail: `type ${type}: residues changed: ${r.seqs.join('|')}` };
+        if (new Set(r.seqs.map(s => s.length)).size !== 1) return { pass: false, detail: `type ${type}: unequal lengths` };
+        details.push(`type ${type}: ${r.args.join(' ')}; ${r.msg}`);
+    }
+    return { pass: true, detail: details.join(' / ') };
+});
+
+// Typing a residue in Edit mode repaints only its span; the codon rows (translation box,
+// syn/non-syn marks) stayed stale after Edit mode ended because the exit took the
+// in-place reshade shortcut instead of a render.
+check('Codon analysis: a residue typed in Edit mode is reflected in the translation and marks when Edit mode ends', async (page) => {
+    await loadFasta(page, CODON_TOY);
+    const r = await page.evaluate(async () => {
+        const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+        await new Promise(res => setTimeout(res, 500));
+        const before = { aa: state._codonData.aaSeq[1][1].aa, mark: state._codonData.synNonSyn[1][3] || null };
+        setGeneDocEditMode(true);
+        state.editTool = 'residue';
+        state.editCell = { row: 1, pos: 3 };
+        // B: ATG GCT ... -> ATG ACT: Ala -> Thr, a non-synonymous change at column 3
+        const handled = handleGeneDocResidueKey({ key: 'A', ctrlKey: false, metaKey: false, altKey: false, preventDefault() {} });
+        const typed = state.seqs[1].seq.slice(3, 6);
+        setGeneDocEditMode(false);
+        await new Promise(res => setTimeout(res, 500));
+        const cd = state._codonData;
+        const rowB = document.querySelectorAll('#alignmentContainer .aa-row')[1];
+        return {
+            handled, typed, before,
+            aa: cd.aaSeq[1][1].aa, cols: cd.aaSeq[1][1].cols.join('.'), mark: cd.synNonSyn[1][3] || null,
+            domHasT: !!rowB && /T/.test(rowB.textContent),
+            editOff: !state.editModeActive
+        };
+    });
+    if (!r.handled || r.typed !== 'ACT') return { pass: false, detail: `typing failed: handled=${r.handled}, codon now ${r.typed}` };
+    if (r.before.aa !== 'A' || r.before.mark !== null) return { pass: false, detail: `unexpected start state ${JSON.stringify(r.before)}` };
+    if (!r.editOff) return { pass: false, detail: 'Edit mode did not end' };
+    if (r.aa !== 'T' || r.cols !== '3.4.5') return { pass: false, detail: `translation not refreshed: ${r.aa}@${r.cols}` };
+    if (r.mark !== 'nonsyn') return { pass: false, detail: `mark at column 3 is ${r.mark}, expected nonsyn` };
+    if (!r.domHasT) return { pass: false, detail: 'translation row in the DOM does not show the new amino acid' };
+    return { pass: true, detail: `GCT->ACT: translation A->T and a non-synonymous mark after leaving Edit mode` };
+});
+
 check('Codon-aware (fast engine): unknown reference name is reported, lowercase kept, no ! in the result', async (page) => {
     await loadFasta(page, CODON_TOY.replace('>C\nATGGCTGAGAAG', '>C\natggctgagaag'));
     await _setCodonMode(page);

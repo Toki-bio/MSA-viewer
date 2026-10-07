@@ -2,8 +2,8 @@
 // ViewAlign - browser-based multiple sequence alignment viewer & editor
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
-const RELEASE_VERSION = '1.33.0';
-const BUILD_TAG = 'v240';
+const RELEASE_VERSION = '1.33.1';
+const BUILD_TAG = 'v241';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -17284,6 +17284,12 @@ function getMafftExtraArgs() {
     if (!isNaN(gapOpen)) args.push('-f', String(-gapOpen));
     if (!isNaN(gapExt)) args.push('-h', String(-gapExt));
     args.push('-E', String(treeRuns));
+    // Protein scoring matrix: disttbfast -b <BLOSUM n> or -j <JTT PAM n> (MAFFT's --bl / --jtt).
+    // The type used to be sent as a second "-E <type>", which is the guide-tree count above:
+    // "-E 0" (JTT) built no tree and every row came back as "(null)"; "-E 1" (BLOSUM62)
+    // silently forced FFT-NS-1. Nucleotide ('2') and codon leave the matrix to disttbfast.
+    if (seqType === '1') args.push('-b', '62');
+    else if (seqType === '0') args.push('-j', '200');
     // Note: disttbfast's -e flag does not accept a numeric value (it's a boolean flag);
     // passing '-e -0.123' causes illegal-option parse errors, so offset is omitted.
 
@@ -19503,7 +19509,6 @@ async function realignSelectedBlock(opts) {
         return;
     }
     const extraArgs = extra.args.slice();
-    if (extra.seqType !== '2' && extra.seqType !== 'codon') extraArgs.push('-E', extra.seqType);
 
     let applyAdjustFull = opts.applyAdjustFull;
     let applyReorder = opts.applyReorder;
@@ -19599,7 +19604,6 @@ async function realignAll() {
     }
 
     const { args: extraArgs, seqType, adjustDir, reorder, reorderOnly } = getMafftExtraArgs();
-    if (seqType !== '2' && seqType !== 'codon') extraArgs.push('-E', seqType);
 
     // Pre-alignment: adjust direction if requested
     let flippedNames = new Set();
@@ -19738,7 +19742,6 @@ function realignSelected() {
     }
 
     const { args: extraArgs, seqType, adjustDir } = getMafftExtraArgs();
-    if (seqType !== '2' && seqType !== 'codon') extraArgs.push('-E', seqType);
 
     // Pre-alignment: adjust direction if requested
     if (adjustDir && (seqType === '2' || seqType === 'codon')) {
@@ -19893,7 +19896,6 @@ async function addSequencesJustAdd() {
         try {
             const { args: extraArgs, seqType } = getMafftExtraArgs();
             const consensusArgs = [...extraArgs];
-            if (seqType !== '2' && seqType !== 'codon') consensusArgs.push('-E', seqType);
 
             let workingSeqs = state.seqs.map(seqObj => ({ ...seqObj }));
             const alignedNewSeqs = [];
@@ -20114,7 +20116,6 @@ function addSequencesAndAlign() {
 
     const { args: extraArgs, seqType, adjustDir, reorder } = getMafftExtraArgs();
     const atTop = !!document.getElementById('addSeqAtTop')?.checked;
-    if (seqType !== '2' && seqType !== 'codon') extraArgs.push('-E', seqType);
 
     // Pre-alignment: adjust direction on new sequences if requested
     let adjustedNewText = newText;
@@ -23119,7 +23120,10 @@ function exitEditModeRepaint() {
     state.editEntrySeqs = null;
     const cols = columnsChangedSinceEditStart(snapshot);
     if (cols && cols.size === 0) return;                 // nothing was edited
-    if (cols && cols.size && canReshadeInPlace()) {
+    // Typing a residue repaints only its own span (fastUpdateEditCellAt), so the codon rows
+    // (translation boxes, stop/syn/non-syn marks) are stale until the next full render; the
+    // in-place reshade below would leave them that way after Edit mode ends.
+    if (cols && cols.size && canReshadeInPlace() && !state._codonData) {
         reshadeChangedColumnsInPlace(cols);
         return;
     }
@@ -26271,7 +26275,6 @@ async function realignSequenceAgainstConsensus(index) {
     try {
         const { args: extraArgs, seqType } = getMafftExtraArgs();
         const consensusArgs = [...extraArgs];
-        if (seqType !== '2' && seqType !== 'codon') consensusArgs.push('-E', seqType);
 
         showMessage('Re-aligning sequence against consensus...', 0);
         const alignedProfile = await alignSequenceToConsensusProfile(state.seqs[index].seq, gappedCons, consensusArgs);
