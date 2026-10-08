@@ -15,7 +15,7 @@ let failed = 0;
 for (const c of ['toy400', 'fam8_indel_trunc', 'duplicates']) {
   const { names, seqs } = readFa(path.join(dir, c + '.fa'));
   for (const [tag, k, canonical] of [['k6c0', 6, false], ['k8c1', 8, true]]) {
-    const want = fs.readFileSync(path.join(dir, `${c}.${tag}.order`), 'utf8').split('\n').filter(Boolean);
+    const want = fs.readFileSync(path.join(dir, `${c}.${tag}.order`), 'utf8').split(/\r?\n/).filter(Boolean);
     const got = KT.guideTree(seqs, k, { canonical }).order.map(i => names[i]);
     const ok = got.length === want.length && got.every((x, i) => x === want[i]);
     if (!ok) failed++;
