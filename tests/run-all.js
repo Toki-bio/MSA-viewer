@@ -20,6 +20,7 @@ const SUITES = [
   { name: 'k-mer grouping: equivalence with the old implementation', args: ['tests/kmer/equiv-old.js'] },
   { name: 'k-mer grouping: planted-family recovery', args: ['tests/kmer/recovery.test.js'] },
   { name: 'k-mer grouping: properties', args: ['tests/kmer/properties.test.js'] },
+  { name: 'k-mer grouping: leaf order equals SubFam C/Python implementation', args: ['tests/kmer/subfam-order.test.js'] },
   { name: 'k-mer grouping: tree cut vs reference', args: ['tests/kmer/cut-reference-check.js'] },
   { name: 'realign region', args: ['tests/realign-region/run.js'] },
   { name: 'codon alignment (fast engine)', args: ['tests/codon-align/run.js'] },
