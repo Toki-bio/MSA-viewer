@@ -159,13 +159,26 @@ html {
     row-gap: 2px;
 }
 
-/* Second row: the controls of the current mode (view switch, Canvas notice, codon frame,
-   reads). Shown by script.js only while one of them is visible. */
+/* The controls of the current mode (view switch, Canvas notice, codon frame, reads),
+   shown by script.js only while one of them is visible. On the menu line when the
+   whole line still fits (file line included), else on a line of their own (placeModeRow). */
 .mode-row {
-    flex-wrap: wrap;
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
     gap: 6px;
-    padding-top: 2px;
-    padding-bottom: 1px;
+    flex: 0 0 auto;
+    padding: 0 4px;
+}
+.mode-row.own-line {
+    flex: 0 0 100%;
+    order: 99;
+    flex-wrap: wrap;
+    overflow: visible;
+    padding: 2px 0 1px;
+}
+#menuRow:has(> #modeRow:not([hidden]):not(.own-line)) > .standard-menu-group {
+    flex-grow: 0;
 }
 .mode-row[hidden] {
     display: none;

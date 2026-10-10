@@ -9608,6 +9608,7 @@ function _fitHeaderInfoPanel() {
     infoEl.classList.remove('measure-natural');
     const pad = parseFloat(getComputedStyle(panel).paddingLeft) + parseFloat(getComputedStyle(panel).paddingRight);
     panel.style.minWidth = Math.ceil(Math.min(natural, 300) + pad + 1) + 'px';
+    placeModeRow();
 }
 
 // Unified source info updater so counts stay accurate after deletions/insertions
@@ -11379,20 +11380,36 @@ function ensureCanvasModeNotice() {
     return notice;
 }
 
-// The mode row (second toolbar row) is shown only while one of its controls is
-// visible. Watches its children, so every place that shows or hides one is covered.
+// The mode row (codon frame, Canvas notice, reads) is shown only while one of its
+// controls is visible. Watches its children, so every place that shows or hides one is covered.
 function syncModeRow() {
     const row = document.getElementById('modeRow');
     if (!row) return;
     const any = [...row.children].some(c => !c.hidden && getComputedStyle(c).display !== 'none');
-    if (row.hidden === !any) return;
-    row.hidden = !any;
+    if (row.hidden !== !any) row.hidden = !any;
+    placeModeRow();
 }
+// On the menu line when the whole line still fits there (the file line included),
+// else on a line of its own below the menus
+function placeModeRow() {
+    const row = document.getElementById('modeRow');
+    if (!row || row.hidden) return;
+    row.classList.remove('own-line');
+    const top = el => el ? el.getBoundingClientRect().top : 0;
+    const menus = document.querySelector('#menuRow > .standard-menu-group');
+    const info = document.getElementById('headerInfoPanel');
+    const lineTop = top(menus);
+    const wrapped = Math.abs(top(row) - lineTop) > 6 || (info && info.getClientRects().length && top(info) - lineTop > 6);
+    if (wrapped) row.classList.add('own-line');
+}
+window.addEventListener('resize', () => placeModeRow());
 (function watchModeRow() {
     const row = document.getElementById('modeRow');
     if (!row || typeof MutationObserver === 'undefined') return;
     let queued = false;
-    new MutationObserver(() => {
+    new MutationObserver(muts => {
+        // placeModeRow's own class change on the row is not a change of its controls
+        if (muts.every(m => m.target === row && m.type === 'attributes' && m.attributeName === 'class')) return;
         if (queued) return;
         queued = true;
         Promise.resolve().then(() => { queued = false; syncModeRow(); });
