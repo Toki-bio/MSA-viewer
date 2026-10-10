@@ -3502,6 +3502,20 @@ body.codon-mode span.codon-nonsyn {
     text-underline-offset: 2px;
 }
 
+/* Sequence rows get 2px of shaded headroom above the bases: the translation row above is
+   white, and where the font's capitals reach the top of a 1em box (Courier New as Windows
+   hints it at ~12px) white bases on dark shading lost their tops against it and looked
+   shifted up from the names. The name moves down with them. */
+body.codon-mode .seq-line[data-seq-index]:not([data-seq-index="-1"]) {
+    height: calc(1em + 2px);
+}
+body.codon-mode .seq-line[data-seq-index]:not([data-seq-index="-1"]) > .seq-data > span {
+    padding-top: 2px;
+}
+body.codon-mode .seq-line[data-seq-index]:not([data-seq-index="-1"]) > .seq-name {
+    padding-top: 2px;
+}
+
 /* Translation track - must match .seq-line font metrics for column alignment */
 body.codon-mode .aa-row {
     display: flex;
