@@ -12107,6 +12107,25 @@ function handleKeyDown(e) {
         return;
     }
 
+    // Ctrl+D (Ctrl+Shift+D: ask first) deletes columns. Handled before everything else
+    // and never left to the browser (bookmark dialog) unless the user is typing in a
+    // visible text field: before, the browser got it whenever the viewer had nothing to
+    // delete by its own rules - residues selected instead of columns, or focus left in
+    // a text box such as the Input box after Ctrl+L.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'd') {
+        const ae = document.activeElement;
+        const typing = ae && ae.getClientRects().length && (ae.tagName === 'TEXTAREA' || ae.isContentEditable
+            || (ae.tagName === 'INPUT' && /^(text|search|url|email|password|)$/i.test(ae.type || '')));
+        if (!typing) {
+            e.preventDefault();
+            if (!state.seqs?.length) return;
+            if (state.selectedColumns.size > 0) deleteSelectedColumns(!e.shiftKey);
+            else if (state.selectedNucs.size > 0) deleteColumnsOfResidueSelection(!e.shiftKey);   // a plain drag selects residues
+            else showMessage('Ctrl+D deletes the selected columns: select them with Ctrl+Alt+drag, or click a gene in the annotation track', 4500);
+            return;
+        }
+    }
+
     // If focus is in an input/textarea, block unmodified keypresses (normal typing),
     // but allow Ctrl/Meta/Alt shortcuts to pass through - EXCEPT in TEXTAREA
     // where browser-native shortcuts (Ctrl+A select-all-text, Ctrl+C copy, etc.) should work.
@@ -12250,18 +12269,6 @@ function handleKeyDown(e) {
             case 'v':
                 if (e.shiftKey) {
                     copySelectedColumns();
-                    e.preventDefault();
-                }
-                break;
-            case 'd':
-                // Only take Ctrl+D from the browser (bookmark) when there is something to delete
-                if (state.selectedColumns.size > 0) {
-                    deleteSelectedColumns(!e.shiftKey);
-                    e.preventDefault();
-                } else if (state.selectedNucs.size > 0) {
-                    // A plain drag selects residues, not columns: delete the columns it spans
-                    // (it used to fall through to the browser's bookmark dialog)
-                    deleteColumnsOfResidueSelection(!e.shiftKey);
                     e.preventDefault();
                 }
                 break;

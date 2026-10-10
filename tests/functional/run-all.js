@@ -993,7 +993,7 @@ check('Codon analysis by gene, windowed Block mode: blocks without CDS have no t
     return { pass: ok, detail: `rows after a one-go jump ${r.afterJump}; translation rows per sequence by block lanes ${JSON.stringify(r.rowsByLanes)}; blank views at steps ${JSON.stringify(r.blank)}; misplaced blocks ${JSON.stringify(r.misplaced)}` };
 });
 
-check('Ctrl+D with residues selected (not columns) deletes the columns they span, asking when not every row is selected', async (page) => {
+check('Ctrl+D with residues selected (not columns) deletes the columns they span, asking when not every row is selected; never left to the browser', async (page) => {
     await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAC\n>c\nACGTACGTAC\n');
     const dialogs = [];
     page.on('dialog', d => { dialogs.push(d.message()); d.accept(); });
@@ -1006,6 +1006,15 @@ check('Ctrl+D with residues selected (not columns) deletes the columns they span
     }, rows);
     const all = await run([0, 1, 2]);
     const part = await run([1]);
+    // Nothing selected, and focus left in the hidden Input box: still not the browser's
+    const none = await page.evaluate(() => {
+        state.selectedColumns.clear(); state.selectedNucs.clear();
+        const ta = document.getElementById('fastaInput'); ta.focus();
+        const ev = new KeyboardEvent('keydown', { key: 'd', ctrlKey: true, bubbles: true, cancelable: true });
+        document.dispatchEvent(ev);
+        return { prevented: ev.defaultPrevented, len: state.seqs[0].seq.length, visible: !!ta.getClientRects().length };
+    });
+    if (none.visible || !none.prevented || none.len !== 4) return { pass: false, detail: `Ctrl+D with nothing selected / focus in the hidden Input box: ${JSON.stringify(none)}` };
     const ok = all.prevented && all.lens.join() === '7,7,7' && all.seq === 'ACCGTAC' && part.prevented && part.lens.join() === '4,4,4' && dialogs.length === 1 && /covers 1 of them/.test(dialogs[0]);
     return { pass: ok, detail: `every row: ${JSON.stringify(all)}; one row: ${JSON.stringify(part)}; dialogs ${JSON.stringify(dialogs)}` };
 });
