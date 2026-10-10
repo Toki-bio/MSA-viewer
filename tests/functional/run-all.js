@@ -1019,6 +1019,31 @@ check('Ctrl+D with residues selected (not columns) deletes the columns they span
     return { pass: ok, detail: `every row: ${JSON.stringify(all)}; one row: ${JSON.stringify(part)}; dialogs ${JSON.stringify(dialogs)}` };
 });
 
+check('Codon analysis: AA only shows the translation in place of the bases, by gene, and toggles back', async (page) => {
+    // One CDS on columns 0-8 (M A *); the bases of row 1 are hidden behind its translation
+    await loadFasta(page, '>a\nATGGCCTAAGGGTTTCCCAAA\n>b\nATGGCATAAGGGTTTCCCAAA\n');
+    const r = await page.evaluate(async () => {
+        const wait = ms => new Promise(res => setTimeout(res, ms));
+        setAnnotation('a\t0\t9\tgeneP\t0\t+\t0\t9\t0\t1\t9\t0\tCDS: plus', 'g.bed');
+        const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+        await wait(600);
+        const btn = document.getElementById('aaOnlyButton');
+        const row = () => document.querySelector('.seq-line[data-seq-index="0"]');
+        const before = { rows: document.querySelectorAll('.aa-row').length, gap: row().nextElementSibling.getBoundingClientRect().top - row().getBoundingClientRect().top };
+        btn.click(); await wait(600);
+        const r0 = row(), aa = r0.nextElementSibling;
+        const on = { cls: document.body.classList.contains('aa-only'), pressed: btn.getAttribute('aria-pressed'), cb: document.getElementById('aaOnly').checked,
+            basesHidden: getComputedStyle(r0.querySelector('.seq-data')).visibility === 'hidden', overlap: Math.abs(aa.getBoundingClientRect().top - r0.getBoundingClientRect().top) < 1.5,
+            nameShown: getComputedStyle(r0.querySelector('.seq-name')).visibility !== 'hidden', aaText: [...aa.querySelectorAll('.aa-data > span')].map(s => s.textContent).join('').replace(/\s/g, '') };
+        document.getElementById('aaOnly').click(); await wait(600);   // the Display menu checkbox turns it off
+        const off = { cls: document.body.classList.contains('aa-only'), pressed: btn.getAttribute('aria-pressed'), basesHidden: getComputedStyle(row().querySelector('.seq-data')).visibility === 'hidden' };
+        return { before, on, off };
+    });
+    const ok = r.on.cls && r.on.pressed === 'true' && r.on.cb && r.on.basesHidden && r.on.overlap && r.on.nameShown && r.on.aaText === 'MA*'
+        && !r.off.cls && r.off.pressed === 'false' && !r.off.basesHidden && r.before.gap > 5;
+    return { pass: ok, detail: JSON.stringify(r) };
+});
+
 check('Codon analysis: "Frameshifts vs Row 1" marks the rows that share an indel, not the reference they outnumber', async (page) => {
     // Row 1 (reference) and one more real copy of a 30-nt CDS; three "pseudogene" rows share one extra base after nt 12.
     // The majority rule takes the three rows' codon phase and marks the two real rows; Row 1 mode marks the three.

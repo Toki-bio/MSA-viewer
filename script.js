@@ -3325,6 +3325,7 @@ let _unifiedWindowRenderParams = null;
 // sequence; every other block's follows from _unifiedAaRowPx, the height of one
 // translation row (see _unifiedGeometry).
 let _unifiedAaRowPx = null;
+let _unifiedSeqRowPx = null;   // a sequence row alone (AA only: the translation overlaps it)
 let _unifiedMeasuredLanes = 0;
 let _unifiedGeomCache = null;
 // Per-block record of which row indices are currently rendered in the
@@ -3339,6 +3340,7 @@ function _invalidateUnifiedWindowMeasurements() {
     _unifiedCharWidthPx = null;
     _unifiedNameColWidthPx = null;
     _unifiedAaRowPx = null;
+    _unifiedSeqRowPx = null;
     _unifiedMeasuredLanes = 0;
     _unifiedGeomCache = null;
     _unifiedRenderedRowRanges.clear();
@@ -3349,9 +3351,13 @@ function _measureUnifiedRowHeight(sampleRowEl) {
     if (sampleRowEl) {
         // The row pitch: the sequence row plus its translation row(s), when codon
         // analysis is on (they follow it as siblings)
-        let h = sampleRowEl.getBoundingClientRect().height;
+        // From the row's top to the bottom of its last translation row: with AA only the
+        // first translation row overlaps the sequence row, so adding the heights overcounts
+        const top = sampleRowEl.getBoundingClientRect().top;
+        let bottom = sampleRowEl.getBoundingClientRect().bottom;
         let sib = sampleRowEl.nextElementSibling;
-        while (sib && sib.classList.contains('aa-row')) { h += sib.getBoundingClientRect().height; sib = sib.nextElementSibling; }
+        while (sib && sib.classList.contains('aa-row')) { bottom = Math.max(bottom, sib.getBoundingClientRect().bottom); sib = sib.nextElementSibling; }
+        const h = bottom - top;
         if (h > 1) _unifiedRowHeightPx = h;
     }
     return _unifiedRowHeightPx || 16;
@@ -3374,6 +3380,9 @@ function _measureUnifiedAaRow(sampleBlockEl, blockIndex, blockWidth, len) {
     const h = aa.getBoundingClientRect().height;
     if (probe) probe.remove();
     if (h > 0.5) _unifiedAaRowPx = h;
+    const seqRow = sampleBlockEl.querySelector('.seq-line[data-seq-index]:not([data-seq-index="-1"])');
+    const s = seqRow?.getBoundingClientRect().height;
+    if (s > 0.5) _unifiedSeqRowPx = s;
 }
 
 // Block positions of the windowed renderer: top(b) (top(numBlocks) = total height),
@@ -3393,22 +3402,27 @@ function _unifiedGeometry(numBlocks, blockWidth, len) {
     const nSeq = state.seqs.length;
     const mk = _unifiedMeasuredLanes;
     const aa = _unifiedAaRowPx || baseRow / (1 + mk);
+    // Pitch of a row with k translation rows: the sequence row plus k translation rows;
+    // with AA only the first one overlaps the sequence row (k > 0)
+    const aaOnly = _aaOnlyActive();
+    const seq = _unifiedSeqRowPx || (aaOnly ? baseRow : baseRow - mk * aa);
+    const pitch = k => seq + k * aa - (aaOnly && k > 0 ? seq : 0);
     const c = _unifiedGeomCache;
-    if (!(c && c.cd === cd && c.numBlocks === numBlocks && c.blockWidth === blockWidth && c.len === len && c.baseRow === baseRow && c.baseBlock === baseBlock && c.aa === aa && c.mk === mk && c.nSeq === nSeq)) {
+    if (!(c && c.cd === cd && c.numBlocks === numBlocks && c.blockWidth === blockWidth && c.len === len && c.baseRow === baseRow && c.baseBlock === baseBlock && c.aa === aa && c.mk === mk && c.nSeq === nSeq && c.aaOnly === aaOnly && c.seq === seq)) {
         const lanes = new Uint8Array(numBlocks);
         const tops = new Float64Array(numBlocks + 1);
         for (let b = 0; b < numBlocks; b++) {
             const st = b * blockWidth;
             lanes[b] = _codonLanesForRange(st, Math.min(st + blockWidth, len));
-            tops[b + 1] = tops[b] + Math.max(1, baseBlock + nSeq * (lanes[b] - mk) * aa);
+            tops[b + 1] = tops[b] + Math.max(1, baseBlock + nSeq * (pitch(lanes[b]) - pitch(mk)));
         }
-        _unifiedGeomCache = { cd, numBlocks, blockWidth, len, baseRow, baseBlock, aa, mk, nSeq, lanes, tops };
+        _unifiedGeomCache = { cd, numBlocks, blockWidth, len, baseRow, baseBlock, aa, mk, nSeq, aaOnly, seq, lanes, tops };
     }
     const { lanes, tops } = _unifiedGeomCache;
     return {
         top: b => tops[Math.max(0, Math.min(numBlocks, b))],
         blockH: b => tops[b + 1] - tops[b],
-        rowH: b => Math.max(1, baseRow + (lanes[b] - mk) * aa),
+        rowH: b => Math.max(1, baseRow + pitch(lanes[b]) - pitch(mk)),
         indexAt: y => {
             let lo = 0, hi = numBlocks - 1;
             while (lo < hi) { const m = (lo + hi + 1) >> 1; if (tops[m] <= y) lo = m; else hi = m - 1; }
@@ -11848,6 +11862,27 @@ function syncCodonModePanel() {
     const hasGenes = _annotCdsFeatures().length > 0;
     const gRadio = document.getElementById('cfGenes');
     if (gRadio) { gRadio.hidden = !hasGenes; const lbl = gRadio.nextElementSibling; if (lbl) lbl.hidden = !hasGenes; }
+}
+
+// AA only (Codon bar button, Display menu checkbox): the translation in place of the
+// nucleotides. Only with codon analysis on, in Full and Block (Canvas draws its own).
+function _aaOnlyActive() {
+    return !!(document.getElementById('aaOnly')?.checked && state._codonData);
+}
+function syncAaOnly() {
+    const on = !!document.getElementById('aaOnly')?.checked;
+    document.body.classList.toggle('aa-only', on);
+    const btn = document.getElementById('aaOnlyButton');
+    if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+function setAaOnly(on) {
+    const cb = document.getElementById('aaOnly');
+    if (!cb || cb.checked === on) { syncAaOnly(); return; }
+    cb.checked = on;
+    syncAaOnly();
+    _invalidateUnifiedWindowMeasurements();
+    renderAlignment({ deferConservation: true });
+    if (on && document.getElementById('modeCanvas')?.checked) showMessage('AA only applies in Full and Block mode', 3000);
 }
 
 function domEventTarget(e) {
@@ -22659,6 +22694,9 @@ function attachUIListeners() {
             }
         });
     });
+    el('aaOnly')?.addEventListener('change', e => { const on = e.target.checked; e.target.checked = !on; setAaOnly(on); });
+    el('aaOnlyButton')?.addEventListener('click', () => setAaOnly(!el('aaOnly')?.checked));
+    syncAaOnly();
 
     const colorSchemeSelect = el('colorSchemeSelect');
     if (colorSchemeSelect) colorSchemeSelect.addEventListener('change', debounceRender);

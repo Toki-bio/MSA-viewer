@@ -440,6 +440,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p><strong>Version 1.33.3</strong> (build v243):</p>
   <ul>
     <li><strong>Codon analysis by gene, compact</strong> - in Block mode a block without CDS gets no translation rows, and a second translation row appears only in blocks where two genes overlap; before, every row of every block kept two empty translation rows on a mitogenome, so the first screen (tRNA-Phe, 12S rRNA) looked blank. The message on switching it on names the first CDS and its column (§5.4).</li>
+    <li><strong>AA only</strong> - a button in the Codon bar (and a checkbox in the Display menu) shows the translation in place of the nucleotides, one amino-acid line per sequence; blocks without a CDS keep their nucleotides. Click again for the nucleotides (§5.4).</li>
     <li><strong>Codon alignment (MACSE)</strong> - a button in the Alignment menu, and <strong>MACSE…</strong> in the Codon bar, select Sequence type <em>Coding sequence</em> with MACSE and show its settings (§3.2.2).</li>
     <li><strong>Toolbar</strong> - a long file title shortens only the file name with an ellipsis (the counts stay) instead of wrapping onto a second toolbar line; the Codon bar sits on the menu line when the whole line fits, and on its own line below the menus otherwise.</li>
     <li><strong>Ctrl+D with residues selected</strong> - a plain drag selects residues, not columns, and Ctrl+D then opened the browser's bookmark dialog; it now deletes the columns the selection spans (asking first unless it covers every sequence). Ctrl+D never opens the bookmark dialog outside a text field: with nothing selected it says how to select columns (§10.2).</li>
@@ -1333,7 +1334,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     description, when its name is not a tRNA, rRNA, origin or control-region name. Loading an annotation
     that looks mitochondrial (tRNAs, rRNAs, ND/COX/ATP/CYTB: at least 10 such features, or every feature,
     as in a one-gene file) while the code is Standard switches the <strong>Code</strong> to Vert Mito and says so. <strong>Copy AA</strong> and <strong>Save AA</strong>
-    then give one record per sequence and gene, each read in the gene's direction. A codon with IUPAC
+    then give one record per sequence and gene, each read in the gene's direction. <strong>AA only</strong> (Codon bar, or
+    the checkbox next to Codon analysis) shows the translation in place of the nucleotides, one amino-acid line per
+    sequence, in Full and Block mode; rows in a block without a CDS keep their nucleotides, and the names work as usual. A codon with IUPAC
     ambiguity letters translates to the amino acid all its readings share (<code>CCN</code> = P), else X.
     Checked against GenBank: the 13 CDS of NC_069019.1 translate exactly to the record's own
     <code>/translation</code> fields (functional test "Codon analysis by gene (oracle)").

@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>ViewAlign</title>
-    <link rel="stylesheet" href="styles.css?v=165">
+    <link rel="stylesheet" href="styles.css?v=166">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -213,6 +213,7 @@
                             </div>
                             <div style="display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;margin-left:74px;">
                                 <label style="font-size:10px;" title="Colour-code codon positions, flag stop codons and frameshifts, classify substitutions (Full/Block only)"><input type="checkbox" id="codonAnalysis" title="Colour-code codon positions, flag stop codons and frameshifts, classify substitutions (Full/Block only)"> Codon analysis</label>
+                                <label style="font-size:10px;white-space:nowrap;" title="Show the translation in place of the nucleotides, one amino-acid line per sequence (blocks without a CDS keep their nucleotides)"><input type="checkbox" id="aaOnly"> AA only</label>
                                 <span style="display:inline-flex;align-items:center;gap:3px;white-space:nowrap;"><label for="codonFrame" style="font-size:10px;color:#555;">Frame</label>
                                 <select id="codonFrame" style="font-size:10px;padding:0 2px;height:18px;" title="Reading frame (also in top bar when codon analysis is on)">
                                     <option value="auto" selected>Auto</option>
@@ -800,7 +801,8 @@
                         <input type="radio" name="codonFrameQuick" id="cfAuto" value="auto" checked title="Auto: the genes of the annotation track when it has CDS features, else the frame with most ATG starts and fewest stops"><label for="cfAuto" title="Auto: the genes of the annotation track when it has CDS features, else the frame with most ATG starts and fewest stops">Auto</label>
                         <input type="radio" name="codonFrameQuick" id="cfGenes" value="genes" hidden title="Each annotated CDS in its own frame and strand"><label for="cfGenes" hidden title="Each annotated CDS in its own frame and strand">Genes</label>
                     </div>
-                    <button type="button" class="codon-panel-btn" onclick="copyAATranslation()" title="Copy amino acid translation(s) as FASTA">Copy AA</button>
+                    <button type="button" class="codon-panel-btn" id="aaOnlyButton" aria-pressed="false" title="Show the translation in place of the nucleotides, one amino-acid line per sequence (blocks without a CDS keep their nucleotides). Click again for the nucleotides.">AA only</button>
+                <button type="button" class="codon-panel-btn" onclick="copyAATranslation()" title="Copy amino acid translation(s) as FASTA">Copy AA</button>
                     <button type="button" class="codon-panel-btn" onclick="downloadAATranslation()" title="Download amino acid translation(s) as FASTA">Save AA</button>
                     <button type="button" class="codon-panel-btn" onclick="openMacsePreset()" title="Realign as codons with MACSE v2.07 (frameshift-aware), in the Alignment menu">MACSE…</button>
                 </div>
@@ -1379,7 +1381,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=1"></script>
     <script src="chromatogram-viewer.js?v=1"></script>
     <script src="realign-region.js?v=2"></script>
-    <script src="script.js?v=291"></script>
+    <script src="script.js?v=292"></script>
     <script src="a11y.js?v=1"></script>
     <script src="tree-draw.js?v=165"></script>
     <script src="block-mask.js?v=1"></script>

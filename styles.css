@@ -3516,6 +3516,28 @@ body.codon-mode .seq-line[data-seq-index]:not([data-seq-index="-1"]) > .seq-name
     padding-top: 2px;
 }
 
+/* AA only: the first translation row moves up over its sequence row (same height as the
+   row, so the row pitch is the translation's), whose bases are hidden; the name stays the
+   sequence row's own, so clicking, dragging and renaming work as usual. Rows without a
+   translation (a block with no CDS) keep their bases. */
+body.codon-mode.aa-only .seq-line[data-seq-index]:not([data-seq-index="-1"]):has(+ .aa-row) > .seq-data {
+    visibility: hidden;
+}
+body.codon-mode.aa-only .seq-line[data-seq-index]:not([data-seq-index="-1"]) + .aa-row {
+    margin-top: calc(-1em - 2px);
+}
+body.codon-mode.aa-only .seq-line[data-seq-index] + .aa-row > .aa-name {
+    visibility: hidden;
+}
+body.codon-mode.aa-only .seq-line[data-seq-index]:not([data-seq-index="-1"]):has(+ .aa-row) > .seq-name {
+    padding-top: 4px;   /* level with the amino-acid letters, which sit in taller boxes */
+}
+.codon-panel-btn[aria-pressed="true"] {
+    background: #2e7d32;
+    color: #fff;
+    border-color: #1b5e20;
+}
+
 /* Translation track - must match .seq-line font metrics for column alignment */
 body.codon-mode .aa-row {
     display: flex;
