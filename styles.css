@@ -2123,7 +2123,10 @@ body.row-reorder-active .seq-name.drag-source:hover {
 }
 
 #headerInfoPanel {
-    flex: 0 1 auto;
+    /* min-width set by _fitHeaderInfoPanel (script.js): the file line's own width up to
+       300px; beyond that the file name shrinks with an ellipsis. Basis 0: the line
+       wraps by that min-width, not by the full title's width */
+    flex: 1 1 0;
     min-width: 0;
     max-width: min(44vw, 780px);
     overflow: hidden;
@@ -2141,7 +2144,23 @@ body.row-reorder-active .seq-name.drag-source:hover {
     flex: 0 0 auto;
 }
 
+#sourceInfo .source-file-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#sourceInfo .source-counts {
+    flex: 0 0 auto;
+    white-space: pre;
+}
+#sourceInfo.measure-natural .source-file-label {
+    flex-shrink: 0;
+}
+
 #sourceInfo {
+    display: flex;
+    justify-content: flex-end;
     flex: 0 0 auto;
     min-width: 0;
     max-width: 100%;
@@ -3922,6 +3941,7 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 .al-menu { padding: 2px 2px 6px; }
 #alignment-controls { width: 470px; max-width: calc(100vw - 24px); box-sizing: border-box; }
 .al-btngrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-bottom: 8px; }
+.al-btngrid .al-btn-wide { grid-column: 1 / -1; }
 .al-btngrid button { height: 26px; padding: 0 8px; margin: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .al-settings { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 10px; align-items: center; border-top: 1px solid #eee; padding-top: 8px; font-size: 12px; }
 .al-settings > label, .al-head { text-align: right; color: #555; font-size: 11px; }
@@ -4165,3 +4185,7 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
         scroll-behavior: auto !important;
     }
 }
+
+/* The codon-aligner settings, just revealed by "Codon alignment (MACSE)" */
+@keyframes al-flash { from { background: #fff3b0; } to { background: transparent; } }
+.al-checks.al-flash { animation: al-flash 1.6s ease-out; border-radius: 3px; }

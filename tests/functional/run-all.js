@@ -877,7 +877,12 @@ check('Codon analysis by gene (oracle): the 13 CDS of mitogenome NC_069019.1 tra
                 row0: Object.fromEntries(Object.entries(byGene(0)).map(([g, es]) => [g, { aa: es.map(e => e.aa).join(''), first: es[0].codon, lastCodon: es[es.length - 1].codon, partialStop: !!es[es.length - 1].partial, lane1: es.filter(e => e.lane === 1).length }])),
                 row1: Object.fromEntries(Object.entries(byGene(1)).map(([g, es]) => [g, es.map(e => e.aa).join('')])),
                 fs: cd.frameShifts.map(f => f.length), stops0: cd.stops[0].length,
-                aaRows: document.querySelector('.block-block')?.querySelectorAll('.aa-row').length,   // per block: 2 rows x lanes
+                // translation rows per block (2 sequences x the lanes its genes use there)
+                blockRows: [...document.querySelectorAll('.block-block')].map(b => b.querySelectorAll('.aa-row').length),
+                blockGenes: [...document.querySelectorAll('.block-block')].map((b, i) => {
+                    const w = parseInt(document.getElementById('blockSizeSlider').value, 10);
+                    return _codonLanesForRange(i * w, (i + 1) * w);
+                }),
                 fasta: buildAATranslationFasta().split('\n').slice(0, 4) });
         }, 800));
     }, bed);
@@ -910,11 +915,99 @@ check('Codon analysis by gene (oracle): the 13 CDS of mitogenome NC_069019.1 tra
     }
     const overlapping = ['ATP6', 'COX3', 'ND4', 'ND6'].filter(g => r.row0[g] && r.row0[g].lane1 > 0);
     if (overlapping.length !== 4) problems.push(`overlapping genes should have codons on lane 2: ${JSON.stringify(Object.fromEntries(['ATP6', 'COX3', 'ND4', 'ND6'].map(g => [g, r.row0[g]?.lane1])))}`);
-    if (r.lanes !== 2 || r.aaRows !== 4) problems.push(`expected 2 translation lanes (4 rows for 2 sequences), got lanes ${r.lanes}, rows ${r.aaRows}`);
+    // Block mode: no translation rows in a block without CDS (the first: tRNA-Phe, 12S rRNA),
+    // one per sequence in a block of one gene, two only where genes overlap
+    const br = r.blockRows || [];
+    if (r.lanes !== 2 || br[0] !== 0 || Math.max(...br) !== 4 || !br.includes(2) || br.some((n, i) => n !== 2 * r.blockGenes[i])) {
+        problems.push(`expected 2 lanes overall, translation rows per block 0 (no CDS) / 2 (one gene) / 4 (overlap): lanes ${r.lanes}, rows ${JSON.stringify(br)}, lanes per block ${JSON.stringify(r.blockGenes)}`);
+    }
     if (r.fs[1] !== 0 || r.fs[0] !== 0) problems.push(`frameshifts flagged: ${r.fs}`);
     if (!/^>NC_069019\.1 .* gene=ND1$/.test(r.fasta[0]) || !/^M/.test(r.fasta[1])) problems.push(`AA FASTA by gene: ${r.fasta.slice(0, 2).join(' / ')}`);
     if (problems.length) return { pass: false, detail: problems.join(' | ') };
-    return { pass: true, detail: `${compared} CDS identical to GenBank (start codons normalised), 4 polyA-completed stops, 4 overlapping genes on lane 2, gapped row mapped, NNN codon = X, per-gene AA FASTA` };
+    return { pass: true, detail: `${compared} CDS identical to GenBank (start codons normalised), 4 polyA-completed stops, 4 overlapping genes on lane 2 (only in their blocks), gapped row mapped, NNN codon = X, per-gene AA FASTA` };
+});
+
+check('Codon analysis by gene, windowed Block mode: blocks without CDS have no translation rows, block positions match, no blank view while scrolling', async (page) => {
+    const fs = require('fs'), path = require('path');
+    const gb = _parseGenBankCds(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'codon', 'NC_069019.1.gb'), 'utf8'));
+    const bed = gb.cds.map(c => `NC_069019.1\t${c.start}\t${c.end}\t${c.gene}\t0\t${c.strand}\t${c.start}\t${c.end}\t0\t1\t${c.end - c.start}\t0\tCDS: ${c.gene}`).join('\n');
+    // 85 copies of the mitogenome (~1.4M residues, as the alignment that showed the blank views): over the windowed-renderer threshold
+    let fasta = `>NC_069019.1\n${gb.seq}\n`;
+    for (let i = 1; i < 85; i++) fasta += `>copy${i}\n${gb.seq}\n`;
+    await loadFasta(page, fasta);
+    const r = await page.evaluate(async (bed) => {
+        const wait = ms => new Promise(res => setTimeout(res, ms));
+        setAnnotation(bed, 'NC_069019.bed');
+        const bs = document.getElementById('blockSizeInput'); bs.value = '137'; bs.dispatchEvent(new Event('change'));
+        const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+        await wait(1500);
+        const c = document.getElementById('alignmentContainer');
+        const p = _unifiedWindowRenderParams;
+        if (!state._needsWindowedDom || !p) return { windowed: false };
+        const nB = Math.ceil(p.len / p.blockWidth);
+        const out = { windowed: true, blank: [], misplaced: [], rowsByLanes: {} };
+        const H = c.scrollHeight, step = Math.round(H / 41);
+        for (let k = 0; k <= 41; k++) {
+            c.scrollTop = k * step;
+            await wait(350);
+            const box = c.getBoundingClientRect();
+            const vis = [...c.querySelectorAll('.seq-line[data-seq-index]')].filter(e => { const b = e.getBoundingClientRect(); return b.bottom > box.top && b.top < box.bottom; });
+            if (vis.length < 3) out.blank.push(k);
+            const G = _unifiedGeometry(nB, p.blockWidth, p.len);
+            const first = c.querySelector(':scope > .block-block[data-block-index]');
+            if (first) {
+                const b = +first.dataset.blockIndex;
+                const top = first.getBoundingClientRect().top - box.top + c.scrollTop;
+                if (Math.abs(top - G.top(b)) > 30) out.misplaced.push(`${b}: ${Math.round(top)} vs ${Math.round(G.top(b))}`);
+            }
+            for (const blk of c.querySelectorAll(':scope > .block-block[data-block-index]')) {
+                const b = +blk.dataset.blockIndex, lanes = _codonLanesForRange(b * p.blockWidth, (b + 1) * p.blockWidth);
+                const row = blk.querySelector('.seq-line[data-seq-index]:not([data-seq-index="-1"])');
+                if (!row) continue;
+                let n = 0, sib = row.nextElementSibling;
+                while (sib && sib.classList.contains('aa-row')) { n++; sib = sib.nextElementSibling; }
+                (out.rowsByLanes[lanes] = out.rowsByLanes[lanes] || new Set()).add(n);
+            }
+        }
+        out.rowsByLanes = Object.fromEntries(Object.entries(out.rowsByLanes).map(([k, v]) => [k, [...v]]));
+        // A block brought to a new row range in one go must not be trimmed back by a
+        // row-growth job still queued for its previous range (seen as a blank view after
+        // a jump, until the next scroll event)
+        const blk = c.querySelector(':scope > .block-block[data-block-index]');
+        const b = +blk.dataset.blockIndex, nSeq = state.seqs.length, last = nSeq - 1;
+        const G = _unifiedGeometry(nB, p.blockWidth, p.len);
+        const isLast = (b + 1) * p.blockWidth >= p.len;
+        const cur = _unifiedRenderedRowRanges.get(b);
+        _incrementalUpdateBlockRows(blk, b, 0, 5, G.rowH(b), cur.colStart, cur.colEnd, p.nameLen, p.stickyNames, p.standard, p.ambiguous, p.blackThresh, p.darkThresh, p.lightThresh, p.enableBlack, p.enableDark, p.enableLight, p.conservationData, isLast, nSeq, null);
+        _scheduleBlockRowGrowth(blk, b, 0, 10, G.rowH(b), p, isLast, nSeq, null);   // the stale job: rows 0-10
+        _growBlockRows(blk, b, last - 20, last, last - 20, last, G.rowH(b), cur.colStart, cur.colEnd, p, isLast, nSeq, null);
+        await wait(300);
+        const after = _unifiedRenderedRowRanges.get(b);
+        out.afterJump = `${after.rowStart}-${after.rowEnd} (wanted ${last - 20}-${last})`;
+        out.jumpOk = after.rowStart === last - 20 && after.rowEnd === last;
+        return out;
+    }, bed);
+    if (!r.windowed) return { pass: false, detail: 'alignment did not use the windowed renderer' };
+    const lanesOk = Object.entries(r.rowsByLanes).every(([k, v]) => v.length === 1 && v[0] === +k) && r.rowsByLanes['0'] && r.rowsByLanes['1'];
+    const ok = r.blank.length === 0 && r.misplaced.length === 0 && lanesOk && r.jumpOk;
+    return { pass: ok, detail: `rows after a one-go jump ${r.afterJump}; translation rows per sequence by block lanes ${JSON.stringify(r.rowsByLanes)}; blank views at steps ${JSON.stringify(r.blank)}; misplaced blocks ${JSON.stringify(r.misplaced)}` };
+});
+
+check('Ctrl+D with residues selected (not columns) deletes the columns they span, asking when not every row is selected', async (page) => {
+    await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAC\n>c\nACGTACGTAC\n');
+    const dialogs = [];
+    page.on('dialog', d => { dialogs.push(d.message()); d.accept(); });
+    const run = rows => page.evaluate(rows => {
+        state.selectedColumns.clear(); state.selectedNucs.clear();
+        for (const r of rows) state.selectedNucs.set(r, new Set([2, 3, 4]));
+        const ev = new KeyboardEvent('keydown', { key: 'd', ctrlKey: true, bubbles: true, cancelable: true });
+        document.dispatchEvent(ev);
+        return { prevented: ev.defaultPrevented, lens: state.seqs.map(s => s.seq.length), seq: state.seqs[0].seq };
+    }, rows);
+    const all = await run([0, 1, 2]);
+    const part = await run([1]);
+    const ok = all.prevented && all.lens.join() === '7,7,7' && all.seq === 'ACCGTAC' && part.prevented && part.lens.join() === '4,4,4' && dialogs.length === 1 && /covers 1 of them/.test(dialogs[0]);
+    return { pass: ok, detail: `every row: ${JSON.stringify(all)}; one row: ${JSON.stringify(part)}; dialogs ${JSON.stringify(dialogs)}` };
 });
 
 check('Codon analysis: "Frameshifts vs Row 1" marks the rows that share an indel, not the reference they outnumber', async (page) => {

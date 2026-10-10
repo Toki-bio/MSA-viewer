@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>ViewAlign</title>
-    <link rel="stylesheet" href="styles.css?v=163">
+    <link rel="stylesheet" href="styles.css?v=164">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -698,6 +698,7 @@
                                 <button id="addSequencesButton" title="Add new sequences and align them to the existing alignment">Add &amp; Align…</button>
                                 <button id="degapBlockLeftButton" title="Remove gaps in the selected column block and pack residues to the LEFT">Degap block ←</button>
                                 <button id="degapBlockRightButton" title="Remove gaps in the selected column block and pack residues to the RIGHT">Degap block →</button>
+                                <button id="macsePresetButton" class="al-btn-wide" title="Frameshift-aware codon alignment of coding sequences with MACSE v2.07 (built in): sets Sequence type to Coding sequence, then Realign All, Realign Selected and Add &amp; Align use it">Codon alignment (MACSE)…</button>
                             </div>
                             <div class="al-settings">
                                 <label for="mafftSeqType">Sequence type</label>
@@ -924,6 +925,7 @@
                 </div>
                 <button type="button" class="codon-panel-btn" onclick="copyAATranslation()" title="Copy amino acid translation(s) as FASTA">Copy AA</button>
                 <button type="button" class="codon-panel-btn" onclick="downloadAATranslation()" title="Download amino acid translation(s) as FASTA">Save AA</button>
+                <button type="button" class="codon-panel-btn" onclick="openMacsePreset()" title="Realign as codons with MACSE v2.07 (frameshift-aware), in the Alignment menu">MACSE…</button>
             </div>
         </div>
         <div id="editToolPanel" class="edit-tool-panel" hidden>
@@ -1375,7 +1377,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=1"></script>
     <script src="chromatogram-viewer.js?v=1"></script>
     <script src="realign-region.js?v=2"></script>
-    <script src="script.js?v=290"></script>
+    <script src="script.js?v=291"></script>
     <script src="a11y.js?v=1"></script>
     <script src="tree-draw.js?v=165"></script>
     <script src="block-mask.js?v=1"></script>

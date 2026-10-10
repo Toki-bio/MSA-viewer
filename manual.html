@@ -437,6 +437,14 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
 
   <h3 id="gs-updates">1.6 Recent Updates</h3>
+  <p><strong>Version 1.33.3</strong> (build v243):</p>
+  <ul>
+    <li><strong>Codon analysis by gene, compact</strong> - in Block mode a block without CDS gets no translation rows, and a second translation row appears only in blocks where two genes overlap; before, every row of every block kept two empty translation rows on a mitogenome, so the first screen (tRNA-Phe, 12S rRNA) looked blank. The message on switching it on names the first CDS and its column (§5.4).</li>
+    <li><strong>Codon alignment (MACSE)</strong> - a button in the Alignment menu, and <strong>MACSE…</strong> in the Codon bar, select Sequence type <em>Coding sequence</em> with MACSE and show its settings (§3.2.2).</li>
+    <li><strong>Toolbar</strong> - a long file title is shortened with an ellipsis instead of wrapping onto a second toolbar line.</li>
+    <li><strong>Ctrl+D with residues selected</strong> - a plain drag selects residues, not columns, and Ctrl+D then opened the browser's bookmark dialog; it now deletes the columns the selection spans (asking first unless it covers every sequence) (§10.2).</li>
+    <li><strong>Scrolling</strong> - after a jump, a block could keep the rows of its previous position and leave the view blank until the next scroll.</li>
+  </ul>
   <p><strong>Version 1.33.2</strong> (build v242):</p>
   <ul>
     <li><strong>Protein trees</strong> - distances on a protein alignment now compare amino acids; before, only columns where both residues were A, C, G or T were compared, so most amino-acid differences were ignored. JC69 and K80 fall back to p-distance on protein, and the tree summary says so (§9.4).</li>
@@ -676,7 +684,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="al-codon-align">3.2.2 Codon-aware alignment of coding sequences</h3>
   <p>
     Setting <strong>Sequence type</strong> to <strong>Coding sequence (codon, frameshift-aware)</strong> replaces MAFFT
-    with a built-in aligner for protein-coding nucleotide sequences, run in a worker. It applies to
+    with a built-in aligner for protein-coding nucleotide sequences, run in a worker (the
+    <strong>Codon alignment (MACSE)…</strong> button of the Alignment menu, or <strong>MACSE…</strong> in the Codon bar,
+    sets it). It applies to
     <strong>Realign All</strong>, <strong>Realign Selected</strong> and <strong>Add &amp; Align</strong>, and honours
     <strong>Adjust direction</strong> (reverse-complemented coding sequences are flipped first). Sequences must be
     nucleotide CDS (DNA or RNA, upper or lower case, IUPAC codes allowed) in frame at their first nucleotide; protein
@@ -1316,7 +1326,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     mitogenome or a multi-gene region needs; one frame across it would put stops everywhere outside the
     first gene. Where genes overlap (ATP8/ATP6, ND4L/ND4, ND5/ND6) the later gene's codons on the shared
     bases go to a second translation row, so its start or stop codon is still shown; the bases keep the
-    first gene's codon positions. A gene whose last codon is cut to <code>T</code> or <code>TA</code> (a
+    first gene's codon positions. In Block mode each block has only the translation rows its genes need:
+    none in a block without CDS, a second one only where genes overlap. A gene whose last codon is cut to <code>T</code> or <code>TA</code> (a
     stop completed by polyadenylation of the mRNA, as GenBank notes it) shows a stop over those bases. A BED
     feature counts as a CDS when its description column starts with <code>CDS</code>, or, without a
     description, when its name is not a tRNA, rRNA, origin or control-region name. Loading an annotation
@@ -2109,7 +2120,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><td><kbd>Ctrl+Shift+J</kbd></td><td>Copy consensus of the selected sequences</td></tr>
     <tr><td><kbd>Ctrl+Shift+V</kbd></td><td>Copy selected columns</td></tr>
     <tr><td><kbd>Ctrl+Shift+D</kbd></td><td>Delete selected columns (asks first)</td></tr>
-    <tr><td><kbd>Ctrl+D</kbd></td><td>Delete selected columns without asking (undoable)</td></tr>
+    <tr><td><kbd>Ctrl+D</kbd></td><td>Delete selected columns without asking (undoable). With residues selected instead (a plain drag), deletes the columns they span, asking first when they are not in every sequence</td></tr>
     <tr><td><kbd>Ctrl+Shift+R</kbd></td><td>Realign selected block (MAFFT)</td></tr>
   </table>
 

@@ -2,8 +2,8 @@
 // ViewAlign - browser-based multiple sequence alignment viewer & editor
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
-const RELEASE_VERSION = '1.33.2';
-const BUILD_TAG = 'v242';
+const RELEASE_VERSION = '1.33.3';
+const BUILD_TAG = 'v243';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -3100,6 +3100,9 @@ function _growBlockRows(blockDiv, blockIndex, targetS, targetE, mustS, mustE, ro
     const e = Math.min(targetE, Math.max(mustE, cur.rowEnd + K));
     if (!_incrementalUpdateBlockRows(blockDiv, blockIndex, s, e, rowHeightPx, colStart, colEnd, p.nameLen, p.stickyNames, p.standard, p.ambiguous, p.blackThresh, p.darkThresh, p.lightThresh, p.enableBlack, p.enableDark, p.enableLight, p.conservationData, isLastBlock, nSeq, colWin)) return false;
     if (s > targetS || e < targetE) _scheduleBlockRowGrowth(blockDiv, blockIndex, targetS, targetE, rowHeightPx, p, isLastBlock, nSeq, colWin);
+    // Reached in one go: a growth job still queued for an earlier target would
+    // trim the block back to that target's rows (blank viewport after a jump)
+    else _cancelBlockJob(blockIndex, 'rows');
     return true;
 }
 
@@ -3136,8 +3139,7 @@ function _scheduleBuiltBlockGrowth(blockDiv, blockIndex, start, end, rowHeightPx
 
 // Rows of one block that intersect the viewport (no buffer). The header
 // (ruler + optional top consensus) sits between the block's top and its rows.
-function _unifiedVisibleRows(blockIndex, blockHeightPx, headerHeightPx, rowHeightPx, scrollTop, clientHeight, nSeq) {
-    const blockTop = blockIndex * blockHeightPx;
+function _unifiedVisibleRows(blockTop, blockHeightPx, headerHeightPx, rowHeightPx, scrollTop, clientHeight, nSeq) {
     const rowAreaTop = blockTop + headerHeightPx;
     const h = Math.max(1, rowHeightPx);
     const visTop = Math.max(scrollTop, rowAreaTop);
@@ -3317,6 +3319,14 @@ let _unifiedHeaderHeightPx = null;
 let _unifiedCharWidthPx = null;
 let _unifiedNameColWidthPx = null;
 let _unifiedWindowRenderParams = null;
+// Codon analysis by gene gives each block only the translation rows its genes need
+// (none in a block without CDS), so blocks differ in height. The measured row and
+// block heights are those of a block with _unifiedMeasuredLanes translation rows per
+// sequence; every other block's follows from _unifiedAaRowPx, the height of one
+// translation row (see _unifiedGeometry).
+let _unifiedAaRowPx = null;
+let _unifiedMeasuredLanes = 0;
+let _unifiedGeomCache = null;
 // Per-block record of which row indices are currently rendered in the
 // DOM, keyed by block index. Populated in _buildUnifiedBlock, consumed
 // by a future incremental-diff version of _refreshUnifiedWindowOnScroll.
@@ -3328,6 +3338,9 @@ function _invalidateUnifiedWindowMeasurements() {
     _unifiedHeaderHeightPx = null;
     _unifiedCharWidthPx = null;
     _unifiedNameColWidthPx = null;
+    _unifiedAaRowPx = null;
+    _unifiedMeasuredLanes = 0;
+    _unifiedGeomCache = null;
     _unifiedRenderedRowRanges.clear();
     _cancelAllBlockJobs();
 }
@@ -3342,6 +3355,66 @@ function _measureUnifiedRowHeight(sampleRowEl) {
         if (h > 1) _unifiedRowHeightPx = h;
     }
     return _unifiedRowHeightPx || 16;
+}
+
+// The translation rows per sequence of the block the heights are measured from, and
+// the height of one translation row (from the block's own, or a probe row when it has none)
+function _measureUnifiedAaRow(sampleBlockEl, blockIndex, blockWidth, len) {
+    if (!sampleBlockEl || !state._codonData) return;
+    const start = blockIndex * blockWidth;
+    _unifiedMeasuredLanes = _codonLanesForRange(start, Math.min(start + blockWidth, len));
+    let aa = sampleBlockEl.querySelector(':scope > .aa-row');
+    let probe = null;
+    if (!aa) {
+        probe = _buildAARowEl([], null, false, 0, 1, null);
+        probe.style.visibility = 'hidden';
+        sampleBlockEl.appendChild(probe);
+        aa = probe;
+    }
+    const h = aa.getBoundingClientRect().height;
+    if (probe) probe.remove();
+    if (h > 0.5) _unifiedAaRowPx = h;
+}
+
+// Block positions of the windowed renderer: top(b) (top(numBlocks) = total height),
+// blockH(b), rowH(b) (a sequence row with its translation rows) and indexAt(y), the
+// block at y. Uniform (b * blockHeight) unless codon analysis by gene gives blocks
+// different translation lane counts.
+function _unifiedGeometry(numBlocks, blockWidth, len) {
+    const baseRow = Math.max(1, _unifiedRowHeightPx || 16);
+    const baseBlock = Math.max(1, _unifiedBlockHeightPx || _unifiedFallbackBlockHeightPx());
+    const cd = state._codonData;
+    if (!(cd && cd.byGene && cd.colLanes && numBlocks > 1)) {
+        return {
+            top: b => b * baseBlock, blockH: () => baseBlock, rowH: () => baseRow,
+            indexAt: y => Math.floor(y / baseBlock)
+        };
+    }
+    const nSeq = state.seqs.length;
+    const mk = _unifiedMeasuredLanes;
+    const aa = _unifiedAaRowPx || baseRow / (1 + mk);
+    const c = _unifiedGeomCache;
+    if (!(c && c.cd === cd && c.numBlocks === numBlocks && c.blockWidth === blockWidth && c.len === len && c.baseRow === baseRow && c.baseBlock === baseBlock && c.aa === aa && c.mk === mk && c.nSeq === nSeq)) {
+        const lanes = new Uint8Array(numBlocks);
+        const tops = new Float64Array(numBlocks + 1);
+        for (let b = 0; b < numBlocks; b++) {
+            const st = b * blockWidth;
+            lanes[b] = _codonLanesForRange(st, Math.min(st + blockWidth, len));
+            tops[b + 1] = tops[b] + Math.max(1, baseBlock + nSeq * (lanes[b] - mk) * aa);
+        }
+        _unifiedGeomCache = { cd, numBlocks, blockWidth, len, baseRow, baseBlock, aa, mk, nSeq, lanes, tops };
+    }
+    const { lanes, tops } = _unifiedGeomCache;
+    return {
+        top: b => tops[Math.max(0, Math.min(numBlocks, b))],
+        blockH: b => tops[b + 1] - tops[b],
+        rowH: b => Math.max(1, baseRow + (lanes[b] - mk) * aa),
+        indexAt: y => {
+            let lo = 0, hi = numBlocks - 1;
+            while (lo < hi) { const m = (lo + hi + 1) >> 1; if (tops[m] <= y) lo = m; else hi = m - 1; }
+            return lo;
+        }
+    };
 }
 
 function _measureUnifiedColumnMetrics(sampleRowEl) {
@@ -3411,7 +3484,7 @@ function _measureUnifiedHeaderHeight(sampleBlockEl) {
 // which renders ALL rows). Each block contains: ruler, optional top consensus,
 // top row spacer, visible rows, bottom row spacer, optional bottom consensus.
 // Column windowing is applied when the block is wider than the viewport.
-function _buildUnifiedBlock(blockIndex, start, end, len, blockHeightPx, rowHeightPx, effectiveScrollTop, clientHeight, scrollLeft, clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPxIn) {
+function _buildUnifiedBlock(blockIndex, start, end, len, blockHeightPx, rowHeightPx, effectiveScrollTop, clientHeight, scrollLeft, clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPxIn, blockTopPxIn) {
     const blockLen = end - start;
     const blockDiv = document.createElement('div');
     blockDiv.className = 'block-block';
@@ -3427,7 +3500,7 @@ function _buildUnifiedBlock(blockIndex, start, end, len, blockHeightPx, rowHeigh
     const visibleDataWidth = Math.max(0, clientWidth - nameColWidthPx);
     const nSeq = state.seqs.length;
     const headerHeight = headerHeightPxIn != null ? headerHeightPxIn : _measureUnifiedHeaderHeight(null);
-    const _vis = _unifiedVisibleRows(blockIndex, blockHeightPx, headerHeight, rowHeightPx, effectiveScrollTop, clientHeight, nSeq);
+    const _vis = _unifiedVisibleRows(blockTopPxIn != null ? blockTopPxIn : blockIndex * blockHeightPx, blockHeightPx, headerHeight, rowHeightPx, effectiveScrollTop, clientHeight, nSeq);
     const _budget = _unifiedWindowBudget(_vis.visibleRows, Math.max(1, Math.ceil(visibleDataWidth / Math.max(1, charWidthPx))), nSeq, blockLen);
     const { colStart, colEnd, needsColWindow } = _computeBlockColumnWindow(start, end, scrollLeft, visibleDataWidth, charWidthPx, _budget.bufferCols);
 
@@ -3484,7 +3557,7 @@ function _buildUnifiedBlock(blockIndex, start, end, len, blockHeightPx, rowHeigh
     }
 
     // Row windowing within this block.
-    // The block's vertical position in the container is blockIndex * blockHeightPx.
+    // The block's vertical position in the container is blockTopPxIn (_unifiedGeometry).
     // The header (ruler + optional top consensus) occupies the space between the
     // block's top and the row area. Uses the directly-measured header height
     // (see _measureUnifiedHeaderHeight) rather than deriving it as
@@ -3645,13 +3718,13 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
     // blank space with the real rows rendered thousands of pixels off-screen).
     // See the retry block below for the actual fix: rebuild once if the real
     // measurement (taken after this pass) turns out to disagree.
-    const rowHeightPx = Math.max(1, _unifiedRowHeightPx || 16);
-    const blockHeightPx = Math.max(1, _unifiedBlockHeightPx || _unifiedFallbackBlockHeightPx());
+    const G = _unifiedGeometry(numBlocks, blockWidth, len);
+    const aaRowPxBefore = _unifiedAaRowPx;
     const effectiveScrollTop = preservedScrollTop != null ? preservedScrollTop : container.scrollTop;
     const { charWidthPx, nameColWidthPx } = _measureUnifiedColumnMetrics(null);
     const overscan = 1;
-    let blockStart = Math.max(0, Math.floor(effectiveScrollTop / blockHeightPx) - overscan);
-    let blockEnd = Math.min(numBlocks - 1, Math.floor((effectiveScrollTop + container.clientHeight) / blockHeightPx) + overscan, blockStart + 20);
+    let blockStart = Math.max(0, G.indexAt(effectiveScrollTop) - overscan);
+    let blockEnd = Math.min(numBlocks - 1, G.indexAt(effectiveScrollTop + container.clientHeight) + overscan, blockStart + 20);
     // Safety fallback: ensure at least one block is rendered
     if (blockEnd < blockStart) {
         blockStart = 0;
@@ -3662,27 +3735,29 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
 
     const topSpacer = document.createElement('div');
     topSpacer.className = 'unified-mode-spacer';
-    topSpacer.style.height = (blockStart * blockHeightPx) + 'px';
+    topSpacer.style.height = G.top(blockStart) + 'px';
     container.appendChild(topSpacer);
 
     let firstRealBlock = null;
     for (let b = blockStart; b <= blockEnd; b++) {
         const start = b * blockWidth;
         const end = Math.min(start + blockWidth, len);
-        const blockDiv = _buildUnifiedBlock(b, start, end, len, blockHeightPx, rowHeightPx, effectiveScrollTop, container.clientHeight, container.scrollLeft, container.clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPx);
+        const blockDiv = _buildUnifiedBlock(b, start, end, len, G.blockH(b), G.rowH(b), effectiveScrollTop, container.clientHeight, container.scrollLeft, container.clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPx, G.top(b));
         container.appendChild(blockDiv);
         if (!firstRealBlock) firstRealBlock = blockDiv;
     }
 
     const bottomSpacer = document.createElement('div');
     bottomSpacer.className = 'unified-mode-spacer';
-    bottomSpacer.style.height = (Math.max(0, numBlocks - 1 - blockEnd) * blockHeightPx) + 'px';
+    bottomSpacer.style.height = Math.max(0, G.top(numBlocks) - G.top(blockEnd + 1)) + 'px';
     container.appendChild(bottomSpacer);
 
     // Measure from the first real block and its first real row
+    const rowHeightPx = G.rowH(blockStart);
     let measuredRowHeightPx = rowHeightPx;
     if (firstRealBlock) {
         _measureUnifiedBlockHeight(firstRealBlock);
+        _measureUnifiedAaRow(firstRealBlock, blockStart, blockWidth, len);
         _measureUnifiedHeaderHeight(firstRealBlock);
         // A real sequence row, not the top consensus line (also .seq-line[data-seq-index],
         // with index -1): the consensus has no translation row under it, so measuring it
@@ -3703,7 +3778,10 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
     // The _isRetry guard makes this at most one extra pass: the second call
     // always measures the same real DOM it just built, so it can't disagree
     // with itself.
-    if (!_isRetry && Math.abs(measuredRowHeightPx - rowHeightPx) > 0.5) {
+    // Blocks of different translation lane counts were placed with a guessed
+    // translation row height until one was measured: rebuild with it too.
+    const aaGuessed = aaRowPxBefore == null && _unifiedAaRowPx != null && !!state._codonData?.byGene && numBlocks > 1;
+    if (!_isRetry && (Math.abs(measuredRowHeightPx - rowHeightPx) > 0.5 || aaGuessed)) {
         container.innerHTML = '';
         // blockHeightPx was measured from this pass's wrongly-sized block (built
         // with the stale rowHeightPx) - reset it too, so the retry derives a
@@ -3720,11 +3798,12 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
     }
     // The blocks hold their on-screen rows; queue their row buffers.
     _cancelAllBlockJobs();
+    const Gm = _unifiedGeometry(numBlocks, blockWidth, len);
     container.querySelectorAll(':scope > .block-block[data-block-index]').forEach(blockDiv => {
         const b = parseInt(blockDiv.getAttribute('data-block-index'), 10);
         if (Number.isNaN(b)) return;
         const start = b * blockWidth, end = Math.min(start + blockWidth, len);
-        _scheduleBuiltBlockGrowth(blockDiv, b, start, end, measuredRowHeightPx, _unifiedCharWidthPx || charWidthPx, _unifiedWindowRenderParams, state.seqs.length);
+        _scheduleBuiltBlockGrowth(blockDiv, b, start, end, Gm.rowH(b), _unifiedCharWidthPx || charWidthPx, _unifiedWindowRenderParams, state.seqs.length);
     });
     _setupUnifiedScrollListener(container);
 }
@@ -3742,8 +3821,7 @@ function _refreshUnifiedWindowOnScroll(container) {
     const [topSpacer, bottomSpacer] = spacers;
 
     const numBlocks = Math.max(1, Math.ceil(p.len / p.blockWidth));
-    const rowHeightPx = Math.max(1, _unifiedRowHeightPx || 16);
-    const blockHeightPx = Math.max(1, _unifiedBlockHeightPx || _unifiedFallbackBlockHeightPx());
+    const G = _unifiedGeometry(numBlocks, p.blockWidth, p.len);
     const { charWidthPx, nameColWidthPx } = _measureUnifiedColumnMetrics(null);
     const overscan = 1;
     // Captured once, before any DOM mutation below - same reasoning as before
@@ -3757,8 +3835,8 @@ function _refreshUnifiedWindowOnScroll(container) {
     const effectiveClientHeight = container.clientHeight;
     const effectiveScrollLeft = container.scrollLeft;
     const effectiveClientWidth = container.clientWidth;
-    let blockStart = Math.max(0, Math.floor(effectiveScrollTop / blockHeightPx) - overscan);
-    let blockEnd = Math.min(numBlocks - 1, Math.floor((effectiveScrollTop + effectiveClientHeight) / blockHeightPx) + overscan, blockStart + 20);
+    let blockStart = Math.max(0, G.indexAt(effectiveScrollTop) - overscan);
+    let blockEnd = Math.min(numBlocks - 1, G.indexAt(effectiveScrollTop + effectiveClientHeight) + overscan, blockStart + 20);
     // Safety fallback: ensure at least one block is rendered
     if (blockEnd < blockStart) {
         blockStart = 0;
@@ -3800,10 +3878,11 @@ function _refreshUnifiedWindowOnScroll(container) {
         const blockLen = end - start;
         const isLastBlock = end >= p.len;
         const existingBlockDiv = existingBlocksByIndex.get(b);
+        const rowHeightPx = G.rowH(b), blockHeightPx = G.blockH(b);
 
         // Same window arithmetic as _buildUnifiedBlock: what is on screen, and
         // the buffer/guard sizes for this alignment.
-        const vis = _unifiedVisibleRows(b, blockHeightPx, headerHeightPx, rowHeightPx, effectiveScrollTop, effectiveClientHeight, nSeq);
+        const vis = _unifiedVisibleRows(G.top(b), blockHeightPx, headerHeightPx, rowHeightPx, effectiveScrollTop, effectiveClientHeight, nSeq);
         const budget = _unifiedWindowBudget(vis.visibleRows, visibleCols, nSeq, blockLen);
         const cw = _computeBlockColumnWindow(start, end, effectiveScrollLeft, visibleDataWidth, charWidthPx, budget.bufferCols);
         const colWin = cw.needsColWindow ? { blockLen, start, charWidthPx } : null;
@@ -3860,7 +3939,7 @@ function _refreshUnifiedWindowOnScroll(container) {
             // (_buildUnifiedBlock records the block's rendered row/column window:
             // the rows on screen; the buffer rows follow a chunk per frame.)
             _cancelBlockJob(b);
-            const blockDiv = _buildUnifiedBlock(b, start, end, p.len, blockHeightPx, rowHeightPx, effectiveScrollTop, effectiveClientHeight, effectiveScrollLeft, effectiveClientWidth, charWidthPx, nameColWidthPx, p.nameLen, p.stickyNames, p.standard, p.ambiguous, p.blackThresh, p.darkThresh, p.lightThresh, p.enableBlack, p.enableDark, p.enableLight, p.conservationData, p.shouldRenderConsensus, p.consensusPosition, p.consensus, p.options, headerHeightPx);
+            const blockDiv = _buildUnifiedBlock(b, start, end, p.len, blockHeightPx, rowHeightPx, effectiveScrollTop, effectiveClientHeight, effectiveScrollLeft, effectiveClientWidth, charWidthPx, nameColWidthPx, p.nameLen, p.stickyNames, p.standard, p.ambiguous, p.blackThresh, p.darkThresh, p.lightThresh, p.enableBlack, p.enableDark, p.enableLight, p.conservationData, p.shouldRenderConsensus, p.consensusPosition, p.consensus, p.options, headerHeightPx, G.top(b));
             _scheduleBuiltBlockGrowth(blockDiv, b, start, end, rowHeightPx, charWidthPx, p, nSeq);
             if (existingBlockDiv) {
                 container.insertBefore(blockDiv, existingBlockDiv);
@@ -3904,8 +3983,8 @@ function _refreshUnifiedWindowOnScroll(container) {
     // note above _unifiedWindowBudget); only touch spacers and selection
     // classes when something was actually rebuilt.
     if (!changed) return;
-    const topH = (blockStart * blockHeightPx) + 'px';
-    const bottomH = (Math.max(0, numBlocks - 1 - blockEnd) * blockHeightPx) + 'px';
+    const topH = G.top(blockStart) + 'px';
+    const bottomH = Math.max(0, G.top(numBlocks) - G.top(blockEnd + 1)) + 'px';
     if (topSpacer.style.height !== topH) topSpacer.style.height = topH;
     if (bottomSpacer.style.height !== bottomH) bottomSpacer.style.height = bottomH;
     // Don't re-measure here — it forces a synchronous layout of everything just
@@ -4919,8 +4998,14 @@ function _computeAnnotatedCodonAnalysis(seqs, len) {
             }
         }
     }
-    for (let i = 0; i < n; i++) aaSeq[i].sort((a, b) => a.cols[0] - b.cols[0]);
-    return { phase, stops, frameShifts, synNonSyn, aaSeq, refIdx: 0, frameOffset: 0, byGene: true, genes, lanes };
+    // Translation lanes used at each column by any row (0 = no CDS there), so a block
+    // without genes gets no translation rows and one without overlaps gets one
+    const colLanes = new Uint8Array(len);
+    for (let i = 0; i < n; i++) {
+        aaSeq[i].sort((a, b) => a.cols[0] - b.cols[0]);
+        for (const e of aaSeq[i]) for (const c of e.cols) if (colLanes[c] <= e.lane) colLanes[c] = e.lane + 1;
+    }
+    return { phase, stops, frameShifts, synNonSyn, aaSeq, refIdx: 0, frameOffset: 0, byGene: true, genes, lanes, colLanes };
 }
 
 // The translations of one row by gene, each read in its gene's direction:
@@ -4984,15 +5069,39 @@ function _buildAARowEl(aaSeqData, frameLabel, isBest, viewStart, viewEnd, frameS
     return aaRow;
 }
 
+// How many translation rows every sequence gets in the block of columns
+// start..end-1: by gene, the lanes the annotated CDS use there (0 in a block with
+// no CDS, 2 only where genes overlap); three with Frame: All 3; else one. Every
+// row of a block gets the same number, so the windowed renderer's row pitch is
+// uniform within a block (blocks may differ, see _unifiedGeometry).
+function _codonLanesForRange(start, end) {
+    const cd = state._codonData;
+    if (!cd || !cd.aaSeq) return 0;
+    if (!cd.byGene) return (state._codonFrames && state._codonActiveFrame === -1) ? 3 : 1;
+    const cl = cd.colLanes;
+    if (!cl) return cd.lanes || 1;
+    const key = start + ':' + end;
+    if (!cd._laneCache) cd._laneCache = new Map();
+    let k = cd._laneCache.get(key);
+    if (k === undefined) {
+        k = 0;
+        for (let c = Math.max(0, start), e = Math.min(cl.length, end); c < e && k < 2; c++) if (cl[c] > k) k = cl[c];
+        cd._laneCache.set(key, k);
+    }
+    return k;
+}
+
 // The translation row(s) of one sequence for the current codon state (none when
-// codon analysis is off): one row, or three with Frame: All 3.
-function _codonRowsFor(seqIdx, viewStart, viewEnd) {
+// codon analysis is off): one row, or three with Frame: All 3. nLanes (by gene):
+// the translation rows of this sequence's block, from _codonLanesForRange.
+function _codonRowsFor(seqIdx, viewStart, viewEnd, nLanes) {
     const cd = state._codonData;
     if (!cd || !cd.aaSeq) return [];
     const rows = [];
-    if (cd.byGene && cd.lanes > 1) {
+    if (cd.byGene) {
         // Overlapping genes: the later gene's shared codons on a second row
-        for (let lane = 0; lane < cd.lanes; lane++) {
+        const n = nLanes != null ? nLanes : (cd.lanes || 1);
+        for (let lane = 0; lane < n; lane++) {
             rows.push(_buildAARowEl(cd.aaSeq[seqIdx].filter(e => (e.lane || 0) === lane), null, false, viewStart, viewEnd, lane === 0 ? cd.frameShifts?.[seqIdx] : null));
         }
     } else if (state._codonFrames && state._codonActiveFrame === -1) {
@@ -5020,10 +5129,13 @@ function _removeCodonRows(lineDiv) {
 // chunk per frame while scrolling) keeps the translation under every row and measures
 // the true row pitch - rows arriving without their translation rows made the content
 // shift under a steady scrollTop ("jerky steps back" when scrolling up).
+// The block's columns are colWin's (a column-windowed row), else viewStart..viewEnd-1
+// (an unwindowed row shows its whole block).
 function _appendCodonRows(lineDiv, seqIdx, viewStart, viewEnd, colWin) {
     _removeCodonRows(lineDiv);
     let after = lineDiv;
-    for (const r of _codonRowsFor(seqIdx, viewStart, viewEnd)) {
+    const lanes = colWin ? _codonLanesForRange(colWin.start, colWin.start + colWin.blockLen) : _codonLanesForRange(viewStart, viewEnd);
+    for (const r of _codonRowsFor(seqIdx, viewStart, viewEnd, lanes)) {
         if (colWin) {
             const d = r.querySelector('.aa-data');
             if (d) _applyColumnWindowStyle(d, colWin.blockLen, viewStart - colWin.start, colWin.charWidthPx);
@@ -8354,7 +8466,10 @@ function _updateCodonAnalysisState(len) {
                     document.body.classList.add('codon-mode');
                     if (state._lastAnnouncedCodonFrame !== 'genes') {
                         state._lastAnnouncedCodonFrame = 'genes';
-                        showMessage(`Codon analysis: ${byGene.genes} CDS from the annotation track, each in its own frame and strand`, 3500);
+                        // Name where the translations start: the first screen may hold no CDS at all
+                        const first = _annotCdsFeatures().reduce((a, d) => (!a || d.cs < a.cs ? d : a), null);
+                        const where = first ? `; first: ${first.f.name || 'CDS'} at column ${(first.cs + 1).toLocaleString()}` : '';
+                        showMessage(`Codon analysis: ${byGene.genes} CDS from the annotation track, each in its own frame and strand${where}`, 5000);
                     }
                     return;
                 }
@@ -9480,6 +9595,21 @@ window.computeAndShowBlockMask = computeAndShowBlockMask;
 window.groupRowsByBlockMask = groupRowsByBlockMask;
 window.groupRowsByType = groupRowsByType;
 
+// The file line keeps its full width up to 300px, so a short one is never cut (the
+// panel moves to a second toolbar line instead when the menus leave no room); a
+// longer one (a long ?title=) shortens only the file name, with an ellipsis, so the
+// panel stays on the menu line and the counts stay readable.
+function _fitHeaderInfoPanel() {
+    const panel = el('headerInfoPanel'), infoEl = el('sourceInfo');
+    if (!panel || !infoEl) return;
+    panel.style.minWidth = '';
+    infoEl.classList.add('measure-natural');
+    const natural = Math.max(infoEl.scrollWidth, el('versionIndicator')?.scrollWidth || 0);
+    infoEl.classList.remove('measure-natural');
+    const pad = parseFloat(getComputedStyle(panel).paddingLeft) + parseFloat(getComputedStyle(panel).paddingRight);
+    panel.style.minWidth = Math.ceil(Math.min(natural, 300) + pad + 1) + 'px';
+}
+
 // Unified source info updater so counts stay accurate after deletions/insertions
 function updateSourceInfo() {
     const infoEl = el('sourceInfo');
@@ -9497,6 +9627,7 @@ function updateSourceInfo() {
             pathLineEl.dataset.fullPath = '';
         }
         if (headerRowEl) headerRowEl.style.display = 'none';
+        _fitHeaderInfoPanel();
         return;
     }
 
@@ -9516,14 +9647,15 @@ function updateSourceInfo() {
 
     const fullFilename = state.currentFilename || '';
     const filenameHtml = fullFilename
-        ? `<strong><span class="source-file-name">${escapeHtml(fullFilename)}</span></strong>: `
+        ? `<strong class="source-file-label"><span class="source-file-name">${escapeHtml(fullFilename)}</span></strong><span class="source-counts">: </span>`
         : '';
 
     const fullPath = state.currentFilePath || '';
     // Residue unit: amino acids for a protein alignment (it said "bp" for both)
     const unit = isProteinAlignment() ? 'aa' : 'bp';
-    const summaryHtml = `${filenameHtml}<strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> ${unit}`;
+    const summaryHtml = `${filenameHtml}<span class="source-counts"><strong>${seqCount}</strong> seq, <strong>${aliLength}</strong> col, <strong>${lengthRange}</strong> ${unit}</span>`;
     infoEl.innerHTML = summaryHtml;
+    _fitHeaderInfoPanel();
     infoEl.dataset.fullFilename = fullFilename;
     infoEl.dataset.fullPath = fullPath;
     if (pathLineEl) {
@@ -12126,6 +12258,11 @@ function handleKeyDown(e) {
                 if (state.selectedColumns.size > 0) {
                     deleteSelectedColumns(!e.shiftKey);
                     e.preventDefault();
+                } else if (state.selectedNucs.size > 0) {
+                    // A plain drag selects residues, not columns: delete the columns it spans
+                    // (it used to fall through to the browser's bookmark dialog)
+                    deleteColumnsOfResidueSelection(!e.shiftKey);
+                    e.preventDefault();
                 }
                 break;
             case '+':
@@ -12714,6 +12851,23 @@ function copySelectedColumns() {
         showMessage("Failed to copy.", 5000);
     });
 }
+// Ctrl+D with residues selected (a plain drag) instead of columns: the columns from the
+// leftmost to the rightmost selected residue. Asked first when the selection does not
+// cover every sequence, since the columns go from all of them.
+function deleteColumnsOfResidueSelection(skipConfirm) {
+    let lo = Infinity, hi = -1;
+    for (const set of state.selectedNucs.values()) for (const p of set) { if (p < lo) lo = p; if (p > hi) hi = p; }
+    if (hi < 0) return;
+    const rows = state.selectedNucs.size, n = state.seqs.length, cols = hi - lo + 1;
+    const partial = rows < n;
+    if ((partial || !skipConfirm) && !confirm(`Delete ${cols === 1 ? 'column ' + (lo + 1).toLocaleString() : `columns ${(lo + 1).toLocaleString()}-${(hi + 1).toLocaleString()} (${cols.toLocaleString()})`} from all ${n} sequences?` + (partial ? ` The selection covers ${rows} of them.` : ''))) return;
+    state.selectedColumns.clear();
+    for (let p = lo; p <= hi; p++) state.selectedColumns.add(p);
+    state.selectedNucs.clear();
+    state.pendingNucStart = null;
+    deleteSelectedColumns(true);
+}
+
 function deleteSelectedColumns(skipConfirm) {
     if (state.selectedColumns.size === 0) {
         showMessage("No columns selected for deletion.", 3000);
@@ -17360,6 +17514,28 @@ function _initMafftAskPrefs() {
         el('codonEngine')?.addEventListener('change', toggleCodonOpts);
         toggleCodonOpts();
     }
+    el('macsePresetButton')?.addEventListener('click', () => openMacsePreset(false));
+}
+
+// MACSE is a Sequence type of the Alignment menu ("Coding sequence"), easy to miss:
+// the Alignment menu's own button and the Codon bar's both select it with the MACSE
+// engine and show its settings; Realign All / Selected and Add & Align then use it.
+function openMacsePreset(openMenu = true) {
+    const sel = el('mafftSeqType'), eng = el('codonEngine');
+    if (!sel) return;
+    if (sel.value !== 'codon') { sel.value = 'codon'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+    if (eng && eng.value !== 'macse') { eng.value = 'macse'; eng.dispatchEvent(new Event('change', { bubbles: true })); }
+    if (openMenu) {
+        const section = document.querySelector('.section-header[data-section="alignment"]')?.closest('.menu-section');
+        if (section) openMenuSection(section);
+    }
+    const opts = el('codonAlignOpts');
+    if (opts) {
+        opts.classList.remove('al-flash');
+        void opts.offsetWidth;   // restart the animation
+        opts.classList.add('al-flash');
+    }
+    showMessage('Sequence type: Coding sequence (MACSE v2.07). Realign All, Realign Selected and Add & Align now align codons, frameshift-aware.', 5000);
 }
 
 /**
