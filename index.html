@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>ViewAlign</title>
-    <link rel="stylesheet" href="styles.css?v=166">
+    <link rel="stylesheet" href="styles.css?v=167">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -20,7 +20,7 @@
                         <span>Input</span>
                         <span class="toggle-icon">v</span>
                     </div>
-                    <button id="addSeqPlusButton" onclick="event.stopPropagation()" title="Add sequence(s)" style="margin-left:3px;padding:0 4px;font-size:9px;font-weight:bold;height:14px;line-height:12px;cursor:pointer;border:1px solid #bbb;background:#f5f5f5;border-radius:3px;box-sizing:border-box;vertical-align:middle;">+</button>
+                    <button id="addSeqPlusButton" onclick="event.stopPropagation()" title="Add sequence(s)" style="margin-left:3px;padding:0 4px;font-size:9px;font-weight:bold;height:14px;line-height:12px;cursor:pointer;border:1px solid #bbb;background:#f5f5f5;border-radius:3px;box-sizing:border-box;vertical-align:top;margin-top:2px;">+</button>
                 <div class="control-group" id="input-controls">
                     <div id="dropZone" style="width: 100%; padding: 20px; min-height: 100px; margin-bottom: 8px;" title="Drop FASTA/MSF/AB1 or click to browse for file">Drop FASTA/MSF/AB1 file here or click to browse
                         <input type="file" id="fileInput" accept="*" style="display: none;">
@@ -1381,7 +1381,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=1"></script>
     <script src="chromatogram-viewer.js?v=1"></script>
     <script src="realign-region.js?v=2"></script>
-    <script src="script.js?v=292"></script>
+    <script src="script.js?v=293"></script>
     <script src="a11y.js?v=1"></script>
     <script src="tree-draw.js?v=165"></script>
     <script src="block-mask.js?v=1"></script>

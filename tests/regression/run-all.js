@@ -1339,6 +1339,7 @@ check('Reorder only: selectable k in the Alignment menu, linked to Group by k-me
 // Row and column selection update only what changed (was: a document-wide query per selected
 // row, and a <style> rule re-matched against every span). What the user sees must still follow
 // the state exactly: after toggles, a range, a clear, a full redraw and with hidden columns.
+// The consensus row never shows a column selection (it did from 252d292 on).
 check('Selection: row/column highlight follows the state after delta updates', async (page) => {
   const path = require('path');
   await page.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples', 'svk_k4.fa'));
@@ -1353,7 +1354,8 @@ check('Selection: row/column highlight follows the state after delta updates', a
     const audit = () => {
       const bad = [];
       document.querySelectorAll('.seq-data > span[data-pos]').forEach(sp => {
-        const want = state.selectedColumns.has(+sp.dataset.pos);
+        // the consensus row is never part of a column selection
+        const want = !sp.closest('.consensus-line') && state.selectedColumns.has(+sp.dataset.pos);
         const got = isCol(sp);
         if (want !== got && bad.length < 5) bad.push('col ' + sp.dataset.pos + (want ? ' missing' : ' stale'));
       });
@@ -1376,13 +1378,14 @@ check('Selection: row/column highlight follows the state after delta updates', a
     state.selectedColumns = new Set([5, 25]); updateColumnSelections(); await frames(); out.reassigned = audit();
     renderAlignment(); await new Promise(res => setTimeout(res, 600)); out.afterRender = audit();
     const cons = document.querySelector('.consensus-line .seq-data > span[data-pos="25"]');
-    out.consensusBaked = !cons || isCol(cons);
+    out.consensusShown = !!cons;
+    out.consensusClear = !!cons && !isCol(cons);
     cols(6); await frames(); out.afterRenderToggle = audit();
     state.selectedColumns.clear(); state.selectedRows.clear(); updateColumnSelections(); updateRowSelections(); await frames(); out.cleared = audit();
     return out;
   });
   const lists = ['toggle', 'untoggle', 'range', 'reassigned', 'afterRender', 'afterRenderToggle', 'cleared'];
-  const ok = lists.every(k => r[k].length === 0) && r.colOverRow && r.consensusBaked;
+  const ok = lists.every(k => r[k].length === 0) && r.colOverRow && r.consensusShown && r.consensusClear;
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
@@ -2470,6 +2473,70 @@ check('Overlapping marks all stay visible, in any order, in DOM and Canvas (conf
     && r.resSelTint && r.colSelOverSnp[0] && r.rowSelTint && r.moved === 0
     && r.canvasTsd === '0,229,255' && r.canvasName === '255,136,0';
   return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// The bars draw their own grip (no native scrollbar). Pressing Chrome's native thumb started its
+// own drag next to the app's, and on Windows Chrome snaps a native thumb back once the pointer
+// strays off the bar: the view jumped back mid-drag with a mouse. Here the pointer drifts 300px
+// above the 14px bar while dragging; the view must keep following it, with the grip under it.
+check('Scrollbars: own grip, a drag that strays off the bar keeps going, a track press pages', async (page) => {
+  await page.setViewportSize({ width: 1920, height: 950 });
+  await loadFasta(page, makeFasta(80, 1500));
+  await setMode(page, 'full');
+  await page.waitForTimeout(800);
+  const bar = '.horizontal-scrollbar';
+  const r0 = await page.evaluate((sel) => { const b = document.querySelector(sel), g = b.querySelector('.scrollbar-grip'), q = b.getBoundingClientRect(), gq = g.getBoundingClientRect();
+    return { native: getComputedStyle(b).scrollbarWidth, x: q.x, y: q.y, h: q.height, gx: gq.x, gw: gq.width, track: b.clientWidth, content: b.scrollWidth }; }, bar);
+  const read = () => page.evaluate(() => [Math.round(el('alignmentContainer').scrollLeft), Math.round(document.querySelector('.horizontal-scrollbar').scrollLeft)]);
+  const x0 = r0.gx + r0.gw / 2, y0 = r0.y + r0.h / 2;
+  const seen = [await read()];
+  await page.mouse.move(x0, y0); await page.mouse.down();
+  for (let k = 1; k <= 10; k++) { await page.mouse.move(x0 + k * 15, y0 - k * 30); await page.waitForTimeout(40); seen.push(await read()); }
+  await page.mouse.up(); await page.waitForTimeout(300); seen.push(await read());
+  const expected = 150 * (r0.content - r0.track) / (r0.track - Math.max(20, r0.track * r0.track / r0.content));
+  const end = seen[seen.length - 1];
+  const g1 = await page.evaluate((sel) => { const q = document.querySelector(sel + ' .scrollbar-grip').getBoundingClientRect(); return [q.left, q.right]; }, bar);
+  // a press on the track right of the grip pages right by most of a screen
+  const before = end[0];
+  await page.mouse.click(Math.min(r0.x + r0.track - 5, g1[1] + 40), y0);
+  await page.waitForTimeout(300);
+  const paged = (await read())[0] - before;
+  const vw = await page.evaluate(() => el('alignmentContainer').clientWidth);
+  const out = { native: r0.native, ratio: Math.round(end[0] / expected * 100) / 100, forward: seen.every((v, i) => i === 0 || v[0] >= seen[i - 1][0]),
+    inSync: seen.every(v => Math.abs(v[0] - v[1]) <= 2), gripUnderPointer: g1[0] <= x0 + 150 + 1 && x0 + 150 <= g1[1] + 1, paged, vw };
+  const ok = out.native === 'none' && out.ratio > 0.9 && out.ratio < 1.1 && out.forward && out.inSync && out.gripUnderPointer && paged > 0.8 * vw && paged < vw;
+  return { pass: ok, detail: JSON.stringify({ ...out, seen }) };
+});
+
+// The menu buttons sit on whole pixels. The info panel at the right sets the menu row's height;
+// at 23.09px (line-height 1.1, odd) every centred button landed .5px off, which a 1x screen
+// rounds: the labels sat high on a Full HD monitor and centred on a 2x one.
+check('Menu row: every menu button on a whole pixel (labels centred on 1x screens)', async (page) => {
+  await page.setInputFiles('#fileInput', require('path').join(__dirname, '..', '..', 'examples', 'svk_k4.fa'));
+  await page.waitForTimeout(1500);
+  const out = {};
+  for (const w of [1920, 1366, 2560]) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.waitForTimeout(300);
+    out[w] = await page.evaluate(() => [...document.querySelectorAll('#menuRow .section-header, #menuRow button')].filter(n => n.offsetParent)
+      .map(n => [n.id || n.textContent.trim().slice(0, 12), n.getBoundingClientRect().top]).filter(([, t]) => Math.abs(t - Math.round(t)) > 0.01));
+  }
+  return { pass: Object.values(out).every(v => v.length === 0), detail: JSON.stringify(out) };
+});
+
+// Actions > New Tab opens the selected sequences in a new ViewAlign tab (it opened a bare
+// text box with the FASTA).
+check('Actions > New Tab: the selected sequences open in a new viewer tab', async (page) => {
+  await page.setInputFiles('#fileInput', require('path').join(__dirname, '..', '..', 'examples', 'svk_k4.fa'));
+  await page.waitForTimeout(1500);
+  const want = await page.evaluate(() => { state.selectedRows = new Set([1, 3, 4]); updateRowSelections(); return [1, 3, 4].map(i => state.seqs[i].header + ' ' + state.seqs[i].seq); });
+  const [tab] = await Promise.all([page.context().waitForEvent('page'), page.evaluate(() => document.getElementById('openInNewTabButton').click())]);
+  await tab.waitForLoadState();
+  await tab.waitForFunction(() => typeof state !== 'undefined' && state.seqs && state.seqs.length > 0, null, { timeout: 15000 });
+  await tab.waitForTimeout(800);
+  const got = await tab.evaluate(() => ({ seqs: state.seqs.map(s => s.header + ' ' + s.seq), rows: document.querySelectorAll('#alignmentContainer .seq-line[data-seq-index="2"]').length, name: state.currentFilename, textBox: !!document.querySelector('body > textarea') }));
+  const ok = JSON.stringify(got.seqs) === JSON.stringify(want) && got.rows > 0 && !got.textBox && /3 selected/.test(got.name);
+  return { pass: ok, detail: JSON.stringify({ n: got.seqs.length, rows: got.rows, name: got.name, textBox: got.textBox }) };
 });
 
 check('Touchpad-style horizontal scroll: no writes back into the alignment, the swipe completes', async (page) => {
