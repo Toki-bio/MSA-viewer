@@ -189,6 +189,9 @@ html {
     display: inline-flex;
     width: auto;
 }
+/* Input's "+" sits 2px down the 18px header, both from the line's top: vertical-align:
+   middle centred it on the x-height, a fractional offset that a 1x screen rounds */
+#input-section > .section-header { vertical-align: top; }
 
 /* Ensure all menu headers are inline so they don't stretch full width */
 .menu-section .section-header {
@@ -1911,7 +1914,7 @@ span.ge-col-flash {
     touch-action: pan-y;
     display: none; /* JS shows this only while the active mode can scroll */
 }
-.vertical-scrollbar-thumb { width: 1px; }
+.vertical-scrollbar-thumb { width: 1px; flex: none; }
 .vertical-scrollbar.grabbing { cursor: grabbing; }
 .vertical-scrollbar::before {
     content: '';
@@ -1921,6 +1924,39 @@ span.ge-col-flash {
     background: transparent;
     pointer-events: auto;
 }
+
+/* The persistent bars draw their own track and grip (_attachScrollbarGrip in script.js): the
+   browser's scrollbar is hidden. Dragging Chrome's native thumb ran alongside the app's own drag,
+   and on Windows Chrome snaps a native thumb back once the pointer strays off the bar. The track
+   is sticky, so it stays put while the bar's content (the -thumb spacer) scrolls under it. */
+.horizontal-scrollbar, .vertical-scrollbar { scrollbar-width: none; }
+.horizontal-scrollbar::-webkit-scrollbar, .vertical-scrollbar::-webkit-scrollbar { display: none; }
+.vertical-scrollbar { flex-direction: row; align-items: flex-start; }
+.scrollbar-track {
+    position: sticky;
+    left: 0;
+    top: 0;
+    flex: none;
+    background: #f1f1f1;
+    box-shadow: inset 0 0 0 1px #e4e4e4;
+}
+.horizontal-scrollbar > .scrollbar-track { width: 100%; height: 14px; }
+.vertical-scrollbar > .scrollbar-track { width: 14px; height: 100%; }
+.scrollbar-grip {
+    position: absolute;
+    left: 0;
+    top: 0;
+    background: #c1c1c1;
+    border-radius: 7px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    box-sizing: border-box;
+    will-change: transform;
+}
+.horizontal-scrollbar > .scrollbar-track > .scrollbar-grip { height: 14px; }
+.vertical-scrollbar > .scrollbar-track > .scrollbar-grip { width: 14px; }
+.horizontal-scrollbar:hover .scrollbar-grip, .vertical-scrollbar:hover .scrollbar-grip { background-color: #a8a8a8; border-width: 2px; }
+.horizontal-scrollbar.grabbing .scrollbar-grip, .vertical-scrollbar.grabbing .scrollbar-grip { background-color: #787878; border-width: 2px; }
 
 /* Utility to temporarily disable text selection during drag */
 .no-select { user-select: none !important; }
@@ -2147,7 +2183,9 @@ body.row-reorder-active .seq-name.drag-source:hover {
     flex-direction: column;
     align-items: flex-end;
     justify-content: center;
-    gap: 1px;
+    /* 10 + 2 + 12 = 24px: an even height like the menu buttons' (14/18/20px), so centring
+       them in the row it sets leaves no half pixel (see #sourceInfo's line-height) */
+    gap: 2px;
     padding-right: 8px;
     padding-left: 14px;
     pointer-events: none;
@@ -2177,7 +2215,10 @@ body.row-reorder-active .seq-name.drag-source:hover {
     flex: 0 0 auto;
     min-width: 0;
     max-width: 100%;
-    line-height: 1.1;
+    /* whole px: this panel sets the menu row's height, and a fractional height (1.1 gave
+       23.09px) put every centred menu button on a .55px offset, which a 1x screen rounds
+       up: the labels sat high on a Full HD monitor but not on a 2x one */
+    line-height: 12px;
     pointer-events: auto;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2201,6 +2242,7 @@ body.row-reorder-active .seq-name.drag-source:hover {
     white-space: nowrap;
     text-align: right;
     font-size: 10px;
+    line-height: 11px;   /* whole px, see #sourceInfo */
     color: #999;
     font-family: 'Courier New', monospace;
     pointer-events: auto;
@@ -2224,7 +2266,7 @@ body.row-reorder-active .seq-name.drag-source:hover {
 #versionIndicator {
     font-size: 10px;
     color: #666; /* #888 failed WCAG AA contrast on white */
-    line-height: 1;
+    line-height: 10px;
     text-align: right;
     white-space: nowrap;
     flex: 0 0 auto;
@@ -2424,7 +2466,7 @@ body.edit-dragging .seq-data {
     --t-row: linear-gradient(rgba(40, 167, 69, 0.30), rgba(40, 167, 69, 0.30));
 }
 /* Only on selected residues: a rule on every residue made the browser style 450k spans with
-   four image layers on each redraw. Consensus row included (a selected column shows there). */
+   four image layers on each redraw. Not on the consensus row (see .column-selected below). */
 .seq-line.selected .seq-data > span[data-pos],
 .seq-data > span.column-selected,
 .seq-data > span.nuc-selected,
@@ -3891,6 +3933,9 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 .seq-data > span.column-selected {
     --t-col: linear-gradient(rgba(25, 118, 210, 0.28), rgba(25, 118, 210, 0.28));
 }
+/* A column selection covers the sequences only: the consensus row never shows it, whichever
+   renderer drew the row (script.js no longer gives its spans the class either). */
+.consensus-line .seq-data > span.column-selected { --t-col: none; }
 /* Rows off screen skip style, layout and paint (non-windowed views, where every row is in
    the page). At 316k residue spans a full layout cost ~2 s, and zoom, Highlight diffs, sort
    and redraws each needed one. Placeholder size: one ch per column, 1em high, which is what

@@ -2978,7 +2978,15 @@ function _createWindowedScrollController(refreshFn, isActiveFn) {
                 triggerWindowedRender();
             });
         },
-        suppressNextEvent() { suppressNext = true; },
+        // Skips the scroll event of a scrollTop restore only. The restore follows emptying and
+        // refilling the container, and Chrome often sends no event for it: the flag then stayed
+        // set and swallowed the user's next real scroll, so the first scroll or scrollbar drag
+        // after a redraw showed blank space (no refresh) until a second one. Scroll events are
+        // dispatched before the next frame's callbacks, so the flag ends with this frame.
+        suppressNextEvent() {
+            suppressNext = true;
+            requestAnimationFrame(() => { suppressNext = false; });
+        },
     };
 }
 
@@ -3701,6 +3709,13 @@ function _incrementalUpdateBlockRows(blockDiv, blockIndex, newRowStart, newRowEn
             }
         });
         blockDiv.insertBefore(frag, insertBefore);
+    }
+    // New rows carry the row and column selection (createSequenceLine), not the residue
+    // selection or the edit cursor: since the v230 row buffer, rows added a chunk per frame
+    // showed selected residues unselected once scrolled into view.
+    if (missingRuns.length) {
+        if (state.selectedNucs.size) scheduleNucSelectionRefresh();
+        if (state.editCell) updateEditActiveCell();
     }
 
     topRowSpacer.style.height = (newRowStart * rowHeightPx) + 'px';
@@ -10489,7 +10504,7 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
         if (state._diffColumns && state._diffColumns.has(pos)) {
             span.classList.add('diff-highlight');
         }
-        if (state.selectedColumns.has(pos)) span.classList.add('column-selected');
+        // no .column-selected: a column selection covers the sequences, not the consensus
 
         // Apply trim region coloring
         if (pos <= leftTrimEnd) {
@@ -12050,8 +12065,10 @@ function handleMouseMove(e) {
         } else {
             const row = closestFromEvent(e, '.seq-line');
             if (row) {
-                const index = parseInt(row.dataset.seqIndex);
-                if (index !== undefined) {
+                const index = parseInt(row.dataset.seqIndex, 10);
+                // the consensus line is -1: dragging onto it selected "row -1", and Delete then
+                // spliced (-1, 1), removing the last sequence instead
+                if (Number.isInteger(index) && index >= 0 && Number.isInteger(state.dragStartRow) && state.dragStartRow >= 0) {
                     const start = Math.min(state.dragStartRow, index);
                     const end = Math.max(state.dragStartRow, index);
                     for (let i = start; i <= end; i++) {
@@ -13108,22 +13125,55 @@ function duplicateSelected() {
     renderAlignment();
     showMessage("Selected sequences duplicated!", 2000);
 }
+// Opens the selected sequences in a new ViewAlign tab (it used to open a bare text box with
+// the FASTA). The FASTA goes over postMessage, not the URL: ?data= is too small for a big
+// selection. The new tab (?handoff=<id>) asks its opener for <id>; the opener answers once.
+const _newTabHandoffs = new Map();
+window.addEventListener('message', (e) => {
+    const m = e.data;
+    if (e.origin !== location.origin || !m || m.type !== 'viewalign-handoff-request') return;
+    const h = _newTabHandoffs.get(m.id);
+    if (!h || !e.source) return;
+    _newTabHandoffs.delete(m.id);
+    e.source.postMessage({ type: 'viewalign-handoff', id: m.id, fasta: h.fasta, name: h.name }, location.origin);
+});
 function openSelectedInNewTab() {
     if (state.selectedRows.size === 0) {
         showMessage("No sequences selected.", 3000);
         return;
     }
-    const fasta = Array.from(state.selectedRows).sort((a,b) => a - b).map(i => {
+    const rows = Array.from(state.selectedRows).sort((a, b) => a - b);
+    const fasta = rows.map(i => {
         const s = state.seqs[i];
         return `>${s.fullHeader || s.header}\n${s.seq}`;
-    }).join('\n');
-    const blob = new Blob([fasta], {type: 'text/plain'});
-    const url = URL.createObjectURL(blob);
-    const newWindow = window.open();
-    newWindow.document.write('<textarea style="width:100%;height:100%;">' + fasta + '</textarea>');
-    newWindow.document.title = 'Selected Sequences';
-    newWindow.document.close();
-    showMessage("Selected sequences opened in new tab!", 2000);
+    }).join('\n') + '\n';
+    const base = (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '');
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    _newTabHandoffs.set(id, { fasta, name: `${base} (${rows.length} selected)` });
+    const w = window.open(location.pathname + '?handoff=' + id, '_blank');
+    if (!w) {
+        _newTabHandoffs.delete(id);
+        showMessage("The browser blocked the new tab: allow pop-ups for this site.", 5000);
+        return;
+    }
+    showMessage(`${rows.length} selected sequence${rows.length === 1 ? '' : 's'} opened in a new tab`, 2000);
+}
+// The new tab's side of openSelectedInNewTab: resolves { fasta, name } from the opener.
+function _receiveNewTabHandoff(id) {
+    return new Promise((resolve, reject) => {
+        const opener = window.opener;
+        if (!opener) { reject(new Error('the tab that opened this one is gone')); return; }
+        const done = (fn, v) => { clearInterval(ask); clearTimeout(give); window.removeEventListener('message', on); fn(v); };
+        const on = (e) => {
+            const m = e.data;
+            if (e.origin === location.origin && m && m.type === 'viewalign-handoff' && m.id === id) done(resolve, m);
+        };
+        window.addEventListener('message', on);
+        const request = () => { try { opener.postMessage({ type: 'viewalign-handoff-request', id }, location.origin); } catch (err) { /* opener navigated away */ } };
+        request();
+        const ask = setInterval(request, 300);   // in case the opener was busy rendering
+        const give = setTimeout(() => done(reject, new Error('no answer from the tab that opened this one')), 10000);
+    });
 }
 function savePreset() {
     const preset = {
@@ -21447,6 +21497,9 @@ function showContextMenu(e, index) {
 // recalc over every row whose class was removed and re-added.
 function updateRowSelections() {
     const sel = state.selectedRows;
+    // Only sequences can be selected rows. Anything else (the consensus line's -1, NaN) made
+    // Delete remove the wrong sequence and Copy / Move to top throw or insert undefined.
+    for (const v of sel) { const n = +v; if (!Number.isInteger(n) || n < 0) sel.delete(v); }
     const els = document.querySelectorAll('.seq-line[data-seq-index], .seq-name[data-seq-index]');
     for (let i = 0; i < els.length; i++) {
         const e = els[i];
@@ -21466,9 +21519,10 @@ function updateRowSelections() {
 // spans: on 316k spans one column cost ~1.7 s of style recalc, 201 columns 2.6 s, and
 // clearing 2 s. The delta costs one class change per span of the changed columns only.
 let _appliedColumnSel = new Set();
-function _forEachSpanInColumns(cols, callback) {
+// skipConsensus: leave the consensus row out (column selection; Highlight diffs marks it too)
+function _forEachSpanInColumns(cols, callback, skipConsensus = false) {
     if (!cols.length) return;
-    const datas = document.querySelectorAll('.seq-data');
+    const datas = document.querySelectorAll(skipConsensus ? '.seq-line:not(.consensus-line) > .seq-data' : '.seq-data');
     for (let d = 0; d < datas.length; d++) {
         const kids = datas[d].children;
         if (!kids.length) continue;
@@ -21512,9 +21566,10 @@ function updateColumnSelections() {
         if (!_appliedColumnSel.has(n)) changed.push(n);
     });
     _appliedColumnSel = next;
+    // the consensus row is not part of a column selection (it was highlighted with it)
     _forEachSpanInColumns(changed, (span, pos) => {
         span.classList.toggle('column-selected', next.has(pos));
-    });
+    }, true);
 }
 
 let pendingNucDomUpdate = false;
@@ -22130,6 +22185,7 @@ function initializeAppUI() {
     const autoTitle = urlParams.get('title');
     const autoMask  = urlParams.get('mask');
     const autoBed   = urlParams.get('bed');
+    const autoHandoff = urlParams.get('handoff');   // Actions > New Tab (openSelectedInNewTab)
     // Loaded after the alignment: the mask overlay, then the annotation track
     const _loadUrlExtras = () => {
         const p = autoMask ? _loadBlockMaskFromUrl(autoMask) : Promise.resolve();
@@ -22169,6 +22225,18 @@ function initializeAppUI() {
             console.error('Snapshot load failed:', err);
             showMessage(`Failed to load snapshot: ${err.message}`, 5000);
         }
+    } else if (autoHandoff) {
+        showMessage('Loading the selected sequences...', 0);
+        _receiveNewTabHandoff(autoHandoff)
+            .then(({ fasta, name }) => {
+                const fastaInputEl = el('fastaInput');
+                if (fastaInputEl) fastaInputEl.value = fasta;
+                state.currentFilename = name;
+                // a reload of this tab would ask an opener that no longer has it
+                try { history.replaceState(null, '', location.pathname); } catch (err) { /* file:// */ }
+                return Promise.resolve(parseAndRender(true)).then(() => showMessage(`Opened ${name}`, 2000));
+            })
+            .catch(err => showMessage(`Could not open the selected sequences: ${err.message}`, 6000));
     } else if (autoUrl) {
         showMessage('Loading alignment from URL...', 0);
         fetch(autoUrl)
@@ -22848,7 +22916,8 @@ function attachUIListeners() {
                 e.preventDefault();
                 const row = e.target.closest('.seq-line');
                 const index = parseInt(row?.dataset?.seqIndex, 10);
-                if (!Number.isInteger(index)) return;
+                // the consensus name (index -1) has no sequence menu: it threw reading 'header'
+                if (!Number.isInteger(index) || index < 0) return;
                 showContextMenu(e, index);
                 return;
             }
@@ -25210,6 +25279,48 @@ function _scrollbarDragRatio(trackPx, contentPx) {
     return range / Math.max(1, trackPx - thumbPx);
 }
 
+// The persistent bars draw their own grip; the browser's scrollbar is hidden (styles.css). With
+// the native one, pressing its thumb started Chrome's own drag next to ours (pointerdown here),
+// each at its own px-per-px ratio, and on Windows Chrome snaps a native thumb back to where the
+// drag began once the pointer strays ~100px off the bar: the view jumped back mid-drag. Now only
+// our drag moves the bar, with the grip sized by the same formula as _scrollbarDragRatio, so the
+// grip stays under the pointer. The bar stays a scroll container (scrollLeft/scrollTop hold the
+// position); the track is sticky, so it does not scroll away with the content.
+function _attachScrollbarGrip(bar, horizontal) {
+    const track = document.createElement('div');
+    track.className = 'scrollbar-track';
+    const grip = document.createElement('div');
+    grip.className = 'scrollbar-grip';
+    track.appendChild(grip);
+    bar.insertBefore(track, bar.firstChild);
+    let trackPx = 0, contentPx = 0;
+    function place() {
+        const range = contentPx - trackPx;
+        if (range <= 0 || trackPx <= 0) { grip.style.display = 'none'; return; }
+        const gripPx = Math.max(20, trackPx * trackPx / contentPx);
+        const pos = Math.min(1, Math.max(0, (horizontal ? bar.scrollLeft : bar.scrollTop) / range)) * (trackPx - gripPx);
+        grip.style.display = '';
+        if (horizontal) { grip.style.width = gripPx + 'px'; grip.style.transform = `translateX(${pos}px)`; }
+        else { grip.style.height = gripPx + 'px'; grip.style.transform = `translateY(${pos}px)`; }
+    }
+    // after the bar's content size changed (re-measures; not on the scroll path)
+    function update() {
+        trackPx = horizontal ? bar.clientWidth : bar.clientHeight;
+        contentPx = horizontal ? bar.scrollWidth : bar.scrollHeight;
+        place();
+    }
+    bar.addEventListener('scroll', place, { passive: true });
+    if (window.ResizeObserver) new ResizeObserver(update).observe(bar);
+    // A press on the track (not the grip) that does not drag pages towards the press.
+    function isTrackPress(e) {
+        if (grip.style.display === 'none' || e.target === grip) return 0;
+        const r = grip.getBoundingClientRect();
+        const p = horizontal ? e.clientX : e.clientY;
+        return p < (horizontal ? r.left : r.top) ? -1 : p > (horizontal ? r.right : r.bottom) ? 1 : 0;
+    }
+    return { update, place, isTrackPress };
+}
+
 // The persistent bars mirror the alignment's scroll position. A bar's own scroll event used to
 // be treated as user input even when our code had just set it, so every scroll step was
 // written back into the alignment (scrollLeft = bar.scrollLeft). That write is a programmatic
@@ -25236,6 +25347,7 @@ function makeBarInputGuard(bar) {
 
     let syncing = false;
     const barInput = makeBarInputGuard(bar);
+    const grip = _attachScrollbarGrip(bar, true);
     // Canvas mode's content is a single absolutely-positioned <canvas> panned via
     // _canvasState.offsetX (alignment.scrollLeft/scrollWidth are meaningless there),
     // so this bar drives that offset directly instead of the DOM scroll position.
@@ -25256,6 +25368,7 @@ function makeBarInputGuard(bar) {
         thumb.style.width = (scrollable ? contentW : 0) + 'px';
         bar.scrollLeft = isCanvasMode() ? (_canvasState.offsetX || 0) : alignment.scrollLeft;
         syncing = false;
+        grip.update();
     }
 
     function onBarScroll() {
@@ -25313,35 +25426,43 @@ function makeBarInputGuard(bar) {
     const mo = new MutationObserver(scheduleSync);
     mo.observe(alignment, { childList: true, subtree: true, characterData: false, attributes: false });
 
-    // Drag-to-pan with Pointer Events and capture for robustness
-    let isDown = false, startX = 0, startScroll = 0;
+    // Dragging anywhere on the bar moves it like the grip, with the pointer captured: the
+    // drag keeps going however far the pointer strays from the 14px bar.
+    let isDown = false, startX = 0, startScroll = 0, moved = false, page = 0;
     let dragRaf = null, lastDx = 0;
+    const scrollTo = (x) => {
+        syncing = true;
+        bar.scrollLeft = x;
+        const newScroll = bar.scrollLeft;   // clamped by the browser
+        if (isCanvasMode()) {
+            _canvasState.offsetX = newScroll;
+            _canvasState.scheduleDraw?.();
+        } else {
+            alignment.scrollLeft = newScroll;
+        }
+        syncing = false;
+    };
+    const applyDrag = () => {
+        dragRaf = null;
+        scrollTo(startScroll + lastDx * _scrollbarDragRatio(bar.clientWidth, bar.scrollWidth));
+    };
     bar.addEventListener('pointerdown', (e) => {
-        isDown = true;
+        if (e.button !== 0) return;
+        isDown = true; moved = false;
+        page = grip.isTrackPress(e);
         try { bar.setPointerCapture(e.pointerId); } catch {}
         bar.classList.add('grabbing');
         document.body.classList.add('no-select');
         startX = e.clientX;
+        lastDx = 0;
         startScroll = bar.scrollLeft;
         e.preventDefault();
     });
     bar.addEventListener('pointermove', (e) => {
         if (!isDown) return;
         lastDx = e.clientX - startX;
-        if (dragRaf) { e.preventDefault(); return; }
-        dragRaf = window.requestAnimationFrame(() => {
-            syncing = true;
-            bar.scrollLeft = startScroll + lastDx * _scrollbarDragRatio(bar.clientWidth, bar.scrollWidth);
-            const newScroll = bar.scrollLeft;   // clamped by the browser
-            if (isCanvasMode()) {
-                _canvasState.offsetX = newScroll;
-                _canvasState.scheduleDraw?.();
-            } else {
-                alignment.scrollLeft = newScroll;
-            }
-            syncing = false;
-            dragRaf = null;
-        });
+        if (Math.abs(lastDx) > 2) moved = true;
+        if (!dragRaf && moved) dragRaf = window.requestAnimationFrame(applyDrag);
         e.preventDefault();
     }, { passive: false });
     const endDrag = () => {
@@ -25349,10 +25470,13 @@ function makeBarInputGuard(bar) {
         isDown = false;
         bar.classList.remove('grabbing');
         document.body.classList.remove('no-select');
-        if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = null; }
+        // the last move is applied, not dropped: dropping it left the view short of the grip
+        if (dragRaf) { cancelAnimationFrame(dragRaf); applyDrag(); }
+        else if (!moved && page) scrollTo(bar.scrollLeft + page * Math.max(1, alignment.clientWidth * 0.9));
     };
     bar.addEventListener('pointerup', endDrag);
     bar.addEventListener('pointercancel', endDrag);
+    bar.addEventListener('lostpointercapture', endDrag);
     window.addEventListener('mouseup', endDrag);
 
     // Map vertical wheel to horizontal scroll when user hovers the bar
@@ -25381,10 +25505,11 @@ function makeBarInputGuard(bar) {
     const isCanvasMode = () => document.getElementById('modeCanvas')?.checked;
     let syncing = false;
     const barInput = makeBarInputGuard(bar);
+    const grip = _attachScrollbarGrip(bar, false);
 
     function syncVisibilityAndSize() {
         if (isCanvasMode()) {
-            bar.style.display = 'block';
+            bar.style.display = 'flex';
             const rect = alignment.getBoundingClientRect();
             bar.style.top = alignment.offsetTop + 'px';
             bar.style.height = rect.height + 'px';
@@ -25394,7 +25519,7 @@ function makeBarInputGuard(bar) {
             bar.scrollTop = _canvasState.offsetY || 0;
             syncing = false;
         } else if (alignment.scrollHeight > alignment.clientHeight) {
-            bar.style.display = 'block';
+            bar.style.display = 'flex';
             const rect = alignment.getBoundingClientRect();
             bar.style.top = alignment.offsetTop + 'px';
             bar.style.height = rect.height + 'px';
@@ -25404,7 +25529,9 @@ function makeBarInputGuard(bar) {
             syncing = false;
         } else {
             bar.style.display = 'none';
+            return;
         }
+        grip.update();
     }
 
     function onBarScroll() {
@@ -25458,34 +25585,43 @@ function makeBarInputGuard(bar) {
         r.addEventListener('change', () => window.requestAnimationFrame(syncVisibilityAndSize));
     });
 
-    let isDown = false, startY = 0, startScroll = 0;
+    // Same drag as the horizontal bar: anywhere on the bar, pointer captured, last move kept,
+    // a press on the track pages.
+    let isDown = false, startY = 0, startScroll = 0, moved = false, page = 0;
     let dragRaf = null, lastDy = 0;
+    const scrollTo = (y) => {
+        syncing = true;
+        bar.scrollTop = y;
+        const newScroll = bar.scrollTop;   // clamped by the browser
+        if (isCanvasMode()) {
+            _canvasState.offsetY = newScroll;
+            _canvasState.scheduleDraw?.();
+        } else {
+            alignment.scrollTop = newScroll;
+        }
+        syncing = false;
+    };
+    const applyDrag = () => {
+        dragRaf = null;
+        scrollTo(startScroll + lastDy * _scrollbarDragRatio(bar.clientHeight, bar.scrollHeight));
+    };
     bar.addEventListener('pointerdown', (e) => {
-        isDown = true;
+        if (e.button !== 0) return;
+        isDown = true; moved = false;
+        page = grip.isTrackPress(e);
         try { bar.setPointerCapture(e.pointerId); } catch {}
         bar.classList.add('grabbing');
         document.body.classList.add('no-select');
         startY = e.clientY;
+        lastDy = 0;
         startScroll = bar.scrollTop;
         e.preventDefault();
     });
     bar.addEventListener('pointermove', (e) => {
         if (!isDown) return;
         lastDy = e.clientY - startY;
-        if (dragRaf) { e.preventDefault(); return; }
-        dragRaf = window.requestAnimationFrame(() => {
-            syncing = true;
-            bar.scrollTop = startScroll + lastDy * _scrollbarDragRatio(bar.clientHeight, bar.scrollHeight);
-            const newScroll = bar.scrollTop;   // clamped by the browser
-            if (isCanvasMode()) {
-                _canvasState.offsetY = newScroll;
-                _canvasState.scheduleDraw?.();
-            } else {
-                alignment.scrollTop = newScroll;
-            }
-            syncing = false;
-            dragRaf = null;
-        });
+        if (Math.abs(lastDy) > 2) moved = true;
+        if (!dragRaf && moved) dragRaf = window.requestAnimationFrame(applyDrag);
         e.preventDefault();
     }, { passive: false });
     const endDrag = () => {
@@ -25493,10 +25629,12 @@ function makeBarInputGuard(bar) {
         isDown = false;
         bar.classList.remove('grabbing');
         document.body.classList.remove('no-select');
-        if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = null; }
+        if (dragRaf) { cancelAnimationFrame(dragRaf); applyDrag(); }
+        else if (!moved && page) scrollTo(bar.scrollTop + page * Math.max(1, bar.clientHeight * 0.9));
     };
     bar.addEventListener('pointerup', endDrag);
     bar.addEventListener('pointercancel', endDrag);
+    bar.addEventListener('lostpointercapture', endDrag);
     window.addEventListener('mouseup', endDrag);
 })();
 
