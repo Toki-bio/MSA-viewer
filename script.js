@@ -21519,10 +21519,10 @@ function updateRowSelections() {
 // spans: on 316k spans one column cost ~1.7 s of style recalc, 201 columns 2.6 s, and
 // clearing 2 s. The delta costs one class change per span of the changed columns only.
 let _appliedColumnSel = new Set();
-function _forEachSpanInColumns(cols, callback) {
+// skipConsensus: leave the consensus row out (column selection; Highlight diffs marks it too)
+function _forEachSpanInColumns(cols, callback, skipConsensus = false) {
     if (!cols.length) return;
-    // the consensus row is not part of a column selection (it was highlighted with it)
-    const datas = document.querySelectorAll('.seq-line:not(.consensus-line) > .seq-data');
+    const datas = document.querySelectorAll(skipConsensus ? '.seq-line:not(.consensus-line) > .seq-data' : '.seq-data');
     for (let d = 0; d < datas.length; d++) {
         const kids = datas[d].children;
         if (!kids.length) continue;
@@ -21566,9 +21566,10 @@ function updateColumnSelections() {
         if (!_appliedColumnSel.has(n)) changed.push(n);
     });
     _appliedColumnSel = next;
+    // the consensus row is not part of a column selection (it was highlighted with it)
     _forEachSpanInColumns(changed, (span, pos) => {
         span.classList.toggle('column-selected', next.has(pos));
-    });
+    }, true);
 }
 
 let pendingNucDomUpdate = false;
