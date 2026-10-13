@@ -2978,7 +2978,15 @@ function _createWindowedScrollController(refreshFn, isActiveFn) {
                 triggerWindowedRender();
             });
         },
-        suppressNextEvent() { suppressNext = true; },
+        // Skips the scroll event of a scrollTop restore only. The restore follows emptying and
+        // refilling the container, and Chrome often sends no event for it: the flag then stayed
+        // set and swallowed the user's next real scroll, so the first scroll or scrollbar drag
+        // after a redraw showed blank space (no refresh) until a second one. Scroll events are
+        // dispatched before the next frame's callbacks, so the flag ends with this frame.
+        suppressNextEvent() {
+            suppressNext = true;
+            requestAnimationFrame(() => { suppressNext = false; });
+        },
     };
 }
 
@@ -3701,6 +3709,13 @@ function _incrementalUpdateBlockRows(blockDiv, blockIndex, newRowStart, newRowEn
             }
         });
         blockDiv.insertBefore(frag, insertBefore);
+    }
+    // New rows carry the row and column selection (createSequenceLine), not the residue
+    // selection or the edit cursor: since the v230 row buffer, rows added a chunk per frame
+    // showed selected residues unselected once scrolled into view.
+    if (missingRuns.length) {
+        if (state.selectedNucs.size) scheduleNucSelectionRefresh();
+        if (state.editCell) updateEditActiveCell();
     }
 
     topRowSpacer.style.height = (newRowStart * rowHeightPx) + 'px';
@@ -12050,8 +12065,10 @@ function handleMouseMove(e) {
         } else {
             const row = closestFromEvent(e, '.seq-line');
             if (row) {
-                const index = parseInt(row.dataset.seqIndex);
-                if (index !== undefined) {
+                const index = parseInt(row.dataset.seqIndex, 10);
+                // the consensus line is -1: dragging onto it selected "row -1", and Delete then
+                // spliced (-1, 1), removing the last sequence instead
+                if (Number.isInteger(index) && index >= 0 && Number.isInteger(state.dragStartRow) && state.dragStartRow >= 0) {
                     const start = Math.min(state.dragStartRow, index);
                     const end = Math.max(state.dragStartRow, index);
                     for (let i = start; i <= end; i++) {
@@ -21480,6 +21497,9 @@ function showContextMenu(e, index) {
 // recalc over every row whose class was removed and re-added.
 function updateRowSelections() {
     const sel = state.selectedRows;
+    // Only sequences can be selected rows. Anything else (the consensus line's -1, NaN) made
+    // Delete remove the wrong sequence and Copy / Move to top throw or insert undefined.
+    for (const v of sel) { const n = +v; if (!Number.isInteger(n) || n < 0) sel.delete(v); }
     const els = document.querySelectorAll('.seq-line[data-seq-index], .seq-name[data-seq-index]');
     for (let i = 0; i < els.length; i++) {
         const e = els[i];
@@ -22895,7 +22915,8 @@ function attachUIListeners() {
                 e.preventDefault();
                 const row = e.target.closest('.seq-line');
                 const index = parseInt(row?.dataset?.seqIndex, 10);
-                if (!Number.isInteger(index)) return;
+                // the consensus name (index -1) has no sequence menu: it threw reading 'header'
+                if (!Number.isInteger(index) || index < 0) return;
                 showContextMenu(e, index);
                 return;
             }

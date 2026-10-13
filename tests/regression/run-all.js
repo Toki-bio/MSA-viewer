@@ -2539,6 +2539,64 @@ check('Actions > New Tab: the selected sequences open in a new viewer tab', asyn
   return { pass: ok, detail: JSON.stringify({ n: got.seqs.length, rows: got.rows, name: got.name, textBox: got.textBox }) };
 });
 
+// A Ctrl+drag from a sequence name onto the Consensus name selected "row -1" (the consensus
+// line's index): Delete then spliced (-1, 1) and removed the last sequence, Copy threw.
+// Right-clicking the Consensus name threw instead of doing nothing.
+check('Row drag onto the Consensus row: not selected, Delete removes only the dragged rows', async (page) => {
+  const errs = []; page.on('pageerror', e => errs.push(e.message));
+  page.on('dialog', d => d.accept());
+  await loadFasta(page, makeFasta(6, 100));
+  const nb = await page.evaluate(() => { const n = document.querySelector('.seq-line[data-seq-index="1"] .seq-name'), c = document.querySelector('.consensus-line .seq-name');
+    const a = n.getBoundingClientRect(), b = c.getBoundingClientRect(); return [a.x + 10, a.y + a.height / 2, b.x + 10, b.y + b.height / 2]; });
+  await page.keyboard.down('Control'); await page.mouse.move(nb[0], nb[1]); await page.mouse.down();
+  await page.mouse.move(nb[2], nb[3], { steps: 5 }); await page.mouse.up(); await page.keyboard.up('Control');
+  const sel = await page.evaluate(() => [...state.selectedRows].sort((a, b) => a - b));
+  const consSelected = await page.evaluate(() => !!document.querySelector('.consensus-line.selected'));
+  await page.evaluate(() => deleteSelected()); await page.waitForTimeout(400);
+  const left = await page.evaluate(() => state.seqs.map(s => s.header).join(','));
+  await page.mouse.click(nb[2], nb[3] - 0, { button: 'right' }); await page.waitForTimeout(200);
+  const ok = JSON.stringify(sel) === '[0,1]' && !consSelected && left === 'seq2,seq3,seq4,seq5' && errs.length === 0;
+  return { pass: ok, detail: JSON.stringify({ sel, consSelected, left, errs }) };
+});
+
+// After a redraw of a windowed alignment the scrollTop restore armed "skip the next scroll
+// event"; Chrome often sent none for it, so the flag swallowed the user's next real scroll:
+// the first scrollbar drag after a redraw landed on blank space, a second one worked.
+check('Windowed redraw: the first scrollbar drag afterwards shows residues (no swallowed scroll)', async (page) => {
+  await loadSyntheticFasta(page, 1500, 4000); await setMode(page, 'full'); await page.waitForTimeout(1200);
+  await page.evaluate(() => { const c = el('alignmentContainer'); c.scrollTop = c.scrollHeight * 0.4; });
+  await page.waitForTimeout(800);
+  await page.evaluate(() => renderAlignment()); await page.waitForTimeout(1500);
+  const b = await page.evaluate(() => { const r = document.querySelector('.horizontal-scrollbar').getBoundingClientRect(); return [r.x, r.y + r.height / 2, r.width]; });
+  await page.mouse.move(b[0] + 10, b[1]); await page.mouse.down(); await page.mouse.move(b[0] + b[2] * 0.5, b[1], { steps: 1 });
+  await page.waitForTimeout(100); await page.mouse.up(); await page.waitForTimeout(1000);
+  const r = await page.evaluate(() => { const c = el('alignmentContainer'), cr = c.getBoundingClientRect();
+    const l = [...document.querySelectorAll('.seq-line[data-seq-index]')].find(e => +e.dataset.seqIndex >= 0 && e.getBoundingClientRect().top > cr.top + 30);
+    const sp = l ? [...l.querySelectorAll('.seq-data > span[data-pos]')].filter(s => { const q = s.getBoundingClientRect(); return q.right > cr.left + 200 && q.left < cr.right; }) : [];
+    return { left: Math.round(c.scrollLeft), visibleResidues: sp.length }; });
+  return { pass: r.left > 1000 && r.visibleResidues > 20, detail: JSON.stringify(r) };
+});
+
+// Rows the v230 row buffer adds a chunk per frame did not get the residue selection: a selected
+// residue scrolled into view showed unselected.
+check('Windowed Full: a selected residue stays highlighted on rows added while scrolling', async (page) => {
+  await loadSyntheticFasta(page, 1500, 4000); await setMode(page, 'full'); await page.waitForTimeout(1500);
+  const r = await page.evaluate(async () => {
+    const frames = (n) => new Promise(res => { let k = 0; const f = () => (++k >= n ? res() : requestAnimationFrame(f)); requestAnimationFrame(f); });
+    const c = el('alignmentContainer');
+    const rowH = document.querySelector('.seq-line[data-seq-index="1"]').getBoundingClientRect().height;
+    const T = 800;
+    state.selectedNucs.clear(); state.selectedNucs.set(T, new Set([2, 3, 4])); scheduleNucSelectionRefresh(); await frames(3);
+    c.scrollTop = Math.round((T - Math.floor(c.clientHeight / rowH) - 15) * rowH); await frames(80);
+    for (let k = 0; k < 30; k++) { c.scrollTop += rowH; await frames(2); }
+    await frames(10);
+    const sp = document.querySelector(`.seq-line[data-seq-index="${T}"] .seq-data > span[data-pos="3"]`);
+    const q = sp?.getBoundingClientRect(), cr = c.getBoundingClientRect();
+    return { onScreen: q ? q.top > cr.top && q.bottom < cr.bottom : false, selected: !!sp?.classList.contains('nuc-selected') };
+  });
+  return { pass: r.onScreen && r.selected, detail: JSON.stringify(r) };
+});
+
 check('Touchpad-style horizontal scroll: no writes back into the alignment, the swipe completes', async (page) => {
   // A compositor-driven gesture (like a two-finger swipe) over a wide alignment in Full view at 50%.
   // The persistent bar used to echo every scroll step back (scrollLeft = bar.scrollLeft), which
