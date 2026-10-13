@@ -3019,6 +3019,107 @@ check('Group explorer: gather and move group never lose rows when sequence names
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+// The ruler's numbers drifted off their columns along a long alignment: a residue is an
+// inline-block, whose width the browser rounds up to its layout unit (Courier New 13px: a
+// 7.8013px glyph makes a 7.8125px cell), while the ruler is one run of text advancing the
+// unrounded 7.8013px. By column 3700 the labels sat ~5 columns left of the column they name;
+// windowed views drifted the same way inside their window. Each label's last digit must sit
+// over its column, at 100% and another zoom, in Full, windowed Full and Block.
+async function rulerOffsets(page) {
+  return page.evaluate(() => {
+    const out = [];
+    const c = el('alignmentContainer'), cr = c.getBoundingClientRect();
+    for (const ruler of c.querySelectorAll('.scale-ruler-line .seq-data')) {
+      let line = ruler.parentElement.nextElementSibling;
+      while (line && !(line.matches('.seq-line[data-seq-index]') && +line.dataset.seqIndex >= 0)) line = line.nextElementSibling;
+      if (!line) continue;
+      const w = document.createTreeWalker(ruler, NodeFilter.SHOW_TEXT);
+      const text = []; let node;
+      while ((node = w.nextNode())) text.push(node);
+      // labels as one string over the text nodes (a node per character in Highlight-diffs mode)
+      const chars = text.flatMap(n => [...n.data].map((ch, i) => ({ n, i, ch })));
+      const str = chars.map(x => x.ch).join('');
+      const re = /\d+/g; let m;
+      while ((m = re.exec(str))) {
+        const last = chars[m.index + m[0].length - 1];
+        const rg = document.createRange(); rg.setStart(last.n, last.i); rg.setEnd(last.n, last.i + 1);
+        const q = rg.getBoundingClientRect();
+        if (q.right < cr.left + 150 || q.left > cr.right) continue;
+        const sp = line.querySelector(`.seq-data > span[data-pos="${+m[0] - 1}"]`);
+        if (sp) out.push([+m[0], Math.round((q.right - sp.getBoundingClientRect().right) * 10) / 10]);
+      }
+    }
+    return out;
+  });
+}
+check('Ruler: every label sits over its column along a long alignment (Full, windowed Full, Block, zoomed)', async (page) => {
+  const out = {};
+  const worst = a => a.reduce((m, [, d]) => Math.max(m, Math.abs(d)), 0);
+  await loadFasta(page, makeFasta(10, 5000));
+  await setMode(page, 'full');
+  for (const col of [0, 2500, 4300]) {
+    await page.evaluate((col) => { const c = el('alignmentContainer'); c.scrollLeft = col * _measureCharWidth(); }, col);
+    await page.waitForTimeout(300);
+    const r = await rulerOffsets(page); out['full@' + col] = [r.length, worst(r)];
+  }
+  await page.evaluate(() => setZoom(150)); await page.waitForTimeout(800);
+  await page.evaluate(() => { const c = el('alignmentContainer'); c.scrollLeft = c.scrollWidth; });
+  await page.waitForTimeout(300);
+  let r = await rulerOffsets(page); out.zoom150 = [r.length, worst(r)];
+  await page.evaluate(() => setZoom(100)); await page.waitForTimeout(500);
+  await setMode(page, 'block'); await page.waitForTimeout(300);
+  r = await rulerOffsets(page); out.block = [r.length, worst(r)];
+  await loadSyntheticFasta(page, 1500, 4000); await setMode(page, 'full'); await page.waitForTimeout(1000);
+  await page.evaluate(() => { const c = el('alignmentContainer'); c.scrollLeft = 3500 * _measureCharWidth(); });
+  await page.waitForTimeout(1000);
+  r = await rulerOffsets(page); out.windowed = [r.length, worst(r)];
+  const ok = Object.values(out).every(([n, d]) => n >= 3 && d <= 1);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Scrolled all the way right, the end of the alignment stayed out of reach: in windowed Full the
+// rows ended exactly at the container's edge, under the 14px vertical scrollbar, so the last two
+// columns sat beneath it and the length labels (outside the row's layout box) could not be scrolled
+// to at all; Canvas mode ended its content under the same bar. In small Full mode the horizontal
+// bar's range was a few px short of the alignment's (bar 2px wider than the alignment's viewport,
+// and rows painted after the bar measured made the alignment wider): the labels showed one digit.
+async function dragBarToEnd(page, sel) {
+  const b = await page.evaluate((sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }, sel);
+  const horizontal = sel.includes('horizontal');
+  const x = b[0] + 6, y = b[1] + 6;
+  await page.mouse.move(x, y); await page.mouse.down();
+  for (let k = 1; k <= 8; k++) await page.mouse.move(horizontal ? x + k * 500 : x, horizontal ? y : y + k * 500);
+  await page.mouse.up(); await page.waitForTimeout(600);
+}
+const END_STATE = () => {
+  const c = el('alignmentContainer'), cr = c.getBoundingClientRect();
+  const vb = document.querySelector('.vertical-scrollbar');
+  const vLeft = getComputedStyle(vb).display !== 'none' ? vb.getBoundingClientRect().left : cr.right - 1;
+  const lines = [...c.querySelectorAll('.seq-line[data-seq-index]')].filter(l => { const q = l.getBoundingClientRect(); return +l.dataset.seqIndex >= 0 && q.top >= cr.top && q.bottom <= cr.bottom; });
+  const right = sel => Math.max(...lines.map(l => { const s = l.querySelectorAll(sel); return s.length ? s[s.length - 1].getBoundingClientRect().right : -1e9; }));
+  return { rows: lines.length, lastCol: Math.round(right('.seq-data > span[data-pos]')), label: Math.round(right('.seq-length')), visibleRight: Math.round(Math.min(vLeft, cr.right - 1)) };
+};
+check('Scrolled to the end: the last column and the length labels clear the scrollbars (Full, windowed Full, Canvas)', async (page) => {
+  const out = {};
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await loadFasta(page, makeFasta(60, 800)); await setMode(page, 'full'); await page.waitForTimeout(800);
+  await dragBarToEnd(page, '.horizontal-scrollbar');
+  out.full = await page.evaluate(END_STATE);
+  await loadSyntheticFasta(page, 1500, 4000); await setMode(page, 'full'); await page.waitForTimeout(1200);
+  await dragBarToEnd(page, '.horizontal-scrollbar'); await dragBarToEnd(page, '.vertical-scrollbar');
+  out.windowed = await page.evaluate(END_STATE);
+  await setMode(page, 'canvas'); await page.waitForTimeout(800);
+  await dragBarToEnd(page, '.horizontal-scrollbar'); await dragBarToEnd(page, '.vertical-scrollbar');
+  out.canvas = await page.evaluate(() => {
+    const m = _canvasState.metrics, cv = el('alignmentCanvas').getBoundingClientRect();
+    const vb = document.querySelector('.vertical-scrollbar').getBoundingClientRect();
+    const len = state.seqs[0].seq.length;
+    return { lastCol: Math.round(cv.left + m.nameW + len * m.charW - _canvasState.offsetX), visibleRight: Math.round(vb.left) };
+  });
+  const fits = s => s.lastCol > 0 && s.lastCol <= s.visibleRight && (s.label === undefined || (s.label > 0 && s.label <= s.visibleRight));
+  return { pass: out.full.rows > 5 && out.windowed.rows > 5 && fits(out.full) && fits(out.windowed) && fits(out.canvas), detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
