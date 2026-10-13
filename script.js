@@ -558,20 +558,30 @@ function syncResidueOverlays() {
     });
 }
 
-// Grid residue width for the second font (spans have no fixed width: a Courier glyph sets it).
-// Taken from the font metrics once per font size: measuring a span would force a layout of the
-// whole alignment on every redraw, and resetting the variable restyles every residue.
+// --res-w: the pitch of the residue grid, i.e. the width of one residue span (spans have no fixed
+// width: a Courier glyph sets it). It is not the glyph's advance: a span is an inline-block, and
+// the browser rounds its width up to a layout unit (Courier New 13px: a 7.8013px glyph makes a
+// 7.8125px cell). Everything laid out in columns but not built of spans uses it: the ruler (one
+// run of text, which advanced 7.8013px per column and drifted ~5 columns left by column 3700),
+// the annotation track, rows waiting to be drawn, and the second font's residues.
+// Measured with a probe outside the alignment once per font size, before the alignment is laid
+// out at that size: measuring a residue would force a layout of the whole alignment, and
+// resetting the variable restyles every residue.
 let _resWidthFor = null;
-let _resWidthCtx = null;
-function _syncResidueWidthVar() {
+function _syncResidueWidthVar(fontSize) {
     if (!alignmentContainer) return;
-    const inline = alignmentContainer.style.fontSize;
+    const inline = fontSize || alignmentContainer.style.fontSize;
     if (_resWidthFor !== null && _resWidthFor === (inline || 'default')) return;
     _resWidthFor = inline || 'default';
     const size = inline || getComputedStyle(alignmentContainer).fontSize;
-    if (!_resWidthCtx) _resWidthCtx = document.createElement('canvas').getContext('2d');
-    _resWidthCtx.font = `${size} "Courier New", monospace`;
-    alignmentContainer.style.setProperty('--res-w', _resWidthCtx.measureText('M').width + 'px');
+    const probe = document.createElement('span');
+    probe.textContent = 'M';
+    probe.style.cssText = `position:absolute;left:-9999px;top:0;visibility:hidden;display:inline-block;white-space:pre;`
+        + `font:700 ${size}/1 "Courier New", monospace;padding:0;margin:0;border:0;letter-spacing:normal`;
+    document.body.appendChild(probe);
+    const w = probe.getBoundingClientRect().width;
+    probe.remove();
+    if (w > 0) alignmentContainer.style.setProperty('--res-w', w + 'px');
 }
 
 // ---- Telling the user where one mark covers another's colour ----
@@ -2998,9 +3008,23 @@ function _createWindowedScrollController(refreshFn, isActiveFn) {
 // horizontal scrolling entirely (the same problem the two vertical spacer
 // divs solve for rows, just expressed per-row via padding instead of two
 // extra sibling elements, since each row needs its own independent offset).
+// Width of the persistent scrollbars (.vertical-scrollbar, .horizontal-scrollbar in styles.css).
+// The vertical one lies over the alignment's right edge.
+const PERSISTENT_SCROLLBAR_PX = 14;
+
+// A column-windowed row is exactly its columns wide, and its layout is contained, so nothing in it
+// widens the alignment. Scrolled all the way right, the last column then ended at the container's
+// edge, under the vertical scrollbar, and the length label after it could not be reached at all.
+// The row keeps room for the label (.seq-length: 8px margin, 2x4px padding, 2px border, digits at
+// 0.85em) and the scrollbar.
+function _columnWindowTailPx(charWidthPx) {
+    const digits = String(state.alignmentIndex?.maxLen || state.seqs?.[0]?.seq.length || 0).length;
+    return Math.ceil(18 + digits * charWidthPx + PERSISTENT_SCROLLBAR_PX + 8);
+}
+
 function _applyColumnWindowStyle(dataEl, len, colStart, charWidthPx) {
     dataEl.style.boxSizing = 'border-box';
-    dataEl.style.width = (len * charWidthPx) + 'px';
+    dataEl.style.width = (len * charWidthPx + _columnWindowTailPx(charWidthPx)) + 'px';
     dataEl.style.paddingLeft = (colStart * charWidthPx) + 'px';
 }
 
@@ -5517,7 +5541,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     let _lastOffX = -1, _lastOffY = -1, _dirty = false;
     function _markDirty() { _dirty = true; }
 
-    const totalContentW = NAME_W + len * CHAR_W + 4;
+    // + the vertical scrollbar, which lies over the canvas's right edge: the last columns ended under it
+    const totalContentW = NAME_W + len * CHAR_W + 4 + PERSISTENT_SCROLLBAR_PX;
     const totalContentH = HEADER_H +nSeqs * rowPitch + 4;
     // Exposed so the persistent horizontal/vertical scrollbars (real DOM
     // elements, since Canvas mode's own content isn't natively scrollable)
@@ -6991,7 +7016,7 @@ function _annotFeatsInRange(colStart, colEnd) {
 // block (positions must agree with the rows' px padding), or null to use ch.
 function _fillAnnotTrackData(data, colStart, colEnd, cw) {
     const n = colEnd - colStart + 1;
-    const u = v => cw ? (v * cw) + 'px' : v + 'ch';
+    const u = v => cw ? (v * cw) + 'px' : `calc(${v} * var(--res-w, 1ch))`;
     const parts = [`<div class="annot-track-inner" style="width:${u(n)}">`];
     for (const d of _annotFeatsInRange(colStart, colEnd)) {
         const s = Math.max(d.cs, colStart), e = Math.min(d.ce, colEnd);
@@ -8728,6 +8753,7 @@ function renderAlignment(options = {}) {
     const _preserveScrollTop = ((document.getElementById('modeSingle')?.checked || document.getElementById('modeBlocks')?.checked) && _needsWindowed)
         ? alignmentContainer.scrollTop : null;
     alignmentContainer.innerHTML = '';
+    _syncResidueWidthVar();   // while the alignment is empty: measuring then costs no layout of it
     // Ensure Full/Block modes have correct scroll/layout behaviour
     // (any leftover Canvas/Compact inline styles are overwritten)
     alignmentContainer.style.position = 'static';
@@ -10684,8 +10710,8 @@ function setZoom(percent) {
     // at 316k spans).
     const bigDom = !isCanvas && (isWindowedDom || _approxResidueCount() > 60000);
     if (bigDom) alignmentContainer.style.transition = 'none';
+    _syncResidueWidthVar(size + 'px');   // before the font change: the probe needs no layout of the alignment
     alignmentContainer.style.fontSize = size + 'px';
-    _syncResidueWidthVar();
     el('zoomVal').textContent = percent + '%';
     el('zoomVal').classList.toggle('not-default', percent !== 100);
     // Keep the raw 0-100 log slider, its fill, and the 100% tick in lockstep
@@ -25358,14 +25384,19 @@ function makeBarInputGuard(bar) {
     // so the empty start page (and any alignment that fits) showed a scrollbar
     // whenever the bar was a pixel narrower than the alignment area. Hidden with
     // visibility, not display, so the layout does not jump when it appears.
+    // The bar's range (thumb - bar width) is made equal to the view's (content - viewport width).
+    // The thumb used to be the content's width, but the bar is 2px wider than the alignment's
+    // viewport (its border), so the bar stopped short of the alignment's end.
     function syncSizes() {
         syncing = true;
+        const canvas = isCanvasMode() ? document.getElementById('alignmentCanvas') : null;
+        const viewW = (canvas && parseFloat(canvas.style.width)) || alignment.clientWidth;
         const contentW = isCanvasMode()
-            ? (_canvasState.totalContentW || alignment.clientWidth)
-            : (alignment.scrollWidth || alignment.clientWidth);
-        const scrollable = contentW > alignment.clientWidth + 1;
+            ? (_canvasState.totalContentW || viewW)
+            : (alignment.scrollWidth || viewW);
+        const scrollable = contentW > viewW + 1;
         bar.style.visibility = scrollable ? '' : 'hidden';
-        thumb.style.width = (scrollable ? contentW : 0) + 'px';
+        thumb.style.width = (scrollable ? contentW - viewW + bar.clientWidth : 0) + 'px';
         bar.scrollLeft = isCanvasMode() ? (_canvasState.offsetX || 0) : alignment.scrollLeft;
         syncing = false;
         grip.update();
@@ -25425,6 +25456,10 @@ function makeBarInputGuard(bar) {
     // Only watch for actual content changes, NOT style changes (which would be triggered by zoom)
     const mo = new MutationObserver(scheduleSync);
     mo.observe(alignment, { childList: true, subtree: true, characterData: false, attributes: false });
+    // Rows off screen are laid out at a placeholder size (content-visibility, styles.css) without
+    // their length labels: drawing them widens the alignment with no DOM change, and the bar,
+    // measured before, could not reach the new end.
+    alignment.addEventListener('contentvisibilityautostatechange', scheduleSync, true);
 
     // Dragging anywhere on the bar moves it like the grip, with the pointer captured: the
     // drag keeps going however far the pointer strays from the 14px bar.
@@ -25508,14 +25543,18 @@ function makeBarInputGuard(bar) {
     const grip = _attachScrollbarGrip(bar, false);
 
     function syncVisibilityAndSize() {
+        // As for the horizontal bar, the bar's range (thumb - bar height) equals the view's: the bar
+        // is the alignment's full height, its viewport 1px less (the bottom border).
         if (isCanvasMode()) {
             bar.style.display = 'flex';
             const rect = alignment.getBoundingClientRect();
             bar.style.top = alignment.offsetTop + 'px';
             bar.style.height = rect.height + 'px';
             syncing = true;
-            const h = _canvasState.totalContentH || alignment.clientHeight;
-            thumb.style.height = Math.max(h, alignment.clientHeight + 1) + 'px';
+            const canvas = document.getElementById('alignmentCanvas');
+            const viewH = (canvas && parseFloat(canvas.style.height)) || alignment.clientHeight;
+            const h = _canvasState.totalContentH || viewH;
+            thumb.style.height = Math.max(0, h - viewH) + bar.clientHeight + 'px';
             bar.scrollTop = _canvasState.offsetY || 0;
             syncing = false;
         } else if (alignment.scrollHeight > alignment.clientHeight) {
@@ -25524,7 +25563,7 @@ function makeBarInputGuard(bar) {
             bar.style.top = alignment.offsetTop + 'px';
             bar.style.height = rect.height + 'px';
             syncing = true;
-            thumb.style.height = Math.max(alignment.scrollHeight, alignment.clientHeight + 1) + 'px';
+            thumb.style.height = (alignment.scrollHeight - alignment.clientHeight) + bar.clientHeight + 'px';
             bar.scrollTop = alignment.scrollTop;
             syncing = false;
         } else {
