@@ -6,6 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>ViewAlign</title>
+    <meta name="description" content="ViewAlign: view, edit and analyse multiple sequence alignments in the browser. GeneDoc-style editing, in-browser MAFFT, codon analysis, clustering, trees, SVG and RTF export. No installation.">
+    <meta property="og:title" content="ViewAlign: multiple sequence alignment viewer and editor">
+    <meta property="og:description" content="View, edit and analyse DNA and protein alignments in the browser: GeneDoc-style editing, in-browser MAFFT, codon analysis, clustering, trees. No installation.">
+    <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
     <link rel="stylesheet" href="styles.css?v=167">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
@@ -869,7 +875,7 @@
                                 <button id="copySelectedButton" title="Copy selected sequences (Ctrl+Shift+C)">Copy Sel</button>
                                 <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">Copy Align</button>
                                 <button id="deleteSelectedButton" title="Delete selected sequences (Ctrl+Del)">Delete Sel</button>
-                                <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
+                                <button id="openInNewTabButton" title="Open selected in new tab (Alt+T)">New Tab</button>
                             </div>
                         </div>
                         <div class="action-section action-section-order">
@@ -912,7 +918,7 @@
                         <div class="action-section action-section-settings">
                             <div class="action-section-label">Presets &amp; Help</div>
                             <div class="button-group">
-                                <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
+                                <button id="savePresetButton" title="Save current settings (Ctrl+Shift+S)">Save Preset</button>
                                 <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
                                 <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
                                 <button id="manualButton" title="Open comprehensive manual in new tab" onclick="window.open('manual.html','_blank')">Manual</button>
