@@ -230,7 +230,8 @@ html {
 
 /* Actions section: align dropdown to the right so it stays on-screen */
 #actions-section .control-group,
-.menu-section.menu-align-right .control-group {
+.menu-section.menu-align-right .control-group,
+.menu-section.menu-flip-right .control-group {
     left: auto;
     right: 0;
     border-radius: 4px 0 4px 4px;

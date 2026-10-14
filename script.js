@@ -2532,10 +2532,21 @@ function openMenuSection(section) {
         return;
     }
     section.classList.add('menu-open');
+    _keepMenuOnScreen(section);
     if (section && section.id === 'groups-menu-section' && _geDocked) {
         const modal = el('clusteringModal');
         if (modal) modal.style.display = 'flex';
     }
+}
+
+// A drop-down that would run past the right edge opens leftwards from its header's
+// right edge instead (at 1024px the Alignment menu was cut off on the right)
+function _keepMenuOnScreen(section) {
+    const group = section && section.querySelector(':scope > .control-group');
+    if (!group || group.classList.contains('detached')) return;
+    section.classList.remove('menu-flip-right');
+    const r = group.getBoundingClientRect();
+    if (r.width && r.right > window.innerWidth - 2) section.classList.add('menu-flip-right');
 }
 
 function makeControlGroupDetachable(section, group, handle, dockBtn) {
