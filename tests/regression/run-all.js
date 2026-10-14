@@ -3135,7 +3135,9 @@ async function auditClickMode(page, mode) {
   if (dlg) await page.click('#alignLoadProceed');
   await page.waitForTimeout(700);
   await page.click('.section-header[data-section="display"]');   // close the menu again
-  await page.waitForTimeout(200);
+  // and move off it: menus also open on hover, and a wheel over the open menu scrolls nothing
+  await page.mouse.move(5, Math.round((await page.evaluate(() => innerHeight)) * 0.66));
+  await page.waitForTimeout(400);
 }
 async function auditOpenSection(page, name) {
   const open = await page.evaluate((n) => document.querySelector(`.section-header[data-section="${n}"]`).closest('.menu-section').classList.contains('menu-open'), name);
@@ -3195,6 +3197,77 @@ check('Audit: windowed Full keeps its columns through a redraw (colour scheme, H
   // The consensus row above the rows went away: rows move up by one, the columns stay
   const ok = out.before[1] > 1000 && auditNear(out.scheme, out.before) && auditNear(out.diffs, out.before)
     && Math.abs(out.consensusOff[1] - out.before[1]) <= 2;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Switching view mode lost or shifted the place in the alignment: the anchor was measured on the
+// consensus row (14px, the sequence rows 13px), so Full -> Canvas landed ~7% of the rows off (row
+// 613 -> 571); a Block view was converted as if it were one tall block (it landed at the bottom,
+// column 1); small alignments scroll the page, whose position was ignored (back to row 1); Canvas
+// -> a small Full view used 8px/16px guesses for the 7.8px/13px cells; and Full <-> Block always
+// landed at column 1.
+check('Audit: mode switches keep the place (Full/Block/Canvas, small and windowed)', async (page) => {
+  const out = {};
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'full');
+  await auditWheel(page, 600, 400, 20);
+  out.full = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.canvas = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.full2 = await auditTopLeft(page);
+  await auditClickMode(page, 'block'); out.block = await auditTopLeft(page);
+  out.bw = await page.evaluate(() => _unifiedWindowRenderParams.blockWidth);
+  await auditClickMode(page, 'canvas'); out.canvas2 = await auditTopLeft(page);
+  await auditClickMode(page, 'block'); out.block2 = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.full3 = await auditTopLeft(page);
+  // small alignments: the page scrolls (Block) or the container scrolls sideways (Full)
+  await loadSyntheticFasta(page, 300, 1000);
+  await auditClickMode(page, 'block');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  // (stay clear of the last ~160 columns: there Canvas and Full cannot scroll a column to the left edge)
+  await auditWheel(page, 0, 900, 6);
+  out.smallBlock = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.smallCanvas = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.smallFull = await auditTopLeft(page);
+  await auditWheel(page, 700, 0, 4);
+  out.smallFullR = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.smallCanvas2 = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.smallFull2 = await auditTopLeft(page);
+  const inBlock = (blockView, col, bw) => !!blockView && blockView[1] % bw === 0 && blockView[1] <= col && col < blockView[1] + bw;
+  const ok = out.full[0] > 300 && out.full[1] > 1000
+    && auditNear(out.canvas, out.full) && auditNear(out.full2, out.full)
+    && inBlock(out.block, out.full[1], out.bw) && Math.abs(out.block[0] - out.full[0]) <= 2
+    && auditNear(out.canvas2, out.block) && auditNear(out.block2, out.block) && auditNear(out.full3, out.block)
+    && out.smallBlock[0] > 100 && auditNear(out.smallCanvas, out.smallBlock) && auditNear(out.smallFull, out.smallBlock)
+    && out.smallFullR[1] > 300 && auditNear(out.smallCanvas2, out.smallFullR) && auditNear(out.smallFull2, out.smallFullR);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Zooming kept the scroll offsets in pixels while the cells grew or shrank, so the view moved to
+// other columns and rows (small Full: column 262 -> 197; windowed Block: column 1951 -> 1462;
+// Canvas: 2000 -> 1777). The first residue at the top left now stays put.
+check('Audit: zooming keeps the top-left residue (small Full, windowed Full and Block, Canvas)', async (page) => {
+  const out = {};
+  const zoomPair = async (key) => {
+    const before = await auditTopLeft(page);
+    await page.mouse.click(5, (await page.evaluate(() => innerHeight)) - 3);   // focus the page, not a control
+    await page.keyboard.press('Control+Equal'); await page.waitForTimeout(1200);
+    const after = await auditTopLeft(page);
+    await page.keyboard.press('Control+Minus'); await page.keyboard.press('Control+Minus'); await page.waitForTimeout(1200);
+    const after2 = await auditTopLeft(page);
+    await page.keyboard.press('Control+Equal'); await page.waitForTimeout(800);
+    out[key] = { before, after, after2 };
+    return auditNear(after, before) && auditNear(after2, before) && before[1] > 50;
+  };
+  await loadSyntheticFasta(page, 20, 800);
+  await auditClickMode(page, 'full'); await auditWheel(page, 600, 0, 6);
+  let ok = await zoomPair('smallFull');
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'full'); await auditWheel(page, 600, 400, 20);
+  ok = await zoomPair('windowedFull') && ok;
+  await auditClickMode(page, 'block'); await auditWheel(page, 0, 3000, 30);
+  ok = await zoomPair('windowedBlock') && ok;
+  await auditClickMode(page, 'canvas'); await auditWheel(page, 600, 400, 20);
+  ok = await zoomPair('canvas') && ok;
   return { pass: ok, detail: JSON.stringify(out) };
 });
 

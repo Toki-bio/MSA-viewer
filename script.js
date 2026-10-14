@@ -5512,7 +5512,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     alignmentContainer.innerHTML = '';
     alignmentContainer.style.overflow = 'hidden';
     alignmentContainer.style.position = 'relative';
-    // Canvas mode needs explicit height since absolute canvas has no flow height
+    // Canvas mode needs explicit height since absolute canvas has no flow height.
+    // Coming from a small Full/Block view the page may be scrolled (the container's top above the
+    // window): the height would then be measured from that negative top and overrun the window.
+    if (window.scrollY) window.scrollTo(0, 0);
     const top = alignmentContainer.getBoundingClientRect().top;
     alignmentContainer.style.height = (window.innerHeight - top - 28) + 'px';
 
@@ -6226,6 +6229,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // (matches DOM mode, which returns early for scale-ruler-line)
     });
 
+    // A zoom captured the top-left residue before the cell size changed: put it back there
+    if (_canvasState.pendingAnchor) {
+        const a = _canvasState.pendingAnchor;
+        _canvasState.pendingAnchor = null;
+        _applyViewAnchor(a);
+    }
     scheduleDraw();
 }
 
@@ -8831,6 +8840,8 @@ function renderAlignment(options = {}) {
         // would make scrollHeight always equal clientHeight and defeat
         // windowing entirely. Same formula Canvas mode already uses for its
         // own fixed-height viewport.
+        // (from a page-scrolled small view: measure from the container's unscrolled top)
+        if (window.scrollY) window.scrollTo(0, 0);
         const top = alignmentContainer.getBoundingClientRect().top;
         // Clamp to a minimum so the windowed renderer always has enough
         // viewport to compute a non-empty row range. A negative or zero
@@ -10775,7 +10786,13 @@ function setZoom(percent) {
     // transition too: every animation step re-laid out every residue span (zoom took 5-13 s
     // at 316k spans).
     const bigDom = !isCanvas && (isWindowedDom || _approxResidueCount() > 60000);
-    if (bigDom) alignmentContainer.style.transition = 'none';
+    // The residue at the view's top left before the cells change size; scrolled back to the top
+    // left afterwards (scroll offsets in pixels alone put other columns and rows there). A Canvas
+    // redraw is debounced, so repeated zoom steps keep the first, still unapplied, anchor.
+    const zoomAnchor = !state.seqs?.length || !!document.getElementById('modeReads')?.checked ? null
+        : isCanvas ? (_canvasState.pendingAnchor || _captureViewAnchor(true)) : _captureViewAnchor(false);
+    // DOM views: no font-size transition while anchoring, so the anchor is applied at the final size
+    if (bigDom || (zoomAnchor && !isCanvas)) alignmentContainer.style.transition = 'none';
     _syncResidueWidthVar(size + 'px');   // before the font change: the probe needs no layout of the alignment
     alignmentContainer.style.fontSize = size + 'px';
     el('zoomVal').textContent = percent + '%';
@@ -10797,12 +10814,16 @@ function setZoom(percent) {
     // need a rebuild: their row/column spacers and viewport windows are based
     // on cached pixel measurements that become stale when the font size changes.
     if (isCanvas) {
+        if (zoomAnchor) _canvasState.pendingAnchor = zoomAnchor;
         debounceRender();
     } else if (isWindowedDom) {
         _invalidateUnifiedWindowMeasurements();
         renderAlignment();
+        if (zoomAnchor) _applyViewAnchor(zoomAnchor);
+    } else if (zoomAnchor) {
+        _applyViewAnchor(zoomAnchor);
     }
-    if (bigDom) {
+    if (bigDom || (zoomAnchor && !isCanvas)) {
         // Keep transitions disabled through the next paint so restoring the
         // stylesheet rule cannot animate away from the geometry just measured.
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -11570,79 +11591,142 @@ function syncQuickModeSwitch() {
 // below. Matches the radio marked `checked` by default in the HTML.
 let _lastModeRadioId = 'modeBlocks';
 
-// Converts the alignment's current DOM scroll position (native scrollTop/
-// scrollLeft on alignmentContainer) into a mode-independent "row index /
-// column index at the top-left of the viewport" anchor. Needed because
-// Canvas mode uses an entirely different scroll mechanism (_canvasState.
-// offsetY/offsetX, a synthetic pan offset with its own pixel pitch, not
-// alignmentContainer's native scrollTop/scrollLeft) - switching modes
-// without converting between the two silently reset the view to the top of
-// the alignment (alignmentContainer.innerHTML='' during the mode's
-// re-render zeroes native scrollTop, and Canvas mode's own offset starts
-// wherever it was last left, which is 0 the first time). Measures a live
-// row/span rather than trusting the windowed renderer's cached
-// _unifiedRowHeightPx/_unifiedCharWidthPx, which are null for a small
-// (non-windowed) alignment and would silently produce a 0/0 anchor.
-function _captureDomScrollAnchor() {
-    const sampleRow = alignmentContainer.querySelector('.seq-line[data-seq-index]');
-    const sampleSpan = sampleRow?.querySelector('.seq-data span[data-pos]');
-    const rowPx = (sampleRow ? sampleRow.getBoundingClientRect().height : 0) || _unifiedRowHeightPx || 16;
-    const colPx = (sampleSpan ? sampleSpan.getBoundingClientRect().width : 0) || _unifiedCharWidthPx || 8;
-    return {
-        rowIndex: alignmentContainer.scrollTop / rowPx,
-        colIndex: alignmentContainer.scrollLeft / colPx
-    };
+// ---- View anchor: where the view is, independent of mode and zoom ----
+// The first sequence row whose top is in view and the first residue column right of the name
+// column. Mode switches and zoom capture it from the live view and scroll the new view so that
+// row and column are at its top left again (row 0 / column 0: scrolled all the way up / left, so
+// the ruler stays in view). Both ends are measured on the rendered rows, not converted from pixel
+// offsets, which went wrong four ways: the sampled row was the consensus line (14px; sequence rows
+// 13px), so Full -> Canvas landed ~7% of the rows off; a Block view was converted as if it were
+// one tall block (it landed at the bottom, column 1); small alignments scroll the page, which was
+// ignored (back to row 1); Canvas -> a small view used 8px/16px guesses for the cells. Full <->
+// Block always went back to column 1, and zooming kept pixel offsets, so the view moved.
+
+// Screen y where alignment content starts to be visible: the container's top, or the bottom of the
+// fixed toolbar when the page has scrolled the container's top under it
+function _alignmentViewTop() {
+    const c = alignmentContainer;
+    const ctrl = el('controls');
+    return Math.max(c.getBoundingClientRect().top + c.clientTop, ctrl ? ctrl.getBoundingClientRect().bottom : 0, 0);
+}
+// The windowed views (and Canvas) scroll the container; small alignments scroll the page
+function _alignmentScrollsItself() {
+    const c = alignmentContainer;
+    return c.scrollHeight > c.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(c).overflowY);
+}
+// Screen x where a row's residues start to be visible: right of its sticky name cell
+function _domDataLeft(row) {
+    const c = alignmentContainer;
+    const name = row?.querySelector(':scope > .seq-name');
+    if (name && el('stickyNames')?.checked !== false) return name.getBoundingClientRect().right;
+    return c.getBoundingClientRect().left + c.clientLeft;
+}
+// First column of a rendered block (a windowed ruler holds only its column window)
+function _blockStartColumn(block) {
+    const p = _unifiedWindowRenderParams;
+    if (state._needsWindowedDom && p && block?.dataset.blockIndex != null) return +block.dataset.blockIndex * p.blockWidth;
+    const sc = block?.querySelector(':scope > .scale-ruler-line > .seq-data[data-scale]');
+    return sc ? +sc.dataset.scale.split(':')[1] : 0;
+}
+function _blockElementForColumn(col) {
+    const c = alignmentContainer;
+    const p = _unifiedWindowRenderParams;
+    if (state._needsWindowedDom && p) return c.querySelector(`:scope > .block-block[data-block-index="${Math.floor(col / p.blockWidth)}"]`);
+    let first = null;
+    for (const b of c.querySelectorAll(':scope > .block-block')) {
+        first = first || b;
+        const sc = b.querySelector(':scope > .scale-ruler-line > .seq-data[data-scale]');
+        if (!sc) continue;
+        const [n, s] = sc.dataset.scale.split(':').map(Number);
+        if (col >= s && col < s + n) return b;
+    }
+    return first;
 }
 
-// Applies a previously-captured anchor to Canvas mode's own pan offset,
-// after renderAlignment() has already built Canvas mode's view (so
-// _canvasState.rowPitch/metrics reflect this alignment, not a stale value
-// from whatever was last shown in Canvas mode). Forces one extra redraw at
-// the corrected offset - cheap (a canvas repaint, not a DOM rebuild), so
-// this reads as landing directly on the right spot rather than a visible
-// jump-then-correct.
-function _applyDomScrollAnchorToCanvas(anchor) {
-    if (!anchor) return;
-    const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
-    const charW = _canvasState.metrics?.charW || 8;
-    _canvasState.offsetY = Math.max(0, anchor.rowIndex * rowPitch);
-    _canvasState.offsetX = Math.max(0, anchor.colIndex * charW);
-    _canvasState.scheduleDraw?.();
-    _canvasState.onOffsetChange?.();
+// fromCanvas: read Canvas's pan offset (default: the current mode). Returns { row, col } or null.
+function _captureViewAnchor(fromCanvas = isCanvasMode()) {
+    if (fromCanvas) {
+        const m = _canvasState.metrics;
+        if (!m || !_canvasState.canvas) return null;
+        const pitch = _canvasState.rowPitch || m.charH;
+        const oy = _canvasState.offsetY || 0, ox = _canvasState.offsetX || 0;
+        return {
+            row: Math.max(0, Math.ceil((oy - (m.headerH || m.charH)) / pitch - 0.01)),
+            col: Math.max(0, Math.ceil(ox / m.charW - 0.01))
+        };
+    }
+    const c = alignmentContainer;
+    const rows = c.querySelectorAll('.seq-line[data-seq-index]');
+    if (!rows.length) return null;
+    const viewTop = _alignmentViewTop();
+    // rows are in document order, top to bottom: the first one whose top is in view
+    let lo = 0, hi = rows.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (rows[mid].getBoundingClientRect().top >= viewTop - 0.5) hi = mid; else lo = mid + 1;
+    }
+    let i = lo;
+    while (i < rows.length - 1 && +rows[i].dataset.seqIndex < 0) i++;   // not a consensus line
+    const row = rows[i];
+    if (+row.dataset.seqIndex < 0) return null;
+    const dataLeft = _domDataLeft(row);
+    let col = null;
+    for (const sp of row.querySelectorAll(':scope > .seq-data > span[data-pos]')) {
+        const r = sp.getBoundingClientRect();
+        if (r.width > 0 && r.left >= dataLeft - 0.5) { col = +sp.dataset.pos; break; }
+    }
+    if (col == null) col = _blockStartColumn(row.closest('.block-block'));
+    return { row: +row.dataset.seqIndex, col };
 }
 
-// Reverse direction: converts Canvas mode's current pan offset into the
-// same row/column-index anchor shape, read BEFORE Canvas's own state is
-// touched by the switch (renderAlignment() doesn't reset _canvasState
-// itself, but reads it as if it still reflects "the view we're leaving",
-// so this must run before anything else changes mode).
-function _captureCanvasScrollAnchor() {
-    const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
-    const charW = _canvasState.metrics?.charW || 8;
-    return {
-        rowIndex: (_canvasState.offsetY || 0) / rowPitch,
-        colIndex: (_canvasState.offsetX || 0) / charW
-    };
-}
-
-// Applies a previously-captured anchor to a DOM mode (Full/Block/classic)
-// after renderAlignment() has already built that mode's view. Uses the
-// cached _unifiedRowHeightPx/_unifiedCharWidthPx (populated by the last
-// windowed DOM render, if any) rather than measuring a live row here,
-// because for a windowed alignment the newly-rendered DOM only covers
-// whatever range scrollTop=0 produced - a live measurement would be
-// correct but arrives too late to matter. For the windowed case, after
-// setting scrollTop/scrollLeft this also explicitly re-runs the scroll
-// refresh so the visible block/row range matches the new position
-// immediately, instead of showing stale content until the next real
-// scroll event.
-function _applyCanvasScrollAnchorToDom(anchor) {
-    if (!anchor) return;
-    const rowPx = _unifiedRowHeightPx || 16;
-    const colPx = _unifiedCharWidthPx || 8;
-    alignmentContainer.scrollTop = Math.max(0, anchor.rowIndex * rowPx);
-    alignmentContainer.scrollLeft = Math.max(0, anchor.colIndex * colPx);
-    if (state._needsWindowedDom) _refreshUnifiedWindowOnScroll(alignmentContainer);
+function _applyViewAnchor(a) {
+    if (!a) return;
+    if (isCanvasMode()) {
+        const m = _canvasState.metrics;
+        if (!m) return;
+        const pitch = _canvasState.rowPitch || m.charH;
+        _canvasState.offsetY = a.row > 0 ? (m.headerH || m.charH) + a.row * pitch : 0;
+        _canvasState.offsetX = a.col > 0 ? a.col * m.charW : 0;
+        _canvasState.scheduleDraw?.();
+        // Resize the persistent scrollbars to the new content as they take the offset: a bar
+        // still sized for the old cells clamped it and wrote the clamped value back (zooming in
+        // near the end of a Canvas moved it ~250 columns left)
+        window._syncHorizontalScrollbar?.();
+        window._syncVerticalScrollbar?.();
+        _canvasState.onOffsetChange?.();
+        return;
+    }
+    const c = alignmentContainer;
+    const blocks = !!el('modeBlocks')?.checked;
+    const p = _unifiedWindowRenderParams;
+    const windowed = !!state._needsWindowedDom && !!p;
+    const cellW = () => parseFloat(c.style.getPropertyValue('--res-w')) || _unifiedCharWidthPx || 7.8;
+    const vScrollBy = dy => { if (_alignmentScrollsItself()) c.scrollTop += dy; else window.scrollBy(0, dy); };
+    if (windowed) {
+        // The target rows may not be built yet: go near them from the windowed geometry first
+        const nb = Math.max(1, Math.ceil(p.len / p.blockWidth));
+        const G = _unifiedGeometry(nb, p.blockWidth, p.len);
+        const b = Math.min(nb - 1, Math.floor(a.col / p.blockWidth));
+        c.scrollTop = G.top(b) + (a.row > 0 ? (_unifiedHeaderHeightPx || 0) + a.row * G.rowH(b) : 0);
+        if (!blocks) c.scrollLeft = a.col * cellW();
+        _refreshUnifiedWindowOnScroll(c);
+    }
+    // Then exactly: the target row's top to the view's top, the target residue to the names' edge
+    for (let pass = 0; pass < (windowed ? 2 : 1); pass++) {
+        const block = _blockElementForColumn(a.col);
+        if (!block) return;
+        const rowEl = block.querySelector(`.seq-line[data-seq-index="${a.row}"]`);
+        const target = a.row > 0 ? rowEl : block;
+        if (target) vScrollBy(target.getBoundingClientRect().top - _alignmentViewTop());
+        if (!blocks || c.scrollWidth > c.clientWidth + 1) {
+            const line = rowEl || block.querySelector('.seq-line[data-seq-index]:not([data-seq-index="-1"])');
+            const sp = line?.querySelector(`:scope > .seq-data > span[data-pos="${a.col}"]`);
+            if (a.col <= _blockStartColumn(block)) c.scrollLeft = 0;
+            else if (sp && sp.getBoundingClientRect().width > 0) c.scrollLeft += sp.getBoundingClientRect().left - _domDataLeft(line);
+            else if (!blocks) c.scrollLeft = a.col * cellW();
+        }
+        if (windowed) _refreshUnifiedWindowOnScroll(c);
+    }
 }
 
 async function onModeChange() {
@@ -11680,15 +11764,13 @@ async function onModeChange() {
     // not dispatch 'change'), so this is an unambiguous signal to stop
     // auto-switching back to Canvas for the rest of this file's session.
     _userDismissedAutoCanvas = true;
-    const enteringCanvasFromDom = document.getElementById('modeCanvas')?.checked && _lastModeRadioId !== 'modeCanvas';
-    const leavingCanvasToDom = !document.getElementById('modeCanvas')?.checked && _lastModeRadioId === 'modeCanvas';
-    // Capture the current scroll position BEFORE renderAlignment() wipes
-    // alignmentContainer's DOM (which resets native scrollTop to 0) / before
-    // anything else touches _canvasState - see _captureDomScrollAnchor's and
-    // _captureCanvasScrollAnchor's comments. Handles both directions between
-    // Canvas mode and a DOM mode (Full/Block/classic).
-    const domScrollAnchor = enteringCanvasFromDom ? _captureDomScrollAnchor() : null;
-    const canvasScrollAnchor = leavingCanvasToDom ? _captureCanvasScrollAnchor() : null;
+    // Capture where the view is BEFORE renderAlignment() wipes alignmentContainer's DOM (which
+    // resets native scrollTop to 0) / before anything else touches _canvasState, from the mode
+    // being left (the radio already shows the new one); applied to the new view below.
+    const VIEW_MODES = ['modeSingle', 'modeBlocks', 'modeCanvas'];
+    const enteringView = VIEW_MODES.includes(document.querySelector('input[name="mode"]:checked')?.id);
+    const viewAnchor = enteringView && VIEW_MODES.includes(_lastModeRadioId) && state.seqs?.length
+        ? _captureViewAnchor(_lastModeRadioId === 'modeCanvas') : null;
     if (document.getElementById('modeCanvas')?.checked) {
         // Entering Canvas mode: these caches are keyed only by length/shadeMode,
         // so any same-length edit made while away from Canvas (residue edits,
@@ -11711,8 +11793,7 @@ async function onModeChange() {
     // panel open over a display its tools cannot touch. Renders below, so no re-render here.
     exitEditModeForUnsupportedView({ rerender: false });
     renderAlignment();
-    if (domScrollAnchor) _applyDomScrollAnchorToCanvas(domScrollAnchor);
-    if (canvasScrollAnchor) _applyCanvasScrollAnchorToDom(canvasScrollAnchor);
+    if (viewAnchor) _applyViewAnchor(viewAnchor);
     setupHoverMenuReveal();
     _lastModeRadioId = document.querySelector('input[name="mode"]:checked')?.id || _lastModeRadioId;
 }
