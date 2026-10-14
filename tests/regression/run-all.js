@@ -4310,6 +4310,29 @@ check('Round 2: windowed Full scrolls sideways and down without long freezes', a
   return { pass: ok, detail: JSON.stringify({ h, v, dom }) };
 });
 
+// Opening a file while a windowed view (or Canvas) was scrolled kept the old file's scroll offsets:
+// the new alignment opened at row ~600, column ~1500 of nothing in particular (Full mode rebuilt
+// its window at the preserved scrollTop/scrollLeft). Small alignments started at the top only
+// because emptying the container reset them. With windowing from 100,000 residues this hit most
+// real files. A new file now opens at its first row and column, in every view.
+check('Round 2: a new file opens at its start after a scrolled windowed view or Canvas', async (page) => {
+  const out = {};
+  for (const mode of ['full', 'block', 'canvas']) {
+    await loadSyntheticFasta(page, 1500, 4000);
+    await auditClickMode(page, mode);
+    await auditWheel(page, 600, 400, 12);
+    out[mode + 'Before'] = await auditTopLeft(page);
+    await loadSyntheticFasta(page, 1200, 3000);
+    await page.waitForTimeout(800);
+    // (Canvas at its start has its ruler at the top left, where the hit test finds no residue)
+    out[mode] = mode === 'canvas' ? await page.evaluate(() => [_canvasState.offsetY, _canvasState.offsetX]) : await auditTopLeft(page);
+  }
+  const atStart = r => !!r && r[0] === 0 && r[1] === 0;
+  const moved = r => !!r && (r[0] > 50 || r[1] > 50);
+  const ok = ['full', 'block', 'canvas'].every(m => moved(out[m + 'Before']) && atStart(out[m]));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
