@@ -22989,6 +22989,11 @@ function attachUIListeners() {
     });
     document.addEventListener('copy', (e) => {
         if (!state.selectedNucs.size) return;
+        // Text copied from a text field or any other selected text is the user's: this used
+        // to replace it with the residue selection (Ctrl+C in the search box gave "CGTA")
+        if (_isTextEntry(document.activeElement)) return;
+        const nativeSel = window.getSelection();
+        if (nativeSel && !nativeSel.isCollapsed && String(nativeSel).length > 0) return;
         const text = buildNucCopyText();
         e.preventDefault();
         e.clipboardData.setData('text/plain', text);

@@ -3214,6 +3214,24 @@ check('Audit: undo snapshots of a large alignment are small and fast, restore ex
   return { pass, detail: JSON.stringify({ ...r, ms, growMB: Math.round(growMB), restored, capped }) };
 });
 
+check('Audit: copying text in a text field copies that text, not the residue selection', async (page) => {
+  // Used to: a document 'copy' listener replaced every copy with the selected residues while
+  // a residue selection existed, so Ctrl+C in the search box or the Input box copied "CGTA".
+  await loadFasta(page, '>a\nACGTACGTAC\n>b\nTTTTGGGGCC\n');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  const a = await auditCell(page, 0, 1), b = await auditCell(page, 0, 4);
+  await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up();
+  await page.click('.section-header[data-section="search"]');   // opens the Search menu
+  await page.click('#searchInput'); await page.keyboard.type('GAATTC');
+  await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c'); await page.waitForTimeout(200);
+  const fromInput = await page.evaluate(() => navigator.clipboard.readText());
+  await page.keyboard.press('Escape');   // closes the menu
+  await auditBlur(page);
+  await page.keyboard.press('Control+c'); await page.waitForTimeout(200);
+  const fromAlignment = await page.evaluate(() => navigator.clipboard.readText());
+  return { pass: fromInput === 'GAATTC' && fromAlignment === 'CGTA', detail: JSON.stringify({ fromInput, fromAlignment }) };
+});
+
 check('Audit: Ctrl+Shift+Z redoes (it used to undo again)', async (page) => {
   // Used to: case 'z' ignored Shift, so Ctrl+Shift+Z / Cmd+Shift+Z (the usual redo, the
   // only one on macOS) undid one more step instead.
