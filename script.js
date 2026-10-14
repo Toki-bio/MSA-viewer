@@ -7276,9 +7276,13 @@ function initAnnotationPanel() {
     const urlBtn = el('annotUrlButton'), urlIn = el('annotUrlInput');
     if (urlBtn && urlIn && !urlBtn._annotBound) {
         urlBtn._annotBound = true;
-        urlBtn.addEventListener('click', () => loadAnnotationFromUrl(urlIn.value));
+        const loadTyped = () => {
+            if (!urlIn.value.trim()) { showMessage('Type the URL of a BED file first.', 2500); return; }
+            loadAnnotationFromUrl(urlIn.value);
+        };
+        urlBtn.addEventListener('click', loadTyped);
         urlIn.addEventListener('keydown', e => {
-            if (e.key === 'Enter') { e.preventDefault(); loadAnnotationFromUrl(urlIn.value); }
+            if (e.key === 'Enter') { e.preventDefault(); loadTyped(); }
         });
     }
     const clr = el('annotClearButton');
@@ -12995,10 +12999,10 @@ function selectAllSequences() {
     updateRowSelections();
 }
 function moveSelectedUp() {
-    if (state.selectedRows.size === 0) return;
-    pushUndo('order');
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices[0] === 0) return;
+    if (indices[0] === 0) { showMessage('Already at the top.', 2000); return; }
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13015,10 +13019,10 @@ function moveSelectedUp() {
     showMessage("Sequences moved up!", 2000);
 }
 function moveSelectedDown() {
-    if (state.selectedRows.size === 0) return;
-    pushUndo('order');
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices[indices.length - 1] === state.seqs.length - 1) return;
+    if (indices[indices.length - 1] === state.seqs.length - 1) { showMessage('Already at the bottom.', 2000); return; }
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13035,7 +13039,7 @@ function moveSelectedDown() {
     showMessage("Sequences moved down!", 2000);
 }
 function moveSelectedToTop() {
-    if (state.selectedRows.size === 0) return;
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const newSeqs = [...state.seqs];
@@ -13053,7 +13057,7 @@ function moveSelectedToTop() {
     showMessage("Sequences moved to top!", 2000);
 }
 function moveSelectedToBottom() {
-    if (state.selectedRows.size === 0) return;
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const newSeqs = [...state.seqs];
@@ -13131,7 +13135,7 @@ function replaceSelectedWithConsensus() {
     showMessage(`Replaced ${indices.length} sequences with consensus: ${consName}`, 3000);
 }
 function duplicateSelected() {
-    if (state.selectedRows.size === 0) return;
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     pushUndo('duplicate');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const copies = indices.map(i => ({...state.seqs[i], header: state.seqs[i].header + '_copy'}));
@@ -14612,7 +14616,10 @@ function searchMotif(options = {}) {
     // A regex keeps its case: upper-casing turns \w, \s, \d into their negations.
     // Matching is case-insensitive either way (flag i, and sequences are upper-cased).
     const motif = useRegex ? raw.trim() : raw.trim().replace(/\s+/g, '').toUpperCase();
-    if (!motif) return;
+    if (!motif) {
+        if (!options.suppressMessage) showMessage('Type a motif in the Search box first.', 2500);
+        return;
+    }
     if (useRegex) {
         try { new RegExp(motif, 'gi'); } catch (e) {
             showMessage('Invalid regex: ' + e.message, 4000);
@@ -16619,7 +16626,7 @@ function loadClusteringPreset(silent = false) {
     // Apply min occurrences (with fallback to default for older presets)
     el('minOccurrencesInput').value = preset.clustering.minOccurrences ?? 3;
 
-    const shouldSilent = silent || presetName === 'optimal';
+    const shouldSilent = silent;   // the start-up loads pass true; a click on Load always answers
     if (!shouldSilent) {
         showMessage(`Preset "${presetName}" loaded!`, 2000);
     }
@@ -21921,7 +21928,11 @@ function initializeAppUI() {
         'loadButton': () => parseAndRender(false),
         'reverseComplementButton': reverseComplementSelected,
         'reverseComplementAllButton': reverseComplementAll,
-        'copySelectedButton': copySelected,
+        // Ctrl+C stays silent with nothing selected (it is pressed everywhere); the button says so
+        'copySelectedButton': () => {
+            if (!state.selectedRows.size && !state.selectedNucs.size) { showMessage('No sequences selected.', 2000); return; }
+            copySelected();
+        },
         'copyAlignmentButton': copyAlignment,
         'deleteSelectedButton': deleteSelected,
         'undoButton': undoDelete,
@@ -21968,7 +21979,8 @@ function initializeAppUI() {
         'trimDropEmptyButton': removeGapColumns,
         'clearSoftTrimButton': clearSoftTrimming,
         'clusteringSavePresetButton': saveClusteringPreset,
-        'clusteringLoadPresetButton': loadClusteringPreset,
+        // not passed directly: the click event arrived as `silent`, so Load never said it had loaded
+        'clusteringLoadPresetButton': () => loadClusteringPreset(),
         'clusteringOptimalPresetButton': createOptimalPreset,
         'clusteringProbeButton': analyzeClusterability,
         'clusterGuideTreeButton': clusterByGuideTree,
@@ -22118,7 +22130,7 @@ function initializeAppUI() {
         reverseQueryButton.addEventListener('click', () => {
             const raw = searchInputEl.value || '';
             const motif = raw.trim().replace(/\s+/g, '').toUpperCase();
-            if (!motif) return;
+            if (!motif) { showMessage('Type a motif in the Search box first.', 2500); return; }
             searchInputEl.value = reverseComplement(motif);
         });
     }
