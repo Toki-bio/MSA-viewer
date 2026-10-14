@@ -12764,6 +12764,15 @@ function applyRowSeqPatch(entry, useAfter, skipDom = false) {
         }
         if (cols.size) {
             reshadeChangedColumnsInPlace(cols);
+            // That repaints the span-cached rows only. Rows the windowed Block renderer
+            // rebuilt during an edit session can be on screen without a cache entry; their
+            // cells kept the old letter after undo/redo.
+            if (!state.spanCache?.get(rowIndex)?.size) {
+                const config = getSequenceRenderConfig();
+                const consData = (state.conservationDataCache && state.conservationDataCache.data) || {};
+                cols.forEach(pos => forEachRowSpanAtPosition(rowIndex, pos,
+                    span => repaintResidueSpan(span, rowIndex, pos, nextSeq[pos] || GENEDOC_FILLER, config, consData)));
+            }
             if (typeof updateRowSelections === 'function') updateRowSelections();
             if (typeof updateColumnSelections === 'function') updateColumnSelections();
             if (typeof updateSourceInfo === 'function') updateSourceInfo();

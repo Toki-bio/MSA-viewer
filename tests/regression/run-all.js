@@ -3363,6 +3363,26 @@ check('Audit: switching from Canvas to Full and deleting rows raises no error fr
   return { pass: errors.length === 0 && n === 1498, detail: JSON.stringify({ n, errors }) };
 });
 
+check('Audit: windowed Block mode repaints a typed residue on undo/redo after scrolling away and back', async (page) => {
+  // Used to: rows the windowed Block renderer rebuilt while edit mode was on were not in the
+  // span cache, and undo/redo of a typed residue repaints only cached rows: after Ctrl+Z off
+  // screen, scrolling back and Ctrl+Y, the cell still showed the old letter.
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'block');
+  await page.waitForTimeout(600);
+  const c = await auditCell(page, 3, 4);
+  await page.mouse.dblclick(c.x, c.y); await page.waitForTimeout(150);
+  await page.keyboard.type('N'); await page.keyboard.press('Escape');
+  await page.evaluate(() => { el('alignmentContainer').scrollTop = 20000; }); await page.waitForTimeout(800);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  await page.evaluate(() => { el('alignmentContainer').scrollTop = 0; }); await page.waitForTimeout(800);
+  const afterUndo = await auditDomMismatches(page);
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(400);
+  const afterRedo = await auditDomMismatches(page);
+  const st = await page.evaluate(() => state.seqs[3].seq[4]);
+  return { pass: st === 'N' && !afterUndo.length && !afterRedo.length, detail: JSON.stringify({ st, afterUndo, afterRedo }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
