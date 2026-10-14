@@ -3145,6 +3145,39 @@ check('Audit: viewer shortcuts never fire while typing in a text field (search, 
   return { pass: Object.values(out).every(Boolean), detail: JSON.stringify({ out, moved, fin, dialogs }) };
 });
 
+check('Audit: undo snapshots of a large alignment are small and fast, restore exactly, and history is capped', async (page) => {
+  // Used to: every undo entry JSON-cloned the whole alignment including the per-residue
+  // gaplessPositions arrays: ~380 ms and ~57 MB per edit at 1500 x 4000, with no cap, so a
+  // few dozen edits on a big file could exhaust the tab's memory.
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'full');
+  await page.waitForTimeout(500);
+  await auditCtrlClickName(page, 3);
+  await auditBlur(page);
+  const m0 = await page.evaluate(() => { if (window.gc) gc(); return performance.memory.usedJSHeapSize; });
+  const t0 = Date.now();
+  for (let i = 0; i < 10; i++) await page.keyboard.press(i % 2 ? 'Control+ArrowDown' : 'Control+ArrowUp');
+  await page.waitForTimeout(300);
+  const ms = Date.now() - t0;
+  const m1 = await page.evaluate(() => performance.memory.usedJSHeapSize);
+  const r = await page.evaluate(() => {
+    const e = state.deletedHistory[state.deletedHistory.length - 1];
+    return { n: state.deletedHistory.length, noDerived: e && e.seqs && e.seqs[0].gaplessPositions === undefined };
+  });
+  // undo all ten: back to the original order with correct gapless positions
+  for (let i = 0; i < 10; i++) await page.keyboard.press('Control+z');
+  await page.waitForTimeout(500);
+  const restored = await page.evaluate(() => state.seqs.slice(0, 6).map(s => s.header).join(',') === 'seq0,seq1,seq2,seq3,seq4,seq5'
+    && state.seqs.every((s, i) => i % 300 || JSON.stringify(s.gaplessPositions) === JSON.stringify(calculateGaplessPositions(s.seq))));
+  const capped = await page.evaluate(() => {
+    for (let i = 0; i < 400; i++) pushUndo('order');
+    return state.deletedHistory.length;
+  });
+  const growMB = (m1 - m0) / 1e6;
+  const pass = r.n === 10 && r.noDerived && growMB < 100 && restored && capped <= 200;
+  return { pass, detail: JSON.stringify({ ...r, ms, growMB: Math.round(growMB), restored, capped }) };
+});
+
 check('Audit: Ctrl+Shift+Z redoes (it used to undo again)', async (page) => {
   // Used to: case 'z' ignored Shift, so Ctrl+Shift+Z / Cmd+Shift+Z (the usual redo, the
   // only one on macOS) undid one more step instead.
