@@ -3404,6 +3404,20 @@ check('Audit: SeqEdit Apply with "Pad/trim" never cuts residues', async (page) =
   return { pass, detail: JSON.stringify({ r, r2 }) };
 });
 
+check('Audit: Degap block moves the residue selection right of the block with its residues', async (page) => {
+  // Used to: Degap block removed the columns it emptied without telling the column-keyed
+  // state (applyColumnEdit), so a residue selection to the right slid onto other residues.
+  await loadFasta(page, '>a\nAC--GTTTGCATGCA\n>b\nA-C-GTTTGCATGCA\n>c\nAC-GTTTGCATGCA-\n');
+  const sel = () => page.evaluate(() => [...state.selectedNucs].map(([r, s]) => r + ':' + [...s].sort((x, y) => x - y).map(c => state.seqs[r].seq[c]).join('')).join());
+  const a = await auditCell(page, 0, 8), b = await auditCell(page, 0, 11);
+  await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up();
+  const before = await sel();
+  await auditCtrlAltDrag(page, 0, 1, 3);
+  await page.evaluate(() => el('degapBlockLeftButton').click()); await page.waitForTimeout(300);
+  const after = await sel();
+  return { pass: before === '0:GCAT' && after === '0:GCAT', detail: JSON.stringify({ before, after, seqs: await auditSeqs(page) }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

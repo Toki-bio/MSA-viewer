@@ -13967,6 +13967,10 @@ function degapSelectedBlock(direction = 'left') {
     }
 
     if (colsToRemove.length > 0) {
+        // Column-keyed state (residue selection, trim bounds, SNP letters, column repeats)
+        // follows the removed columns, as with Delete columns; it used to stay on the old
+        // column numbers, i.e. on other residues
+        applyColumnEdit({ type: 'delete', cols: colsToRemove });
         state.seqs.forEach(seqObj => {
             const chars = seqObj.seq.split('');
             colsToRemove.forEach(col => {
