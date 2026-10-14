@@ -577,20 +577,30 @@ function syncResidueOverlays() {
     });
 }
 
-// Grid residue width for the second font (spans have no fixed width: a Courier glyph sets it).
-// Taken from the font metrics once per font size: measuring a span would force a layout of the
-// whole alignment on every redraw, and resetting the variable restyles every residue.
+// --res-w: the pitch of the residue grid, i.e. the width of one residue span (spans have no fixed
+// width: a Courier glyph sets it). It is not the glyph's advance: a span is an inline-block, and
+// the browser rounds its width up to a layout unit (Courier New 13px: a 7.8013px glyph makes a
+// 7.8125px cell). Everything laid out in columns but not built of spans uses it: the ruler (one
+// run of text, which advanced 7.8013px per column and drifted ~5 columns left by column 3700),
+// the annotation track, rows waiting to be drawn, and the second font's residues.
+// Measured with a probe outside the alignment once per font size, before the alignment is laid
+// out at that size: measuring a residue would force a layout of the whole alignment, and
+// resetting the variable restyles every residue.
 let _resWidthFor = null;
-let _resWidthCtx = null;
-function _syncResidueWidthVar() {
+function _syncResidueWidthVar(fontSize) {
     if (!alignmentContainer) return;
-    const inline = alignmentContainer.style.fontSize;
+    const inline = fontSize || alignmentContainer.style.fontSize;
     if (_resWidthFor !== null && _resWidthFor === (inline || 'default')) return;
     _resWidthFor = inline || 'default';
     const size = inline || getComputedStyle(alignmentContainer).fontSize;
-    if (!_resWidthCtx) _resWidthCtx = document.createElement('canvas').getContext('2d');
-    _resWidthCtx.font = `${size} "Courier New", monospace`;
-    alignmentContainer.style.setProperty('--res-w', _resWidthCtx.measureText('M').width + 'px');
+    const probe = document.createElement('span');
+    probe.textContent = 'M';
+    probe.style.cssText = `position:absolute;left:-9999px;top:0;visibility:hidden;display:inline-block;white-space:pre;`
+        + `font:700 ${size}/1 "Courier New", monospace;padding:0;margin:0;border:0;letter-spacing:normal`;
+    document.body.appendChild(probe);
+    const w = probe.getBoundingClientRect().width;
+    probe.remove();
+    if (w > 0) alignmentContainer.style.setProperty('--res-w', w + 'px');
 }
 
 // ---- Telling the user where one mark covers another's colour ----
@@ -1582,6 +1592,27 @@ function updateVersionIndicator() {
             elVersion.innerHTML = `ViewAlign ${RELEASE_VERSION} (build ${BUILD_TAG}, <a href="${url}" target="_blank" style="color:#666;" title="Commit as of the last version.json update">${sha}</a>)`;
         })
         .catch(() => {});
+}
+
+// The windowed views and Canvas are their own scrollers, with a fixed height: the window's height
+// below the alignment's top. It was set once per render, so after the window was made smaller the
+// bottom of the alignment (and of its scrollbar) hung below the window, and after it was made
+// taller part of the window stayed empty. Refit on window resize and when the toolbar wraps.
+function _fitFixedAlignmentViewport() {
+    const c = alignmentContainer;
+    if (!c || !/px$/.test(c.style.height || '')) return;
+    const canvasMode = isCanvasMode();
+    const windowed = !!state._needsWindowedDom && !!(el('modeSingle')?.checked || el('modeBlocks')?.checked);
+    if (!canvasMode && !windowed) return;
+    const top = c.getBoundingClientRect().top;
+    // the same formulas as renderAlignment (windowed) and _renderCanvasAlignment
+    const h = canvasMode ? window.innerHeight - top - 28 : Math.max(100, window.innerHeight - top - 28);
+    if (Math.abs(parseFloat(c.style.height) - h) < 0.5) return;
+    c.style.height = h + 'px';
+    if (canvasMode) _canvasState.resizeHandler?.();
+    else if (_unifiedWindowRenderParams) _refreshUnifiedWindowOnScroll(c);
+    window._syncVerticalScrollbar?.();
+    window._syncHorizontalScrollbar?.();
 }
 
 function updateControlsOffset() {
@@ -2748,7 +2779,7 @@ function updateNameLengthSliderRange() {
 
     // Use the display header (first token) only to size the name column,
     // so long descriptions in fullHeader don't blow up spacing.
-    const maxNameLength = Math.max(...state.seqs.map(s => s.header.length));
+    const maxNameLength = _arrMax(state.seqs.map(s => s.header.length));
 
     const slider = el('nameLengthSlider');
     const input = el('nameLengthInput');
@@ -2935,7 +2966,7 @@ function toggleStickyNames() {
     // Skip the forced-immediate part above that size; the class toggle above
     // still applies on the next natural paint either way.
     const _totalRes = state.alignmentIndex?.totalResidues || (state.seqs.length > 0
-        ? state.seqs.length * Math.max(...state.seqs.map(s => s.seq.length))
+        ? state.seqs.length * _maxSeqLen(state.seqs)
         : 0);
     if (!(state.alignmentIndex?.isCrazy) && _totalRes <= 80000) {
         alignmentContainer.offsetHeight; // Force reflow
@@ -3033,9 +3064,23 @@ function _createWindowedScrollController(refreshFn, isActiveFn) {
 // horizontal scrolling entirely (the same problem the two vertical spacer
 // divs solve for rows, just expressed per-row via padding instead of two
 // extra sibling elements, since each row needs its own independent offset).
+// Width of the persistent scrollbars (.vertical-scrollbar, .horizontal-scrollbar in styles.css).
+// The vertical one lies over the alignment's right edge.
+const PERSISTENT_SCROLLBAR_PX = 14;
+
+// A column-windowed row is exactly its columns wide, and its layout is contained, so nothing in it
+// widens the alignment. Scrolled all the way right, the last column then ended at the container's
+// edge, under the vertical scrollbar, and the length label after it could not be reached at all.
+// The row keeps room for the label (.seq-length: 8px margin, 2x4px padding, 2px border, digits at
+// 0.85em) and the scrollbar.
+function _columnWindowTailPx(charWidthPx) {
+    const digits = String(state.alignmentIndex?.maxLen || state.seqs?.[0]?.seq.length || 0).length;
+    return Math.ceil(18 + digits * charWidthPx + PERSISTENT_SCROLLBAR_PX + 8);
+}
+
 function _applyColumnWindowStyle(dataEl, len, colStart, charWidthPx) {
     dataEl.style.boxSizing = 'border-box';
-    dataEl.style.width = (len * charWidthPx) + 'px';
+    dataEl.style.width = (len * charWidthPx + _columnWindowTailPx(charWidthPx)) + 'px';
     dataEl.style.paddingLeft = (colStart * charWidthPx) + 'px';
 }
 
@@ -3765,7 +3810,7 @@ function _incrementalUpdateBlockRows(blockDiv, blockIndex, newRowStart, newRowEn
 // the slider (multiple blocks). Windows at three granularities: block-level
 // (which blocks are visible), row-level (which rows within each block), and
 // column-level (only when a block is wider than the viewport).
-function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, _isRetry) {
+function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, _isRetry, preservedScrollLeft) {
     _unifiedWindowRenderParams = { len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options };
     const numBlocks = Math.max(1, Math.ceil(len / blockWidth));
     // rowHeightPx falls back to a hardcoded 16px guess until a real row has been
@@ -3785,6 +3830,7 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
     const G = _unifiedGeometry(numBlocks, blockWidth, len);
     const aaRowPxBefore = _unifiedAaRowPx;
     const effectiveScrollTop = preservedScrollTop != null ? preservedScrollTop : container.scrollTop;
+    const effectiveScrollLeft = preservedScrollLeft != null ? preservedScrollLeft : container.scrollLeft;
     const { charWidthPx, nameColWidthPx } = _measureUnifiedColumnMetrics(null);
     const overscan = 1;
     let blockStart = Math.max(0, G.indexAt(effectiveScrollTop) - overscan);
@@ -3806,7 +3852,7 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
     for (let b = blockStart; b <= blockEnd; b++) {
         const start = b * blockWidth;
         const end = Math.min(start + blockWidth, len);
-        const blockDiv = _buildUnifiedBlock(b, start, end, len, G.blockH(b), G.rowH(b), effectiveScrollTop, container.clientHeight, container.scrollLeft, container.clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPx, G.top(b));
+        const blockDiv = _buildUnifiedBlock(b, start, end, len, G.blockH(b), G.rowH(b), effectiveScrollTop, container.clientHeight, effectiveScrollLeft, container.clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPx, G.top(b));
         container.appendChild(blockDiv);
         if (!firstRealBlock) firstRealBlock = blockDiv;
     }
@@ -3852,13 +3898,16 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
         // fresh fallback from the now-correct row height instead of reusing a
         // blockHeightPx that's just as poisoned as the row height was.
         _unifiedBlockHeightPx = null;
-        return renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, true);
+        return renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, true, preservedScrollLeft);
     }
 
     // Restore scroll position (same suppress dance as the existing functions)
-    if (preservedScrollTop != null && container.scrollTop !== preservedScrollTop) {
+    const restoreTop = preservedScrollTop != null && container.scrollTop !== preservedScrollTop;
+    const restoreLeft = preservedScrollLeft != null && container.scrollLeft !== preservedScrollLeft;
+    if (restoreTop || restoreLeft) {
         _unifiedScrollController.suppressNextEvent();
-        container.scrollTop = preservedScrollTop;
+        if (restoreLeft) container.scrollLeft = preservedScrollLeft;
+        if (restoreTop) container.scrollTop = preservedScrollTop;
     }
     // The blocks hold their on-screen rows; queue their row buffers.
     _cancelAllBlockJobs();
@@ -4260,7 +4309,7 @@ function _computeConsensusCharForColumn(seqArray, pos, opts) {
 
 function computeConsensusForSequences(seqArray) {
     if (!seqArray || seqArray.length === 0) return '';
-    const len = Math.max(...seqArray.map(s => s.length));
+    const len = _arrMax(seqArray.map(s => s.length));
     const opts = _getConsensusOptions();
     let out = '';
     for (let pos = 0; pos < len; pos++) {
@@ -4275,7 +4324,7 @@ function computeConsensusForSequences(seqArray) {
 // than ~8ms per slice, regardless of alignment size.
 function computeConsensusForSequencesChunked(seqArray, onDone, token) {
     if (!seqArray || seqArray.length === 0) { onDone(''); return; }
-    const len = Math.max(...seqArray.map(s => s.length));
+    const len = _arrMax(seqArray.map(s => s.length));
     const opts = _getConsensusOptions();
     const chars = new Array(len);
     let pos = 0;
@@ -5242,6 +5291,18 @@ function _populateAlignedAARow(dataCol, aaSeqData, viewStart, viewEnd, frameShif
     dataCol.innerHTML = html;
 }
 
+// Largest / smallest entry of a list or Set, and the longest sequence. Math.max(...list) passes
+// every entry as an argument and throws "Maximum call stack size exceeded" past ~125,000 of them:
+// an alignment of 130,000 sequences failed to load. Empty input gives -Infinity / Infinity, as
+// Math.max() / Math.min() do.
+function _arrMax(a) { let m = -Infinity; for (const v of a) { const n = +v; if (n > m) m = n; } return m; }
+function _arrMin(a) { let m = Infinity; for (const v of a) { const n = +v; if (n < m) m = n; } return m; }
+function _maxSeqLen(seqs) {
+    let m = -Infinity;
+    for (let i = 0; i < seqs.length; i++) { const l = seqs[i].seq.length; if (l > m) m = l; }
+    return m;
+}
+
 // CANVAS-BASED RENDERER - for large alignments
 // Draws only visible area, no per-residue DOM nodes
 // =====================================================================
@@ -5309,6 +5370,11 @@ function _initCanvasMetrics(ctx, fontSizePx) {
 //   4. clientX=900, clientY=900 (past last col/row) → canvas-relative (800, 850)
 //      If alignment is 50 cols × 20 rows: col=74, row=55 → both out of range → null
 //      → null  ✓
+// Screen x where the name column ends: fixed with sticky names, scrolled with the rows otherwise
+function _canvasNameRight(nameW) {
+    return el('stickyNames')?.checked === false ? nameW - (_canvasState.offsetX || 0) : nameW;
+}
+
 function _canvasHitTest(clientX, clientY) {
     const canvas = _canvasState.canvas;
     if (!canvas) return null;
@@ -5324,12 +5390,15 @@ function _canvasHitTest(clientX, clientY) {
     const rowPitch = _canvasState.rowPitch || CHAR_H;
     // Subtract the name column and scale ruler offsets, then add back the pan
     // offset so the result is in content (not viewport) coordinates.
+    // Left of the name column's right edge is the name column, not data: with sticky names a
+    // click on a name used to hit the residue scrolled under it and start a selection there.
+    if (x < _canvasNameRight(NAME_W)) return null;
     const col = Math.floor((x - NAME_W + _canvasState.offsetX) / CHAR_W);
     const row = Math.floor((y - HEADER_H +_canvasState.offsetY) / rowPitch);
     if (col < 0 || row < 0) return null;
     const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
     const len = state.seqs && state.seqs.length > 0
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxSeqLen(state.seqs)
         : 0;
     if (row >= nSeqs || col >= len) return null;
     return { row, col };
@@ -5347,10 +5416,10 @@ function _canvasHitTestRuler(clientX, clientY) {
     const y = clientY - rect.top;
     const trackH = m.trackH || 0;             // annotation track above the ruler
     if (y < trackH || y >= trackH + m.charH) return null;  // not in ruler row
-    if (x < m.nameW) return null;             // name column corner
+    if (x < _canvasNameRight(m.nameW)) return null;   // name column corner
     const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
     const len = state.seqs && state.seqs.length > 0
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxSeqLen(state.seqs)
         : 0;
     if (col < 0 || col >= len) return null;
     return { col };
@@ -5366,7 +5435,7 @@ function _canvasHitTestName(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const x = clientX - rect.left;
     const y = clientY - rect.top;
-    if (x < 0 || x >= m.nameW) return null;   // not in name column
+    if (x < 0 || x >= _canvasNameRight(m.nameW)) return null;   // not in name column
     if (y < (m.headerH || m.charH)) return null; // ruler / annotation corner
     const row = Math.floor((y - (m.headerH || m.charH) + _canvasState.offsetY) / (_canvasState.rowPitch || m.charH));
     const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
@@ -5401,7 +5470,7 @@ function _canvasColFromClientX(clientX) {
     if (x < m.nameW) return -1;
     const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
     const len = state.seqs && state.seqs.length > 0
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxSeqLen(state.seqs)
         : 0;
     if (col < 0 || col >= len) return -1;
     return col;
@@ -5472,7 +5541,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     alignmentContainer.innerHTML = '';
     alignmentContainer.style.overflow = 'hidden';
     alignmentContainer.style.position = 'relative';
-    // Canvas mode needs explicit height since absolute canvas has no flow height
+    // Canvas mode needs explicit height since absolute canvas has no flow height.
+    // Coming from a small Full/Block view the page may be scrolled (the container's top above the
+    // window): the height would then be measured from that negative top and overrun the window.
+    if (window.scrollY) window.scrollTo(0, 0);
     const top = alignmentContainer.getBoundingClientRect().top;
     alignmentContainer.style.height = (window.innerHeight - top - 28) + 'px';
 
@@ -5546,7 +5618,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     let _lastOffX = -1, _lastOffY = -1, _dirty = false;
     function _markDirty() { _dirty = true; }
 
-    const totalContentW = NAME_W + len * CHAR_W + 4;
+    // + the vertical scrollbar, which lies over the canvas's right edge: the last columns ended under it
+    const totalContentW = NAME_W + len * CHAR_W + 4 + PERSISTENT_SCROLLBAR_PX;
     const totalContentH = HEADER_H +nSeqs * rowPitch + 4;
     // Exposed so the persistent horizontal/vertical scrollbars (real DOM
     // elements, since Canvas mode's own content isn't natively scrollable)
@@ -5555,8 +5628,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     _canvasState.totalContentH = totalContentH;
 
     // Resize canvas to viewport
+    // The container's client area, not its border box (2px wider, 1px taller): the canvas
+    // overflowed it, its edge was cut, and a scrollTop/scrollLeft write nudged the alignment.
     function resize() {
-        const rect = alignmentContainer.getBoundingClientRect();
+        const rect = { width: alignmentContainer.clientWidth, height: alignmentContainer.clientHeight };
         canvas.width = rect.width * dpr;
         canvas.height = rect.height * dpr;
         canvas.style.width = rect.width + 'px';
@@ -5814,16 +5889,24 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
         }
 
+        // Marks on residues and columns stay right of the name column: drawn after the names,
+        // they used to paint over the sticky names for columns scrolled under them.
+        const dataLeft = stickyNames ? NAME_W : Math.max(0, NAME_W - ox);
+        const clipToData = () => { ctx.save(); ctx.beginPath(); ctx.rect(dataLeft, 0, Math.max(0, w - dataLeft), h); ctx.clip(); };
+
         // Highlight selected columns (semi-transparent vertical strips)
         if (state.selectedColumns.size > 0) {
+            clipToData();
             ctx.fillStyle = 'rgba(25, 118, 210, 0.15)';
             state.selectedColumns.forEach(pos => {
                 const x = NAME_W + pos * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) return;
                 const dataTop = Math.max(0, HEADER_H - oy);
-                const dataBottom = Math.min(h, HEADER_H +nSeqs * CHAR_H - oy);
+                // rowPitch, not CHAR_H: with translation rows the strip stopped partway down
+                const dataBottom = Math.min(h, HEADER_H + nSeqs * rowPitch - oy);
                 ctx.fillRect(x, dataTop, CHAR_W, dataBottom - dataTop);
             });
+            ctx.restore();
         }
 
         // Highlight selected rows (semi-transparent horizontal strips; same tint as the DOM)
@@ -5836,6 +5919,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             });
         }
 
+        clipToData();
         // Highlight selected nucleotides (mirrors DOM .nuc-selected in Full/Block mode)
         if (state.selectedNucs.size > 0) {
             ctx.fillStyle = 'rgba(25, 118, 210, 0.25)';
@@ -5882,6 +5966,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 }
             }
         }
+
+        ctx.restore();   // clipToData
 
         // Name column separator (fixed on-screen when sticky, scrolls with
         // content otherwise, matching the name column's own behaviour above)
@@ -6172,6 +6258,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // (matches DOM mode, which returns early for scale-ruler-line)
     });
 
+    // A zoom captured the top-left residue before the cell size changed: put it back there
+    if (_canvasState.pendingAnchor) {
+        const a = _canvasState.pendingAnchor;
+        _canvasState.pendingAnchor = null;
+        _applyViewAnchor(a);
+    }
     scheduleDraw();
 }
 
@@ -6535,8 +6627,8 @@ function _pushParsedFastaSequence(seqs, header, seq) {
 function _checkLengthMismatch(seqs) {
     if (!seqs || seqs.length < 2) return null;
     const lengths = seqs.map(s => s.seq.length);
-    const maxLen = Math.max(...lengths);
-    const minLen = Math.min(...lengths);
+    const maxLen = _arrMax(lengths);
+    const minLen = _arrMin(lengths);
     if (maxLen === minLen) return null;
 
     // Find the majority length
@@ -6572,7 +6664,7 @@ function _checkLengthMismatch(seqs) {
  */
 function _normalizeSequenceLengths(seqs) {
     if (!seqs || seqs.length === 0) return;
-    const maxLen = Math.max(...seqs.map(s => s.seq.length));
+    const maxLen = _maxSeqLen(seqs);
     for (const s of seqs) {
         if (s.seq.length < maxLen) {
             s.seq = s.seq.padEnd(maxLen, '-');
@@ -7022,7 +7114,7 @@ function _annotFeatsInRange(colStart, colEnd) {
 // block (positions must agree with the rows' px padding), or null to use ch.
 function _fillAnnotTrackData(data, colStart, colEnd, cw) {
     const n = colEnd - colStart + 1;
-    const u = v => cw ? (v * cw) + 'px' : v + 'ch';
+    const u = v => cw ? (v * cw) + 'px' : `calc(${v} * var(--res-w, 1ch))`;
     const parts = [`<div class="annot-track-inner" style="width:${u(n)}">`];
     for (const d of _annotFeatsInRange(colStart, colEnd)) {
         const s = Math.max(d.cs, colStart), e = Math.min(d.ce, colEnd);
@@ -8065,7 +8157,10 @@ function renderReadsAlignment() {
     // Reference name label
     const refLabel = document.createElement('span');
     refLabel.className = 'seq-name';
-    refLabel.style.cssText = 'width:160px;min-width:160px;font-weight:bold;font-size:11px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    // Exactly NAME_W wide from the line's left edge, like the reads' name column in the SVG
+    // below: as a .seq-name it took that class's -12px margin (and sticky -15px offset), and the
+    // reference started 12px (one base) left of the reads.
+    refLabel.style.cssText = 'box-sizing:border-box;flex:0 0 160px;width:160px;min-width:160px;margin:0;left:0;font-weight:bold;font-size:11px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
     refLabel.textContent = bamState.refName;
     refLabel.title = bamState.refName;
     refLine.appendChild(refLabel);
@@ -8103,7 +8198,8 @@ function renderReadsAlignment() {
     scaleLine.style.zIndex = '1';
 
     const scaleLabel = document.createElement('span');
-    scaleLabel.style.cssText = 'width:160px;min-width:160px;text-align:right;padding:0 4px;';
+    // border-box: with its padding added it was 168px, and the ruler sat 8px right of the bases
+    scaleLabel.style.cssText = 'box-sizing:border-box;flex:0 0 160px;width:160px;min-width:160px;text-align:right;padding:0 4px;';
     scaleLine.appendChild(scaleLabel);
 
     const scaleData = document.createElement('div');
@@ -8755,7 +8851,7 @@ function renderAlignment(options = {}) {
     // and the render-path dispatch both depend on these.  _needsWindowed must
     // be declared before its first use to avoid a temporal-dead-zone
     // ReferenceError that would throw on every call to renderAlignment.
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxSeqLen(state.seqs);
     const TOTAL_RESIDUES = state.seqs.length * len;
     const _needsWindowed = TOTAL_RESIDUES > ALIGN_WINDOWED_DOM_THRESHOLD || !!state.alignmentIndex?.needsWindowedDom;
     state._needsWindowedDom = _needsWindowed;
@@ -8767,7 +8863,12 @@ function renderAlignment(options = {}) {
     // change scroll behavior anywhere else.
     const _preserveScrollTop = ((document.getElementById('modeSingle')?.checked || document.getElementById('modeBlocks')?.checked) && _needsWindowed)
         ? alignmentContainer.scrollTop : null;
+    // The same for scrollLeft: emptying the container zeroed it, and the column window was then
+    // built from that 0, so every redraw (colour scheme, consensus, Highlight diffs, zoom) threw a
+    // windowed Full view back to column 1.
+    const _preserveScrollLeft = _preserveScrollTop !== null ? alignmentContainer.scrollLeft : null;
     alignmentContainer.innerHTML = '';
+    _syncResidueWidthVar();   // while the alignment is empty: measuring then costs no layout of it
     // Ensure Full/Block modes have correct scroll/layout behaviour
     // (any leftover Canvas/Compact inline styles are overwritten)
     alignmentContainer.style.position = 'static';
@@ -8779,6 +8880,8 @@ function renderAlignment(options = {}) {
         // would make scrollHeight always equal clientHeight and defeat
         // windowing entirely. Same formula Canvas mode already uses for its
         // own fixed-height viewport.
+        // (from a page-scrolled small view: measure from the container's unscrolled top)
+        if (window.scrollY) window.scrollTo(0, 0);
         const top = alignmentContainer.getBoundingClientRect().top;
         // Clamp to a minimum so the windowed renderer always has enough
         // viewport to compute a non-empty row range. A negative or zero
@@ -8917,7 +9020,7 @@ function renderAlignment(options = {}) {
             const computeShadingAndRepaint = () => {
                 if (myToken.cancelled) return;
                 if (!state.seqs || !state.seqs.length) return;
-                if (Math.max(...state.seqs.map(s => s.seq.length)) !== len) return; // alignment changed
+                if (_maxSeqLen(state.seqs) !== len) return; // alignment changed
                 // its own copy of the row list: a row delete splices state.seqs in place
                 preCalculateConservationChunked(state.seqs.slice(), len, shadeMode, (data) => {
                     if (myToken.cancelled) return;
@@ -8939,7 +9042,7 @@ function renderAlignment(options = {}) {
             const computeConsensusIdle = () => {
                 if (myToken.cancelled) return;
                 if (!state.seqs || !state.seqs.length) return;
-                if (Math.max(...state.seqs.map(s => s.seq.length)) !== len) return;
+                if (_maxSeqLen(state.seqs) !== len) return;
                 computeConsensusForSequencesChunked(state.seqs.map(s => s.seq), (consStr) => {
                     if (myToken.cancelled) return;
                     const cons = consStr.split('');
@@ -9003,7 +9106,7 @@ function renderAlignment(options = {}) {
     // blockWidth parameter, so the only difference is its value.
     const effectiveBlockWidth = useBlocks ? blockWidth : len;
     if (_needsWindowed) {
-        renderUnifiedWindowedDom(alignmentContainer, len, effectiveBlockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, _preserveScrollTop);
+        renderUnifiedWindowedDom(alignmentContainer, len, effectiveBlockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, _preserveScrollTop, false, _preserveScrollLeft);
     } else if (TOTAL_RESIDUES > ALIGN_WINDOWED_DOM_THRESHOLD) {
         // Safety net: should have been windowed but wasn't.  Show a message
         // instead of creating millions of DOM nodes that crash the tab.
@@ -9717,10 +9820,10 @@ function updateSourceInfo() {
         .replace(/'/g, '&#39;');
 
     const seqCount = state.seqs.length;
-    const aliLength = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLength = _maxSeqLen(state.seqs);
     const gaplessLengths = state.seqs.map(seq => seq.gaplessPositions[seq.gaplessPositions.length - 1] || 0);
-    const minLength = Math.min(...gaplessLengths);
-    const maxLength = Math.max(...gaplessLengths);
+    const minLength = _arrMin(gaplessLengths);
+    const maxLength = _arrMax(gaplessLengths);
     const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
 
     const fullFilename = state.currentFilename || '';
@@ -9841,7 +9944,7 @@ function resolveNucRowIndex(row) {
 
 function getConsensusSequenceGapped() {
     const len = state.seqs?.length
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxSeqLen(state.seqs)
         : 0;
     if (len > 0 && state.consensusCache?.values?.length === len) {
         return state.consensusCache.values.join('');
@@ -10220,7 +10323,7 @@ function refreshSequenceRowDom(rowIndex, limitPositions = null, referenceSeq = n
     const rowCache = state.spanCache?.get(rowIndex);
     if (!rowCache || rowCache.size === 0) return false;
 
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxSeqLen(state.seqs);
     const config = getSequenceRenderConfig();
     const conservationData = (state.editLiveConservation || referenceSeq)
         ? (getDeferredConservationData(len, config.shadeMode) || state.conservationDataCache?.data || [])
@@ -10764,9 +10867,15 @@ function setZoom(percent) {
     // transition too: every animation step re-laid out every residue span (zoom took 5-13 s
     // at 316k spans).
     const bigDom = !isCanvas && (isWindowedDom || _approxResidueCount() > 60000);
-    if (bigDom) alignmentContainer.style.transition = 'none';
+    // The residue at the view's top left before the cells change size; scrolled back to the top
+    // left afterwards (scroll offsets in pixels alone put other columns and rows there). A Canvas
+    // redraw is debounced, so repeated zoom steps keep the first, still unapplied, anchor.
+    const zoomAnchor = !state.seqs?.length || !!document.getElementById('modeReads')?.checked ? null
+        : isCanvas ? (_canvasState.pendingAnchor || _captureViewAnchor(true)) : _captureViewAnchor(false);
+    // DOM views: no font-size transition while anchoring, so the anchor is applied at the final size
+    if (bigDom || (zoomAnchor && !isCanvas)) alignmentContainer.style.transition = 'none';
+    _syncResidueWidthVar(size + 'px');   // before the font change: the probe needs no layout of the alignment
     alignmentContainer.style.fontSize = size + 'px';
-    _syncResidueWidthVar();
     el('zoomVal').textContent = percent + '%';
     el('zoomVal').classList.toggle('not-default', percent !== 100);
     // Keep the raw 0-100 log slider, its fill, and the 100% tick in lockstep
@@ -10786,12 +10895,16 @@ function setZoom(percent) {
     // need a rebuild: their row/column spacers and viewport windows are based
     // on cached pixel measurements that become stale when the font size changes.
     if (isCanvas) {
+        if (zoomAnchor) _canvasState.pendingAnchor = zoomAnchor;
         debounceRender();
     } else if (isWindowedDom) {
         _invalidateUnifiedWindowMeasurements();
         renderAlignment();
+        if (zoomAnchor) _applyViewAnchor(zoomAnchor);
+    } else if (zoomAnchor) {
+        _applyViewAnchor(zoomAnchor);
     }
-    if (bigDom) {
+    if (bigDom || (zoomAnchor && !isCanvas)) {
         // Keep transitions disabled through the next paint so restoring the
         // stylesheet rule cannot animate away from the geometry just measured.
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -11380,7 +11493,7 @@ async function parseAndRender(isFromDrop = false) {
         if (!state.alignmentIndex) {
             const _stats = {
                 nSeqs: state.seqs.length,
-                maxLen: state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0,
+                maxLen: state.seqs.length > 0 ? _maxSeqLen(state.seqs) : 0,
                 totalResidues: state.seqs.reduce((sum, s) => sum + s.seq.length, 0)
             };
             state.alignmentIndex = { ..._stats, ...classifyAlignmentSize(_stats) };
@@ -11602,79 +11715,142 @@ function syncQuickModeSwitch() {
 // below. Matches the radio marked `checked` by default in the HTML.
 let _lastModeRadioId = 'modeBlocks';
 
-// Converts the alignment's current DOM scroll position (native scrollTop/
-// scrollLeft on alignmentContainer) into a mode-independent "row index /
-// column index at the top-left of the viewport" anchor. Needed because
-// Canvas mode uses an entirely different scroll mechanism (_canvasState.
-// offsetY/offsetX, a synthetic pan offset with its own pixel pitch, not
-// alignmentContainer's native scrollTop/scrollLeft) - switching modes
-// without converting between the two silently reset the view to the top of
-// the alignment (alignmentContainer.innerHTML='' during the mode's
-// re-render zeroes native scrollTop, and Canvas mode's own offset starts
-// wherever it was last left, which is 0 the first time). Measures a live
-// row/span rather than trusting the windowed renderer's cached
-// _unifiedRowHeightPx/_unifiedCharWidthPx, which are null for a small
-// (non-windowed) alignment and would silently produce a 0/0 anchor.
-function _captureDomScrollAnchor() {
-    const sampleRow = alignmentContainer.querySelector('.seq-line[data-seq-index]');
-    const sampleSpan = sampleRow?.querySelector('.seq-data span[data-pos]');
-    const rowPx = (sampleRow ? sampleRow.getBoundingClientRect().height : 0) || _unifiedRowHeightPx || 16;
-    const colPx = (sampleSpan ? sampleSpan.getBoundingClientRect().width : 0) || _unifiedCharWidthPx || 8;
-    return {
-        rowIndex: alignmentContainer.scrollTop / rowPx,
-        colIndex: alignmentContainer.scrollLeft / colPx
-    };
+// ---- View anchor: where the view is, independent of mode and zoom ----
+// The first sequence row whose top is in view and the first residue column right of the name
+// column. Mode switches and zoom capture it from the live view and scroll the new view so that
+// row and column are at its top left again (row 0 / column 0: scrolled all the way up / left, so
+// the ruler stays in view). Both ends are measured on the rendered rows, not converted from pixel
+// offsets, which went wrong four ways: the sampled row was the consensus line (14px; sequence rows
+// 13px), so Full -> Canvas landed ~7% of the rows off; a Block view was converted as if it were
+// one tall block (it landed at the bottom, column 1); small alignments scroll the page, which was
+// ignored (back to row 1); Canvas -> a small view used 8px/16px guesses for the cells. Full <->
+// Block always went back to column 1, and zooming kept pixel offsets, so the view moved.
+
+// Screen y where alignment content starts to be visible: the container's top, or the bottom of the
+// fixed toolbar when the page has scrolled the container's top under it
+function _alignmentViewTop() {
+    const c = alignmentContainer;
+    const ctrl = el('controls');
+    return Math.max(c.getBoundingClientRect().top + c.clientTop, ctrl ? ctrl.getBoundingClientRect().bottom : 0, 0);
+}
+// The windowed views (and Canvas) scroll the container; small alignments scroll the page
+function _alignmentScrollsItself() {
+    const c = alignmentContainer;
+    return c.scrollHeight > c.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(c).overflowY);
+}
+// Screen x where a row's residues start to be visible: right of its sticky name cell
+function _domDataLeft(row) {
+    const c = alignmentContainer;
+    const name = row?.querySelector(':scope > .seq-name');
+    if (name && el('stickyNames')?.checked !== false) return name.getBoundingClientRect().right;
+    return c.getBoundingClientRect().left + c.clientLeft;
+}
+// First column of a rendered block (a windowed ruler holds only its column window)
+function _blockStartColumn(block) {
+    const p = _unifiedWindowRenderParams;
+    if (state._needsWindowedDom && p && block?.dataset.blockIndex != null) return +block.dataset.blockIndex * p.blockWidth;
+    const sc = block?.querySelector(':scope > .scale-ruler-line > .seq-data[data-scale]');
+    return sc ? +sc.dataset.scale.split(':')[1] : 0;
+}
+function _blockElementForColumn(col) {
+    const c = alignmentContainer;
+    const p = _unifiedWindowRenderParams;
+    if (state._needsWindowedDom && p) return c.querySelector(`:scope > .block-block[data-block-index="${Math.floor(col / p.blockWidth)}"]`);
+    let first = null;
+    for (const b of c.querySelectorAll(':scope > .block-block')) {
+        first = first || b;
+        const sc = b.querySelector(':scope > .scale-ruler-line > .seq-data[data-scale]');
+        if (!sc) continue;
+        const [n, s] = sc.dataset.scale.split(':').map(Number);
+        if (col >= s && col < s + n) return b;
+    }
+    return first;
 }
 
-// Applies a previously-captured anchor to Canvas mode's own pan offset,
-// after renderAlignment() has already built Canvas mode's view (so
-// _canvasState.rowPitch/metrics reflect this alignment, not a stale value
-// from whatever was last shown in Canvas mode). Forces one extra redraw at
-// the corrected offset - cheap (a canvas repaint, not a DOM rebuild), so
-// this reads as landing directly on the right spot rather than a visible
-// jump-then-correct.
-function _applyDomScrollAnchorToCanvas(anchor) {
-    if (!anchor) return;
-    const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
-    const charW = _canvasState.metrics?.charW || 8;
-    _canvasState.offsetY = Math.max(0, anchor.rowIndex * rowPitch);
-    _canvasState.offsetX = Math.max(0, anchor.colIndex * charW);
-    _canvasState.scheduleDraw?.();
-    _canvasState.onOffsetChange?.();
+// fromCanvas: read Canvas's pan offset (default: the current mode). Returns { row, col } or null.
+function _captureViewAnchor(fromCanvas = isCanvasMode()) {
+    if (fromCanvas) {
+        const m = _canvasState.metrics;
+        if (!m || !_canvasState.canvas) return null;
+        const pitch = _canvasState.rowPitch || m.charH;
+        const oy = _canvasState.offsetY || 0, ox = _canvasState.offsetX || 0;
+        return {
+            row: Math.max(0, Math.ceil((oy - (m.headerH || m.charH)) / pitch - 0.01)),
+            col: Math.max(0, Math.ceil(ox / m.charW - 0.01))
+        };
+    }
+    const c = alignmentContainer;
+    const rows = c.querySelectorAll('.seq-line[data-seq-index]');
+    if (!rows.length) return null;
+    const viewTop = _alignmentViewTop();
+    // rows are in document order, top to bottom: the first one whose top is in view
+    let lo = 0, hi = rows.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (rows[mid].getBoundingClientRect().top >= viewTop - 0.5) hi = mid; else lo = mid + 1;
+    }
+    let i = lo;
+    while (i < rows.length - 1 && +rows[i].dataset.seqIndex < 0) i++;   // not a consensus line
+    const row = rows[i];
+    if (+row.dataset.seqIndex < 0) return null;
+    const dataLeft = _domDataLeft(row);
+    let col = null;
+    for (const sp of row.querySelectorAll(':scope > .seq-data > span[data-pos]')) {
+        const r = sp.getBoundingClientRect();
+        if (r.width > 0 && r.left >= dataLeft - 0.5) { col = +sp.dataset.pos; break; }
+    }
+    if (col == null) col = _blockStartColumn(row.closest('.block-block'));
+    return { row: +row.dataset.seqIndex, col };
 }
 
-// Reverse direction: converts Canvas mode's current pan offset into the
-// same row/column-index anchor shape, read BEFORE Canvas's own state is
-// touched by the switch (renderAlignment() doesn't reset _canvasState
-// itself, but reads it as if it still reflects "the view we're leaving",
-// so this must run before anything else changes mode).
-function _captureCanvasScrollAnchor() {
-    const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
-    const charW = _canvasState.metrics?.charW || 8;
-    return {
-        rowIndex: (_canvasState.offsetY || 0) / rowPitch,
-        colIndex: (_canvasState.offsetX || 0) / charW
-    };
-}
-
-// Applies a previously-captured anchor to a DOM mode (Full/Block/classic)
-// after renderAlignment() has already built that mode's view. Uses the
-// cached _unifiedRowHeightPx/_unifiedCharWidthPx (populated by the last
-// windowed DOM render, if any) rather than measuring a live row here,
-// because for a windowed alignment the newly-rendered DOM only covers
-// whatever range scrollTop=0 produced - a live measurement would be
-// correct but arrives too late to matter. For the windowed case, after
-// setting scrollTop/scrollLeft this also explicitly re-runs the scroll
-// refresh so the visible block/row range matches the new position
-// immediately, instead of showing stale content until the next real
-// scroll event.
-function _applyCanvasScrollAnchorToDom(anchor) {
-    if (!anchor) return;
-    const rowPx = _unifiedRowHeightPx || 16;
-    const colPx = _unifiedCharWidthPx || 8;
-    alignmentContainer.scrollTop = Math.max(0, anchor.rowIndex * rowPx);
-    alignmentContainer.scrollLeft = Math.max(0, anchor.colIndex * colPx);
-    if (state._needsWindowedDom) _refreshUnifiedWindowOnScroll(alignmentContainer);
+function _applyViewAnchor(a) {
+    if (!a) return;
+    if (isCanvasMode()) {
+        const m = _canvasState.metrics;
+        if (!m) return;
+        const pitch = _canvasState.rowPitch || m.charH;
+        _canvasState.offsetY = a.row > 0 ? (m.headerH || m.charH) + a.row * pitch : 0;
+        _canvasState.offsetX = a.col > 0 ? a.col * m.charW : 0;
+        _canvasState.scheduleDraw?.();
+        // Resize the persistent scrollbars to the new content as they take the offset: a bar
+        // still sized for the old cells clamped it and wrote the clamped value back (zooming in
+        // near the end of a Canvas moved it ~250 columns left)
+        window._syncHorizontalScrollbar?.();
+        window._syncVerticalScrollbar?.();
+        _canvasState.onOffsetChange?.();
+        return;
+    }
+    const c = alignmentContainer;
+    const blocks = !!el('modeBlocks')?.checked;
+    const p = _unifiedWindowRenderParams;
+    const windowed = !!state._needsWindowedDom && !!p;
+    const cellW = () => parseFloat(c.style.getPropertyValue('--res-w')) || _unifiedCharWidthPx || 7.8;
+    const vScrollBy = dy => { if (_alignmentScrollsItself()) c.scrollTop += dy; else window.scrollBy(0, dy); };
+    if (windowed) {
+        // The target rows may not be built yet: go near them from the windowed geometry first
+        const nb = Math.max(1, Math.ceil(p.len / p.blockWidth));
+        const G = _unifiedGeometry(nb, p.blockWidth, p.len);
+        const b = Math.min(nb - 1, Math.floor(a.col / p.blockWidth));
+        c.scrollTop = G.top(b) + (a.row > 0 ? (_unifiedHeaderHeightPx || 0) + a.row * G.rowH(b) : 0);
+        if (!blocks) c.scrollLeft = a.col * cellW();
+        _refreshUnifiedWindowOnScroll(c);
+    }
+    // Then exactly: the target row's top to the view's top, the target residue to the names' edge
+    for (let pass = 0; pass < (windowed ? 2 : 1); pass++) {
+        const block = _blockElementForColumn(a.col);
+        if (!block) return;
+        const rowEl = block.querySelector(`.seq-line[data-seq-index="${a.row}"]`);
+        const target = a.row > 0 ? rowEl : block;
+        if (target) vScrollBy(target.getBoundingClientRect().top - _alignmentViewTop());
+        if (!blocks || c.scrollWidth > c.clientWidth + 1) {
+            const line = rowEl || block.querySelector('.seq-line[data-seq-index]:not([data-seq-index="-1"])');
+            const sp = line?.querySelector(`:scope > .seq-data > span[data-pos="${a.col}"]`);
+            if (a.col <= _blockStartColumn(block)) c.scrollLeft = 0;
+            else if (sp && sp.getBoundingClientRect().width > 0) c.scrollLeft += sp.getBoundingClientRect().left - _domDataLeft(line);
+            else if (!blocks) c.scrollLeft = a.col * cellW();
+        }
+        if (windowed) _refreshUnifiedWindowOnScroll(c);
+    }
 }
 
 async function onModeChange() {
@@ -11712,15 +11888,13 @@ async function onModeChange() {
     // not dispatch 'change'), so this is an unambiguous signal to stop
     // auto-switching back to Canvas for the rest of this file's session.
     _userDismissedAutoCanvas = true;
-    const enteringCanvasFromDom = document.getElementById('modeCanvas')?.checked && _lastModeRadioId !== 'modeCanvas';
-    const leavingCanvasToDom = !document.getElementById('modeCanvas')?.checked && _lastModeRadioId === 'modeCanvas';
-    // Capture the current scroll position BEFORE renderAlignment() wipes
-    // alignmentContainer's DOM (which resets native scrollTop to 0) / before
-    // anything else touches _canvasState - see _captureDomScrollAnchor's and
-    // _captureCanvasScrollAnchor's comments. Handles both directions between
-    // Canvas mode and a DOM mode (Full/Block/classic).
-    const domScrollAnchor = enteringCanvasFromDom ? _captureDomScrollAnchor() : null;
-    const canvasScrollAnchor = leavingCanvasToDom ? _captureCanvasScrollAnchor() : null;
+    // Capture where the view is BEFORE renderAlignment() wipes alignmentContainer's DOM (which
+    // resets native scrollTop to 0) / before anything else touches _canvasState, from the mode
+    // being left (the radio already shows the new one); applied to the new view below.
+    const VIEW_MODES = ['modeSingle', 'modeBlocks', 'modeCanvas'];
+    const enteringView = VIEW_MODES.includes(document.querySelector('input[name="mode"]:checked')?.id);
+    const viewAnchor = enteringView && VIEW_MODES.includes(_lastModeRadioId) && state.seqs?.length
+        ? _captureViewAnchor(_lastModeRadioId === 'modeCanvas') : null;
     if (document.getElementById('modeCanvas')?.checked) {
         // Entering Canvas mode: these caches are keyed only by length/shadeMode,
         // so any same-length edit made while away from Canvas (residue edits,
@@ -11743,8 +11917,7 @@ async function onModeChange() {
     // panel open over a display its tools cannot touch. Renders below, so no re-render here.
     exitEditModeForUnsupportedView({ rerender: false });
     renderAlignment();
-    if (domScrollAnchor) _applyDomScrollAnchorToCanvas(domScrollAnchor);
-    if (canvasScrollAnchor) _applyCanvasScrollAnchorToDom(canvasScrollAnchor);
+    if (viewAnchor) _applyViewAnchor(viewAnchor);
     setupHoverMenuReveal();
     _lastModeRadioId = document.querySelector('input[name="mode"]:checked')?.id || _lastModeRadioId;
 }
@@ -11752,7 +11925,7 @@ async function onModeChange() {
 const LARGE_ALIGNMENT_RESIDUE_THRESHOLD = 80000;
 
 function _isLargeAlignmentPending() {
-    const _aliLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+    const _aliLen = state.seqs.length > 0 ? _maxSeqLen(state.seqs) : 0;
     return (state.seqs.length * _aliLen) > LARGE_ALIGNMENT_RESIDUE_THRESHOLD;
 }
 
@@ -11770,7 +11943,9 @@ function _computeLargeAlignmentBlockChars() {
     // the slider's displayed number) but became a real under-utilization
     // bug ("screen fit is too narrow") once fitBlockSizeBeforeInitialRender
     // started using this estimate for the real initial render.
-    const charPx = 7.8 * zoom;
+    // The residue cell measured for the current font (--res-w, _syncResidueWidthVar), else 7.8px x zoom
+    const resW = parseFloat(alignmentContainer?.style.getPropertyValue('--res-w'));
+    const charPx = resW > 0 ? resW : 7.8 * zoom;
     const namePx = ((effectiveNameLength() + 1) * charPx) + 16;   // .seq-name: nameLen ch + 1ch gap + 16px
     // Use window.innerWidth instead of container.clientWidth to avoid forcing
     // a synchronous reflow over the (potentially already-rendered) DOM —
@@ -11832,9 +12007,14 @@ function setBlockSizeToScreen() {
         const chars = _computeLargeAlignmentBlockChars();
         const slider = el('blockSizeSlider');
         const input = el('blockSizeInput');
+        const prev = parseInt(slider?.value || '200', 10);
         if (slider) slider.value = chars;
         if (input) input.value = chars;
-        return; // Skip re-render for large alignments
+        // Redraw with it when it changed (no measuring needed: the estimate is from the zoom).
+        // This used to stop at the number for every alignment over 80,000 residues, so after a
+        // zoom the Screen button changed the slider while the blocks kept overflowing.
+        if (el('modeBlocks')?.checked && chars !== prev) renderAlignment();
+        return;
     }
 
     // Try to measure an existing nucleotide span
@@ -12521,12 +12701,20 @@ function handleKeyDown(e) {
     }
 
     // Page navigation for large alignments
-    if (e.key === 'PageUp' || e.key === 'PageDown') {
+    // Canvas pans its own offset; a windowed view scrolls the container; a small alignment
+    // scrolls the page, so the key is left to the browser. The key used to always scroll the
+    // container and be cancelled: it did nothing for small alignments or in Canvas.
+    if ((e.key === 'PageUp' || e.key === 'PageDown') && !e.ctrlKey && !e.metaKey && !e.altKey && !_isTextEntry(document.activeElement)) {
         const container = alignmentContainer;
         const direction = e.key === 'PageUp' ? -1 : 1;
-        const scrollAmount = container.clientHeight * 0.8;
-        container.scrollTop += direction * scrollAmount;
-        e.preventDefault();
+        if (isCanvasMode() && _canvasState.scheduleDraw) {
+            _canvasState.offsetY = Math.max(0, (_canvasState.offsetY || 0) + direction * container.clientHeight * 0.8);
+            _canvasState.scheduleDraw();
+            e.preventDefault();
+        } else if (container.scrollHeight > container.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(container).overflowY)) {
+            container.scrollTop += direction * container.clientHeight * 0.8;
+            e.preventDefault();
+        }
     }
 }
 function handleKeyUp(e) {
@@ -13111,7 +13299,7 @@ function copySelectedConsensus() {
         return;
     }
     const selectedSeqs = Array.from(state.selectedRows).map(i => state.seqs[i].seq);
-    const len = Math.max(...selectedSeqs.map(s => s.length));
+    const len = _arrMax(selectedSeqs.map(s => s.length));
     const opts = _getConsensusOptions();
     const consArr = [];
     for (let pos = 0; pos < len; pos++) consArr.push(_computeConsensusCharForColumn(selectedSeqs, pos, opts));
@@ -13309,7 +13497,7 @@ function replaceSelectedWithConsensus() {
 
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
-    const len = Math.max(...selectedSeqs.map(s => s.length));
+    const len = _arrMax(selectedSeqs.map(s => s.length));
 
     // Generate consensus sequence
     const cons = computeConsensusForSequences(selectedSeqs);
@@ -14170,7 +14358,7 @@ function _exportCellClass(base, posData, config) {
 // with a position ruler, the consensus row where the screen shows it, and
 // one line per sequence.
 function _exportLayout({ wrapAlways = false } = {}) {
-    const len = Math.max(...state.seqs.map(q => q.seq.length));
+    const len = _maxSeqLen(state.seqs);
     const blockSlider = parseInt(el('blockSizeSlider')?.value, 10) || 60;
     const blockMode = !!el('modeBlocks')?.checked;
     const blockWidth = Math.max(1, (blockMode || wrapAlways) ? blockSlider : len);
@@ -15425,7 +15613,7 @@ function _gotoSelectionItem(item) {
         if (!rows.length) return;
         const i = ((_gotoCursor.nucs ?? -1) + 1) % rows.length;
         _gotoCursor.nucs = i;
-        _showRowInAlignment(rows[i], Math.min(...state.selectedNucs.get(rows[i])));
+        _showRowInAlignment(rows[i], _arrMin(state.selectedNucs.get(rows[i])));
     } else if (item.entry) {
         _gotoNextSearchHit(item.entry);
     }
@@ -16657,7 +16845,7 @@ async function clusterSequences() {
         showMessage("Need at least 3 sequences to cluster.", 3000);
         return;
     }
-    const residues = state.seqs.length * Math.max(...state.seqs.map(s => s.seq.length));
+    const residues = state.seqs.length * _maxSeqLen(state.seqs);
     if (!confirmIfLarge('Clustering', residues, 200000,
         'can take several minutes - its cost grows much faster than the alignment does')) {
         return;
@@ -20423,7 +20611,7 @@ function realignSelected() {
         });
 
         // Pad all sequences to the same length
-        const maxLen = Math.max(...state.seqs.map(s => s.seq.length));
+        const maxLen = _maxSeqLen(state.seqs);
         for (const s of state.seqs) {
             s.seq = s.seq.padEnd(maxLen, '-');
         }
@@ -20576,7 +20764,7 @@ async function addSequencesJustAdd() {
         }
     } else {
         // Pad to current alignment length
-        const alignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+        const alignLen = state.seqs.length > 0 ? _maxSeqLen(state.seqs) : 0;
         for (const ns of newSeqs) {
             if (alignLen > 0 && ns.seq.length < alignLen) {
                 ns.seq = ns.seq.padEnd(alignLen, '-');
@@ -21010,7 +21198,7 @@ function openSeqEditor(index) {
             // Multi-sequence mode
             return openSeqEditorMulti();
         } else if (state.selectedRows.size === 1) {
-            index = Math.min(...state.selectedRows);
+            index = _arrMin(state.selectedRows);
         } else {
             index = -1; // freeform mode
         }
@@ -21232,7 +21420,7 @@ function seqEditApply() {
 
         pushUndo('seqedit-multi');
         const padCheckbox = document.getElementById('seqEditPadGaps');
-        const alignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+        const alignLen = state.seqs.length > 0 ? _maxSeqLen(state.seqs) : 0;
 
         // Update existing sequences (matched by index order)
         const updateCount = Math.min(entries.length, indices.length);
@@ -21249,7 +21437,7 @@ function seqEditApply() {
         }
         // If user added extra sequences in the textarea, append them
         // Recompute alignment length in case updates above changed it
-        const updatedAlignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+        const updatedAlignLen = state.seqs.length > 0 ? _maxSeqLen(state.seqs) : 0;
         for (let i = updateCount; i < entries.length; i++) {
             let seq = entries[i].seq;
             if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) seq = _seqEditFitWidth(seq, updatedAlignLen);
@@ -21299,7 +21487,7 @@ function seqEditApply() {
     // Pad or trim if checkbox is checked
     const padCheckbox = document.getElementById('seqEditPadGaps');
     if (padCheckbox && padCheckbox.checked && state.seqs.length > 0) {
-        const alignLen = Math.max(...state.seqs.map(s => s.seq.length));
+        const alignLen = _maxSeqLen(state.seqs);
         if (alignLen > 0) seq = _seqEditFitWidth(seq, alignLen);
     }
 
@@ -22457,11 +22645,12 @@ function initializeAppUI() {
     const controls = el('controls');
     if (controls && typeof ResizeObserver !== 'undefined') {
         const controlsResizeObserver = new ResizeObserver(() => {
-            window.requestAnimationFrame(updateControlsOffset);
+            window.requestAnimationFrame(() => { updateControlsOffset(); _fitFixedAlignmentViewport(); });
         });
         controlsResizeObserver.observe(controls);
     }
     window.addEventListener('resize', () => window.requestAnimationFrame(updateControlsOffset));
+    window.addEventListener('resize', () => window.requestAnimationFrame(_fitFixedAlignmentViewport));
 
     // Initialize slider backgrounds
     ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(id => {
@@ -23937,7 +24126,7 @@ function isGeneDocGapChar(char) {
 
 function normalizeAlignmentLengths() {
     if (!state.seqs.length) return 0;
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxSeqLen(state.seqs);
     state.seqs.forEach(s => {
         if (s.seq.length < len) s.seq = s.seq.padEnd(len, GENEDOC_FILLER);
     });
@@ -24349,7 +24538,7 @@ function startGeneDocMoveDrag(e, rowIndex, pos, tool, span) {
         originalSeq: state.seqs[rowIndex].seq,
         // what the DOM row shows now, for the overlay's "unchanged cell" test
         startHits: state.searchHistory?.length ? _computeSearchHitsForSeq(state.seqs[rowIndex].seq) : new Map(),
-        originalAlignmentLength: Math.max(...state.seqs.map(seqObj => seqObj.seq.length)),
+        originalAlignmentLength: _maxSeqLen(state.seqs),
         moved: 0,
         visiblePositions: null,
         visibleComputedAtMoved: 0,
@@ -24542,7 +24731,7 @@ function handleGeneDocEditDragEnd() {
         normalizeAlignmentLengths();
         refreshAllGaplessPositions();
         state.editCell = { row: drag.rowIndex, pos: drag.anchorPos };
-        const nextAlignmentLength = Math.max(...state.seqs.map(seqObj => seqObj.seq.length));
+        const nextAlignmentLength = _maxSeqLen(state.seqs);
         const toolLabel = drag.tool === 'slideKeepGaps' ? 'SlideText' : 'MoveText';
         const columns = Math.abs(drag.moved);
         const fullName = state.seqs[drag.rowIndex]?.header || `row ${drag.rowIndex + 1}`;
@@ -24621,7 +24810,7 @@ function handleGeneDocGapToolClick(rowIndex, pos, tool) {
     _pushUndoEntry(undoEntry);
     results.forEach(([s, r]) => { if (r.changed) s.seq = r.seq; });
     const label = deleting ? 'gap deleted' : 'gap inserted';
-    applyColumnEdit({ type: deleting ? 'delete' : 'insert', at: pos, cols: [pos], newWidth: Math.max(...state.seqs.map(q => q.seq.length)) },
+    applyColumnEdit({ type: deleting ? 'delete' : 'insert', at: pos, cols: [pos], newWidth: _maxSeqLen(state.seqs) },
         targets.length === state.seqs.length ? 'all' : targets);
     finalizeGeneDocEdit(`${targets.length} sequence(s): ${label}.`, 1600, pos, oldWidth);
 }
@@ -24768,7 +24957,7 @@ function fastUpdateEditCell() {
 
 function removeGapColumns() {
     if (state.seqs.length === 0) return;
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxSeqLen(state.seqs);
     const colsToRemove = [];
     for (let pos = 0; pos < len; pos++) {
         if (state.seqs.every(s => isGeneDocGapChar(s.seq[pos] || GENEDOC_FILLER))) {
@@ -24799,7 +24988,7 @@ function insertGapColumn(skipSelected = false) {
         showMessage("Select a column position by Ctrl+Alt+click on a nucleotide to insert gap there.", 5000);
         return;
     }
-    const pos = Math.min(...state.selectedColumns);
+    const pos = _arrMin(state.selectedColumns);
     pushUndo('insertGap');
     normalizeAlignmentLengths();
     const edited = [];
@@ -24829,7 +25018,7 @@ function insertSingleGap(rowIndex, pos) {
     }
     _pushUndoEntry(undoEntry);
     s.seq = result.seq;
-    applyColumnEdit({ type: 'insert', at: pos, newWidth: Math.max(...state.seqs.map(q => q.seq.length)) }, [rowIndex]);
+    applyColumnEdit({ type: 'insert', at: pos, newWidth: _maxSeqLen(state.seqs) }, [rowIndex]);
     finalizeGeneDocEdit('Single GeneDoc gap inserted.', 1800, pos, oldWidth);
 }
 
@@ -25692,14 +25881,19 @@ function makeBarInputGuard(bar) {
     // so the empty start page (and any alignment that fits) showed a scrollbar
     // whenever the bar was a pixel narrower than the alignment area. Hidden with
     // visibility, not display, so the layout does not jump when it appears.
+    // The bar's range (thumb - bar width) is made equal to the view's (content - viewport width).
+    // The thumb used to be the content's width, but the bar is 2px wider than the alignment's
+    // viewport (its border), so the bar stopped short of the alignment's end.
     function syncSizes() {
         syncing = true;
+        const canvas = isCanvasMode() ? document.getElementById('alignmentCanvas') : null;
+        const viewW = (canvas && parseFloat(canvas.style.width)) || alignment.clientWidth;
         const contentW = isCanvasMode()
-            ? (_canvasState.totalContentW || alignment.clientWidth)
-            : (alignment.scrollWidth || alignment.clientWidth);
-        const scrollable = contentW > alignment.clientWidth + 1;
+            ? (_canvasState.totalContentW || viewW)
+            : (alignment.scrollWidth || viewW);
+        const scrollable = contentW > viewW + 1;
         bar.style.visibility = scrollable ? '' : 'hidden';
-        thumb.style.width = (scrollable ? contentW : 0) + 'px';
+        thumb.style.width = (scrollable ? contentW - viewW + bar.clientWidth : 0) + 'px';
         bar.scrollLeft = isCanvasMode() ? (_canvasState.offsetX || 0) : alignment.scrollLeft;
         syncing = false;
         grip.update();
@@ -25759,6 +25953,10 @@ function makeBarInputGuard(bar) {
     // Only watch for actual content changes, NOT style changes (which would be triggered by zoom)
     const mo = new MutationObserver(scheduleSync);
     mo.observe(alignment, { childList: true, subtree: true, characterData: false, attributes: false });
+    // Rows off screen are laid out at a placeholder size (content-visibility, styles.css) without
+    // their length labels: drawing them widens the alignment with no DOM change, and the bar,
+    // measured before, could not reach the new end.
+    alignment.addEventListener('contentvisibilityautostatechange', scheduleSync, true);
 
     // Dragging anywhere on the bar moves it like the grip, with the pointer captured: the
     // drag keeps going however far the pointer strays from the 14px bar.
@@ -25842,14 +26040,18 @@ function makeBarInputGuard(bar) {
     const grip = _attachScrollbarGrip(bar, false);
 
     function syncVisibilityAndSize() {
+        // As for the horizontal bar, the bar's range (thumb - bar height) equals the view's: the bar
+        // is the alignment's full height, its viewport 1px less (the bottom border).
         if (isCanvasMode()) {
             bar.style.display = 'flex';
             const rect = alignment.getBoundingClientRect();
             bar.style.top = alignment.offsetTop + 'px';
             bar.style.height = rect.height + 'px';
             syncing = true;
-            const h = _canvasState.totalContentH || alignment.clientHeight;
-            thumb.style.height = Math.max(h, alignment.clientHeight + 1) + 'px';
+            const canvas = document.getElementById('alignmentCanvas');
+            const viewH = (canvas && parseFloat(canvas.style.height)) || alignment.clientHeight;
+            const h = _canvasState.totalContentH || viewH;
+            thumb.style.height = Math.max(0, h - viewH) + bar.clientHeight + 'px';
             bar.scrollTop = _canvasState.offsetY || 0;
             syncing = false;
         } else if (alignment.scrollHeight > alignment.clientHeight) {
@@ -25858,7 +26060,7 @@ function makeBarInputGuard(bar) {
             bar.style.top = alignment.offsetTop + 'px';
             bar.style.height = rect.height + 'px';
             syncing = true;
-            thumb.style.height = Math.max(alignment.scrollHeight, alignment.clientHeight + 1) + 'px';
+            thumb.style.height = (alignment.scrollHeight - alignment.clientHeight) + bar.clientHeight + 'px';
             bar.scrollTop = alignment.scrollTop;
             syncing = false;
         } else {
@@ -28508,7 +28710,7 @@ function _syncTsdModeSubUI() {
 
 function _initTsdColumnDefaults() {
     if (!state.seqs?.length) return;
-    const aliLen = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLen = _maxSeqLen(state.seqs);
     const flank = parseInt(document.getElementById('tsdFlankSize')?.value, 10) || 30;
     const upEnd = document.getElementById('tsdUpEnd');
     const downStart = document.getElementById('tsdDownStart');
@@ -28538,7 +28740,7 @@ function _fillTsdRegionsFromSelection() {
         return;
     }
     const cols = [...state.selectedColumns].sort((a, b) => a - b);
-    const aliLen = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLen = _maxSeqLen(state.seqs);
     const manual = document.querySelector('input[name="tsdMode"][value="manual"]');
     if (manual) manual.checked = true;
     const upStartEl = document.getElementById('tsdUpStart');
@@ -29256,7 +29458,7 @@ function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, m
  */
 function _findTSD(seqs, mode, params) {
     const results = [];
-    const aliLen = Math.max(...seqs.map(seqObj => seqObj.seq.length));
+    const aliLen = _maxSeqLen(seqs);
     const minTsdLen = params.minLen || 4;
     const maxTsdLen = params.maxLen || 20;
     const maxDiv = (Number.isFinite(params.maxDiv) ? params.maxDiv : 20) / 100;
@@ -29429,7 +29631,7 @@ function runTsdAnalysis() {
     if (!resultsEl) return;
     const tsdMode = document.querySelector('input[name="tsdMode"]:checked')?.value || 'auto';
     const params = _readTsdParams();
-    const aliLen = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLen = _maxSeqLen(state.seqs);
 
     if (tsdMode === 'manual') {
         if (params.upStart < 1 || params.upEnd < params.upStart) {

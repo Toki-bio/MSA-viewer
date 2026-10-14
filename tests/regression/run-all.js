@@ -3759,6 +3759,430 @@ check('audit UI: page has a description and social preview tags', async (page) =
   return { pass: r.every(Boolean), detail: JSON.stringify(r) };
 });
 
+// The ruler's numbers drifted off their columns along a long alignment: a residue is an
+// inline-block, whose width the browser rounds up to its layout unit (Courier New 13px: a
+// 7.8013px glyph makes a 7.8125px cell), while the ruler is one run of text advancing the
+// unrounded 7.8013px. By column 3700 the labels sat ~5 columns left of the column they name;
+// windowed views drifted the same way inside their window. Each label's last digit must sit
+// over its column, at 100% and another zoom, in Full, windowed Full and Block.
+async function rulerOffsets(page) {
+  return page.evaluate(() => {
+    const out = [];
+    const c = el('alignmentContainer'), cr = c.getBoundingClientRect();
+    for (const ruler of c.querySelectorAll('.scale-ruler-line .seq-data')) {
+      let line = ruler.parentElement.nextElementSibling;
+      while (line && !(line.matches('.seq-line[data-seq-index]') && +line.dataset.seqIndex >= 0)) line = line.nextElementSibling;
+      if (!line) continue;
+      const w = document.createTreeWalker(ruler, NodeFilter.SHOW_TEXT);
+      const text = []; let node;
+      while ((node = w.nextNode())) text.push(node);
+      // labels as one string over the text nodes (a node per character in Highlight-diffs mode)
+      const chars = text.flatMap(n => [...n.data].map((ch, i) => ({ n, i, ch })));
+      const str = chars.map(x => x.ch).join('');
+      const re = /\d+/g; let m;
+      while ((m = re.exec(str))) {
+        const last = chars[m.index + m[0].length - 1];
+        const rg = document.createRange(); rg.setStart(last.n, last.i); rg.setEnd(last.n, last.i + 1);
+        const q = rg.getBoundingClientRect();
+        if (q.right < cr.left + 150 || q.left > cr.right) continue;
+        const sp = line.querySelector(`.seq-data > span[data-pos="${+m[0] - 1}"]`);
+        if (sp) out.push([+m[0], Math.round((q.right - sp.getBoundingClientRect().right) * 10) / 10]);
+      }
+    }
+    return out;
+  });
+}
+check('Ruler: every label sits over its column along a long alignment (Full, windowed Full, Block, zoomed)', async (page) => {
+  const out = {};
+  const worst = a => a.reduce((m, [, d]) => Math.max(m, Math.abs(d)), 0);
+  await loadFasta(page, makeFasta(10, 5000));
+  await setMode(page, 'full');
+  for (const col of [0, 2500, 4300]) {
+    await page.evaluate((col) => { const c = el('alignmentContainer'); c.scrollLeft = col * _measureCharWidth(); }, col);
+    await page.waitForTimeout(300);
+    const r = await rulerOffsets(page); out['full@' + col] = [r.length, worst(r)];
+  }
+  await page.evaluate(() => setZoom(150)); await page.waitForTimeout(800);
+  await page.evaluate(() => { const c = el('alignmentContainer'); c.scrollLeft = c.scrollWidth; });
+  await page.waitForTimeout(300);
+  let r = await rulerOffsets(page); out.zoom150 = [r.length, worst(r)];
+  await page.evaluate(() => setZoom(100)); await page.waitForTimeout(500);
+  await setMode(page, 'block'); await page.waitForTimeout(300);
+  r = await rulerOffsets(page); out.block = [r.length, worst(r)];
+  await loadSyntheticFasta(page, 1500, 4000); await setMode(page, 'full'); await page.waitForTimeout(1000);
+  await page.evaluate(() => { const c = el('alignmentContainer'); c.scrollLeft = 3500 * _measureCharWidth(); });
+  await page.waitForTimeout(1000);
+  r = await rulerOffsets(page); out.windowed = [r.length, worst(r)];
+  const ok = Object.values(out).every(([n, d]) => n >= 3 && d <= 1);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Scrolled all the way right, the end of the alignment stayed out of reach: in windowed Full the
+// rows ended exactly at the container's edge, under the 14px vertical scrollbar, so the last two
+// columns sat beneath it and the length labels (outside the row's layout box) could not be scrolled
+// to at all; Canvas mode ended its content under the same bar. In small Full mode the horizontal
+// bar's range was a few px short of the alignment's (bar 2px wider than the alignment's viewport,
+// and rows painted after the bar measured made the alignment wider): the labels showed one digit.
+async function dragBarToEnd(page, sel) {
+  const b = await page.evaluate((sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }, sel);
+  const horizontal = sel.includes('horizontal');
+  const x = b[0] + 6, y = b[1] + 6;
+  await page.mouse.move(x, y); await page.mouse.down();
+  for (let k = 1; k <= 8; k++) await page.mouse.move(horizontal ? x + k * 500 : x, horizontal ? y : y + k * 500);
+  await page.mouse.up(); await page.waitForTimeout(600);
+}
+const END_STATE = () => {
+  const c = el('alignmentContainer'), cr = c.getBoundingClientRect();
+  const vb = document.querySelector('.vertical-scrollbar');
+  const vLeft = getComputedStyle(vb).display !== 'none' ? vb.getBoundingClientRect().left : cr.right - 1;
+  const lines = [...c.querySelectorAll('.seq-line[data-seq-index]')].filter(l => { const q = l.getBoundingClientRect(); return +l.dataset.seqIndex >= 0 && q.top >= cr.top && q.bottom <= cr.bottom; });
+  const right = sel => Math.max(...lines.map(l => { const s = l.querySelectorAll(sel); return s.length ? s[s.length - 1].getBoundingClientRect().right : -1e9; }));
+  return { rows: lines.length, lastCol: Math.round(right('.seq-data > span[data-pos]')), label: Math.round(right('.seq-length')), visibleRight: Math.round(Math.min(vLeft, cr.right - 1)) };
+};
+check('Scrolled to the end: the last column and the length labels clear the scrollbars (Full, windowed Full, Canvas)', async (page) => {
+  const out = {};
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await loadFasta(page, makeFasta(60, 800)); await setMode(page, 'full'); await page.waitForTimeout(800);
+  await dragBarToEnd(page, '.horizontal-scrollbar');
+  out.full = await page.evaluate(END_STATE);
+  await loadSyntheticFasta(page, 1500, 4000); await setMode(page, 'full'); await page.waitForTimeout(1200);
+  await dragBarToEnd(page, '.horizontal-scrollbar'); await dragBarToEnd(page, '.vertical-scrollbar');
+  out.windowed = await page.evaluate(END_STATE);
+  await setMode(page, 'canvas'); await page.waitForTimeout(800);
+  await dragBarToEnd(page, '.horizontal-scrollbar'); await dragBarToEnd(page, '.vertical-scrollbar');
+  out.canvas = await page.evaluate(() => {
+    const m = _canvasState.metrics, cv = el('alignmentCanvas').getBoundingClientRect();
+    const vb = document.querySelector('.vertical-scrollbar').getBoundingClientRect();
+    const len = state.seqs[0].seq.length;
+    return { lastCol: Math.round(cv.left + m.nameW + len * m.charW - _canvasState.offsetX), visibleRight: Math.round(vb.left) };
+  });
+  const fits = s => s.lastCol > 0 && s.lastCol <= s.visibleRight && (s.label === undefined || (s.label > 0 && s.label <= s.visibleRight));
+  return { pass: out.full.rows > 5 && out.windowed.rows > 5 && fits(out.full) && fits(out.windowed) && fits(out.canvas), detail: JSON.stringify(out) };
+});
+
+// ---------- pre-publication audit: rendering (2026-10-14) ----------
+
+// Switches view mode the way a user does: the Display menu's Mode radio, then the
+// "Full mode on a large alignment" dialog if it comes up (shared helper setMode only waits
+// for that dialog near ALIGN_CRAZY_VOLUME, so on a tall or long alignment the switch could
+// still be pending when a check read the view).
+async function auditClickMode(page, mode) {
+  const id = { full: 'modeSingle', block: 'modeBlocks', canvas: 'modeCanvas' }[mode];
+  const open = await page.evaluate(() => document.querySelector('.section-header[data-section="display"]').closest('.menu-section').classList.contains('menu-open'));
+  if (!open) await page.click('.section-header[data-section="display"]');
+  await page.click('#' + id);
+  const dlg = await page.waitForSelector('#alignLoadProceed', { timeout: 1500 }).then(() => true).catch(() => false);
+  if (dlg) await page.click('#alignLoadProceed');
+  await page.waitForTimeout(700);
+  await page.click('.section-header[data-section="display"]');   // close the menu again
+  // and move off it: menus also open on hover, and a wheel over the open menu scrolls nothing
+  await page.mouse.move(5, Math.round((await page.evaluate(() => innerHeight)) * 0.66));
+  await page.waitForTimeout(400);
+}
+async function auditOpenSection(page, name) {
+  const open = await page.evaluate((n) => document.querySelector(`.section-header[data-section="${n}"]`).closest('.menu-section').classList.contains('menu-open'), name);
+  if (!open) await page.click(`.section-header[data-section="${name}"]`);
+}
+// [row, column] of the first residue at the top left of the view, in any mode (Canvas: its
+// hit test; Full/Block: the first residue below the toolbar, right of the sticky names).
+const AUDIT_TOPLEFT = () => {
+  const c = el('alignmentContainer');
+  if (el('modeCanvas').checked) {
+    const cv = el('alignmentCanvas').getBoundingClientRect(), m = _canvasState.metrics;
+    const h = _canvasHitTest(cv.left + m.nameW + 2, cv.top + 2);
+    return h ? [h.row, h.col] : null;
+  }
+  const cr = c.getBoundingClientRect();
+  const top = Math.max(cr.top, el('controls').getBoundingClientRect().bottom, 0);
+  const name = [...c.querySelectorAll('.seq-line[data-seq-index] > .seq-name')].find(n => { const r = n.getBoundingClientRect(); return r.height && r.bottom > top; });
+  const x = (name && el('stickyNames').checked ? name.getBoundingClientRect().right : cr.left) + 2;
+  for (let y = top + 2; y < top + 120; y += 3) {
+    const e = document.elementFromPoint(x, y);
+    const line = e && e.matches('span[data-pos]') && e.closest('.seq-line[data-seq-index]');
+    if (line && +line.dataset.seqIndex >= 0) return [+line.dataset.seqIndex, +e.dataset.pos];
+  }
+  return null;
+};
+// AUDIT_TOPLEFT once the view has settled (a redraw of a big alignment can take a few seconds)
+async function auditTopLeft(page) {
+  let r = null;
+  for (let i = 0; i < 25 && !r; i++) { r = await page.evaluate(AUDIT_TOPLEFT); if (!r) await page.waitForTimeout(200); }
+  return r;
+}
+const auditNear = (a, b, tol = 2) => !!a && !!b && Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol;
+async function auditWheel(page, dx, dy, n) {
+  const b = await page.evaluate(() => { const r = el('alignmentContainer').getBoundingClientRect(); return [r.left + r.width / 2, Math.max(r.top, 0) + (Math.min(r.bottom, innerHeight) - Math.max(r.top, 0)) / 2]; });
+  await page.mouse.move(b[0], b[1]);
+  for (let i = 0; i < n; i++) { await page.mouse.wheel(dx, dy); await page.waitForTimeout(40); }
+  await page.waitForTimeout(700);
+}
+
+// Windowed Full mode (above ALIGN_WINDOWED_DOM_THRESHOLD) kept only scrollTop through a redraw:
+// emptying the container reset scrollLeft to 0 and the column window was built from that 0, so
+// changing the colour scheme, Highlight diffs or the consensus row threw the view back to column 1.
+check('Audit: windowed Full keeps its columns through a redraw (colour scheme, Highlight diffs, consensus)', async (page) => {
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'full');
+  await auditWheel(page, 600, 400, 20);
+  const out = { before: await auditTopLeft(page) };
+  await auditOpenSection(page, 'display');
+  await page.selectOption('#colorSchemeSelect', 'nucleotide'); await page.waitForTimeout(1200);
+  out.scheme = await auditTopLeft(page);
+  await page.click('#highlightDiffs'); await page.waitForTimeout(1200);
+  out.diffs = await auditTopLeft(page);
+  await page.click('.section-header[data-section="display"]');
+  await auditOpenSection(page, 'consensus');
+  await page.click('#showConsensus'); await page.waitForTimeout(1200);
+  out.consensusOff = await auditTopLeft(page);
+  // The consensus row above the rows went away: rows move up by one, the columns stay
+  const ok = out.before[1] > 1000 && auditNear(out.scheme, out.before) && auditNear(out.diffs, out.before)
+    && Math.abs(out.consensusOff[1] - out.before[1]) <= 2;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Switching view mode lost or shifted the place in the alignment: the anchor was measured on the
+// consensus row (14px, the sequence rows 13px), so Full -> Canvas landed ~7% of the rows off (row
+// 613 -> 571); a Block view was converted as if it were one tall block (it landed at the bottom,
+// column 1); small alignments scroll the page, whose position was ignored (back to row 1); Canvas
+// -> a small Full view used 8px/16px guesses for the 7.8px/13px cells; and Full <-> Block always
+// landed at column 1.
+check('Audit: mode switches keep the place (Full/Block/Canvas, small and windowed)', async (page) => {
+  const out = {};
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'full');
+  await auditWheel(page, 600, 400, 20);
+  out.full = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.canvas = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.full2 = await auditTopLeft(page);
+  await auditClickMode(page, 'block'); out.block = await auditTopLeft(page);
+  out.bw = await page.evaluate(() => _unifiedWindowRenderParams.blockWidth);
+  await auditClickMode(page, 'canvas'); out.canvas2 = await auditTopLeft(page);
+  await auditClickMode(page, 'block'); out.block2 = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.full3 = await auditTopLeft(page);
+  // small alignments: the page scrolls (Block) or the container scrolls sideways (Full)
+  await loadSyntheticFasta(page, 300, 1000);
+  await auditClickMode(page, 'block');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  // (stay clear of the last ~160 columns: there Canvas and Full cannot scroll a column to the left edge)
+  await auditWheel(page, 0, 900, 6);
+  out.smallBlock = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.smallCanvas = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.smallFull = await auditTopLeft(page);
+  await auditWheel(page, 700, 0, 4);
+  out.smallFullR = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.smallCanvas2 = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.smallFull2 = await auditTopLeft(page);
+  const inBlock = (blockView, col, bw) => !!blockView && blockView[1] % bw === 0 && blockView[1] <= col && col < blockView[1] + bw;
+  const ok = out.full[0] > 300 && out.full[1] > 1000
+    && auditNear(out.canvas, out.full) && auditNear(out.full2, out.full)
+    && inBlock(out.block, out.full[1], out.bw) && Math.abs(out.block[0] - out.full[0]) <= 2
+    && auditNear(out.canvas2, out.block) && auditNear(out.block2, out.block) && auditNear(out.full3, out.block)
+    && out.smallBlock[0] > 100 && auditNear(out.smallCanvas, out.smallBlock) && auditNear(out.smallFull, out.smallBlock)
+    && out.smallFullR[1] > 300 && auditNear(out.smallCanvas2, out.smallFullR) && auditNear(out.smallFull2, out.smallFullR);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Zooming kept the scroll offsets in pixels while the cells grew or shrank, so the view moved to
+// other columns and rows (small Full: column 262 -> 197; windowed Block: column 1951 -> 1462;
+// Canvas: 2000 -> 1777). The first residue at the top left now stays put.
+check('Audit: zooming keeps the top-left residue (small Full, windowed Full and Block, Canvas)', async (page) => {
+  const out = {};
+  const zoomPair = async (key) => {
+    const before = await auditTopLeft(page);
+    await page.mouse.click(5, (await page.evaluate(() => innerHeight)) - 3);   // focus the page, not a control
+    await page.keyboard.press('Control+Equal'); await page.waitForTimeout(1200);
+    const after = await auditTopLeft(page);
+    await page.keyboard.press('Control+Minus'); await page.keyboard.press('Control+Minus'); await page.waitForTimeout(1200);
+    const after2 = await auditTopLeft(page);
+    await page.keyboard.press('Control+Equal'); await page.waitForTimeout(800);
+    out[key] = { before, after, after2 };
+    return auditNear(after, before) && auditNear(after2, before) && before[1] > 50;
+  };
+  await loadSyntheticFasta(page, 20, 800);
+  await auditClickMode(page, 'full'); await auditWheel(page, 600, 0, 6);
+  let ok = await zoomPair('smallFull');
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'full'); await auditWheel(page, 600, 400, 20);
+  ok = await zoomPair('windowedFull') && ok;
+  await auditClickMode(page, 'block'); await auditWheel(page, 0, 3000, 30);
+  ok = await zoomPair('windowedBlock') && ok;
+  await auditClickMode(page, 'canvas'); await auditWheel(page, 600, 400, 20);
+  ok = await zoomPair('canvas') && ok;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// The windowed views and Canvas set their fixed height once, at render: after the window was made
+// smaller the bottom of the alignment (and of the vertical scrollbar) hung below the window, and
+// after it was made taller a band of the window stayed empty.
+check('Audit: windowed Full and Canvas follow a window resize', async (page) => {
+  const out = {};
+  await loadSyntheticFasta(page, 1500, 4000);
+  const fit = () => { const r = el('alignmentContainer').getBoundingClientRect(); return { bottom: Math.round(r.bottom), inner: innerHeight }; };
+  for (const mode of ['full', 'canvas']) {
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await auditClickMode(page, mode);
+    await page.setViewportSize({ width: 1400, height: 600 }); await page.waitForTimeout(800);
+    out[mode + '600'] = await page.evaluate(fit);
+    await page.setViewportSize({ width: 1400, height: 1100 }); await page.waitForTimeout(800);
+    out[mode + '1100'] = await page.evaluate(fit);
+    if (mode === 'canvas') out.canvasH = await page.evaluate(() => [parseFloat(el('alignmentCanvas').style.height), el('alignmentContainer').clientHeight]);
+    else out.fullRows = await page.evaluate(() => { const c = el('alignmentContainer'), cr = c.getBoundingClientRect(); return [...c.querySelectorAll('.seq-line[data-seq-index]')].filter(l => { const q = l.getBoundingClientRect(); return q.top >= cr.top && q.bottom <= cr.bottom; }).length; });
+  }
+  const within = s => s.bottom <= s.inner && s.bottom >= s.inner - 60;
+  const ok = within(out.full600) && within(out.full1100) && within(out.canvas600) && within(out.canvas1100)
+    && out.fullRows > 60 && Math.abs(out.canvasH[0] - out.canvasH[1]) <= 1;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Canvas with translation rows: the selected-column tint stopped at nSeqs x one row height
+// (CHAR_H instead of the row pitch), so with all three frames it covered only the top quarter.
+check('Audit: Canvas column selection covers every row with translation rows', async (page) => {
+  await loadFasta(page, makeFasta(40, 300, 'ATGGCAACG'));
+  await auditClickMode(page, 'canvas');
+  await auditOpenSection(page, 'display');
+  await page.click('#codonAnalysis'); await page.waitForTimeout(1200);
+  await page.selectOption('#codonFrame', 'all'); await page.waitForTimeout(1200);
+  await page.click('.section-header[data-section="display"]');
+  // Ctrl+Alt+click on the ruler selects a column (canvas mousedown)
+  const g = await page.evaluate(() => { const r = el('alignmentCanvas').getBoundingClientRect(), m = _canvasState.metrics; return { x: r.left + m.nameW + 10.5 * m.charW, y: r.top + m.headerH - m.charH / 2, top: r.top, h: r.height }; });
+  await page.keyboard.down('Control'); await page.keyboard.down('Alt');
+  await page.mouse.click(g.x, g.y);
+  await page.keyboard.up('Alt'); await page.keyboard.up('Control');
+  await page.waitForTimeout(400);
+  const r = await page.evaluate(() => {
+    const m = _canvasState.metrics, ctx = el('alignmentCanvas').getContext('2d'), d = devicePixelRatio;
+    const h = parseFloat(el('alignmentCanvas').style.height);
+    // a gap pixel between two codon letters on the lowest translation row on screen
+    const p = _canvasState.rowPitch, x = m.nameW + 10 * m.charW + 1;
+    const row = Math.floor((h - m.headerH) / p) - 1;
+    const y = m.headerH + row * p + p - 2;
+    const px = ctx.getImageData(x * d, y * d, 1, 1).data;
+    return { sel: [...state.selectedColumns], row, px: [...px] };
+  });
+  // tinted: blue-ish, not white
+  const ok = r.sel.includes(10) && r.row > 10 && r.px[2] > r.px[0] + 20;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// Canvas, scrolled right: a plain click on a sequence name hit-tested as the residue hidden under
+// the sticky name column and started a residue selection there, drawn over the name; selected
+// columns and residues also painted over the name column.
+check('Audit: Canvas clicks on names do not select hidden residues; selections stay off the name column', async (page) => {
+  await loadFasta(page, makeFasta(40, 600));
+  await auditClickMode(page, 'canvas');
+  await auditWheel(page, 400, 0, 1);
+  const g = await page.evaluate(() => { const r = el('alignmentCanvas').getBoundingClientRect(), m = _canvasState.metrics; return { left: r.left, top: r.top, nameW: m.nameW, charW: m.charW, headerH: m.headerH, pitch: _canvasState.rowPitch, ox: _canvasState.offsetX }; });
+  await page.mouse.click(g.left + 50, g.top + g.headerH + 3 * g.pitch + 5);
+  await page.waitForTimeout(300);
+  const r = await page.evaluate((g) => {
+    const out = { ox: g.ox, pending: state.pendingNucStart, nucs: state.selectedNucs.size };
+    // a column scrolled under the names, selected: the name cell must stay unpainted
+    const col = Math.floor((g.ox - 40) / g.charW);
+    state.selectedColumns = new Set([col]); _canvasState.scheduleDraw();
+    return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => {
+      const ctx = el('alignmentCanvas').getContext('2d'), d = devicePixelRatio;
+      const x = g.nameW + col * g.charW - g.ox + 2;
+      out.x = x; out.namePx = [...ctx.getImageData(x * d, (g.headerH + 5 * g.pitch + 1) * d, 1, 1).data];
+      res(out);
+    })));
+  }, g);
+  const ok = g.ox > 100 && !r.pending && r.nucs === 0 && r.x < g.nameW && r.namePx[0] === 255 && r.namePx[2] === 255;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// Display > Screen ("fit block size to the window") only updated the number above 80,000 residues
+// (the redraw was skipped for large alignments), so after zooming in the blocks kept overflowing.
+check('Audit: Screen refits the blocks of a large alignment', async (page) => {
+  await loadSyntheticFasta(page, 100, 1000);
+  await auditClickMode(page, 'block');
+  await page.mouse.click(5, 895);
+  for (let i = 0; i < 3; i++) { await page.keyboard.press('Control+Equal'); await page.waitForTimeout(600); }
+  const before = await page.evaluate(() => { const c = el('alignmentContainer'); return c.scrollWidth - c.clientWidth; });
+  await auditOpenSection(page, 'display');
+  await page.click('#blockSizeScreenBtn'); await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => { const c = el('alignmentContainer'); return { slider: +el('blockSizeSlider').value, rendered: +document.querySelector('.scale-ruler-line .seq-data').dataset.scale.split(':')[0], overflow: c.scrollWidth - c.clientWidth }; });
+  r.before = before;
+  return { pass: before > 0 && r.rendered === r.slider && r.overflow <= 0, detail: JSON.stringify(r) };
+});
+
+// PageUp/PageDown scrolled alignmentContainer and always cancelled the key: for small alignments
+// the page is the scroller, so the keys did nothing at all; in Canvas no key scrolled.
+check('Audit: PageDown scrolls a small (page-scrolled) alignment and Canvas', async (page) => {
+  const out = {};
+  await loadFasta(page, makeFasta(400, 100));
+  await setMode(page, 'block');
+  await page.mouse.click(700, 895);
+  await page.keyboard.press('PageDown'); await page.waitForTimeout(400);
+  out.pageY = await page.evaluate(() => scrollY);
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'canvas');
+  await page.mouse.click(700, 895);
+  await page.keyboard.press('PageDown'); await page.waitForTimeout(400);
+  out.canvas = await page.evaluate(() => [_canvasState.offsetY, el('alignmentContainer').scrollTop]);
+  await page.keyboard.press('PageUp'); await page.waitForTimeout(400);
+  out.canvasUp = await page.evaluate(() => _canvasState.offsetY);
+  const ok = out.pageY > 300 && out.canvas[0] > 300 && out.canvas[1] === 0 && out.canvasUp === 0;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Math.max(...lengths) over one entry per sequence throws "Maximum call stack size exceeded"
+// past ~125,000 arguments: an alignment of 130,000 short sequences failed to load.
+check('Audit: 130,000 sequences load and render', async (page) => {
+  await loadSyntheticFasta(page, 130000, 20);
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => ({ n: state.seqs.length, rows: document.querySelectorAll('.seq-line[data-seq-index]').length + (el('alignmentCanvas') ? 1 : 0), msg: el('statusMessage')?.innerText.slice(0, 120) }));
+  return { pass: r.n === 130000 && r.rows > 0, detail: JSON.stringify(r) };
+});
+
+// With codon analysis the translation row's name cell (sticky, white) is empty in single-frame
+// mode and the row aligned its items to the top, so the cell was 0px tall: scrolled sideways,
+// the amino acids showed through the name column.
+check('Audit: translation rows stay under the sticky name column when scrolled sideways', async (page) => {
+  await loadFasta(page, makeFasta(20, 600, 'ATGGCAACG'));
+  await auditClickMode(page, 'full');
+  await auditOpenSection(page, 'display');
+  await page.click('#codonAnalysis'); await page.waitForTimeout(1200);
+  await page.click('.section-header[data-section="display"]');
+  await auditWheel(page, 600, 0, 3);
+  const r = await page.evaluate(() => {
+    const a = document.querySelector('.aa-row'), n = a.querySelector('.aa-name'), ar = a.getBoundingClientRect();
+    const e = document.elementFromPoint(n.getBoundingClientRect().left + 40, ar.top + ar.height / 2);
+    // the codon boxes fill the row's content box (its padding is the row's own white)
+    const boxH = Math.max(...[...a.querySelectorAll('.aa-data > span')].slice(0, 20).map(sp => sp.getBoundingClientRect().height));
+    return { sl: el('alignmentContainer').scrollLeft, nameH: n.getBoundingClientRect().height, boxH, hit: e && e.className };
+  });
+  return { pass: r.sl > 1000 && r.nameH >= r.boxH - 0.5 && !/aa-c/.test(r.hit || ''), detail: JSON.stringify(r) };
+});
+
+// The canvas was sized from the container's border box, 2px wider and 1px taller than its client
+// area: the alignment could be nudged by 2x1px (PageDown set scrollTop to 1) and its edge was cut.
+check('Audit: the Canvas fits the alignment area exactly', async (page) => {
+  await loadFasta(page, makeFasta(40, 600));
+  await auditClickMode(page, 'canvas');
+  const r = await page.evaluate(() => { const c = el('alignmentContainer'), cv = el('alignmentCanvas'); return { cw: c.clientWidth, ch: c.clientHeight, w: parseFloat(cv.style.width), h: parseFloat(cv.style.height), sx: c.scrollWidth - c.clientWidth, sy: c.scrollHeight - c.clientHeight }; });
+  return { pass: r.w === r.cw && r.h === r.ch && r.sx === 0 && r.sy === 0, detail: JSON.stringify(r) };
+});
+
+// Reads mode: the reference's name cell took .seq-name's -12px margin and the ruler's label was
+// 8px wider (content-box padding) than the reads' 160px name column, so reads started one base
+// right of the reference and the ruler numbers ~1.7 bases right.
+check('Audit: Reads mode lines up reads, reference and ruler', async (page) => {
+  await openSynthetic(page, 'synth_ref.fa');
+  await openSynthetic(page, 'synth_reads.bam');
+  await page.evaluate(() => { el('modeReads').checked = true; onModeChange(); }); await page.waitForTimeout(1200);
+  const r = await page.evaluate(() => {
+    const c = el('alignmentContainer');
+    const ref0 = c.querySelector('.ref-track-line .seq-data span[data-pos]').getBoundingClientRect().left;
+    const scale0 = c.querySelector('.scale-line').lastChild.children[0].getBoundingClientRect().left;
+    const svg = el('readsPileSvg'), sr = svg.getBoundingClientRect();
+    const read = bamState.reads.find(rd => rd.start === bamState.refStart);
+    const bars = [...svg.querySelectorAll('rect[stroke="#4a7fa8"]')].map(b => +b.getAttribute('x') + sr.left);
+    return { ref0, scale0, firstBar: Math.min(...bars), hasReadAtStart: !!read };
+  });
+  const ok = r.hasReadAtStart && Math.abs(r.firstBar - r.ref0) < 1 && Math.abs(r.scale0 - r.ref0) < 1;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
