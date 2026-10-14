@@ -3080,6 +3080,429 @@ check('MAFFT worker that cannot load: the error says why, not "undefined"', asyn
   return { pass: /could not start/i.test(msg), detail: msg };
 });
 
+// ---------- pre-publication audit: editing (2026-10-14) ----------
+// Helpers for these checks: the centre of a residue cell / name cell on screen, in DOM
+// modes from the rendered span, in Canvas mode from the canvas metrics.
+async function auditCell(page, row, col) {
+  return page.evaluate(({ row, col }) => {
+    if (document.getElementById('modeCanvas')?.checked) {
+      const c = _canvasState.canvas, m = _canvasState.metrics, r = c.getBoundingClientRect();
+      const rp = _canvasState.rowPitch || m.charH;
+      return { x: r.left + m.nameW - _canvasState.offsetX + (col + 0.5) * m.charW, y: r.top + (m.headerH || m.charH) - _canvasState.offsetY + (row + 0.5) * rp };
+    }
+    const sp = document.querySelector(`.seq-line[data-seq-index="${row}"] .seq-data > span[data-pos="${col}"]`);
+    if (!sp) return null;
+    const b = sp.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  }, { row, col });
+}
+async function auditName(page, row) {
+  return page.evaluate((row) => {
+    if (document.getElementById('modeCanvas')?.checked) {
+      const c = _canvasState.canvas, m = _canvasState.metrics, r = c.getBoundingClientRect();
+      const rp = _canvasState.rowPitch || m.charH;
+      return { x: r.left + 12, y: r.top + (m.headerH || m.charH) - _canvasState.offsetY + (row + 0.5) * rp };
+    }
+    const n = document.querySelector(`.seq-line[data-seq-index="${row}"] > .seq-name`);
+    const b = n.getBoundingClientRect();
+    return { x: b.left + 12, y: b.top + b.height / 2 };
+  }, row);
+}
+async function auditCtrlClickName(page, row) {
+  const p = await auditName(page, row);
+  await page.keyboard.down('Control'); await page.mouse.click(p.x, p.y); await page.keyboard.up('Control');
+}
+async function auditCtrlAltDrag(page, row, c0, c1) {
+  const a = await auditCell(page, row, c0), b = await auditCell(page, row, c1);
+  await page.keyboard.down('Control'); await page.keyboard.down('Alt');
+  await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up();
+  await page.keyboard.up('Alt'); await page.keyboard.up('Control');
+}
+const auditSeqs = (page) => page.evaluate(() => state.seqs.map(s => s.header + ':' + s.seq));
+// Every rendered residue span shows its state letter (catches stale rows after an edit)
+const auditDomMismatches = (page) => page.evaluate(() => {
+  const bad = [];
+  document.querySelectorAll('.seq-line[data-seq-index]').forEach(line => {
+    const i = +line.dataset.seqIndex; if (i < 0) return;
+    const s = state.seqs[i]?.seq || '';
+    line.querySelectorAll('.seq-data > span[data-pos]').forEach(sp => {
+      const p = +sp.dataset.pos;
+      if (sp.textContent !== (s[p] ?? '') && bad.length < 5) bad.push(`r${i}c${p} dom=${sp.textContent} state=${s[p]}`);
+    });
+  });
+  return bad;
+});
+const auditBlur = (page) => page.evaluate(() => document.activeElement?.blur());
+
+check('Audit: loading a new file clears undo/redo, so Ctrl+Z cannot write the old file into the new one', async (page) => {
+  // Used to: the undo stack survived a load. After typing a residue in file 1 and loading
+  // a protein file, Ctrl+Z wrote file 1's DNA row ("ACGTACGT--") into the new file's
+  // first row, and a deletion undo brought file 1's sequences back wholesale.
+  page.on('dialog', d => d.accept());
+  await loadFasta(page, '>a\nACGTACGT\n>b\nTTTTGGGG\n>c\nGGGGCCCC\n');
+  let c = await auditCell(page, 0, 2);
+  await page.mouse.dblclick(c.x, c.y); await page.keyboard.type('N');
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  await page.click('#editToggleButton');
+  await auditCtrlClickName(page, 2);
+  await auditBlur(page);
+  await page.keyboard.press('Control+Delete'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);   // leaves one redo entry too
+  const before = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  await loadFasta(page, '>human\nMKVLAAGIVG\n>mouse\nMKVLSAGIVG\n');
+  const loaded = await auditSeqs(page);
+  await auditBlur(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(300);
+  const after = await auditSeqs(page);
+  const r = await page.evaluate(() => ({ h: state.deletedHistory.length + '/' + state.redoHistory.length, trimBackup: state.trimBackup }));
+  const pass = before !== '0/0' && JSON.stringify(after) === JSON.stringify(loaded) && r.h === '0/0' && !r.trimBackup;
+  return { pass, detail: JSON.stringify({ before, loaded, after, ...r }) };
+});
+
+check('Audit: Realign Block keeps every row\'s own residues when names share a first word', async (page) => {
+  // Used to: realign-region keyed rows by the first word of the name, so ">s1 sampleA" got
+  // the realigned region of ">s1 sampleB" - its residues silently replaced.
+  await loadFasta(page, '>s1 sampleA\nACGTAC--GTAAACCCGGGTTT\n>s1 sampleB\nTTTTGGGGCCCCAAAATTTT--\n>s2\nACGTACGTAAACCCGGGTTA--\n');
+  const ug = () => page.evaluate(() => state.seqs.map(s => s.fullHeader + ':' + s.seq.replace(/[-.]/g, '')));
+  const before = await ug();
+  await auditCtrlAltDrag(page, 0, 2, 11);
+  await page.keyboard.press('Control+Shift+R');
+  await page.waitForFunction(() => state.deletedHistory.some(e => e.type === 'realign-block'), null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const after = await ug();
+  const ran = await page.evaluate(() => state.deletedHistory.some(e => e.type === 'realign-block'));
+  return { pass: ran && JSON.stringify(after) === JSON.stringify(before), detail: JSON.stringify({ ran, before, after }) };
+});
+
+check('Audit: Realign All and Duplicate keep rows with identical names apart', async (page) => {
+  // Used to: Realign All matched MAFFT's output back by name, so the second of two rows
+  // called ">a" became a copy of the first (TTTTGGGG... lost). Duplicate (Ctrl+U) kept the
+  // original fullHeader, so exports had two identical names.
+  await loadFasta(page, '>a\nACGTACGTAAACCCGGGTTT\n>a\nTTTTGGGGCCCCAAAATTTT\n>b\nACGTACGTAAACCCGGGTTA\n');
+  const ug = () => page.evaluate(() => state.seqs.map(s => s.fullHeader + ':' + s.seq.replace(/[-.]/g, '')));
+  const before = await ug();
+  await page.evaluate(() => el('realignAllButton').click());   // the button's own handler
+  await page.waitForFunction(() => state.deletedHistory.some(e => e.type === 'realign-all'), null, { timeout: 30000 }).catch(() => {});
+  await page.waitForFunction(() => !document.getElementById('busyOverlay') || document.getElementById('busyOverlay').hidden, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const after = await ug();
+  await loadFasta(page, '>x first\nACGT\n>y\nTTTT\n');
+  await auditCtrlClickName(page, 0);
+  await auditBlur(page);
+  await page.keyboard.press('Control+u'); await page.waitForTimeout(300);
+  const dup = await page.evaluate(() => state.seqs.map(s => s.header + '|' + s.fullHeader));
+  const pass = JSON.stringify(after) === JSON.stringify(before) && dup[2] === 'x_copy|x_copy first';
+  return { pass, detail: JSON.stringify({ before, after, dup }) };
+});
+
+check('Audit: viewer shortcuts never fire while typing in a text field (search, rename box, SeqEdit)', async (page) => {
+  // Used to: the capture-phase shortcut handler let Ctrl+Z/Y/Delete/Home/Arrow through from
+  // single-line inputs. Ctrl+Z in the search box undid the alignment instead of the text;
+  // Ctrl+Delete (delete word) deleted the selected sequences; Ctrl+Z in the rename box
+  // undid a reorder and the box then saved its text onto a different sequence; and with
+  // SeqEdit open, a row change behind it made Apply overwrite another sequence.
+  const dialogs = [];
+  page.on('dialog', d => { dialogs.push(d.message()); d.accept(); });
+  await loadFasta(page, '>alpha\nACGTACGT\n>beta\nTTTTGGGG\n>gamma\nCCCCAAAA\n');
+  await auditCtrlClickName(page, 2);
+  await page.keyboard.press('Control+ArrowUp'); await page.waitForTimeout(200);   // alpha, gamma, beta
+  const moved = await auditSeqs(page);
+  const out = {};
+  // search box
+  await page.click('.section-header[data-section="search"]');   // opens the Search menu
+  await page.click('#searchInput'); await page.keyboard.type('ACG');
+  for (const k of ['Control+z', 'Control+y', 'Control+Home', 'Control+End', 'Control+ArrowDown', 'Control+Delete', 'Control+Shift+Z']) await page.keyboard.press(k);
+  out.search = JSON.stringify(await auditSeqs(page)) === JSON.stringify(moved) && dialogs.length === 0
+    && (await page.inputValue('#searchInput')) === 'ACG';
+  await page.keyboard.press('Escape');   // closes the menu
+  // rename box: Ctrl+Z is the box's own undo, and the name lands on the row it was opened on
+  let p = await auditName(page, 1);
+  await page.mouse.dblclick(p.x, p.y); await page.waitForTimeout(150);
+  await page.keyboard.press('End'); await page.keyboard.press('Backspace');
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(200);
+  await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+  out.rename = JSON.stringify(await auditSeqs(page)) === JSON.stringify(moved);
+  // SeqEdit: Ctrl+Delete in the name field deletes nothing
+  await auditBlur(page); await page.keyboard.press('Escape');   // Esc clears the selection
+  await auditCtrlClickName(page, await page.evaluate(() => state.seqs.findIndex(s => s.header === 'beta')));
+  await page.evaluate(() => el('seqEditButton').click());
+  await page.waitForTimeout(200);
+  await page.click('#seqEditNameInput'); await page.keyboard.press('End'); await page.keyboard.type('_ed');
+  await page.keyboard.press('Control+Delete'); await page.waitForTimeout(200);
+  out.seqEditKeys = (await page.evaluate(() => state.seqs.length)) === 3 && dialogs.length === 0;
+  // focus on a button of the dialog (not a text field): Ctrl+Up still reorders behind it,
+  // and Apply must still edit beta, not whatever row now has its old index
+  await page.focus('#seqEditApplyBtn');
+  await page.keyboard.press('Control+ArrowUp'); await page.waitForTimeout(200);
+  await page.click('#seqEditApplyBtn'); await page.waitForTimeout(300);
+  const fin = await auditSeqs(page);
+  out.seqEditTarget = fin.includes('beta_ed:TTTTGGGG') && fin.includes('gamma:CCCCAAAA') && fin.includes('alpha:ACGTACGT') && fin.length === 3;
+  return { pass: Object.values(out).every(Boolean), detail: JSON.stringify({ out, moved, fin, dialogs }) };
+});
+
+check('Audit: undo snapshots of a large alignment are small and fast, restore exactly, and history is capped', async (page) => {
+  // Used to: every undo entry JSON-cloned the whole alignment including the per-residue
+  // gaplessPositions arrays: ~380 ms and ~57 MB per edit at 1500 x 4000, with no cap, so a
+  // few dozen edits on a big file could exhaust the tab's memory.
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'full');
+  await page.waitForTimeout(500);
+  await auditCtrlClickName(page, 3);
+  await auditBlur(page);
+  const m0 = await page.evaluate(() => { if (window.gc) gc(); return performance.memory.usedJSHeapSize; });
+  const t0 = Date.now();
+  for (let i = 0; i < 10; i++) await page.keyboard.press(i % 2 ? 'Control+ArrowDown' : 'Control+ArrowUp');
+  await page.waitForTimeout(300);
+  const ms = Date.now() - t0;
+  const m1 = await page.evaluate(() => performance.memory.usedJSHeapSize);
+  const r = await page.evaluate(() => {
+    const e = state.deletedHistory[state.deletedHistory.length - 1];
+    return { n: state.deletedHistory.length, noDerived: e && e.seqs && e.seqs[0].gaplessPositions === undefined };
+  });
+  // undo all ten: back to the original order with correct gapless positions
+  for (let i = 0; i < 10; i++) await page.keyboard.press('Control+z');
+  await page.waitForTimeout(500);
+  const restored = await page.evaluate(() => state.seqs.slice(0, 6).map(s => s.header).join(',') === 'seq0,seq1,seq2,seq3,seq4,seq5'
+    && state.seqs.every((s, i) => i % 300 || JSON.stringify(s.gaplessPositions) === JSON.stringify(calculateGaplessPositions(s.seq))));
+  const capped = await page.evaluate(() => {
+    for (let i = 0; i < 400; i++) pushUndo('order');
+    return state.deletedHistory.length;
+  });
+  const growMB = (m1 - m0) / 1e6;
+  const pass = r.n === 10 && r.noDerived && growMB < 100 && restored && capped <= 200;
+  return { pass, detail: JSON.stringify({ ...r, ms, growMB: Math.round(growMB), restored, capped }) };
+});
+
+check('Audit: copying text in a text field copies that text, not the residue selection', async (page) => {
+  // Used to: a document 'copy' listener replaced every copy with the selected residues while
+  // a residue selection existed, so Ctrl+C in the search box or the Input box copied "CGTA".
+  await loadFasta(page, '>a\nACGTACGTAC\n>b\nTTTTGGGGCC\n');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  const a = await auditCell(page, 0, 1), b = await auditCell(page, 0, 4);
+  await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up();
+  await page.click('.section-header[data-section="search"]');   // opens the Search menu
+  await page.click('#searchInput'); await page.keyboard.type('GAATTC');
+  await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c'); await page.waitForTimeout(200);
+  const fromInput = await page.evaluate(() => navigator.clipboard.readText());
+  await page.keyboard.press('Escape');   // closes the menu
+  await auditBlur(page);
+  await page.keyboard.press('Control+c'); await page.waitForTimeout(200);
+  const fromAlignment = await page.evaluate(() => navigator.clipboard.readText());
+  return { pass: fromInput === 'GAATTC' && fromAlignment === 'CGTA', detail: JSON.stringify({ fromInput, fromAlignment }) };
+});
+
+check('Audit: selected rows stay on their sequences through Sort and Add at top', async (page) => {
+  // Used to: the row selection is a set of row numbers, and Sort / Add Sequences at top left
+  // it on the old numbers, so it jumped to other sequences (and Ctrl+Del then hit those).
+  await loadFasta(page, '>zeta\nACGTACGT\n>alpha\nTTTTGGGG\n>mid\nGGGGCCCC\n');
+  await auditCtrlClickName(page, 0);
+  const selNames = () => page.evaluate(() => [...state.selectedRows].map(i => state.seqs[i].header).sort().join(','));
+  await page.evaluate(() => el('sortByNameButton').click());   // the button's own onclick
+  await page.waitForTimeout(400);
+  const afterSort = await selNames();
+  const domSel = await page.evaluate(() => [...document.querySelectorAll('.seq-line[data-seq-index]')].filter(l => l.querySelector('.seq-name.selected') || l.classList.contains('selected')).map(l => l.dataset.seqIndex).join(','));
+  const zetaRow = await page.evaluate(() => String(state.seqs.findIndex(s => s.header === 'zeta')));
+  await page.evaluate(() => { el('addSeqInput').value = '>new\nAAAACCCC'; el('addSeqAtTop').checked = true; el('addSeqAlignCons').checked = false; el('addSeqJustAddButton').click(); });
+  await page.waitForTimeout(400);
+  const afterAdd = await selNames();
+  return { pass: afterSort === 'zeta' && domSel === zetaRow && afterAdd === 'zeta', detail: JSON.stringify({ afterSort, domSel, zetaRow, afterAdd }) };
+});
+
+check('Audit: hard trim is undoable with Ctrl+Z, and Undo Trim is itself undoable', async (page) => {
+  // Used to: Execute (hard trim) pushed no undo entry, and the separate Undo Trim button
+  // restored the pre-trim copy silently, throwing away every edit made after the trim.
+  page.on('dialog', d => d.accept());
+  const orig = ['a:----ACGTACGTAC----', 'b:---TACGTTCGTAC--T-', 'c:-----AGTACGTAC----'];
+  await loadFasta(page, orig.map(x => '>' + x.replace(':', '\n')).join('\n') + '\n');
+  await page.evaluate(() => el('previewTrimButton').click());
+  await page.evaluate(() => el('executeTrimButton').click()); await page.waitForTimeout(500);
+  const trimmed = await auditSeqs(page);
+  await auditBlur(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  const undone = await auditSeqs(page);
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(400);
+  const redone = await auditSeqs(page);
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Delete'); await page.waitForTimeout(300);
+  await page.evaluate(() => el('undoTrimButton').click()); await page.waitForTimeout(400);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  const backToEdited = await auditSeqs(page);
+  const pass = JSON.stringify(undone) === JSON.stringify(orig) && JSON.stringify(redone) === JSON.stringify(trimmed)
+    && trimmed[0] !== orig[0] && backToEdited.length === 2 && backToEdited[0] === trimmed[0];
+  return { pass, detail: JSON.stringify({ trimmed, undone, redone, backToEdited }) };
+});
+
+check('Audit: Ctrl+Shift+Z redoes (it used to undo again)', async (page) => {
+  // Used to: case 'z' ignored Shift, so Ctrl+Shift+Z / Cmd+Shift+Z (the usual redo, the
+  // only one on macOS) undid one more step instead.
+  await loadFasta(page, '>a\nACGT\n>b\nTTTT\n>c\nGGGG\n');
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Home'); await page.waitForTimeout(150);
+  const moved = await auditSeqs(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(150);
+  await page.keyboard.press('Control+Shift+Z'); await page.waitForTimeout(150);
+  const a = await auditSeqs(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(150);
+  await page.keyboard.press('Meta+Shift+Z'); await page.waitForTimeout(150);
+  const b = await auditSeqs(page);
+  return { pass: JSON.stringify(a) === JSON.stringify(moved) && JSON.stringify(b) === JSON.stringify(moved), detail: JSON.stringify({ moved, a, b }) };
+});
+
+check('Audit: right-click Rename uses the rename box (Esc cancels, Enter saves) in Full, Block and Canvas', async (page) => {
+  // Used to: the context-menu Rename had its own older editor. Esc re-rendered, the input
+  // blurred and the blur SAVED the name; in Canvas mode the input was put inside the
+  // <canvas> element, 0x0 and invisible, and renaming did nothing.
+  const out = {};
+  for (const mode of ['full', 'block', 'canvas']) {
+    await loadFasta(page, '>alpha\nACGTACGT\n>beta\nTTTTGGGG\n');
+    await setMode(page, mode);
+    const open = async () => {
+      const p = await auditName(page, 1);
+      await page.mouse.click(p.x, p.y, { button: 'right' }); await page.waitForTimeout(150);
+      await page.evaluate(() => [...document.querySelectorAll('.context-menu div')].find(d => d.textContent === 'Rename sequence').click());
+      await page.waitForTimeout(150);
+    };
+    await open();
+    const box = await page.evaluate(() => { const a = document.activeElement; const r = a.getBoundingClientRect(); return a.tagName === 'INPUT' && r.width > 20 && r.height > 8; });
+    await page.keyboard.press('Control+a'); await page.keyboard.type('XYZ'); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    const esc = (await auditSeqs(page))[1];
+    await open();
+    await page.keyboard.press('Control+a'); await page.keyboard.type('B2'); await page.keyboard.press('Enter'); await page.waitForTimeout(200);
+    const ent = (await auditSeqs(page))[1];
+    out[mode] = { box, esc, ent, left: await page.evaluate(() => !!document.querySelector('.seq-name-edit')) };
+  }
+  const pass = Object.values(out).every(o => o.box && o.esc === 'beta:TTTTGGGG' && o.ent === 'B2:TTTTGGGG' && !o.left);
+  return { pass, detail: JSON.stringify(out) };
+});
+
+check('Audit: edits that change nothing add no undo entry and keep the redo list', async (page) => {
+  // Used to: Ctrl+Up on the top row (and Ctrl+Down on the last, Ctrl+Home/End when already
+  // there, a gap tool click that changed nothing) pushed an undo entry first, so the history
+  // filled with phantom steps and the redo list was wiped.
+  await loadFasta(page, '>a\nACGT--\n>b\nTTTT--\n>c\nGGGG--\n');
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Home'); await page.keyboard.press('Control+Home');   // the 2nd is a no-op
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(200);
+  // one undo takes c back to the bottom (the no-op added no step): history 0, redo 1. Now
+  // more no-op moves:
+  const h0 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  await page.keyboard.press('Control+ArrowDown'); await page.keyboard.press('Control+End');
+  await auditCtrlClickName(page, 2); await auditCtrlClickName(page, 0);   // only row 0
+  await page.keyboard.press('Control+ArrowUp'); await page.keyboard.press('Control+Home');
+  const h1 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  // Ins Gap Seq inside the trailing gap run changes nothing
+  await page.click('#editToggleButton'); await page.click('#editInsertGapButton');
+  const c = await auditCell(page, 1, 5); await page.mouse.click(c.x, c.y); await page.waitForTimeout(200);
+  const h2 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  // Realign All declined at MAFFT's large-job prompt (no dialog handler: Playwright
+  // dismisses it) changes nothing either
+  await loadFasta(page, makeFasta(100, 3000));
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Home'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  const h3 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  await page.evaluate(() => el('realignAllButton').click()); await page.waitForTimeout(500);
+  const h4 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  return { pass: h0 === '0/1' && h1 === h0 && h2 === h0 && h3 === '0/1' && h4 === h3, detail: JSON.stringify({ h0, h1, h2, h3, h4 }) };
+});
+
+check('Audit: switching from Canvas to Full and deleting rows raises no error from the Canvas shading job', async (page) => {
+  // Used to: the Canvas deferred shading job kept a reference to state.seqs and was only
+  // cancelled by the next Canvas render; after a switch to Full, a row delete spliced the
+  // array under it and it threw "Cannot read properties of undefined (reading 'seq')".
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('dialog', d => d.accept());
+  await loadSyntheticFasta(page, 1500, 4000);   // opens in Canvas (above CANVAS_AUTO_THRESHOLD)
+  await setMode(page, 'full');
+  await auditCtrlClickName(page, 2); await auditCtrlClickName(page, 3); await auditBlur(page);
+  await page.keyboard.press('Control+Delete');
+  await page.waitForTimeout(3000);
+  const n = await page.evaluate(() => state.seqs.length);
+  return { pass: errors.length === 0 && n === 1498, detail: JSON.stringify({ n, errors }) };
+});
+
+check('Audit: windowed Block mode repaints a typed residue on undo/redo after scrolling away and back', async (page) => {
+  // Used to: rows the windowed Block renderer rebuilt while edit mode was on were not in the
+  // span cache, and undo/redo of a typed residue repaints only cached rows: after Ctrl+Z off
+  // screen, scrolling back and Ctrl+Y, the cell still showed the old letter.
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'block');
+  await page.waitForTimeout(600);
+  const c = await auditCell(page, 3, 4);
+  await page.mouse.dblclick(c.x, c.y); await page.waitForTimeout(150);
+  await page.keyboard.type('N'); await page.keyboard.press('Escape');
+  await page.evaluate(() => { el('alignmentContainer').scrollTop = 20000; }); await page.waitForTimeout(800);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  await page.evaluate(() => { el('alignmentContainer').scrollTop = 0; }); await page.waitForTimeout(800);
+  const afterUndo = await auditDomMismatches(page);
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(400);
+  const afterRedo = await auditDomMismatches(page);
+  const st = await page.evaluate(() => state.seqs[3].seq[4]);
+  return { pass: st === 'N' && !afterUndo.length && !afterRedo.length, detail: JSON.stringify({ st, afterUndo, afterRedo }) };
+});
+
+check('Audit: SeqEdit Apply with "Pad/trim" never cuts residues', async (page) => {
+  // Used to: with the default "Pad/trim to alignment length", inserting residues in SeqEdit
+  // cut the sequence back to the alignment width, dropping its last residues (GT lost).
+  await loadFasta(page, '>a\nACGTACGT\n>b\nTTTTGG--\n');
+  await auditCtrlClickName(page, 0);
+  await page.evaluate(() => el('seqEditButton').click()); await page.waitForTimeout(200);
+  await page.evaluate(() => { const t = el('seqEditTextarea'); const p = t.value.indexOf('\n') + 1; t.focus(); t.setSelectionRange(p, p); });
+  await page.keyboard.type('TT');
+  await page.click('#seqEditApplyBtn'); await page.waitForTimeout(300);
+  const r = await page.evaluate(() => state.seqs.map(s => s.seq));
+  // a shorter edit is still padded, and only trailing gaps are trimmed
+  await auditCtrlClickName(page, 0); await auditCtrlClickName(page, 1);
+  await page.evaluate(() => el('seqEditButton').click()); await page.waitForTimeout(200);
+  await page.evaluate(() => { const t = el('seqEditTextarea'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); });
+  await page.keyboard.type('----');
+  await page.click('#seqEditApplyBtn'); await page.waitForTimeout(300);
+  const r2 = await page.evaluate(() => state.seqs.map(s => s.seq));
+  const pass = r[0] === 'TTACGTACGT' && r[1] === 'TTTTGG----' && r2[1] === 'TTTTGG----';
+  return { pass, detail: JSON.stringify({ r, r2 }) };
+});
+
+check('Audit: Degap block moves the residue selection right of the block with its residues', async (page) => {
+  // Used to: Degap block removed the columns it emptied without telling the column-keyed
+  // state (applyColumnEdit), so a residue selection to the right slid onto other residues.
+  await loadFasta(page, '>a\nAC--GTTTGCATGCA\n>b\nA-C-GTTTGCATGCA\n>c\nAC-GTTTGCATGCA-\n');
+  const sel = () => page.evaluate(() => [...state.selectedNucs].map(([r, s]) => r + ':' + [...s].sort((x, y) => x - y).map(c => state.seqs[r].seq[c]).join('')).join());
+  const a = await auditCell(page, 0, 8), b = await auditCell(page, 0, 11);
+  await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up();
+  const before = await sel();
+  await auditCtrlAltDrag(page, 0, 1, 3);
+  await page.evaluate(() => el('degapBlockLeftButton').click()); await page.waitForTimeout(300);
+  const after = await sel();
+  return { pass: before === '0:GCAT' && after === '0:GCAT', detail: JSON.stringify({ before, after, seqs: await auditSeqs(page) }) };
+});
+
+check('Audit: Just Add of a sequence longer than the alignment keeps it rectangular', async (page) => {
+  // Used to: only shorter new sequences were padded; a longer one left every other row short.
+  await loadFasta(page, '>a\nACGTACGT\n>b\nTTTTGGGG\n');
+  await page.evaluate(() => { el('addSeqInput').value = '>long\nAAAACCCCGGGGTTTT'; el('addSeqAtTop').checked = false; el('addSeqAlignCons').checked = false; el('addSeqJustAddButton').click(); });
+  await page.waitForTimeout(400);
+  const lens = await page.evaluate(() => state.seqs.map(s => s.seq.length));
+  return { pass: lens.join() === '16,16,16', detail: lens.join() };
+});
+
+check('Audit: deleting every sequence or every column is refused', async (page) => {
+  // Used to: the guard only stopped deleting when exactly one sequence was left, so Ctrl+A,
+  // Ctrl+Del emptied the alignment; deleting all columns left zero-length sequences.
+  page.on('dialog', d => d.accept());
+  await loadFasta(page, '>a\nACGT\n>b\nTTTT\n>c\nGGGG\n');
+  await auditBlur(page);
+  await page.keyboard.press('Control+a'); await page.keyboard.press('Control+Delete'); await page.waitForTimeout(300);
+  const n = await page.evaluate(() => state.seqs.length);
+  await page.keyboard.press('Control+a');   // deselect all
+  await auditCtrlAltDrag(page, 0, 0, 3);
+  await page.keyboard.press('Control+d'); await page.waitForTimeout(300);
+  const w = await page.evaluate(() => state.seqs[0].seq.length);
+  return { pass: n === 3 && w === 4, detail: JSON.stringify({ n, w }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

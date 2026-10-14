@@ -8896,7 +8896,8 @@ function renderAlignment(options = {}) {
                 if (myToken.cancelled) return;
                 if (!state.seqs || !state.seqs.length) return;
                 if (Math.max(...state.seqs.map(s => s.seq.length)) !== len) return; // alignment changed
-                preCalculateConservationChunked(state.seqs, len, shadeMode, (data) => {
+                // its own copy of the row list: a row delete splices state.seqs in place
+                preCalculateConservationChunked(state.seqs.slice(), len, shadeMode, (data) => {
                     if (myToken.cancelled) return;
                     state.conservationDataCache = { len, shadeMode, data };
                     if (document.getElementById('modeCanvas')?.checked) renderAlignment(options);
@@ -8935,6 +8936,11 @@ function renderAlignment(options = {}) {
         _flushRenderMessage();
         return;
     }
+
+    // Leaving Canvas: its deferred shading/consensus jobs describe a frame no longer shown.
+    // They were only cancelled by the next Canvas render, and after a switch to Full a row
+    // delete made the shading job throw ("reading 'seq'" of a spliced-out row).
+    if (_canvasDeferredToken) { _canvasDeferredToken.cancelled = true; _canvasDeferredToken = null; }
 
     let consensus = [];
     state._codonData = null;
@@ -9619,8 +9625,10 @@ function groupRowsByType(rowIdxs) {
         if (want.has(s.header)) matched.push(s);
         else rest.push(s);
     }
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('group-by-type');
     state.seqs = [...matched, ...rest];
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderAlignment();
     showMessage('Stacked ' + matched.length + ' sequences of that type', 2500);
@@ -10232,13 +10240,16 @@ function _relabelSeqNameCells(index) {
     });
 }
 
-function _startSeqNameEdit(nameSpan, index) {
-    if (!state.seqs[index] || nameSpan.querySelector('.seq-name-edit')) return;
+// onDone(renamed): called when the box closes (the Canvas overlay removes itself with it)
+function _startSeqNameEdit(nameSpan, index, onDone) {
+    // The sequence, not its row number: rows can move while the box is open
+    const obj = state.seqs[index];
+    if (!obj || nameSpan.querySelector('.seq-name-edit')) return;
     hideTooltip();
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'seq-name-edit';
-    input.value = state.seqs[index].header;
+    input.value = obj.header;
     input.spellcheck = false;
     input.setAttribute('aria-label', 'Sequence name');
     const label = nameSpan.querySelector('.seq-name-text');
@@ -10256,16 +10267,18 @@ function _startSeqNameEdit(nameSpan, index) {
         input.remove();
         nameSpan.classList.remove('renaming');
         if (label) label.style.visibility = '';
-        if (!commit || !newName || newName === state.seqs[index].header) return;
-        const oldName = state.seqs[index].header;
+        const row = state.seqs.indexOf(obj);
+        if (!commit || !newName || row < 0 || newName === obj.header) { onDone?.(false); return; }
+        const oldName = obj.header;
         pushUndo('rename');
-        state.seqs[index].header = newName;
-        state.seqs[index].fullHeader = newName;
+        obj.header = newName;
+        obj.fullHeader = newName;
         _migrateColourMapping(oldName, newName);
-        _relabelSeqNameCells(index);
+        _relabelSeqNameCells(row);
         // "No limit" sizes the name column to the longest name, which may just have changed
         if (el('nameLengthNoLimit')?.checked) applyNameLengthLive(effectiveNameLength());
         showMessage('Sequence renamed', 1500);
+        onDone?.(true);
     };
     // Keys typed here are for the name only: none may reach the viewer's shortcuts
     input.addEventListener('keydown', (e) => {
@@ -10280,6 +10293,34 @@ function _startSeqNameEdit(nameSpan, index) {
     input.addEventListener('blur', () => finish(true));
     const onOutside = (e) => { if (e.target !== input) finish(true); };
     document.addEventListener('mousedown', onOutside, true);
+}
+
+// Right-click > Rename: the same box as a double-click on the name. It used to be an older
+// inline editor whose Esc saved (the redraw blurred it, and blur saved), and in Canvas mode
+// it put the input inside the <canvas>, where it was invisible and did nothing.
+function _renameSequenceFromMenu(index, e) {
+    if (!state.seqs[index]) return;
+    if (!isCanvasMode()) {
+        const nameSpan = e?.target?.closest?.('.seq-name')
+            || document.querySelector(`.seq-line[data-seq-index="${index}"] > .seq-name`);
+        if (nameSpan) _startSeqNameEdit(nameSpan, index);
+        return;
+    }
+    // Canvas: a name cell laid over the canvas row for the box to sit in
+    const c = _canvasState.canvas, m = _canvasState.metrics;
+    if (!c || !m) return;
+    const r = c.getBoundingClientRect();
+    const pitch = _canvasState.rowPitch || m.charH;
+    const top = r.top + (m.headerH || m.charH) - _canvasState.offsetY + index * pitch;
+    const cell = document.createElement('div');
+    cell.className = 'seq-name canvas-rename';
+    cell.style.cssText = `position:fixed;left:${r.left}px;top:${top}px;width:${Math.max(m.nameW, 80)}px;`
+        + `height:${pitch}px;z-index:80;font-size:${getComputedStyle(c).fontSize};`;
+    document.body.appendChild(cell);
+    _startSeqNameEdit(cell, index, () => {
+        cell.remove();
+        _canvasState.scheduleDraw?.();
+    });
 }
 
 // The residue spans of one row for columns start..end-1, as an HTML string.
@@ -11346,6 +11387,12 @@ async function parseAndRender(isFromDrop = false) {
         colourState.mappings.clear();
         colourState.history?.clear();
         state.manuallyColoured = new Set();
+        // Undo/redo (and the trim backup) describe the previous file: Ctrl+Z after a load
+        // used to write the old file's rows into the new alignment
+        state.deletedHistory = [];
+        state.redoHistory = [];
+        state.trimBackup = null;
+        state.trimBackupColState = null;
         state.dragStartCol = null;
         state.dragStartRow = null;
         state.isDragging = false;
@@ -12263,6 +12310,17 @@ function handleKeyDown(e) {
             }
             return; // let browser handle all keys in textarea (Input window etc.)
         }
+        // A single-line text field (search box, rename box, SeqEdit name...) gets native
+        // editing only. Ctrl+Z/Y/Delete/Home/End/arrows used to reach the viewer from here:
+        // Ctrl+Z undid the alignment instead of the typing, Ctrl+Delete (delete word) deleted
+        // the selected sequences, and a rename box then saved onto another row.
+        if (_isTextEntry(activeEl)) {
+            if (activeEl.id === 'searchInput' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+                searchMotif();
+                e.preventDefault();
+            }
+            return;
+        }
         if ((e.ctrlKey || e.metaKey) && !e.altKey) {
             const key = e.key.toLowerCase();
             if ((key === 'v' || key === 'c' || key === 'x' || key === 'a') && !e.shiftKey) {
@@ -12319,7 +12377,9 @@ function handleKeyDown(e) {
                 e.preventDefault();
                 break;
             case 'z':
-                undoDelete();
+                // Ctrl+Shift+Z / Cmd+Shift+Z is redo (it used to undo once more)
+                if (e.shiftKey) redoAction();
+                else undoDelete();
                 e.preventDefault();
                 break;
             case 'y':
@@ -12478,25 +12538,42 @@ function reverseComplementAll() {
     reverseComplementSequences(state.seqs.map((_, i) => i));
 }
 
+// The row selection is a set of row numbers: a reorder must carry it to the rows its
+// sequences moved to. Sort and Add at top left it on the old numbers, i.e. on other
+// sequences, where Ctrl+Del would then act.
+function _selectedRowObjs() {
+    return [...state.selectedRows].map(i => state.seqs[i]).filter(Boolean);
+}
+function _reselectRowObjs(objs, lastObj) {
+    const at = new Map(state.seqs.map((o, i) => [o, i]));
+    state.selectedRows = new Set(objs.map(o => at.get(o)).filter(i => i !== undefined));
+    if (lastObj !== undefined) state.lastSelectedIndex = at.has(lastObj) ? at.get(lastObj) : null;
+}
+
 // -- Sort functions --
 function sortByName() {
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('sort-name');
     const indices = state.seqs.map((s, i) => ({ idx: i, name: s.header.toLowerCase() }));
     indices.sort((a, b) => a.name.localeCompare(b.name));
     state.seqs = indices.map(e => state.seqs[e.idx]);
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderWithNotice('Sorting by name…').then(() => showMessage('Sorted by name', 2000));
 }
 function sortByLength() {
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('sort-length');
     const indices = state.seqs.map((s, i) => ({ idx: i, len: s.seq.replace(/[-.]/g, '').length }));
     indices.sort((a, b) => b.len - a.len);
     state.seqs = indices.map(e => state.seqs[e.idx]);
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderWithNotice('Sorting by length…').then(() => showMessage('Sorted by length (descending)', 2000));
 }
 function sortBySimilarity() {
     if (state.seqs.length < 2) return;
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('sort-similarity');
     const ref = state.seqs[0].seq;
     const scored = state.seqs.map((s, i) => {
@@ -12509,6 +12586,7 @@ function sortBySimilarity() {
     });
     scored.sort((a, b) => b.score - a.score);
     state.seqs = scored.map(e => state.seqs[e.idx]);
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderWithNotice('Sorting by similarity…').then(() => showMessage('Sorted by similarity to first sequence', 2000));
 }
@@ -12550,8 +12628,10 @@ function importOrder() {
                 }
                 reordered.sort((a, b) => orderMap.get(a.header) - orderMap.get(b.header));
                 const extra = data.order.filter(h => !currentHeaders.has(h));
+                const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
                 pushUndo('import-order');
                 state.seqs = [...reordered, ...unmatched];
+                _reselectRowObjs(sel, last);
                 state.lastAction = 'sort';
                 renderAlignment();
                 let msg = 'Order loaded (' + reordered.length + ' matched';
@@ -12573,8 +12653,10 @@ function deleteSelected() {
         showMessage("No sequences selected for deletion.", 3000);
         return;
     }
-    if (state.seqs.length === 1) {
-        showMessage("Cannot delete the last sequence.", 3000);
+    // every sequence selected: refused like deleting the last one (Ctrl+A, Ctrl+Del used to
+    // empty the alignment)
+    if (state.seqs.length === 1 || state.selectedRows.size >= state.seqs.length) {
+        showMessage(state.seqs.length === 1 ? "Cannot delete the last sequence." : "Cannot delete every sequence: keep at least one.", 3000);
         return;
     }
     if (confirm(`Delete ${state.selectedRows.size} sequence(s)?`)) {
@@ -12596,14 +12678,61 @@ function deleteSelected() {
  * Push current state onto undo stack. Call BEFORE mutating state.
  */
 function pushUndo(type) {
-    state.deletedHistory.push({
+    _pushUndoEntry(_makeUndoEntry(type));
+}
+
+// For an edit that may turn out to change nothing: take the snapshot first, push it only
+// once something changed (pushing up front added phantom steps and wiped the redo list).
+function _makeUndoEntry(type) {
+    return {
         type: type,
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        seqs: _undoSnapshotSeqs(),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
-    });
+    };
+}
+
+function _pushUndoEntry(entry) {
+    state.deletedHistory.push(entry);
     // Clear redo stack whenever a new action is performed
     state.redoHistory = [];
+    _trimUndoHistory();
+}
+
+// An undo entry keeps each sequence's own fields but not gaplessPositions, which is derived
+// and was most of the cost: JSON-cloning it took ~380 ms and ~57 MB per edit at 1500 x
+// 4000. Strings are immutable, so a snapshot shares them with the live rows.
+function _undoSnapshotSeqs() {
+    return state.seqs.map(s => {
+        const { gaplessPositions, ...rest } = s;
+        return rest;
+    });
+}
+
+function _undoRestoreSeqs(seqs) {
+    return seqs.map(s => ({ ...s, gaplessPositions: calculateGaplessPositions(s.seq) }));
+}
+
+// Oldest entries go first once the history holds more than UNDO_HISTORY_MAX steps or more
+// residues than UNDO_HISTORY_RESIDUES (counted as if no row were shared, so an upper bound).
+// The newest entry is always kept.
+const UNDO_HISTORY_MAX = 200;
+const UNDO_HISTORY_RESIDUES = 150e6;
+function _trimUndoHistory() {
+    const h = state.deletedHistory;
+    let total = 0;
+    for (let i = h.length - 1; i >= 0; i--) {
+        const e = h[i];
+        if (e._size === undefined) {
+            e._size = e.seqs ? e.seqs.reduce((n, q) => n + q.seq.length, 0)
+                : (e.beforeSeq?.length || 0) + (e.afterSeq?.length || 0);
+        }
+        total += e._size;
+        if (i < h.length - 1 && (total > UNDO_HISTORY_RESIDUES || h.length - i > UNDO_HISTORY_MAX)) {
+            h.splice(0, i + 1);
+            return;
+        }
+    }
 }
 
 // beforeWidth/afterWidth: an edit that runs past the end of the alignment widens every
@@ -12624,6 +12753,7 @@ function pushUndoRowPatch(type, rowIndex, beforeSeq, afterSeq, beforeWidth, afte
         selectedColumns: new Set(state.selectedColumns)
     });
     state.redoHistory = [];
+    _trimUndoHistory();
 }
 
 // Restore the alignment to a known column count. Only all-gap trailing columns are
@@ -12691,6 +12821,15 @@ function applyRowSeqPatch(entry, useAfter, skipDom = false) {
         }
         if (cols.size) {
             reshadeChangedColumnsInPlace(cols);
+            // That repaints the span-cached rows only. Rows the windowed Block renderer
+            // rebuilt during an edit session can be on screen without a cache entry; their
+            // cells kept the old letter after undo/redo.
+            if (!state.spanCache?.get(rowIndex)?.size) {
+                const config = getSequenceRenderConfig();
+                const consData = (state.conservationDataCache && state.conservationDataCache.data) || {};
+                cols.forEach(pos => forEachRowSpanAtPosition(rowIndex, pos,
+                    span => repaintResidueSpan(span, rowIndex, pos, nextSeq[pos] || GENEDOC_FILLER, config, consData)));
+            }
             if (typeof updateRowSelections === 'function') updateRowSelections();
             if (typeof updateColumnSelections === 'function') updateColumnSelections();
             if (typeof updateSourceInfo === 'function') updateSourceInfo();
@@ -12722,13 +12861,13 @@ function undoDelete(quiet) {
     const redoEntry = {
         type: last.type,
         label: last.label,
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        seqs: _undoSnapshotSeqs(),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
     };
     if (last.colStateBefore) redoEntry.colStateAfter = _snapshotColumnState();
     state.redoHistory.push(redoEntry);
-    state.seqs = last.seqs;
+    state.seqs = _undoRestoreSeqs(last.seqs);
     if (last.colStateBefore) _restoreColumnState(last.colStateBefore);
     state.selectedRows = last.selectedRows || new Set();
     state.selectedColumns = last.selectedColumns || new Set();
@@ -12758,13 +12897,13 @@ function redoAction(quiet) {
     const undoEntry = {
         type: next.type,
         label: next.label,
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        seqs: _undoSnapshotSeqs(),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
     };
     if (next.colStateAfter) undoEntry.colStateBefore = _snapshotColumnState();
     state.deletedHistory.push(undoEntry);
-    state.seqs = next.seqs;
+    state.seqs = _undoRestoreSeqs(next.seqs);
     if (next.colStateAfter) _restoreColumnState(next.colStateAfter);
     state.selectedRows = next.selectedRows || new Set();
     state.selectedColumns = next.selectedColumns || new Set();
@@ -13004,6 +13143,14 @@ function deleteSelectedColumns(skipConfirm) {
         showMessage("No columns selected for deletion.", 3000);
         return;
     }
+    // Deleting every column left zero-length sequences
+    const width = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
+    let kept = 0;
+    for (let c = 0; c < width && !kept; c++) if (!state.selectedColumns.has(c)) kept++;
+    if (!kept) {
+        showMessage("Cannot delete every column.", 3000);
+        return;
+    }
     if (skipConfirm || confirm(`Delete ${state.selectedColumns.size} column(s)?`)) {
         pushUndo('deleteColumns');
         const colsToDelete = Array.from(state.selectedColumns).sort((a,b) => b - a);
@@ -13037,9 +13184,9 @@ function selectAllSequences() {
 }
 function moveSelectedUp() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     if (indices[0] === 0) return;
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13057,9 +13204,9 @@ function moveSelectedUp() {
 }
 function moveSelectedDown() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     if (indices[indices.length - 1] === state.seqs.length - 1) return;
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13077,8 +13224,9 @@ function moveSelectedDown() {
 }
 function moveSelectedToTop() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indices.every((r, k) => r === k)) return;   // already at the top
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13095,8 +13243,9 @@ function moveSelectedToTop() {
 }
 function moveSelectedToBottom() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indices.every((r, k) => r === state.seqs.length - indices.length + k)) return;   // already there
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13175,7 +13324,13 @@ function duplicateSelected() {
     if (state.selectedRows.size === 0) return;
     pushUndo('duplicate');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    const copies = indices.map(i => ({...state.seqs[i], header: state.seqs[i].header + '_copy'}));
+    // The full name gets "_copy" on its first word too: it kept the original's, so exports
+    // (which write fullHeader) had two identical names
+    const copies = indices.map(i => {
+        const s = state.seqs[i];
+        const full = s.fullHeader || s.header;
+        return { ...s, header: s.header + '_copy', fullHeader: /\S/.test(full) ? full.replace(/^(\s*\S+)/, '$1_copy') : s.header + '_copy' };
+    });
     state.seqs.push(...copies);
     renderAlignment();
     showMessage("Selected sequences duplicated!", 2000);
@@ -13890,6 +14045,10 @@ function degapSelectedBlock(direction = 'left') {
     }
 
     if (colsToRemove.length > 0) {
+        // Column-keyed state (residue selection, trim bounds, SNP letters, column repeats)
+        // follows the removed columns, as with Delete columns; it used to stay on the old
+        // column numbers, i.e. on other residues
+        applyColumnEdit({ type: 'delete', cols: colsToRemove });
         state.seqs.forEach(seqObj => {
             const chars = seqObj.seq.split('');
             colsToRemove.forEach(col => {
@@ -15690,7 +15849,9 @@ function executeTrimming() {
         return;
     }
 
-    // Hard trim: actually delete columns
+    // Hard trim: actually delete columns. Undoable with Ctrl+Z like any other edit (it used
+    // to push no undo entry; the column state is saved on this entry by applyColumnEdit).
+    pushUndo('trim');
     state.trimBackupColState = _snapshotColumnState();
     {
         const dead = [];
@@ -15739,6 +15900,8 @@ function undoTrimming() {
         return;
     }
 
+    // Itself undoable: it puts back the pre-trim copy, dropping any edit made since the trim
+    pushUndo('undo-trim');
     state.seqs = state.trimBackup.map(seq => ({...seq}));
     state.trimBackup = null;
     if (state.trimBackupColState) { _restoreColumnState(state.trimBackupColState); state.trimBackupColState = null; }
@@ -19957,7 +20120,9 @@ async function realignSelectedBlock(opts) {
 
         pushUndo('realign-block');
         state.seqs = result.seqs.map(r => {
-            const orig = state.seqs.find(s => s.header === r.header || s.fullHeader === r.fullHeader);
+            // by the row it came from: by name, rows sharing a name all got the first one's
+            const orig = (Number.isInteger(r._row) && state.seqs[r._row])
+                || state.seqs.find(s => s.header === r.header || s.fullHeader === r.fullHeader);
             return {
                 header: orig ? orig.header : r.header,
                 fullHeader: orig ? orig.fullHeader : (r.fullHeader || r.header),
@@ -19965,6 +20130,10 @@ async function realignSelectedBlock(opts) {
                 gaplessPositions: calculateGaplessPositions(r.seq)
             };
         });
+        // the rows may have been reordered: the row selection goes with its rows
+        const newRowOf = new Map(result.seqs.map((r, i) => [r._row, i]));
+        state.selectedRows = new Set([...state.selectedRows].map(i => newRowOf.get(i)).filter(i => i !== undefined));
+        state.lastSelectedIndex = newRowOf.has(state.lastSelectedIndex) ? newRowOf.get(state.lastSelectedIndex) : null;
         state.selectedColumns.clear();
         if (result.aligned) _dropColumnAnalysesAfterRealign();
         renderAlignment();
@@ -19983,20 +20152,38 @@ async function realignSelectedBlock(opts) {
 /**
  * Realign all loaded sequences using MAFFT WASM.
  */
+// The name each row is sent to MAFFT under: its full name, with a row suffix when another
+// row has the same one. Results used to be matched back by name alone, so of two rows with
+// one name the second came back as a copy of the first.
+function _uniqueRowNames(seqObjs, rows) {
+    const seen = new Set();
+    return seqObjs.map((s, k) => {
+        const base = String(s.fullHeader || s.header || 'seq');
+        let n = base;
+        if (seen.has(n)) { n = base + '__row' + ((rows ? rows[k] : k) + 1); while (seen.has(n)) n += '_'; }
+        seen.add(n);
+        return n;
+    });
+}
+const _stripRowSuffix = n => String(n).replace(/__row\d+_*$/, '');
+
 async function realignAll() {
     if (state.seqs.length < 2) {
         showMessage("Need at least 2 sequences to align.", 2000);
         return;
     }
 
-    // Save undo state
-    pushUndo('realign-all');
+    // Undo state, pushed only once the alignment changes (a declined or cancelled run
+    // used to leave a phantom step and wipe the redo list)
+    const undoEntry = _makeUndoEntry('realign-all');
 
     // Build ungapped FASTA
+    const rowNames = _uniqueRowNames(state.seqs);
+    const rowOfName = new Map(rowNames.map((n, i) => [n, i]));
     let fasta = '';
-    for (const s of state.seqs) {
-        fasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
-    }
+    state.seqs.forEach((s, i) => {
+        fasta += `>${rowNames[i]}\n${s.seq.replace(/[-.]/g, '')}\n`;
+    });
 
     const { args: extraArgs, seqType, adjustDir, reorder, reorderOnly } = getMafftExtraArgs();
 
@@ -20013,21 +20200,21 @@ async function realignAll() {
 
     // Reorder only: skip MAFFT. Apply RC to gapped rows if needed, then permute.
     if (reorderOnly) {
+        _pushUndoEntry(undoEntry);
         if (flippedNames.size > 0) {
-            for (const s of state.seqs) {
-                if (flippedNames.has(s.header) || flippedNames.has(s.fullHeader)) {
+            state.seqs.forEach((s, i) => {
+                if (flippedNames.has(rowNames[i])) {
                     s.seq = _reverseComplement(s.seq);
                     s.gaplessPositions = calculateGaplessPositions(s.seq);
                 }
-            }
+            });
         }
         const reordered = _reorderByGuideTree(fasta);
-        const byFull = new Map(state.seqs.map(s => [s.fullHeader || s.header, s]));
         const byHdr = new Map(state.seqs.map(s => [s.header, s]));
         const newSeqs = [];
         const used = new Set();
         for (const hdr of reordered.order) {
-            const s = byFull.get(hdr) || byHdr.get(hdr) || byHdr.get(String(hdr).split(/\s+/)[0]);
+            const s = state.seqs[rowOfName.get(hdr)] || byHdr.get(hdr) || byHdr.get(String(hdr).split(/\s+/)[0]);
             if (s && !used.has(s)) {
                 newSeqs.push(s);
                 used.add(s);
@@ -20038,7 +20225,7 @@ async function realignAll() {
         state.selectedColumns.clear();
         renderAlignment();
         const msgs = [`Reordered ${state.seqs.length} sequences (no alignment).`];
-        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].join(', ')}`);
+        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].map(_stripRowSuffix).join(', ')}`);
         showMessage(msgs.join(' '), flippedNames.size > 0 ? 5000 : 2000);
         return;
     }
@@ -20070,10 +20257,10 @@ async function realignAll() {
         // Build new seqs array
         const newSeqs = [];
         // Determine output order: guide tree order or original input order
-        const outputOrder = guideOrder || state.seqs.map(s => s.fullHeader || s.header);
+        const outputOrder = guideOrder || rowNames;
         for (const hdr of outputOrder) {
-            const a = aligned.find(x => x.name === hdr || x.name === hdr.split(/\s+/)[0]);
-            const orig = state.seqs.find(s => s.header === hdr || s.fullHeader === hdr);
+            const a = aligned.find(x => x.name === hdr) || aligned.find(x => x.name === hdr.split(/\s+/)[0]);
+            const orig = state.seqs[rowOfName.get(hdr)];
             if (a) {
                 const origCase = originalCaseByHeader.get(a.name);
                 newSeqs.push({
@@ -20087,17 +20274,18 @@ async function realignAll() {
         // Fallback: use aligned in MAFFT output order
         if (newSeqs.length === 0) {
             for (const a of aligned) {
-                const name = a.name.split(/\s+/)[0];
+                const name = _stripRowSuffix(a.name.split(/\s+/)[0]);
                 const origCase = originalCaseByHeader.get(a.name);
                 newSeqs.push({
                     header: name,
-                    fullHeader: a.name,
+                    fullHeader: _stripRowSuffix(a.name),
                     seq: origCase ? _remapCaseOntoAligned(origCase, a.seq) : a.seq,
                     gaplessPositions: calculateGaplessPositions(a.seq)
                 });
             }
         }
 
+        _pushUndoEntry(undoEntry);
         state.seqs = newSeqs;
         state.selectedRows.clear();
         state.selectedColumns.clear();
@@ -20105,7 +20293,7 @@ async function realignAll() {
         _dropColumnAnalysesAfterRealign();
         renderAlignment();
         const msgs = [`Aligned ${state.seqs.length} sequences successfully!`];
-        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].join(', ')}`);
+        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].map(_stripRowSuffix).join(', ')}`);
         showMessage(msgs.join(' '), flippedNames.size > 0 ? 5000 : 2000);
     } catch (err) {
         showMessage("MAFFT alignment error: " + err.message, 4000);
@@ -20129,12 +20317,13 @@ function realignSelected() {
 
     const selectedIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
 
-    // Build ungapped FASTA from selected sequences
+    // Build ungapped FASTA from selected sequences (names made unique: results go back by row)
+    const selObjs = selectedIndices.map(i => state.seqs[i]);
+    const rowNames = _uniqueRowNames(selObjs, selectedIndices);
     let fasta = '';
-    for (const idx of selectedIndices) {
-        const s = state.seqs[idx];
-        fasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
-    }
+    selObjs.forEach((s, k) => {
+        fasta += `>${rowNames[k]}\n${s.seq.replace(/[-.]/g, '')}\n`;
+    });
 
     const { args: extraArgs, seqType, adjustDir } = getMafftExtraArgs();
 
@@ -20164,16 +20353,16 @@ function realignSelected() {
         }
 
         // Replace selected sequences with aligned versions
-        for (const idx of selectedIndices) {
-            const s = state.seqs[idx];
-            const match = aligned.find(a => a.name === s.header || a.name === s.fullHeader);
-            if (match) {
+        selObjs.forEach((s, k) => {
+            const idx = state.seqs.indexOf(s);
+            const match = aligned.find(a => a.name === rowNames[k]);
+            if (match && idx >= 0) {
                 const origCase = originalCaseByHeader.get(match.name);
                 const recased = origCase ? _remapCaseOntoAligned(origCase, match.seq) : match.seq;
                 state.seqs[idx].seq = recased;
                 state.seqs[idx].gaplessPositions = calculateGaplessPositions(recased);
             }
-        }
+        });
 
         // Pad all sequences to the same length
         const maxLen = Math.max(...state.seqs.map(s => s.seq.length));
@@ -20316,6 +20505,8 @@ async function addSequencesJustAdd() {
             const existingCount = workingSeqs.length - alignedNewSeqs.length;
             if (atTop) {
                 state.seqs = [...alignedNewSeqs, ...workingSeqs.slice(0, existingCount)];
+                state.selectedRows = new Set([...state.selectedRows].map(i => i + alignedNewSeqs.length));
+                if (Number.isInteger(state.lastSelectedIndex)) state.lastSelectedIndex += alignedNewSeqs.length;
             } else {
                 state.seqs = workingSeqs;
             }
@@ -20339,10 +20530,17 @@ async function addSequencesJustAdd() {
     if (!(alignToCons && state.seqs.length > 0 && state.consensusSeq)) {
         if (atTop) {
             state.seqs.unshift(...newSeqs);
+            state.selectedRows = new Set([...state.selectedRows].map(i => i + newSeqs.length));
+            if (Number.isInteger(state.lastSelectedIndex)) state.lastSelectedIndex += newSeqs.length;
         } else {
             state.seqs.push(...newSeqs);
         }
     }
+
+    // A new sequence longer than the alignment widens it: pad every row (only shorter new
+    // sequences were padded, so a longer one left the alignment ragged)
+    const widthBefore = state.seqs.reduce((m, q) => Math.min(m, q.seq.length), Infinity);
+    if (normalizeAlignmentLengths() !== widthBefore) refreshAllGaplessPositions();
 
     closeAddSequencesModal();
     renderAlignment();
@@ -20742,6 +20940,11 @@ function _seqEditResetUndo(initialValue) {
 }
 
 
+// The sequences the open editor was opened on, by object: rows can move behind the dialog
+// (Ctrl+Up with focus on a button), and Apply used to write to whatever row then had the
+// remembered index, overwriting another sequence.
+let _seqEditTargetObjs = [];
+
 function openSeqEditor(index) {
     if (index === undefined || index === null) {
         // Use selected rows, or open freeform if none selected
@@ -20771,11 +20974,13 @@ function openSeqEditor(index) {
         // Freeform mode: blank editor for new or arbitrary text
         if (nameInput) nameInput.value = 'new_sequence';
         if (indexEl) indexEl.textContent = '-1';
+        _seqEditTargetObjs = [];
         textarea.value = '>new_sequence\n';
     } else {
         const s = state.seqs[index];
         if (nameInput) nameInput.value = s.fullHeader || s.header;
         if (indexEl) indexEl.textContent = String(index);
+        _seqEditTargetObjs = [s];
         textarea.value = `>${s.fullHeader || s.header}\n${s.seq}`;
     }
     _updateSeqEditLength();
@@ -20800,6 +21005,7 @@ function openSeqEditorMulti() {
     // Store multi indices
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     if (indexEl) indexEl.textContent = 'multi:' + indices.join(',');
+    _seqEditTargetObjs = indices.map(i => state.seqs[i]);
 
     // Build multi-FASTA
     let text = '';
@@ -20943,12 +21149,23 @@ function seqEditLowercase() {
     _seqEditTransform(seq => seq.toLowerCase());
 }
 
+// "Pad/trim to alignment length": pad a short sequence, and trim only trailing gaps from a
+// long one. It used to cut a long one to the width, dropping its last residues; one that is
+// still longer now widens the alignment (the caller pads the other rows).
+function _seqEditFitWidth(seq, alignLen) {
+    if (seq.length < alignLen) return seq.padEnd(alignLen, '-');
+    let end = seq.length;
+    while (end > alignLen && (seq[end - 1] === '-' || seq[end - 1] === '.')) end--;
+    return seq.slice(0, end);
+}
+
 function seqEditApply() {
     const indexStr = document.getElementById('seqEditIndex')?.textContent;
 
     // Multi-sequence mode
     if (indexStr && indexStr.startsWith('multi:')) {
-        const indices = indexStr.substring(6).split(',').map(Number);
+        const indices = indexStr.substring(6).split(',').map(Number)
+            .map((i, k) => (_seqEditTargetObjs[k] ? state.seqs.indexOf(_seqEditTargetObjs[k]) : i));
         const entries = _getSeqEditMultiFasta();
         if (entries.length === 0) {
             showMessage("No sequences found.", 2000);
@@ -20965,10 +21182,7 @@ function seqEditApply() {
             const idx = indices[i];
             if (idx < 0 || idx >= state.seqs.length) continue;
             let seq = entries[i].seq;
-            if (padCheckbox && padCheckbox.checked && alignLen > 0) {
-                if (seq.length < alignLen) seq = seq.padEnd(alignLen, '-');
-                else if (seq.length > alignLen) seq = seq.substring(0, alignLen);
-            }
+            if (padCheckbox && padCheckbox.checked && alignLen > 0) seq = _seqEditFitWidth(seq, alignLen);
             const fullH = entries[i].header;
             state.seqs[idx].header = fullH.split(/\s+/)[0];
             state.seqs[idx].fullHeader = fullH;
@@ -20980,10 +21194,7 @@ function seqEditApply() {
         const updatedAlignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
         for (let i = updateCount; i < entries.length; i++) {
             let seq = entries[i].seq;
-            if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) {
-                if (seq.length < updatedAlignLen) seq = seq.padEnd(updatedAlignLen, '-');
-                else if (seq.length > updatedAlignLen) seq = seq.substring(0, updatedAlignLen);
-            }
+            if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) seq = _seqEditFitWidth(seq, updatedAlignLen);
             const fullH = entries[i].header;
             state.seqs.push({
                 header: fullH.split(/\s+/)[0],
@@ -20992,14 +21203,16 @@ function seqEditApply() {
                 gaplessPositions: calculateGaplessPositions(seq)
             });
         }
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
         closeSeqEditor();
         renderAlignment();
         showMessage(`${updateCount} sequence${updateCount > 1 ? 's' : ''} updated!`, 2000);
         return;
     }
 
-    const index = parseInt(indexStr);
+    let index = parseInt(indexStr);
     const isFreeform = (index === -1);
+    if (!isFreeform && _seqEditTargetObjs[0]) index = state.seqs.indexOf(_seqEditTargetObjs[0]);
 
     if (!isFreeform && (isNaN(index) || index < 0 || index >= state.seqs.length)) {
         showMessage("Invalid sequence index.", 3000);
@@ -21029,13 +21242,7 @@ function seqEditApply() {
     const padCheckbox = document.getElementById('seqEditPadGaps');
     if (padCheckbox && padCheckbox.checked && state.seqs.length > 0) {
         const alignLen = Math.max(...state.seqs.map(s => s.seq.length));
-        if (alignLen > 0) {
-            if (seq.length < alignLen) {
-                seq = seq.padEnd(alignLen, '-');
-            } else if (seq.length > alignLen) {
-                seq = seq.substring(0, alignLen);
-            }
-        }
+        if (alignLen > 0) seq = _seqEditFitWidth(seq, alignLen);
     }
 
     if (isFreeform) {
@@ -21047,6 +21254,7 @@ function seqEditApply() {
             gaplessPositions: calculateGaplessPositions(seq)
         };
         state.seqs.push(newSeq);
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
         closeSeqEditor();
         renderAlignment();
         showMessage("New sequence added!", 2000);
@@ -21056,6 +21264,7 @@ function seqEditApply() {
         state.seqs[index].fullHeader = newFullHeader;
         state.seqs[index].seq = seq;
         state.seqs[index].gaplessPositions = calculateGaplessPositions(seq);
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
         closeSeqEditor();
         renderAlignment();
         showMessage("Sequence updated!", 2000);
@@ -21078,6 +21287,7 @@ const UNDO_TYPE_LABELS = {
     'seqedit': 'Edit sequence', 'seqedit-add': 'Add sequence', 'seqedit-multi': 'Edit sequences',
     'add-sequences': 'Add sequences', 'add-and-align': 'Add and align',
     'replaceWithConsensus': 'Replace with consensus', 'insertConsensus': 'Insert consensus',
+    'trim': 'Trim', 'undo-trim': 'Undo trim',
     'insertGap': 'Insert gaps', 'insertSingleGap': 'Insert gap', 'removeGaps': 'Remove gaps',
     'removeSingleGap': 'Remove gap', 'deleteColumns': 'Delete columns',
     'degap-block-left': 'Degap block (left)', 'degap-block-right': 'Degap block (right)',
@@ -21326,41 +21536,8 @@ function showContextMenu(e, index) {
         const renameItem = document.createElement('div');
         renameItem.textContent = 'Rename sequence';
         renameItem.addEventListener('click', () => {
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.value = state.seqs[index].header;
-            input.style.width = `${e.target.offsetWidth}px`;
-            input.style.fontSize = getComputedStyle(e.target).fontSize;
-            input.style.fontFamily = getComputedStyle(e.target).fontFamily;
-            input.style.padding = '0';
-            input.style.border = '1px solid #ccc';
-            e.target.innerHTML = '';
-            e.target.appendChild(input);
-            input.focus();
-            input.select();
-            const save = () => {
-                const newName = input.value.trim();
-                if (newName && newName !== state.seqs[index].header) {
-                    const oldName = state.seqs[index].header;
-                    pushUndo('rename');
-                    state.seqs[index].header = newName;
-                    state.seqs[index].fullHeader = newName;
-                    _migrateColourMapping(oldName, newName);
-                    renderAlignment();
-                    showMessage("Sequence renamed!", 2000);
-                } else {
-                    renderAlignment();
-                }
-            };
-            input.addEventListener('blur', save);
-            input.addEventListener('keydown', (ev) => {
-                if (ev.key === 'Enter') {
-                    save();
-                } else if (ev.key === 'Escape') {
-                    renderAlignment();
-                }
-            });
             closeContextMenu();
+            _renameSequenceFromMenu(index, e);
         });
         contextMenu.appendChild(renameItem);
     }
@@ -22989,6 +23166,11 @@ function attachUIListeners() {
     });
     document.addEventListener('copy', (e) => {
         if (!state.selectedNucs.size) return;
+        // Text copied from a text field or any other selected text is the user's: this used
+        // to replace it with the residue selection (Ctrl+C in the search box gave "CGTA")
+        if (_isTextEntry(document.activeElement)) return;
+        const nativeSel = window.getSelection();
+        if (nativeSel && !nativeSel.isCollapsed && String(nativeSel).length > 0) return;
         const text = buildNucCopyText();
         e.preventDefault();
         e.clipboardData.setData('text/plain', text);
@@ -24362,24 +24544,19 @@ function handleGeneDocGapToolClick(rowIndex, pos, tool) {
         }
     }
 
-    pushUndo(`geneDoc-${tool}`);
+    const undoEntry = _makeUndoEntry(`geneDoc-${tool}`);
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
-    let changed = false;
-    targets.forEach(i => {
+    const results = targets.map(i => {
         const s = state.seqs[i];
-        const result = deleting
-            ? geneDocDeleteDashString(s.seq, pos)
-            : geneDocInsertDashString(s.seq, pos);
-        if (result.changed) {
-            s.seq = result.seq;
-            changed = true;
-        }
+        return [s, deleting ? geneDocDeleteDashString(s.seq, pos) : geneDocInsertDashString(s.seq, pos)];
     });
-    if (!changed) {
+    if (!results.some(([, r]) => r.changed)) {
         showMessage('No GeneDoc edit was applied.', 1800);
         return;
     }
+    _pushUndoEntry(undoEntry);
+    results.forEach(([s, r]) => { if (r.changed) s.seq = r.seq; });
     const label = deleting ? 'gap deleted' : 'gap inserted';
     applyColumnEdit({ type: deleting ? 'delete' : 'insert', at: pos, cols: [pos], newWidth: Math.max(...state.seqs.map(q => q.seq.length)) },
         targets.length === state.seqs.length ? 'all' : targets);
@@ -24579,7 +24756,7 @@ function insertGapColumn(skipSelected = false) {
 function insertSingleGap(rowIndex, pos) {
     const s = state.seqs[rowIndex];
     if (!s) return;
-    pushUndo('insertSingleGap');
+    const undoEntry = _makeUndoEntry('insertSingleGap');
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
     const result = geneDocInsertDashString(s.seq, pos);
@@ -24587,6 +24764,7 @@ function insertSingleGap(rowIndex, pos) {
         showMessage('No gap inserted.', 1800);
         return;
     }
+    _pushUndoEntry(undoEntry);
     s.seq = result.seq;
     applyColumnEdit({ type: 'insert', at: pos, newWidth: Math.max(...state.seqs.map(q => q.seq.length)) }, [rowIndex]);
     finalizeGeneDocEdit('Single GeneDoc gap inserted.', 1800, pos, oldWidth);
@@ -24599,7 +24777,7 @@ function removeSingleGap(rowIndex, pos) {
         showMessage("Not a gap.", 2000);
         return;
     }
-    pushUndo('removeSingleGap');
+    const undoEntry = _makeUndoEntry('removeSingleGap');
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
     const result = geneDocDeleteDashString(s.seq, pos);
@@ -24607,6 +24785,7 @@ function removeSingleGap(rowIndex, pos) {
         showMessage('No gap removed.', 1800);
         return;
     }
+    _pushUndoEntry(undoEntry);
     s.seq = result.seq;
     applyColumnEdit({ type: 'delete', cols: [pos] }, [rowIndex]);
     finalizeGeneDocEdit('Single GeneDoc gap removed.', 1800, pos, oldWidth);
