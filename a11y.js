@@ -80,13 +80,17 @@
         colourInspectorModal: { modal: false, close: '.win-close[title="Close"]' },
         dotPlotModal: { modal: false, close: '#dotPlotCloseBtn' },
         repeatFinderModal: { modal: false, close: '#repeatFinderCloseBtn' },
-        seqEditModal: { modal: true, close: '#seqEditCloseBtn' },
+        // escUnchanged: Esc closes it from its text boxes too while nothing has been edited
+        // (focus opens in the text box, so Esc never closed it); with edits Esc keeps them
+        seqEditModal: { modal: true, close: '#seqEditCloseBtn', escUnchanged: true },
         // Esc first clears a column selection in the matrix (script.js)
         statsModal: { modal: false, close: '#statsCloseBtn', escapeFirst: () => typeof state !== 'undefined' && !!(state._statsSelCols && state._statsSelCols.size) },
         treeBuilderModal: { modal: false, close: '#treeBuilderCloseBtn' },
     };
     const openOrder = []; // dialogs in the order they were shown
     const returnFocusTo = new Map();
+    const valuesAtOpen = new Map();
+    const fieldValues = node => Array.from(node.querySelectorAll('input, textarea, select')).map(n => (n.type === 'checkbox' || n.type === 'radio') ? n.checked : n.value).join('\u0000');
 
     function closeDialog(id) {
         const node = document.getElementById(id);
@@ -129,6 +133,7 @@
                     openOrder.push(id);
                     const prev = document.activeElement;
                     if (prev && prev !== document.body && !node.contains(prev)) returnFocusTo.set(id, prev);
+                    if (cfg.escUnchanged) valuesAtOpen.set(id, fieldValues(node));
                     // after the opener has filled the window
                     setTimeout(() => {
                         if (!isShown(node) || node.contains(document.activeElement)) return;
@@ -136,8 +141,11 @@
                         (first || node).focus({ preventScroll: true });
                     }, 0);
                 } else {
-                    const back = returnFocusTo.get(id);
+                    let back = returnFocusTo.get(id);
                     returnFocusTo.delete(id);
+                    // An opener inside a menu that has since closed cannot take focus (it went
+                    // to <body>): give it to that menu's header instead
+                    if (back && !back.getClientRects().length) back = back.closest('.menu-section')?.querySelector(':scope > .section-header') || back;
                     if (back && document.contains(back) && (!document.activeElement || document.activeElement === document.body || node.contains(document.activeElement))) {
                         back.focus({ preventScroll: true });
                     }
@@ -167,7 +175,8 @@
                 if (ae?.classList?.contains('seq-name-edit')) return;
                 if (ae?.closest?.('.menu-section.menu-open')) return;
                 if (ae && dialog.contains(ae) && (ae.tagName === 'TEXTAREA' || ae.isContentEditable
-                    || (ae.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|color|range|file|image)$/i.test(ae.type || '')))) return;
+                    || (ae.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|color|range|file|image)$/i.test(ae.type || '')))
+                    && !(DIALOGS[dialog.id]?.escUnchanged && valuesAtOpen.get(dialog.id) === fieldValues(dialog))) return;
                 if (DIALOGS[dialog.id]?.escapeFirst?.()) return;
                 if (!dialog.contains(document.activeElement) && DIALOGS[dialog.id] && !DIALOGS[dialog.id].modal) {
                     // a non-modal window only closes on Esc when it has focus
