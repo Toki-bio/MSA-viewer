@@ -9601,8 +9601,10 @@ function groupRowsByType(rowIdxs) {
         if (want.has(s.header)) matched.push(s);
         else rest.push(s);
     }
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('group-by-type');
     state.seqs = [...matched, ...rest];
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderAlignment();
     showMessage('Stacked ' + matched.length + ' sequences of that type', 2500);
@@ -12475,25 +12477,42 @@ function reverseComplementAll() {
     reverseComplementSequences(state.seqs.map((_, i) => i));
 }
 
+// The row selection is a set of row numbers: a reorder must carry it to the rows its
+// sequences moved to. Sort and Add at top left it on the old numbers, i.e. on other
+// sequences, where Ctrl+Del would then act.
+function _selectedRowObjs() {
+    return [...state.selectedRows].map(i => state.seqs[i]).filter(Boolean);
+}
+function _reselectRowObjs(objs, lastObj) {
+    const at = new Map(state.seqs.map((o, i) => [o, i]));
+    state.selectedRows = new Set(objs.map(o => at.get(o)).filter(i => i !== undefined));
+    if (lastObj !== undefined) state.lastSelectedIndex = at.has(lastObj) ? at.get(lastObj) : null;
+}
+
 // -- Sort functions --
 function sortByName() {
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('sort-name');
     const indices = state.seqs.map((s, i) => ({ idx: i, name: s.header.toLowerCase() }));
     indices.sort((a, b) => a.name.localeCompare(b.name));
     state.seqs = indices.map(e => state.seqs[e.idx]);
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderWithNotice('Sorting by name…').then(() => showMessage('Sorted by name', 2000));
 }
 function sortByLength() {
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('sort-length');
     const indices = state.seqs.map((s, i) => ({ idx: i, len: s.seq.replace(/[-.]/g, '').length }));
     indices.sort((a, b) => b.len - a.len);
     state.seqs = indices.map(e => state.seqs[e.idx]);
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderWithNotice('Sorting by length…').then(() => showMessage('Sorted by length (descending)', 2000));
 }
 function sortBySimilarity() {
     if (state.seqs.length < 2) return;
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('sort-similarity');
     const ref = state.seqs[0].seq;
     const scored = state.seqs.map((s, i) => {
@@ -12506,6 +12525,7 @@ function sortBySimilarity() {
     });
     scored.sort((a, b) => b.score - a.score);
     state.seqs = scored.map(e => state.seqs[e.idx]);
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderWithNotice('Sorting by similarity…').then(() => showMessage('Sorted by similarity to first sequence', 2000));
 }
@@ -12547,8 +12567,10 @@ function importOrder() {
                 }
                 reordered.sort((a, b) => orderMap.get(a.header) - orderMap.get(b.header));
                 const extra = data.order.filter(h => !currentHeaders.has(h));
+                const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
                 pushUndo('import-order');
                 state.seqs = [...reordered, ...unmatched];
+                _reselectRowObjs(sel, last);
                 state.lastAction = 'sort';
                 renderAlignment();
                 let msg = 'Order loaded (' + reordered.length + ' matched';
@@ -19971,6 +19993,10 @@ async function realignSelectedBlock(opts) {
                 gaplessPositions: calculateGaplessPositions(r.seq)
             };
         });
+        // the rows may have been reordered: the row selection goes with its rows
+        const newRowOf = new Map(result.seqs.map((r, i) => [r._row, i]));
+        state.selectedRows = new Set([...state.selectedRows].map(i => newRowOf.get(i)).filter(i => i !== undefined));
+        state.lastSelectedIndex = newRowOf.has(state.lastSelectedIndex) ? newRowOf.get(state.lastSelectedIndex) : null;
         state.selectedColumns.clear();
         if (result.aligned) _dropColumnAnalysesAfterRealign();
         renderAlignment();
@@ -20339,6 +20365,8 @@ async function addSequencesJustAdd() {
             const existingCount = workingSeqs.length - alignedNewSeqs.length;
             if (atTop) {
                 state.seqs = [...alignedNewSeqs, ...workingSeqs.slice(0, existingCount)];
+                state.selectedRows = new Set([...state.selectedRows].map(i => i + alignedNewSeqs.length));
+                if (Number.isInteger(state.lastSelectedIndex)) state.lastSelectedIndex += alignedNewSeqs.length;
             } else {
                 state.seqs = workingSeqs;
             }
@@ -20362,6 +20390,8 @@ async function addSequencesJustAdd() {
     if (!(alignToCons && state.seqs.length > 0 && state.consensusSeq)) {
         if (atTop) {
             state.seqs.unshift(...newSeqs);
+            state.selectedRows = new Set([...state.selectedRows].map(i => i + newSeqs.length));
+            if (Number.isInteger(state.lastSelectedIndex)) state.lastSelectedIndex += newSeqs.length;
         } else {
             state.seqs.push(...newSeqs);
         }

@@ -3232,6 +3232,23 @@ check('Audit: copying text in a text field copies that text, not the residue sel
   return { pass: fromInput === 'GAATTC' && fromAlignment === 'CGTA', detail: JSON.stringify({ fromInput, fromAlignment }) };
 });
 
+check('Audit: selected rows stay on their sequences through Sort and Add at top', async (page) => {
+  // Used to: the row selection is a set of row numbers, and Sort / Add Sequences at top left
+  // it on the old numbers, so it jumped to other sequences (and Ctrl+Del then hit those).
+  await loadFasta(page, '>zeta\nACGTACGT\n>alpha\nTTTTGGGG\n>mid\nGGGGCCCC\n');
+  await auditCtrlClickName(page, 0);
+  const selNames = () => page.evaluate(() => [...state.selectedRows].map(i => state.seqs[i].header).sort().join(','));
+  await page.evaluate(() => el('sortByNameButton').click());   // the button's own onclick
+  await page.waitForTimeout(400);
+  const afterSort = await selNames();
+  const domSel = await page.evaluate(() => [...document.querySelectorAll('.seq-line[data-seq-index]')].filter(l => l.querySelector('.seq-name.selected') || l.classList.contains('selected')).map(l => l.dataset.seqIndex).join(','));
+  const zetaRow = await page.evaluate(() => String(state.seqs.findIndex(s => s.header === 'zeta')));
+  await page.evaluate(() => { el('addSeqInput').value = '>new\nAAAACCCC'; el('addSeqAtTop').checked = true; el('addSeqAlignCons').checked = false; el('addSeqJustAddButton').click(); });
+  await page.waitForTimeout(400);
+  const afterAdd = await selNames();
+  return { pass: afterSort === 'zeta' && domSel === zetaRow && afterAdd === 'zeta', detail: JSON.stringify({ afterSort, domSel, zetaRow, afterAdd }) };
+});
+
 check('Audit: Ctrl+Shift+Z redoes (it used to undo again)', async (page) => {
   // Used to: case 'z' ignored Shift, so Ctrl+Shift+Z / Cmd+Shift+Z (the usual redo, the
   // only one on macOS) undid one more step instead.
