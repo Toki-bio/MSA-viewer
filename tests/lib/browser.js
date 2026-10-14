@@ -112,8 +112,22 @@ async function loadSyntheticFasta(page, nSeq, nCol, alphabet = 'ACGT') {
 async function setMode(page, mode) {
   const id = { full: 'modeSingle', block: 'modeBlocks', canvas: 'modeCanvas' }[mode];
   if (!id) throw new Error(`unknown mode: ${mode}`);
-  await page.evaluate((id) => { document.getElementById(id).checked = true; onModeChange(); }, id);
-  await _dismissProceedDialogIfPresent(page);
+  // Full and Block ask "Full mode on a large alignment" for any tall (>500 rows), long (>3000
+  // columns) or very large alignment (onModeChange), not only near ALIGN_CRAZY_VOLUME: wait for
+  // that dialog whenever the page's own size classification says it comes, and for the switch.
+  const asks = await page.evaluate((id) => {
+    document.getElementById(id).checked = true;
+    window.__modePromise = onModeChange();
+    const idx = typeof state !== 'undefined' ? state.alignmentIndex : null;
+    return id !== 'modeCanvas' && !!idx && !!(idx.isCrazy || idx.isTall || idx.isLong);
+  }, id);
+  if (asks) {
+    const dlg = await page.waitForSelector('#alignLoadProceed', { timeout: 8000 }).then(() => true).catch(() => false);
+    if (dlg) await page.click('#alignLoadProceed');
+  } else {
+    await _dismissProceedDialogIfPresent(page);
+  }
+  await page.evaluate(() => window.__modePromise);
   await page.waitForTimeout(200);
 }
 

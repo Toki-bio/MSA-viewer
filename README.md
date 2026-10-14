@@ -7,11 +7,11 @@ No installation, no build step, no framework dependencies.
 
 ## Features
 
-- **Nine input formats with auto-detection**: FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm,
-  GenBank flatfile, SAM, and BAM/CRAM (read in the browser onto an open reference);
+- **Ten input formats with auto-detection**: FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm,
+  GenBank flatfile, ABI (AB1) chromatograms, SAM, and BAM/CRAM (read in the browser onto an open reference);
   GenBank/RefSeq records can also be fetched by accession
 - **Four view modes**: Full, Block, Canvas (viewport-culled; Full and Block window
-  the alignment above about 500,000 residues, and Canvas auto-activates above
+  the alignment above about 100,000 residues, and Canvas auto-activates above
   5 million), and Reads (IGV-style tracks for mapped SAM/BAM data). Opening an
   alignment with more than 500 sequences *and* more than 3,000 columns, or more than
   5 million residues, first asks before loading
@@ -34,7 +34,7 @@ No installation, no build step, no framework dependencies.
   the alignment in every view mode; coordinates on a named sequence are mapped through its
   gaps, so the track follows the alignment. Load from a file, a URL, or `?bed=<url>`; with
   codon analysis on, each annotated CDS is translated in its own frame and strand
-- **More analysis**: dot plots with region detection, repeat/TSD finder, UPGMA trees,
+- **More analysis**: dot plots with region detection, repeat/TSD finder, UPGMA and neighbour-joining trees,
   regex motif search, 50 restriction enzyme sites
 - **Publication export**: SVG (viewport or full), Word-compatible RTF with per-residue
   conservation shading, FASTA, Newick
@@ -60,15 +60,16 @@ Opening `index.html` directly from disk (`file://`) shows and edits alignments, 
 block Web Workers and file fetches there, so MAFFT, MACSE, sequence search, dot plots and
 `?url=` loading need the page served over HTTP(S).
 
-### Server Mode (Recommended)
+### Server Mode (optional)
 ```bash
 npm install
 node server.js
 ```
 Visit `http://localhost:3000`
 
-Enables:
-- BLAST search
+Adds:
+- Hosted BLAST databases, searched with NCBI blastn when it is installed (the BLAST-like
+  search described above runs in the browser without a server)
 - Remote SSH file loading
 
 ## Remote File Loading Setup

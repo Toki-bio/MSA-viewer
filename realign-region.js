@@ -13,16 +13,22 @@
     'use strict';
 
     function headerKey(s) {
+        // run() gives every row a unique key; rows whose names share a first word used to
+        // share one, and got each other's realigned region
+        if (s && s._key) return s._key;
         var h = (s && (s.header || s.fullHeader || s.name)) || '';
         return String(h).split(/\s+/)[0];
     }
 
     function cloneSeq(s) {
-        return {
+        var c = {
             header: s.header,
             fullHeader: s.fullHeader || s.header,
             seq: s.seq
         };
+        if (s._key) c._key = s._key;
+        if (s._row !== undefined) c._row = s._row;
+        return c;
     }
 
     function padTo(seq, len) {
@@ -159,11 +165,13 @@
 
     function applyOrder(seqs, headerOrder) {
         var byKey = {};
+        // names first, then the unique keys over them: a repeated name must not take
+        // another row's key
         for (var i = 0; i < seqs.length; i++) {
-            byKey[headerKey(seqs[i])] = seqs[i];
-            if (seqs[i].header) byKey[seqs[i].header] = seqs[i];
-            if (seqs[i].fullHeader) byKey[seqs[i].fullHeader] = seqs[i];
+            if (seqs[i].header && !byKey[seqs[i].header]) byKey[seqs[i].header] = seqs[i];
+            if (seqs[i].fullHeader && !byKey[seqs[i].fullHeader]) byKey[seqs[i].fullHeader] = seqs[i];
         }
+        for (var i2 = 0; i2 < seqs.length; i2++) byKey[headerKey(seqs[i2])] = seqs[i2];
         var out = [];
         var seen = {};
         var order = headerOrder || [];
@@ -294,14 +302,36 @@
         var mafftAlign = options.mafftAlign;
         var extraArgs = options.extraArgs || [];
 
-        var orig = (seqs || []).map(cloneSeq);
+        // Unique per-row keys (the name's first word, plus a row suffix when it repeats) and
+        // the row each result came from (_row), so the caller can map results back by row
+        var seenKeys = {};
+        var nameOfKey = {};
+        var orig = (seqs || []).map(function (s, i) {
+            var c = cloneSeq(s);
+            var base = headerKey(s), k = base;
+            if (seenKeys[k]) { k = base + '__row' + (i + 1); while (seenKeys[k]) k += '_'; }
+            seenKeys[k] = true;
+            nameOfKey[k] = base;
+            c._key = k;
+            c._row = i;
+            return c;
+        });
+        function done(res) {
+            res.seqs = res.seqs.map(function (s) {
+                var c = cloneSeq(s);
+                delete c._key;
+                return c;
+            });
+            if (res.order) res.order = res.order.map(function (k) { return nameOfKey[k] || k; });
+            return res;
+        }
         if (!orig.length) {
-            return { seqs: orig, cancelled: false, noop: true, aligned: false, flipped: [], order: null, orderApplied: false, runs: [], mafftCalls: 0, message: 'No sequences' };
+            return done({ seqs: orig, cancelled: false, noop: true, aligned: false, flipped: [], order: null, orderApplied: false, runs: [], mafftCalls: 0, message: 'No sequences' });
         }
 
         var runs = columnRuns(selectedCols);
         if (!runs.length) {
-            return { seqs: orig, cancelled: false, noop: true, aligned: false, flipped: [], order: null, orderApplied: false, runs: [], mafftCalls: 0, message: 'Need at least one span of 2+ selected columns' };
+            return done({ seqs: orig, cancelled: false, noop: true, aligned: false, flipped: [], order: null, orderApplied: false, runs: [], mafftCalls: 0, message: 'Need at least one span of 2+ selected columns' });
         }
 
         var alen = orig[0].seq.length;
@@ -332,16 +362,14 @@
             if (flippedSet.size) {
                 if (applyAdjustFull) {
                     working = working.map(function (s) {
-                        var k = headerKey(s);
-                        if (!flippedSet.has(k) && !flippedSet.has(s.header) && !flippedSet.has(s.fullHeader)) return s;
+                        if (!isFlipped(s)) return s;
                         var c = cloneSeq(s);
                         c.seq = rcFn(s.seq);
                         return c;
                     });
                 } else {
                     working = working.map(function (s) {
-                        var k = headerKey(s);
-                        if (!flippedSet.has(k) && !flippedSet.has(s.header) && !flippedSet.has(s.fullHeader)) return s;
+                        if (!isFlipped(s)) return s;
                         var seq = s.seq;
                         var sortedRuns = runs.slice().sort(function (a, b) { return a.start - b.start; });
                         for (var r = sortedRuns.length - 1; r >= 0; r--) {
@@ -357,9 +385,9 @@
             }
         }
 
+        // by the row's unique key only: a repeated name must not flip its namesake
         function isFlipped(s) {
-            var k = headerKey(s);
-            return flippedSet.has(k) || flippedSet.has(s.header) || flippedSet.has(s.fullHeader);
+            return flippedSet.has(headerKey(s));
         }
 
         function coordsFor(s, run) {
@@ -386,14 +414,16 @@
 
         var flippedNames = [];
         flippedSet.forEach(function (h) {
-            if (flippedNames.indexOf(h) < 0 && h.indexOf(' ') < 0) flippedNames.push(h);
+            if (h.indexOf(' ') >= 0) return;
+            var nm = nameOfKey[h] || h;
+            if (flippedNames.indexOf(nm) < 0) flippedNames.push(nm);
         });
 
         if (reorderOnly) {
             var tree = reorderFn(regionUngappedFa());
             var order = tree.order || [];
             if (!applyReorder) {
-                return {
+                return done({
                     seqs: padAll(working),
                     cancelled: false,
                     noop: !adjustDir || flippedNames.length === 0,
@@ -404,10 +434,10 @@
                     runs: runs,
                     mafftCalls: 0,
                     message: 'Reorder only: row order not applied (whole-MSA apply is off)'
-                };
+                });
             }
             working = applyOrder(working, order);
-            return {
+            return done({
                 seqs: padAll(working),
                 cancelled: false,
                 noop: false,
@@ -418,7 +448,7 @@
                 runs: runs,
                 mafftCalls: 0,
                 message: 'Reordered by selected region (no alignment)'
-            };
+            });
         }
 
         if (typeof mafftAlign !== 'function') {
@@ -456,7 +486,7 @@
                 mafftCalls++;
                 var raw = await mafftAlign(toFasta(recs), extraArgs);
                 if (raw === null || raw === undefined) {
-                    return {
+                    return done({
                         seqs: orig,
                         cancelled: true,
                         noop: true,
@@ -467,7 +497,7 @@
                         runs: runs,
                         mafftCalls: mafftCalls,
                         message: 'Cancelled'
-                    };
+                    });
                 }
                 var origUgByName = {};
                 for (var oi = 0; oi < recs.length; oi++) origUgByName[recs[oi].name] = recs[oi].seq;
@@ -505,7 +535,7 @@
             orderApplied = true;
         }
 
-        return {
+        return done({
             seqs: working,
             cancelled: false,
             noop: false,
@@ -516,7 +546,7 @@
             runs: runs,
             mafftCalls: mafftCalls,
             message: 'Region realigned'
-        };
+        });
     }
 
     return {

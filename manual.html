@@ -1040,8 +1040,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <strong>Show 2D</strong> draws translucent rectangles over stretches where a
     subset of rows share a local pattern. This is a separate overlay from name
     and letter colours. It does not change row order. Full and Block view modes
-    are supported; Canvas mode is not, and neither is the windowed display used above
-    about 500,000 residues.
+    are supported, including the windowed display used above about 100,000 residues;
+    Canvas mode is not.
   </p>
   <p>
     If SNP or k-mer groups already exist, each rectangle is tagged against them:
@@ -1159,7 +1159,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
     <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block.</td></tr>
     <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40–300 chars; <strong>Screen</strong> fits the block to the window width). Sequence names repeat per block.</td></tr>
-    <tr><td><strong>Canvas</strong></td><td>Massive alignments (>= 5,000,000 residues)</td><td>Auto-activates above 5 million residues and reports the switch. From about 500,000 residues, Full and Block already draw a window rather than every cell.</td></tr>
+    <tr><td><strong>Canvas</strong></td><td>Massive alignments (>= 5,000,000 residues)</td><td>Auto-activates above 5 million residues and reports the switch. From about 100,000 residues, Full and Block already draw a window rather than every cell.</td></tr>
     <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5). A <strong>Show bases</strong> checkbox next to the mode switch draws every base of each read instead of mismatches only.</td></tr>
   </table>
   <p>
@@ -1593,7 +1593,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
     <tr><td>Select all</td><td><kbd>Ctrl+A</kbd></td><td>Select or deselect all sequences</td></tr>
     <tr><td>Copy</td><td><kbd>Ctrl+C</kbd></td><td>Copy the selected bases, or the selected sequences as ungapped FASTA (names are copied from the Group explorer's <em>Copy names</em>, §4.5)</td></tr>
-    <tr><td>Copy sequences</td><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy selected sequences as ungapped FASTA (same as Ctrl+C with no bases selected)</td></tr>
+    <tr><td>Copy sequences</td><td><kbd>Alt+C</kbd></td><td>Copy selected sequences as ungapped FASTA (same as Ctrl+C with no bases selected). Ctrl+Shift+C also works where the browser lets it through; Chrome, Edge and Firefox keep it for their developer tools</td></tr>
     <tr><td>Delete</td><td><kbd>Ctrl+Del</kbd></td><td>Remove selected sequences (undoable)</td></tr>
     <tr><td>Duplicate</td><td><kbd>Ctrl+U</kbd></td><td>Duplicate selected sequences (undoable)</td></tr>
     <tr><td>Reverse complement</td><td><kbd>Ctrl+R</kbd></td><td>Reverse and complement selected DNA sequences</td></tr>
@@ -1786,7 +1786,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
     <tr><td>Select All</td><td><kbd>Ctrl+A</kbd></td><td>Select or deselect all rows</td></tr>
-    <tr><td>Copy Sel</td><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy the selected sequences as FASTA</td></tr>
+    <tr><td>Copy Sel</td><td><kbd>Alt+C</kbd></td><td>Copy the selected sequences as FASTA</td></tr>
     <tr><td>Copy Align</td><td>-</td><td>Copy the whole alignment as FASTA (also the toolbar <strong>Copy</strong> button)</td></tr>
     <tr><td>Delete Sel</td><td><kbd>Ctrl+Del</kbd></td><td>Delete the selected sequences (undoable)</td></tr>
     <tr><td>New Tab</td><td><kbd>Alt+T</kbd></td><td>Open the selected sequences as an alignment in a new ViewAlign tab</td></tr>
@@ -1982,7 +1982,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>Newick (<code>.nwk</code>)</td><td>Phylogenetics tools</td><td>Tree window <strong>Download .nwk</strong>: UPGMA or Neighbor-Joining tree with branch lengths, whichever the Tree window last built</td></tr>
     <tr><td>Standalone HTML</td><td>Sharing</td><td>Input menu <strong>Create</strong>: a JSON snapshot plus a self-contained HTML snapshot page with embedded alignment, and a <code>?snapshot=</code> URL on the clipboard (§2.6)</td></tr>
     <tr><td>New tab</td><td>A sub-alignment</td><td>Selected sequences opened as an alignment in a new ViewAlign tab (<kbd>Alt+T</kbd>)</td></tr>
-    <tr><td>Copy Selected</td><td>Clipboard</td><td>FASTA of selected sequences (<kbd>Ctrl+Shift+C</kbd>)</td></tr>
+    <tr><td>Copy Selected</td><td>Clipboard</td><td>FASTA of selected sequences (<kbd>Alt+C</kbd>)</td></tr>
     <tr><td>Copy Columns</td><td>Clipboard</td><td>FASTA of selected columns (<kbd>Ctrl+Shift+V</kbd>)</td></tr>
   </table>
   <p>
@@ -2120,7 +2120,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><td><kbd>Ctrl+End</kbd></td><td>Move selected to bottom</td></tr>
     <tr><td><kbd>Ctrl+B</kbd></td><td>Insert consensus of the selection below it</td></tr>
     <tr><td><kbd>Ctrl+Shift+K</kbd></td><td>Copy consensus</td></tr>
-    <tr><td><kbd>Ctrl+Shift+J</kbd></td><td>Copy consensus of the selected sequences</td></tr>
+    <tr><td><kbd>Alt+J</kbd></td><td>Copy consensus of the selected sequences (Ctrl+Shift+J also works where the browser lets it through; Chrome, Edge and Firefox keep it for their developer tools)</td></tr>
     <tr><td><kbd>Ctrl+Shift+V</kbd></td><td>Copy selected columns</td></tr>
     <tr><td><kbd>Ctrl+Shift+D</kbd></td><td>Delete selected columns (asks first)</td></tr>
     <tr><td><kbd>Ctrl+D</kbd></td><td>Delete selected columns without asking (undoable). With residues selected instead (a plain drag), deletes the columns they span, asking first when they are not in every sequence</td></tr>
@@ -2130,7 +2130,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
   <h3 id="sc-mouse">10.3 Mouse Actions</h3>
   <table>
     <tr><th>Action</th><th>Result</th></tr>
-    <tr><td>Click sequence name</td><td>Select row</td></tr>
+    <tr><td>Click sequence name</td><td>Select that row only (replaces the row selection; clicking the only selected row keeps it selected). Double-click renames</td></tr>
     <tr><td>Ctrl+Click name</td><td>Toggle row selection (Shift+Click selects the range from the last selected row)</td></tr>
     <tr><td>Click / Ctrl+Click residue</td><td>Select residues (bases) in that row; a second click in the same row extends to a range, or drag. In Edit mode, Ctrl is required (a plain click is for the edit tools)</td></tr>
     <tr><td>Ctrl+Alt+Click residue</td><td>Select column; Ctrl+Alt+drag selects a column range (§8.2)</td></tr>
@@ -2225,7 +2225,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <!-- Compact mode removed -->
     <li>Turn on <strong>Highlight Diffs</strong> to visually compress conserved regions</li>
     <li>Use <strong>Block mode</strong> with smaller block sizes (40-60 columns; the minimum is 40) for very wide alignments</li>
-    <li>From about 500,000 residues, <strong>Full</strong> and <strong>Block</strong> draw a window of the alignment. <strong>Canvas</strong> auto-activates above 5 million residues and reports the switch</li>
+    <li>From about 100,000 residues, <strong>Full</strong> and <strong>Block</strong> draw a window of the alignment. <strong>Canvas</strong> auto-activates above 5 million residues and reports the switch</li>
     <li>For extremely large files (&gt; 500 sequences x 5,000 columns), consider splitting the input</li>
     <li>Use <strong>Variable sites only</strong> with the <strong>threshold slider</strong> to strip conserved columns and focus on variation. Set the threshold to ≥20% or higher to highlight only the most polymorphic sites.</li>
   </ul>

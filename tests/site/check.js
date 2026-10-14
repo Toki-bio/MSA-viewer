@@ -43,6 +43,12 @@ async function main() {
   execFileSync('bash', [path.join(ROOT, 'tools', 'build-site.sh'), out], { stdio: 'pipe' });
   const has = f => fs.existsSync(path.join(out, f));
 
+  // version.json names the commit the site was built from. It was a committed
+  // file updated by hand, and the live site pointed 12 commits back (audit 2026-10-14).
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  const ver = JSON.parse(fs.readFileSync(path.join(out, 'version.json'), 'utf8'));
+  check('version.json names the commit the site was built from', ver.commit === head, `${ver.commit} != ${head}`);
+
   // 1. Everything the viewer loads
   const html = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
   const refs = new Set();

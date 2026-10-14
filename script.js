@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v243';
+const BUILD_TAG = 'v244';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -183,10 +183,27 @@ function safeLocalGet(key, fallback = {}) {
         const raw = localStorage.getItem(key);
         return raw ? JSON.parse(raw) : fallback;
     } catch (e) {
-        console.warn(`localStorage key "${key}" corrupted, resetting.`, e);
-        localStorage.removeItem(key);
+        // Blocked storage throws here too: never let that stop the page loading
+        console.warn(`localStorage key "${key}" unreadable, resetting.`, e);
+        try { localStorage.removeItem(key); } catch (_) {}
         return fallback;
     }
+}
+
+// Writes a localStorage value; storage can be full or blocked by the browser.
+// With a label, tells the user what could not be saved.
+function safeLocalSet(key, value, label) {
+    try {
+        localStorage.setItem(key, value);
+        return true;
+    } catch (e) {
+        if (label) showMessage(`Could not save ${label}: browser storage is full or blocked.`, 4000);
+        return false;
+    }
+}
+
+function safeLocalGetRaw(key) {
+    try { return localStorage.getItem(key); } catch (_) { return null; }
 }
 
 function _checkedRadioValue(name, fallback) {
@@ -273,10 +290,12 @@ function _searchMatchesInDegapped(displayString, entry) {
             // An empty match (q*, ^) covers no residue: neither a hit nor a count
             if (m[0].length === 0) { re.lastIndex++; continue; }
             matches.push({ idx: m.index, len: m[0].length, matchingPositions: null });
+            // Restriction sites overlap (GCGC twice in GCGCGC): resume one past the start
+            if (entry.overlapping) re.lastIndex = m.index + 1;
         }
         return matches;
     }
-    return findFuzzyMatches(displayString, motif, maxMismatches)
+    return findFuzzyMatches(displayString, motif, maxMismatches, !!entry.iupac)
         .map(m => ({ idx: m.idx, len: m.len, matchingPositions: m.matchingPositions }));
 }
 
@@ -558,20 +577,30 @@ function syncResidueOverlays() {
     });
 }
 
-// Grid residue width for the second font (spans have no fixed width: a Courier glyph sets it).
-// Taken from the font metrics once per font size: measuring a span would force a layout of the
-// whole alignment on every redraw, and resetting the variable restyles every residue.
+// --res-w: the pitch of the residue grid, i.e. the width of one residue span (spans have no fixed
+// width: a Courier glyph sets it). It is not the glyph's advance: a span is an inline-block, and
+// the browser rounds its width up to a layout unit (Courier New 13px: a 7.8013px glyph makes a
+// 7.8125px cell). Everything laid out in columns but not built of spans uses it: the ruler (one
+// run of text, which advanced 7.8013px per column and drifted ~5 columns left by column 3700),
+// the annotation track, rows waiting to be drawn, and the second font's residues.
+// Measured with a probe outside the alignment once per font size, before the alignment is laid
+// out at that size: measuring a residue would force a layout of the whole alignment, and
+// resetting the variable restyles every residue.
 let _resWidthFor = null;
-let _resWidthCtx = null;
-function _syncResidueWidthVar() {
+function _syncResidueWidthVar(fontSize) {
     if (!alignmentContainer) return;
-    const inline = alignmentContainer.style.fontSize;
+    const inline = fontSize || alignmentContainer.style.fontSize;
     if (_resWidthFor !== null && _resWidthFor === (inline || 'default')) return;
     _resWidthFor = inline || 'default';
     const size = inline || getComputedStyle(alignmentContainer).fontSize;
-    if (!_resWidthCtx) _resWidthCtx = document.createElement('canvas').getContext('2d');
-    _resWidthCtx.font = `${size} "Courier New", monospace`;
-    alignmentContainer.style.setProperty('--res-w', _resWidthCtx.measureText('M').width + 'px');
+    const probe = document.createElement('span');
+    probe.textContent = 'M';
+    probe.style.cssText = `position:absolute;left:-9999px;top:0;visibility:hidden;display:inline-block;white-space:pre;`
+        + `font:700 ${size}/1 "Courier New", monospace;padding:0;margin:0;border:0;letter-spacing:normal`;
+    document.body.appendChild(probe);
+    const w = probe.getBoundingClientRect().width;
+    probe.remove();
+    if (w > 0) alignmentContainer.style.setProperty('--res-w', w + 'px');
 }
 
 // ---- Telling the user where one mark covers another's colour ----
@@ -1498,6 +1527,7 @@ let _draggedSeqIndex = -1;
 let _dragPreviewInsertAbove = true;
 let _dragImageEl = null;
 let _rowReorderDrag = null;
+let _canvasNameClick = null;   // Canvas: a plain press on a name, selected on mouseup if it did not move
 
 function _getDragImageEl() {
     if (_dragImageEl && _dragImageEl.isConnected) return _dragImageEl;
@@ -1563,6 +1593,27 @@ function updateVersionIndicator() {
             elVersion.innerHTML = `ViewAlign ${RELEASE_VERSION} (build ${BUILD_TAG}, <a href="${url}" target="_blank" style="color:#666;" title="Commit as of the last version.json update">${sha}</a>)`;
         })
         .catch(() => {});
+}
+
+// The windowed views and Canvas are their own scrollers, with a fixed height: the window's height
+// below the alignment's top. It was set once per render, so after the window was made smaller the
+// bottom of the alignment (and of its scrollbar) hung below the window, and after it was made
+// taller part of the window stayed empty. Refit on window resize and when the toolbar wraps.
+function _fitFixedAlignmentViewport() {
+    const c = alignmentContainer;
+    if (!c || !/px$/.test(c.style.height || '')) return;
+    const canvasMode = isCanvasMode();
+    const windowed = !!state._needsWindowedDom && !!(el('modeSingle')?.checked || el('modeBlocks')?.checked);
+    if (!canvasMode && !windowed) return;
+    const top = c.getBoundingClientRect().top;
+    // the same formulas as renderAlignment (windowed) and _renderCanvasAlignment
+    const h = canvasMode ? window.innerHeight - top - 28 : Math.max(100, window.innerHeight - top - 28);
+    if (Math.abs(parseFloat(c.style.height) - h) < 0.5) return;
+    c.style.height = h + 'px';
+    if (canvasMode) _canvasState.resizeHandler?.();
+    else if (_unifiedWindowRenderParams) _refreshUnifiedWindowOnScroll(c);
+    window._syncVerticalScrollbar?.();
+    window._syncHorizontalScrollbar?.();
 }
 
 function updateControlsOffset() {
@@ -1799,10 +1850,12 @@ async function fetchFileFromServer(filePath, serverKey) {
                 clearInterval(flashInterval);
             }
         }, 500);
-        if (Notification.permission === 'default') {
+        // iOS Safari has no Notification API at all
+        const canNotify = typeof Notification !== 'undefined';
+        if (canNotify && Notification.permission === 'default') {
             Notification.requestPermission();
         }
-        if (document.hidden && Notification.permission === 'granted') {
+        if (canNotify && document.hidden && Notification.permission === 'granted') {
             new Notification('ViewAlign', { body: `Loaded ${fname}` });
         }
     } catch (err) {
@@ -1944,6 +1997,8 @@ function _finishRowReorderDrag(e) {
         _clearDragInsertPreview();
         _clearDragSources();
         _draggedSeqIndex = -1;
+        // A plain click (no drag) on a name selects that row only (it used to do nothing)
+        selectOnlyRow(drag.draggedIndex);
         return;
     }
     const nearest = _findNearestSequenceLine(e.clientY);
@@ -2224,6 +2279,8 @@ if (!fastaInput || !alignmentContainer || !statusMessage) {
 // A note from an aligner (e.g. the codon aligner's frameshift summary) that should ride along with the caller's
 // own completion message instead of being overwritten by it. Consumed by the next showMessage call.
 let _pendingAlignNote = null;
+// One hide timer: an earlier message's timer used to hide a newer message early
+let _statusMessageTimer = null;
 function showMessage(msg, duration = 2000) {
     if (_pendingAlignNote) {
         msg = msg + ' ' + _pendingAlignNote;
@@ -2232,7 +2289,8 @@ function showMessage(msg, duration = 2000) {
     }
     statusMessage.textContent = msg;
     statusMessage.style.display = 'block';
-    if (duration > 0) setTimeout(() => { statusMessage.style.display = 'none'; }, duration);
+    clearTimeout(_statusMessageTimer);
+    _statusMessageTimer = duration > 0 ? setTimeout(() => { statusMessage.style.display = 'none'; }, duration) : null;
 }
 
 const EXCLUSIVE_MODAL_IDS = [
@@ -2529,10 +2587,21 @@ function openMenuSection(section) {
         return;
     }
     section.classList.add('menu-open');
+    _keepMenuOnScreen(section);
     if (section && section.id === 'groups-menu-section' && _geDocked) {
         const modal = el('clusteringModal');
         if (modal) modal.style.display = 'flex';
     }
+}
+
+// A drop-down that would run past the right edge opens leftwards from its header's
+// right edge instead (at 1024px the Alignment menu was cut off on the right)
+function _keepMenuOnScreen(section) {
+    const group = section && section.querySelector(':scope > .control-group');
+    if (!group || group.classList.contains('detached')) return;
+    section.classList.remove('menu-flip-right');
+    const r = group.getBoundingClientRect();
+    if (r.width && r.right > window.innerWidth - 2) section.classList.add('menu-flip-right');
 }
 
 function makeControlGroupDetachable(section, group, handle, dockBtn) {
@@ -2713,7 +2782,7 @@ function updateNameLengthSliderRange() {
 
     // Use the display header (first token) only to size the name column,
     // so long descriptions in fullHeader don't blow up spacing.
-    const maxNameLength = Math.max(...state.seqs.map(s => s.header.length));
+    const maxNameLength = _arrMax(state.seqs.map(s => s.header.length));
 
     const slider = el('nameLengthSlider');
     const input = el('nameLengthInput');
@@ -2900,7 +2969,7 @@ function toggleStickyNames() {
     // Skip the forced-immediate part above that size; the class toggle above
     // still applies on the next natural paint either way.
     const _totalRes = state.alignmentIndex?.totalResidues || (state.seqs.length > 0
-        ? state.seqs.length * Math.max(...state.seqs.map(s => s.seq.length))
+        ? state.seqs.length * _maxSeqLen(state.seqs)
         : 0);
     if (!(state.alignmentIndex?.isCrazy) && _totalRes <= 80000) {
         alignmentContainer.offsetHeight; // Force reflow
@@ -2998,9 +3067,23 @@ function _createWindowedScrollController(refreshFn, isActiveFn) {
 // horizontal scrolling entirely (the same problem the two vertical spacer
 // divs solve for rows, just expressed per-row via padding instead of two
 // extra sibling elements, since each row needs its own independent offset).
+// Width of the persistent scrollbars (.vertical-scrollbar, .horizontal-scrollbar in styles.css).
+// The vertical one lies over the alignment's right edge.
+const PERSISTENT_SCROLLBAR_PX = 14;
+
+// A column-windowed row is exactly its columns wide, and its layout is contained, so nothing in it
+// widens the alignment. Scrolled all the way right, the last column then ended at the container's
+// edge, under the vertical scrollbar, and the length label after it could not be reached at all.
+// The row keeps room for the label (.seq-length: 8px margin, 2x4px padding, 2px border, digits at
+// 0.85em) and the scrollbar.
+function _columnWindowTailPx(charWidthPx) {
+    const digits = String(state.alignmentIndex?.maxLen || state.seqs?.[0]?.seq.length || 0).length;
+    return Math.ceil(18 + digits * charWidthPx + PERSISTENT_SCROLLBAR_PX + 8);
+}
+
 function _applyColumnWindowStyle(dataEl, len, colStart, charWidthPx) {
     dataEl.style.boxSizing = 'border-box';
-    dataEl.style.width = (len * charWidthPx) + 'px';
+    dataEl.style.width = (len * charWidthPx + _columnWindowTailPx(charWidthPx)) + 'px';
     dataEl.style.paddingLeft = (colStart * charWidthPx) + 'px';
 }
 
@@ -3043,18 +3126,22 @@ function _computeBlockColumnWindow(start, end, scrollLeft, visibleDataWidth, cha
 //
 // Sizes come from a budget of residue spans, so a tall alignment gets a
 // shorter column buffer and a wide one a shorter row buffer.
+//
+// The budget is about 2.5 screens, not 6. Every change of the window (a re-centre of the columns,
+// rows added at an end) costs style, layout and paint of ALL built rows, not just of the changed
+// part: on 1500 x 4,000 (1400 x 900 window) the old window was ~130 rows x 510 columns (63k
+// spans), and each horizontal re-centre took 0.9-1.9 s (up to 4.5 s with real wheel events),
+// each vertical step ~330 ms. Measured with a window of half a screen of rows and a third of a
+// screen of columns on each side (~30k spans): a re-centre ~0.2-0.4 s, vertical steps ~170 ms.
+// The guard is a quarter of the buffer, so a re-centre still comes only every ~3/4 buffer.
 function _unifiedWindowBudget(visibleRows, visibleCols, nSeq, blockLen) {
     const vc = Math.max(1, Math.min(visibleCols, blockLen));
-    let bufferRows = Math.max(20, 2 * visibleRows);
-    const colsFor = (renderedRows) => Math.min(3 * vc, Math.max(vc, Math.floor(20000 / Math.max(1, renderedRows))));
-    let renderedRows = Math.min(nSeq, visibleRows + 2 * bufferRows);
-    let bufferCols = colsFor(renderedRows);
-    if (renderedRows * Math.min(blockLen, vc + 2 * bufferCols) > 70000) {
-        bufferRows = Math.max(10, Math.floor(bufferRows / 2));
-        renderedRows = Math.min(nSeq, visibleRows + 2 * bufferRows);
-        bufferCols = colsFor(renderedRows);
-    }
-    return { bufferRows, bufferCols, guardRows: Math.ceil(bufferRows / 2), guardCols: Math.ceil(bufferCols / 2) };
+    const bufferRows = Math.max(8, Math.ceil(visibleRows / 2));
+    const renderedRows = Math.max(1, Math.min(nSeq, visibleRows + 2 * bufferRows));
+    // A third of a screen of columns each side; more when few rows are built (up to 25,000 spans
+    // in all), never more than two screens
+    const bufferCols = Math.min(2 * vc, Math.max(20, Math.ceil(vc * 0.35), Math.floor((25000 / renderedRows - vc) / 2)));
+    return { bufferRows, bufferCols, guardRows: Math.ceil(bufferRows / 4), guardCols: Math.ceil(bufferCols / 4) };
 }
 
 // Rows per animation frame when a block's row window grows (a block entering
@@ -3092,6 +3179,7 @@ function _runUnifiedBlockJobs() {
         if (done && _unifiedBlockJobs.get(b) === step) _unifiedBlockJobs.delete(b);
     }
     if (_unifiedBlockJobs.size) _unifiedBlockJobRaf = requestAnimationFrame(_runUnifiedBlockJobs);
+    _scheduleBlockMaskOverlay();   // rows were added or dropped
 }
 
 // Brings a block's rendered row range to targetS..targetE: rows beyond the
@@ -3172,15 +3260,13 @@ function _rangeWithinGuard(rendS, rendE, visS, visE, guard, minS, maxE) {
     return (rendS <= minS || rendS <= visS - guard) && (rendE >= maxE || rendE >= visE + guard);
 }
 
+// One node at a time: Range.deleteContents spent ~1.3 ms a row (2 s of a 30-step horizontal scroll
+// on 1500 x 4,000 in a profile), about 40% more than removing the spans directly.
 function _removeLeadingChildren(el, n) {
-    const r = document.createRange();
-    r.setStart(el, 0); r.setEnd(el, n);
-    r.deleteContents();
+    for (let i = 0; i < n && el.firstChild; i++) el.removeChild(el.firstChild);
 }
 function _removeTrailingChildren(el, n) {
-    const r = document.createRange();
-    r.setStart(el, el.childNodes.length - n); r.setEnd(el, el.childNodes.length);
-    r.deleteContents();
+    for (let i = 0; i < n && el.lastChild; i++) el.removeChild(el.lastChild);
 }
 
 // Moves one data row's rendered column window from oldS..oldE to newS..newE
@@ -3730,7 +3816,7 @@ function _incrementalUpdateBlockRows(blockDiv, blockIndex, newRowStart, newRowEn
 // the slider (multiple blocks). Windows at three granularities: block-level
 // (which blocks are visible), row-level (which rows within each block), and
 // column-level (only when a block is wider than the viewport).
-function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, _isRetry) {
+function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, _isRetry, preservedScrollLeft) {
     _unifiedWindowRenderParams = { len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options };
     const numBlocks = Math.max(1, Math.ceil(len / blockWidth));
     // rowHeightPx falls back to a hardcoded 16px guess until a real row has been
@@ -3750,6 +3836,7 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
     const G = _unifiedGeometry(numBlocks, blockWidth, len);
     const aaRowPxBefore = _unifiedAaRowPx;
     const effectiveScrollTop = preservedScrollTop != null ? preservedScrollTop : container.scrollTop;
+    const effectiveScrollLeft = preservedScrollLeft != null ? preservedScrollLeft : container.scrollLeft;
     const { charWidthPx, nameColWidthPx } = _measureUnifiedColumnMetrics(null);
     const overscan = 1;
     let blockStart = Math.max(0, G.indexAt(effectiveScrollTop) - overscan);
@@ -3771,7 +3858,7 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
     for (let b = blockStart; b <= blockEnd; b++) {
         const start = b * blockWidth;
         const end = Math.min(start + blockWidth, len);
-        const blockDiv = _buildUnifiedBlock(b, start, end, len, G.blockH(b), G.rowH(b), effectiveScrollTop, container.clientHeight, container.scrollLeft, container.clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPx, G.top(b));
+        const blockDiv = _buildUnifiedBlock(b, start, end, len, G.blockH(b), G.rowH(b), effectiveScrollTop, container.clientHeight, effectiveScrollLeft, container.clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPx, G.top(b));
         container.appendChild(blockDiv);
         if (!firstRealBlock) firstRealBlock = blockDiv;
     }
@@ -3817,13 +3904,16 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
         // fresh fallback from the now-correct row height instead of reusing a
         // blockHeightPx that's just as poisoned as the row height was.
         _unifiedBlockHeightPx = null;
-        return renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, true);
+        return renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, true, preservedScrollLeft);
     }
 
     // Restore scroll position (same suppress dance as the existing functions)
-    if (preservedScrollTop != null && container.scrollTop !== preservedScrollTop) {
+    const restoreTop = preservedScrollTop != null && container.scrollTop !== preservedScrollTop;
+    const restoreLeft = preservedScrollLeft != null && container.scrollLeft !== preservedScrollLeft;
+    if (restoreTop || restoreLeft) {
         _unifiedScrollController.suppressNextEvent();
-        container.scrollTop = preservedScrollTop;
+        if (restoreLeft) container.scrollLeft = preservedScrollLeft;
+        if (restoreTop) container.scrollTop = preservedScrollTop;
     }
     // The blocks hold their on-screen rows; queue their row buffers.
     _cancelAllBlockJobs();
@@ -4012,6 +4102,7 @@ function _refreshUnifiedWindowOnScroll(container) {
     // note above _unifiedWindowBudget); only touch spacers and selection
     // classes when something was actually rebuilt.
     if (!changed) return;
+    _scheduleBlockMaskOverlay();
     const topH = G.top(blockStart) + 'px';
     const bottomH = Math.max(0, G.top(numBlocks) - G.top(blockEnd + 1)) + 'px';
     if (topSpacer.style.height !== topH) topSpacer.style.height = topH;
@@ -4030,23 +4121,16 @@ function _setupUnifiedScrollListener(container) {
 }
 
 function reverseComplement(seq) {
-    const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.', 'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H' };
+    // RNA stays RNA (A pairs with U when the sequence has U and no T); gap,
+    // stop and missing-data symbols (~ * ? X) are kept as they are.
+    const isRna = /[Uu]/.test(seq) && !/[Tt]/.test(seq);
+    const complement = { 'A': isRna ? 'U' : 'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.', 'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H',
+                         '~':'~','*':'*','?':'?','X':'X' };
     return seq.split('').reverse().map(b => {
         const rc = complement[b.toUpperCase()];
         if (!rc) return /[a-z]/.test(b) ? 'n' : 'N';
         return /[a-z]/.test(b) ? rc.toLowerCase() : rc;
     }).join('');
-}
-
-function hexToRgb(hex) {
-    const clean = hex.replace('#', '');
-    if (clean.length !== 6) return null;
-    const num = parseInt(clean, 16);
-    return {
-        r: (num >> 16) & 255,
-        g: (num >> 8) & 255,
-        b: num & 255
-    };
 }
 
 function rgbToHsl(r, g, b) {
@@ -4223,7 +4307,8 @@ function _computeConsensusCharForColumn(seqArray, pos, opts) {
         if (fallbackMode === 'n') return 'X';
         return '-';
     }
-    const std = present.filter(b => 'ACGT'.includes(b));
+    // Union of what every code in the column stands for (A + R = A/G = R)
+    const std = [...new Set(present.flatMap(b => iupacToBases(b)).filter(b => 'ACGT'.includes(b)))];
     if (fallbackMode === 'iupac' && std.length >= 2) return iupacFromBases(std);
     if (fallbackMode === 'n') return 'N';
     return '-';
@@ -4231,7 +4316,7 @@ function _computeConsensusCharForColumn(seqArray, pos, opts) {
 
 function computeConsensusForSequences(seqArray) {
     if (!seqArray || seqArray.length === 0) return '';
-    const len = Math.max(...seqArray.map(s => s.length));
+    const len = _arrMax(seqArray.map(s => s.length));
     const opts = _getConsensusOptions();
     let out = '';
     for (let pos = 0; pos < len; pos++) {
@@ -4246,7 +4331,7 @@ function computeConsensusForSequences(seqArray) {
 // than ~8ms per slice, regardless of alignment size.
 function computeConsensusForSequencesChunked(seqArray, onDone, token) {
     if (!seqArray || seqArray.length === 0) { onDone(''); return; }
-    const len = Math.max(...seqArray.map(s => s.length));
+    const len = _arrMax(seqArray.map(s => s.length));
     const opts = _getConsensusOptions();
     const chars = new Array(len);
     let pos = 0;
@@ -4943,7 +5028,7 @@ function _computeMultiFrameCodonAnalysis(seqs, len) {
         return a.frame - b.frame;
     });
     const bestFrame = frameScores[0].frame;
-    return { frames, refIdx: 0, bestFrame };
+    return { frames, refIdx: 0, bestFrame, bestFrameAtg: frameScores[0].atgStarts > 0 };
 }
 
 // ── Codon analysis by gene (annotation track) ─────────────────────────────
@@ -5213,6 +5298,18 @@ function _populateAlignedAARow(dataCol, aaSeqData, viewStart, viewEnd, frameShif
     dataCol.innerHTML = html;
 }
 
+// Largest / smallest entry of a list or Set, and the longest sequence. Math.max(...list) passes
+// every entry as an argument and throws "Maximum call stack size exceeded" past ~125,000 of them:
+// an alignment of 130,000 sequences failed to load. Empty input gives -Infinity / Infinity, as
+// Math.max() / Math.min() do.
+function _arrMax(a) { let m = -Infinity; for (const v of a) { const n = +v; if (n > m) m = n; } return m; }
+function _arrMin(a) { let m = Infinity; for (const v of a) { const n = +v; if (n < m) m = n; } return m; }
+function _maxSeqLen(seqs) {
+    let m = -Infinity;
+    for (let i = 0; i < seqs.length; i++) { const l = seqs[i].seq.length; if (l > m) m = l; }
+    return m;
+}
+
 // CANVAS-BASED RENDERER - for large alignments
 // Draws only visible area, no per-residue DOM nodes
 // =====================================================================
@@ -5280,6 +5377,11 @@ function _initCanvasMetrics(ctx, fontSizePx) {
 //   4. clientX=900, clientY=900 (past last col/row) → canvas-relative (800, 850)
 //      If alignment is 50 cols × 20 rows: col=74, row=55 → both out of range → null
 //      → null  ✓
+// Screen x where the name column ends: fixed with sticky names, scrolled with the rows otherwise
+function _canvasNameRight(nameW) {
+    return el('stickyNames')?.checked === false ? nameW - (_canvasState.offsetX || 0) : nameW;
+}
+
 function _canvasHitTest(clientX, clientY) {
     const canvas = _canvasState.canvas;
     if (!canvas) return null;
@@ -5295,12 +5397,15 @@ function _canvasHitTest(clientX, clientY) {
     const rowPitch = _canvasState.rowPitch || CHAR_H;
     // Subtract the name column and scale ruler offsets, then add back the pan
     // offset so the result is in content (not viewport) coordinates.
+    // Left of the name column's right edge is the name column, not data: with sticky names a
+    // click on a name used to hit the residue scrolled under it and start a selection there.
+    if (x < _canvasNameRight(NAME_W)) return null;
     const col = Math.floor((x - NAME_W + _canvasState.offsetX) / CHAR_W);
     const row = Math.floor((y - HEADER_H +_canvasState.offsetY) / rowPitch);
     if (col < 0 || row < 0) return null;
     const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
     const len = state.seqs && state.seqs.length > 0
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxSeqLen(state.seqs)
         : 0;
     if (row >= nSeqs || col >= len) return null;
     return { row, col };
@@ -5318,10 +5423,10 @@ function _canvasHitTestRuler(clientX, clientY) {
     const y = clientY - rect.top;
     const trackH = m.trackH || 0;             // annotation track above the ruler
     if (y < trackH || y >= trackH + m.charH) return null;  // not in ruler row
-    if (x < m.nameW) return null;             // name column corner
+    if (x < _canvasNameRight(m.nameW)) return null;   // name column corner
     const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
     const len = state.seqs && state.seqs.length > 0
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxSeqLen(state.seqs)
         : 0;
     if (col < 0 || col >= len) return null;
     return { col };
@@ -5337,7 +5442,7 @@ function _canvasHitTestName(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const x = clientX - rect.left;
     const y = clientY - rect.top;
-    if (x < 0 || x >= m.nameW) return null;   // not in name column
+    if (x < 0 || x >= _canvasNameRight(m.nameW)) return null;   // not in name column
     if (y < (m.headerH || m.charH)) return null; // ruler / annotation corner
     const row = Math.floor((y - (m.headerH || m.charH) + _canvasState.offsetY) / (_canvasState.rowPitch || m.charH));
     const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
@@ -5372,7 +5477,7 @@ function _canvasColFromClientX(clientX) {
     if (x < m.nameW) return -1;
     const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
     const len = state.seqs && state.seqs.length > 0
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxSeqLen(state.seqs)
         : 0;
     if (col < 0 || col >= len) return -1;
     return col;
@@ -5443,7 +5548,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     alignmentContainer.innerHTML = '';
     alignmentContainer.style.overflow = 'hidden';
     alignmentContainer.style.position = 'relative';
-    // Canvas mode needs explicit height since absolute canvas has no flow height
+    // Canvas mode needs explicit height since absolute canvas has no flow height.
+    // Coming from a small Full/Block view the page may be scrolled (the container's top above the
+    // window): the height would then be measured from that negative top and overrun the window.
+    if (window.scrollY) window.scrollTo(0, 0);
     const top = alignmentContainer.getBoundingClientRect().top;
     alignmentContainer.style.height = (window.innerHeight - top - 28) + 'px';
 
@@ -5517,7 +5625,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     let _lastOffX = -1, _lastOffY = -1, _dirty = false;
     function _markDirty() { _dirty = true; }
 
-    const totalContentW = NAME_W + len * CHAR_W + 4;
+    // + the vertical scrollbar, which lies over the canvas's right edge: the last columns ended under it
+    const totalContentW = NAME_W + len * CHAR_W + 4 + PERSISTENT_SCROLLBAR_PX;
     const totalContentH = HEADER_H +nSeqs * rowPitch + 4;
     // Exposed so the persistent horizontal/vertical scrollbars (real DOM
     // elements, since Canvas mode's own content isn't natively scrollable)
@@ -5526,8 +5635,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     _canvasState.totalContentH = totalContentH;
 
     // Resize canvas to viewport
+    // The container's client area, not its border box (2px wider, 1px taller): the canvas
+    // overflowed it, its edge was cut, and a scrollTop/scrollLeft write nudged the alignment.
     function resize() {
-        const rect = alignmentContainer.getBoundingClientRect();
+        const rect = { width: alignmentContainer.clientWidth, height: alignmentContainer.clientHeight };
         canvas.width = rect.width * dpr;
         canvas.height = rect.height * dpr;
         canvas.style.width = rect.width + 'px';
@@ -5557,9 +5668,17 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         _canvasState.offsetY = dragOy - (e.clientY - dragStartY);
         scheduleDraw();
     };
-    _canvasState.mouseupHandler = () => {
+    _canvasState.mouseupHandler = (e) => {
         dragging = false;
         canvas.style.cursor = 'default';
+        const nc = _canvasNameClick;
+        _canvasNameClick = null;
+        if (nc && e && Math.abs(e.clientX - nc.x) < 4 && Math.abs(e.clientY - nc.y) < 4) {
+            // a click, not a pan: select the row
+            selectOnlyRow(nc.row);
+            _markDirty();
+            scheduleDraw();
+        }
     };
     window.addEventListener('resize', _canvasState.resizeHandler);
     setAlignmentColorSchemeClass();
@@ -5785,16 +5904,24 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
         }
 
+        // Marks on residues and columns stay right of the name column: drawn after the names,
+        // they used to paint over the sticky names for columns scrolled under them.
+        const dataLeft = stickyNames ? NAME_W : Math.max(0, NAME_W - ox);
+        const clipToData = () => { ctx.save(); ctx.beginPath(); ctx.rect(dataLeft, 0, Math.max(0, w - dataLeft), h); ctx.clip(); };
+
         // Highlight selected columns (semi-transparent vertical strips)
         if (state.selectedColumns.size > 0) {
+            clipToData();
             ctx.fillStyle = 'rgba(25, 118, 210, 0.15)';
             state.selectedColumns.forEach(pos => {
                 const x = NAME_W + pos * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) return;
                 const dataTop = Math.max(0, HEADER_H - oy);
-                const dataBottom = Math.min(h, HEADER_H +nSeqs * CHAR_H - oy);
+                // rowPitch, not CHAR_H: with translation rows the strip stopped partway down
+                const dataBottom = Math.min(h, HEADER_H + nSeqs * rowPitch - oy);
                 ctx.fillRect(x, dataTop, CHAR_W, dataBottom - dataTop);
             });
+            ctx.restore();
         }
 
         // Highlight selected rows (semi-transparent horizontal strips; same tint as the DOM)
@@ -5807,6 +5934,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             });
         }
 
+        clipToData();
         // Highlight selected nucleotides (mirrors DOM .nuc-selected in Full/Block mode)
         if (state.selectedNucs.size > 0) {
             ctx.fillStyle = 'rgba(25, 118, 210, 0.25)';
@@ -5853,6 +5981,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 }
             }
         }
+
+        ctx.restore();   // clipToData
 
         // Name column separator (fixed on-screen when sticky, scrolls with
         // content otherwise, matching the name column's own behaviour above)
@@ -5999,6 +6129,13 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
         }
 
+        // Plain click on a name: select that row on mouseup unless the press turns into a pan
+        _canvasNameClick = null;
+        if (!isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
+            const nameHit = _canvasHitTestName(e.clientX, e.clientY);
+            if (nameHit) _canvasNameClick = { row: nameHit.row, x: e.clientX, y: e.clientY };
+        }
+
         const hit = _canvasHitTest(e.clientX, e.clientY);
         if (hit) {
             // Selection: mirror handleNucleotideSelectMouseDown's state mutations
@@ -6143,6 +6280,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // (matches DOM mode, which returns early for scale-ruler-line)
     });
 
+    // A zoom captured the top-left residue before the cell size changed: put it back there
+    if (_canvasState.pendingAnchor) {
+        const a = _canvasState.pendingAnchor;
+        _canvasState.pendingAnchor = null;
+        _applyViewAnchor(a);
+    }
     scheduleDraw();
 }
 
@@ -6506,8 +6649,8 @@ function _pushParsedFastaSequence(seqs, header, seq) {
 function _checkLengthMismatch(seqs) {
     if (!seqs || seqs.length < 2) return null;
     const lengths = seqs.map(s => s.seq.length);
-    const maxLen = Math.max(...lengths);
-    const minLen = Math.min(...lengths);
+    const maxLen = _arrMax(lengths);
+    const minLen = _arrMin(lengths);
     if (maxLen === minLen) return null;
 
     // Find the majority length
@@ -6543,7 +6686,7 @@ function _checkLengthMismatch(seqs) {
  */
 function _normalizeSequenceLengths(seqs) {
     if (!seqs || seqs.length === 0) return;
-    const maxLen = Math.max(...seqs.map(s => s.seq.length));
+    const maxLen = _maxSeqLen(seqs);
     for (const s of seqs) {
         if (s.seq.length < maxLen) {
             s.seq = s.seq.padEnd(maxLen, '-');
@@ -6644,6 +6787,8 @@ function _looksLikeA3m(seqs) {
     if (seqs.length < 2) return false;
     if (!seqs.some(s => /[a-z]/.test(s.seq))) return false;
     if (seqs.every(s => s.seq.length === seqs[0].seq.length)) return false;
+    // A3M match columns are capitals: an all-lowercase alignment is just ragged
+    if (!seqs.some(s => /[A-Z]/.test(s.seq))) return false;
     const matchCols = s => s.seq.replace(/[a-z.]/g, '').length;
     const m = matchCols(seqs[0]);
     return m > 0 && seqs.every(s => matchCols(s) === m);
@@ -6991,7 +7136,7 @@ function _annotFeatsInRange(colStart, colEnd) {
 // block (positions must agree with the rows' px padding), or null to use ch.
 function _fillAnnotTrackData(data, colStart, colEnd, cw) {
     const n = colEnd - colStart + 1;
-    const u = v => cw ? (v * cw) + 'px' : v + 'ch';
+    const u = v => cw ? (v * cw) + 'px' : `calc(${v} * var(--res-w, 1ch))`;
     const parts = [`<div class="annot-track-inner" style="width:${u(n)}">`];
     for (const d of _annotFeatsInRange(colStart, colEnd)) {
         const s = Math.max(d.cs, colStart), e = Math.min(d.ce, colEnd);
@@ -7262,9 +7407,13 @@ function initAnnotationPanel() {
     const urlBtn = el('annotUrlButton'), urlIn = el('annotUrlInput');
     if (urlBtn && urlIn && !urlBtn._annotBound) {
         urlBtn._annotBound = true;
-        urlBtn.addEventListener('click', () => loadAnnotationFromUrl(urlIn.value));
+        const loadTyped = () => {
+            if (!urlIn.value.trim()) { showMessage('Type the URL of a BED file first.', 2500); return; }
+            loadAnnotationFromUrl(urlIn.value);
+        };
+        urlBtn.addEventListener('click', loadTyped);
         urlIn.addEventListener('keydown', e => {
-            if (e.key === 'Enter') { e.preventDefault(); loadAnnotationFromUrl(urlIn.value); }
+            if (e.key === 'Enter') { e.preventDefault(); loadTyped(); }
         });
     }
     const clr = el('annotClearButton');
@@ -7284,7 +7433,7 @@ function generateScale(maxLength, interval = 10, startPos = 0) {
     const firstMultiple = Math.ceil(startAbs / interval) * interval;
 
     // Show position markers at multiples of interval within this block
-    for (let absPos = firstMultiple; absPos < endAbs; absPos += interval) {
+    for (let absPos = firstMultiple; absPos <= endAbs; absPos += interval) {
         let label;
         // Alternate: 10 number, 20 *, 30 number, 40 *, etc.
         if ((absPos / interval) % 2 === 1) {
@@ -8030,7 +8179,10 @@ function renderReadsAlignment() {
     // Reference name label
     const refLabel = document.createElement('span');
     refLabel.className = 'seq-name';
-    refLabel.style.cssText = 'width:160px;min-width:160px;font-weight:bold;font-size:11px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    // Exactly NAME_W wide from the line's left edge, like the reads' name column in the SVG
+    // below: as a .seq-name it took that class's -12px margin (and sticky -15px offset), and the
+    // reference started 12px (one base) left of the reads.
+    refLabel.style.cssText = 'box-sizing:border-box;flex:0 0 160px;width:160px;min-width:160px;margin:0;left:0;font-weight:bold;font-size:11px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
     refLabel.textContent = bamState.refName;
     refLabel.title = bamState.refName;
     refLine.appendChild(refLabel);
@@ -8068,7 +8220,8 @@ function renderReadsAlignment() {
     scaleLine.style.zIndex = '1';
 
     const scaleLabel = document.createElement('span');
-    scaleLabel.style.cssText = 'width:160px;min-width:160px;text-align:right;padding:0 4px;';
+    // border-box: with its padding added it was 168px, and the ruler sat 8px right of the bases
+    scaleLabel.style.cssText = 'box-sizing:border-box;flex:0 0 160px;width:160px;min-width:160px;text-align:right;padding:0 4px;';
     scaleLine.appendChild(scaleLabel);
 
     const scaleData = document.createElement('div');
@@ -8523,7 +8676,8 @@ function _updateCodonAnalysisState(len) {
                     const bf = state._codonFrames.bestFrame;
                     if (state._lastAnnouncedCodonFrame !== bf) {
                         state._lastAnnouncedCodonFrame = bf;
-                        showMessage(`Codon analysis: auto-selected frame ${bf} (ATG start)`, 2500);
+                        // 1-based, as the Frame selector labels it (Pos 1-3)
+                        showMessage(`Codon analysis: auto-selected Pos ${bf + 1} (${state._codonFrames.bestFrameAtg ? 'ATG start' : 'fewest stop codons'})`, 2500);
                     }
                 }
             } else {
@@ -8694,7 +8848,11 @@ function renderAlignment(options = {}) {
     syncCodonModePanel();
     syncSearchControlsAvailability();
     if (!state.seqs || state.seqs.length === 0) {
-        alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
+        // Wraps (on a phone the one line ran off under its own scrollbar) and offers the
+        // example alignment through the ?url= loader
+        alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic; white-space:normal; overflow-wrap:anywhere;">'
+            + 'No sequences loaded. Paste FASTA/MSF in the Input menu and click Load, or drop a file on the page. '
+            + '<a href="?url=examples/svk_k4.fa&amp;title=SVK%20SINE%20(K1%E2%80%93K4)" style="font-style:normal;">Try an example alignment</a> (40 SINE copies, 4 subfamilies).</div>';
         syncCodonModePanel();
         return;
     }
@@ -8715,7 +8873,7 @@ function renderAlignment(options = {}) {
     // and the render-path dispatch both depend on these.  _needsWindowed must
     // be declared before its first use to avoid a temporal-dead-zone
     // ReferenceError that would throw on every call to renderAlignment.
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxSeqLen(state.seqs);
     const TOTAL_RESIDUES = state.seqs.length * len;
     const _needsWindowed = TOTAL_RESIDUES > ALIGN_WINDOWED_DOM_THRESHOLD || !!state.alignmentIndex?.needsWindowedDom;
     state._needsWindowedDom = _needsWindowed;
@@ -8727,7 +8885,12 @@ function renderAlignment(options = {}) {
     // change scroll behavior anywhere else.
     const _preserveScrollTop = ((document.getElementById('modeSingle')?.checked || document.getElementById('modeBlocks')?.checked) && _needsWindowed)
         ? alignmentContainer.scrollTop : null;
+    // The same for scrollLeft: emptying the container zeroed it, and the column window was then
+    // built from that 0, so every redraw (colour scheme, consensus, Highlight diffs, zoom) threw a
+    // windowed Full view back to column 1.
+    const _preserveScrollLeft = _preserveScrollTop !== null ? alignmentContainer.scrollLeft : null;
     alignmentContainer.innerHTML = '';
+    _syncResidueWidthVar();   // while the alignment is empty: measuring then costs no layout of it
     // Ensure Full/Block modes have correct scroll/layout behaviour
     // (any leftover Canvas/Compact inline styles are overwritten)
     alignmentContainer.style.position = 'static';
@@ -8739,6 +8902,8 @@ function renderAlignment(options = {}) {
         // would make scrollHeight always equal clientHeight and defeat
         // windowing entirely. Same formula Canvas mode already uses for its
         // own fixed-height viewport.
+        // (from a page-scrolled small view: measure from the container's unscrolled top)
+        if (window.scrollY) window.scrollTo(0, 0);
         const top = alignmentContainer.getBoundingClientRect().top;
         // Clamp to a minimum so the windowed renderer always has enough
         // viewport to compute a non-empty row range. A negative or zero
@@ -8877,8 +9042,9 @@ function renderAlignment(options = {}) {
             const computeShadingAndRepaint = () => {
                 if (myToken.cancelled) return;
                 if (!state.seqs || !state.seqs.length) return;
-                if (Math.max(...state.seqs.map(s => s.seq.length)) !== len) return; // alignment changed
-                preCalculateConservationChunked(state.seqs, len, shadeMode, (data) => {
+                if (_maxSeqLen(state.seqs) !== len) return; // alignment changed
+                // its own copy of the row list: a row delete splices state.seqs in place
+                preCalculateConservationChunked(state.seqs.slice(), len, shadeMode, (data) => {
                     if (myToken.cancelled) return;
                     state.conservationDataCache = { len, shadeMode, data };
                     if (document.getElementById('modeCanvas')?.checked) renderAlignment(options);
@@ -8898,7 +9064,7 @@ function renderAlignment(options = {}) {
             const computeConsensusIdle = () => {
                 if (myToken.cancelled) return;
                 if (!state.seqs || !state.seqs.length) return;
-                if (Math.max(...state.seqs.map(s => s.seq.length)) !== len) return;
+                if (_maxSeqLen(state.seqs) !== len) return;
                 computeConsensusForSequencesChunked(state.seqs.map(s => s.seq), (consStr) => {
                     if (myToken.cancelled) return;
                     const cons = consStr.split('');
@@ -8917,6 +9083,11 @@ function renderAlignment(options = {}) {
         _flushRenderMessage();
         return;
     }
+
+    // Leaving Canvas: its deferred shading/consensus jobs describe a frame no longer shown.
+    // They were only cancelled by the next Canvas render, and after a switch to Full a row
+    // delete made the shading job throw ("reading 'seq'" of a spliced-out row).
+    if (_canvasDeferredToken) { _canvasDeferredToken.cancelled = true; _canvasDeferredToken = null; }
 
     let consensus = [];
     state._codonData = null;
@@ -8957,7 +9128,7 @@ function renderAlignment(options = {}) {
     // blockWidth parameter, so the only difference is its value.
     const effectiveBlockWidth = useBlocks ? blockWidth : len;
     if (_needsWindowed) {
-        renderUnifiedWindowedDom(alignmentContainer, len, effectiveBlockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, _preserveScrollTop);
+        renderUnifiedWindowedDom(alignmentContainer, len, effectiveBlockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, _preserveScrollTop, false, _preserveScrollLeft);
     } else if (TOTAL_RESIDUES > ALIGN_WINDOWED_DOM_THRESHOLD) {
         // Safety net: should have been windowed but wasn't.  Show a message
         // instead of creating millions of DOM nodes that crash the tab.
@@ -9115,12 +9286,24 @@ function _blockMaskGroupContiguity(rows) {
     return best / s.length;
 }
 
+// The windowed views (above ALIGN_WINDOWED_DOM_THRESHOLD) build only the rows and columns near the
+// screen and rebuild them as it moves: the overlay is drawn over what is built and redrawn after
+// each change of the window (one frame later, _scheduleBlockMaskOverlay). The rectangles sit in
+// their block's own coordinates, so scrolling alone moves them with the residues. Which rows form
+// a run, and the dashed outline of a scattered group or a lone row, are decided on all of the
+// mask's rows, not on the built ones, so a rectangle does not change style at the window's edge.
+let _blockMaskOverlayRaf = 0;
+function _scheduleBlockMaskOverlay() {
+    if (!state.blockMask || _blockMaskOverlayRaf) return;
+    _blockMaskOverlayRaf = requestAnimationFrame(() => { _blockMaskOverlayRaf = 0; renderBlockMaskOverlay(); });
+}
+
 function renderBlockMaskOverlay() {
     document.querySelectorAll('.block-mask-layer').forEach(el => el.remove());
     const mask = state.blockMask;
     if (!mask || !Array.isArray(mask.blocks) || !Array.isArray(mask.row_headers)) return;
     if (document.getElementById('modeCanvas')?.checked) return;   // Canvas: unsupported
-    if (state._needsWindowedDom) return;                          // windowed DOM: unsupported yet
+    const windowed = !!state._needsWindowedDom;
     const container = document.getElementById('alignmentContainer');
     if (!container) return;
     const blockEls = container.querySelectorAll('.block-block');
@@ -9239,9 +9422,27 @@ function renderBlockMaskOverlay() {
                 const si = rowVis[k];
                 if (si >= 0 && rowElByIdx.has(si)) vis.push(si);
             }
+            const localOnly = !!mb.localOnly;
+            if (windowed) {
+                // Runs of consecutive rows over the whole mask, each clipped to the built rows
+                const all = [];
+                for (const k of mb.rows) if (rowVis[k] >= 0) all.push(rowVis[k]);
+                if (!all.length || !vis.length) return;
+                all.sort((a, b) => a - b);
+                const builtLo = Math.min(...vis), builtHi = Math.max(...vis);
+                const dashedAll = !localOnly && _blockMaskGroupContiguity(all) < 0.6;
+                let a = 0;
+                for (let i = 1; i <= all.length; i++) {
+                    if (i < all.length && all[i] === all[i - 1] + 1) continue;
+                    const lo = Math.max(all[a], builtLo), hi = Math.min(all[i - 1], builtHi);
+                    const ya = lo <= hi ? rowTop(lo) : null, yz = lo <= hi ? rowTop(hi) : null;
+                    if (ya != null && yz != null) addRect(ya, (yz - ya) + rowH, _blockMaskOpacity, dashedAll || (!localOnly && i - a === 1), localOnly);
+                    a = i;
+                }
+                return;
+            }
             if (!vis.length) return;
             vis.sort((a, b) => rowElByIdx.get(a).getBoundingClientRect().top - rowElByIdx.get(b).getBoundingClientRect().top);
-            const localOnly = !!mb.localOnly;
             const groupDashed = !localOnly && _blockMaskGroupContiguity(vis) < 0.6;
             let runStart = vis[0], prev = vis[0], runLen = 1;
             const flush = (a, z, len) => {
@@ -9601,8 +9802,10 @@ function groupRowsByType(rowIdxs) {
         if (want.has(s.header)) matched.push(s);
         else rest.push(s);
     }
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('group-by-type');
     state.seqs = [...matched, ...rest];
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderAlignment();
     showMessage('Stacked ' + matched.length + ' sequences of that type', 2500);
@@ -9669,10 +9872,10 @@ function updateSourceInfo() {
         .replace(/'/g, '&#39;');
 
     const seqCount = state.seqs.length;
-    const aliLength = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLength = _maxSeqLen(state.seqs);
     const gaplessLengths = state.seqs.map(seq => seq.gaplessPositions[seq.gaplessPositions.length - 1] || 0);
-    const minLength = Math.min(...gaplessLengths);
-    const maxLength = Math.max(...gaplessLengths);
+    const minLength = _arrMin(gaplessLengths);
+    const maxLength = _arrMax(gaplessLengths);
     const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
 
     const fullFilename = state.currentFilename || '';
@@ -9793,7 +9996,7 @@ function resolveNucRowIndex(row) {
 
 function getConsensusSequenceGapped() {
     const len = state.seqs?.length
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxSeqLen(state.seqs)
         : 0;
     if (len > 0 && state.consensusCache?.values?.length === len) {
         return state.consensusCache.values.join('');
@@ -10172,7 +10375,7 @@ function refreshSequenceRowDom(rowIndex, limitPositions = null, referenceSeq = n
     const rowCache = state.spanCache?.get(rowIndex);
     if (!rowCache || rowCache.size === 0) return false;
 
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxSeqLen(state.seqs);
     const config = getSequenceRenderConfig();
     const conservationData = (state.editLiveConservation || referenceSeq)
         ? (getDeferredConservationData(len, config.shadeMode) || state.conservationDataCache?.data || [])
@@ -10214,13 +10417,16 @@ function _relabelSeqNameCells(index) {
     });
 }
 
-function _startSeqNameEdit(nameSpan, index) {
-    if (!state.seqs[index] || nameSpan.querySelector('.seq-name-edit')) return;
+// onDone(renamed): called when the box closes (the Canvas overlay removes itself with it)
+function _startSeqNameEdit(nameSpan, index, onDone) {
+    // The sequence, not its row number: rows can move while the box is open
+    const obj = state.seqs[index];
+    if (!obj || nameSpan.querySelector('.seq-name-edit')) return;
     hideTooltip();
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'seq-name-edit';
-    input.value = state.seqs[index].header;
+    input.value = obj.header;
     input.spellcheck = false;
     input.setAttribute('aria-label', 'Sequence name');
     const label = nameSpan.querySelector('.seq-name-text');
@@ -10238,16 +10444,18 @@ function _startSeqNameEdit(nameSpan, index) {
         input.remove();
         nameSpan.classList.remove('renaming');
         if (label) label.style.visibility = '';
-        if (!commit || !newName || newName === state.seqs[index].header) return;
-        const oldName = state.seqs[index].header;
+        const row = state.seqs.indexOf(obj);
+        if (!commit || !newName || row < 0 || newName === obj.header) { onDone?.(false); return; }
+        const oldName = obj.header;
         pushUndo('rename');
-        state.seqs[index].header = newName;
-        state.seqs[index].fullHeader = newName;
+        obj.header = newName;
+        obj.fullHeader = newName;
         _migrateColourMapping(oldName, newName);
-        _relabelSeqNameCells(index);
+        _relabelSeqNameCells(row);
         // "No limit" sizes the name column to the longest name, which may just have changed
         if (el('nameLengthNoLimit')?.checked) applyNameLengthLive(effectiveNameLength());
         showMessage('Sequence renamed', 1500);
+        onDone?.(true);
     };
     // Keys typed here are for the name only: none may reach the viewer's shortcuts
     input.addEventListener('keydown', (e) => {
@@ -10262,6 +10470,34 @@ function _startSeqNameEdit(nameSpan, index) {
     input.addEventListener('blur', () => finish(true));
     const onOutside = (e) => { if (e.target !== input) finish(true); };
     document.addEventListener('mousedown', onOutside, true);
+}
+
+// Right-click > Rename: the same box as a double-click on the name. It used to be an older
+// inline editor whose Esc saved (the redraw blurred it, and blur saved), and in Canvas mode
+// it put the input inside the <canvas>, where it was invisible and did nothing.
+function _renameSequenceFromMenu(index, e) {
+    if (!state.seqs[index]) return;
+    if (!isCanvasMode()) {
+        const nameSpan = e?.target?.closest?.('.seq-name')
+            || document.querySelector(`.seq-line[data-seq-index="${index}"] > .seq-name`);
+        if (nameSpan) _startSeqNameEdit(nameSpan, index);
+        return;
+    }
+    // Canvas: a name cell laid over the canvas row for the box to sit in
+    const c = _canvasState.canvas, m = _canvasState.metrics;
+    if (!c || !m) return;
+    const r = c.getBoundingClientRect();
+    const pitch = _canvasState.rowPitch || m.charH;
+    const top = r.top + (m.headerH || m.charH) - _canvasState.offsetY + index * pitch;
+    const cell = document.createElement('div');
+    cell.className = 'seq-name canvas-rename';
+    cell.style.cssText = `position:fixed;left:${r.left}px;top:${top}px;width:${Math.max(m.nameW, 80)}px;`
+        + `height:${pitch}px;z-index:80;font-size:${getComputedStyle(c).fontSize};`;
+    document.body.appendChild(cell);
+    _startSeqNameEdit(cell, index, () => {
+        cell.remove();
+        _canvasState.scheduleDraw?.();
+    });
 }
 
 // The residue spans of one row for columns start..end-1, as an HTML string.
@@ -10683,9 +10919,15 @@ function setZoom(percent) {
     // transition too: every animation step re-laid out every residue span (zoom took 5-13 s
     // at 316k spans).
     const bigDom = !isCanvas && (isWindowedDom || _approxResidueCount() > 60000);
-    if (bigDom) alignmentContainer.style.transition = 'none';
+    // The residue at the view's top left before the cells change size; scrolled back to the top
+    // left afterwards (scroll offsets in pixels alone put other columns and rows there). A Canvas
+    // redraw is debounced, so repeated zoom steps keep the first, still unapplied, anchor.
+    const zoomAnchor = !state.seqs?.length || !!document.getElementById('modeReads')?.checked ? null
+        : isCanvas ? (_canvasState.pendingAnchor || _captureViewAnchor(true)) : _captureViewAnchor(false);
+    // DOM views: no font-size transition while anchoring, so the anchor is applied at the final size
+    if (bigDom || (zoomAnchor && !isCanvas)) alignmentContainer.style.transition = 'none';
+    _syncResidueWidthVar(size + 'px');   // before the font change: the probe needs no layout of the alignment
     alignmentContainer.style.fontSize = size + 'px';
-    _syncResidueWidthVar();
     el('zoomVal').textContent = percent + '%';
     el('zoomVal').classList.toggle('not-default', percent !== 100);
     // Keep the raw 0-100 log slider, its fill, and the 100% tick in lockstep
@@ -10705,12 +10947,16 @@ function setZoom(percent) {
     // need a rebuild: their row/column spacers and viewport windows are based
     // on cached pixel measurements that become stale when the font size changes.
     if (isCanvas) {
+        if (zoomAnchor) _canvasState.pendingAnchor = zoomAnchor;
         debounceRender();
     } else if (isWindowedDom) {
         _invalidateUnifiedWindowMeasurements();
         renderAlignment();
+        if (zoomAnchor) _applyViewAnchor(zoomAnchor);
+    } else if (zoomAnchor) {
+        _applyViewAnchor(zoomAnchor);
     }
-    if (bigDom) {
+    if (bigDom || (zoomAnchor && !isCanvas)) {
         // Keep transitions disabled through the next paint so restoring the
         // stylesheet rule cannot animate away from the geometry just measured.
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -10771,7 +11017,8 @@ function _predictRedrawMs() {
     const n = _approxResidueCount();
     const key = _redrawKey();
     if (_lastRedraw && _lastRedraw.key === key && _lastRedraw.residues > 0) return _lastRedraw.ms * n / _lastRedraw.residues;
-    return (isSpanRenderMode() && !state._needsWindowedDom && n > 200000) ? 1500 : 0;
+    // 60k: full-DOM files now stop at ALIGN_WINDOWED_DOM_THRESHOLD (100k), so the notice must start below it
+    return (isSpanRenderMode() && !state._needsWindowedDom && n > 60000) ? 1500 : 0;
 }
 async function renderWithNotice(label) {
     if (!state.seqs || !state.seqs.length) { renderAlignment(); return; }
@@ -10812,10 +11059,14 @@ const ALIGN_CRAZY_VOLUME = 5_000_000;
 // Canvas auto-switch (both still gated by ALIGN_CRAZY_VOLUME).
 // Measured 2026-10 at 300 x 1,000: the full build blocks the page 2.3 s on a
 // switch to Full (1.3 s Block, 1.2 s on load); windowed it is 0.4 s with
-// similar scrolling. Lowering this to ~100,000 would remove those freezes but
-// also the Show 2D block-mask overlay, which the windowed display does not
-// support yet (renderBlockMaskOverlay), so it stays at 500,000 for now.
-const ALIGN_WINDOWED_DOM_THRESHOLD = 500_000;
+// similar scrolling. At 500,000 (the old value) there was a cliff: 400 x 1,245
+// loaded in 3.4-4.7 s and switched to Full in 5.7-8.4 s, 400 x 1,255 (windowed)
+// in under 1 s. Measured 2026-10-14 (headless, 400 rows): full DOM load / Full
+// switch 1.1 / 1.2 s at 100k residues, 1.5 / 1.9 s at 150k, 2.0 / 3.8 s at 300k;
+// windowed 0.6-1.0 s for both at every size from 50k up. 100,000 is where the
+// full DOM stops being as fast. Show 2D (renderBlockMaskOverlay) draws on the
+// windowed view too, so nothing is lost above it.
+const ALIGN_WINDOWED_DOM_THRESHOLD = 100_000;
 
 /** Single-pass FASTA scan: counts sequences and lengths without building seq objects. */
 function scanFastaIndex(text) {
@@ -11083,6 +11334,19 @@ function _looksLikeLocalPath(text) {
     return /^[A-Za-z]:[\\/]/.test(text) || /^\//.test(text) || /^~[\\/]/.test(text) || /^\.\.?[\\/]/.test(text);
 }
 
+// A load that failed leaves no alignment behind: the view shows the error, so
+// Save, Copy and the analyses must not keep working on the previous file's rows.
+function _clearFailedLoad() {
+    state.seqs = [];
+    state.selectedRows?.clear();
+    state.selectedColumns?.clear();
+    state.selectedNucs?.clear();
+    state.currentFilename = '';
+    state.currentFilePath = '';
+    const src = el('sourceInfo');
+    if (src) src.innerHTML = 'No file loaded';
+}
+
 async function parseAndRender(isFromDrop = false) {
     showMessage("Scanning alignment...", 0);
     _proteinSchemeRemapWarned = false;
@@ -11091,7 +11355,34 @@ async function parseAndRender(isFromDrop = false) {
     if (!inputText) {
         alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
         statusMessage.style.display = 'none';
+        if (isFromDrop) {
+            _clearFailedLoad();
+            showMessage('The file is empty.', 4000);
+        }
         return;
+    }
+    // NUL bytes or mostly control characters: an image, archive or other binary file
+    const _ctrl = (inputText.slice(0, 4096).match(/[\x00-\x08\x0E-\x1F]/g) || []).length;
+    if (inputText.includes('\x00') || _ctrl > 0.1 * Math.min(4096, inputText.length)) {
+        _clearFailedLoad();
+        alignmentContainer.innerHTML = '<div class="error-message">This is a binary file, not an alignment. Open FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, SAM/BAM or AB1.</div>';
+        showMessage('Error: not an alignment (binary file).', 5000);
+        return;
+    }
+    if (/^@[^\n]*\n[^\n]*\n\+/.test(inputText)) {
+        _clearFailedLoad();
+        alignmentContainer.innerHTML = '<div class="error-message">This is a FASTQ file of reads, not an alignment. Convert it to FASTA, or map the reads (SAM/BAM) onto an open reference.</div>';
+        showMessage('Error: FASTQ reads are not an alignment.', 5000);
+        return;
+    }
+    // A snapshot .json downloaded by Snapshot > Create
+    if (inputText[0] === '{') {
+        let payload = null;
+        try { payload = JSON.parse(inputText); } catch (_) {}
+        if (payload && typeof payload === 'object' && typeof payload.fasta === 'string' && 'schema' in payload) {
+            _loadSnapshotPayload(payload);
+            return;
+        }
     }
 
     if (_looksLikeUrl(inputText)) {
@@ -11259,7 +11550,7 @@ async function parseAndRender(isFromDrop = false) {
         if (!state.alignmentIndex) {
             const _stats = {
                 nSeqs: state.seqs.length,
-                maxLen: state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0,
+                maxLen: state.seqs.length > 0 ? _maxSeqLen(state.seqs) : 0,
                 totalResidues: state.seqs.reduce((sum, s) => sum + s.seq.length, 0)
             };
             state.alignmentIndex = { ..._stats, ...classifyAlignmentSize(_stats) };
@@ -11288,6 +11579,12 @@ async function parseAndRender(isFromDrop = false) {
         colourState.mappings.clear();
         colourState.history?.clear();
         state.manuallyColoured = new Set();
+        // Undo/redo (and the trim backup) describe the previous file: Ctrl+Z after a load
+        // used to write the old file's rows into the new alignment
+        state.deletedHistory = [];
+        state.redoHistory = [];
+        state.trimBackup = null;
+        state.trimBackupColState = null;
         state.dragStartCol = null;
         state.dragStartRow = null;
         state.isDragging = false;
@@ -11323,6 +11620,16 @@ async function parseAndRender(isFromDrop = false) {
         // doing this only after render left the on-screen content overflowing
         // even though the size slider showed a "corrected" value.
         fitBlockSizeBeforeInitialRender();
+        // A new file opens at its first row and column. The windowed views keep scrollTop and
+        // scrollLeft through a redraw (renderAlignment) and Canvas keeps its pan offset, so a file
+        // opened over a scrolled view used to open at the old file's place.
+        if (alignmentContainer.scrollTop || alignmentContainer.scrollLeft) {
+            _unifiedScrollController.suppressNextEvent();
+            alignmentContainer.scrollTop = 0;
+            alignmentContainer.scrollLeft = 0;
+        }
+        _canvasState.offsetX = 0;
+        _canvasState.offsetY = 0;
         renderAlignment();
         updateBamButtonVisibility();
         // Auto-fit block size to screen width on every load
@@ -11383,12 +11690,9 @@ async function parseAndRender(isFromDrop = false) {
         }, 100);
     } catch (e) {
         console.error("Error in parseAndRender:", e);
-    alignmentContainer.innerHTML = `<div class="error-message">Error: ${e.message}</div>`;
+    alignmentContainer.innerHTML = `<div class="error-message">Error: ${_escapeHtml(e.message)}</div>`;
         showMessage(`Error: ${e.message}`, 5000);
-    // Reset filename on error to avoid poisoning future loads
-        state.currentFilename = '';
-        state.currentFilePath = '';
-        el('sourceInfo').innerHTML = 'No file loaded';
+        _clearFailedLoad();
     }
 }
 // Mirrors the canonical mode radios' checked state onto the always-visible
@@ -11478,79 +11782,142 @@ function syncQuickModeSwitch() {
 // below. Matches the radio marked `checked` by default in the HTML.
 let _lastModeRadioId = 'modeBlocks';
 
-// Converts the alignment's current DOM scroll position (native scrollTop/
-// scrollLeft on alignmentContainer) into a mode-independent "row index /
-// column index at the top-left of the viewport" anchor. Needed because
-// Canvas mode uses an entirely different scroll mechanism (_canvasState.
-// offsetY/offsetX, a synthetic pan offset with its own pixel pitch, not
-// alignmentContainer's native scrollTop/scrollLeft) - switching modes
-// without converting between the two silently reset the view to the top of
-// the alignment (alignmentContainer.innerHTML='' during the mode's
-// re-render zeroes native scrollTop, and Canvas mode's own offset starts
-// wherever it was last left, which is 0 the first time). Measures a live
-// row/span rather than trusting the windowed renderer's cached
-// _unifiedRowHeightPx/_unifiedCharWidthPx, which are null for a small
-// (non-windowed) alignment and would silently produce a 0/0 anchor.
-function _captureDomScrollAnchor() {
-    const sampleRow = alignmentContainer.querySelector('.seq-line[data-seq-index]');
-    const sampleSpan = sampleRow?.querySelector('.seq-data span[data-pos]');
-    const rowPx = (sampleRow ? sampleRow.getBoundingClientRect().height : 0) || _unifiedRowHeightPx || 16;
-    const colPx = (sampleSpan ? sampleSpan.getBoundingClientRect().width : 0) || _unifiedCharWidthPx || 8;
-    return {
-        rowIndex: alignmentContainer.scrollTop / rowPx,
-        colIndex: alignmentContainer.scrollLeft / colPx
-    };
+// ---- View anchor: where the view is, independent of mode and zoom ----
+// The first sequence row whose top is in view and the first residue column right of the name
+// column. Mode switches and zoom capture it from the live view and scroll the new view so that
+// row and column are at its top left again (row 0 / column 0: scrolled all the way up / left, so
+// the ruler stays in view). Both ends are measured on the rendered rows, not converted from pixel
+// offsets, which went wrong four ways: the sampled row was the consensus line (14px; sequence rows
+// 13px), so Full -> Canvas landed ~7% of the rows off; a Block view was converted as if it were
+// one tall block (it landed at the bottom, column 1); small alignments scroll the page, which was
+// ignored (back to row 1); Canvas -> a small view used 8px/16px guesses for the cells. Full <->
+// Block always went back to column 1, and zooming kept pixel offsets, so the view moved.
+
+// Screen y where alignment content starts to be visible: the container's top, or the bottom of the
+// fixed toolbar when the page has scrolled the container's top under it
+function _alignmentViewTop() {
+    const c = alignmentContainer;
+    const ctrl = el('controls');
+    return Math.max(c.getBoundingClientRect().top + c.clientTop, ctrl ? ctrl.getBoundingClientRect().bottom : 0, 0);
+}
+// The windowed views (and Canvas) scroll the container; small alignments scroll the page
+function _alignmentScrollsItself() {
+    const c = alignmentContainer;
+    return c.scrollHeight > c.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(c).overflowY);
+}
+// Screen x where a row's residues start to be visible: right of its sticky name cell
+function _domDataLeft(row) {
+    const c = alignmentContainer;
+    const name = row?.querySelector(':scope > .seq-name');
+    if (name && el('stickyNames')?.checked !== false) return name.getBoundingClientRect().right;
+    return c.getBoundingClientRect().left + c.clientLeft;
+}
+// First column of a rendered block (a windowed ruler holds only its column window)
+function _blockStartColumn(block) {
+    const p = _unifiedWindowRenderParams;
+    if (state._needsWindowedDom && p && block?.dataset.blockIndex != null) return +block.dataset.blockIndex * p.blockWidth;
+    const sc = block?.querySelector(':scope > .scale-ruler-line > .seq-data[data-scale]');
+    return sc ? +sc.dataset.scale.split(':')[1] : 0;
+}
+function _blockElementForColumn(col) {
+    const c = alignmentContainer;
+    const p = _unifiedWindowRenderParams;
+    if (state._needsWindowedDom && p) return c.querySelector(`:scope > .block-block[data-block-index="${Math.floor(col / p.blockWidth)}"]`);
+    let first = null;
+    for (const b of c.querySelectorAll(':scope > .block-block')) {
+        first = first || b;
+        const sc = b.querySelector(':scope > .scale-ruler-line > .seq-data[data-scale]');
+        if (!sc) continue;
+        const [n, s] = sc.dataset.scale.split(':').map(Number);
+        if (col >= s && col < s + n) return b;
+    }
+    return first;
 }
 
-// Applies a previously-captured anchor to Canvas mode's own pan offset,
-// after renderAlignment() has already built Canvas mode's view (so
-// _canvasState.rowPitch/metrics reflect this alignment, not a stale value
-// from whatever was last shown in Canvas mode). Forces one extra redraw at
-// the corrected offset - cheap (a canvas repaint, not a DOM rebuild), so
-// this reads as landing directly on the right spot rather than a visible
-// jump-then-correct.
-function _applyDomScrollAnchorToCanvas(anchor) {
-    if (!anchor) return;
-    const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
-    const charW = _canvasState.metrics?.charW || 8;
-    _canvasState.offsetY = Math.max(0, anchor.rowIndex * rowPitch);
-    _canvasState.offsetX = Math.max(0, anchor.colIndex * charW);
-    _canvasState.scheduleDraw?.();
-    _canvasState.onOffsetChange?.();
+// fromCanvas: read Canvas's pan offset (default: the current mode). Returns { row, col } or null.
+function _captureViewAnchor(fromCanvas = isCanvasMode()) {
+    if (fromCanvas) {
+        const m = _canvasState.metrics;
+        if (!m || !_canvasState.canvas) return null;
+        const pitch = _canvasState.rowPitch || m.charH;
+        const oy = _canvasState.offsetY || 0, ox = _canvasState.offsetX || 0;
+        return {
+            row: Math.max(0, Math.ceil((oy - (m.headerH || m.charH)) / pitch - 0.01)),
+            col: Math.max(0, Math.ceil(ox / m.charW - 0.01))
+        };
+    }
+    const c = alignmentContainer;
+    const rows = c.querySelectorAll('.seq-line[data-seq-index]');
+    if (!rows.length) return null;
+    const viewTop = _alignmentViewTop();
+    // rows are in document order, top to bottom: the first one whose top is in view
+    let lo = 0, hi = rows.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (rows[mid].getBoundingClientRect().top >= viewTop - 0.5) hi = mid; else lo = mid + 1;
+    }
+    let i = lo;
+    while (i < rows.length - 1 && +rows[i].dataset.seqIndex < 0) i++;   // not a consensus line
+    const row = rows[i];
+    if (+row.dataset.seqIndex < 0) return null;
+    const dataLeft = _domDataLeft(row);
+    let col = null;
+    for (const sp of row.querySelectorAll(':scope > .seq-data > span[data-pos]')) {
+        const r = sp.getBoundingClientRect();
+        if (r.width > 0 && r.left >= dataLeft - 0.5) { col = +sp.dataset.pos; break; }
+    }
+    if (col == null) col = _blockStartColumn(row.closest('.block-block'));
+    return { row: +row.dataset.seqIndex, col };
 }
 
-// Reverse direction: converts Canvas mode's current pan offset into the
-// same row/column-index anchor shape, read BEFORE Canvas's own state is
-// touched by the switch (renderAlignment() doesn't reset _canvasState
-// itself, but reads it as if it still reflects "the view we're leaving",
-// so this must run before anything else changes mode).
-function _captureCanvasScrollAnchor() {
-    const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
-    const charW = _canvasState.metrics?.charW || 8;
-    return {
-        rowIndex: (_canvasState.offsetY || 0) / rowPitch,
-        colIndex: (_canvasState.offsetX || 0) / charW
-    };
-}
-
-// Applies a previously-captured anchor to a DOM mode (Full/Block/classic)
-// after renderAlignment() has already built that mode's view. Uses the
-// cached _unifiedRowHeightPx/_unifiedCharWidthPx (populated by the last
-// windowed DOM render, if any) rather than measuring a live row here,
-// because for a windowed alignment the newly-rendered DOM only covers
-// whatever range scrollTop=0 produced - a live measurement would be
-// correct but arrives too late to matter. For the windowed case, after
-// setting scrollTop/scrollLeft this also explicitly re-runs the scroll
-// refresh so the visible block/row range matches the new position
-// immediately, instead of showing stale content until the next real
-// scroll event.
-function _applyCanvasScrollAnchorToDom(anchor) {
-    if (!anchor) return;
-    const rowPx = _unifiedRowHeightPx || 16;
-    const colPx = _unifiedCharWidthPx || 8;
-    alignmentContainer.scrollTop = Math.max(0, anchor.rowIndex * rowPx);
-    alignmentContainer.scrollLeft = Math.max(0, anchor.colIndex * colPx);
-    if (state._needsWindowedDom) _refreshUnifiedWindowOnScroll(alignmentContainer);
+function _applyViewAnchor(a) {
+    if (!a) return;
+    if (isCanvasMode()) {
+        const m = _canvasState.metrics;
+        if (!m) return;
+        const pitch = _canvasState.rowPitch || m.charH;
+        _canvasState.offsetY = a.row > 0 ? (m.headerH || m.charH) + a.row * pitch : 0;
+        _canvasState.offsetX = a.col > 0 ? a.col * m.charW : 0;
+        _canvasState.scheduleDraw?.();
+        // Resize the persistent scrollbars to the new content as they take the offset: a bar
+        // still sized for the old cells clamped it and wrote the clamped value back (zooming in
+        // near the end of a Canvas moved it ~250 columns left)
+        window._syncHorizontalScrollbar?.();
+        window._syncVerticalScrollbar?.();
+        _canvasState.onOffsetChange?.();
+        return;
+    }
+    const c = alignmentContainer;
+    const blocks = !!el('modeBlocks')?.checked;
+    const p = _unifiedWindowRenderParams;
+    const windowed = !!state._needsWindowedDom && !!p;
+    const cellW = () => parseFloat(c.style.getPropertyValue('--res-w')) || _unifiedCharWidthPx || 7.8;
+    const vScrollBy = dy => { if (_alignmentScrollsItself()) c.scrollTop += dy; else window.scrollBy(0, dy); };
+    if (windowed) {
+        // The target rows may not be built yet: go near them from the windowed geometry first
+        const nb = Math.max(1, Math.ceil(p.len / p.blockWidth));
+        const G = _unifiedGeometry(nb, p.blockWidth, p.len);
+        const b = Math.min(nb - 1, Math.floor(a.col / p.blockWidth));
+        c.scrollTop = G.top(b) + (a.row > 0 ? (_unifiedHeaderHeightPx || 0) + a.row * G.rowH(b) : 0);
+        if (!blocks) c.scrollLeft = a.col * cellW();
+        _refreshUnifiedWindowOnScroll(c);
+    }
+    // Then exactly: the target row's top to the view's top, the target residue to the names' edge
+    for (let pass = 0; pass < (windowed ? 2 : 1); pass++) {
+        const block = _blockElementForColumn(a.col);
+        if (!block) return;
+        const rowEl = block.querySelector(`.seq-line[data-seq-index="${a.row}"]`);
+        const target = a.row > 0 ? rowEl : block;
+        if (target) vScrollBy(target.getBoundingClientRect().top - _alignmentViewTop());
+        if (!blocks || c.scrollWidth > c.clientWidth + 1) {
+            const line = rowEl || block.querySelector('.seq-line[data-seq-index]:not([data-seq-index="-1"])');
+            const sp = line?.querySelector(`:scope > .seq-data > span[data-pos="${a.col}"]`);
+            if (a.col <= _blockStartColumn(block)) c.scrollLeft = 0;
+            else if (sp && sp.getBoundingClientRect().width > 0) c.scrollLeft += sp.getBoundingClientRect().left - _domDataLeft(line);
+            else if (!blocks) c.scrollLeft = a.col * cellW();
+        }
+        if (windowed) _refreshUnifiedWindowOnScroll(c);
+    }
 }
 
 async function onModeChange() {
@@ -11588,15 +11955,13 @@ async function onModeChange() {
     // not dispatch 'change'), so this is an unambiguous signal to stop
     // auto-switching back to Canvas for the rest of this file's session.
     _userDismissedAutoCanvas = true;
-    const enteringCanvasFromDom = document.getElementById('modeCanvas')?.checked && _lastModeRadioId !== 'modeCanvas';
-    const leavingCanvasToDom = !document.getElementById('modeCanvas')?.checked && _lastModeRadioId === 'modeCanvas';
-    // Capture the current scroll position BEFORE renderAlignment() wipes
-    // alignmentContainer's DOM (which resets native scrollTop to 0) / before
-    // anything else touches _canvasState - see _captureDomScrollAnchor's and
-    // _captureCanvasScrollAnchor's comments. Handles both directions between
-    // Canvas mode and a DOM mode (Full/Block/classic).
-    const domScrollAnchor = enteringCanvasFromDom ? _captureDomScrollAnchor() : null;
-    const canvasScrollAnchor = leavingCanvasToDom ? _captureCanvasScrollAnchor() : null;
+    // Capture where the view is BEFORE renderAlignment() wipes alignmentContainer's DOM (which
+    // resets native scrollTop to 0) / before anything else touches _canvasState, from the mode
+    // being left (the radio already shows the new one); applied to the new view below.
+    const VIEW_MODES = ['modeSingle', 'modeBlocks', 'modeCanvas'];
+    const enteringView = VIEW_MODES.includes(document.querySelector('input[name="mode"]:checked')?.id);
+    const viewAnchor = enteringView && VIEW_MODES.includes(_lastModeRadioId) && state.seqs?.length
+        ? _captureViewAnchor(_lastModeRadioId === 'modeCanvas') : null;
     if (document.getElementById('modeCanvas')?.checked) {
         // Entering Canvas mode: these caches are keyed only by length/shadeMode,
         // so any same-length edit made while away from Canvas (residue edits,
@@ -11619,8 +11984,7 @@ async function onModeChange() {
     // panel open over a display its tools cannot touch. Renders below, so no re-render here.
     exitEditModeForUnsupportedView({ rerender: false });
     renderAlignment();
-    if (domScrollAnchor) _applyDomScrollAnchorToCanvas(domScrollAnchor);
-    if (canvasScrollAnchor) _applyCanvasScrollAnchorToDom(canvasScrollAnchor);
+    if (viewAnchor) _applyViewAnchor(viewAnchor);
     setupHoverMenuReveal();
     _lastModeRadioId = document.querySelector('input[name="mode"]:checked')?.id || _lastModeRadioId;
 }
@@ -11628,7 +11992,7 @@ async function onModeChange() {
 const LARGE_ALIGNMENT_RESIDUE_THRESHOLD = 80000;
 
 function _isLargeAlignmentPending() {
-    const _aliLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+    const _aliLen = state.seqs.length > 0 ? _maxSeqLen(state.seqs) : 0;
     return (state.seqs.length * _aliLen) > LARGE_ALIGNMENT_RESIDUE_THRESHOLD;
 }
 
@@ -11646,7 +12010,9 @@ function _computeLargeAlignmentBlockChars() {
     // the slider's displayed number) but became a real under-utilization
     // bug ("screen fit is too narrow") once fitBlockSizeBeforeInitialRender
     // started using this estimate for the real initial render.
-    const charPx = 7.8 * zoom;
+    // The residue cell measured for the current font (--res-w, _syncResidueWidthVar), else 7.8px x zoom
+    const resW = parseFloat(alignmentContainer?.style.getPropertyValue('--res-w'));
+    const charPx = resW > 0 ? resW : 7.8 * zoom;
     const namePx = ((effectiveNameLength() + 1) * charPx) + 16;   // .seq-name: nameLen ch + 1ch gap + 16px
     // Use window.innerWidth instead of container.clientWidth to avoid forcing
     // a synchronous reflow over the (potentially already-rendered) DOM —
@@ -11708,9 +12074,14 @@ function setBlockSizeToScreen() {
         const chars = _computeLargeAlignmentBlockChars();
         const slider = el('blockSizeSlider');
         const input = el('blockSizeInput');
+        const prev = parseInt(slider?.value || '200', 10);
         if (slider) slider.value = chars;
         if (input) input.value = chars;
-        return; // Skip re-render for large alignments
+        // Redraw with it when it changed (no measuring needed: the estimate is from the zoom).
+        // This used to stop at the number for every alignment over 80,000 residues, so after a
+        // zoom the Screen button changed the slider while the blocks kept overflowing.
+        if (el('modeBlocks')?.checked && chars !== prev) renderAlignment();
+        return;
     }
 
     // Try to measure an existing nucleotide span
@@ -12036,6 +12407,17 @@ function handleRowSelectMouseDown(e) {
     return false;
 }
 
+// Plain click on a sequence name: that row becomes the whole row selection (a row that is
+// already the only one selected stays selected). Ctrl+click toggles, Shift+click extends.
+function selectOnlyRow(index) {
+    if (!Number.isInteger(index) || index < 0 || !state.seqs[index]) return;
+    state.selectedNucs.clear();
+    state.pendingNucStart = null;
+    scheduleNucSelectionRefresh();
+    state.selectedRows = new Set([index]);
+    state.lastSelectedIndex = index;
+    updateRowSelections();
+}
 // Selection helper consolidating toggle behavior
 function toggleRowSelection(index) {
     if (state.selectedRows.has(index)) {
@@ -12208,6 +12590,17 @@ function handleKeyDown(e) {
             }
             return; // let browser handle all keys in textarea (Input window etc.)
         }
+        // A single-line text field (search box, rename box, SeqEdit name...) gets native
+        // editing only. Ctrl+Z/Y/Delete/Home/End/arrows used to reach the viewer from here:
+        // Ctrl+Z undid the alignment instead of the typing, Ctrl+Delete (delete word) deleted
+        // the selected sequences, and a rename box then saved onto another row.
+        if (_isTextEntry(activeEl)) {
+            if (activeEl.id === 'searchInput' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+                searchMotif();
+                e.preventDefault();
+            }
+            return;
+        }
         if ((e.ctrlKey || e.metaKey) && !e.altKey) {
             const key = e.key.toLowerCase();
             if ((key === 'v' || key === 'c' || key === 'x' || key === 'a') && !e.shiftKey) {
@@ -12264,7 +12657,9 @@ function handleKeyDown(e) {
                 e.preventDefault();
                 break;
             case 'z':
-                undoDelete();
+                // Ctrl+Shift+Z / Cmd+Shift+Z is redo (it used to undo once more)
+                if (e.shiftKey) redoAction();
+                else undoDelete();
                 e.preventDefault();
                 break;
             case 'y':
@@ -12330,7 +12725,7 @@ function handleKeyDown(e) {
                 }
                 break;
             case 'j':
-                if (e.shiftKey) {
+                if (e.shiftKey) {   // alias of Alt+J (browsers keep Ctrl+Shift+J for DevTools)
                     copySelectedConsensus();
                     e.preventDefault();
                 }
@@ -12382,14 +12777,30 @@ function handleKeyDown(e) {
         openSelectedInNewTab();
         e.preventDefault();
     }
+    // Alt+J: copy the consensus of the selected rows; Alt+C: copy the selection (as Copy Sel).
+    // Chrome, Edge and Firefox keep Ctrl+Shift+J / Ctrl+Shift+C for their developer tools, so
+    // those never reached the page; they still work as aliases where a browser passes them.
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.code === 'KeyJ' || e.code === 'KeyC')) {
+        if (e.code === 'KeyJ') copySelectedConsensus();
+        else copySelected();
+        e.preventDefault();
+    }
 
     // Page navigation for large alignments
-    if (e.key === 'PageUp' || e.key === 'PageDown') {
+    // Canvas pans its own offset; a windowed view scrolls the container; a small alignment
+    // scrolls the page, so the key is left to the browser. The key used to always scroll the
+    // container and be cancelled: it did nothing for small alignments or in Canvas.
+    if ((e.key === 'PageUp' || e.key === 'PageDown') && !e.ctrlKey && !e.metaKey && !e.altKey && !_isTextEntry(document.activeElement)) {
         const container = alignmentContainer;
         const direction = e.key === 'PageUp' ? -1 : 1;
-        const scrollAmount = container.clientHeight * 0.8;
-        container.scrollTop += direction * scrollAmount;
-        e.preventDefault();
+        if (isCanvasMode() && _canvasState.scheduleDraw) {
+            _canvasState.offsetY = Math.max(0, (_canvasState.offsetY || 0) + direction * container.clientHeight * 0.8);
+            _canvasState.scheduleDraw();
+            e.preventDefault();
+        } else if (container.scrollHeight > container.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(container).overflowY)) {
+            container.scrollTop += direction * container.clientHeight * 0.8;
+            e.preventDefault();
+        }
     }
 }
 function handleKeyUp(e) {
@@ -12408,7 +12819,7 @@ window.addEventListener('blur', () => {
 // ACTION FUNCTIONS
 function reverseComplementSelected() {
     if (state.selectedRows.size === 0) {
-        showMessage("Select sequences (Ctrl+click) to RevComp.", 3000);
+        showMessage("Select sequences (click a name; Ctrl+click adds) to RevComp.", 3000);
         return;
     }
     reverseComplementSequences(Array.from(state.selectedRows));
@@ -12423,37 +12834,55 @@ function reverseComplementAll() {
     reverseComplementSequences(state.seqs.map((_, i) => i));
 }
 
+// The row selection is a set of row numbers: a reorder must carry it to the rows its
+// sequences moved to. Sort and Add at top left it on the old numbers, i.e. on other
+// sequences, where Ctrl+Del would then act.
+function _selectedRowObjs() {
+    return [...state.selectedRows].map(i => state.seqs[i]).filter(Boolean);
+}
+function _reselectRowObjs(objs, lastObj) {
+    const at = new Map(state.seqs.map((o, i) => [o, i]));
+    state.selectedRows = new Set(objs.map(o => at.get(o)).filter(i => i !== undefined));
+    if (lastObj !== undefined) state.lastSelectedIndex = at.has(lastObj) ? at.get(lastObj) : null;
+}
+
 // -- Sort functions --
 function sortByName() {
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('sort-name');
     const indices = state.seqs.map((s, i) => ({ idx: i, name: s.header.toLowerCase() }));
     indices.sort((a, b) => a.name.localeCompare(b.name));
     state.seqs = indices.map(e => state.seqs[e.idx]);
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderWithNotice('Sorting by name…').then(() => showMessage('Sorted by name', 2000));
 }
 function sortByLength() {
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('sort-length');
     const indices = state.seqs.map((s, i) => ({ idx: i, len: s.seq.replace(/[-.]/g, '').length }));
     indices.sort((a, b) => b.len - a.len);
     state.seqs = indices.map(e => state.seqs[e.idx]);
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderWithNotice('Sorting by length…').then(() => showMessage('Sorted by length (descending)', 2000));
 }
 function sortBySimilarity() {
     if (state.seqs.length < 2) return;
+    const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
     pushUndo('sort-similarity');
     const ref = state.seqs[0].seq;
     const scored = state.seqs.map((s, i) => {
         let match = 0, total = 0;
         for (let p = 0; p < ref.length; p++) {
-            const a = ref[p], b = s.seq[p] || '-';
+            const a = ref[p].toUpperCase(), b = (s.seq[p] || '-').toUpperCase();
             if (a !== '-' && a !== '.' && b !== '-' && b !== '.') { total++; if (a === b) match++; }
         }
         return { idx: i, score: total > 0 ? match / total : 0 };
     });
     scored.sort((a, b) => b.score - a.score);
     state.seqs = scored.map(e => state.seqs[e.idx]);
+    _reselectRowObjs(sel, last);
     state.lastAction = 'sort';
     renderWithNotice('Sorting by similarity…').then(() => showMessage('Sorted by similarity to first sequence', 2000));
 }
@@ -12495,8 +12924,10 @@ function importOrder() {
                 }
                 reordered.sort((a, b) => orderMap.get(a.header) - orderMap.get(b.header));
                 const extra = data.order.filter(h => !currentHeaders.has(h));
+                const sel = _selectedRowObjs(), last = state.seqs[state.lastSelectedIndex];
                 pushUndo('import-order');
                 state.seqs = [...reordered, ...unmatched];
+                _reselectRowObjs(sel, last);
                 state.lastAction = 'sort';
                 renderAlignment();
                 let msg = 'Order loaded (' + reordered.length + ' matched';
@@ -12518,8 +12949,10 @@ function deleteSelected() {
         showMessage("No sequences selected for deletion.", 3000);
         return;
     }
-    if (state.seqs.length === 1) {
-        showMessage("Cannot delete the last sequence.", 3000);
+    // every sequence selected: refused like deleting the last one (Ctrl+A, Ctrl+Del used to
+    // empty the alignment)
+    if (state.seqs.length === 1 || state.selectedRows.size >= state.seqs.length) {
+        showMessage(state.seqs.length === 1 ? "Cannot delete the last sequence." : "Cannot delete every sequence: keep at least one.", 3000);
         return;
     }
     if (confirm(`Delete ${state.selectedRows.size} sequence(s)?`)) {
@@ -12541,14 +12974,61 @@ function deleteSelected() {
  * Push current state onto undo stack. Call BEFORE mutating state.
  */
 function pushUndo(type) {
-    state.deletedHistory.push({
+    _pushUndoEntry(_makeUndoEntry(type));
+}
+
+// For an edit that may turn out to change nothing: take the snapshot first, push it only
+// once something changed (pushing up front added phantom steps and wiped the redo list).
+function _makeUndoEntry(type) {
+    return {
         type: type,
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        seqs: _undoSnapshotSeqs(),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
-    });
+    };
+}
+
+function _pushUndoEntry(entry) {
+    state.deletedHistory.push(entry);
     // Clear redo stack whenever a new action is performed
     state.redoHistory = [];
+    _trimUndoHistory();
+}
+
+// An undo entry keeps each sequence's own fields but not gaplessPositions, which is derived
+// and was most of the cost: JSON-cloning it took ~380 ms and ~57 MB per edit at 1500 x
+// 4000. Strings are immutable, so a snapshot shares them with the live rows.
+function _undoSnapshotSeqs() {
+    return state.seqs.map(s => {
+        const { gaplessPositions, ...rest } = s;
+        return rest;
+    });
+}
+
+function _undoRestoreSeqs(seqs) {
+    return seqs.map(s => ({ ...s, gaplessPositions: calculateGaplessPositions(s.seq) }));
+}
+
+// Oldest entries go first once the history holds more than UNDO_HISTORY_MAX steps or more
+// residues than UNDO_HISTORY_RESIDUES (counted as if no row were shared, so an upper bound).
+// The newest entry is always kept.
+const UNDO_HISTORY_MAX = 200;
+const UNDO_HISTORY_RESIDUES = 150e6;
+function _trimUndoHistory() {
+    const h = state.deletedHistory;
+    let total = 0;
+    for (let i = h.length - 1; i >= 0; i--) {
+        const e = h[i];
+        if (e._size === undefined) {
+            e._size = e.seqs ? e.seqs.reduce((n, q) => n + q.seq.length, 0)
+                : (e.beforeSeq?.length || 0) + (e.afterSeq?.length || 0);
+        }
+        total += e._size;
+        if (i < h.length - 1 && (total > UNDO_HISTORY_RESIDUES || h.length - i > UNDO_HISTORY_MAX)) {
+            h.splice(0, i + 1);
+            return;
+        }
+    }
 }
 
 // beforeWidth/afterWidth: an edit that runs past the end of the alignment widens every
@@ -12569,6 +13049,7 @@ function pushUndoRowPatch(type, rowIndex, beforeSeq, afterSeq, beforeWidth, afte
         selectedColumns: new Set(state.selectedColumns)
     });
     state.redoHistory = [];
+    _trimUndoHistory();
 }
 
 // Restore the alignment to a known column count. Only all-gap trailing columns are
@@ -12636,6 +13117,15 @@ function applyRowSeqPatch(entry, useAfter, skipDom = false) {
         }
         if (cols.size) {
             reshadeChangedColumnsInPlace(cols);
+            // That repaints the span-cached rows only. Rows the windowed Block renderer
+            // rebuilt during an edit session can be on screen without a cache entry; their
+            // cells kept the old letter after undo/redo.
+            if (!state.spanCache?.get(rowIndex)?.size) {
+                const config = getSequenceRenderConfig();
+                const consData = (state.conservationDataCache && state.conservationDataCache.data) || {};
+                cols.forEach(pos => forEachRowSpanAtPosition(rowIndex, pos,
+                    span => repaintResidueSpan(span, rowIndex, pos, nextSeq[pos] || GENEDOC_FILLER, config, consData)));
+            }
             if (typeof updateRowSelections === 'function') updateRowSelections();
             if (typeof updateColumnSelections === 'function') updateColumnSelections();
             if (typeof updateSourceInfo === 'function') updateSourceInfo();
@@ -12667,13 +13157,13 @@ function undoDelete(quiet) {
     const redoEntry = {
         type: last.type,
         label: last.label,
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        seqs: _undoSnapshotSeqs(),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
     };
     if (last.colStateBefore) redoEntry.colStateAfter = _snapshotColumnState();
     state.redoHistory.push(redoEntry);
-    state.seqs = last.seqs;
+    state.seqs = _undoRestoreSeqs(last.seqs);
     if (last.colStateBefore) _restoreColumnState(last.colStateBefore);
     state.selectedRows = last.selectedRows || new Set();
     state.selectedColumns = last.selectedColumns || new Set();
@@ -12703,13 +13193,13 @@ function redoAction(quiet) {
     const undoEntry = {
         type: next.type,
         label: next.label,
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        seqs: _undoSnapshotSeqs(),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
     };
     if (next.colStateAfter) undoEntry.colStateBefore = _snapshotColumnState();
     state.deletedHistory.push(undoEntry);
-    state.seqs = next.seqs;
+    state.seqs = _undoRestoreSeqs(next.seqs);
     if (next.colStateAfter) _restoreColumnState(next.colStateAfter);
     state.selectedRows = next.selectedRows || new Set();
     state.selectedColumns = next.selectedColumns || new Set();
@@ -12895,7 +13385,7 @@ function copySelectedConsensus() {
         return;
     }
     const selectedSeqs = Array.from(state.selectedRows).map(i => state.seqs[i].seq);
-    const len = Math.max(...selectedSeqs.map(s => s.length));
+    const len = _arrMax(selectedSeqs.map(s => s.length));
     const opts = _getConsensusOptions();
     const consArr = [];
     for (let pos = 0; pos < len; pos++) consArr.push(_computeConsensusCharForColumn(selectedSeqs, pos, opts));
@@ -12949,6 +13439,14 @@ function deleteSelectedColumns(skipConfirm) {
         showMessage("No columns selected for deletion.", 3000);
         return;
     }
+    // Deleting every column left zero-length sequences
+    const width = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
+    let kept = 0;
+    for (let c = 0; c < width && !kept; c++) if (!state.selectedColumns.has(c)) kept++;
+    if (!kept) {
+        showMessage("Cannot delete every column.", 3000);
+        return;
+    }
     if (skipConfirm || confirm(`Delete ${state.selectedColumns.size} column(s)?`)) {
         pushUndo('deleteColumns');
         const colsToDelete = Array.from(state.selectedColumns).sort((a,b) => b - a);
@@ -12981,10 +13479,10 @@ function selectAllSequences() {
     updateRowSelections();
 }
 function moveSelectedUp() {
-    if (state.selectedRows.size === 0) return;
-    pushUndo('order');
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices[0] === 0) return;
+    if (indices[0] === 0) { showMessage('Already at the top.', 2000); return; }
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13001,10 +13499,10 @@ function moveSelectedUp() {
     showMessage("Sequences moved up!", 2000);
 }
 function moveSelectedDown() {
-    if (state.selectedRows.size === 0) return;
-    pushUndo('order');
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices[indices.length - 1] === state.seqs.length - 1) return;
+    if (indices[indices.length - 1] === state.seqs.length - 1) { showMessage('Already at the bottom.', 2000); return; }
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13021,9 +13519,10 @@ function moveSelectedDown() {
     showMessage("Sequences moved down!", 2000);
 }
 function moveSelectedToTop() {
-    if (state.selectedRows.size === 0) return;
-    pushUndo('order');
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indices.every((r, k) => r === k)) { showMessage('Already at the top.', 2000); return; }
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13039,9 +13538,10 @@ function moveSelectedToTop() {
     showMessage("Sequences moved to top!", 2000);
 }
 function moveSelectedToBottom() {
-    if (state.selectedRows.size === 0) return;
-    pushUndo('order');
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indices.every((r, k) => r === state.seqs.length - indices.length + k)) { showMessage('Already at the bottom.', 2000); return; }
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13083,7 +13583,7 @@ function replaceSelectedWithConsensus() {
 
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
-    const len = Math.max(...selectedSeqs.map(s => s.length));
+    const len = _arrMax(selectedSeqs.map(s => s.length));
 
     // Generate consensus sequence
     const cons = computeConsensusForSequences(selectedSeqs);
@@ -13117,10 +13617,16 @@ function replaceSelectedWithConsensus() {
     showMessage(`Replaced ${indices.length} sequences with consensus: ${consName}`, 3000);
 }
 function duplicateSelected() {
-    if (state.selectedRows.size === 0) return;
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     pushUndo('duplicate');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    const copies = indices.map(i => ({...state.seqs[i], header: state.seqs[i].header + '_copy'}));
+    // The full name gets "_copy" on its first word too: it kept the original's, so exports
+    // (which write fullHeader) had two identical names
+    const copies = indices.map(i => {
+        const s = state.seqs[i];
+        const full = s.fullHeader || s.header;
+        return { ...s, header: s.header + '_copy', fullHeader: /\S/.test(full) ? full.replace(/^(\s*\S+)/, '$1_copy') : s.header + '_copy' };
+    });
     state.seqs.push(...copies);
     renderAlignment();
     showMessage("Selected sequences duplicated!", 2000);
@@ -13200,11 +13706,10 @@ function savePreset() {
         stickyNames: el('stickyNames').checked,
         nameLenNoLimit: !!el('nameLengthNoLimit')?.checked
     };
-    localStorage.setItem('msaviewer_preset_v44', JSON.stringify(preset));
-    showMessage("Preset saved!", 2000);
+    if (safeLocalSet('msaviewer_preset_v44', JSON.stringify(preset), 'the preset')) showMessage("Preset saved!", 2000);
 }
 function loadPreset() {
-    const saved = localStorage.getItem('msaviewer_preset_v44');
+    const saved = safeLocalGetRaw('msaviewer_preset_v44');
     if (!saved) {
         showMessage("No saved preset found.", 3000);
         return;
@@ -13215,7 +13720,7 @@ function loadPreset() {
     } catch (e) {
         console.error('Preset JSON corrupted:', e);
         showMessage('Saved preset is corrupted and was reset.', 4000);
-        localStorage.removeItem('msaviewer_preset_v44');
+        try { localStorage.removeItem('msaviewer_preset_v44'); } catch (_) {}
         return;
     }
     ['black','dark','light','zoom','blockSize','nameLen','consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(k => {
@@ -13530,13 +14035,23 @@ function _loadSnapshotPayload(payload) {
     });
 }
 
+// Colours read from a snapshot (a shared link or file) end up in CSS rules:
+// accept only a plain colour, never text that could close the rule.
+function _safeCssColor(c) {
+    const v = String(c == null ? '' : c).trim();
+    if (/^#[0-9a-f]{3,8}$/i.test(v) || /^[a-z]{3,30}$/i.test(v)
+        || /^(rgb|hsl)a?\([\d\s.,%/+-]+\)$/i.test(v)) return v;
+    return null;
+}
+
 function _applySnapshotColourState(cs) {
     if (!cs || !Array.isArray(cs.mappings)) return;
     // Replace, not merge - like selectedRows/selectedColumns above, loading a snapshot
     // should give back exactly what was saved, not saved-plus-whatever-was-already-there.
     colourState.mappings.clear();
     cs.mappings.forEach(([name, color]) => {
-        colourState.mappings.set(name, color);
+        const safe = _safeCssColor(color);
+        if (safe) colourState.mappings.set(name, safe);
     });
     if (typeof applyColourToSeqNames === 'function') {
         applyColourToSeqNames(colourState.mappings);
@@ -13564,7 +14079,7 @@ function _applySnapshotSearchHistory(sh, legacyMismatches) {
         state.searchHistory.push({
             id: className,
             motif: motifKey,
-            color: entry.color || '#ffcc00',
+            color: _safeCssColor(entry.color) || '#ffcc00',
             className,
             label: entry.label || rawMotif,
             strand,
@@ -13659,10 +14174,14 @@ async function createSnapshot() {
         const githubRelativePath = `snapshots/${fileBaseName}.json`;
         const githubSnapshotUrl = `${window.location.origin}${window.location.pathname}?snapshotFile=${encodeURIComponent(githubRelativePath)}`;
 
+        // The clipboard can refuse (page not focused, permission denied): the
+        // downloads must still happen
         let copied = false;
         if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(snapshotUrl);
-            copied = true;
+            try {
+                await navigator.clipboard.writeText(snapshotUrl);
+                copied = true;
+            } catch (_) { copied = false; }
         }
 
         downloadSnapshotJson(payload, fileBaseName);
@@ -13720,6 +14239,12 @@ function _renderSnapshotSelect(files) {
     });
 }
 
+// The snapshot-folder rows (list, Refresh, Open, path box) only make sense where something
+// can be listed: on the public site (no server, empty manifest) they could only say "nothing found"
+function _showSnapshotFolderRows(on) {
+    ['snapshotFolderListRow', 'snapshotFolderPathRow'].forEach(id => { const r = el(id); if (r) r.style.display = on ? 'flex' : 'none'; });
+}
+
 async function refreshSnapshotList(silent = false) {
     const refreshBtn = el('snapshotRefreshButton');
     if (refreshBtn) refreshBtn.disabled = true;
@@ -13732,6 +14257,7 @@ async function refreshSnapshotList(silent = false) {
             const data = await apiResp.json();
             const files = Array.isArray(data.files) ? data.files : [];
             _renderSnapshotSelect(files);
+            _showSnapshotFolderRows(true);
             if (!silent) showMessage(`Snapshot list refreshed (${files.length} file${files.length === 1 ? '' : 's'})`, 2000);
             return;
         }
@@ -13749,10 +14275,12 @@ async function refreshSnapshotList(silent = false) {
                 return { path, name: String(v.name || parts[parts.length - 1] || path) };
             }).filter(v => v.path);
             _renderSnapshotSelect(files);
+            _showSnapshotFolderRows(files.length > 0);
             if (!silent) showMessage(`Snapshot list refreshed (${files.length} via manifest)`, 2500);
             return;
         } catch (err2) {
             _renderSnapshotSelect([]);
+            _showSnapshotFolderRows(false);
             if (!silent) showMessage('No snapshot list API/manifest. Use manual snapshot path input.', 3500);
         }
     } finally {
@@ -13822,6 +14350,10 @@ function degapSelectedBlock(direction = 'left') {
     }
 
     if (colsToRemove.length > 0) {
+        // Column-keyed state (residue selection, trim bounds, SNP letters, column repeats)
+        // follows the removed columns, as with Delete columns; it used to stay on the old
+        // column numbers, i.e. on other residues
+        applyColumnEdit({ type: 'delete', cols: colsToRemove });
         state.seqs.forEach(seqObj => {
             const chars = seqObj.seq.split('');
             colsToRemove.forEach(col => {
@@ -13840,6 +14372,7 @@ function degapSelectedBlock(direction = 'left') {
 
 function _escapeXmlText(value) {
     return String(value)
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '') // not allowed in XML 1.0
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
@@ -13911,7 +14444,7 @@ function _exportCellClass(base, posData, config) {
 // with a position ruler, the consensus row where the screen shows it, and
 // one line per sequence.
 function _exportLayout({ wrapAlways = false } = {}) {
-    const len = Math.max(...state.seqs.map(q => q.seq.length));
+    const len = _maxSeqLen(state.seqs);
     const blockSlider = parseInt(el('blockSizeSlider')?.value, 10) || 60;
     const blockMode = !!el('modeBlocks')?.checked;
     const blockWidth = Math.max(1, (blockMode || wrapAlways) ? blockSlider : len);
@@ -14250,15 +14783,17 @@ function findFuzzyPositions(degapped, motif, maxMismatches) {
     return findFuzzyMatches(degapped, motif, maxMismatches).map(m => m.idx);
 }
 
-function findFuzzyMatches(degapped, motif, maxMismatches) {
+function findFuzzyMatches(degapped, motif, maxMismatches, iupac = false) {
     const matches = [];
     const motifLen = motif.length;
     if (!motifLen || degapped.length < motifLen) return matches;
+    // With iupac, a motif code matches any base it stands for (N: A, C, G or T)
+    const allowed = iupac ? Array.from(motif, c => new Set(iupacToBases(c).concat(c))) : null;
     for (let i = 0; i <= degapped.length - motifLen; i++) {
         let mismatches = 0;
         const matchingPositions = [];
         for (let j = 0; j < motifLen; j++) {
-            if (degapped[i + j] === motif[j]) {
+            if (degapped[i + j] === motif[j] || (allowed && allowed[j].has(degapped[i + j]))) {
                 matchingPositions.push(i + j);
             } else {
                 mismatches++;
@@ -14286,6 +14821,11 @@ function reverseComplementSequences(indices) {
     const targets = Array.from(indices || []).filter(i => Number.isInteger(i) && i >= 0 && i < state.seqs.length);
     if (!targets.length) {
         showMessage('Select sequences to RevComp.', 3000);
+        return;
+    }
+    // A protein has no complement: this used to rewrite every row as IUPAC nonsense
+    if (isProteinAlignment()) {
+        showMessage('Reverse complement needs nucleotide sequences; this alignment is protein.', 3500);
         return;
     }
     pushUndo('revcomp');
@@ -14434,6 +14974,7 @@ function searchResEnzyme() {
             strand: 'restriction',
             key: `restriction:${name}:${site}:fwd`,
             countMode: 'alignmentSites',
+            overlapping: true,
             suppressMessage: true
         });
         if (forwardResult) currentResults.push(...forwardResult.results);
@@ -14449,6 +14990,7 @@ function searchResEnzyme() {
                     strand: 'restriction rev comp',
                     key: `restriction:${name}:${site}:rev`,
                     countMode: 'alignmentSites',
+                    overlapping: true,
                     suppressMessage: true
                 });
                 if (reverseResult) currentResults.push(...reverseResult.results);
@@ -14593,7 +15135,10 @@ function searchMotif(options = {}) {
     // A regex keeps its case: upper-casing turns \w, \s, \d into their negations.
     // Matching is case-insensitive either way (flag i, and sequences are upper-cased).
     const motif = useRegex ? raw.trim() : raw.trim().replace(/\s+/g, '').toUpperCase();
-    if (!motif) return;
+    if (!motif) {
+        if (!options.suppressMessage) showMessage('Type a motif in the Search box first.', 2500);
+        return;
+    }
     if (useRegex) {
         try { new RegExp(motif, 'gi'); } catch (e) {
             showMessage('Invalid regex: ' + e.message, 4000);
@@ -14669,7 +15214,10 @@ function searchMotif(options = {}) {
         const entry = {
             id: className, motif: motifKey, className, color: searchColorValue, label, strand,
             searchValue: searchMotifValue, useRegex: !!useRegex,
-            maxMismatches: useRegex ? 0 : maxMismatches, enabled: true
+            maxMismatches: useRegex ? 0 : maxMismatches, enabled: true,
+            ...(options.overlapping ? { overlapping: true } : {}),
+            // In a nucleotide motif R, Y, N ... stand for several bases (in protein they are residues)
+            ...(!useRegex && !protein && /[RYSWKMBDHVN]/.test(searchMotifValue) ? { iupac: true } : {})
         };
 
         // Re-running an identical search replaces it rather than stacking a copy
@@ -15151,7 +15699,7 @@ function _gotoSelectionItem(item) {
         if (!rows.length) return;
         const i = ((_gotoCursor.nucs ?? -1) + 1) % rows.length;
         _gotoCursor.nucs = i;
-        _showRowInAlignment(rows[i], Math.min(...state.selectedNucs.get(rows[i])));
+        _showRowInAlignment(rows[i], _arrMin(state.selectedNucs.get(rows[i])));
     } else if (item.entry) {
         _gotoNextSearchHit(item.entry);
     }
@@ -15363,7 +15911,7 @@ function closeInfoModal() {
 function updateClusteringStatus(msg) {
     const statusEl = el('clusteringStatus');
     if (statusEl) statusEl.textContent = msg;
-    console.log('[Clustering] ' + msg);
+    debugLog('[Clustering] ' + msg);
 }
 
 function getTrimParameters() {
@@ -15614,7 +16162,9 @@ function executeTrimming() {
         return;
     }
 
-    // Hard trim: actually delete columns
+    // Hard trim: actually delete columns. Undoable with Ctrl+Z like any other edit (it used
+    // to push no undo entry; the column state is saved on this entry by applyColumnEdit).
+    pushUndo('trim');
     state.trimBackupColState = _snapshotColumnState();
     {
         const dead = [];
@@ -15663,6 +16213,8 @@ function undoTrimming() {
         return;
     }
 
+    // Itself undoable: it puts back the pre-trim copy, dropping any edit made since the trim
+    pushUndo('undo-trim');
     state.seqs = state.trimBackup.map(seq => ({...seq}));
     state.trimBackup = null;
     if (state.trimBackupColState) { _restoreColumnState(state.trimBackupColState); state.trimBackupColState = null; }
@@ -16288,6 +16840,7 @@ function _renderClusterabilityReport(rows, base, nSeqs, progress) {
                        <td style="padding:3px 6px;text-align:right;border-bottom:1px solid #f0f0f0;">${r.largest || ''}</td></tr>`;
         });
         content.innerHTML = ph + '</table>';
+        _geKeepOnScreen();
         return;
     }
     const ok = rows.filter(r => !r.error);
@@ -16355,6 +16908,19 @@ function _renderClusterabilityReport(rows, base, nSeqs, progress) {
             This is a survey only - nothing has been changed. Set the parameters you want and press Find SNP groups.
         </div>`;
     content.innerHTML = html;
+    _geKeepOnScreen();
+}
+
+// The floating explorer is pinned where it first opened, when it was still small; as the
+// Clusterability table filled in it grew past the bottom of the screen (y 360..889 on a
+// 768px screen). Move it up (and left) so all of it stays visible; the body scrolls.
+function _geKeepOnScreen() {
+    const modal = el('clusteringModal');
+    if (!modal || modal.style.display === 'none' || modal.classList.contains('ge-docked')) return;
+    if (modal.style.transform !== 'none') return;   // still centred by CSS
+    const r = modal.getBoundingClientRect();
+    if (r.bottom > window.innerHeight - 4) modal.style.top = Math.max(4, window.innerHeight - 4 - r.height) + 'px';
+    if (r.right > window.innerWidth - 4) modal.style.left = Math.max(4, window.innerWidth - 4 - r.width) + 'px';
 }
 
 // The clusterer holds the main thread for its whole run - seconds on a typical alignment,
@@ -16365,7 +16931,7 @@ async function clusterSequences() {
         showMessage("Need at least 3 sequences to cluster.", 3000);
         return;
     }
-    const residues = state.seqs.length * Math.max(...state.seqs.map(s => s.seq.length));
+    const residues = state.seqs.length * _maxSeqLen(state.seqs);
     if (!confirmIfLarge('Clustering', residues, 200000,
         'can take several minutes - its cost grows much faster than the alignment does')) {
         return;
@@ -16434,6 +17000,7 @@ function highlightDiagnosticMutations() {
 /**
  * Helper to convert hex color to RGB
  */
+// (Was declared twice; this later one always won. Invalid input gives black.)
 function hexToRgb(hex) {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return result ? {
@@ -16482,14 +17049,14 @@ function saveClusteringPreset() {
     // Store in localStorage
     let presets = safeLocalGet('clusteringPresets');
     presets[presetName] = preset;
-    localStorage.setItem('clusteringPresets', JSON.stringify(presets));
+    safeLocalSet('clusteringPresets', JSON.stringify(presets), 'the clustering preset');
 
     // Update preset list
     updateClusteringPresetList();
 
     el('presetNameInput').value = '';
     showMessage(`Preset "${presetName}" saved!`, 2000);
-    console.log('[Clustering] Saved preset:', presetName, preset);
+    debugLog('[Clustering] Saved preset:', presetName, preset);
 }
 
 function createOptimalPreset(silent = false) {
@@ -16525,7 +17092,7 @@ function createOptimalPreset(silent = false) {
     // Store in localStorage
     let presets = safeLocalGet('clusteringPresets');
     presets['optimal'] = optimalPreset;
-    localStorage.setItem('clusteringPresets', JSON.stringify(presets));
+    safeLocalSet('clusteringPresets', JSON.stringify(presets), silent ? null : 'the clustering preset');
 
     // Update preset list and select it
     updateClusteringPresetList();
@@ -16539,7 +17106,7 @@ function createOptimalPreset(silent = false) {
     if (!silent) {
         showMessage('Standard starting parameters restored - these are defaults, not tuned to your data.', 3000);
     }
-    console.log('[Clustering] Created optimal preset:', optimalPreset);
+    debugLog('[Clustering] Created optimal preset:', optimalPreset);
 }
 
 function loadClusteringPreset(silent = false) {
@@ -16586,11 +17153,11 @@ function loadClusteringPreset(silent = false) {
     // Apply min occurrences (with fallback to default for older presets)
     el('minOccurrencesInput').value = preset.clustering.minOccurrences ?? 3;
 
-    const shouldSilent = silent || presetName === 'optimal';
+    const shouldSilent = silent;   // the start-up loads pass true; a click on Load always answers
     if (!shouldSilent) {
         showMessage(`Preset "${presetName}" loaded!`, 2000);
     }
-    console.log('[Clustering] Loaded preset:', presetName, preset);
+    debugLog('[Clustering] Loaded preset:', presetName, preset);
 }
 
 function updateClusteringPresetList() {
@@ -16610,7 +17177,7 @@ function updateClusteringPresetList() {
         presetSelect.appendChild(option);
     });
 
-    console.log('[Clustering] Preset list updated:', presetNames.length, 'presets');
+    debugLog('[Clustering] Preset list updated:', presetNames.length, 'presets');
 }
 
 function deleteClusteringPreset() {
@@ -16628,7 +17195,7 @@ function deleteClusteringPreset() {
 
     let presets = safeLocalGet('clusteringPresets');
     delete presets[presetName];
-    localStorage.setItem('clusteringPresets', JSON.stringify(presets));
+    safeLocalSet('clusteringPresets', JSON.stringify(presets), 'the clustering presets');
 
     updateClusteringPresetList();
     showMessage(`Preset "${presetName}" deleted`, 2000);
@@ -16645,8 +17212,9 @@ function _geSetProbeMode(on) {
     const title = modal && modal.querySelector('.ge-header h3');
     if (modal) modal.classList.toggle('ge-probe', !!on);
     if (title) title.textContent = on ? 'Clusterability' : 'Group explorer';
-    const actions = el('geHeaderActions');
-    if (actions) actions.style.visibility = on ? 'hidden' : '';
+    // Dock and Clear all are explorer actions; the window buttons (×) stay. Hiding the whole
+    // row left the Clusterability window with no way to close it but Esc.
+    ['geDockBtn', 'geClearBtn'].forEach(id => { const b = el(id); if (b) b.style.visibility = on ? 'hidden' : ''; });
 }
 
 function _geSetMenuVisible(on) {
@@ -17591,7 +18159,7 @@ function _initMafftAskPrefs() {
         adj.checked = _mafftPrefBool(MAFFT_ASK_ADJUST, false);
         adj.addEventListener('change', () => {
             _mafftPrefSet(MAFFT_ASK_ADJUST, adj.checked);
-            if (adj.checked && localStorage.getItem(MAFFT_DEF_ADJUST) === null) {
+            if (adj.checked && safeLocalGetRaw(MAFFT_DEF_ADJUST) === null) {
                 _mafftPrefSet(MAFFT_DEF_ADJUST, true);
             }
         });
@@ -17600,7 +18168,7 @@ function _initMafftAskPrefs() {
         reo.checked = _mafftPrefBool(MAFFT_ASK_REORDER, false);
         reo.addEventListener('change', () => {
             _mafftPrefSet(MAFFT_ASK_REORDER, reo.checked);
-            if (reo.checked && localStorage.getItem(MAFFT_DEF_REORDER) === null) {
+            if (reo.checked && safeLocalGetRaw(MAFFT_DEF_REORDER) === null) {
                 _mafftPrefSet(MAFFT_DEF_REORDER, false);
             }
         });
@@ -17632,6 +18200,10 @@ function _initMafftAskPrefs() {
 function openMacsePreset(openMenu = true) {
     const sel = el('mafftSeqType'), eng = el('codonEngine');
     if (!sel) return;
+    if (state.seqs.length && isProteinAlignment()) {
+        showMessage('Codon alignment needs nucleotide (coding) sequences; this alignment is protein.', 4000);
+        return;
+    }
     if (sel.value !== 'codon') { sel.value = 'codon'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
     if (eng && eng.value !== 'macse') { eng.value = 'macse'; eng.dispatchEvent(new Event('change', { bubbles: true })); }
     if (openMenu) {
@@ -17713,8 +18285,9 @@ function _reverseComplement(seq) {
     const comp = { A:'T', T:'A', C:'G', G:'C', a:'t', t:'a', c:'g', g:'c',
                    R:'Y', Y:'R', S:'S', W:'W', K:'M', M:'K', B:'V', V:'B', D:'H', H:'D',
                    r:'y', y:'r', s:'s', w:'w', k:'m', m:'k', b:'v', v:'b', d:'h', h:'d',
-                   N:'N', n:'n', '-':'-', '.':'.' };
-    return seq.split('').reverse().map(c => comp[c] || c).join('');
+                   N:'N', n:'n', '-':'-', '.':'.', U:'A', u:'a' };
+    const rna = /[Uu]/.test(seq) && !/[Tt]/.test(seq);
+    return seq.split('').reverse().map(c => (rna && (c === 'A' || c === 'a')) ? (c === 'A' ? 'U' : 'u') : (comp[c] || c)).join('');
 }
 
 /**
@@ -17739,7 +18312,7 @@ function _adjustDirection(fasta) {
 
     // Build k-mer set from first sequence (reference)
     const K = 6;
-    const refSeq = seqs[0].seq.toUpperCase().replace(/[^ACGT]/g, '');
+    const refSeq = seqs[0].seq.toUpperCase().replace(/U/g, 'T').replace(/[^ACGT]/g, '');
     const refKmers = new Set();
     for (let i = 0; i <= refSeq.length - K; i++) {
         refKmers.add(refSeq.substring(i, i + K));
@@ -17750,7 +18323,7 @@ function _adjustDirection(fasta) {
 
     for (let i = 1; i < seqs.length; i++) {
         const s = seqs[i];
-        const clean = s.seq.toUpperCase().replace(/[^ACGT]/g, '');
+        const clean = s.seq.toUpperCase().replace(/U/g, 'T').replace(/[^ACGT]/g, '');
         const rc = _reverseComplement(clean);
 
         let fwdScore = 0, rcScore = 0;
@@ -17899,7 +18472,8 @@ function _modelPairDistance(seqOne, seqTwo, model, protein = false) {
 
 function _newickName(name) {
     const cleaned = String(name || 'seq').replace(/\s+/g, '_');
-    if (/^[A-Za-z0-9_.:-]+$/.test(cleaned)) return cleaned;
+    // ":" separates a branch length, so chr1:100-200 must be quoted
+    if (/^[A-Za-z0-9_.-]+$/.test(cleaned)) return cleaned;
     return `'${cleaned.replace(/'/g, "''")}'`;
 }
 
@@ -19595,11 +20169,22 @@ function _cancelActiveMafftWorker() {
     }
 }
 
+// A worker script that fails to load raises an ErrorEvent with no message
+function _workerStartError(err, what) {
+    if (err && err.message) return new Error(err.message);
+    const why = location.protocol === 'file:'
+        ? 'open the viewer over http(s), not as a file'
+        : 'the script could not be downloaded; check the connection and reload';
+    return new Error(`Could not start ${what} (${why})`);
+}
+
 function _runMafftInWorker(fasta, extraArgs) {
     return new Promise((resolve, reject) => {
         _cancelActiveMafftWorker();
         const id = Date.now();
-        const worker = new Worker(`mafft-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`);
+        let worker;
+        try { worker = new Worker(`mafft-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`); }
+        catch (_) { reject(_workerStartError(null, 'MAFFT')); return; }
         _activeMafftWorker = worker;
         _activeMafftReject = reject;
         worker.onmessage = (ev) => {
@@ -19614,7 +20199,7 @@ function _runMafftInWorker(fasta, extraArgs) {
             _activeMafftWorker = null;
             _activeMafftReject = null;
             worker.terminate();
-            reject(err);
+            reject(_workerStartError(err, 'MAFFT'));
         };
         worker.postMessage({ id, type: 'align', fasta, extraArgs, wasmPath: '' });
     });
@@ -19678,7 +20263,9 @@ function _runCodonAlignInWorker(fasta, opts, onProgress) {
         const id = Date.now();
         // MACSE port: macse-worker.js (CeCILL 2.1, may start nested workers); fast engine: codon-align-worker.js (MIT)
         const macse = !!(opts && opts.engine === 'macse');
-        const worker = macse ? _takeMacseWorker() : new Worker(`codon-align-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`);
+        let worker;
+        try { worker = macse ? _takeMacseWorker() : new Worker(`codon-align-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`); }
+        catch (_) { reject(_workerStartError(null, 'codon alignment')); return; }
         _activeMafftWorker = worker;
         _activeMafftReject = reject;
         worker.onmessage = (ev) => {
@@ -19697,7 +20284,7 @@ function _runCodonAlignInWorker(fasta, opts, onProgress) {
             _activeMafftReject = null;
             worker.terminate();
             if (worker === _macseWorker) _macseWorker = null;
-            reject(err);
+            reject(_workerStartError(err, 'codon alignment'));
         };
         worker.postMessage({ id, type: 'align', fasta, opts });
     });
@@ -19865,7 +20452,9 @@ async function realignSelectedBlock(opts) {
 
         pushUndo('realign-block');
         state.seqs = result.seqs.map(r => {
-            const orig = state.seqs.find(s => s.header === r.header || s.fullHeader === r.fullHeader);
+            // by the row it came from: by name, rows sharing a name all got the first one's
+            const orig = (Number.isInteger(r._row) && state.seqs[r._row])
+                || state.seqs.find(s => s.header === r.header || s.fullHeader === r.fullHeader);
             return {
                 header: orig ? orig.header : r.header,
                 fullHeader: orig ? orig.fullHeader : (r.fullHeader || r.header),
@@ -19873,6 +20462,10 @@ async function realignSelectedBlock(opts) {
                 gaplessPositions: calculateGaplessPositions(r.seq)
             };
         });
+        // the rows may have been reordered: the row selection goes with its rows
+        const newRowOf = new Map(result.seqs.map((r, i) => [r._row, i]));
+        state.selectedRows = new Set([...state.selectedRows].map(i => newRowOf.get(i)).filter(i => i !== undefined));
+        state.lastSelectedIndex = newRowOf.has(state.lastSelectedIndex) ? newRowOf.get(state.lastSelectedIndex) : null;
         state.selectedColumns.clear();
         if (result.aligned) _dropColumnAnalysesAfterRealign();
         renderAlignment();
@@ -19891,20 +20484,38 @@ async function realignSelectedBlock(opts) {
 /**
  * Realign all loaded sequences using MAFFT WASM.
  */
+// The name each row is sent to MAFFT under: its full name, with a row suffix when another
+// row has the same one. Results used to be matched back by name alone, so of two rows with
+// one name the second came back as a copy of the first.
+function _uniqueRowNames(seqObjs, rows) {
+    const seen = new Set();
+    return seqObjs.map((s, k) => {
+        const base = String(s.fullHeader || s.header || 'seq');
+        let n = base;
+        if (seen.has(n)) { n = base + '__row' + ((rows ? rows[k] : k) + 1); while (seen.has(n)) n += '_'; }
+        seen.add(n);
+        return n;
+    });
+}
+const _stripRowSuffix = n => String(n).replace(/__row\d+_*$/, '');
+
 async function realignAll() {
     if (state.seqs.length < 2) {
         showMessage("Need at least 2 sequences to align.", 2000);
         return;
     }
 
-    // Save undo state
-    pushUndo('realign-all');
+    // Undo state, pushed only once the alignment changes (a declined or cancelled run
+    // used to leave a phantom step and wipe the redo list)
+    const undoEntry = _makeUndoEntry('realign-all');
 
     // Build ungapped FASTA
+    const rowNames = _uniqueRowNames(state.seqs);
+    const rowOfName = new Map(rowNames.map((n, i) => [n, i]));
     let fasta = '';
-    for (const s of state.seqs) {
-        fasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
-    }
+    state.seqs.forEach((s, i) => {
+        fasta += `>${rowNames[i]}\n${s.seq.replace(/[-.]/g, '')}\n`;
+    });
 
     const { args: extraArgs, seqType, adjustDir, reorder, reorderOnly } = getMafftExtraArgs();
 
@@ -19921,21 +20532,21 @@ async function realignAll() {
 
     // Reorder only: skip MAFFT. Apply RC to gapped rows if needed, then permute.
     if (reorderOnly) {
+        _pushUndoEntry(undoEntry);
         if (flippedNames.size > 0) {
-            for (const s of state.seqs) {
-                if (flippedNames.has(s.header) || flippedNames.has(s.fullHeader)) {
+            state.seqs.forEach((s, i) => {
+                if (flippedNames.has(rowNames[i])) {
                     s.seq = _reverseComplement(s.seq);
                     s.gaplessPositions = calculateGaplessPositions(s.seq);
                 }
-            }
+            });
         }
         const reordered = _reorderByGuideTree(fasta);
-        const byFull = new Map(state.seqs.map(s => [s.fullHeader || s.header, s]));
         const byHdr = new Map(state.seqs.map(s => [s.header, s]));
         const newSeqs = [];
         const used = new Set();
         for (const hdr of reordered.order) {
-            const s = byFull.get(hdr) || byHdr.get(hdr) || byHdr.get(String(hdr).split(/\s+/)[0]);
+            const s = state.seqs[rowOfName.get(hdr)] || byHdr.get(hdr) || byHdr.get(String(hdr).split(/\s+/)[0]);
             if (s && !used.has(s)) {
                 newSeqs.push(s);
                 used.add(s);
@@ -19946,7 +20557,7 @@ async function realignAll() {
         state.selectedColumns.clear();
         renderAlignment();
         const msgs = [`Reordered ${state.seqs.length} sequences (no alignment).`];
-        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].join(', ')}`);
+        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].map(_stripRowSuffix).join(', ')}`);
         showMessage(msgs.join(' '), flippedNames.size > 0 ? 5000 : 2000);
         return;
     }
@@ -19978,10 +20589,10 @@ async function realignAll() {
         // Build new seqs array
         const newSeqs = [];
         // Determine output order: guide tree order or original input order
-        const outputOrder = guideOrder || state.seqs.map(s => s.fullHeader || s.header);
+        const outputOrder = guideOrder || rowNames;
         for (const hdr of outputOrder) {
-            const a = aligned.find(x => x.name === hdr || x.name === hdr.split(/\s+/)[0]);
-            const orig = state.seqs.find(s => s.header === hdr || s.fullHeader === hdr);
+            const a = aligned.find(x => x.name === hdr) || aligned.find(x => x.name === hdr.split(/\s+/)[0]);
+            const orig = state.seqs[rowOfName.get(hdr)];
             if (a) {
                 const origCase = originalCaseByHeader.get(a.name);
                 newSeqs.push({
@@ -19995,17 +20606,18 @@ async function realignAll() {
         // Fallback: use aligned in MAFFT output order
         if (newSeqs.length === 0) {
             for (const a of aligned) {
-                const name = a.name.split(/\s+/)[0];
+                const name = _stripRowSuffix(a.name.split(/\s+/)[0]);
                 const origCase = originalCaseByHeader.get(a.name);
                 newSeqs.push({
                     header: name,
-                    fullHeader: a.name,
+                    fullHeader: _stripRowSuffix(a.name),
                     seq: origCase ? _remapCaseOntoAligned(origCase, a.seq) : a.seq,
                     gaplessPositions: calculateGaplessPositions(a.seq)
                 });
             }
         }
 
+        _pushUndoEntry(undoEntry);
         state.seqs = newSeqs;
         state.selectedRows.clear();
         state.selectedColumns.clear();
@@ -20013,7 +20625,7 @@ async function realignAll() {
         _dropColumnAnalysesAfterRealign();
         renderAlignment();
         const msgs = [`Aligned ${state.seqs.length} sequences successfully!`];
-        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].join(', ')}`);
+        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].map(_stripRowSuffix).join(', ')}`);
         showMessage(msgs.join(' '), flippedNames.size > 0 ? 5000 : 2000);
     } catch (err) {
         showMessage("MAFFT alignment error: " + err.message, 4000);
@@ -20037,12 +20649,13 @@ function realignSelected() {
 
     const selectedIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
 
-    // Build ungapped FASTA from selected sequences
+    // Build ungapped FASTA from selected sequences (names made unique: results go back by row)
+    const selObjs = selectedIndices.map(i => state.seqs[i]);
+    const rowNames = _uniqueRowNames(selObjs, selectedIndices);
     let fasta = '';
-    for (const idx of selectedIndices) {
-        const s = state.seqs[idx];
-        fasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
-    }
+    selObjs.forEach((s, k) => {
+        fasta += `>${rowNames[k]}\n${s.seq.replace(/[-.]/g, '')}\n`;
+    });
 
     const { args: extraArgs, seqType, adjustDir } = getMafftExtraArgs();
 
@@ -20072,19 +20685,19 @@ function realignSelected() {
         }
 
         // Replace selected sequences with aligned versions
-        for (const idx of selectedIndices) {
-            const s = state.seqs[idx];
-            const match = aligned.find(a => a.name === s.header || a.name === s.fullHeader);
-            if (match) {
+        selObjs.forEach((s, k) => {
+            const idx = state.seqs.indexOf(s);
+            const match = aligned.find(a => a.name === rowNames[k]);
+            if (match && idx >= 0) {
                 const origCase = originalCaseByHeader.get(match.name);
                 const recased = origCase ? _remapCaseOntoAligned(origCase, match.seq) : match.seq;
                 state.seqs[idx].seq = recased;
                 state.seqs[idx].gaplessPositions = calculateGaplessPositions(recased);
             }
-        }
+        });
 
         // Pad all sequences to the same length
-        const maxLen = Math.max(...state.seqs.map(s => s.seq.length));
+        const maxLen = _maxSeqLen(state.seqs);
         for (const s of state.seqs) {
             s.seq = s.seq.padEnd(maxLen, '-');
         }
@@ -20224,6 +20837,8 @@ async function addSequencesJustAdd() {
             const existingCount = workingSeqs.length - alignedNewSeqs.length;
             if (atTop) {
                 state.seqs = [...alignedNewSeqs, ...workingSeqs.slice(0, existingCount)];
+                state.selectedRows = new Set([...state.selectedRows].map(i => i + alignedNewSeqs.length));
+                if (Number.isInteger(state.lastSelectedIndex)) state.lastSelectedIndex += alignedNewSeqs.length;
             } else {
                 state.seqs = workingSeqs;
             }
@@ -20235,7 +20850,7 @@ async function addSequencesJustAdd() {
         }
     } else {
         // Pad to current alignment length
-        const alignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+        const alignLen = state.seqs.length > 0 ? _maxSeqLen(state.seqs) : 0;
         for (const ns of newSeqs) {
             if (alignLen > 0 && ns.seq.length < alignLen) {
                 ns.seq = ns.seq.padEnd(alignLen, '-');
@@ -20247,10 +20862,17 @@ async function addSequencesJustAdd() {
     if (!(alignToCons && state.seqs.length > 0 && state.consensusSeq)) {
         if (atTop) {
             state.seqs.unshift(...newSeqs);
+            state.selectedRows = new Set([...state.selectedRows].map(i => i + newSeqs.length));
+            if (Number.isInteger(state.lastSelectedIndex)) state.lastSelectedIndex += newSeqs.length;
         } else {
             state.seqs.push(...newSeqs);
         }
     }
+
+    // A new sequence longer than the alignment widens it: pad every row (only shorter new
+    // sequences were padded, so a longer one left the alignment ragged)
+    const widthBefore = state.seqs.reduce((m, q) => Math.min(m, q.seq.length), Infinity);
+    if (normalizeAlignmentLengths() !== widthBefore) refreshAllGaplessPositions();
 
     closeAddSequencesModal();
     renderAlignment();
@@ -20650,6 +21272,11 @@ function _seqEditResetUndo(initialValue) {
 }
 
 
+// The sequences the open editor was opened on, by object: rows can move behind the dialog
+// (Ctrl+Up with focus on a button), and Apply used to write to whatever row then had the
+// remembered index, overwriting another sequence.
+let _seqEditTargetObjs = [];
+
 function openSeqEditor(index) {
     if (index === undefined || index === null) {
         // Use selected rows, or open freeform if none selected
@@ -20657,7 +21284,7 @@ function openSeqEditor(index) {
             // Multi-sequence mode
             return openSeqEditorMulti();
         } else if (state.selectedRows.size === 1) {
-            index = Math.min(...state.selectedRows);
+            index = _arrMin(state.selectedRows);
         } else {
             index = -1; // freeform mode
         }
@@ -20679,11 +21306,13 @@ function openSeqEditor(index) {
         // Freeform mode: blank editor for new or arbitrary text
         if (nameInput) nameInput.value = 'new_sequence';
         if (indexEl) indexEl.textContent = '-1';
+        _seqEditTargetObjs = [];
         textarea.value = '>new_sequence\n';
     } else {
         const s = state.seqs[index];
         if (nameInput) nameInput.value = s.fullHeader || s.header;
         if (indexEl) indexEl.textContent = String(index);
+        _seqEditTargetObjs = [s];
         textarea.value = `>${s.fullHeader || s.header}\n${s.seq}`;
     }
     _updateSeqEditLength();
@@ -20708,6 +21337,7 @@ function openSeqEditorMulti() {
     // Store multi indices
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     if (indexEl) indexEl.textContent = 'multi:' + indices.join(',');
+    _seqEditTargetObjs = indices.map(i => state.seqs[i]);
 
     // Build multi-FASTA
     let text = '';
@@ -20851,12 +21481,23 @@ function seqEditLowercase() {
     _seqEditTransform(seq => seq.toLowerCase());
 }
 
+// "Pad/trim to alignment length": pad a short sequence, and trim only trailing gaps from a
+// long one. It used to cut a long one to the width, dropping its last residues; one that is
+// still longer now widens the alignment (the caller pads the other rows).
+function _seqEditFitWidth(seq, alignLen) {
+    if (seq.length < alignLen) return seq.padEnd(alignLen, '-');
+    let end = seq.length;
+    while (end > alignLen && (seq[end - 1] === '-' || seq[end - 1] === '.')) end--;
+    return seq.slice(0, end);
+}
+
 function seqEditApply() {
     const indexStr = document.getElementById('seqEditIndex')?.textContent;
 
     // Multi-sequence mode
     if (indexStr && indexStr.startsWith('multi:')) {
-        const indices = indexStr.substring(6).split(',').map(Number);
+        const indices = indexStr.substring(6).split(',').map(Number)
+            .map((i, k) => (_seqEditTargetObjs[k] ? state.seqs.indexOf(_seqEditTargetObjs[k]) : i));
         const entries = _getSeqEditMultiFasta();
         if (entries.length === 0) {
             showMessage("No sequences found.", 2000);
@@ -20865,7 +21506,7 @@ function seqEditApply() {
 
         pushUndo('seqedit-multi');
         const padCheckbox = document.getElementById('seqEditPadGaps');
-        const alignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+        const alignLen = state.seqs.length > 0 ? _maxSeqLen(state.seqs) : 0;
 
         // Update existing sequences (matched by index order)
         const updateCount = Math.min(entries.length, indices.length);
@@ -20873,10 +21514,7 @@ function seqEditApply() {
             const idx = indices[i];
             if (idx < 0 || idx >= state.seqs.length) continue;
             let seq = entries[i].seq;
-            if (padCheckbox && padCheckbox.checked && alignLen > 0) {
-                if (seq.length < alignLen) seq = seq.padEnd(alignLen, '-');
-                else if (seq.length > alignLen) seq = seq.substring(0, alignLen);
-            }
+            if (padCheckbox && padCheckbox.checked && alignLen > 0) seq = _seqEditFitWidth(seq, alignLen);
             const fullH = entries[i].header;
             state.seqs[idx].header = fullH.split(/\s+/)[0];
             state.seqs[idx].fullHeader = fullH;
@@ -20885,13 +21523,10 @@ function seqEditApply() {
         }
         // If user added extra sequences in the textarea, append them
         // Recompute alignment length in case updates above changed it
-        const updatedAlignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+        const updatedAlignLen = state.seqs.length > 0 ? _maxSeqLen(state.seqs) : 0;
         for (let i = updateCount; i < entries.length; i++) {
             let seq = entries[i].seq;
-            if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) {
-                if (seq.length < updatedAlignLen) seq = seq.padEnd(updatedAlignLen, '-');
-                else if (seq.length > updatedAlignLen) seq = seq.substring(0, updatedAlignLen);
-            }
+            if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) seq = _seqEditFitWidth(seq, updatedAlignLen);
             const fullH = entries[i].header;
             state.seqs.push({
                 header: fullH.split(/\s+/)[0],
@@ -20900,14 +21535,16 @@ function seqEditApply() {
                 gaplessPositions: calculateGaplessPositions(seq)
             });
         }
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
         closeSeqEditor();
         renderAlignment();
         showMessage(`${updateCount} sequence${updateCount > 1 ? 's' : ''} updated!`, 2000);
         return;
     }
 
-    const index = parseInt(indexStr);
+    let index = parseInt(indexStr);
     const isFreeform = (index === -1);
+    if (!isFreeform && _seqEditTargetObjs[0]) index = state.seqs.indexOf(_seqEditTargetObjs[0]);
 
     if (!isFreeform && (isNaN(index) || index < 0 || index >= state.seqs.length)) {
         showMessage("Invalid sequence index.", 3000);
@@ -20936,14 +21573,8 @@ function seqEditApply() {
     // Pad or trim if checkbox is checked
     const padCheckbox = document.getElementById('seqEditPadGaps');
     if (padCheckbox && padCheckbox.checked && state.seqs.length > 0) {
-        const alignLen = Math.max(...state.seqs.map(s => s.seq.length));
-        if (alignLen > 0) {
-            if (seq.length < alignLen) {
-                seq = seq.padEnd(alignLen, '-');
-            } else if (seq.length > alignLen) {
-                seq = seq.substring(0, alignLen);
-            }
-        }
+        const alignLen = _maxSeqLen(state.seqs);
+        if (alignLen > 0) seq = _seqEditFitWidth(seq, alignLen);
     }
 
     if (isFreeform) {
@@ -20955,6 +21586,7 @@ function seqEditApply() {
             gaplessPositions: calculateGaplessPositions(seq)
         };
         state.seqs.push(newSeq);
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
         closeSeqEditor();
         renderAlignment();
         showMessage("New sequence added!", 2000);
@@ -20964,6 +21596,7 @@ function seqEditApply() {
         state.seqs[index].fullHeader = newFullHeader;
         state.seqs[index].seq = seq;
         state.seqs[index].gaplessPositions = calculateGaplessPositions(seq);
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
         closeSeqEditor();
         renderAlignment();
         showMessage("Sequence updated!", 2000);
@@ -20986,6 +21619,7 @@ const UNDO_TYPE_LABELS = {
     'seqedit': 'Edit sequence', 'seqedit-add': 'Add sequence', 'seqedit-multi': 'Edit sequences',
     'add-sequences': 'Add sequences', 'add-and-align': 'Add and align',
     'replaceWithConsensus': 'Replace with consensus', 'insertConsensus': 'Insert consensus',
+    'trim': 'Trim', 'undo-trim': 'Undo trim',
     'insertGap': 'Insert gaps', 'insertSingleGap': 'Insert gap', 'removeGaps': 'Remove gaps',
     'removeSingleGap': 'Remove gap', 'deleteColumns': 'Delete columns',
     'degap-block-left': 'Degap block (left)', 'degap-block-right': 'Degap block (right)',
@@ -21234,41 +21868,8 @@ function showContextMenu(e, index) {
         const renameItem = document.createElement('div');
         renameItem.textContent = 'Rename sequence';
         renameItem.addEventListener('click', () => {
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.value = state.seqs[index].header;
-            input.style.width = `${e.target.offsetWidth}px`;
-            input.style.fontSize = getComputedStyle(e.target).fontSize;
-            input.style.fontFamily = getComputedStyle(e.target).fontFamily;
-            input.style.padding = '0';
-            input.style.border = '1px solid #ccc';
-            e.target.innerHTML = '';
-            e.target.appendChild(input);
-            input.focus();
-            input.select();
-            const save = () => {
-                const newName = input.value.trim();
-                if (newName && newName !== state.seqs[index].header) {
-                    const oldName = state.seqs[index].header;
-                    pushUndo('rename');
-                    state.seqs[index].header = newName;
-                    state.seqs[index].fullHeader = newName;
-                    _migrateColourMapping(oldName, newName);
-                    renderAlignment();
-                    showMessage("Sequence renamed!", 2000);
-                } else {
-                    renderAlignment();
-                }
-            };
-            input.addEventListener('blur', save);
-            input.addEventListener('keydown', (ev) => {
-                if (ev.key === 'Enter') {
-                    save();
-                } else if (ev.key === 'Escape') {
-                    renderAlignment();
-                }
-            });
             closeContextMenu();
+            _renameSequenceFromMenu(index, e);
         });
         contextMenu.appendChild(renameItem);
     }
@@ -21883,7 +22484,11 @@ function initializeAppUI() {
         'loadButton': () => parseAndRender(false),
         'reverseComplementButton': reverseComplementSelected,
         'reverseComplementAllButton': reverseComplementAll,
-        'copySelectedButton': copySelected,
+        // Ctrl+C stays silent with nothing selected (it is pressed everywhere); the button says so
+        'copySelectedButton': () => {
+            if (!state.selectedRows.size && !state.selectedNucs.size) { showMessage('No sequences selected.', 2000); return; }
+            copySelected();
+        },
         'copyAlignmentButton': copyAlignment,
         'deleteSelectedButton': deleteSelected,
         'undoButton': undoDelete,
@@ -21930,7 +22535,8 @@ function initializeAppUI() {
         'trimDropEmptyButton': removeGapColumns,
         'clearSoftTrimButton': clearSoftTrimming,
         'clusteringSavePresetButton': saveClusteringPreset,
-        'clusteringLoadPresetButton': loadClusteringPreset,
+        // not passed directly: the click event arrived as `silent`, so Load never said it had loaded
+        'clusteringLoadPresetButton': () => loadClusteringPreset(),
         'clusteringOptimalPresetButton': createOptimalPreset,
         'clusteringProbeButton': analyzeClusterability,
         'clusterGuideTreeButton': clusterByGuideTree,
@@ -22080,7 +22686,7 @@ function initializeAppUI() {
         reverseQueryButton.addEventListener('click', () => {
             const raw = searchInputEl.value || '';
             const motif = raw.trim().replace(/\s+/g, '').toUpperCase();
-            if (!motif) return;
+            if (!motif) { showMessage('Type a motif in the Search box first.', 2500); return; }
             searchInputEl.value = reverseComplement(motif);
         });
     }
@@ -22125,11 +22731,12 @@ function initializeAppUI() {
     const controls = el('controls');
     if (controls && typeof ResizeObserver !== 'undefined') {
         const controlsResizeObserver = new ResizeObserver(() => {
-            window.requestAnimationFrame(updateControlsOffset);
+            window.requestAnimationFrame(() => { updateControlsOffset(); _fitFixedAlignmentViewport(); });
         });
         controlsResizeObserver.observe(controls);
     }
     window.addEventListener('resize', () => window.requestAnimationFrame(updateControlsOffset));
+    window.addEventListener('resize', () => window.requestAnimationFrame(_fitFixedAlignmentViewport));
 
     // Initialize slider backgrounds
     ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(id => {
@@ -22897,6 +23504,11 @@ function attachUIListeners() {
     });
     document.addEventListener('copy', (e) => {
         if (!state.selectedNucs.size) return;
+        // Text copied from a text field or any other selected text is the user's: this used
+        // to replace it with the residue selection (Ctrl+C in the search box gave "CGTA")
+        if (_isTextEntry(document.activeElement)) return;
+        const nativeSel = window.getSelection();
+        if (nativeSel && !nativeSel.isCollapsed && String(nativeSel).length > 0) return;
         const text = buildNucCopyText();
         e.preventDefault();
         e.clipboardData.setData('text/plain', text);
@@ -23600,7 +24212,7 @@ function isGeneDocGapChar(char) {
 
 function normalizeAlignmentLengths() {
     if (!state.seqs.length) return 0;
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxSeqLen(state.seqs);
     state.seqs.forEach(s => {
         if (s.seq.length < len) s.seq = s.seq.padEnd(len, GENEDOC_FILLER);
     });
@@ -24012,7 +24624,7 @@ function startGeneDocMoveDrag(e, rowIndex, pos, tool, span) {
         originalSeq: state.seqs[rowIndex].seq,
         // what the DOM row shows now, for the overlay's "unchanged cell" test
         startHits: state.searchHistory?.length ? _computeSearchHitsForSeq(state.seqs[rowIndex].seq) : new Map(),
-        originalAlignmentLength: Math.max(...state.seqs.map(seqObj => seqObj.seq.length)),
+        originalAlignmentLength: _maxSeqLen(state.seqs),
         moved: 0,
         visiblePositions: null,
         visibleComputedAtMoved: 0,
@@ -24205,7 +24817,7 @@ function handleGeneDocEditDragEnd() {
         normalizeAlignmentLengths();
         refreshAllGaplessPositions();
         state.editCell = { row: drag.rowIndex, pos: drag.anchorPos };
-        const nextAlignmentLength = Math.max(...state.seqs.map(seqObj => seqObj.seq.length));
+        const nextAlignmentLength = _maxSeqLen(state.seqs);
         const toolLabel = drag.tool === 'slideKeepGaps' ? 'SlideText' : 'MoveText';
         const columns = Math.abs(drag.moved);
         const fullName = state.seqs[drag.rowIndex]?.header || `row ${drag.rowIndex + 1}`;
@@ -24270,26 +24882,21 @@ function handleGeneDocGapToolClick(rowIndex, pos, tool) {
         }
     }
 
-    pushUndo(`geneDoc-${tool}`);
+    const undoEntry = _makeUndoEntry(`geneDoc-${tool}`);
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
-    let changed = false;
-    targets.forEach(i => {
+    const results = targets.map(i => {
         const s = state.seqs[i];
-        const result = deleting
-            ? geneDocDeleteDashString(s.seq, pos)
-            : geneDocInsertDashString(s.seq, pos);
-        if (result.changed) {
-            s.seq = result.seq;
-            changed = true;
-        }
+        return [s, deleting ? geneDocDeleteDashString(s.seq, pos) : geneDocInsertDashString(s.seq, pos)];
     });
-    if (!changed) {
+    if (!results.some(([, r]) => r.changed)) {
         showMessage('No GeneDoc edit was applied.', 1800);
         return;
     }
+    _pushUndoEntry(undoEntry);
+    results.forEach(([s, r]) => { if (r.changed) s.seq = r.seq; });
     const label = deleting ? 'gap deleted' : 'gap inserted';
-    applyColumnEdit({ type: deleting ? 'delete' : 'insert', at: pos, cols: [pos], newWidth: Math.max(...state.seqs.map(q => q.seq.length)) },
+    applyColumnEdit({ type: deleting ? 'delete' : 'insert', at: pos, cols: [pos], newWidth: _maxSeqLen(state.seqs) },
         targets.length === state.seqs.length ? 'all' : targets);
     finalizeGeneDocEdit(`${targets.length} sequence(s): ${label}.`, 1600, pos, oldWidth);
 }
@@ -24436,7 +25043,7 @@ function fastUpdateEditCell() {
 
 function removeGapColumns() {
     if (state.seqs.length === 0) return;
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxSeqLen(state.seqs);
     const colsToRemove = [];
     for (let pos = 0; pos < len; pos++) {
         if (state.seqs.every(s => isGeneDocGapChar(s.seq[pos] || GENEDOC_FILLER))) {
@@ -24467,7 +25074,7 @@ function insertGapColumn(skipSelected = false) {
         showMessage("Select a column position by Ctrl+Alt+click on a nucleotide to insert gap there.", 5000);
         return;
     }
-    const pos = Math.min(...state.selectedColumns);
+    const pos = _arrMin(state.selectedColumns);
     pushUndo('insertGap');
     normalizeAlignmentLengths();
     const edited = [];
@@ -24487,7 +25094,7 @@ function insertGapColumn(skipSelected = false) {
 function insertSingleGap(rowIndex, pos) {
     const s = state.seqs[rowIndex];
     if (!s) return;
-    pushUndo('insertSingleGap');
+    const undoEntry = _makeUndoEntry('insertSingleGap');
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
     const result = geneDocInsertDashString(s.seq, pos);
@@ -24495,8 +25102,9 @@ function insertSingleGap(rowIndex, pos) {
         showMessage('No gap inserted.', 1800);
         return;
     }
+    _pushUndoEntry(undoEntry);
     s.seq = result.seq;
-    applyColumnEdit({ type: 'insert', at: pos, newWidth: Math.max(...state.seqs.map(q => q.seq.length)) }, [rowIndex]);
+    applyColumnEdit({ type: 'insert', at: pos, newWidth: _maxSeqLen(state.seqs) }, [rowIndex]);
     finalizeGeneDocEdit('Single GeneDoc gap inserted.', 1800, pos, oldWidth);
 }
 
@@ -24507,7 +25115,7 @@ function removeSingleGap(rowIndex, pos) {
         showMessage("Not a gap.", 2000);
         return;
     }
-    pushUndo('removeSingleGap');
+    const undoEntry = _makeUndoEntry('removeSingleGap');
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
     const result = geneDocDeleteDashString(s.seq, pos);
@@ -24515,6 +25123,7 @@ function removeSingleGap(rowIndex, pos) {
         showMessage('No gap removed.', 1800);
         return;
     }
+    _pushUndoEntry(undoEntry);
     s.seq = result.seq;
     applyColumnEdit({ type: 'delete', cols: [pos] }, [rowIndex]);
     finalizeGeneDocEdit('Single GeneDoc gap removed.', 1800, pos, oldWidth);
@@ -25073,7 +25682,7 @@ function saveColourPreset() {
 
     colourState.presets[presetName] = Array.from(colourState.mappings.entries());
     colourState.selectedPresetName = presetName;
-    localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets));
+    safeLocalSet('seqColourPresets', JSON.stringify(colourState.presets), 'the colour preset');
 
     el('colourPresetName').value = '';
     updateColourPresetList();
@@ -25147,7 +25756,7 @@ function updateColourPresetList() {
             if (colourState.selectedPresetName === name) {
                 colourState.selectedPresetName = null;
             }
-            localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets));
+            safeLocalSet('seqColourPresets', JSON.stringify(colourState.presets), 'the colour presets');
             updateColourPresetList();
         });
 
@@ -25358,14 +25967,19 @@ function makeBarInputGuard(bar) {
     // so the empty start page (and any alignment that fits) showed a scrollbar
     // whenever the bar was a pixel narrower than the alignment area. Hidden with
     // visibility, not display, so the layout does not jump when it appears.
+    // The bar's range (thumb - bar width) is made equal to the view's (content - viewport width).
+    // The thumb used to be the content's width, but the bar is 2px wider than the alignment's
+    // viewport (its border), so the bar stopped short of the alignment's end.
     function syncSizes() {
         syncing = true;
+        const canvas = isCanvasMode() ? document.getElementById('alignmentCanvas') : null;
+        const viewW = (canvas && parseFloat(canvas.style.width)) || alignment.clientWidth;
         const contentW = isCanvasMode()
-            ? (_canvasState.totalContentW || alignment.clientWidth)
-            : (alignment.scrollWidth || alignment.clientWidth);
-        const scrollable = contentW > alignment.clientWidth + 1;
+            ? (_canvasState.totalContentW || viewW)
+            : (alignment.scrollWidth || viewW);
+        const scrollable = contentW > viewW + 1;
         bar.style.visibility = scrollable ? '' : 'hidden';
-        thumb.style.width = (scrollable ? contentW : 0) + 'px';
+        thumb.style.width = (scrollable ? contentW - viewW + bar.clientWidth : 0) + 'px';
         bar.scrollLeft = isCanvasMode() ? (_canvasState.offsetX || 0) : alignment.scrollLeft;
         syncing = false;
         grip.update();
@@ -25425,6 +26039,10 @@ function makeBarInputGuard(bar) {
     // Only watch for actual content changes, NOT style changes (which would be triggered by zoom)
     const mo = new MutationObserver(scheduleSync);
     mo.observe(alignment, { childList: true, subtree: true, characterData: false, attributes: false });
+    // Rows off screen are laid out at a placeholder size (content-visibility, styles.css) without
+    // their length labels: drawing them widens the alignment with no DOM change, and the bar,
+    // measured before, could not reach the new end.
+    alignment.addEventListener('contentvisibilityautostatechange', scheduleSync, true);
 
     // Dragging anywhere on the bar moves it like the grip, with the pointer captured: the
     // drag keeps going however far the pointer strays from the 14px bar.
@@ -25508,14 +26126,18 @@ function makeBarInputGuard(bar) {
     const grip = _attachScrollbarGrip(bar, false);
 
     function syncVisibilityAndSize() {
+        // As for the horizontal bar, the bar's range (thumb - bar height) equals the view's: the bar
+        // is the alignment's full height, its viewport 1px less (the bottom border).
         if (isCanvasMode()) {
             bar.style.display = 'flex';
             const rect = alignment.getBoundingClientRect();
             bar.style.top = alignment.offsetTop + 'px';
             bar.style.height = rect.height + 'px';
             syncing = true;
-            const h = _canvasState.totalContentH || alignment.clientHeight;
-            thumb.style.height = Math.max(h, alignment.clientHeight + 1) + 'px';
+            const canvas = document.getElementById('alignmentCanvas');
+            const viewH = (canvas && parseFloat(canvas.style.height)) || alignment.clientHeight;
+            const h = _canvasState.totalContentH || viewH;
+            thumb.style.height = Math.max(0, h - viewH) + bar.clientHeight + 'px';
             bar.scrollTop = _canvasState.offsetY || 0;
             syncing = false;
         } else if (alignment.scrollHeight > alignment.clientHeight) {
@@ -25524,7 +26146,7 @@ function makeBarInputGuard(bar) {
             bar.style.top = alignment.offsetTop + 'px';
             bar.style.height = rect.height + 'px';
             syncing = true;
-            thumb.style.height = Math.max(alignment.scrollHeight, alignment.clientHeight + 1) + 'px';
+            thumb.style.height = (alignment.scrollHeight - alignment.clientHeight) + bar.clientHeight + 'px';
             bar.scrollTop = alignment.scrollTop;
             syncing = false;
         } else {
@@ -25670,7 +26292,7 @@ function getBlastWorkerPool() {
     const hc = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
     const n = Math.max(1, Math.min(MAX_SHARD_WORKERS, hc));
     while (blastWorkerPool.length < n) {
-        blastWorkerPool.push(new Worker('./blast-worker.js'));
+        blastWorkerPool.push(new Worker(`./blast-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`));
         workerPrimed.push(new Set());
     }
     return blastWorkerPool.slice(0, n);
@@ -25725,7 +26347,10 @@ function showBlastDialog(sequenceHeader, sequenceSeq) {
     content.className = 'blast-dialog-content';
 
     const seqLabel = document.createElement('div');
-    seqLabel.innerHTML = `<strong>Sequence:</strong> ${sequenceHeader}`;
+    // The name is untrusted text (a shared file or link): never parse it as HTML
+    const seqLabelStrong = document.createElement('strong');
+    seqLabelStrong.textContent = 'Sequence:';
+    seqLabel.append(seqLabelStrong, ' ' + sequenceHeader);
     seqLabel.style.marginBottom = '12px';
     seqLabel.style.fontSize = '12px';
     seqLabel.style.wordBreak = 'break-word';
@@ -26254,15 +26879,17 @@ function buildBlastHitElement(hit, hitIndex, dbIndex, queryLen) {
         `Gaps = ${hsp.gaps}/${hsp.alignLen}<br>` +
         `Strand = <span class="${strandClass}">${strandLabel}</span>&nbsp;&nbsp; ` +
         `Query: ${hsp.queryStart}..${hsp.queryEnd} of ${queryLen} nt &rarr; ` +
-        `Subject: ${hsp.hitStart}..${hsp.hitEnd} of ${hit.length} nt`;
+        `Subject: ${hsp.strand === '-' ? `${hsp.hitEnd}..${hsp.hitStart}` : `${hsp.hitStart}..${hsp.hitEnd}`} of ${hit.length} nt`;
     div.appendChild(stats);
 
     // Alignment blocks
     const pre = document.createElement('pre');
     pre.className = 'blast-alignment-block';
     let alnText = '';
+    // Plus/Minus: the subject is shown reverse-complemented, so its positions count down
+    const sStep = hsp.strand === '-' ? -1 : 1;
     let qPos = hsp.queryStart;
-    let sPos = hsp.hitStart;
+    let sPos = sStep < 0 ? hsp.hitEnd : hsp.hitStart;
     const numW = Math.max(String(hsp.queryEnd).length, String(hsp.hitEnd).length, 1);
     for (let i = 0; i < hsp.querySeq.length; i += W) {
         const qBlock = hsp.querySeq.substring(i, i + W);
@@ -26271,13 +26898,13 @@ function buildBlastHitElement(hit, hitIndex, dbIndex, queryLen) {
         const qAdv = qBlock.replace(/-/g, '').length;
         const sAdv = sBlock.replace(/-/g, '').length;
         const qEnd = qPos + qAdv - 1;
-        const sEnd = sPos + sAdv - 1;
+        const sEnd = sPos + sStep * (sAdv - 1);
         const pad = ' '.repeat(7 + numW + 2);
         alnText += `Query  ${String(qPos).padStart(numW)}  ${qBlock}  ${qEnd}\n`;
         alnText += `${pad}${mBlock}\n`;
         alnText += `Sbjct  ${String(sPos).padStart(numW)}  ${sBlock}  ${sEnd}\n\n`;
         qPos = qEnd + 1;
-        sPos = sEnd + 1;
+        sPos = sEnd + sStep;
     }
     pre.textContent = alnText;
     div.appendChild(pre);
@@ -26469,7 +27096,7 @@ function buildHitDistributionDiagram(hits, queryLen, onHitClick) {
         // where the hovered bar sits in its scroll container.
         const evalueStr = (typeof hsp.evalue === 'number')
             ? (hsp.evalue < 0.001 ? hsp.evalue.toExponential(2) : hsp.evalue.toFixed(4)) : 'n/a';
-        const tipHtml = `<b>${(hit.def || hit.id).substring(0, 60)}</b><br>` +
+        const tipHtml = `<b>${_escapeHtml((hit.def || hit.id).substring(0, 60))}</b><br>` +
             `score = ${hsp.bitScore} bits &nbsp; e-value = ${evalueStr}<br>` +
             `Q ${hsp.queryStart}..${hsp.queryEnd} (${hsp.strand === '-' ? 'Plus/Minus' : 'Plus/Plus'})`;
         bar.addEventListener('mouseenter', (e) => _showBlastHitTooltip(tipHtml, e));
@@ -26603,10 +27230,10 @@ function displayBlastResults(queryName, queryLen, results) {
                     <td>${hsp.percent}%</td>
                     <td>${hsp.alignLen}</td>
                     <td>${hsp.queryStart}..${hsp.queryEnd}</td>
-                    <td>${hsp.hitStart}..${hsp.hitEnd}</td>
+                    <td>${hsp.strand === '-' ? `${hsp.hitEnd}..${hsp.hitStart}` : `${hsp.hitStart}..${hsp.hitEnd}`}</td>
                     <td>${hit.length}</td>
                     <td class="${strandCls}">${strandTxt}</td>
-                    <td class="desc">${(hit.def || hit.id).substring(0, 80)}</td>`;
+                    <td class="desc">${_escapeHtml((hit.def || hit.id).substring(0, 80))}</td>`;
                 tr.addEventListener('click', () => {
                     const target = hitsSection.querySelector(`#blast-hit-${di}-${hi}`);
                     if (target) hitsSection.scrollTop = target.offsetTop;
@@ -26797,8 +27424,8 @@ function _dotRunWorker(file, message) {
         cancel(new Error('cancelled'));
     }
     return new Promise((res, rej) => {
-        const w = file === 'word' ? (_dotWordWorker ||= new Worker('doter-word-worker.js?v=' + BUILD_TAG))
-                                  : (_dotPlotWorker ||= new Worker('doter-worker.js?v=' + BUILD_TAG));
+        const w = file === 'word' ? (_dotWordWorker ||= new Worker('doter-word-worker.js?v=' + BUILD_TAG.replace(/^v/, '')))
+                                  : (_dotPlotWorker ||= new Worker('doter-worker.js?v=' + BUILD_TAG.replace(/^v/, '')));
         const done = () => { w.removeEventListener('message', ok); w.removeEventListener('error', no);
             if (_dotWorkerJobs[file] === no) delete _dotWorkerJobs[file]; };
         const ok = (e) => { done(); if (e.data.error) { rej(new Error(e.data.error)); return; } res(e.data); };
@@ -28169,7 +28796,7 @@ function _syncTsdModeSubUI() {
 
 function _initTsdColumnDefaults() {
     if (!state.seqs?.length) return;
-    const aliLen = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLen = _maxSeqLen(state.seqs);
     const flank = parseInt(document.getElementById('tsdFlankSize')?.value, 10) || 30;
     const upEnd = document.getElementById('tsdUpEnd');
     const downStart = document.getElementById('tsdDownStart');
@@ -28199,7 +28826,7 @@ function _fillTsdRegionsFromSelection() {
         return;
     }
     const cols = [...state.selectedColumns].sort((a, b) => a - b);
-    const aliLen = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLen = _maxSeqLen(state.seqs);
     const manual = document.querySelector('input[name="tsdMode"][value="manual"]');
     if (manual) manual.checked = true;
     const upStartEl = document.getElementById('tsdUpStart');
@@ -28917,7 +29544,7 @@ function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, m
  */
 function _findTSD(seqs, mode, params) {
     const results = [];
-    const aliLen = Math.max(...seqs.map(seqObj => seqObj.seq.length));
+    const aliLen = _maxSeqLen(seqs);
     const minTsdLen = params.minLen || 4;
     const maxTsdLen = params.maxLen || 20;
     const maxDiv = (Number.isFinite(params.maxDiv) ? params.maxDiv : 20) / 100;
@@ -29090,7 +29717,7 @@ function runTsdAnalysis() {
     if (!resultsEl) return;
     const tsdMode = document.querySelector('input[name="tsdMode"]:checked')?.value || 'auto';
     const params = _readTsdParams();
-    const aliLen = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLen = _maxSeqLen(state.seqs);
 
     if (tsdMode === 'manual') {
         if (params.upStart < 1 || params.upEnd < params.upStart) {

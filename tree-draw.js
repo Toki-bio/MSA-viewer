@@ -56,7 +56,7 @@
   }
 
   function quoteName(nm) {
-    return /[\s():,;']/.test(nm) ? "'" + String(nm).replace(/'/g, "''") + "'" : nm;
+    return /[\s():,;'\[\]]/.test(nm) ? "'" + String(nm).replace(/'/g, "''") + "'" : nm;
   }
 
   // Serialise back to Newick so a re-rooted or rotated tree can be copied out.

@@ -1392,13 +1392,16 @@ check('Selection: row/column highlight follows the state after delta updates', a
 // Speed: the update itself (script + forced style/layout) for a column and for rows on ~300k
 // residue spans. Old code here: column 104-129 ms, one row ~850 ms, 150 rows ~1 s.
 // (Real clicks were slower still from hit-testing positioned spans; see styles.css.)
-check('Selection speed: column click and 150 rows on 300k spans', async (page) => {
+// Owner approved 2026-10-14: ALIGN_WINDOWED_DOM_THRESHOLD dropped from 500k to 100k residues, so a
+// full-DOM file can no longer hold 300k spans. The check now runs on the largest full-DOM size
+// (140x700 = 98k) with the same time limits.
+check('Selection speed: column click and 150 rows on 98k spans (largest full DOM)', async (page) => {
   let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
   const base = Array.from({ length: 700 }, () => 'ACGT'[rnd() % 4]);
   let fa = '';
-  for (let i = 0; i < 420; i++) fa += `>s${i}\n` + base.map(c => (rnd() % 8 === 0 ? 'ACGT-'[rnd() % 5] : c)).join('') + '\n';
+  for (let i = 0; i < 140; i++) fa += `>s${i}\n` + base.map(c => (rnd() % 8 === 0 ? 'ACGT-'[rnd() % 5] : c)).join('') + '\n';
   await page.setInputFiles('#fileInput', { name: 'big.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
-  await page.waitForFunction(() => state.seqs && state.seqs.length === 420, null, { timeout: 60000 });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 140, null, { timeout: 60000 });
   await page.waitForTimeout(3000);
   const r = await page.evaluate(async () => {
     const frames = () => new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
@@ -1407,10 +1410,10 @@ check('Selection speed: column click and 150 rows on 300k spans', async (page) =
     out.col1 = time(() => { state.selectedColumns.add(100); updateColumnSelections(); }); await frames();
     out.col2 = time(() => { state.selectedColumns.add(101); updateColumnSelections(); }); await frames();
     out.rows150 = time(() => { for (let i = 10; i < 160; i++) state.selectedRows.add(i); updateRowSelections(); }); await frames();
-    out.row1 = time(() => { state.selectedRows.add(300); updateRowSelections(); });
+    out.row1 = time(() => { state.selectedRows.add(120); updateRowSelections(); });
     return out;
   });
-  const ok = r.spans > 250000 && r.col2 < 60 && r.row1 < 300 && r.rows150 < 600;
+  const ok = r.spans > 90000 && r.col2 < 60 && r.row1 < 300 && r.rows150 < 600;
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
@@ -1453,6 +1456,8 @@ check('Highlight diffs: in-place update matches a full redraw exactly', async (p
 
 // A redraw expected to take over ~1 s says what it is doing first (it blocks the page, so the
 // notice has to be painted before it starts), and a quick one does not flash a notice.
+// Owner approved 2026-10-14: files of 100k+ residues are now windowed (no slow full redraw), so
+// the notice starts at 60k and this check uses a 140x700 (98k) full-DOM file instead of 420x700.
 check('Slow redraw: notice shown before and hidden after; none for small files', async (page) => {
   const path = require('path');
   const watch = () => page.evaluate(() => {
@@ -1473,9 +1478,9 @@ check('Slow redraw: notice shown before and hidden after; none for small files',
   let seed = 3; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
   const base = Array.from({ length: 700 }, () => 'ACGT'[rnd() % 4]);
   let fa = '';
-  for (let i = 0; i < 420; i++) fa += `>s${i}\n` + base.map(c => (rnd() % 8 === 0 ? 'ACGT-'[rnd() % 5] : c)).join('') + '\n';
+  for (let i = 0; i < 140; i++) fa += `>s${i}\n` + base.map(c => (rnd() % 8 === 0 ? 'ACGT-'[rnd() % 5] : c)).join('') + '\n';
   await page.setInputFiles('#fileInput', { name: 'big.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
-  await page.waitForFunction(() => state.seqs && state.seqs.length === 420, null, { timeout: 60000 });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 140, null, { timeout: 60000 });
   await page.waitForTimeout(3000);
   await page.evaluate(() => { window.__busy = []; });
   const big = await toggle();
@@ -3017,6 +3022,1476 @@ check('Group explorer: gather and move group never lose rows when sequence names
   });
   const ok = r.groups === 3 && r.contiguous && r.allKept && r.oneKept && r.moveKept && r.undoKept;
   return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// ---------- pre-publication audit (2026-10-14) ----------
+
+check('XSS: a sequence name with HTML is shown as text in the BLAST Search dialog', async (page) => {
+  // The dialog built its label with innerHTML from the name, so a shared FASTA or
+  // ?data= link with a name like <img onerror=...> ran script on the public site.
+  const dialogs = [];
+  page.on('dialog', d => { dialogs.push(d.message()); d.dismiss().catch(() => {}); });
+  await page.evaluate(() => { window.__xss = 0; });
+  await loadFasta(page, '>Gene<details/open/ontoggle=window.__xss=1;alert(1)>\nACGTACGTAC\n>b\nACGTTCGTAC\n');
+  await page.click('.seq-line[data-seq-index="0"] > .seq-name', { button: 'right' });
+  const item = page.locator('div', { hasText: /^BLAST Search$/ }).last();
+  await item.click();
+  await page.waitForTimeout(500);
+  const r = await page.evaluate(() => ({
+    xss: window.__xss,
+    label: [...document.querySelectorAll('.blast-dialog-content > div')].map(d => d.textContent).find(t => /^Sequence:/.test(t)) || null,
+  }));
+  const ok = r.xss === 0 && !dialogs.length && /<details/.test(r.label || '');
+  return { pass: ok, detail: JSON.stringify({ ...r, dialogs }) };
+});
+
+check('localStorage blocked by the browser: the alignment still renders', async (page) => {
+  // safeLocalGet called localStorage.removeItem inside its catch, which threw again
+  // and stopped script.js at startup: every render then failed (colourState TDZ).
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('blocked', 'SecurityError'); } });
+  });
+  await page.goto(page.url(), { waitUntil: 'networkidle' });
+  await loadFasta(page, makeFasta(5, 60));
+  const cells = await page.evaluate(() => document.querySelectorAll('#alignmentContainer .seq-line[data-seq-index]').length);
+  return { pass: cells >= 5 && !errors.length, detail: JSON.stringify({ cells, errors: errors.slice(0, 3) }) };
+});
+
+check('localStorage full: no uncaught error on load and saving a preset says why it failed', async (page) => {
+  // setItem threw QuotaExceededError uncaught on every load (createOptimalPreset)
+  // and Save preset failed silently.
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.addInitScript(() => {
+    Storage.prototype.setItem = function () { throw new DOMException('full', 'QuotaExceededError'); };
+  });
+  await page.goto(page.url(), { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+  await loadFasta(page, makeFasta(5, 60));
+  // Save Preset is in a menu panel: dispatch the button's own click handler
+  await page.evaluate(() => document.getElementById('savePresetButton').click());
+  await page.waitForTimeout(200);
+  const msg = await page.evaluate(() => document.getElementById('statusMessage')?.textContent || '');
+  return { pass: !errors.length && /storage/i.test(msg), detail: JSON.stringify({ errors: errors.slice(0, 3), msg }) };
+});
+
+check('MAFFT worker that cannot load: the error says why, not "undefined"', async (page) => {
+  // worker.onerror rejected with the ErrorEvent itself, which has no .message
+  // when the script fails to load: the status bar read "MAFFT alignment error: undefined".
+  await page.route('**/mafft-worker.js*', r => r.fulfill({ status: 404, body: 'nope' }));
+  const msg = await page.evaluate(() => _runMafftInWorker('>a\nACGT\n>b\nACGT\n', []).then(() => 'resolved', e => String(e && e.message)));
+  return { pass: /could not start/i.test(msg), detail: msg };
+});
+
+// ---------- pre-publication audit: editing (2026-10-14) ----------
+// Helpers for these checks: the centre of a residue cell / name cell on screen, in DOM
+// modes from the rendered span, in Canvas mode from the canvas metrics.
+async function auditCell(page, row, col) {
+  return page.evaluate(({ row, col }) => {
+    if (document.getElementById('modeCanvas')?.checked) {
+      const c = _canvasState.canvas, m = _canvasState.metrics, r = c.getBoundingClientRect();
+      const rp = _canvasState.rowPitch || m.charH;
+      return { x: r.left + m.nameW - _canvasState.offsetX + (col + 0.5) * m.charW, y: r.top + (m.headerH || m.charH) - _canvasState.offsetY + (row + 0.5) * rp };
+    }
+    const sp = document.querySelector(`.seq-line[data-seq-index="${row}"] .seq-data > span[data-pos="${col}"]`);
+    if (!sp) return null;
+    const b = sp.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  }, { row, col });
+}
+async function auditName(page, row) {
+  return page.evaluate((row) => {
+    if (document.getElementById('modeCanvas')?.checked) {
+      const c = _canvasState.canvas, m = _canvasState.metrics, r = c.getBoundingClientRect();
+      const rp = _canvasState.rowPitch || m.charH;
+      return { x: r.left + 12, y: r.top + (m.headerH || m.charH) - _canvasState.offsetY + (row + 0.5) * rp };
+    }
+    const n = document.querySelector(`.seq-line[data-seq-index="${row}"] > .seq-name`);
+    const b = n.getBoundingClientRect();
+    return { x: b.left + 12, y: b.top + b.height / 2 };
+  }, row);
+}
+async function auditCtrlClickName(page, row) {
+  const p = await auditName(page, row);
+  await page.keyboard.down('Control'); await page.mouse.click(p.x, p.y); await page.keyboard.up('Control');
+}
+async function auditCtrlAltDrag(page, row, c0, c1) {
+  const a = await auditCell(page, row, c0), b = await auditCell(page, row, c1);
+  await page.keyboard.down('Control'); await page.keyboard.down('Alt');
+  await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up();
+  await page.keyboard.up('Alt'); await page.keyboard.up('Control');
+}
+const auditSeqs = (page) => page.evaluate(() => state.seqs.map(s => s.header + ':' + s.seq));
+// Every rendered residue span shows its state letter (catches stale rows after an edit)
+const auditDomMismatches = (page) => page.evaluate(() => {
+  const bad = [];
+  document.querySelectorAll('.seq-line[data-seq-index]').forEach(line => {
+    const i = +line.dataset.seqIndex; if (i < 0) return;
+    const s = state.seqs[i]?.seq || '';
+    line.querySelectorAll('.seq-data > span[data-pos]').forEach(sp => {
+      const p = +sp.dataset.pos;
+      if (sp.textContent !== (s[p] ?? '') && bad.length < 5) bad.push(`r${i}c${p} dom=${sp.textContent} state=${s[p]}`);
+    });
+  });
+  return bad;
+});
+const auditBlur = (page) => page.evaluate(() => document.activeElement?.blur());
+
+check('Audit: loading a new file clears undo/redo, so Ctrl+Z cannot write the old file into the new one', async (page) => {
+  // Used to: the undo stack survived a load. After typing a residue in file 1 and loading
+  // a protein file, Ctrl+Z wrote file 1's DNA row ("ACGTACGT--") into the new file's
+  // first row, and a deletion undo brought file 1's sequences back wholesale.
+  page.on('dialog', d => d.accept());
+  await loadFasta(page, '>a\nACGTACGT\n>b\nTTTTGGGG\n>c\nGGGGCCCC\n');
+  let c = await auditCell(page, 0, 2);
+  await page.mouse.dblclick(c.x, c.y); await page.keyboard.type('N');
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  await page.click('#editToggleButton');
+  await auditCtrlClickName(page, 2);
+  await auditBlur(page);
+  await page.keyboard.press('Control+Delete'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);   // leaves one redo entry too
+  const before = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  await loadFasta(page, '>human\nMKVLAAGIVG\n>mouse\nMKVLSAGIVG\n');
+  const loaded = await auditSeqs(page);
+  await auditBlur(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(300);
+  const after = await auditSeqs(page);
+  const r = await page.evaluate(() => ({ h: state.deletedHistory.length + '/' + state.redoHistory.length, trimBackup: state.trimBackup }));
+  const pass = before !== '0/0' && JSON.stringify(after) === JSON.stringify(loaded) && r.h === '0/0' && !r.trimBackup;
+  return { pass, detail: JSON.stringify({ before, loaded, after, ...r }) };
+});
+
+check('Audit: Realign Block keeps every row\'s own residues when names share a first word', async (page) => {
+  // Used to: realign-region keyed rows by the first word of the name, so ">s1 sampleA" got
+  // the realigned region of ">s1 sampleB" - its residues silently replaced.
+  await loadFasta(page, '>s1 sampleA\nACGTAC--GTAAACCCGGGTTT\n>s1 sampleB\nTTTTGGGGCCCCAAAATTTT--\n>s2\nACGTACGTAAACCCGGGTTA--\n');
+  const ug = () => page.evaluate(() => state.seqs.map(s => s.fullHeader + ':' + s.seq.replace(/[-.]/g, '')));
+  const before = await ug();
+  await auditCtrlAltDrag(page, 0, 2, 11);
+  await page.keyboard.press('Control+Shift+R');
+  await page.waitForFunction(() => state.deletedHistory.some(e => e.type === 'realign-block'), null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const after = await ug();
+  const ran = await page.evaluate(() => state.deletedHistory.some(e => e.type === 'realign-block'));
+  return { pass: ran && JSON.stringify(after) === JSON.stringify(before), detail: JSON.stringify({ ran, before, after }) };
+});
+
+check('Audit: Realign All and Duplicate keep rows with identical names apart', async (page) => {
+  // Used to: Realign All matched MAFFT's output back by name, so the second of two rows
+  // called ">a" became a copy of the first (TTTTGGGG... lost). Duplicate (Ctrl+U) kept the
+  // original fullHeader, so exports had two identical names.
+  await loadFasta(page, '>a\nACGTACGTAAACCCGGGTTT\n>a\nTTTTGGGGCCCCAAAATTTT\n>b\nACGTACGTAAACCCGGGTTA\n');
+  const ug = () => page.evaluate(() => state.seqs.map(s => s.fullHeader + ':' + s.seq.replace(/[-.]/g, '')));
+  const before = await ug();
+  await page.evaluate(() => el('realignAllButton').click());   // the button's own handler
+  await page.waitForFunction(() => state.deletedHistory.some(e => e.type === 'realign-all'), null, { timeout: 30000 }).catch(() => {});
+  await page.waitForFunction(() => !document.getElementById('busyOverlay') || document.getElementById('busyOverlay').hidden, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const after = await ug();
+  await loadFasta(page, '>x first\nACGT\n>y\nTTTT\n');
+  await auditCtrlClickName(page, 0);
+  await auditBlur(page);
+  await page.keyboard.press('Control+u'); await page.waitForTimeout(300);
+  const dup = await page.evaluate(() => state.seqs.map(s => s.header + '|' + s.fullHeader));
+  const pass = JSON.stringify(after) === JSON.stringify(before) && dup[2] === 'x_copy|x_copy first';
+  return { pass, detail: JSON.stringify({ before, after, dup }) };
+});
+
+check('Audit: viewer shortcuts never fire while typing in a text field (search, rename box, SeqEdit)', async (page) => {
+  // Used to: the capture-phase shortcut handler let Ctrl+Z/Y/Delete/Home/Arrow through from
+  // single-line inputs. Ctrl+Z in the search box undid the alignment instead of the text;
+  // Ctrl+Delete (delete word) deleted the selected sequences; Ctrl+Z in the rename box
+  // undid a reorder and the box then saved its text onto a different sequence; and with
+  // SeqEdit open, a row change behind it made Apply overwrite another sequence.
+  const dialogs = [];
+  page.on('dialog', d => { dialogs.push(d.message()); d.accept(); });
+  await loadFasta(page, '>alpha\nACGTACGT\n>beta\nTTTTGGGG\n>gamma\nCCCCAAAA\n');
+  await auditCtrlClickName(page, 2);
+  await page.keyboard.press('Control+ArrowUp'); await page.waitForTimeout(200);   // alpha, gamma, beta
+  const moved = await auditSeqs(page);
+  const out = {};
+  // search box
+  await page.click('.section-header[data-section="search"]');   // opens the Search menu
+  await page.click('#searchInput'); await page.keyboard.type('ACG');
+  for (const k of ['Control+z', 'Control+y', 'Control+Home', 'Control+End', 'Control+ArrowDown', 'Control+Delete', 'Control+Shift+Z']) await page.keyboard.press(k);
+  out.search = JSON.stringify(await auditSeqs(page)) === JSON.stringify(moved) && dialogs.length === 0
+    && (await page.inputValue('#searchInput')) === 'ACG';
+  await page.keyboard.press('Escape');   // closes the menu
+  // rename box: Ctrl+Z is the box's own undo, and the name lands on the row it was opened on
+  let p = await auditName(page, 1);
+  await page.mouse.dblclick(p.x, p.y); await page.waitForTimeout(150);
+  await page.keyboard.press('End'); await page.keyboard.press('Backspace');
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(200);
+  await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+  out.rename = JSON.stringify(await auditSeqs(page)) === JSON.stringify(moved);
+  // SeqEdit: Ctrl+Delete in the name field deletes nothing
+  await auditBlur(page); await page.keyboard.press('Escape');   // Esc clears the selection
+  await auditCtrlClickName(page, await page.evaluate(() => state.seqs.findIndex(s => s.header === 'beta')));
+  await page.evaluate(() => el('seqEditButton').click());
+  await page.waitForTimeout(200);
+  await page.click('#seqEditNameInput'); await page.keyboard.press('End'); await page.keyboard.type('_ed');
+  await page.keyboard.press('Control+Delete'); await page.waitForTimeout(200);
+  out.seqEditKeys = (await page.evaluate(() => state.seqs.length)) === 3 && dialogs.length === 0;
+  // focus on a button of the dialog (not a text field): Ctrl+Up still reorders behind it,
+  // and Apply must still edit beta, not whatever row now has its old index
+  await page.focus('#seqEditApplyBtn');
+  await page.keyboard.press('Control+ArrowUp'); await page.waitForTimeout(200);
+  await page.click('#seqEditApplyBtn'); await page.waitForTimeout(300);
+  const fin = await auditSeqs(page);
+  out.seqEditTarget = fin.includes('beta_ed:TTTTGGGG') && fin.includes('gamma:CCCCAAAA') && fin.includes('alpha:ACGTACGT') && fin.length === 3;
+  return { pass: Object.values(out).every(Boolean), detail: JSON.stringify({ out, moved, fin, dialogs }) };
+});
+
+check('Audit: undo snapshots of a large alignment are small and fast, restore exactly, and history is capped', async (page) => {
+  // Used to: every undo entry JSON-cloned the whole alignment including the per-residue
+  // gaplessPositions arrays: ~380 ms and ~57 MB per edit at 1500 x 4000, with no cap, so a
+  // few dozen edits on a big file could exhaust the tab's memory.
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'full');
+  await page.waitForTimeout(500);
+  await auditCtrlClickName(page, 3);
+  await auditBlur(page);
+  const m0 = await page.evaluate(() => { if (window.gc) gc(); return performance.memory.usedJSHeapSize; });
+  const t0 = Date.now();
+  for (let i = 0; i < 10; i++) await page.keyboard.press(i % 2 ? 'Control+ArrowDown' : 'Control+ArrowUp');
+  await page.waitForTimeout(300);
+  const ms = Date.now() - t0;
+  const m1 = await page.evaluate(() => performance.memory.usedJSHeapSize);
+  const r = await page.evaluate(() => {
+    const e = state.deletedHistory[state.deletedHistory.length - 1];
+    return { n: state.deletedHistory.length, noDerived: e && e.seqs && e.seqs[0].gaplessPositions === undefined };
+  });
+  // undo all ten: back to the original order with correct gapless positions
+  for (let i = 0; i < 10; i++) await page.keyboard.press('Control+z');
+  await page.waitForTimeout(500);
+  const restored = await page.evaluate(() => state.seqs.slice(0, 6).map(s => s.header).join(',') === 'seq0,seq1,seq2,seq3,seq4,seq5'
+    && state.seqs.every((s, i) => i % 300 || JSON.stringify(s.gaplessPositions) === JSON.stringify(calculateGaplessPositions(s.seq))));
+  const capped = await page.evaluate(() => {
+    for (let i = 0; i < 400; i++) pushUndo('order');
+    return state.deletedHistory.length;
+  });
+  const growMB = (m1 - m0) / 1e6;
+  const pass = r.n === 10 && r.noDerived && growMB < 100 && restored && capped <= 200;
+  return { pass, detail: JSON.stringify({ ...r, ms, growMB: Math.round(growMB), restored, capped }) };
+});
+
+check('Audit: copying text in a text field copies that text, not the residue selection', async (page) => {
+  // Used to: a document 'copy' listener replaced every copy with the selected residues while
+  // a residue selection existed, so Ctrl+C in the search box or the Input box copied "CGTA".
+  await loadFasta(page, '>a\nACGTACGTAC\n>b\nTTTTGGGGCC\n');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  const a = await auditCell(page, 0, 1), b = await auditCell(page, 0, 4);
+  await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up();
+  await page.click('.section-header[data-section="search"]');   // opens the Search menu
+  await page.click('#searchInput'); await page.keyboard.type('GAATTC');
+  await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c'); await page.waitForTimeout(200);
+  const fromInput = await page.evaluate(() => navigator.clipboard.readText());
+  await page.keyboard.press('Escape');   // closes the menu
+  await auditBlur(page);
+  await page.keyboard.press('Control+c'); await page.waitForTimeout(200);
+  const fromAlignment = await page.evaluate(() => navigator.clipboard.readText());
+  return { pass: fromInput === 'GAATTC' && fromAlignment === 'CGTA', detail: JSON.stringify({ fromInput, fromAlignment }) };
+});
+
+check('Audit: selected rows stay on their sequences through Sort and Add at top', async (page) => {
+  // Used to: the row selection is a set of row numbers, and Sort / Add Sequences at top left
+  // it on the old numbers, so it jumped to other sequences (and Ctrl+Del then hit those).
+  await loadFasta(page, '>zeta\nACGTACGT\n>alpha\nTTTTGGGG\n>mid\nGGGGCCCC\n');
+  await auditCtrlClickName(page, 0);
+  const selNames = () => page.evaluate(() => [...state.selectedRows].map(i => state.seqs[i].header).sort().join(','));
+  await page.evaluate(() => el('sortByNameButton').click());   // the button's own onclick
+  await page.waitForTimeout(400);
+  const afterSort = await selNames();
+  const domSel = await page.evaluate(() => [...document.querySelectorAll('.seq-line[data-seq-index]')].filter(l => l.querySelector('.seq-name.selected') || l.classList.contains('selected')).map(l => l.dataset.seqIndex).join(','));
+  const zetaRow = await page.evaluate(() => String(state.seqs.findIndex(s => s.header === 'zeta')));
+  await page.evaluate(() => { el('addSeqInput').value = '>new\nAAAACCCC'; el('addSeqAtTop').checked = true; el('addSeqAlignCons').checked = false; el('addSeqJustAddButton').click(); });
+  await page.waitForTimeout(400);
+  const afterAdd = await selNames();
+  return { pass: afterSort === 'zeta' && domSel === zetaRow && afterAdd === 'zeta', detail: JSON.stringify({ afterSort, domSel, zetaRow, afterAdd }) };
+});
+
+check('Audit: hard trim is undoable with Ctrl+Z, and Undo Trim is itself undoable', async (page) => {
+  // Used to: Execute (hard trim) pushed no undo entry, and the separate Undo Trim button
+  // restored the pre-trim copy silently, throwing away every edit made after the trim.
+  page.on('dialog', d => d.accept());
+  const orig = ['a:----ACGTACGTAC----', 'b:---TACGTTCGTAC--T-', 'c:-----AGTACGTAC----'];
+  await loadFasta(page, orig.map(x => '>' + x.replace(':', '\n')).join('\n') + '\n');
+  await page.evaluate(() => el('previewTrimButton').click());
+  await page.evaluate(() => el('executeTrimButton').click()); await page.waitForTimeout(500);
+  const trimmed = await auditSeqs(page);
+  await auditBlur(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  const undone = await auditSeqs(page);
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(400);
+  const redone = await auditSeqs(page);
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Delete'); await page.waitForTimeout(300);
+  await page.evaluate(() => el('undoTrimButton').click()); await page.waitForTimeout(400);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  const backToEdited = await auditSeqs(page);
+  const pass = JSON.stringify(undone) === JSON.stringify(orig) && JSON.stringify(redone) === JSON.stringify(trimmed)
+    && trimmed[0] !== orig[0] && backToEdited.length === 2 && backToEdited[0] === trimmed[0];
+  return { pass, detail: JSON.stringify({ trimmed, undone, redone, backToEdited }) };
+});
+
+check('Audit: Ctrl+Shift+Z redoes (it used to undo again)', async (page) => {
+  // Used to: case 'z' ignored Shift, so Ctrl+Shift+Z / Cmd+Shift+Z (the usual redo, the
+  // only one on macOS) undid one more step instead.
+  await loadFasta(page, '>a\nACGT\n>b\nTTTT\n>c\nGGGG\n');
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Home'); await page.waitForTimeout(150);
+  const moved = await auditSeqs(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(150);
+  await page.keyboard.press('Control+Shift+Z'); await page.waitForTimeout(150);
+  const a = await auditSeqs(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(150);
+  await page.keyboard.press('Meta+Shift+Z'); await page.waitForTimeout(150);
+  const b = await auditSeqs(page);
+  return { pass: JSON.stringify(a) === JSON.stringify(moved) && JSON.stringify(b) === JSON.stringify(moved), detail: JSON.stringify({ moved, a, b }) };
+});
+
+check('Audit: right-click Rename uses the rename box (Esc cancels, Enter saves) in Full, Block and Canvas', async (page) => {
+  // Used to: the context-menu Rename had its own older editor. Esc re-rendered, the input
+  // blurred and the blur SAVED the name; in Canvas mode the input was put inside the
+  // <canvas> element, 0x0 and invisible, and renaming did nothing.
+  const out = {};
+  for (const mode of ['full', 'block', 'canvas']) {
+    await loadFasta(page, '>alpha\nACGTACGT\n>beta\nTTTTGGGG\n');
+    await setMode(page, mode);
+    const open = async () => {
+      const p = await auditName(page, 1);
+      await page.mouse.click(p.x, p.y, { button: 'right' }); await page.waitForTimeout(150);
+      await page.evaluate(() => [...document.querySelectorAll('.context-menu div')].find(d => d.textContent === 'Rename sequence').click());
+      await page.waitForTimeout(150);
+    };
+    await open();
+    const box = await page.evaluate(() => { const a = document.activeElement; const r = a.getBoundingClientRect(); return a.tagName === 'INPUT' && r.width > 20 && r.height > 8; });
+    await page.keyboard.press('Control+a'); await page.keyboard.type('XYZ'); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    const esc = (await auditSeqs(page))[1];
+    await open();
+    await page.keyboard.press('Control+a'); await page.keyboard.type('B2'); await page.keyboard.press('Enter'); await page.waitForTimeout(200);
+    const ent = (await auditSeqs(page))[1];
+    out[mode] = { box, esc, ent, left: await page.evaluate(() => !!document.querySelector('.seq-name-edit')) };
+  }
+  const pass = Object.values(out).every(o => o.box && o.esc === 'beta:TTTTGGGG' && o.ent === 'B2:TTTTGGGG' && !o.left);
+  return { pass, detail: JSON.stringify(out) };
+});
+
+check('Audit: edits that change nothing add no undo entry and keep the redo list', async (page) => {
+  // Used to: Ctrl+Up on the top row (and Ctrl+Down on the last, Ctrl+Home/End when already
+  // there, a gap tool click that changed nothing) pushed an undo entry first, so the history
+  // filled with phantom steps and the redo list was wiped.
+  await loadFasta(page, '>a\nACGT--\n>b\nTTTT--\n>c\nGGGG--\n');
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Home'); await page.keyboard.press('Control+Home');   // the 2nd is a no-op
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(200);
+  // one undo takes c back to the bottom (the no-op added no step): history 0, redo 1. Now
+  // more no-op moves:
+  const h0 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  await page.keyboard.press('Control+ArrowDown'); await page.keyboard.press('Control+End');
+  await auditCtrlClickName(page, 2); await auditCtrlClickName(page, 0);   // only row 0
+  await page.keyboard.press('Control+ArrowUp'); await page.keyboard.press('Control+Home');
+  const h1 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  // Ins Gap Seq inside the trailing gap run changes nothing
+  await page.click('#editToggleButton'); await page.click('#editInsertGapButton');
+  const c = await auditCell(page, 1, 5); await page.mouse.click(c.x, c.y); await page.waitForTimeout(200);
+  const h2 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  // Realign All declined at MAFFT's large-job prompt (no dialog handler: Playwright
+  // dismisses it) changes nothing either
+  await loadFasta(page, makeFasta(100, 3000));
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Home'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  const h3 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  await page.evaluate(() => el('realignAllButton').click()); await page.waitForTimeout(500);
+  const h4 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  return { pass: h0 === '0/1' && h1 === h0 && h2 === h0 && h3 === '0/1' && h4 === h3, detail: JSON.stringify({ h0, h1, h2, h3, h4 }) };
+});
+
+check('Audit: switching from Canvas to Full and deleting rows raises no error from the Canvas shading job', async (page) => {
+  // Used to: the Canvas deferred shading job kept a reference to state.seqs and was only
+  // cancelled by the next Canvas render; after a switch to Full, a row delete spliced the
+  // array under it and it threw "Cannot read properties of undefined (reading 'seq')".
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('dialog', d => d.accept());
+  await loadSyntheticFasta(page, 1500, 4000);   // opens in Canvas (above CANVAS_AUTO_THRESHOLD)
+  await setMode(page, 'full');
+  await auditCtrlClickName(page, 2); await auditCtrlClickName(page, 3); await auditBlur(page);
+  await page.keyboard.press('Control+Delete');
+  await page.waitForTimeout(3000);
+  const n = await page.evaluate(() => state.seqs.length);
+  return { pass: errors.length === 0 && n === 1498, detail: JSON.stringify({ n, errors }) };
+});
+
+check('Audit: windowed Block mode repaints a typed residue on undo/redo after scrolling away and back', async (page) => {
+  // Used to: rows the windowed Block renderer rebuilt while edit mode was on were not in the
+  // span cache, and undo/redo of a typed residue repaints only cached rows: after Ctrl+Z off
+  // screen, scrolling back and Ctrl+Y, the cell still showed the old letter.
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'block');
+  await page.waitForTimeout(600);
+  const c = await auditCell(page, 3, 4);
+  await page.mouse.dblclick(c.x, c.y); await page.waitForTimeout(150);
+  await page.keyboard.type('N'); await page.keyboard.press('Escape');
+  await page.evaluate(() => { el('alignmentContainer').scrollTop = 20000; }); await page.waitForTimeout(800);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  await page.evaluate(() => { el('alignmentContainer').scrollTop = 0; }); await page.waitForTimeout(800);
+  const afterUndo = await auditDomMismatches(page);
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(400);
+  const afterRedo = await auditDomMismatches(page);
+  const st = await page.evaluate(() => state.seqs[3].seq[4]);
+  return { pass: st === 'N' && !afterUndo.length && !afterRedo.length, detail: JSON.stringify({ st, afterUndo, afterRedo }) };
+});
+
+check('Audit: SeqEdit Apply with "Pad/trim" never cuts residues', async (page) => {
+  // Used to: with the default "Pad/trim to alignment length", inserting residues in SeqEdit
+  // cut the sequence back to the alignment width, dropping its last residues (GT lost).
+  await loadFasta(page, '>a\nACGTACGT\n>b\nTTTTGG--\n');
+  await auditCtrlClickName(page, 0);
+  await page.evaluate(() => el('seqEditButton').click()); await page.waitForTimeout(200);
+  await page.evaluate(() => { const t = el('seqEditTextarea'); const p = t.value.indexOf('\n') + 1; t.focus(); t.setSelectionRange(p, p); });
+  await page.keyboard.type('TT');
+  await page.click('#seqEditApplyBtn'); await page.waitForTimeout(300);
+  const r = await page.evaluate(() => state.seqs.map(s => s.seq));
+  // a shorter edit is still padded, and only trailing gaps are trimmed
+  await auditCtrlClickName(page, 0); await auditCtrlClickName(page, 1);
+  await page.evaluate(() => el('seqEditButton').click()); await page.waitForTimeout(200);
+  await page.evaluate(() => { const t = el('seqEditTextarea'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); });
+  await page.keyboard.type('----');
+  await page.click('#seqEditApplyBtn'); await page.waitForTimeout(300);
+  const r2 = await page.evaluate(() => state.seqs.map(s => s.seq));
+  const pass = r[0] === 'TTACGTACGT' && r[1] === 'TTTTGG----' && r2[1] === 'TTTTGG----';
+  return { pass, detail: JSON.stringify({ r, r2 }) };
+});
+
+check('Audit: Degap block moves the residue selection right of the block with its residues', async (page) => {
+  // Used to: Degap block removed the columns it emptied without telling the column-keyed
+  // state (applyColumnEdit), so a residue selection to the right slid onto other residues.
+  await loadFasta(page, '>a\nAC--GTTTGCATGCA\n>b\nA-C-GTTTGCATGCA\n>c\nAC-GTTTGCATGCA-\n');
+  const sel = () => page.evaluate(() => [...state.selectedNucs].map(([r, s]) => r + ':' + [...s].sort((x, y) => x - y).map(c => state.seqs[r].seq[c]).join('')).join());
+  const a = await auditCell(page, 0, 8), b = await auditCell(page, 0, 11);
+  await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up();
+  const before = await sel();
+  await auditCtrlAltDrag(page, 0, 1, 3);
+  await page.evaluate(() => el('degapBlockLeftButton').click()); await page.waitForTimeout(300);
+  const after = await sel();
+  return { pass: before === '0:GCAT' && after === '0:GCAT', detail: JSON.stringify({ before, after, seqs: await auditSeqs(page) }) };
+});
+
+check('Audit: Just Add of a sequence longer than the alignment keeps it rectangular', async (page) => {
+  // Used to: only shorter new sequences were padded; a longer one left every other row short.
+  await loadFasta(page, '>a\nACGTACGT\n>b\nTTTTGGGG\n');
+  await page.evaluate(() => { el('addSeqInput').value = '>long\nAAAACCCCGGGGTTTT'; el('addSeqAtTop').checked = false; el('addSeqAlignCons').checked = false; el('addSeqJustAddButton').click(); });
+  await page.waitForTimeout(400);
+  const lens = await page.evaluate(() => state.seqs.map(s => s.seq.length));
+  return { pass: lens.join() === '16,16,16', detail: lens.join() };
+});
+
+check('Audit: deleting every sequence or every column is refused', async (page) => {
+  // Used to: the guard only stopped deleting when exactly one sequence was left, so Ctrl+A,
+  // Ctrl+Del emptied the alignment; deleting all columns left zero-length sequences.
+  page.on('dialog', d => d.accept());
+  await loadFasta(page, '>a\nACGT\n>b\nTTTT\n>c\nGGGG\n');
+  await auditBlur(page);
+  await page.keyboard.press('Control+a'); await page.keyboard.press('Control+Delete'); await page.waitForTimeout(300);
+  const n = await page.evaluate(() => state.seqs.length);
+  await page.keyboard.press('Control+a');   // deselect all
+  await auditCtrlAltDrag(page, 0, 0, 3);
+  await page.keyboard.press('Control+d'); await page.waitForTimeout(300);
+  const w = await page.evaluate(() => state.seqs[0].seq.length);
+  return { pass: n === 3 && w === 4, detail: JSON.stringify({ n, w }) };
+});
+
+// ============================================================================
+// pre-publication audit: UI (2026-10-14)
+// ============================================================================
+const _auditFs = require('fs');
+const _auditPath = require('path');
+const _auditSvk = () => _auditFs.readFileSync(_auditPath.join(__dirname, '..', '..', 'examples', 'svk_k4.fa'), 'utf8');
+// Opens a top menu the way a mouse does (hovering its header) and clicks one of its buttons.
+async function _auditMenuClick(page, section, buttonId) {
+  await page.hover(`.section-header[data-section="${section}"]`);
+  await page.waitForTimeout(150);
+  await page.click('#' + buttonId);
+}
+const _auditToast = (page) => page.evaluate(() => {
+  const s = document.getElementById('statusMessage');
+  return getComputedStyle(s).display !== 'none' ? s.textContent.trim() : '';
+});
+const _auditHideToast = (page) => page.evaluate(() => { document.getElementById('statusMessage').style.display = 'none'; });
+
+// Reverse complement on a protein alignment used to turn every row into IUPAC nonsense
+// (RRLRTAFT... became YMNMKYYN...) and report "Reverse complement applied"; the MACSE
+// codon preset was likewise accepted on protein. Both must refuse with a message.
+// (Writing this check also showed that an earlier toast's hide timer hid a newer toast
+// early: the MACSE message vanished at once. showMessage now keeps one timer.)
+check('audit UI: reverse complement and the MACSE preset refuse a protein alignment', async (page) => {
+  await loadFasta(page, makeFasta(6, 60, 'ACDEFGHIKLMNPQRSTVWY'));
+  const seqs = () => page.evaluate(() => state.seqs.map(s => s.seq).join('|'));
+  const before = await seqs();
+  await _auditMenuClick(page, 'actions', 'reverseComplementAllButton');
+  await page.waitForTimeout(300);
+  const allMsg = await _auditToast(page);
+  const afterAll = await seqs();
+  await page.mouse.move(700, 600);
+  await page.click('.seq-line[data-seq-index="0"] .seq-name', { modifiers: ['Control'] });
+  await _auditHideToast(page);
+  await page.keyboard.press('Control+r');
+  await page.waitForTimeout(300);
+  const ctrlRMsg = await _auditToast(page);
+  const afterCtrlR = await seqs();
+  await _auditHideToast(page);
+  await _auditMenuClick(page, 'alignment', 'macsePresetButton');
+  await page.waitForTimeout(300);
+  const macse = { type: await page.evaluate(() => el('mafftSeqType').value), msg: await _auditToast(page) };
+  const pass = afterAll === before && afterCtrlR === before && /nucleotide/i.test(allMsg) && /nucleotide/i.test(ctrlRMsg)
+    && macse.type !== 'codon' && /nucleotide/i.test(macse.msg);
+  return { pass, detail: JSON.stringify({ allMsg, ctrlRMsg, changedAll: afterAll !== before, changedCtrlR: afterCtrlR !== before, macse }) };
+});
+
+// The Clusterability window hid its whole header-button row, × included, so only Esc
+// closed it (and nothing said so); it opened off-centre and ran past the bottom of a
+// 1366x768 screen with overflow hidden, so the last rows and the footnote were unreachable.
+check('audit UI: Clusterability window has a close button, fits the screen and scrolls', async (page) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await loadFasta(page, _auditSvk());
+  await page.hover('.section-header[data-section="clustering"]');
+  await page.waitForTimeout(150);
+  await page.click('#clustering-controls summary:has-text("Presets")');
+  await page.click('#clusteringProbeButton');
+  await page.waitForFunction(() => /already the best|best of|tried/i.test(el('clusteringModal').textContent) && !/run \d+ of/i.test(el('clusteringStatus')?.textContent || ''), null, { timeout: 30000 });
+  await page.waitForTimeout(800);
+  const geo = await page.evaluate(() => {
+    const m = el('clusteringModal'), r = m.getBoundingClientRect();
+    const x = el('clusteringModalClose'), xr = x.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right), vh: innerHeight, vw: innerWidth,
+      closeVisible: xr.width > 0 && getComputedStyle(x).visibility !== 'hidden' && xr.top >= 0 && xr.bottom <= innerHeight };
+  });
+  // the footnote under the table can be scrolled into view with the mouse wheel
+  const rows = await page.$$('#clusteringModal tr');
+  const last = rows[rows.length - 1];
+  const box = await page.evaluate(() => { const r = el('clusteringModal').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.move(box.x, box.y);
+  for (let i = 0; i < 10; i++) { await page.mouse.wheel(0, 300); await page.waitForTimeout(50); }
+  const lastBottom = await last.evaluate(n => Math.round(n.getBoundingClientRect().bottom));
+  let closed = false;
+  if (geo.closeVisible) { await page.click('#clusteringModalClose'); closed = await page.evaluate(() => el('clusteringModal').style.display === 'none'); }
+  const pass = geo.closeVisible && closed && geo.top >= 0 && geo.bottom <= geo.vh && geo.left >= 0 && geo.right <= geo.vw && lastBottom <= geo.vh;
+  return { pass, detail: JSON.stringify({ ...geo, lastRowBottom: lastBottom, closed }) };
+});
+
+// Two Actions tooltips named keys that do not do what they say: Save Preset said Ctrl+S
+// (the key is Ctrl+Shift+S; Ctrl+S opens the browser's Save Page) and New Tab said Ctrl+T
+// (Chrome keeps Ctrl+T; the key is Alt+T), contradicting the Keys panel and the Manual.
+check('audit UI: Actions tooltips name the real shortcuts', async (page) => {
+  const t = await page.evaluate(() => [el('savePresetButton').title, el('openInNewTabButton').title]);
+  const pass = /Ctrl\+Shift\+S/.test(t[0]) && /Alt\+T/.test(t[1]) && !/Ctrl\+T/.test(t[1]);
+  return { pass, detail: JSON.stringify(t) };
+});
+
+// Toasts (#statusMessage, z-index 1000) were drawn under every window (z-index 10000+),
+// so e.g. "Newick copied." after Copy Newick in the Tree window was invisible.
+check('audit UI: a toast shows above an open window', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  await _auditMenuClick(page, 'actions', 'buildTreeButton');
+  await page.waitForFunction(() => el('treeBuilderModal').style.display !== 'none', null, { timeout: 10000 });
+  await page.waitForTimeout(500);
+  await page.click('#treeBuilderModal button:has-text("Copy Newick")');
+  await page.waitForTimeout(200);
+  const r = await page.evaluate(() => {
+    const s = el('statusMessage');
+    if (getComputedStyle(s).display === 'none') return { shown: false };
+    const rc = s.getBoundingClientRect();
+    s.style.pointerEvents = 'auto';   // hit-test only: the toast itself ignores the mouse
+    const top = document.elementFromPoint(rc.left + rc.width / 2, rc.top + rc.height / 2);
+    s.style.pointerEvents = '';
+    return { shown: true, text: s.textContent, onTop: top === s || s.contains(top), topmost: top && (top.id || top.className) };
+  });
+  return { pass: r.shown && r.onTop, detail: JSON.stringify(r) };
+});
+
+// At 1024px wide the Alignment menu (x 755..1225) ran off the right edge, cutting
+// "Realign Selected", "Degap block →" and the Gap extension box.
+check('audit UI: a menu that would run off the right edge stays on screen (1024px)', async (page) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await loadFasta(page, makeFasta(8, 120));
+  const out = {};
+  for (const sec of ['alignment', 'colourseqs', 'search', 'clustering']) {
+    await page.mouse.move(500, 700);
+    await page.hover(`.section-header[data-section="${sec}"]`);
+    await page.waitForTimeout(200);
+    out[sec] = await page.evaluate(sec => {
+      const g = document.querySelector(`.section-header[data-section="${sec}"]`).closest('.menu-section').querySelector('.control-group');
+      const r = g.getBoundingClientRect();
+      return [Math.round(r.left), Math.round(r.right)];
+    }, sec);
+  }
+  const pass = Object.values(out).every(([l, r]) => l >= 0 && r <= 1024);
+  return { pass, detail: JSON.stringify(out) };
+});
+
+// There was no print stylesheet: the fixed menu bar printed over the first block (ruler
+// and consensus hidden) and the conservation shading backgrounds were dropped, leaving
+// white-on-white residues.
+check('audit UI: printing hides the menu bar and keeps residue shading', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  await page.emulateMedia({ media: 'print' });
+  const r = await page.evaluate(() => ({
+    controls: getComputedStyle(el('controls')).display,
+    adjust: getComputedStyle(document.body).printColorAdjust || getComputedStyle(document.body).webkitPrintColorAdjust,
+  }));
+  await page.emulateMedia({ media: 'screen' });
+  return { pass: r.controls === 'none' && r.adjust === 'exact', detail: JSON.stringify(r) };
+});
+
+// These buttons did nothing visible when there was nothing to act on (other buttons in
+// the same menus say "No sequences selected."), and Clustering > Load got the click event
+// as its `silent` argument, so loading a preset never said it had.
+check('audit UI: buttons with nothing to act on say so', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  const out = {};
+  const tryBtn = async (section, id, before) => {
+    await page.mouse.move(700, 700);
+    await page.waitForTimeout(100);
+    if (before) await before();
+    await _auditHideToast(page);
+    await _auditMenuClick(page, section, id);
+    await page.waitForTimeout(300);
+    out[id] = await _auditToast(page);
+  };
+  for (const id of ['copySelectedButton', 'duplicateButton', 'moveUpButton', 'moveDownButton', 'moveToTopButton', 'moveToBottomButton']) await tryBtn('actions', id);
+  await tryBtn('search', 'searchButton');
+  await tryBtn('search', 'reverseComplementQueryButton');
+  await tryBtn('annotation', 'annotUrlButton');
+  await tryBtn('clustering', 'clusteringLoadPresetButton', async () => {
+    await page.hover('.section-header[data-section="clustering"]');
+    await page.waitForTimeout(150);
+    await page.click('#clustering-controls summary:has-text("Presets")');
+  });
+  // Up with the first row already at the top
+  await page.mouse.move(700, 700);
+  await page.click('.seq-line[data-seq-index="0"] .seq-name', { modifiers: ['Control'] });
+  await tryBtn('actions', 'moveUpButton');
+  out.upAtTop = out.moveUpButton;
+  const silent = Object.entries(out).filter(([, v]) => !v).map(([k]) => k);
+  return { pass: silent.length === 0, detail: silent.length ? `silent: ${silent.join(', ')}` : JSON.stringify(out) };
+});
+
+// Esc closed every window except the Sequence Editor (focus lands in its text box, and
+// Esc in a text field was left to the field). It now closes on Esc while nothing in it
+// has been changed; with edits, Esc keeps it open so they are not lost.
+check('audit UI: Sequence Editor closes on Esc when unchanged', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  const shown = () => page.evaluate(() => el('seqEditModal').style.display !== 'none');
+  await _auditMenuClick(page, 'actions', 'seqEditButton');
+  await page.waitForTimeout(300);
+  const opened = await shown();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  const closedUnchanged = !(await shown());
+  await _auditMenuClick(page, 'actions', 'seqEditButton');
+  await page.waitForTimeout(300);
+  await page.click('#seqEditTextarea');
+  await page.keyboard.type('ACGT');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  const keptEdited = await shown();
+  return { pass: opened && closedUnchanged && keptEdited, detail: JSON.stringify({ opened, closedUnchanged, keptEdited }) };
+});
+
+// Opening Info or the Tree window from the Actions menu and closing it with Esc left
+// keyboard focus on <body>: the opener sits in a menu that has closed, so the focus
+// return had nowhere to go. It now goes back to the menu's header.
+check('audit UI: closing Info or the Tree window gives focus back to the Actions menu', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  const out = {};
+  for (const id of ['infoButton', 'buildTreeButton']) {
+    await page.focus('.section-header[data-section="actions"]');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    await page.focus('#' + id);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(1200);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    out[id] = await page.evaluate(() => { const a = document.activeElement; return a.id || a.dataset?.section || a.tagName; });
+  }
+  const ok = v => v === 'actions' || v === 'infoButton' || v === 'buildTreeButton';
+  return { pass: ok(out.infoButton) && ok(out.buildTreeButton), detail: JSON.stringify(out) };
+});
+
+// The first screen was one line of text with no example; on a phone that line did not
+// wrap and got its own horizontal scrollbar. It wraps now and offers an example alignment.
+check('audit UI: empty state wraps on a phone and loads the example alignment', async (page) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload({ waitUntil: 'networkidle' });
+  const r = await page.evaluate(() => { const c = el('alignmentContainer'); return { sw: c.scrollWidth, cw: c.clientWidth }; });
+  const link = await page.$('#alignmentContainer a:has-text("example")');
+  let loaded = 0;
+  if (link) {
+    await link.click();
+    await page.waitForFunction(() => typeof state !== 'undefined' && state.seqs.length > 0, null, { timeout: 15000 }).catch(() => {});
+    loaded = await page.evaluate(() => typeof state !== 'undefined' ? state.seqs.length : 0);
+  }
+  return { pass: r.sw <= r.cw && !!link && loaded === 40, detail: JSON.stringify({ ...r, link: !!link, loaded }) };
+});
+
+// The Input menu showed the snapshot-folder rows (list, Refresh, Open, path box, Open
+// Path) on the public site, where there is no server and the manifest is empty, so they
+// could only ever say "nothing found". They show only when a server or manifest lists files.
+check('audit UI: snapshot-folder rows hidden when nothing can be listed', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  await page.waitForTimeout(1500);   // the server probe and the manifest fetch have answered
+  await page.hover('.section-header[data-section="input"]');
+  await page.waitForTimeout(200);
+  const r = await page.evaluate(() => {
+    const vis = id => !!el(id) && el(id).getClientRects().length > 0;
+    return { list: vis('snapshotListSelect'), path: vis('snapshotPathInput'), create: vis('snapshotCreateTopButton'), svg: vis('exportSvgTopButton') };
+  });
+  return { pass: !r.list && !r.path && r.create && r.svg, detail: JSON.stringify(r) };
+});
+
+// A shared link to the app had no description or preview.
+check('audit UI: page has a description and social preview tags', async (page) => {
+  const r = await page.evaluate(() => ['meta[name="description"]', 'meta[property="og:title"]', 'meta[property="og:description"]', 'meta[property="og:image"]']
+    .map(s => (document.querySelector(s)?.getAttribute('content') || '').length > 0));
+  return { pass: r.every(Boolean), detail: JSON.stringify(r) };
+});
+
+// The ruler's numbers drifted off their columns along a long alignment: a residue is an
+// inline-block, whose width the browser rounds up to its layout unit (Courier New 13px: a
+// 7.8013px glyph makes a 7.8125px cell), while the ruler is one run of text advancing the
+// unrounded 7.8013px. By column 3700 the labels sat ~5 columns left of the column they name;
+// windowed views drifted the same way inside their window. Each label's last digit must sit
+// over its column, at 100% and another zoom, in Full, windowed Full and Block.
+async function rulerOffsets(page) {
+  return page.evaluate(() => {
+    const out = [];
+    const c = el('alignmentContainer'), cr = c.getBoundingClientRect();
+    for (const ruler of c.querySelectorAll('.scale-ruler-line .seq-data')) {
+      let line = ruler.parentElement.nextElementSibling;
+      while (line && !(line.matches('.seq-line[data-seq-index]') && +line.dataset.seqIndex >= 0)) line = line.nextElementSibling;
+      if (!line) continue;
+      const w = document.createTreeWalker(ruler, NodeFilter.SHOW_TEXT);
+      const text = []; let node;
+      while ((node = w.nextNode())) text.push(node);
+      // labels as one string over the text nodes (a node per character in Highlight-diffs mode)
+      const chars = text.flatMap(n => [...n.data].map((ch, i) => ({ n, i, ch })));
+      const str = chars.map(x => x.ch).join('');
+      const re = /\d+/g; let m;
+      while ((m = re.exec(str))) {
+        const last = chars[m.index + m[0].length - 1];
+        const rg = document.createRange(); rg.setStart(last.n, last.i); rg.setEnd(last.n, last.i + 1);
+        const q = rg.getBoundingClientRect();
+        if (q.right < cr.left + 150 || q.left > cr.right) continue;
+        const sp = line.querySelector(`.seq-data > span[data-pos="${+m[0] - 1}"]`);
+        if (sp) out.push([+m[0], Math.round((q.right - sp.getBoundingClientRect().right) * 10) / 10]);
+      }
+    }
+    return out;
+  });
+}
+check('Ruler: every label sits over its column along a long alignment (Full, windowed Full, Block, zoomed)', async (page) => {
+  const out = {};
+  const worst = a => a.reduce((m, [, d]) => Math.max(m, Math.abs(d)), 0);
+  await loadFasta(page, makeFasta(10, 5000));
+  await setMode(page, 'full');
+  for (const col of [0, 2500, 4300]) {
+    await page.evaluate((col) => { const c = el('alignmentContainer'); c.scrollLeft = col * _measureCharWidth(); }, col);
+    await page.waitForTimeout(300);
+    const r = await rulerOffsets(page); out['full@' + col] = [r.length, worst(r)];
+  }
+  await page.evaluate(() => setZoom(150)); await page.waitForTimeout(800);
+  await page.evaluate(() => { const c = el('alignmentContainer'); c.scrollLeft = c.scrollWidth; });
+  await page.waitForTimeout(300);
+  let r = await rulerOffsets(page); out.zoom150 = [r.length, worst(r)];
+  await page.evaluate(() => setZoom(100)); await page.waitForTimeout(500);
+  await setMode(page, 'block'); await page.waitForTimeout(300);
+  r = await rulerOffsets(page); out.block = [r.length, worst(r)];
+  await loadSyntheticFasta(page, 1500, 4000); await setMode(page, 'full'); await page.waitForTimeout(1000);
+  await page.evaluate(() => { const c = el('alignmentContainer'); c.scrollLeft = 3500 * _measureCharWidth(); });
+  await page.waitForTimeout(1000);
+  r = await rulerOffsets(page); out.windowed = [r.length, worst(r)];
+  const ok = Object.values(out).every(([n, d]) => n >= 3 && d <= 1);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Scrolled all the way right, the end of the alignment stayed out of reach: in windowed Full the
+// rows ended exactly at the container's edge, under the 14px vertical scrollbar, so the last two
+// columns sat beneath it and the length labels (outside the row's layout box) could not be scrolled
+// to at all; Canvas mode ended its content under the same bar. In small Full mode the horizontal
+// bar's range was a few px short of the alignment's (bar 2px wider than the alignment's viewport,
+// and rows painted after the bar measured made the alignment wider): the labels showed one digit.
+async function dragBarToEnd(page, sel) {
+  const b = await page.evaluate((sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }, sel);
+  const horizontal = sel.includes('horizontal');
+  const x = b[0] + 6, y = b[1] + 6;
+  await page.mouse.move(x, y); await page.mouse.down();
+  for (let k = 1; k <= 8; k++) await page.mouse.move(horizontal ? x + k * 500 : x, horizontal ? y : y + k * 500);
+  await page.mouse.up(); await page.waitForTimeout(600);
+}
+const END_STATE = () => {
+  const c = el('alignmentContainer'), cr = c.getBoundingClientRect();
+  const vb = document.querySelector('.vertical-scrollbar');
+  const vLeft = getComputedStyle(vb).display !== 'none' ? vb.getBoundingClientRect().left : cr.right - 1;
+  const lines = [...c.querySelectorAll('.seq-line[data-seq-index]')].filter(l => { const q = l.getBoundingClientRect(); return +l.dataset.seqIndex >= 0 && q.top >= cr.top && q.bottom <= cr.bottom; });
+  const right = sel => Math.max(...lines.map(l => { const s = l.querySelectorAll(sel); return s.length ? s[s.length - 1].getBoundingClientRect().right : -1e9; }));
+  return { rows: lines.length, lastCol: Math.round(right('.seq-data > span[data-pos]')), label: Math.round(right('.seq-length')), visibleRight: Math.round(Math.min(vLeft, cr.right - 1)) };
+};
+check('Scrolled to the end: the last column and the length labels clear the scrollbars (Full, windowed Full, Canvas)', async (page) => {
+  const out = {};
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await loadFasta(page, makeFasta(60, 800)); await setMode(page, 'full'); await page.waitForTimeout(800);
+  await dragBarToEnd(page, '.horizontal-scrollbar');
+  out.full = await page.evaluate(END_STATE);
+  await loadSyntheticFasta(page, 1500, 4000); await setMode(page, 'full'); await page.waitForTimeout(1200);
+  await dragBarToEnd(page, '.horizontal-scrollbar'); await dragBarToEnd(page, '.vertical-scrollbar');
+  out.windowed = await page.evaluate(END_STATE);
+  await setMode(page, 'canvas'); await page.waitForTimeout(800);
+  await dragBarToEnd(page, '.horizontal-scrollbar'); await dragBarToEnd(page, '.vertical-scrollbar');
+  out.canvas = await page.evaluate(() => {
+    const m = _canvasState.metrics, cv = el('alignmentCanvas').getBoundingClientRect();
+    const vb = document.querySelector('.vertical-scrollbar').getBoundingClientRect();
+    const len = state.seqs[0].seq.length;
+    return { lastCol: Math.round(cv.left + m.nameW + len * m.charW - _canvasState.offsetX), visibleRight: Math.round(vb.left) };
+  });
+  const fits = s => s.lastCol > 0 && s.lastCol <= s.visibleRight && (s.label === undefined || (s.label > 0 && s.label <= s.visibleRight));
+  return { pass: out.full.rows > 5 && out.windowed.rows > 5 && fits(out.full) && fits(out.windowed) && fits(out.canvas), detail: JSON.stringify(out) };
+});
+
+// ---------- pre-publication audit: rendering (2026-10-14) ----------
+
+// Switches view mode the way a user does: the Display menu's Mode radio, then the
+// "Full mode on a large alignment" dialog if it comes up (shared helper setMode only waits
+// for that dialog near ALIGN_CRAZY_VOLUME, so on a tall or long alignment the switch could
+// still be pending when a check read the view).
+async function auditClickMode(page, mode) {
+  const id = { full: 'modeSingle', block: 'modeBlocks', canvas: 'modeCanvas' }[mode];
+  const open = await page.evaluate(() => document.querySelector('.section-header[data-section="display"]').closest('.menu-section').classList.contains('menu-open'));
+  if (!open) await page.click('.section-header[data-section="display"]');
+  await page.click('#' + id);
+  const dlg = await page.waitForSelector('#alignLoadProceed', { timeout: 1500 }).then(() => true).catch(() => false);
+  if (dlg) await page.click('#alignLoadProceed');
+  await page.waitForTimeout(700);
+  await page.click('.section-header[data-section="display"]');   // close the menu again
+  // and move off it: menus also open on hover, and a wheel over the open menu scrolls nothing
+  await page.mouse.move(5, Math.round((await page.evaluate(() => innerHeight)) * 0.66));
+  await page.waitForTimeout(400);
+}
+async function auditOpenSection(page, name) {
+  const open = await page.evaluate((n) => document.querySelector(`.section-header[data-section="${n}"]`).closest('.menu-section').classList.contains('menu-open'), name);
+  if (!open) await page.click(`.section-header[data-section="${name}"]`);
+}
+// [row, column] of the first residue at the top left of the view, in any mode (Canvas: its
+// hit test; Full/Block: the first residue below the toolbar, right of the sticky names).
+const AUDIT_TOPLEFT = () => {
+  const c = el('alignmentContainer');
+  if (el('modeCanvas').checked) {
+    const cv = el('alignmentCanvas').getBoundingClientRect(), m = _canvasState.metrics;
+    const h = _canvasHitTest(cv.left + m.nameW + 2, cv.top + 2);
+    return h ? [h.row, h.col] : null;
+  }
+  const cr = c.getBoundingClientRect();
+  const top = Math.max(cr.top, el('controls').getBoundingClientRect().bottom, 0);
+  const name = [...c.querySelectorAll('.seq-line[data-seq-index] > .seq-name')].find(n => { const r = n.getBoundingClientRect(); return r.height && r.bottom > top; });
+  const x = (name && el('stickyNames').checked ? name.getBoundingClientRect().right : cr.left) + 2;
+  for (let y = top + 2; y < top + 120; y += 3) {
+    const e = document.elementFromPoint(x, y);
+    const line = e && e.matches('span[data-pos]') && e.closest('.seq-line[data-seq-index]');
+    if (line && +line.dataset.seqIndex >= 0) return [+line.dataset.seqIndex, +e.dataset.pos];
+  }
+  return null;
+};
+// AUDIT_TOPLEFT once the view has settled (a redraw of a big alignment can take a few seconds)
+async function auditTopLeft(page) {
+  let r = null;
+  for (let i = 0; i < 25 && !r; i++) { r = await page.evaluate(AUDIT_TOPLEFT); if (!r) await page.waitForTimeout(200); }
+  return r;
+}
+const auditNear = (a, b, tol = 2) => !!a && !!b && Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol;
+async function auditWheel(page, dx, dy, n) {
+  const b = await page.evaluate(() => { const r = el('alignmentContainer').getBoundingClientRect(); return [r.left + r.width / 2, Math.max(r.top, 0) + (Math.min(r.bottom, innerHeight) - Math.max(r.top, 0)) / 2]; });
+  await page.mouse.move(b[0], b[1]);
+  for (let i = 0; i < n; i++) { await page.mouse.wheel(dx, dy); await page.waitForTimeout(40); }
+  await page.waitForTimeout(700);
+}
+
+// Windowed Full mode (above ALIGN_WINDOWED_DOM_THRESHOLD) kept only scrollTop through a redraw:
+// emptying the container reset scrollLeft to 0 and the column window was built from that 0, so
+// changing the colour scheme, Highlight diffs or the consensus row threw the view back to column 1.
+check('Audit: windowed Full keeps its columns through a redraw (colour scheme, Highlight diffs, consensus)', async (page) => {
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'full');
+  await auditWheel(page, 600, 400, 20);
+  const out = { before: await auditTopLeft(page) };
+  await auditOpenSection(page, 'display');
+  await page.selectOption('#colorSchemeSelect', 'nucleotide'); await page.waitForTimeout(1200);
+  out.scheme = await auditTopLeft(page);
+  await page.click('#highlightDiffs'); await page.waitForTimeout(1200);
+  out.diffs = await auditTopLeft(page);
+  await page.click('.section-header[data-section="display"]');
+  await auditOpenSection(page, 'consensus');
+  await page.click('#showConsensus'); await page.waitForTimeout(1200);
+  out.consensusOff = await auditTopLeft(page);
+  // The consensus row above the rows went away: rows move up by one, the columns stay
+  const ok = out.before[1] > 1000 && auditNear(out.scheme, out.before) && auditNear(out.diffs, out.before)
+    && Math.abs(out.consensusOff[1] - out.before[1]) <= 2;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Switching view mode lost or shifted the place in the alignment: the anchor was measured on the
+// consensus row (14px, the sequence rows 13px), so Full -> Canvas landed ~7% of the rows off (row
+// 613 -> 571); a Block view was converted as if it were one tall block (it landed at the bottom,
+// column 1); small alignments scroll the page, whose position was ignored (back to row 1); Canvas
+// -> a small Full view used 8px/16px guesses for the 7.8px/13px cells; and Full <-> Block always
+// landed at column 1.
+check('Audit: mode switches keep the place (Full/Block/Canvas, small and windowed)', async (page) => {
+  const out = {};
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'full');
+  await auditWheel(page, 600, 400, 20);
+  out.full = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.canvas = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.full2 = await auditTopLeft(page);
+  await auditClickMode(page, 'block'); out.block = await auditTopLeft(page);
+  out.bw = await page.evaluate(() => _unifiedWindowRenderParams.blockWidth);
+  await auditClickMode(page, 'canvas'); out.canvas2 = await auditTopLeft(page);
+  await auditClickMode(page, 'block'); out.block2 = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.full3 = await auditTopLeft(page);
+  // small alignments: the page scrolls (Block) or the container scrolls sideways (Full)
+  await loadSyntheticFasta(page, 300, 1000);
+  await auditClickMode(page, 'block');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  // (stay clear of the last ~160 columns: there Canvas and Full cannot scroll a column to the left edge)
+  await auditWheel(page, 0, 900, 6);
+  out.smallBlock = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.smallCanvas = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.smallFull = await auditTopLeft(page);
+  await auditWheel(page, 700, 0, 4);
+  out.smallFullR = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.smallCanvas2 = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.smallFull2 = await auditTopLeft(page);
+  const inBlock = (blockView, col, bw) => !!blockView && blockView[1] % bw === 0 && blockView[1] <= col && col < blockView[1] + bw;
+  const ok = out.full[0] > 300 && out.full[1] > 1000
+    && auditNear(out.canvas, out.full) && auditNear(out.full2, out.full)
+    && inBlock(out.block, out.full[1], out.bw) && Math.abs(out.block[0] - out.full[0]) <= 2
+    && auditNear(out.canvas2, out.block) && auditNear(out.block2, out.block) && auditNear(out.full3, out.block)
+    && out.smallBlock[0] > 100 && auditNear(out.smallCanvas, out.smallBlock) && auditNear(out.smallFull, out.smallBlock)
+    && out.smallFullR[1] > 300 && auditNear(out.smallCanvas2, out.smallFullR) && auditNear(out.smallFull2, out.smallFullR);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Zooming kept the scroll offsets in pixels while the cells grew or shrank, so the view moved to
+// other columns and rows (small Full: column 262 -> 197; windowed Block: column 1951 -> 1462;
+// Canvas: 2000 -> 1777). The first residue at the top left now stays put.
+check('Audit: zooming keeps the top-left residue (small Full, windowed Full and Block, Canvas)', async (page) => {
+  const out = {};
+  const zoomPair = async (key) => {
+    const before = await auditTopLeft(page);
+    await page.mouse.click(5, (await page.evaluate(() => innerHeight)) - 3);   // focus the page, not a control
+    await page.keyboard.press('Control+Equal'); await page.waitForTimeout(1200);
+    const after = await auditTopLeft(page);
+    await page.keyboard.press('Control+Minus'); await page.keyboard.press('Control+Minus'); await page.waitForTimeout(1200);
+    const after2 = await auditTopLeft(page);
+    await page.keyboard.press('Control+Equal'); await page.waitForTimeout(800);
+    out[key] = { before, after, after2 };
+    return auditNear(after, before) && auditNear(after2, before) && before[1] > 50;
+  };
+  await loadSyntheticFasta(page, 20, 800);
+  await auditClickMode(page, 'full'); await auditWheel(page, 600, 0, 6);
+  let ok = await zoomPair('smallFull');
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'full'); await auditWheel(page, 600, 400, 20);
+  ok = await zoomPair('windowedFull') && ok;
+  await auditClickMode(page, 'block'); await auditWheel(page, 0, 3000, 30);
+  ok = await zoomPair('windowedBlock') && ok;
+  await auditClickMode(page, 'canvas'); await auditWheel(page, 600, 400, 20);
+  ok = await zoomPair('canvas') && ok;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// The windowed views and Canvas set their fixed height once, at render: after the window was made
+// smaller the bottom of the alignment (and of the vertical scrollbar) hung below the window, and
+// after it was made taller a band of the window stayed empty.
+check('Audit: windowed Full and Canvas follow a window resize', async (page) => {
+  const out = {};
+  await loadSyntheticFasta(page, 1500, 4000);
+  const fit = () => { const r = el('alignmentContainer').getBoundingClientRect(); return { bottom: Math.round(r.bottom), inner: innerHeight }; };
+  for (const mode of ['full', 'canvas']) {
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await auditClickMode(page, mode);
+    await page.setViewportSize({ width: 1400, height: 600 }); await page.waitForTimeout(800);
+    out[mode + '600'] = await page.evaluate(fit);
+    await page.setViewportSize({ width: 1400, height: 1100 }); await page.waitForTimeout(800);
+    out[mode + '1100'] = await page.evaluate(fit);
+    if (mode === 'canvas') out.canvasH = await page.evaluate(() => [parseFloat(el('alignmentCanvas').style.height), el('alignmentContainer').clientHeight]);
+    else out.fullRows = await page.evaluate(() => { const c = el('alignmentContainer'), cr = c.getBoundingClientRect(); return [...c.querySelectorAll('.seq-line[data-seq-index]')].filter(l => { const q = l.getBoundingClientRect(); return q.top >= cr.top && q.bottom <= cr.bottom; }).length; });
+  }
+  const within = s => s.bottom <= s.inner && s.bottom >= s.inner - 60;
+  const ok = within(out.full600) && within(out.full1100) && within(out.canvas600) && within(out.canvas1100)
+    && out.fullRows > 60 && Math.abs(out.canvasH[0] - out.canvasH[1]) <= 1;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Canvas with translation rows: the selected-column tint stopped at nSeqs x one row height
+// (CHAR_H instead of the row pitch), so with all three frames it covered only the top quarter.
+check('Audit: Canvas column selection covers every row with translation rows', async (page) => {
+  await loadFasta(page, makeFasta(40, 300, 'ATGGCAACG'));
+  await auditClickMode(page, 'canvas');
+  await auditOpenSection(page, 'display');
+  await page.click('#codonAnalysis'); await page.waitForTimeout(1200);
+  await page.selectOption('#codonFrame', 'all'); await page.waitForTimeout(1200);
+  await page.click('.section-header[data-section="display"]');
+  // Ctrl+Alt+click on the ruler selects a column (canvas mousedown)
+  const g = await page.evaluate(() => { const r = el('alignmentCanvas').getBoundingClientRect(), m = _canvasState.metrics; return { x: r.left + m.nameW + 10.5 * m.charW, y: r.top + m.headerH - m.charH / 2, top: r.top, h: r.height }; });
+  await page.keyboard.down('Control'); await page.keyboard.down('Alt');
+  await page.mouse.click(g.x, g.y);
+  await page.keyboard.up('Alt'); await page.keyboard.up('Control');
+  await page.waitForTimeout(400);
+  const r = await page.evaluate(() => {
+    const m = _canvasState.metrics, ctx = el('alignmentCanvas').getContext('2d'), d = devicePixelRatio;
+    const h = parseFloat(el('alignmentCanvas').style.height);
+    // a gap pixel between two codon letters on the lowest translation row on screen
+    const p = _canvasState.rowPitch, x = m.nameW + 10 * m.charW + 1;
+    const row = Math.floor((h - m.headerH) / p) - 1;
+    const y = m.headerH + row * p + p - 2;
+    const px = ctx.getImageData(x * d, y * d, 1, 1).data;
+    return { sel: [...state.selectedColumns], row, px: [...px] };
+  });
+  // tinted: blue-ish, not white
+  const ok = r.sel.includes(10) && r.row > 10 && r.px[2] > r.px[0] + 20;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// Canvas, scrolled right: a plain click on a sequence name hit-tested as the residue hidden under
+// the sticky name column and started a residue selection there, drawn over the name; selected
+// columns and residues also painted over the name column.
+check('Audit: Canvas clicks on names do not select hidden residues; selections stay off the name column', async (page) => {
+  await loadFasta(page, makeFasta(40, 600));
+  await auditClickMode(page, 'canvas');
+  await auditWheel(page, 400, 0, 1);
+  const g = await page.evaluate(() => { const r = el('alignmentCanvas').getBoundingClientRect(), m = _canvasState.metrics; return { left: r.left, top: r.top, nameW: m.nameW, charW: m.charW, headerH: m.headerH, pitch: _canvasState.rowPitch, ox: _canvasState.offsetX }; });
+  await page.mouse.click(g.left + 50, g.top + g.headerH + 3 * g.pitch + 5);
+  await page.waitForTimeout(300);
+  const r = await page.evaluate((g) => {
+    const out = { ox: g.ox, pending: state.pendingNucStart, nucs: state.selectedNucs.size };
+    // a column scrolled under the names, selected: the name cell must stay unpainted
+    const col = Math.floor((g.ox - 40) / g.charW);
+    state.selectedColumns = new Set([col]); _canvasState.scheduleDraw();
+    return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => {
+      const ctx = el('alignmentCanvas').getContext('2d'), d = devicePixelRatio;
+      const x = g.nameW + col * g.charW - g.ox + 2;
+      out.x = x; out.namePx = [...ctx.getImageData(x * d, (g.headerH + 5 * g.pitch + 1) * d, 1, 1).data];
+      res(out);
+    })));
+  }, g);
+  const ok = g.ox > 100 && !r.pending && r.nucs === 0 && r.x < g.nameW && r.namePx[0] === 255 && r.namePx[2] === 255;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// Display > Screen ("fit block size to the window") only updated the number above 80,000 residues
+// (the redraw was skipped for large alignments), so after zooming in the blocks kept overflowing.
+check('Audit: Screen refits the blocks of a large alignment', async (page) => {
+  await loadSyntheticFasta(page, 100, 1000);
+  await auditClickMode(page, 'block');
+  await page.mouse.click(5, 895);
+  for (let i = 0; i < 3; i++) { await page.keyboard.press('Control+Equal'); await page.waitForTimeout(600); }
+  const before = await page.evaluate(() => { const c = el('alignmentContainer'); return c.scrollWidth - c.clientWidth; });
+  await auditOpenSection(page, 'display');
+  await page.click('#blockSizeScreenBtn'); await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => { const c = el('alignmentContainer'); return { slider: +el('blockSizeSlider').value, rendered: +document.querySelector('.scale-ruler-line .seq-data').dataset.scale.split(':')[0], overflow: c.scrollWidth - c.clientWidth }; });
+  r.before = before;
+  return { pass: before > 0 && r.rendered === r.slider && r.overflow <= 0, detail: JSON.stringify(r) };
+});
+
+// PageUp/PageDown scrolled alignmentContainer and always cancelled the key: for small alignments
+// the page is the scroller, so the keys did nothing at all; in Canvas no key scrolled.
+check('Audit: PageDown scrolls a small (page-scrolled) alignment and Canvas', async (page) => {
+  const out = {};
+  await loadFasta(page, makeFasta(400, 100));
+  await setMode(page, 'block');
+  await page.mouse.click(700, 895);
+  await page.keyboard.press('PageDown'); await page.waitForTimeout(400);
+  out.pageY = await page.evaluate(() => scrollY);
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'canvas');
+  await page.mouse.click(700, 895);
+  await page.keyboard.press('PageDown'); await page.waitForTimeout(400);
+  out.canvas = await page.evaluate(() => [_canvasState.offsetY, el('alignmentContainer').scrollTop]);
+  await page.keyboard.press('PageUp'); await page.waitForTimeout(400);
+  out.canvasUp = await page.evaluate(() => _canvasState.offsetY);
+  const ok = out.pageY > 300 && out.canvas[0] > 300 && out.canvas[1] === 0 && out.canvasUp === 0;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Math.max(...lengths) over one entry per sequence throws "Maximum call stack size exceeded"
+// past ~125,000 arguments: an alignment of 130,000 short sequences failed to load.
+check('Audit: 130,000 sequences load and render', async (page) => {
+  await loadSyntheticFasta(page, 130000, 20);
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => ({ n: state.seqs.length, rows: document.querySelectorAll('.seq-line[data-seq-index]').length + (el('alignmentCanvas') ? 1 : 0), msg: el('statusMessage')?.innerText.slice(0, 120) }));
+  return { pass: r.n === 130000 && r.rows > 0, detail: JSON.stringify(r) };
+});
+
+// With codon analysis the translation row's name cell (sticky, white) is empty in single-frame
+// mode and the row aligned its items to the top, so the cell was 0px tall: scrolled sideways,
+// the amino acids showed through the name column.
+check('Audit: translation rows stay under the sticky name column when scrolled sideways', async (page) => {
+  await loadFasta(page, makeFasta(20, 600, 'ATGGCAACG'));
+  await auditClickMode(page, 'full');
+  await auditOpenSection(page, 'display');
+  await page.click('#codonAnalysis'); await page.waitForTimeout(1200);
+  await page.click('.section-header[data-section="display"]');
+  await auditWheel(page, 600, 0, 3);
+  const r = await page.evaluate(() => {
+    const a = document.querySelector('.aa-row'), n = a.querySelector('.aa-name'), ar = a.getBoundingClientRect();
+    const e = document.elementFromPoint(n.getBoundingClientRect().left + 40, ar.top + ar.height / 2);
+    // the codon boxes fill the row's content box (its padding is the row's own white)
+    const boxH = Math.max(...[...a.querySelectorAll('.aa-data > span')].slice(0, 20).map(sp => sp.getBoundingClientRect().height));
+    return { sl: el('alignmentContainer').scrollLeft, nameH: n.getBoundingClientRect().height, boxH, hit: e && e.className };
+  });
+  return { pass: r.sl > 1000 && r.nameH >= r.boxH - 0.5 && !/aa-c/.test(r.hit || ''), detail: JSON.stringify(r) };
+});
+
+// The canvas was sized from the container's border box, 2px wider and 1px taller than its client
+// area: the alignment could be nudged by 2x1px (PageDown set scrollTop to 1) and its edge was cut.
+check('Audit: the Canvas fits the alignment area exactly', async (page) => {
+  await loadFasta(page, makeFasta(40, 600));
+  await auditClickMode(page, 'canvas');
+  const r = await page.evaluate(() => { const c = el('alignmentContainer'), cv = el('alignmentCanvas'); return { cw: c.clientWidth, ch: c.clientHeight, w: parseFloat(cv.style.width), h: parseFloat(cv.style.height), sx: c.scrollWidth - c.clientWidth, sy: c.scrollHeight - c.clientHeight }; });
+  return { pass: r.w === r.cw && r.h === r.ch && r.sx === 0 && r.sy === 0, detail: JSON.stringify(r) };
+});
+
+// Reads mode: the reference's name cell took .seq-name's -12px margin and the ruler's label was
+// 8px wider (content-box padding) than the reads' 160px name column, so reads started one base
+// right of the reference and the ruler numbers ~1.7 bases right.
+check('Audit: Reads mode lines up reads, reference and ruler', async (page) => {
+  await openSynthetic(page, 'synth_ref.fa');
+  await openSynthetic(page, 'synth_reads.bam');
+  await page.evaluate(() => { el('modeReads').checked = true; onModeChange(); }); await page.waitForTimeout(1200);
+  const r = await page.evaluate(() => {
+    const c = el('alignmentContainer');
+    const ref0 = c.querySelector('.ref-track-line .seq-data span[data-pos]').getBoundingClientRect().left;
+    const scale0 = c.querySelector('.scale-line').lastChild.children[0].getBoundingClientRect().left;
+    const svg = el('readsPileSvg'), sr = svg.getBoundingClientRect();
+    const read = bamState.reads.find(rd => rd.start === bamState.refStart);
+    const bars = [...svg.querySelectorAll('rect[stroke="#4a7fa8"]')].map(b => +b.getAttribute('x') + sr.left);
+    return { ref0, scale0, firstBar: Math.min(...bars), hasReadAtStart: !!read };
+  });
+  const ok = r.hasReadAtStart && Math.abs(r.firstBar - r.ref0) < 1 && Math.abs(r.scale0 - r.ref0) < 1;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// ---------- owner decisions after the audit (2026-10-14) ----------
+
+check('toolbar: menu headers use the same font as the toolbar buttons, not the browser serif', async (page) => {
+  // #controls set no font-family, so on Windows the menu headers (Input, Shade, Display...)
+  // fell back to bold Times New Roman next to Arial buttons. The owner chose Arial.
+  const r = await page.evaluate(() => {
+    const head = document.querySelector('#input-section .section-header span');
+    const btn = document.querySelector('#controls button');
+    const fam = el => getComputedStyle(el).fontFamily.split(',')[0].replace(/["']/g, '').trim();
+    const label = [...document.querySelectorAll('#controls label')].map(fam);
+    return { head: fam(head), btn: fam(btn), serifLabels: label.filter(f => /times|serif/i.test(f) && !/sans/i.test(f)).length };
+  });
+  return { pass: r.head === 'Arial' && r.btn === 'Arial' && r.serifLabels === 0, detail: JSON.stringify(r) };
+});
+
+// ---------- owner decisions, round 2 (2026-10-14) ----------
+const r2Sel = (page) => page.evaluate(() => [...state.selectedRows].sort((a, b) => a - b).join(','));
+async function r2ClickName(page, row, mods = []) {
+  const p = await auditName(page, row);
+  for (const m of mods) await page.keyboard.down(m);
+  await page.mouse.click(p.x, p.y);
+  for (const m of mods.slice().reverse()) await page.keyboard.up(m);
+  await page.waitForTimeout(250);
+}
+// The click / Ctrl / Shift sequence on names, in one view; returns what went wrong
+async function r2NameClicks(page, label) {
+  const bad = [];
+  const expect = async (want, what) => {
+    const got = await r2Sel(page);
+    if (got !== want) bad.push(`${label} ${what}: ${got} (want ${want})`);
+  };
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+  await r2ClickName(page, 2); await expect('2', 'click');
+  await r2ClickName(page, 2); await expect('2', 'click again');
+  await r2ClickName(page, 4); await expect('4', 'click another');
+  await r2ClickName(page, 1, ['Control']); await expect('1,4', 'ctrl+click');
+  await r2ClickName(page, 1, ['Control']); await expect('4', 'ctrl+click again');
+  await r2ClickName(page, 1, ['Control']);
+  await r2ClickName(page, 6, ['Shift']); await expect('1,2,3,4,5,6', 'shift+click');
+  await r2ClickName(page, 3); await expect('3', 'click after range');
+  if (!(await page.evaluate(() => el('modeCanvas').checked))) {
+    const dom = await page.evaluate(() => [...document.querySelectorAll('.seq-line.selected[data-seq-index]')].map(l => l.dataset.seqIndex).filter((v, i, a) => a.indexOf(v) === i).join(','));
+    if (dom !== '3') bad.push(`${label} highlighted rows: ${dom}`);
+  }
+  return bad;
+}
+
+// The owner wants a plain click on a sequence name to select that row (the manual's Mouse table
+// says "Click sequence name | Select row"). It used to do nothing: only Ctrl+click selected, and
+// in Canvas a plain click on a name only started a pan.
+check('Owner: a plain click on a sequence name selects that row (Full, Block, windowed, Canvas)', async (page) => {
+  const bad = [];
+  await loadFasta(page, makeFasta(12, 120));
+  for (const mode of ['full', 'block', 'canvas']) {
+    await auditClickMode(page, mode);
+    bad.push(...await r2NameClicks(page, mode));
+  }
+  await loadSyntheticFasta(page, 1500, 4000);
+  for (const mode of ['block', 'full', 'canvas']) {
+    await auditClickMode(page, mode);
+    bad.push(...await r2NameClicks(page, 'windowed ' + mode));
+  }
+  return { pass: bad.length === 0, detail: bad.join('; ') || 'ok' };
+});
+
+// Selecting on a plain click must not break the other name gestures: a drag still reorders (and
+// moves the whole selection when the dragged row is in it, so the click must not first reduce
+// the selection to one row), a double-click still opens the rename box and leaves just that row
+// selected, and the right-click menu still opens.
+check('Owner: drag, double-click and right-click on names still reorder, rename and open the menu', async (page) => {
+  const bad = [];
+  for (const big of [false, true]) {
+    if (big) { await loadSyntheticFasta(page, 1500, 4000); await auditClickMode(page, 'block'); }
+    else { await loadFasta(page, makeFasta(12, 120)); await auditClickMode(page, 'full'); }
+    const L = big ? 'windowed' : 'full';
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    const names0 = await page.evaluate(() => state.seqs.slice(0, 8).map(s => s.header));
+    await r2ClickName(page, 1, ['Control']); await r2ClickName(page, 2, ['Control']);
+    const a = await auditName(page, 1), b = await auditName(page, 5);
+    await page.mouse.move(a.x, a.y); await page.mouse.down();
+    await page.mouse.move(a.x, a.y + 10, { steps: 3 }); await page.mouse.move(b.x, b.y + 4, { steps: 6 });
+    await page.mouse.up(); await page.waitForTimeout(big ? 1500 : 600);
+    const after = await page.evaluate(() => state.seqs.slice(0, 8).map(s => s.header));
+    const sel = await r2Sel(page);
+    const movedRows = sel.split(',').map(Number).map(i => after[i]);
+    if (after.join() === names0.join()) bad.push(`${L} drag did not reorder`);
+    if (movedRows.join() !== [names0[1], names0[2]].join()) bad.push(`${L} drag selection ${sel} = ${movedRows} (want ${names0[1]},${names0[2]})`);
+    // double-click renames
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    const n = await auditName(page, 3);
+    await page.mouse.dblclick(n.x, n.y); await page.waitForTimeout(300);
+    const box = await page.$('.seq-name-edit');
+    if (!box) bad.push(`${L} double-click: no rename box`);
+    else {
+      await page.keyboard.press('Control+A'); await page.keyboard.type('renamed_r2'); await page.keyboard.press('Enter');
+      await page.waitForTimeout(400);
+      const r = await page.evaluate(() => ({ h: state.seqs[3].header, sel: [...state.selectedRows].join(','), box: !!document.querySelector('.seq-name-edit') }));
+      if (r.h !== 'renamed_r2' || r.sel !== '3' || r.box) bad.push(`${L} double-click rename: ${JSON.stringify(r)}`);
+    }
+    // right-click menu
+    const m = await auditName(page, 4);
+    await page.mouse.click(m.x, m.y, { button: 'right' }); await page.waitForTimeout(300);
+    if (!(await page.$('.context-menu'))) bad.push(`${L} right-click: no menu`);
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+  }
+  return { pass: bad.length === 0, detail: bad.join('; ') || 'ok' };
+});
+
+// Chrome reserves Ctrl+Shift+J (console) and Ctrl+Shift+C (inspect element), Firefox too, so
+// those shortcuts never reached the page. Alt+J copies the selected rows' consensus and Alt+C
+// copies the selection (as Copy Sel); the old keys stay as aliases where a browser lets them
+// through.
+check('Owner: Alt+J copies the selected consensus and Alt+C copies the selection', async (page) => {
+  await loadFasta(page, makeFasta(8, 40));
+  await auditClickMode(page, 'full');
+  await page.keyboard.press('Escape');
+  await auditCtrlClickName(page, 1); await auditCtrlClickName(page, 2);
+  await page.evaluate(() => { window._copied = null; navigator.clipboard.writeText = t => { window._copied = t; return Promise.resolve(); }; });
+  await page.mouse.move(5, 600);
+  const out = {};
+  for (const [k, key] of [['j', 'Alt+KeyJ'], ['c', 'Alt+KeyC'], ['oldJ', 'Control+Shift+KeyJ'], ['oldC', 'Control+Shift+KeyC']]) {
+    await page.evaluate(() => { window._copied = null; });
+    await page.keyboard.press(key); await page.waitForTimeout(300);
+    out[k] = await page.evaluate(() => window._copied);
+  }
+  const h = await page.evaluate(() => [state.seqs[1].fullHeader || state.seqs[1].header, state.seqs[2].fullHeader || state.seqs[2].header]);
+  const isCons = t => /^>Selected_Consensus\n[A-Z]+$/.test(t || '');
+  const isRows = t => !!t && t.includes('>' + h[0] + '\n') && t.includes('>' + h[1] + '\n') && !t.includes('Selected_Consensus');
+  const ok = isCons(out.j) && isRows(out.c) && isCons(out.oldJ) && isRows(out.oldC);
+  return { pass: ok, detail: JSON.stringify(out).slice(0, 300) };
+});
+
+// ---------- pre-publication audit round 2: performance (2026-10-14) ----------
+
+// Page time from a user action to the frame after it (two animation frames: the work queued by the
+// action has run and the result has been laid out and painted).
+const r2Settle = (page) => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
+// Longest main-thread task while fn runs (PerformanceObserver 'longtask', > 50 ms each)
+async function r2LongTasks(page, fn) {
+  await page.evaluate(() => { window.__r2lt = []; window.__r2obs?.disconnect(); window.__r2obs = new PerformanceObserver(l => { for (const e of l.getEntries()) window.__r2lt.push(e.duration); }); window.__r2obs.observe({ type: 'longtask' }); });
+  await fn();
+  await page.waitForTimeout(600);
+  return page.evaluate(() => { window.__r2obs.disconnect(); return { max: Math.round(Math.max(0, ...window.__r2lt)), sum: Math.round(window.__r2lt.reduce((a, b) => a + b, 0)), n: window.__r2lt.length }; });
+}
+const r2Windowed = () => ({ windowed: !!state._needsWindowedDom, spacers: el('alignmentContainer').querySelectorAll(':scope > .unified-mode-spacer').length, spans: el('alignmentContainer').querySelectorAll('.seq-line[data-seq-index] span[data-pos]').length });
+
+// Alignments just under the windowed-renderer threshold (500,000 residues) got the full DOM, one
+// span per residue: 400 x 1,245 took 4.7 s to load and 8.4 s to switch to Full (~500k nodes),
+// while 400 x 1,255 took 0.9 s and 0.8 s windowed. The threshold is now low enough that an
+// alignment just above it is windowed in both Full and Block.
+check('Round 2: an alignment just above the windowed threshold is windowed in Full and Block', async (page) => {
+  const T = await page.evaluate(() => ALIGN_WINDOWED_DOM_THRESHOLD);
+  const nCol = Math.floor(T / 100) + 1;
+  await loadSyntheticFasta(page, 100, nCol);
+  await auditClickMode(page, 'full');
+  const full = await page.evaluate(r2Windowed);
+  await auditClickMode(page, 'block');
+  const block = await page.evaluate(r2Windowed);
+  const cells = 100 * nCol;
+  const ok = T <= 150000 && full.windowed && full.spacers === 2 && full.spans < cells / 2
+    && block.windowed && block.spacers === 2 && block.spans < cells / 2;
+  return { pass: ok, detail: JSON.stringify({ T, nCol, full, block }) };
+});
+
+// The cliff itself: 400 x 1,245 (498,000 residues) loaded in 3.4-4.7 s and switched to Full in
+// 5.7-8.4 s (full DOM); windowed both take under 1 s here. The budget is generous for a loaded
+// machine and still well below the old times.
+check('Round 2: 400 x 1,245 loads and switches to Full quickly (no full-DOM cliff)', async (page) => {
+  const t0 = Date.now();
+  await loadSyntheticFasta(page, 400, 1245);
+  await r2Settle(page);
+  const load = Date.now() - t0;
+  await auditOpenSection(page, 'display');
+  const t1 = Date.now();
+  await page.click('#modeSingle');
+  await r2Settle(page);
+  const full = Date.now() - t1;
+  await page.click('.section-header[data-section="display"]');
+  const w = await page.evaluate(r2Windowed);
+  return { pass: w.windowed && load + full < 4000, detail: JSON.stringify({ load, full, ...w }) };
+});
+
+// Show 2D drew nothing on a windowed alignment (renderBlockMaskOverlay returned early), so lowering
+// the windowed threshold would have taken it away from alignments of 100k-500k residues. The
+// overlay is now drawn over the rows and columns the windowed view has built, and redrawn as the
+// window moves. Each rectangle must start at its column's residue and cover its rows.
+const R2_MASK_ALIGNED = () => {
+  const mask = state.blockMask, c = el('alignmentContainer'), cr = c.getBoundingClientRect();
+  if (!mask) return { why: 'no mask' };
+  const headerToIdx = new Map(state.seqs.map((s, i) => [s.header, i]));
+  const rects = [...c.querySelectorAll('.block-mask-layer rect')];
+  let checked = 0, bad = 0;
+  for (const mb of mask.blocks) {
+    const rows = mb.rows === 'all' ? null : new Set(mb.rows.map(k => headerToIdx.get(mask.row_headers[k])));
+    for (const sp of c.querySelectorAll(`.seq-line[data-seq-index] > .seq-data > span[data-pos="${mb.col_start}"]`)) {
+      const si = +sp.closest('.seq-line').dataset.seqIndex;
+      if (si < 0 || (rows && !rows.has(si))) continue;
+      const s = sp.getBoundingClientRect();
+      if (s.right < cr.left + 150 || s.left > cr.right - 20 || s.bottom < cr.top || s.top > cr.bottom) continue;   // off screen / under the names
+      checked++;
+      const blk = sp.closest('.block-block');
+      const hit = rects.some(r => { const q = r.getBoundingClientRect(); return r.closest('.block-block') === blk && Math.abs(q.left - s.left) < 1.5 && q.top <= s.top + 1 && q.bottom >= s.bottom - 1; });
+      if (!hit) bad++;
+      if (checked >= 12) break;
+    }
+    if (checked >= 12) break;
+  }
+  return { rects: rects.length, checked, bad, sl: c.scrollLeft, st: c.scrollTop, menu: document.querySelector('.menu-open .section-header')?.dataset.section || null };
+};
+check('Round 2: Show 2D draws its rectangles on a windowed alignment (Full and Block, after scrolling)', async (page) => {
+  const fs = require('fs'), path = require('path');
+  const fa = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'blockmask', 'oma_SINE16b.aln.fa'), 'utf8');
+  await loadFasta(page, fa + fa.replace(/^>(\S+)/gm, '>$1_copy'));   // 100 x 1,049 = 104,900 residues
+  await auditClickMode(page, 'full');
+  const out = { w: await page.evaluate(r2Windowed) };
+  await auditOpenSection(page, 'clustering');
+  await page.click('#biclusterComputeButton'); await page.waitForTimeout(1500);
+  // close the menu (it also opens on hover) so the wheel below reaches the alignment
+  for (let i = 0; i < 3 && await page.evaluate(() => !!document.querySelector('.section-header[data-section="clustering"]').closest('.menu-open')); i++) {
+    await page.click('.section-header[data-section="clustering"]');
+    await page.mouse.move(5, 600); await page.waitForTimeout(400);
+  }
+  out.full = await page.evaluate(R2_MASK_ALIGNED);
+  await auditWheel(page, 300, 0, 8);   // to column ~300: rows and columns the first window did not build
+  out.fullScrolled = await page.evaluate(R2_MASK_ALIGNED);
+  await auditClickMode(page, 'block');
+  out.block = await page.evaluate(R2_MASK_ALIGNED);
+  await auditWheel(page, 0, 400, 6);
+  out.blockScrolled = await page.evaluate(R2_MASK_ALIGNED);
+  const good = r => r && r.rects > 0 && r.checked > 0 && r.bad === 0;
+  // (the first screen of Full and of Block holds no rectangle's first column: there only that none is misplaced)
+  const ok = out.w.windowed && out.full.bad === 0 && good(out.fullScrolled) && out.block.bad === 0 && good(out.blockScrolled);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Horizontal scrolling of a windowed Full view froze the page: each re-centre of the column window
+// patched every built row (~130 rows x 510 columns, 63k residue spans), 0.9-1.9 s per re-centre
+// (Range.deleteContents alone ~150 ms, the rest style, layout and paint of all of them), up to
+// 4.5 s with real wheel events (96k spans built, 9x the cells on screen). The window is now
+// about 3.5x the screen; budget 800 ms per long task (now ~0.3-0.4 s, before 0.85-1.9 s here).
+check('Round 2: windowed Full scrolls sideways and down without long freezes', async (page) => {
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'full');
+  await page.waitForTimeout(1500);   // the row buffer fills in over the first frames
+  const box = await page.evaluate(() => { const r = el('alignmentContainer').getBoundingClientRect(); return [r.left + r.width / 2, r.top + Math.min(r.height, innerHeight - r.top) / 2]; });
+  await page.mouse.move(box[0], box[1]);
+  const steps = async (dx, dy, n) => { for (let i = 0; i < n; i++) { await page.mouse.wheel(dx, dy); await r2Settle(page); await page.waitForTimeout(30); } };
+  const h = await r2LongTasks(page, () => steps(300, 0, 24));
+  const v = await r2LongTasks(page, () => steps(0, 300, 16));
+  const dom = await page.evaluate(() => {
+    const c = el('alignmentContainer'), row = c.querySelector('.seq-line[data-seq-index]:not([data-seq-index="-1"])');
+    const name = row.querySelector('.seq-name').getBoundingClientRect().width;
+    const visCells = Math.ceil(c.clientHeight / row.getBoundingClientRect().height) * Math.ceil((c.clientWidth - name) / _unifiedCharWidthPx);
+    return { sl: c.scrollLeft, st: c.scrollTop, spans: c.querySelectorAll('.seq-line[data-seq-index] span[data-pos]').length, visCells };
+  });
+  const ok = dom.sl > 6000 && dom.st > 3000 && h.max < 800 && v.max < 800 && dom.spans < 4.5 * dom.visCells;
+  return { pass: ok, detail: JSON.stringify({ h, v, dom }) };
+});
+
+// Opening a file while a windowed view (or Canvas) was scrolled kept the old file's scroll offsets:
+// the new alignment opened at row ~600, column ~1500 of nothing in particular (Full mode rebuilt
+// its window at the preserved scrollTop/scrollLeft). Small alignments started at the top only
+// because emptying the container reset them. With windowing from 100,000 residues this hit most
+// real files. A new file now opens at its first row and column, in every view.
+check('Round 2: a new file opens at its start after a scrolled windowed view or Canvas', async (page) => {
+  const out = {};
+  for (const mode of ['full', 'block', 'canvas']) {
+    await loadSyntheticFasta(page, 1500, 4000);
+    await auditClickMode(page, mode);
+    await auditWheel(page, 600, 400, 12);
+    out[mode + 'Before'] = await auditTopLeft(page);
+    await loadSyntheticFasta(page, 1200, 3000);
+    await page.waitForTimeout(800);
+    // (Canvas at its start has its ruler at the top left, where the hit test finds no residue)
+    out[mode] = mode === 'canvas' ? await page.evaluate(() => [_canvasState.offsetY, _canvasState.offsetX]) : await auditTopLeft(page);
+  }
+  const atStart = r => !!r && r[0] === 0 && r[1] === 0;
+  const moved = r => !!r && (r[0] > 50 || r[1] > 50);
+  const ok = ['full', 'block', 'canvas'].every(m => moved(out[m + 'Before']) && atStart(out[m]));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// The small part of 'Audit: mode switches keep the place' used 300 x 1,000 to reach the views that
+// scroll the page (full DOM). From 100,000 residues that alignment is windowed, so the same steps
+// are repeated here on one under the threshold, where Block scrolls the page.
+check('Round 2: mode switches keep the place on an alignment under the windowed threshold', async (page) => {
+  const out = {};
+  await loadSyntheticFasta(page, 150, 600);   // 90,000 residues
+  await auditClickMode(page, 'block');
+  out.w = await page.evaluate(() => !!state._needsWindowedDom);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await auditWheel(page, 0, 700, 4);
+  out.pageY = await page.evaluate(() => Math.round(scrollY));
+  out.block = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.canvas = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.full = await auditTopLeft(page);
+  await auditWheel(page, 700, 0, 3);
+  out.fullR = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.canvas2 = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.full2 = await auditTopLeft(page);
+  const ok = !out.w && out.pageY > 1000 && out.block[0] > 20 && out.block[1] > 0
+    && auditNear(out.canvas, out.block) && auditNear(out.full, out.block)
+    && out.fullR[1] > out.full[1] + 100 && auditNear(out.canvas2, out.fullR) && auditNear(out.full2, out.fullR);
+  return { pass: ok, detail: JSON.stringify(out) };
 });
 
 async function main() {
