@@ -3198,6 +3198,71 @@ check('Audit: windowed Full keeps its columns through a redraw (colour scheme, H
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// Canvas with translation rows: the selected-column tint stopped at nSeqs x one row height
+// (CHAR_H instead of the row pitch), so with all three frames it covered only the top quarter.
+check('Audit: Canvas column selection covers every row with translation rows', async (page) => {
+  await loadFasta(page, makeFasta(40, 300, 'ATGGCAACG'));
+  await auditClickMode(page, 'canvas');
+  await auditOpenSection(page, 'display');
+  await page.click('#codonAnalysis'); await page.waitForTimeout(1200);
+  await page.selectOption('#codonFrame', 'all'); await page.waitForTimeout(1200);
+  await page.click('.section-header[data-section="display"]');
+  // Ctrl+Alt+click on the ruler selects a column (canvas mousedown)
+  const g = await page.evaluate(() => { const r = el('alignmentCanvas').getBoundingClientRect(), m = _canvasState.metrics; return { x: r.left + m.nameW + 10.5 * m.charW, y: r.top + m.headerH - m.charH / 2, top: r.top, h: r.height }; });
+  await page.keyboard.down('Control'); await page.keyboard.down('Alt');
+  await page.mouse.click(g.x, g.y);
+  await page.keyboard.up('Alt'); await page.keyboard.up('Control');
+  await page.waitForTimeout(400);
+  const r = await page.evaluate(() => {
+    const m = _canvasState.metrics, ctx = el('alignmentCanvas').getContext('2d'), d = devicePixelRatio;
+    const h = parseFloat(el('alignmentCanvas').style.height);
+    // a gap pixel between two codon letters on the lowest translation row on screen
+    const p = _canvasState.rowPitch, x = m.nameW + 10 * m.charW + 1;
+    const row = Math.floor((h - m.headerH) / p) - 1;
+    const y = m.headerH + row * p + p - 2;
+    const px = ctx.getImageData(x * d, y * d, 1, 1).data;
+    return { sel: [...state.selectedColumns], row, px: [...px] };
+  });
+  // tinted: blue-ish, not white
+  const ok = r.sel.includes(10) && r.row > 10 && r.px[2] > r.px[0] + 20;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// Canvas, scrolled right: a plain click on a sequence name hit-tested as the residue hidden under
+// the sticky name column and started a residue selection there, drawn over the name; selected
+// columns and residues also painted over the name column.
+check('Audit: Canvas clicks on names do not select hidden residues; selections stay off the name column', async (page) => {
+  await loadFasta(page, makeFasta(40, 600));
+  await auditClickMode(page, 'canvas');
+  await auditWheel(page, 400, 0, 1);
+  const g = await page.evaluate(() => { const r = el('alignmentCanvas').getBoundingClientRect(), m = _canvasState.metrics; return { left: r.left, top: r.top, nameW: m.nameW, charW: m.charW, headerH: m.headerH, pitch: _canvasState.rowPitch, ox: _canvasState.offsetX }; });
+  await page.mouse.click(g.left + 50, g.top + g.headerH + 3 * g.pitch + 5);
+  await page.waitForTimeout(300);
+  const r = await page.evaluate((g) => {
+    const out = { ox: g.ox, pending: state.pendingNucStart, nucs: state.selectedNucs.size };
+    // a column scrolled under the names, selected: the name cell must stay unpainted
+    const col = Math.floor((g.ox - 40) / g.charW);
+    state.selectedColumns = new Set([col]); _canvasState.scheduleDraw();
+    return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => {
+      const ctx = el('alignmentCanvas').getContext('2d'), d = devicePixelRatio;
+      const x = g.nameW + col * g.charW - g.ox + 2;
+      out.x = x; out.namePx = [...ctx.getImageData(x * d, (g.headerH + 5 * g.pitch + 1) * d, 1, 1).data];
+      res(out);
+    })));
+  }, g);
+  const ok = g.ox > 100 && !r.pending && r.nucs === 0 && r.x < g.nameW && r.namePx[0] === 255 && r.namePx[2] === 255;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// The canvas was sized from the container's border box, 2px wider and 1px taller than its client
+// area: the alignment could be nudged by 2x1px (PageDown set scrollTop to 1) and its edge was cut.
+check('Audit: the Canvas fits the alignment area exactly', async (page) => {
+  await loadFasta(page, makeFasta(40, 600));
+  await auditClickMode(page, 'canvas');
+  const r = await page.evaluate(() => { const c = el('alignmentContainer'), cv = el('alignmentCanvas'); return { cw: c.clientWidth, ch: c.clientHeight, w: parseFloat(cv.style.width), h: parseFloat(cv.style.height), sx: c.scrollWidth - c.clientWidth, sy: c.scrollHeight - c.clientHeight }; });
+  return { pass: r.w === r.cw && r.h === r.ch && r.sx === 0 && r.sy === 0, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

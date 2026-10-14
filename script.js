@@ -5308,6 +5308,11 @@ function _initCanvasMetrics(ctx, fontSizePx) {
 //   4. clientX=900, clientY=900 (past last col/row) → canvas-relative (800, 850)
 //      If alignment is 50 cols × 20 rows: col=74, row=55 → both out of range → null
 //      → null  ✓
+// Screen x where the name column ends: fixed with sticky names, scrolled with the rows otherwise
+function _canvasNameRight(nameW) {
+    return el('stickyNames')?.checked === false ? nameW - (_canvasState.offsetX || 0) : nameW;
+}
+
 function _canvasHitTest(clientX, clientY) {
     const canvas = _canvasState.canvas;
     if (!canvas) return null;
@@ -5323,6 +5328,9 @@ function _canvasHitTest(clientX, clientY) {
     const rowPitch = _canvasState.rowPitch || CHAR_H;
     // Subtract the name column and scale ruler offsets, then add back the pan
     // offset so the result is in content (not viewport) coordinates.
+    // Left of the name column's right edge is the name column, not data: with sticky names a
+    // click on a name used to hit the residue scrolled under it and start a selection there.
+    if (x < _canvasNameRight(NAME_W)) return null;
     const col = Math.floor((x - NAME_W + _canvasState.offsetX) / CHAR_W);
     const row = Math.floor((y - HEADER_H +_canvasState.offsetY) / rowPitch);
     if (col < 0 || row < 0) return null;
@@ -5346,7 +5354,7 @@ function _canvasHitTestRuler(clientX, clientY) {
     const y = clientY - rect.top;
     const trackH = m.trackH || 0;             // annotation track above the ruler
     if (y < trackH || y >= trackH + m.charH) return null;  // not in ruler row
-    if (x < m.nameW) return null;             // name column corner
+    if (x < _canvasNameRight(m.nameW)) return null;   // name column corner
     const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
     const len = state.seqs && state.seqs.length > 0
         ? Math.max(...state.seqs.map(s => s.seq.length))
@@ -5365,7 +5373,7 @@ function _canvasHitTestName(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const x = clientX - rect.left;
     const y = clientY - rect.top;
-    if (x < 0 || x >= m.nameW) return null;   // not in name column
+    if (x < 0 || x >= _canvasNameRight(m.nameW)) return null;   // not in name column
     if (y < (m.headerH || m.charH)) return null; // ruler / annotation corner
     const row = Math.floor((y - (m.headerH || m.charH) + _canvasState.offsetY) / (_canvasState.rowPitch || m.charH));
     const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
@@ -5555,8 +5563,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     _canvasState.totalContentH = totalContentH;
 
     // Resize canvas to viewport
+    // The container's client area, not its border box (2px wider, 1px taller): the canvas
+    // overflowed it, its edge was cut, and a scrollTop/scrollLeft write nudged the alignment.
     function resize() {
-        const rect = alignmentContainer.getBoundingClientRect();
+        const rect = { width: alignmentContainer.clientWidth, height: alignmentContainer.clientHeight };
         canvas.width = rect.width * dpr;
         canvas.height = rect.height * dpr;
         canvas.style.width = rect.width + 'px';
@@ -5814,16 +5824,24 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
         }
 
+        // Marks on residues and columns stay right of the name column: drawn after the names,
+        // they used to paint over the sticky names for columns scrolled under them.
+        const dataLeft = stickyNames ? NAME_W : Math.max(0, NAME_W - ox);
+        const clipToData = () => { ctx.save(); ctx.beginPath(); ctx.rect(dataLeft, 0, Math.max(0, w - dataLeft), h); ctx.clip(); };
+
         // Highlight selected columns (semi-transparent vertical strips)
         if (state.selectedColumns.size > 0) {
+            clipToData();
             ctx.fillStyle = 'rgba(25, 118, 210, 0.15)';
             state.selectedColumns.forEach(pos => {
                 const x = NAME_W + pos * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) return;
                 const dataTop = Math.max(0, HEADER_H - oy);
-                const dataBottom = Math.min(h, HEADER_H +nSeqs * CHAR_H - oy);
+                // rowPitch, not CHAR_H: with translation rows the strip stopped partway down
+                const dataBottom = Math.min(h, HEADER_H + nSeqs * rowPitch - oy);
                 ctx.fillRect(x, dataTop, CHAR_W, dataBottom - dataTop);
             });
+            ctx.restore();
         }
 
         // Highlight selected rows (semi-transparent horizontal strips; same tint as the DOM)
@@ -5836,6 +5854,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             });
         }
 
+        clipToData();
         // Highlight selected nucleotides (mirrors DOM .nuc-selected in Full/Block mode)
         if (state.selectedNucs.size > 0) {
             ctx.fillStyle = 'rgba(25, 118, 210, 0.25)';
@@ -5882,6 +5901,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 }
             }
         }
+
+        ctx.restore();   // clipToData
 
         // Name column separator (fixed on-screen when sticky, scrolls with
         // content otherwise, matching the name column's own behaviour above)
