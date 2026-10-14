@@ -4276,6 +4276,30 @@ check('Owner: drag, double-click and right-click on names still reorder, rename 
   return { pass: bad.length === 0, detail: bad.join('; ') || 'ok' };
 });
 
+// Chrome reserves Ctrl+Shift+J (console) and Ctrl+Shift+C (inspect element), Firefox too, so
+// those shortcuts never reached the page. Alt+J copies the selected rows' consensus and Alt+C
+// copies the selection (as Copy Sel); the old keys stay as aliases where a browser lets them
+// through.
+check('Owner: Alt+J copies the selected consensus and Alt+C copies the selection', async (page) => {
+  await loadFasta(page, makeFasta(8, 40));
+  await auditClickMode(page, 'full');
+  await page.keyboard.press('Escape');
+  await auditCtrlClickName(page, 1); await auditCtrlClickName(page, 2);
+  await page.evaluate(() => { window._copied = null; navigator.clipboard.writeText = t => { window._copied = t; return Promise.resolve(); }; });
+  await page.mouse.move(5, 600);
+  const out = {};
+  for (const [k, key] of [['j', 'Alt+KeyJ'], ['c', 'Alt+KeyC'], ['oldJ', 'Control+Shift+KeyJ'], ['oldC', 'Control+Shift+KeyC']]) {
+    await page.evaluate(() => { window._copied = null; });
+    await page.keyboard.press(key); await page.waitForTimeout(300);
+    out[k] = await page.evaluate(() => window._copied);
+  }
+  const h = await page.evaluate(() => [state.seqs[1].fullHeader || state.seqs[1].header, state.seqs[2].fullHeader || state.seqs[2].header]);
+  const isCons = t => /^>Selected_Consensus\n[A-Z]+$/.test(t || '');
+  const isRows = t => !!t && t.includes('>' + h[0] + '\n') && t.includes('>' + h[1] + '\n') && !t.includes('Selected_Consensus');
+  const ok = isCons(out.j) && isRows(out.c) && isCons(out.oldJ) && isRows(out.oldC);
+  return { pass: ok, detail: JSON.stringify(out).slice(0, 300) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
