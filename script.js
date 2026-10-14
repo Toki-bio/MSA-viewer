@@ -2224,6 +2224,8 @@ if (!fastaInput || !alignmentContainer || !statusMessage) {
 // A note from an aligner (e.g. the codon aligner's frameshift summary) that should ride along with the caller's
 // own completion message instead of being overwritten by it. Consumed by the next showMessage call.
 let _pendingAlignNote = null;
+// One hide timer: an earlier message's timer used to hide a newer message early
+let _statusMessageTimer = null;
 function showMessage(msg, duration = 2000) {
     if (_pendingAlignNote) {
         msg = msg + ' ' + _pendingAlignNote;
@@ -2232,7 +2234,8 @@ function showMessage(msg, duration = 2000) {
     }
     statusMessage.textContent = msg;
     statusMessage.style.display = 'block';
-    if (duration > 0) setTimeout(() => { statusMessage.style.display = 'none'; }, duration);
+    clearTimeout(_statusMessageTimer);
+    _statusMessageTimer = duration > 0 ? setTimeout(() => { statusMessage.style.display = 'none'; }, duration) : null;
 }
 
 const EXCLUSIVE_MODAL_IDS = [
@@ -14288,6 +14291,11 @@ function reverseComplementSequences(indices) {
         showMessage('Select sequences to RevComp.', 3000);
         return;
     }
+    // A protein has no complement: this used to rewrite every row as IUPAC nonsense
+    if (isProteinAlignment()) {
+        showMessage('Reverse complement needs nucleotide sequences; this alignment is protein.', 3500);
+        return;
+    }
     pushUndo('revcomp');
     for (const i of targets) {
         const seqObj = state.seqs[i];
@@ -17632,6 +17640,10 @@ function _initMafftAskPrefs() {
 function openMacsePreset(openMenu = true) {
     const sel = el('mafftSeqType'), eng = el('codonEngine');
     if (!sel) return;
+    if (state.seqs.length && isProteinAlignment()) {
+        showMessage('Codon alignment needs nucleotide (coding) sequences; this alignment is protein.', 4000);
+        return;
+    }
     if (sel.value !== 'codon') { sel.value = 'codon'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
     if (eng && eng.value !== 'macse') { eng.value = 'macse'; eng.dispatchEvent(new Event('change', { bubbles: true })); }
     if (openMenu) {
