@@ -3626,6 +3626,9 @@ body.codon-mode .aa-name {
     position: sticky;
     left: -15px;
     z-index: 45;
+    /* The row's full height: empty (single frame) it was 0px tall in a flex-start row, so the
+       amino acids scrolled under it showed through the name column */
+    align-self: stretch;
 }
 
 body.codon-mode .aa-data {
