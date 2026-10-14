@@ -3120,6 +3120,84 @@ check('Scrolled to the end: the last column and the length labels clear the scro
   return { pass: out.full.rows > 5 && out.windowed.rows > 5 && fits(out.full) && fits(out.windowed) && fits(out.canvas), detail: JSON.stringify(out) };
 });
 
+// ---------- pre-publication audit: rendering (2026-10-14) ----------
+
+// Switches view mode the way a user does: the Display menu's Mode radio, then the
+// "Full mode on a large alignment" dialog if it comes up (shared helper setMode only waits
+// for that dialog near ALIGN_CRAZY_VOLUME, so on a tall or long alignment the switch could
+// still be pending when a check read the view).
+async function auditClickMode(page, mode) {
+  const id = { full: 'modeSingle', block: 'modeBlocks', canvas: 'modeCanvas' }[mode];
+  const open = await page.evaluate(() => document.querySelector('.section-header[data-section="display"]').closest('.menu-section').classList.contains('menu-open'));
+  if (!open) await page.click('.section-header[data-section="display"]');
+  await page.click('#' + id);
+  const dlg = await page.waitForSelector('#alignLoadProceed', { timeout: 1500 }).then(() => true).catch(() => false);
+  if (dlg) await page.click('#alignLoadProceed');
+  await page.waitForTimeout(700);
+  await page.click('.section-header[data-section="display"]');   // close the menu again
+  await page.waitForTimeout(200);
+}
+async function auditOpenSection(page, name) {
+  const open = await page.evaluate((n) => document.querySelector(`.section-header[data-section="${n}"]`).closest('.menu-section').classList.contains('menu-open'), name);
+  if (!open) await page.click(`.section-header[data-section="${name}"]`);
+}
+// [row, column] of the first residue at the top left of the view, in any mode (Canvas: its
+// hit test; Full/Block: the first residue below the toolbar, right of the sticky names).
+const AUDIT_TOPLEFT = () => {
+  const c = el('alignmentContainer');
+  if (el('modeCanvas').checked) {
+    const cv = el('alignmentCanvas').getBoundingClientRect(), m = _canvasState.metrics;
+    const h = _canvasHitTest(cv.left + m.nameW + 2, cv.top + 2);
+    return h ? [h.row, h.col] : null;
+  }
+  const cr = c.getBoundingClientRect();
+  const top = Math.max(cr.top, el('controls').getBoundingClientRect().bottom, 0);
+  const name = [...c.querySelectorAll('.seq-line[data-seq-index] > .seq-name')].find(n => { const r = n.getBoundingClientRect(); return r.height && r.bottom > top; });
+  const x = (name && el('stickyNames').checked ? name.getBoundingClientRect().right : cr.left) + 2;
+  for (let y = top + 2; y < top + 120; y += 3) {
+    const e = document.elementFromPoint(x, y);
+    const line = e && e.matches('span[data-pos]') && e.closest('.seq-line[data-seq-index]');
+    if (line && +line.dataset.seqIndex >= 0) return [+line.dataset.seqIndex, +e.dataset.pos];
+  }
+  return null;
+};
+// AUDIT_TOPLEFT once the view has settled (a redraw of a big alignment can take a few seconds)
+async function auditTopLeft(page) {
+  let r = null;
+  for (let i = 0; i < 25 && !r; i++) { r = await page.evaluate(AUDIT_TOPLEFT); if (!r) await page.waitForTimeout(200); }
+  return r;
+}
+const auditNear = (a, b, tol = 2) => !!a && !!b && Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol;
+async function auditWheel(page, dx, dy, n) {
+  const b = await page.evaluate(() => { const r = el('alignmentContainer').getBoundingClientRect(); return [r.left + r.width / 2, Math.max(r.top, 0) + (Math.min(r.bottom, innerHeight) - Math.max(r.top, 0)) / 2]; });
+  await page.mouse.move(b[0], b[1]);
+  for (let i = 0; i < n; i++) { await page.mouse.wheel(dx, dy); await page.waitForTimeout(40); }
+  await page.waitForTimeout(700);
+}
+
+// Windowed Full mode (above ALIGN_WINDOWED_DOM_THRESHOLD) kept only scrollTop through a redraw:
+// emptying the container reset scrollLeft to 0 and the column window was built from that 0, so
+// changing the colour scheme, Highlight diffs or the consensus row threw the view back to column 1.
+check('Audit: windowed Full keeps its columns through a redraw (colour scheme, Highlight diffs, consensus)', async (page) => {
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'full');
+  await auditWheel(page, 600, 400, 20);
+  const out = { before: await auditTopLeft(page) };
+  await auditOpenSection(page, 'display');
+  await page.selectOption('#colorSchemeSelect', 'nucleotide'); await page.waitForTimeout(1200);
+  out.scheme = await auditTopLeft(page);
+  await page.click('#highlightDiffs'); await page.waitForTimeout(1200);
+  out.diffs = await auditTopLeft(page);
+  await page.click('.section-header[data-section="display"]');
+  await auditOpenSection(page, 'consensus');
+  await page.click('#showConsensus'); await page.waitForTimeout(1200);
+  out.consensusOff = await auditTopLeft(page);
+  // The consensus row above the rows went away: rows move up by one, the columns stay
+  const ok = out.before[1] > 1000 && auditNear(out.scheme, out.before) && auditNear(out.diffs, out.before)
+    && Math.abs(out.consensusOff[1] - out.before[1]) <= 2;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

@@ -3754,7 +3754,7 @@ function _incrementalUpdateBlockRows(blockDiv, blockIndex, newRowStart, newRowEn
 // the slider (multiple blocks). Windows at three granularities: block-level
 // (which blocks are visible), row-level (which rows within each block), and
 // column-level (only when a block is wider than the viewport).
-function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, _isRetry) {
+function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, _isRetry, preservedScrollLeft) {
     _unifiedWindowRenderParams = { len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options };
     const numBlocks = Math.max(1, Math.ceil(len / blockWidth));
     // rowHeightPx falls back to a hardcoded 16px guess until a real row has been
@@ -3774,6 +3774,7 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
     const G = _unifiedGeometry(numBlocks, blockWidth, len);
     const aaRowPxBefore = _unifiedAaRowPx;
     const effectiveScrollTop = preservedScrollTop != null ? preservedScrollTop : container.scrollTop;
+    const effectiveScrollLeft = preservedScrollLeft != null ? preservedScrollLeft : container.scrollLeft;
     const { charWidthPx, nameColWidthPx } = _measureUnifiedColumnMetrics(null);
     const overscan = 1;
     let blockStart = Math.max(0, G.indexAt(effectiveScrollTop) - overscan);
@@ -3795,7 +3796,7 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
     for (let b = blockStart; b <= blockEnd; b++) {
         const start = b * blockWidth;
         const end = Math.min(start + blockWidth, len);
-        const blockDiv = _buildUnifiedBlock(b, start, end, len, G.blockH(b), G.rowH(b), effectiveScrollTop, container.clientHeight, container.scrollLeft, container.clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPx, G.top(b));
+        const blockDiv = _buildUnifiedBlock(b, start, end, len, G.blockH(b), G.rowH(b), effectiveScrollTop, container.clientHeight, effectiveScrollLeft, container.clientWidth, charWidthPx, nameColWidthPx, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, headerHeightPx, G.top(b));
         container.appendChild(blockDiv);
         if (!firstRealBlock) firstRealBlock = blockDiv;
     }
@@ -3841,13 +3842,16 @@ function renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNam
         // fresh fallback from the now-correct row height instead of reusing a
         // blockHeightPx that's just as poisoned as the row height was.
         _unifiedBlockHeightPx = null;
-        return renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, true);
+        return renderUnifiedWindowedDom(container, len, blockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, preservedScrollTop, true, preservedScrollLeft);
     }
 
     // Restore scroll position (same suppress dance as the existing functions)
-    if (preservedScrollTop != null && container.scrollTop !== preservedScrollTop) {
+    const restoreTop = preservedScrollTop != null && container.scrollTop !== preservedScrollTop;
+    const restoreLeft = preservedScrollLeft != null && container.scrollLeft !== preservedScrollLeft;
+    if (restoreTop || restoreLeft) {
         _unifiedScrollController.suppressNextEvent();
-        container.scrollTop = preservedScrollTop;
+        if (restoreLeft) container.scrollLeft = preservedScrollLeft;
+        if (restoreTop) container.scrollTop = preservedScrollTop;
     }
     // The blocks hold their on-screen rows; queue their row buffers.
     _cancelAllBlockJobs();
@@ -8752,6 +8756,10 @@ function renderAlignment(options = {}) {
     // change scroll behavior anywhere else.
     const _preserveScrollTop = ((document.getElementById('modeSingle')?.checked || document.getElementById('modeBlocks')?.checked) && _needsWindowed)
         ? alignmentContainer.scrollTop : null;
+    // The same for scrollLeft: emptying the container zeroed it, and the column window was then
+    // built from that 0, so every redraw (colour scheme, consensus, Highlight diffs, zoom) threw a
+    // windowed Full view back to column 1.
+    const _preserveScrollLeft = _preserveScrollTop !== null ? alignmentContainer.scrollLeft : null;
     alignmentContainer.innerHTML = '';
     _syncResidueWidthVar();   // while the alignment is empty: measuring then costs no layout of it
     // Ensure Full/Block modes have correct scroll/layout behaviour
@@ -8983,7 +8991,7 @@ function renderAlignment(options = {}) {
     // blockWidth parameter, so the only difference is its value.
     const effectiveBlockWidth = useBlocks ? blockWidth : len;
     if (_needsWindowed) {
-        renderUnifiedWindowedDom(alignmentContainer, len, effectiveBlockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, _preserveScrollTop);
+        renderUnifiedWindowedDom(alignmentContainer, len, effectiveBlockWidth, nameLen, stickyNames, standard, ambiguous, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, conservationData, shouldRenderConsensus, consensusPosition, consensus, options, _preserveScrollTop, false, _preserveScrollLeft);
     } else if (TOTAL_RESIDUES > ALIGN_WINDOWED_DOM_THRESHOLD) {
         // Safety net: should have been windowed but wasn't.  Show a message
         // instead of creating millions of DOM nodes that crash the tab.
