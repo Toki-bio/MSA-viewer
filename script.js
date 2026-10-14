@@ -12598,8 +12598,10 @@ function deleteSelected() {
         showMessage("No sequences selected for deletion.", 3000);
         return;
     }
-    if (state.seqs.length === 1) {
-        showMessage("Cannot delete the last sequence.", 3000);
+    // every sequence selected: refused like deleting the last one (Ctrl+A, Ctrl+Del used to
+    // empty the alignment)
+    if (state.seqs.length === 1 || state.selectedRows.size >= state.seqs.length) {
+        showMessage(state.seqs.length === 1 ? "Cannot delete the last sequence." : "Cannot delete every sequence: keep at least one.", 3000);
         return;
     }
     if (confirm(`Delete ${state.selectedRows.size} sequence(s)?`)) {
@@ -13084,6 +13086,14 @@ function deleteColumnsOfResidueSelection(skipConfirm) {
 function deleteSelectedColumns(skipConfirm) {
     if (state.selectedColumns.size === 0) {
         showMessage("No columns selected for deletion.", 3000);
+        return;
+    }
+    // Deleting every column left zero-length sequences
+    const width = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
+    let kept = 0;
+    for (let c = 0; c < width && !kept; c++) if (!state.selectedColumns.has(c)) kept++;
+    if (!kept) {
+        showMessage("Cannot delete every column.", 3000);
         return;
     }
     if (skipConfirm || confirm(`Delete ${state.selectedColumns.size} column(s)?`)) {
@@ -20434,6 +20444,11 @@ async function addSequencesJustAdd() {
             state.seqs.push(...newSeqs);
         }
     }
+
+    // A new sequence longer than the alignment widens it: pad every row (only shorter new
+    // sequences were padded, so a longer one left the alignment ragged)
+    const widthBefore = state.seqs.reduce((m, q) => Math.min(m, q.seq.length), Infinity);
+    if (normalizeAlignmentLengths() !== widthBefore) refreshAllGaplessPositions();
 
     closeAddSequencesModal();
     renderAlignment();

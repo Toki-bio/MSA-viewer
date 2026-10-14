@@ -3418,6 +3418,30 @@ check('Audit: Degap block moves the residue selection right of the block with it
   return { pass: before === '0:GCAT' && after === '0:GCAT', detail: JSON.stringify({ before, after, seqs: await auditSeqs(page) }) };
 });
 
+check('Audit: Just Add of a sequence longer than the alignment keeps it rectangular', async (page) => {
+  // Used to: only shorter new sequences were padded; a longer one left every other row short.
+  await loadFasta(page, '>a\nACGTACGT\n>b\nTTTTGGGG\n');
+  await page.evaluate(() => { el('addSeqInput').value = '>long\nAAAACCCCGGGGTTTT'; el('addSeqAtTop').checked = false; el('addSeqAlignCons').checked = false; el('addSeqJustAddButton').click(); });
+  await page.waitForTimeout(400);
+  const lens = await page.evaluate(() => state.seqs.map(s => s.seq.length));
+  return { pass: lens.join() === '16,16,16', detail: lens.join() };
+});
+
+check('Audit: deleting every sequence or every column is refused', async (page) => {
+  // Used to: the guard only stopped deleting when exactly one sequence was left, so Ctrl+A,
+  // Ctrl+Del emptied the alignment; deleting all columns left zero-length sequences.
+  page.on('dialog', d => d.accept());
+  await loadFasta(page, '>a\nACGT\n>b\nTTTT\n>c\nGGGG\n');
+  await auditBlur(page);
+  await page.keyboard.press('Control+a'); await page.keyboard.press('Control+Delete'); await page.waitForTimeout(300);
+  const n = await page.evaluate(() => state.seqs.length);
+  await page.keyboard.press('Control+a');   // deselect all
+  await auditCtrlAltDrag(page, 0, 0, 3);
+  await page.keyboard.press('Control+d'); await page.waitForTimeout(300);
+  const w = await page.evaluate(() => state.seqs[0].seq.length);
+  return { pass: n === 3 && w === 4, detail: JSON.stringify({ n, w }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
