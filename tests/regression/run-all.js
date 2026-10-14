@@ -4282,7 +4282,7 @@ check('Round 2: Show 2D draws its rectangles on a windowed alignment (Full and B
   out.blockScrolled = await page.evaluate(R2_MASK_ALIGNED);
   const good = r => r && r.rects > 0 && r.checked > 0 && r.bad === 0;
   // (the first screen of Full and of Block holds no rectangle's first column: there only that none is misplaced)
-  const ok = out.w.windowed && out.full.rects > 0 && out.full.bad === 0 && good(out.fullScrolled) && out.block.bad === 0 && good(out.blockScrolled);
+  const ok = out.w.windowed && out.full.bad === 0 && good(out.fullScrolled) && out.block.bad === 0 && good(out.blockScrolled);
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
