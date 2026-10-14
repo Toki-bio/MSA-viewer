@@ -4286,6 +4286,30 @@ check('Round 2: Show 2D draws its rectangles on a windowed alignment (Full and B
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// Horizontal scrolling of a windowed Full view froze the page: each re-centre of the column window
+// patched every built row (~130 rows x 510 columns, 63k residue spans), 0.9-1.9 s per re-centre
+// (Range.deleteContents alone ~150 ms, the rest style, layout and paint of all of them), up to
+// 4.5 s with real wheel events (96k spans built, 9x the cells on screen). The window is now
+// about 3.5x the screen; budget 800 ms per long task (now ~0.3-0.4 s, before 0.85-1.9 s here).
+check('Round 2: windowed Full scrolls sideways and down without long freezes', async (page) => {
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'full');
+  await page.waitForTimeout(1500);   // the row buffer fills in over the first frames
+  const box = await page.evaluate(() => { const r = el('alignmentContainer').getBoundingClientRect(); return [r.left + r.width / 2, r.top + Math.min(r.height, innerHeight - r.top) / 2]; });
+  await page.mouse.move(box[0], box[1]);
+  const steps = async (dx, dy, n) => { for (let i = 0; i < n; i++) { await page.mouse.wheel(dx, dy); await r2Settle(page); await page.waitForTimeout(30); } };
+  const h = await r2LongTasks(page, () => steps(300, 0, 24));
+  const v = await r2LongTasks(page, () => steps(0, 300, 16));
+  const dom = await page.evaluate(() => {
+    const c = el('alignmentContainer'), row = c.querySelector('.seq-line[data-seq-index]:not([data-seq-index="-1"])');
+    const name = row.querySelector('.seq-name').getBoundingClientRect().width;
+    const visCells = Math.ceil(c.clientHeight / row.getBoundingClientRect().height) * Math.ceil((c.clientWidth - name) / _unifiedCharWidthPx);
+    return { sl: c.scrollLeft, st: c.scrollTop, spans: c.querySelectorAll('.seq-line[data-seq-index] span[data-pos]').length, visCells };
+  });
+  const ok = dom.sl > 6000 && dom.st > 3000 && h.max < 800 && v.max < 800 && dom.spans < 4.5 * dom.visCells;
+  return { pass: ok, detail: JSON.stringify({ h, v, dom }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
