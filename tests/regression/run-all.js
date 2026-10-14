@@ -3269,6 +3269,26 @@ check('Audit: Screen refits the blocks of a large alignment', async (page) => {
   return { pass: before > 0 && r.rendered === r.slider && r.overflow <= 0, detail: JSON.stringify(r) };
 });
 
+// PageUp/PageDown scrolled alignmentContainer and always cancelled the key: for small alignments
+// the page is the scroller, so the keys did nothing at all; in Canvas no key scrolled.
+check('Audit: PageDown scrolls a small (page-scrolled) alignment and Canvas', async (page) => {
+  const out = {};
+  await loadFasta(page, makeFasta(400, 100));
+  await setMode(page, 'block');
+  await page.mouse.click(700, 895);
+  await page.keyboard.press('PageDown'); await page.waitForTimeout(400);
+  out.pageY = await page.evaluate(() => scrollY);
+  await loadSyntheticFasta(page, 1500, 4000);
+  await auditClickMode(page, 'canvas');
+  await page.mouse.click(700, 895);
+  await page.keyboard.press('PageDown'); await page.waitForTimeout(400);
+  out.canvas = await page.evaluate(() => [_canvasState.offsetY, el('alignmentContainer').scrollTop]);
+  await page.keyboard.press('PageUp'); await page.waitForTimeout(400);
+  out.canvasUp = await page.evaluate(() => _canvasState.offsetY);
+  const ok = out.pageY > 300 && out.canvas[0] > 300 && out.canvas[1] === 0 && out.canvasUp === 0;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 // Math.max(...lengths) over one entry per sequence throws "Maximum call stack size exceeded"
 // past ~125,000 arguments: an alignment of 130,000 short sequences failed to load.
 check('Audit: 130,000 sequences load and render', async (page) => {

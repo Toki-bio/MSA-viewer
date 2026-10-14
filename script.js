@@ -12458,12 +12458,20 @@ function handleKeyDown(e) {
     }
 
     // Page navigation for large alignments
-    if (e.key === 'PageUp' || e.key === 'PageDown') {
+    // Canvas pans its own offset; a windowed view scrolls the container; a small alignment
+    // scrolls the page, so the key is left to the browser. The key used to always scroll the
+    // container and be cancelled: it did nothing for small alignments or in Canvas.
+    if ((e.key === 'PageUp' || e.key === 'PageDown') && !e.ctrlKey && !e.metaKey && !e.altKey && !_isTextEntry(document.activeElement)) {
         const container = alignmentContainer;
         const direction = e.key === 'PageUp' ? -1 : 1;
-        const scrollAmount = container.clientHeight * 0.8;
-        container.scrollTop += direction * scrollAmount;
-        e.preventDefault();
+        if (isCanvasMode() && _canvasState.scheduleDraw) {
+            _canvasState.offsetY = Math.max(0, (_canvasState.offsetY || 0) + direction * container.clientHeight * 0.8);
+            _canvasState.scheduleDraw();
+            e.preventDefault();
+        } else if (container.scrollHeight > container.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(container).overflowY)) {
+            container.scrollTop += direction * container.clientHeight * 0.8;
+            e.preventDefault();
+        }
     }
 }
 function handleKeyUp(e) {
