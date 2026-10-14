@@ -589,6 +589,25 @@ function prepareSearchWork(querySeq, dbSeqs, index) {
     return { workItems, qRevComp, dbTotalLen };
 }
 
+// A hit found with the reverse-complemented query is reported the way BLAST
+// reports Plus/Minus: coordinates on the query as given, the aligned query read
+// along its plus strand and the subject reverse-complemented beside it
+// (hitStart..hitEnd stay ascending positions on the subject).
+function _hspToPlusQuery(hit, qLen) {
+    const rcAligned = s => {
+        let out = '';
+        for (let i = s.length - 1; i >= 0; i--) out += s[i] === '-' ? '-' : (COMPL[s[i]] || 'N');
+        return out;
+    };
+    const qs = qLen - hit.queryEnd + 1;
+    hit.queryEnd = qLen - hit.queryStart + 1;
+    hit.queryStart = qs;
+    hit.querySeq = rcAligned(hit.querySeq);
+    hit.hitSeq = rcAligned(hit.hitSeq);
+    hit.midline = hit.midline.split('').reverse().join('');
+    return hit;
+}
+
 function scoreRankedCandidates(workItems, querySeq, qRevComp, dbTotalLen, useBanded, bandHalf) {
     const scored = [];
     for (const it of workItems) {
@@ -629,7 +648,7 @@ function scoreRankedCandidates(workItems, querySeq, qRevComp, dbTotalLen, useBan
                     : smithWatermanAffine(qRevComp, window);
                 if (hit && (!bestHit || hit.score > bestHit.score)) {
                     hit.hitStart += winStart; hit.hitEnd += winStart; hit.strand = '-';
-                    bestHit = hit;
+                    bestHit = _hspToPlusQuery(hit, querySeq.length);
                 }
             }
         }
