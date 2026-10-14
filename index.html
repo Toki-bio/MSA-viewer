@@ -6,8 +6,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>ViewAlign</title>
+    <meta name="description" content="ViewAlign: view, edit and analyse multiple sequence alignments in the browser. GeneDoc-style editing, in-browser MAFFT, codon analysis, clustering, trees, SVG and RTF export. No installation.">
+    <meta property="og:title" content="ViewAlign: multiple sequence alignment viewer and editor">
+    <meta property="og:description" content="View, edit and analyse DNA and protein alignments in the browser: GeneDoc-style editing, in-browser MAFFT, codon analysis, clustering, trees. No installation.">
+    <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23fff'/%3E%3Crect x='2' y='3' width='5' height='2' fill='%2364c864'/%3E%3Crect x='7' y='3' width='7' height='2' fill='%23f0a030'/%3E%3Crect x='2' y='7' width='8' height='2' fill='%23f06060'/%3E%3Crect x='10' y='7' width='4' height='2' fill='%2364c864'/%3E%3Crect x='2' y='11' width='4' height='2' fill='%236090f0'/%3E%3Crect x='6' y='11' width='8' height='2' fill='%23f0a030'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="styles.css?v=167">
+    <link rel="stylesheet" href="styles.css?v=168">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -46,14 +52,15 @@
                     </div>
                     <div id="snapshotLoadRow" style="margin-top: 6px; border-top: 1px solid #ddd; padding-top: 6px;">
                         <div style="font-size: 10px; color: #666; margin-bottom: 3px;">Snapshots</div>
-                        <div style="display: flex; gap: 4px; align-items: center;">
+                        <!-- the two snapshot-folder rows show once the optional server or snapshots/index.json lists files (script.js refreshSnapshotList) -->
+                        <div id="snapshotFolderListRow" style="display: none; gap: 4px; align-items: center;">
                             <select id="snapshotListSelect" style="flex: 1; font-size: 11px; height: 22px;" title="Select a saved snapshot JSON from snapshots folder">
                                 <option value="">-- snapshots/*.json --</option>
                             </select>
                             <button id="snapshotRefreshButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Refresh snapshot list">Refresh</button>
                             <button id="snapshotOpenButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Open selected snapshot">Open</button>
                         </div>
-                        <div style="display: flex; gap: 4px; align-items: center; margin-top: 4px;">
+                        <div id="snapshotFolderPathRow" style="display: none; gap: 4px; align-items: center; margin-top: 4px;">
                             <input type="text" id="snapshotPathInput" placeholder="snapshots/my_snapshot.json" style="flex: 1; font-size: 11px; padding: 2px 4px; font-family: 'Courier New', monospace; border: 1px solid #ccc; border-radius: 3px;" title="Manual snapshot path for ?snapshotFile mode">
                             <button id="snapshotPathOpenButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Open snapshot by path">Open Path</button>
                         </div>
@@ -870,7 +877,7 @@
                                 <button id="copySelectedButton" title="Copy selected sequences (Ctrl+Shift+C)">Copy Sel</button>
                                 <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">Copy Align</button>
                                 <button id="deleteSelectedButton" title="Delete selected sequences (Ctrl+Del)">Delete Sel</button>
-                                <button id="openInNewTabButton" title="Open selected in new tab (Ctrl+T)">New Tab</button>
+                                <button id="openInNewTabButton" title="Open selected in new tab (Alt+T)">New Tab</button>
                             </div>
                         </div>
                         <div class="action-section action-section-order">
@@ -913,7 +920,7 @@
                         <div class="action-section action-section-settings">
                             <div class="action-section-label">Presets &amp; Help</div>
                             <div class="button-group">
-                                <button id="savePresetButton" title="Save current settings (Ctrl+S)">Save Preset</button>
+                                <button id="savePresetButton" title="Save current settings (Ctrl+Shift+S)">Save Preset</button>
                                 <button id="loadPresetButton" title="Load saved settings (Ctrl+O)">Load Preset</button>
                                 <button id="infoButton" title="Show info and shortcuts (Ctrl+I)">Info</button>
                                 <button id="manualButton" title="Open comprehensive manual in new tab" onclick="window.open('manual.html','_blank')">Manual</button>
@@ -1381,10 +1388,10 @@ B: -</pre>
     <script src="bam-parser.js?v=166"></script>
     <script src="ab1-parser.js?v=1"></script>
     <script src="chromatogram-viewer.js?v=1"></script>
-    <script src="realign-region.js?v=2"></script>
-    <script src="script.js?v=293"></script>
-    <script src="a11y.js?v=1"></script>
-    <script src="tree-draw.js?v=165"></script>
+    <script src="realign-region.js?v=3"></script>
+    <script src="script.js?v=294"></script>
+    <script src="a11y.js?v=2"></script>
+    <script src="tree-draw.js?v=166"></script>
     <script src="block-mask.js?v=1"></script>
     <script src="block-bicluster.js?v=17"></script>
     <script>

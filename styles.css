@@ -230,7 +230,8 @@ html {
 
 /* Actions section: align dropdown to the right so it stays on-screen */
 #actions-section .control-group,
-.menu-section.menu-align-right .control-group {
+.menu-section.menu-align-right .control-group,
+.menu-section.menu-flip-right .control-group {
     left: auto;
     right: 0;
     border-radius: 4px 0 4px 4px;
@@ -1405,7 +1406,8 @@ input[type="number"]::-webkit-outer-spin-button {
 .group-explorer.ge-probe .ge-summary {
     display: none;
 }
-.group-explorer.ge-probe #geHeaderActions {
+.group-explorer.ge-probe #geDockBtn,
+.group-explorer.ge-probe #geClearBtn {
     visibility: hidden;
 }
 
@@ -2992,7 +2994,9 @@ span.column-highlighted::after {
     padding: 10px 20px;
     border-radius: 4px;
     font-size: 14px;
-    z-index: 1000;
+    /* Above every window (10000+) and detached panel (100000): under them, a toast such as
+       "Newick copied." in the Tree window was invisible */
+    z-index: 100001;
     display: none;
     /* Purely a passive toast (no click handler anywhere), but centered and
        sized to its text - it was intercepting wheel/click events meant for
@@ -4283,3 +4287,13 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 /* The codon-aligner settings, just revealed by "Codon alignment (MACSE)" */
 @keyframes al-flash { from { background: #fff3b0; } to { background: transparent; } }
 .al-checks.al-flash { animation: al-flash 1.6s ease-out; border-radius: 3px; }
+
+/* Printing: the fixed menu bar printed over the first block, and the browser dropped the
+   conservation-shading backgrounds, leaving white residues on white paper */
+@media print {
+    #controls { display: none !important; }
+    body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+}

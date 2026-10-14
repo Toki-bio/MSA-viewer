@@ -3503,6 +3503,262 @@ check('Audit: deleting every sequence or every column is refused', async (page) 
   return { pass: n === 3 && w === 4, detail: JSON.stringify({ n, w }) };
 });
 
+// ============================================================================
+// pre-publication audit: UI (2026-10-14)
+// ============================================================================
+const _auditFs = require('fs');
+const _auditPath = require('path');
+const _auditSvk = () => _auditFs.readFileSync(_auditPath.join(__dirname, '..', '..', 'examples', 'svk_k4.fa'), 'utf8');
+// Opens a top menu the way a mouse does (hovering its header) and clicks one of its buttons.
+async function _auditMenuClick(page, section, buttonId) {
+  await page.hover(`.section-header[data-section="${section}"]`);
+  await page.waitForTimeout(150);
+  await page.click('#' + buttonId);
+}
+const _auditToast = (page) => page.evaluate(() => {
+  const s = document.getElementById('statusMessage');
+  return getComputedStyle(s).display !== 'none' ? s.textContent.trim() : '';
+});
+const _auditHideToast = (page) => page.evaluate(() => { document.getElementById('statusMessage').style.display = 'none'; });
+
+// Reverse complement on a protein alignment used to turn every row into IUPAC nonsense
+// (RRLRTAFT... became YMNMKYYN...) and report "Reverse complement applied"; the MACSE
+// codon preset was likewise accepted on protein. Both must refuse with a message.
+// (Writing this check also showed that an earlier toast's hide timer hid a newer toast
+// early: the MACSE message vanished at once. showMessage now keeps one timer.)
+check('audit UI: reverse complement and the MACSE preset refuse a protein alignment', async (page) => {
+  await loadFasta(page, makeFasta(6, 60, 'ACDEFGHIKLMNPQRSTVWY'));
+  const seqs = () => page.evaluate(() => state.seqs.map(s => s.seq).join('|'));
+  const before = await seqs();
+  await _auditMenuClick(page, 'actions', 'reverseComplementAllButton');
+  await page.waitForTimeout(300);
+  const allMsg = await _auditToast(page);
+  const afterAll = await seqs();
+  await page.mouse.move(700, 600);
+  await page.click('.seq-line[data-seq-index="0"] .seq-name', { modifiers: ['Control'] });
+  await _auditHideToast(page);
+  await page.keyboard.press('Control+r');
+  await page.waitForTimeout(300);
+  const ctrlRMsg = await _auditToast(page);
+  const afterCtrlR = await seqs();
+  await _auditHideToast(page);
+  await _auditMenuClick(page, 'alignment', 'macsePresetButton');
+  await page.waitForTimeout(300);
+  const macse = { type: await page.evaluate(() => el('mafftSeqType').value), msg: await _auditToast(page) };
+  const pass = afterAll === before && afterCtrlR === before && /nucleotide/i.test(allMsg) && /nucleotide/i.test(ctrlRMsg)
+    && macse.type !== 'codon' && /nucleotide/i.test(macse.msg);
+  return { pass, detail: JSON.stringify({ allMsg, ctrlRMsg, changedAll: afterAll !== before, changedCtrlR: afterCtrlR !== before, macse }) };
+});
+
+// The Clusterability window hid its whole header-button row, × included, so only Esc
+// closed it (and nothing said so); it opened off-centre and ran past the bottom of a
+// 1366x768 screen with overflow hidden, so the last rows and the footnote were unreachable.
+check('audit UI: Clusterability window has a close button, fits the screen and scrolls', async (page) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await loadFasta(page, _auditSvk());
+  await page.hover('.section-header[data-section="clustering"]');
+  await page.waitForTimeout(150);
+  await page.click('#clustering-controls summary:has-text("Presets")');
+  await page.click('#clusteringProbeButton');
+  await page.waitForFunction(() => /already the best|best of|tried/i.test(el('clusteringModal').textContent) && !/run \d+ of/i.test(el('clusteringStatus')?.textContent || ''), null, { timeout: 30000 });
+  await page.waitForTimeout(800);
+  const geo = await page.evaluate(() => {
+    const m = el('clusteringModal'), r = m.getBoundingClientRect();
+    const x = el('clusteringModalClose'), xr = x.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right), vh: innerHeight, vw: innerWidth,
+      closeVisible: xr.width > 0 && getComputedStyle(x).visibility !== 'hidden' && xr.top >= 0 && xr.bottom <= innerHeight };
+  });
+  // the footnote under the table can be scrolled into view with the mouse wheel
+  const rows = await page.$$('#clusteringModal tr');
+  const last = rows[rows.length - 1];
+  const box = await page.evaluate(() => { const r = el('clusteringModal').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.move(box.x, box.y);
+  for (let i = 0; i < 10; i++) { await page.mouse.wheel(0, 300); await page.waitForTimeout(50); }
+  const lastBottom = await last.evaluate(n => Math.round(n.getBoundingClientRect().bottom));
+  let closed = false;
+  if (geo.closeVisible) { await page.click('#clusteringModalClose'); closed = await page.evaluate(() => el('clusteringModal').style.display === 'none'); }
+  const pass = geo.closeVisible && closed && geo.top >= 0 && geo.bottom <= geo.vh && geo.left >= 0 && geo.right <= geo.vw && lastBottom <= geo.vh;
+  return { pass, detail: JSON.stringify({ ...geo, lastRowBottom: lastBottom, closed }) };
+});
+
+// Two Actions tooltips named keys that do not do what they say: Save Preset said Ctrl+S
+// (the key is Ctrl+Shift+S; Ctrl+S opens the browser's Save Page) and New Tab said Ctrl+T
+// (Chrome keeps Ctrl+T; the key is Alt+T), contradicting the Keys panel and the Manual.
+check('audit UI: Actions tooltips name the real shortcuts', async (page) => {
+  const t = await page.evaluate(() => [el('savePresetButton').title, el('openInNewTabButton').title]);
+  const pass = /Ctrl\+Shift\+S/.test(t[0]) && /Alt\+T/.test(t[1]) && !/Ctrl\+T/.test(t[1]);
+  return { pass, detail: JSON.stringify(t) };
+});
+
+// Toasts (#statusMessage, z-index 1000) were drawn under every window (z-index 10000+),
+// so e.g. "Newick copied." after Copy Newick in the Tree window was invisible.
+check('audit UI: a toast shows above an open window', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  await _auditMenuClick(page, 'actions', 'buildTreeButton');
+  await page.waitForFunction(() => el('treeBuilderModal').style.display !== 'none', null, { timeout: 10000 });
+  await page.waitForTimeout(500);
+  await page.click('#treeBuilderModal button:has-text("Copy Newick")');
+  await page.waitForTimeout(200);
+  const r = await page.evaluate(() => {
+    const s = el('statusMessage');
+    if (getComputedStyle(s).display === 'none') return { shown: false };
+    const rc = s.getBoundingClientRect();
+    s.style.pointerEvents = 'auto';   // hit-test only: the toast itself ignores the mouse
+    const top = document.elementFromPoint(rc.left + rc.width / 2, rc.top + rc.height / 2);
+    s.style.pointerEvents = '';
+    return { shown: true, text: s.textContent, onTop: top === s || s.contains(top), topmost: top && (top.id || top.className) };
+  });
+  return { pass: r.shown && r.onTop, detail: JSON.stringify(r) };
+});
+
+// At 1024px wide the Alignment menu (x 755..1225) ran off the right edge, cutting
+// "Realign Selected", "Degap block →" and the Gap extension box.
+check('audit UI: a menu that would run off the right edge stays on screen (1024px)', async (page) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await loadFasta(page, makeFasta(8, 120));
+  const out = {};
+  for (const sec of ['alignment', 'colourseqs', 'search', 'clustering']) {
+    await page.mouse.move(500, 700);
+    await page.hover(`.section-header[data-section="${sec}"]`);
+    await page.waitForTimeout(200);
+    out[sec] = await page.evaluate(sec => {
+      const g = document.querySelector(`.section-header[data-section="${sec}"]`).closest('.menu-section').querySelector('.control-group');
+      const r = g.getBoundingClientRect();
+      return [Math.round(r.left), Math.round(r.right)];
+    }, sec);
+  }
+  const pass = Object.values(out).every(([l, r]) => l >= 0 && r <= 1024);
+  return { pass, detail: JSON.stringify(out) };
+});
+
+// There was no print stylesheet: the fixed menu bar printed over the first block (ruler
+// and consensus hidden) and the conservation shading backgrounds were dropped, leaving
+// white-on-white residues.
+check('audit UI: printing hides the menu bar and keeps residue shading', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  await page.emulateMedia({ media: 'print' });
+  const r = await page.evaluate(() => ({
+    controls: getComputedStyle(el('controls')).display,
+    adjust: getComputedStyle(document.body).printColorAdjust || getComputedStyle(document.body).webkitPrintColorAdjust,
+  }));
+  await page.emulateMedia({ media: 'screen' });
+  return { pass: r.controls === 'none' && r.adjust === 'exact', detail: JSON.stringify(r) };
+});
+
+// These buttons did nothing visible when there was nothing to act on (other buttons in
+// the same menus say "No sequences selected."), and Clustering > Load got the click event
+// as its `silent` argument, so loading a preset never said it had.
+check('audit UI: buttons with nothing to act on say so', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  const out = {};
+  const tryBtn = async (section, id, before) => {
+    await page.mouse.move(700, 700);
+    await page.waitForTimeout(100);
+    if (before) await before();
+    await _auditHideToast(page);
+    await _auditMenuClick(page, section, id);
+    await page.waitForTimeout(300);
+    out[id] = await _auditToast(page);
+  };
+  for (const id of ['copySelectedButton', 'duplicateButton', 'moveUpButton', 'moveDownButton', 'moveToTopButton', 'moveToBottomButton']) await tryBtn('actions', id);
+  await tryBtn('search', 'searchButton');
+  await tryBtn('search', 'reverseComplementQueryButton');
+  await tryBtn('annotation', 'annotUrlButton');
+  await tryBtn('clustering', 'clusteringLoadPresetButton', async () => {
+    await page.hover('.section-header[data-section="clustering"]');
+    await page.waitForTimeout(150);
+    await page.click('#clustering-controls summary:has-text("Presets")');
+  });
+  // Up with the first row already at the top
+  await page.mouse.move(700, 700);
+  await page.click('.seq-line[data-seq-index="0"] .seq-name', { modifiers: ['Control'] });
+  await tryBtn('actions', 'moveUpButton');
+  out.upAtTop = out.moveUpButton;
+  const silent = Object.entries(out).filter(([, v]) => !v).map(([k]) => k);
+  return { pass: silent.length === 0, detail: silent.length ? `silent: ${silent.join(', ')}` : JSON.stringify(out) };
+});
+
+// Esc closed every window except the Sequence Editor (focus lands in its text box, and
+// Esc in a text field was left to the field). It now closes on Esc while nothing in it
+// has been changed; with edits, Esc keeps it open so they are not lost.
+check('audit UI: Sequence Editor closes on Esc when unchanged', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  const shown = () => page.evaluate(() => el('seqEditModal').style.display !== 'none');
+  await _auditMenuClick(page, 'actions', 'seqEditButton');
+  await page.waitForTimeout(300);
+  const opened = await shown();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  const closedUnchanged = !(await shown());
+  await _auditMenuClick(page, 'actions', 'seqEditButton');
+  await page.waitForTimeout(300);
+  await page.click('#seqEditTextarea');
+  await page.keyboard.type('ACGT');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  const keptEdited = await shown();
+  return { pass: opened && closedUnchanged && keptEdited, detail: JSON.stringify({ opened, closedUnchanged, keptEdited }) };
+});
+
+// Opening Info or the Tree window from the Actions menu and closing it with Esc left
+// keyboard focus on <body>: the opener sits in a menu that has closed, so the focus
+// return had nowhere to go. It now goes back to the menu's header.
+check('audit UI: closing Info or the Tree window gives focus back to the Actions menu', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  const out = {};
+  for (const id of ['infoButton', 'buildTreeButton']) {
+    await page.focus('.section-header[data-section="actions"]');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    await page.focus('#' + id);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(1200);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    out[id] = await page.evaluate(() => { const a = document.activeElement; return a.id || a.dataset?.section || a.tagName; });
+  }
+  const ok = v => v === 'actions' || v === 'infoButton' || v === 'buildTreeButton';
+  return { pass: ok(out.infoButton) && ok(out.buildTreeButton), detail: JSON.stringify(out) };
+});
+
+// The first screen was one line of text with no example; on a phone that line did not
+// wrap and got its own horizontal scrollbar. It wraps now and offers an example alignment.
+check('audit UI: empty state wraps on a phone and loads the example alignment', async (page) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload({ waitUntil: 'networkidle' });
+  const r = await page.evaluate(() => { const c = el('alignmentContainer'); return { sw: c.scrollWidth, cw: c.clientWidth }; });
+  const link = await page.$('#alignmentContainer a:has-text("example")');
+  let loaded = 0;
+  if (link) {
+    await link.click();
+    await page.waitForFunction(() => typeof state !== 'undefined' && state.seqs.length > 0, null, { timeout: 15000 }).catch(() => {});
+    loaded = await page.evaluate(() => typeof state !== 'undefined' ? state.seqs.length : 0);
+  }
+  return { pass: r.sw <= r.cw && !!link && loaded === 40, detail: JSON.stringify({ ...r, link: !!link, loaded }) };
+});
+
+// The Input menu showed the snapshot-folder rows (list, Refresh, Open, path box, Open
+// Path) on the public site, where there is no server and the manifest is empty, so they
+// could only ever say "nothing found". They show only when a server or manifest lists files.
+check('audit UI: snapshot-folder rows hidden when nothing can be listed', async (page) => {
+  await loadFasta(page, makeFasta(8, 120));
+  await page.waitForTimeout(1500);   // the server probe and the manifest fetch have answered
+  await page.hover('.section-header[data-section="input"]');
+  await page.waitForTimeout(200);
+  const r = await page.evaluate(() => {
+    const vis = id => !!el(id) && el(id).getClientRects().length > 0;
+    return { list: vis('snapshotListSelect'), path: vis('snapshotPathInput'), create: vis('snapshotCreateTopButton'), svg: vis('exportSvgTopButton') };
+  });
+  return { pass: !r.list && !r.path && r.create && r.svg, detail: JSON.stringify(r) };
+});
+
+// A shared link to the app had no description or preview.
+check('audit UI: page has a description and social preview tags', async (page) => {
+  const r = await page.evaluate(() => ['meta[name="description"]', 'meta[property="og:title"]', 'meta[property="og:description"]', 'meta[property="og:image"]']
+    .map(s => (document.querySelector(s)?.getAttribute('content') || '').length > 0));
+  return { pass: r.every(Boolean), detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

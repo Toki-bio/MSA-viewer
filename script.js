@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v243';
+const BUILD_TAG = 'v244';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -2245,6 +2245,8 @@ if (!fastaInput || !alignmentContainer || !statusMessage) {
 // A note from an aligner (e.g. the codon aligner's frameshift summary) that should ride along with the caller's
 // own completion message instead of being overwritten by it. Consumed by the next showMessage call.
 let _pendingAlignNote = null;
+// One hide timer: an earlier message's timer used to hide a newer message early
+let _statusMessageTimer = null;
 function showMessage(msg, duration = 2000) {
     if (_pendingAlignNote) {
         msg = msg + ' ' + _pendingAlignNote;
@@ -2253,7 +2255,8 @@ function showMessage(msg, duration = 2000) {
     }
     statusMessage.textContent = msg;
     statusMessage.style.display = 'block';
-    if (duration > 0) setTimeout(() => { statusMessage.style.display = 'none'; }, duration);
+    clearTimeout(_statusMessageTimer);
+    _statusMessageTimer = duration > 0 ? setTimeout(() => { statusMessage.style.display = 'none'; }, duration) : null;
 }
 
 const EXCLUSIVE_MODAL_IDS = [
@@ -2550,10 +2553,21 @@ function openMenuSection(section) {
         return;
     }
     section.classList.add('menu-open');
+    _keepMenuOnScreen(section);
     if (section && section.id === 'groups-menu-section' && _geDocked) {
         const modal = el('clusteringModal');
         if (modal) modal.style.display = 'flex';
     }
+}
+
+// A drop-down that would run past the right edge opens leftwards from its header's
+// right edge instead (at 1024px the Alignment menu was cut off on the right)
+function _keepMenuOnScreen(section) {
+    const group = section && section.querySelector(':scope > .control-group');
+    if (!group || group.classList.contains('detached')) return;
+    section.classList.remove('menu-flip-right');
+    const r = group.getBoundingClientRect();
+    if (r.width && r.right > window.innerWidth - 2) section.classList.add('menu-flip-right');
 }
 
 function makeControlGroupDetachable(section, group, handle, dockBtn) {
@@ -7279,9 +7293,13 @@ function initAnnotationPanel() {
     const urlBtn = el('annotUrlButton'), urlIn = el('annotUrlInput');
     if (urlBtn && urlIn && !urlBtn._annotBound) {
         urlBtn._annotBound = true;
-        urlBtn.addEventListener('click', () => loadAnnotationFromUrl(urlIn.value));
+        const loadTyped = () => {
+            if (!urlIn.value.trim()) { showMessage('Type the URL of a BED file first.', 2500); return; }
+            loadAnnotationFromUrl(urlIn.value);
+        };
+        urlBtn.addEventListener('click', loadTyped);
         urlIn.addEventListener('keydown', e => {
-            if (e.key === 'Enter') { e.preventDefault(); loadAnnotationFromUrl(urlIn.value); }
+            if (e.key === 'Enter') { e.preventDefault(); loadTyped(); }
         });
     }
     const clr = el('annotClearButton');
@@ -8712,7 +8730,11 @@ function renderAlignment(options = {}) {
     syncCodonModePanel();
     syncSearchControlsAvailability();
     if (!state.seqs || state.seqs.length === 0) {
-        alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
+        // Wraps (on a phone the one line ran off under its own scrollbar) and offers the
+        // example alignment through the ?url= loader
+        alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic; white-space:normal; overflow-wrap:anywhere;">'
+            + 'No sequences loaded. Paste FASTA/MSF in the Input menu and click Load, or drop a file on the page. '
+            + '<a href="?url=examples/svk_k4.fa&amp;title=SVK%20SINE%20(K1%E2%80%93K4)" style="font-style:normal;">Try an example alignment</a> (40 SINE copies, 4 subfamilies).</div>';
         syncCodonModePanel();
         return;
     }
@@ -13183,9 +13205,9 @@ function selectAllSequences() {
     updateRowSelections();
 }
 function moveSelectedUp() {
-    if (state.selectedRows.size === 0) return;
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices[0] === 0) return;
+    if (indices[0] === 0) { showMessage('Already at the top.', 2000); return; }
     pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
@@ -13203,9 +13225,9 @@ function moveSelectedUp() {
     showMessage("Sequences moved up!", 2000);
 }
 function moveSelectedDown() {
-    if (state.selectedRows.size === 0) return;
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices[indices.length - 1] === state.seqs.length - 1) return;
+    if (indices[indices.length - 1] === state.seqs.length - 1) { showMessage('Already at the bottom.', 2000); return; }
     pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
@@ -13223,9 +13245,9 @@ function moveSelectedDown() {
     showMessage("Sequences moved down!", 2000);
 }
 function moveSelectedToTop() {
-    if (state.selectedRows.size === 0) return;
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices.every((r, k) => r === k)) return;   // already at the top
+    if (indices.every((r, k) => r === k)) { showMessage('Already at the top.', 2000); return; }
     pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
@@ -13242,9 +13264,9 @@ function moveSelectedToTop() {
     showMessage("Sequences moved to top!", 2000);
 }
 function moveSelectedToBottom() {
-    if (state.selectedRows.size === 0) return;
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices.every((r, k) => r === state.seqs.length - indices.length + k)) return;   // already there
+    if (indices.every((r, k) => r === state.seqs.length - indices.length + k)) { showMessage('Already at the bottom.', 2000); return; }
     pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
@@ -13321,7 +13343,7 @@ function replaceSelectedWithConsensus() {
     showMessage(`Replaced ${indices.length} sequences with consensus: ${consName}`, 3000);
 }
 function duplicateSelected() {
-    if (state.selectedRows.size === 0) return;
+    if (state.selectedRows.size === 0) { showMessage('No sequences selected.', 2000); return; }
     pushUndo('duplicate');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     // The full name gets "_copy" on its first word too: it kept the original's, so exports
@@ -13943,6 +13965,12 @@ function _renderSnapshotSelect(files) {
     });
 }
 
+// The snapshot-folder rows (list, Refresh, Open, path box) only make sense where something
+// can be listed: on the public site (no server, empty manifest) they could only say "nothing found"
+function _showSnapshotFolderRows(on) {
+    ['snapshotFolderListRow', 'snapshotFolderPathRow'].forEach(id => { const r = el(id); if (r) r.style.display = on ? 'flex' : 'none'; });
+}
+
 async function refreshSnapshotList(silent = false) {
     const refreshBtn = el('snapshotRefreshButton');
     if (refreshBtn) refreshBtn.disabled = true;
@@ -13955,6 +13983,7 @@ async function refreshSnapshotList(silent = false) {
             const data = await apiResp.json();
             const files = Array.isArray(data.files) ? data.files : [];
             _renderSnapshotSelect(files);
+            _showSnapshotFolderRows(true);
             if (!silent) showMessage(`Snapshot list refreshed (${files.length} file${files.length === 1 ? '' : 's'})`, 2000);
             return;
         }
@@ -13972,10 +14001,12 @@ async function refreshSnapshotList(silent = false) {
                 return { path, name: String(v.name || parts[parts.length - 1] || path) };
             }).filter(v => v.path);
             _renderSnapshotSelect(files);
+            _showSnapshotFolderRows(files.length > 0);
             if (!silent) showMessage(`Snapshot list refreshed (${files.length} via manifest)`, 2500);
             return;
         } catch (err2) {
             _renderSnapshotSelect([]);
+            _showSnapshotFolderRows(false);
             if (!silent) showMessage('No snapshot list API/manifest. Use manual snapshot path input.', 3500);
         }
     } finally {
@@ -14518,6 +14549,11 @@ function reverseComplementSequences(indices) {
         showMessage('Select sequences to RevComp.', 3000);
         return;
     }
+    // A protein has no complement: this used to rewrite every row as IUPAC nonsense
+    if (isProteinAlignment()) {
+        showMessage('Reverse complement needs nucleotide sequences; this alignment is protein.', 3500);
+        return;
+    }
     pushUndo('revcomp');
     for (const i of targets) {
         const seqObj = state.seqs[i];
@@ -14825,7 +14861,10 @@ function searchMotif(options = {}) {
     // A regex keeps its case: upper-casing turns \w, \s, \d into their negations.
     // Matching is case-insensitive either way (flag i, and sequences are upper-cased).
     const motif = useRegex ? raw.trim() : raw.trim().replace(/\s+/g, '').toUpperCase();
-    if (!motif) return;
+    if (!motif) {
+        if (!options.suppressMessage) showMessage('Type a motif in the Search box first.', 2500);
+        return;
+    }
     if (useRegex) {
         try { new RegExp(motif, 'gi'); } catch (e) {
             showMessage('Invalid regex: ' + e.message, 4000);
@@ -16527,6 +16566,7 @@ function _renderClusterabilityReport(rows, base, nSeqs, progress) {
                        <td style="padding:3px 6px;text-align:right;border-bottom:1px solid #f0f0f0;">${r.largest || ''}</td></tr>`;
         });
         content.innerHTML = ph + '</table>';
+        _geKeepOnScreen();
         return;
     }
     const ok = rows.filter(r => !r.error);
@@ -16594,6 +16634,19 @@ function _renderClusterabilityReport(rows, base, nSeqs, progress) {
             This is a survey only - nothing has been changed. Set the parameters you want and press Find SNP groups.
         </div>`;
     content.innerHTML = html;
+    _geKeepOnScreen();
+}
+
+// The floating explorer is pinned where it first opened, when it was still small; as the
+// Clusterability table filled in it grew past the bottom of the screen (y 360..889 on a
+// 768px screen). Move it up (and left) so all of it stays visible; the body scrolls.
+function _geKeepOnScreen() {
+    const modal = el('clusteringModal');
+    if (!modal || modal.style.display === 'none' || modal.classList.contains('ge-docked')) return;
+    if (modal.style.transform !== 'none') return;   // still centred by CSS
+    const r = modal.getBoundingClientRect();
+    if (r.bottom > window.innerHeight - 4) modal.style.top = Math.max(4, window.innerHeight - 4 - r.height) + 'px';
+    if (r.right > window.innerWidth - 4) modal.style.left = Math.max(4, window.innerWidth - 4 - r.width) + 'px';
 }
 
 // The clusterer holds the main thread for its whole run - seconds on a typical alignment,
@@ -16826,7 +16879,7 @@ function loadClusteringPreset(silent = false) {
     // Apply min occurrences (with fallback to default for older presets)
     el('minOccurrencesInput').value = preset.clustering.minOccurrences ?? 3;
 
-    const shouldSilent = silent || presetName === 'optimal';
+    const shouldSilent = silent;   // the start-up loads pass true; a click on Load always answers
     if (!shouldSilent) {
         showMessage(`Preset "${presetName}" loaded!`, 2000);
     }
@@ -16885,8 +16938,9 @@ function _geSetProbeMode(on) {
     const title = modal && modal.querySelector('.ge-header h3');
     if (modal) modal.classList.toggle('ge-probe', !!on);
     if (title) title.textContent = on ? 'Clusterability' : 'Group explorer';
-    const actions = el('geHeaderActions');
-    if (actions) actions.style.visibility = on ? 'hidden' : '';
+    // Dock and Clear all are explorer actions; the window buttons (×) stay. Hiding the whole
+    // row left the Clusterability window with no way to close it but Esc.
+    ['geDockBtn', 'geClearBtn'].forEach(id => { const b = el(id); if (b) b.style.visibility = on ? 'hidden' : ''; });
 }
 
 function _geSetMenuVisible(on) {
@@ -17872,6 +17926,10 @@ function _initMafftAskPrefs() {
 function openMacsePreset(openMenu = true) {
     const sel = el('mafftSeqType'), eng = el('codonEngine');
     if (!sel) return;
+    if (state.seqs.length && isProteinAlignment()) {
+        showMessage('Codon alignment needs nucleotide (coding) sequences; this alignment is protein.', 4000);
+        return;
+    }
     if (sel.value !== 'codon') { sel.value = 'codon'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
     if (eng && eng.value !== 'macse') { eng.value = 'macse'; eng.dispatchEvent(new Event('change', { bubbles: true })); }
     if (openMenu) {
@@ -22152,7 +22210,11 @@ function initializeAppUI() {
         'loadButton': () => parseAndRender(false),
         'reverseComplementButton': reverseComplementSelected,
         'reverseComplementAllButton': reverseComplementAll,
-        'copySelectedButton': copySelected,
+        // Ctrl+C stays silent with nothing selected (it is pressed everywhere); the button says so
+        'copySelectedButton': () => {
+            if (!state.selectedRows.size && !state.selectedNucs.size) { showMessage('No sequences selected.', 2000); return; }
+            copySelected();
+        },
         'copyAlignmentButton': copyAlignment,
         'deleteSelectedButton': deleteSelected,
         'undoButton': undoDelete,
@@ -22199,7 +22261,8 @@ function initializeAppUI() {
         'trimDropEmptyButton': removeGapColumns,
         'clearSoftTrimButton': clearSoftTrimming,
         'clusteringSavePresetButton': saveClusteringPreset,
-        'clusteringLoadPresetButton': loadClusteringPreset,
+        // not passed directly: the click event arrived as `silent`, so Load never said it had loaded
+        'clusteringLoadPresetButton': () => loadClusteringPreset(),
         'clusteringOptimalPresetButton': createOptimalPreset,
         'clusteringProbeButton': analyzeClusterability,
         'clusterGuideTreeButton': clusterByGuideTree,
@@ -22349,7 +22412,7 @@ function initializeAppUI() {
         reverseQueryButton.addEventListener('click', () => {
             const raw = searchInputEl.value || '';
             const motif = raw.trim().replace(/\s+/g, '').toUpperCase();
-            if (!motif) return;
+            if (!motif) { showMessage('Type a motif in the Search box first.', 2500); return; }
             searchInputEl.value = reverseComplement(motif);
         });
     }
