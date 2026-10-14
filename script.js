@@ -16307,6 +16307,7 @@ function _renderClusterabilityReport(rows, base, nSeqs, progress) {
                        <td style="padding:3px 6px;text-align:right;border-bottom:1px solid #f0f0f0;">${r.largest || ''}</td></tr>`;
         });
         content.innerHTML = ph + '</table>';
+        _geKeepOnScreen();
         return;
     }
     const ok = rows.filter(r => !r.error);
@@ -16374,6 +16375,19 @@ function _renderClusterabilityReport(rows, base, nSeqs, progress) {
             This is a survey only - nothing has been changed. Set the parameters you want and press Find SNP groups.
         </div>`;
     content.innerHTML = html;
+    _geKeepOnScreen();
+}
+
+// The floating explorer is pinned where it first opened, when it was still small; as the
+// Clusterability table filled in it grew past the bottom of the screen (y 360..889 on a
+// 768px screen). Move it up (and left) so all of it stays visible; the body scrolls.
+function _geKeepOnScreen() {
+    const modal = el('clusteringModal');
+    if (!modal || modal.style.display === 'none' || modal.classList.contains('ge-docked')) return;
+    if (modal.style.transform !== 'none') return;   // still centred by CSS
+    const r = modal.getBoundingClientRect();
+    if (r.bottom > window.innerHeight - 4) modal.style.top = Math.max(4, window.innerHeight - 4 - r.height) + 'px';
+    if (r.right > window.innerWidth - 4) modal.style.left = Math.max(4, window.innerWidth - 4 - r.width) + 'px';
 }
 
 // The clusterer holds the main thread for its whole run - seconds on a typical alignment,
@@ -16664,8 +16678,9 @@ function _geSetProbeMode(on) {
     const title = modal && modal.querySelector('.ge-header h3');
     if (modal) modal.classList.toggle('ge-probe', !!on);
     if (title) title.textContent = on ? 'Clusterability' : 'Group explorer';
-    const actions = el('geHeaderActions');
-    if (actions) actions.style.visibility = on ? 'hidden' : '';
+    // Dock and Clear all are explorer actions; the window buttons (×) stay. Hiding the whole
+    // row left the Clusterability window with no way to close it but Esc.
+    ['geDockBtn', 'geClearBtn'].forEach(id => { const b = el(id); if (b) b.style.visibility = on ? 'hidden' : ''; });
 }
 
 function _geSetMenuVisible(on) {

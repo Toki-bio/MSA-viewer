@@ -1406,7 +1406,8 @@ input[type="number"]::-webkit-outer-spin-button {
 .group-explorer.ge-probe .ge-summary {
     display: none;
 }
-.group-explorer.ge-probe #geHeaderActions {
+.group-explorer.ge-probe #geDockBtn,
+.group-explorer.ge-probe #geClearBtn {
     visibility: hidden;
 }
 
