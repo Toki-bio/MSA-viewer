@@ -13742,6 +13742,12 @@ function _renderSnapshotSelect(files) {
     });
 }
 
+// The snapshot-folder rows (list, Refresh, Open, path box) only make sense where something
+// can be listed: on the public site (no server, empty manifest) they could only say "nothing found"
+function _showSnapshotFolderRows(on) {
+    ['snapshotFolderListRow', 'snapshotFolderPathRow'].forEach(id => { const r = el(id); if (r) r.style.display = on ? 'flex' : 'none'; });
+}
+
 async function refreshSnapshotList(silent = false) {
     const refreshBtn = el('snapshotRefreshButton');
     if (refreshBtn) refreshBtn.disabled = true;
@@ -13754,6 +13760,7 @@ async function refreshSnapshotList(silent = false) {
             const data = await apiResp.json();
             const files = Array.isArray(data.files) ? data.files : [];
             _renderSnapshotSelect(files);
+            _showSnapshotFolderRows(true);
             if (!silent) showMessage(`Snapshot list refreshed (${files.length} file${files.length === 1 ? '' : 's'})`, 2000);
             return;
         }
@@ -13771,10 +13778,12 @@ async function refreshSnapshotList(silent = false) {
                 return { path, name: String(v.name || parts[parts.length - 1] || path) };
             }).filter(v => v.path);
             _renderSnapshotSelect(files);
+            _showSnapshotFolderRows(files.length > 0);
             if (!silent) showMessage(`Snapshot list refreshed (${files.length} via manifest)`, 2500);
             return;
         } catch (err2) {
             _renderSnapshotSelect([]);
+            _showSnapshotFolderRows(false);
             if (!silent) showMessage('No snapshot list API/manifest. Use manual snapshot path input.', 3500);
         }
     } finally {
