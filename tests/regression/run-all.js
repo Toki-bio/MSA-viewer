@@ -3254,6 +3254,15 @@ check('Audit: Canvas clicks on names do not select hidden residues; selections s
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+// Math.max(...lengths) over one entry per sequence throws "Maximum call stack size exceeded"
+// past ~125,000 arguments: an alignment of 130,000 short sequences failed to load.
+check('Audit: 130,000 sequences load and render', async (page) => {
+  await loadSyntheticFasta(page, 130000, 20);
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => ({ n: state.seqs.length, rows: document.querySelectorAll('.seq-line[data-seq-index]').length + (el('alignmentCanvas') ? 1 : 0), msg: el('statusMessage')?.innerText.slice(0, 120) }));
+  return { pass: r.n === 130000 && r.rows > 0, detail: JSON.stringify(r) };
+});
+
 // With codon analysis the translation row's name cell (sticky, white) is empty in single-frame
 // mode and the row aligned its items to the top, so the cell was 0px tall: scrolled sideways,
 // the amino acids showed through the name column.
