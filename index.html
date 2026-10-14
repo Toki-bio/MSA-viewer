@@ -327,7 +327,7 @@
                             <button id="copyConsensusButton" title="Copy full consensus as FASTA (shortcut: Ctrl+Shift+K)">Copy Consensus</button>
                         </div>
                         <div class="slider-container">
-                            <button id="copySelectedConsensusButton" title="Copy consensus of selected sequences (shortcut: Ctrl+Shift+J)">Copy Sel Consensus</button>
+                            <button id="copySelectedConsensusButton" title="Copy consensus of selected sequences (shortcut: Alt+J)">Copy Sel Consensus</button>
                         </div>
                         <div class="slider-container">
                             <button id="insertGroupConsensusButton" title="Insert consensus below selected sequences (shortcut: Ctrl+B)">+ Consensus Below</button>
@@ -826,6 +826,7 @@
                         <div class="keys-cat">Selection &amp; clipboard</div>
                         <strong>Ctrl+A</strong><span>Select/deselect all</span>
                         <strong>Ctrl+C</strong><span>Copy bases, or rows as FASTA</span>
+                        <strong>Alt+C</strong><span>Copy selected (as Copy Sel)</span>
                         <strong>Ctrl+Shift+V</strong><span>Copy columns</span>
                         <div class="keys-cat">Sequences</div>
                         <strong>Ctrl+Del</strong><span>Delete selected</span>
@@ -842,7 +843,7 @@
                         <div class="keys-cat">Consensus</div>
                         <strong>Ctrl+B</strong><span>Consensus below</span>
                         <strong>Ctrl+Shift+K</strong><span>Copy consensus</span>
-                        <strong>Ctrl+Shift+J</strong><span>Copy selected consensus</span>
+                        <strong>Alt+J</strong><span>Copy selected consensus</span>
                         <div class="keys-cat">Search</div>
                         <strong>Ctrl+F</strong><span>Find motif</span>
                         <strong>Ctrl+Shift+F</strong><span>Clear last search</span>
@@ -874,7 +875,7 @@
                             <div class="action-section-label">Selection</div>
                             <div class="button-group">
                                 <button id="selectAllButton" title="Select/deselect all sequences (Ctrl+A)">Select All</button>
-                                <button id="copySelectedButton" title="Copy selected sequences (Ctrl+Shift+C)">Copy Sel</button>
+                                <button id="copySelectedButton" title="Copy selected sequences (Alt+C)">Copy Sel</button>
                                 <button id="copyAlignmentButton" title="Copy entire alignment as FASTA">Copy Align</button>
                                 <button id="deleteSelectedButton" title="Delete selected sequences (Ctrl+Del)">Delete Sel</button>
                                 <button id="openInNewTabButton" title="Open selected in new tab (Alt+T)">New Tab</button>
@@ -999,6 +1000,7 @@
             <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 20px; font-family: monospace; font-size: 12px;">
                 <strong>Ctrl+A</strong><span>Select/deselect all sequences</span>
                 <strong>Ctrl+C</strong><span>Copy selected bases, or selected sequences as FASTA</span>
+                <strong>Alt+C</strong><span>Copy selected (same as Copy Sel)</span>
                 <strong>Ctrl+Del</strong><span>Delete selected sequences</span>
                 <strong>Ctrl+Z</strong><span>Undo</span>
                 <strong>Ctrl+Y</strong><span>Redo</span>
@@ -1018,7 +1020,7 @@
                 <strong>Ctrl+Shift+D</strong><span>Delete selected columns (asks first)</span>
                 <strong>Ctrl+D</strong><span>Delete selected columns (no prompt)</span>
                 <strong>Ctrl+Shift+K</strong><span>Copy consensus</span>
-                <strong>Ctrl+Shift+J</strong><span>Copy consensus of selected</span>
+                <strong>Alt+J</strong><span>Copy consensus of selected</span>
                 <strong>Ctrl+L</strong><span>Load pasted input</span>
                 <strong>Ctrl++ / Ctrl+-</strong><span>Zoom in/out</span>
                 <strong>Ctrl+0</strong><span>Reset zoom to 100%</span>
@@ -1260,7 +1262,7 @@ B: -</pre>
                     <div class="rf-seg" role="radiogroup" aria-label="Which sequences to search">
                         <label title="One sequence, chosen on the right"><input type="radio" name="repeatScope" value="single" checked>One sequence</label>
                         <label title="Every loaded sequence"><input type="radio" name="repeatScope" value="all">All</label>
-                        <label title="The rows selected in the alignment (Ctrl+click names)"><input type="radio" name="repeatScope" value="selected">Selected rows</label>
+                        <label title="The rows selected in the alignment (click a name; Ctrl+click adds, Shift+click takes a range)"><input type="radio" name="repeatScope" value="selected">Selected rows</label>
                     </div>
                     <select id="repeatFinderSeqSelect" class="rf-seqselect" title="Sequence to search"></select>
                 </div>

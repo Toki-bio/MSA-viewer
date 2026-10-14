@@ -1527,6 +1527,7 @@ let _draggedSeqIndex = -1;
 let _dragPreviewInsertAbove = true;
 let _dragImageEl = null;
 let _rowReorderDrag = null;
+let _canvasNameClick = null;   // Canvas: a plain press on a name, selected on mouseup if it did not move
 
 function _getDragImageEl() {
     if (_dragImageEl && _dragImageEl.isConnected) return _dragImageEl;
@@ -1996,6 +1997,8 @@ function _finishRowReorderDrag(e) {
         _clearDragInsertPreview();
         _clearDragSources();
         _draggedSeqIndex = -1;
+        // A plain click (no drag) on a name selects that row only (it used to do nothing)
+        selectOnlyRow(drag.draggedIndex);
         return;
     }
     const nearest = _findNearestSequenceLine(e.clientY);
@@ -5661,9 +5664,17 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         _canvasState.offsetY = dragOy - (e.clientY - dragStartY);
         scheduleDraw();
     };
-    _canvasState.mouseupHandler = () => {
+    _canvasState.mouseupHandler = (e) => {
         dragging = false;
         canvas.style.cursor = 'default';
+        const nc = _canvasNameClick;
+        _canvasNameClick = null;
+        if (nc && e && Math.abs(e.clientX - nc.x) < 4 && Math.abs(e.clientY - nc.y) < 4) {
+            // a click, not a pan: select the row
+            selectOnlyRow(nc.row);
+            _markDirty();
+            scheduleDraw();
+        }
     };
     window.addEventListener('resize', _canvasState.resizeHandler);
     setAlignmentColorSchemeClass();
@@ -6112,6 +6123,13 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 scheduleDraw();
                 return;
             }
+        }
+
+        // Plain click on a name: select that row on mouseup unless the press turns into a pan
+        _canvasNameClick = null;
+        if (!isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
+            const nameHit = _canvasHitTestName(e.clientX, e.clientY);
+            if (nameHit) _canvasNameClick = { row: nameHit.row, x: e.clientX, y: e.clientY };
         }
 
         const hit = _canvasHitTest(e.clientX, e.clientY);
@@ -12340,6 +12358,17 @@ function handleRowSelectMouseDown(e) {
     return false;
 }
 
+// Plain click on a sequence name: that row becomes the whole row selection (a row that is
+// already the only one selected stays selected). Ctrl+click toggles, Shift+click extends.
+function selectOnlyRow(index) {
+    if (!Number.isInteger(index) || index < 0 || !state.seqs[index]) return;
+    state.selectedNucs.clear();
+    state.pendingNucStart = null;
+    scheduleNucSelectionRefresh();
+    state.selectedRows = new Set([index]);
+    state.lastSelectedIndex = index;
+    updateRowSelections();
+}
 // Selection helper consolidating toggle behavior
 function toggleRowSelection(index) {
     if (state.selectedRows.has(index)) {
@@ -12647,7 +12676,7 @@ function handleKeyDown(e) {
                 }
                 break;
             case 'j':
-                if (e.shiftKey) {
+                if (e.shiftKey) {   // alias of Alt+J (browsers keep Ctrl+Shift+J for DevTools)
                     copySelectedConsensus();
                     e.preventDefault();
                 }
@@ -12699,6 +12728,14 @@ function handleKeyDown(e) {
         openSelectedInNewTab();
         e.preventDefault();
     }
+    // Alt+J: copy the consensus of the selected rows; Alt+C: copy the selection (as Copy Sel).
+    // Chrome, Edge and Firefox keep Ctrl+Shift+J / Ctrl+Shift+C for their developer tools, so
+    // those never reached the page; they still work as aliases where a browser passes them.
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.code === 'KeyJ' || e.code === 'KeyC')) {
+        if (e.code === 'KeyJ') copySelectedConsensus();
+        else copySelected();
+        e.preventDefault();
+    }
 
     // Page navigation for large alignments
     // Canvas pans its own offset; a windowed view scrolls the container; a small alignment
@@ -12733,7 +12770,7 @@ window.addEventListener('blur', () => {
 // ACTION FUNCTIONS
 function reverseComplementSelected() {
     if (state.selectedRows.size === 0) {
-        showMessage("Select sequences (Ctrl+click) to RevComp.", 3000);
+        showMessage("Select sequences (click a name; Ctrl+click adds) to RevComp.", 3000);
         return;
     }
     reverseComplementSequences(Array.from(state.selectedRows));
