@@ -4333,6 +4333,30 @@ check('Round 2: a new file opens at its start after a scrolled windowed view or 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// The small part of 'Audit: mode switches keep the place' used 300 x 1,000 to reach the views that
+// scroll the page (full DOM). From 100,000 residues that alignment is windowed, so the same steps
+// are repeated here on one under the threshold, where Block scrolls the page.
+check('Round 2: mode switches keep the place on an alignment under the windowed threshold', async (page) => {
+  const out = {};
+  await loadSyntheticFasta(page, 150, 600);   // 90,000 residues
+  await auditClickMode(page, 'block');
+  out.w = await page.evaluate(() => !!state._needsWindowedDom);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await auditWheel(page, 0, 700, 4);
+  out.pageY = await page.evaluate(() => Math.round(scrollY));
+  out.block = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.canvas = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.full = await auditTopLeft(page);
+  await auditWheel(page, 700, 0, 3);
+  out.fullR = await auditTopLeft(page);
+  await auditClickMode(page, 'canvas'); out.canvas2 = await auditTopLeft(page);
+  await auditClickMode(page, 'full'); out.full2 = await auditTopLeft(page);
+  const ok = !out.w && out.pageY > 1000 && out.block[0] > 20 && out.block[1] > 0
+    && auditNear(out.canvas, out.block) && auditNear(out.full, out.block)
+    && out.fullR[1] > out.full[1] + 100 && auditNear(out.canvas2, out.fullR) && auditNear(out.full2, out.fullR);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
