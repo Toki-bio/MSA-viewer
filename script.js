@@ -8092,7 +8092,10 @@ function renderReadsAlignment() {
     // Reference name label
     const refLabel = document.createElement('span');
     refLabel.className = 'seq-name';
-    refLabel.style.cssText = 'width:160px;min-width:160px;font-weight:bold;font-size:11px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    // Exactly NAME_W wide from the line's left edge, like the reads' name column in the SVG
+    // below: as a .seq-name it took that class's -12px margin (and sticky -15px offset), and the
+    // reference started 12px (one base) left of the reads.
+    refLabel.style.cssText = 'box-sizing:border-box;flex:0 0 160px;width:160px;min-width:160px;margin:0;left:0;font-weight:bold;font-size:11px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
     refLabel.textContent = bamState.refName;
     refLabel.title = bamState.refName;
     refLine.appendChild(refLabel);
@@ -8130,7 +8133,8 @@ function renderReadsAlignment() {
     scaleLine.style.zIndex = '1';
 
     const scaleLabel = document.createElement('span');
-    scaleLabel.style.cssText = 'width:160px;min-width:160px;text-align:right;padding:0 4px;';
+    // border-box: with its padding added it was 168px, and the ruler sat 8px right of the bases
+    scaleLabel.style.cssText = 'box-sizing:border-box;flex:0 0 160px;width:160px;min-width:160px;text-align:right;padding:0 4px;';
     scaleLine.appendChild(scaleLabel);
 
     const scaleData = document.createElement('div');
