@@ -1392,13 +1392,16 @@ check('Selection: row/column highlight follows the state after delta updates', a
 // Speed: the update itself (script + forced style/layout) for a column and for rows on ~300k
 // residue spans. Old code here: column 104-129 ms, one row ~850 ms, 150 rows ~1 s.
 // (Real clicks were slower still from hit-testing positioned spans; see styles.css.)
-check('Selection speed: column click and 150 rows on 300k spans', async (page) => {
+// Owner approved 2026-10-14: ALIGN_WINDOWED_DOM_THRESHOLD dropped from 500k to 100k residues, so a
+// full-DOM file can no longer hold 300k spans. The check now runs on the largest full-DOM size
+// (140x700 = 98k) with the same time limits.
+check('Selection speed: column click and 150 rows on 98k spans (largest full DOM)', async (page) => {
   let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
   const base = Array.from({ length: 700 }, () => 'ACGT'[rnd() % 4]);
   let fa = '';
-  for (let i = 0; i < 420; i++) fa += `>s${i}\n` + base.map(c => (rnd() % 8 === 0 ? 'ACGT-'[rnd() % 5] : c)).join('') + '\n';
+  for (let i = 0; i < 140; i++) fa += `>s${i}\n` + base.map(c => (rnd() % 8 === 0 ? 'ACGT-'[rnd() % 5] : c)).join('') + '\n';
   await page.setInputFiles('#fileInput', { name: 'big.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
-  await page.waitForFunction(() => state.seqs && state.seqs.length === 420, null, { timeout: 60000 });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 140, null, { timeout: 60000 });
   await page.waitForTimeout(3000);
   const r = await page.evaluate(async () => {
     const frames = () => new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
@@ -1407,10 +1410,10 @@ check('Selection speed: column click and 150 rows on 300k spans', async (page) =
     out.col1 = time(() => { state.selectedColumns.add(100); updateColumnSelections(); }); await frames();
     out.col2 = time(() => { state.selectedColumns.add(101); updateColumnSelections(); }); await frames();
     out.rows150 = time(() => { for (let i = 10; i < 160; i++) state.selectedRows.add(i); updateRowSelections(); }); await frames();
-    out.row1 = time(() => { state.selectedRows.add(300); updateRowSelections(); });
+    out.row1 = time(() => { state.selectedRows.add(120); updateRowSelections(); });
     return out;
   });
-  const ok = r.spans > 250000 && r.col2 < 60 && r.row1 < 300 && r.rows150 < 600;
+  const ok = r.spans > 90000 && r.col2 < 60 && r.row1 < 300 && r.rows150 < 600;
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
@@ -1453,6 +1456,8 @@ check('Highlight diffs: in-place update matches a full redraw exactly', async (p
 
 // A redraw expected to take over ~1 s says what it is doing first (it blocks the page, so the
 // notice has to be painted before it starts), and a quick one does not flash a notice.
+// Owner approved 2026-10-14: files of 100k+ residues are now windowed (no slow full redraw), so
+// the notice starts at 60k and this check uses a 140x700 (98k) full-DOM file instead of 420x700.
 check('Slow redraw: notice shown before and hidden after; none for small files', async (page) => {
   const path = require('path');
   const watch = () => page.evaluate(() => {
@@ -1473,9 +1478,9 @@ check('Slow redraw: notice shown before and hidden after; none for small files',
   let seed = 3; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
   const base = Array.from({ length: 700 }, () => 'ACGT'[rnd() % 4]);
   let fa = '';
-  for (let i = 0; i < 420; i++) fa += `>s${i}\n` + base.map(c => (rnd() % 8 === 0 ? 'ACGT-'[rnd() % 5] : c)).join('') + '\n';
+  for (let i = 0; i < 140; i++) fa += `>s${i}\n` + base.map(c => (rnd() % 8 === 0 ? 'ACGT-'[rnd() % 5] : c)).join('') + '\n';
   await page.setInputFiles('#fileInput', { name: 'big.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
-  await page.waitForFunction(() => state.seqs && state.seqs.length === 420, null, { timeout: 60000 });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 140, null, { timeout: 60000 });
   await page.waitForTimeout(3000);
   await page.evaluate(() => { window.__busy = []; });
   const big = await toggle();

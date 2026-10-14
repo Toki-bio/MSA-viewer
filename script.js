@@ -11017,7 +11017,8 @@ function _predictRedrawMs() {
     const n = _approxResidueCount();
     const key = _redrawKey();
     if (_lastRedraw && _lastRedraw.key === key && _lastRedraw.residues > 0) return _lastRedraw.ms * n / _lastRedraw.residues;
-    return (isSpanRenderMode() && !state._needsWindowedDom && n > 200000) ? 1500 : 0;
+    // 60k: full-DOM files now stop at ALIGN_WINDOWED_DOM_THRESHOLD (100k), so the notice must start below it
+    return (isSpanRenderMode() && !state._needsWindowedDom && n > 60000) ? 1500 : 0;
 }
 async function renderWithNotice(label) {
     if (!state.seqs || !state.seqs.length) { renderAlignment(); return; }
