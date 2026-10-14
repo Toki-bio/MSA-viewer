@@ -8878,7 +8878,8 @@ function renderAlignment(options = {}) {
                 if (myToken.cancelled) return;
                 if (!state.seqs || !state.seqs.length) return;
                 if (Math.max(...state.seqs.map(s => s.seq.length)) !== len) return; // alignment changed
-                preCalculateConservationChunked(state.seqs, len, shadeMode, (data) => {
+                // its own copy of the row list: a row delete splices state.seqs in place
+                preCalculateConservationChunked(state.seqs.slice(), len, shadeMode, (data) => {
                     if (myToken.cancelled) return;
                     state.conservationDataCache = { len, shadeMode, data };
                     if (document.getElementById('modeCanvas')?.checked) renderAlignment(options);
@@ -8917,6 +8918,11 @@ function renderAlignment(options = {}) {
         _flushRenderMessage();
         return;
     }
+
+    // Leaving Canvas: its deferred shading/consensus jobs describe a frame no longer shown.
+    // They were only cancelled by the next Canvas render, and after a switch to Full a row
+    // delete made the shading job throw ("reading 'seq'" of a spliced-out row).
+    if (_canvasDeferredToken) { _canvasDeferredToken.cancelled = true; _canvasDeferredToken = null; }
 
     let consensus = [];
     state._codonData = null;
