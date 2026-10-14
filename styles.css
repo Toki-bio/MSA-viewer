@@ -75,6 +75,9 @@ html {
     flex-direction: column;
     gap: 1px;
     font-size: 12px;
+    /* Without a font the headers fell back to the browser serif (Times New Roman on
+       Windows) beside the Arial buttons */
+    font-family: Arial, sans-serif;
     border-bottom: 0;
     z-index: 100;
 }
