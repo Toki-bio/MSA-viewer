@@ -15732,7 +15732,9 @@ function executeTrimming() {
         return;
     }
 
-    // Hard trim: actually delete columns
+    // Hard trim: actually delete columns. Undoable with Ctrl+Z like any other edit (it used
+    // to push no undo entry; the column state is saved on this entry by applyColumnEdit).
+    pushUndo('trim');
     state.trimBackupColState = _snapshotColumnState();
     {
         const dead = [];
@@ -15781,6 +15783,8 @@ function undoTrimming() {
         return;
     }
 
+    // Itself undoable: it puts back the pre-trim copy, dropping any edit made since the trim
+    pushUndo('undo-trim');
     state.seqs = state.trimBackup.map(seq => ({...seq}));
     state.trimBackup = null;
     if (state.trimBackupColState) { _restoreColumnState(state.trimBackupColState); state.trimBackupColState = null; }
@@ -21141,6 +21145,7 @@ const UNDO_TYPE_LABELS = {
     'seqedit': 'Edit sequence', 'seqedit-add': 'Add sequence', 'seqedit-multi': 'Edit sequences',
     'add-sequences': 'Add sequences', 'add-and-align': 'Add and align',
     'replaceWithConsensus': 'Replace with consensus', 'insertConsensus': 'Insert consensus',
+    'trim': 'Trim', 'undo-trim': 'Undo trim',
     'insertGap': 'Insert gaps', 'insertSingleGap': 'Insert gap', 'removeGaps': 'Remove gaps',
     'removeSingleGap': 'Remove gap', 'deleteColumns': 'Delete columns',
     'degap-block-left': 'Degap block (left)', 'degap-block-right': 'Degap block (right)',
