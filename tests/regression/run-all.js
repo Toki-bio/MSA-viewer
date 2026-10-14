@@ -3019,6 +3019,175 @@ check('Group explorer: gather and move group never lose rows when sequence names
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+// ---------- pre-publication audit: editing (2026-10-14) ----------
+// Helpers for these checks: the centre of a residue cell / name cell on screen, in DOM
+// modes from the rendered span, in Canvas mode from the canvas metrics.
+async function auditCell(page, row, col) {
+  return page.evaluate(({ row, col }) => {
+    if (document.getElementById('modeCanvas')?.checked) {
+      const c = _canvasState.canvas, m = _canvasState.metrics, r = c.getBoundingClientRect();
+      const rp = _canvasState.rowPitch || m.charH;
+      return { x: r.left + m.nameW - _canvasState.offsetX + (col + 0.5) * m.charW, y: r.top + (m.headerH || m.charH) - _canvasState.offsetY + (row + 0.5) * rp };
+    }
+    const sp = document.querySelector(`.seq-line[data-seq-index="${row}"] .seq-data > span[data-pos="${col}"]`);
+    if (!sp) return null;
+    const b = sp.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  }, { row, col });
+}
+async function auditName(page, row) {
+  return page.evaluate((row) => {
+    if (document.getElementById('modeCanvas')?.checked) {
+      const c = _canvasState.canvas, m = _canvasState.metrics, r = c.getBoundingClientRect();
+      const rp = _canvasState.rowPitch || m.charH;
+      return { x: r.left + 12, y: r.top + (m.headerH || m.charH) - _canvasState.offsetY + (row + 0.5) * rp };
+    }
+    const n = document.querySelector(`.seq-line[data-seq-index="${row}"] > .seq-name`);
+    const b = n.getBoundingClientRect();
+    return { x: b.left + 12, y: b.top + b.height / 2 };
+  }, row);
+}
+async function auditCtrlClickName(page, row) {
+  const p = await auditName(page, row);
+  await page.keyboard.down('Control'); await page.mouse.click(p.x, p.y); await page.keyboard.up('Control');
+}
+async function auditCtrlAltDrag(page, row, c0, c1) {
+  const a = await auditCell(page, row, c0), b = await auditCell(page, row, c1);
+  await page.keyboard.down('Control'); await page.keyboard.down('Alt');
+  await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up();
+  await page.keyboard.up('Alt'); await page.keyboard.up('Control');
+}
+const auditSeqs = (page) => page.evaluate(() => state.seqs.map(s => s.header + ':' + s.seq));
+// Every rendered residue span shows its state letter (catches stale rows after an edit)
+const auditDomMismatches = (page) => page.evaluate(() => {
+  const bad = [];
+  document.querySelectorAll('.seq-line[data-seq-index]').forEach(line => {
+    const i = +line.dataset.seqIndex; if (i < 0) return;
+    const s = state.seqs[i]?.seq || '';
+    line.querySelectorAll('.seq-data > span[data-pos]').forEach(sp => {
+      const p = +sp.dataset.pos;
+      if (sp.textContent !== (s[p] ?? '') && bad.length < 5) bad.push(`r${i}c${p} dom=${sp.textContent} state=${s[p]}`);
+    });
+  });
+  return bad;
+});
+const auditBlur = (page) => page.evaluate(() => document.activeElement?.blur());
+
+check('Audit: loading a new file clears undo/redo, so Ctrl+Z cannot write the old file into the new one', async (page) => {
+  // Used to: the undo stack survived a load. After typing a residue in file 1 and loading
+  // a protein file, Ctrl+Z wrote file 1's DNA row ("ACGTACGT--") into the new file's
+  // first row, and a deletion undo brought file 1's sequences back wholesale.
+  page.on('dialog', d => d.accept());
+  await loadFasta(page, '>a\nACGTACGT\n>b\nTTTTGGGG\n>c\nGGGGCCCC\n');
+  let c = await auditCell(page, 0, 2);
+  await page.mouse.dblclick(c.x, c.y); await page.keyboard.type('N');
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  await page.click('#editToggleButton');
+  await auditCtrlClickName(page, 2);
+  await auditBlur(page);
+  await page.keyboard.press('Control+Delete'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);   // leaves one redo entry too
+  const before = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  await loadFasta(page, '>human\nMKVLAAGIVG\n>mouse\nMKVLSAGIVG\n');
+  const loaded = await auditSeqs(page);
+  await auditBlur(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(300);
+  const after = await auditSeqs(page);
+  const r = await page.evaluate(() => ({ h: state.deletedHistory.length + '/' + state.redoHistory.length, trimBackup: state.trimBackup }));
+  const pass = before !== '0/0' && JSON.stringify(after) === JSON.stringify(loaded) && r.h === '0/0' && !r.trimBackup;
+  return { pass, detail: JSON.stringify({ before, loaded, after, ...r }) };
+});
+
+check('Audit: viewer shortcuts never fire while typing in a text field (search, rename box, SeqEdit)', async (page) => {
+  // Used to: the capture-phase shortcut handler let Ctrl+Z/Y/Delete/Home/Arrow through from
+  // single-line inputs. Ctrl+Z in the search box undid the alignment instead of the text;
+  // Ctrl+Delete (delete word) deleted the selected sequences; Ctrl+Z in the rename box
+  // undid a reorder and the box then saved its text onto a different sequence; and with
+  // SeqEdit open, a row change behind it made Apply overwrite another sequence.
+  const dialogs = [];
+  page.on('dialog', d => { dialogs.push(d.message()); d.accept(); });
+  await loadFasta(page, '>alpha\nACGTACGT\n>beta\nTTTTGGGG\n>gamma\nCCCCAAAA\n');
+  await auditCtrlClickName(page, 2);
+  await page.keyboard.press('Control+ArrowUp'); await page.waitForTimeout(200);   // alpha, gamma, beta
+  const moved = await auditSeqs(page);
+  const out = {};
+  // search box
+  await page.click('.section-header[data-section="search"]');   // opens the Search menu
+  await page.click('#searchInput'); await page.keyboard.type('ACG');
+  for (const k of ['Control+z', 'Control+y', 'Control+Home', 'Control+End', 'Control+ArrowDown', 'Control+Delete', 'Control+Shift+Z']) await page.keyboard.press(k);
+  out.search = JSON.stringify(await auditSeqs(page)) === JSON.stringify(moved) && dialogs.length === 0
+    && (await page.inputValue('#searchInput')) === 'ACG';
+  await page.keyboard.press('Escape');   // closes the menu
+  // rename box: Ctrl+Z is the box's own undo, and the name lands on the row it was opened on
+  let p = await auditName(page, 1);
+  await page.mouse.dblclick(p.x, p.y); await page.waitForTimeout(150);
+  await page.keyboard.press('End'); await page.keyboard.press('Backspace');
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(200);
+  await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+  out.rename = JSON.stringify(await auditSeqs(page)) === JSON.stringify(moved);
+  // SeqEdit: Ctrl+Delete in the name field deletes nothing
+  await auditBlur(page); await page.keyboard.press('Escape');   // Esc clears the selection
+  await auditCtrlClickName(page, await page.evaluate(() => state.seqs.findIndex(s => s.header === 'beta')));
+  await page.evaluate(() => el('seqEditButton').click());
+  await page.waitForTimeout(200);
+  await page.click('#seqEditNameInput'); await page.keyboard.press('End'); await page.keyboard.type('_ed');
+  await page.keyboard.press('Control+Delete'); await page.waitForTimeout(200);
+  out.seqEditKeys = (await page.evaluate(() => state.seqs.length)) === 3 && dialogs.length === 0;
+  // focus on a button of the dialog (not a text field): Ctrl+Up still reorders behind it,
+  // and Apply must still edit beta, not whatever row now has its old index
+  await page.focus('#seqEditApplyBtn');
+  await page.keyboard.press('Control+ArrowUp'); await page.waitForTimeout(200);
+  await page.click('#seqEditApplyBtn'); await page.waitForTimeout(300);
+  const fin = await auditSeqs(page);
+  out.seqEditTarget = fin.includes('beta_ed:TTTTGGGG') && fin.includes('gamma:CCCCAAAA') && fin.includes('alpha:ACGTACGT') && fin.length === 3;
+  return { pass: Object.values(out).every(Boolean), detail: JSON.stringify({ out, moved, fin, dialogs }) };
+});
+
+check('Audit: Ctrl+Shift+Z redoes (it used to undo again)', async (page) => {
+  // Used to: case 'z' ignored Shift, so Ctrl+Shift+Z / Cmd+Shift+Z (the usual redo, the
+  // only one on macOS) undid one more step instead.
+  await loadFasta(page, '>a\nACGT\n>b\nTTTT\n>c\nGGGG\n');
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Home'); await page.waitForTimeout(150);
+  const moved = await auditSeqs(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(150);
+  await page.keyboard.press('Control+Shift+Z'); await page.waitForTimeout(150);
+  const a = await auditSeqs(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(150);
+  await page.keyboard.press('Meta+Shift+Z'); await page.waitForTimeout(150);
+  const b = await auditSeqs(page);
+  return { pass: JSON.stringify(a) === JSON.stringify(moved) && JSON.stringify(b) === JSON.stringify(moved), detail: JSON.stringify({ moved, a, b }) };
+});
+
+check('Audit: right-click Rename uses the rename box (Esc cancels, Enter saves) in Full, Block and Canvas', async (page) => {
+  // Used to: the context-menu Rename had its own older editor. Esc re-rendered, the input
+  // blurred and the blur SAVED the name; in Canvas mode the input was put inside the
+  // <canvas> element, 0x0 and invisible, and renaming did nothing.
+  const out = {};
+  for (const mode of ['full', 'block', 'canvas']) {
+    await loadFasta(page, '>alpha\nACGTACGT\n>beta\nTTTTGGGG\n');
+    await setMode(page, mode);
+    const open = async () => {
+      const p = await auditName(page, 1);
+      await page.mouse.click(p.x, p.y, { button: 'right' }); await page.waitForTimeout(150);
+      await page.evaluate(() => [...document.querySelectorAll('.context-menu div')].find(d => d.textContent === 'Rename sequence').click());
+      await page.waitForTimeout(150);
+    };
+    await open();
+    const box = await page.evaluate(() => { const a = document.activeElement; const r = a.getBoundingClientRect(); return a.tagName === 'INPUT' && r.width > 20 && r.height > 8; });
+    await page.keyboard.press('Control+a'); await page.keyboard.type('XYZ'); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    const esc = (await auditSeqs(page))[1];
+    await open();
+    await page.keyboard.press('Control+a'); await page.keyboard.type('B2'); await page.keyboard.press('Enter'); await page.waitForTimeout(200);
+    const ent = (await auditSeqs(page))[1];
+    out[mode] = { box, esc, ent, left: await page.evaluate(() => !!document.querySelector('.seq-name-edit')) };
+  }
+  const pass = Object.values(out).every(o => o.box && o.esc === 'beta:TTTTGGGG' && o.ent === 'B2:TTTTGGGG' && !o.left);
+  return { pass, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

@@ -10214,13 +10214,16 @@ function _relabelSeqNameCells(index) {
     });
 }
 
-function _startSeqNameEdit(nameSpan, index) {
-    if (!state.seqs[index] || nameSpan.querySelector('.seq-name-edit')) return;
+// onDone(renamed): called when the box closes (the Canvas overlay removes itself with it)
+function _startSeqNameEdit(nameSpan, index, onDone) {
+    // The sequence, not its row number: rows can move while the box is open
+    const obj = state.seqs[index];
+    if (!obj || nameSpan.querySelector('.seq-name-edit')) return;
     hideTooltip();
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'seq-name-edit';
-    input.value = state.seqs[index].header;
+    input.value = obj.header;
     input.spellcheck = false;
     input.setAttribute('aria-label', 'Sequence name');
     const label = nameSpan.querySelector('.seq-name-text');
@@ -10238,16 +10241,18 @@ function _startSeqNameEdit(nameSpan, index) {
         input.remove();
         nameSpan.classList.remove('renaming');
         if (label) label.style.visibility = '';
-        if (!commit || !newName || newName === state.seqs[index].header) return;
-        const oldName = state.seqs[index].header;
+        const row = state.seqs.indexOf(obj);
+        if (!commit || !newName || row < 0 || newName === obj.header) { onDone?.(false); return; }
+        const oldName = obj.header;
         pushUndo('rename');
-        state.seqs[index].header = newName;
-        state.seqs[index].fullHeader = newName;
+        obj.header = newName;
+        obj.fullHeader = newName;
         _migrateColourMapping(oldName, newName);
-        _relabelSeqNameCells(index);
+        _relabelSeqNameCells(row);
         // "No limit" sizes the name column to the longest name, which may just have changed
         if (el('nameLengthNoLimit')?.checked) applyNameLengthLive(effectiveNameLength());
         showMessage('Sequence renamed', 1500);
+        onDone?.(true);
     };
     // Keys typed here are for the name only: none may reach the viewer's shortcuts
     input.addEventListener('keydown', (e) => {
@@ -10262,6 +10267,34 @@ function _startSeqNameEdit(nameSpan, index) {
     input.addEventListener('blur', () => finish(true));
     const onOutside = (e) => { if (e.target !== input) finish(true); };
     document.addEventListener('mousedown', onOutside, true);
+}
+
+// Right-click > Rename: the same box as a double-click on the name. It used to be an older
+// inline editor whose Esc saved (the redraw blurred it, and blur saved), and in Canvas mode
+// it put the input inside the <canvas>, where it was invisible and did nothing.
+function _renameSequenceFromMenu(index, e) {
+    if (!state.seqs[index]) return;
+    if (!isCanvasMode()) {
+        const nameSpan = e?.target?.closest?.('.seq-name')
+            || document.querySelector(`.seq-line[data-seq-index="${index}"] > .seq-name`);
+        if (nameSpan) _startSeqNameEdit(nameSpan, index);
+        return;
+    }
+    // Canvas: a name cell laid over the canvas row for the box to sit in
+    const c = _canvasState.canvas, m = _canvasState.metrics;
+    if (!c || !m) return;
+    const r = c.getBoundingClientRect();
+    const pitch = _canvasState.rowPitch || m.charH;
+    const top = r.top + (m.headerH || m.charH) - _canvasState.offsetY + index * pitch;
+    const cell = document.createElement('div');
+    cell.className = 'seq-name canvas-rename';
+    cell.style.cssText = `position:fixed;left:${r.left}px;top:${top}px;width:${Math.max(m.nameW, 80)}px;`
+        + `height:${pitch}px;z-index:80;font-size:${getComputedStyle(c).fontSize};`;
+    document.body.appendChild(cell);
+    _startSeqNameEdit(cell, index, () => {
+        cell.remove();
+        _canvasState.scheduleDraw?.();
+    });
 }
 
 // The residue spans of one row for columns start..end-1, as an HTML string.
@@ -11288,6 +11321,12 @@ async function parseAndRender(isFromDrop = false) {
         colourState.mappings.clear();
         colourState.history?.clear();
         state.manuallyColoured = new Set();
+        // Undo/redo (and the trim backup) describe the previous file: Ctrl+Z after a load
+        // used to write the old file's rows into the new alignment
+        state.deletedHistory = [];
+        state.redoHistory = [];
+        state.trimBackup = null;
+        state.trimBackupColState = null;
         state.dragStartCol = null;
         state.dragStartRow = null;
         state.isDragging = false;
@@ -12208,6 +12247,17 @@ function handleKeyDown(e) {
             }
             return; // let browser handle all keys in textarea (Input window etc.)
         }
+        // A single-line text field (search box, rename box, SeqEdit name...) gets native
+        // editing only. Ctrl+Z/Y/Delete/Home/End/arrows used to reach the viewer from here:
+        // Ctrl+Z undid the alignment instead of the typing, Ctrl+Delete (delete word) deleted
+        // the selected sequences, and a rename box then saved onto another row.
+        if (_isTextEntry(activeEl)) {
+            if (activeEl.id === 'searchInput' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+                searchMotif();
+                e.preventDefault();
+            }
+            return;
+        }
         if ((e.ctrlKey || e.metaKey) && !e.altKey) {
             const key = e.key.toLowerCase();
             if ((key === 'v' || key === 'c' || key === 'x' || key === 'a') && !e.shiftKey) {
@@ -12264,7 +12314,9 @@ function handleKeyDown(e) {
                 e.preventDefault();
                 break;
             case 'z':
-                undoDelete();
+                // Ctrl+Shift+Z / Cmd+Shift+Z is redo (it used to undo once more)
+                if (e.shiftKey) redoAction();
+                else undoDelete();
                 e.preventDefault();
                 break;
             case 'y':
@@ -20650,6 +20702,11 @@ function _seqEditResetUndo(initialValue) {
 }
 
 
+// The sequences the open editor was opened on, by object: rows can move behind the dialog
+// (Ctrl+Up with focus on a button), and Apply used to write to whatever row then had the
+// remembered index, overwriting another sequence.
+let _seqEditTargetObjs = [];
+
 function openSeqEditor(index) {
     if (index === undefined || index === null) {
         // Use selected rows, or open freeform if none selected
@@ -20679,11 +20736,13 @@ function openSeqEditor(index) {
         // Freeform mode: blank editor for new or arbitrary text
         if (nameInput) nameInput.value = 'new_sequence';
         if (indexEl) indexEl.textContent = '-1';
+        _seqEditTargetObjs = [];
         textarea.value = '>new_sequence\n';
     } else {
         const s = state.seqs[index];
         if (nameInput) nameInput.value = s.fullHeader || s.header;
         if (indexEl) indexEl.textContent = String(index);
+        _seqEditTargetObjs = [s];
         textarea.value = `>${s.fullHeader || s.header}\n${s.seq}`;
     }
     _updateSeqEditLength();
@@ -20708,6 +20767,7 @@ function openSeqEditorMulti() {
     // Store multi indices
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     if (indexEl) indexEl.textContent = 'multi:' + indices.join(',');
+    _seqEditTargetObjs = indices.map(i => state.seqs[i]);
 
     // Build multi-FASTA
     let text = '';
@@ -20856,7 +20916,8 @@ function seqEditApply() {
 
     // Multi-sequence mode
     if (indexStr && indexStr.startsWith('multi:')) {
-        const indices = indexStr.substring(6).split(',').map(Number);
+        const indices = indexStr.substring(6).split(',').map(Number)
+            .map((i, k) => (_seqEditTargetObjs[k] ? state.seqs.indexOf(_seqEditTargetObjs[k]) : i));
         const entries = _getSeqEditMultiFasta();
         if (entries.length === 0) {
             showMessage("No sequences found.", 2000);
@@ -20906,8 +20967,9 @@ function seqEditApply() {
         return;
     }
 
-    const index = parseInt(indexStr);
+    let index = parseInt(indexStr);
     const isFreeform = (index === -1);
+    if (!isFreeform && _seqEditTargetObjs[0]) index = state.seqs.indexOf(_seqEditTargetObjs[0]);
 
     if (!isFreeform && (isNaN(index) || index < 0 || index >= state.seqs.length)) {
         showMessage("Invalid sequence index.", 3000);
@@ -21234,41 +21296,8 @@ function showContextMenu(e, index) {
         const renameItem = document.createElement('div');
         renameItem.textContent = 'Rename sequence';
         renameItem.addEventListener('click', () => {
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.value = state.seqs[index].header;
-            input.style.width = `${e.target.offsetWidth}px`;
-            input.style.fontSize = getComputedStyle(e.target).fontSize;
-            input.style.fontFamily = getComputedStyle(e.target).fontFamily;
-            input.style.padding = '0';
-            input.style.border = '1px solid #ccc';
-            e.target.innerHTML = '';
-            e.target.appendChild(input);
-            input.focus();
-            input.select();
-            const save = () => {
-                const newName = input.value.trim();
-                if (newName && newName !== state.seqs[index].header) {
-                    const oldName = state.seqs[index].header;
-                    pushUndo('rename');
-                    state.seqs[index].header = newName;
-                    state.seqs[index].fullHeader = newName;
-                    _migrateColourMapping(oldName, newName);
-                    renderAlignment();
-                    showMessage("Sequence renamed!", 2000);
-                } else {
-                    renderAlignment();
-                }
-            };
-            input.addEventListener('blur', save);
-            input.addEventListener('keydown', (ev) => {
-                if (ev.key === 'Enter') {
-                    save();
-                } else if (ev.key === 'Escape') {
-                    renderAlignment();
-                }
-            });
             closeContextMenu();
+            _renameSequenceFromMenu(index, e);
         });
         contextMenu.appendChild(renameItem);
     }
