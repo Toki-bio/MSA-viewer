@@ -12615,12 +12615,22 @@ function deleteSelected() {
  * Push current state onto undo stack. Call BEFORE mutating state.
  */
 function pushUndo(type) {
-    state.deletedHistory.push({
+    _pushUndoEntry(_makeUndoEntry(type));
+}
+
+// For an edit that may turn out to change nothing: take the snapshot first, push it only
+// once something changed (pushing up front added phantom steps and wiped the redo list).
+function _makeUndoEntry(type) {
+    return {
         type: type,
         seqs: _undoSnapshotSeqs(),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
-    });
+    };
+}
+
+function _pushUndoEntry(entry) {
+    state.deletedHistory.push(entry);
     // Clear redo stack whenever a new action is performed
     state.redoHistory = [];
     _trimUndoHistory();
@@ -13094,9 +13104,9 @@ function selectAllSequences() {
 }
 function moveSelectedUp() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     if (indices[0] === 0) return;
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13114,9 +13124,9 @@ function moveSelectedUp() {
 }
 function moveSelectedDown() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     if (indices[indices.length - 1] === state.seqs.length - 1) return;
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13134,8 +13144,9 @@ function moveSelectedDown() {
 }
 function moveSelectedToTop() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indices.every((r, k) => r === k)) return;   // already at the top
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -13152,8 +13163,9 @@ function moveSelectedToTop() {
 }
 function moveSelectedToBottom() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indices.every((r, k) => r === state.seqs.length - indices.length + k)) return;   // already there
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -20040,8 +20052,9 @@ async function realignAll() {
         return;
     }
 
-    // Save undo state
-    pushUndo('realign-all');
+    // Undo state, pushed only once the alignment changes (a declined or cancelled run
+    // used to leave a phantom step and wipe the redo list)
+    const undoEntry = _makeUndoEntry('realign-all');
 
     // Build ungapped FASTA
     const rowNames = _uniqueRowNames(state.seqs);
@@ -20066,6 +20079,7 @@ async function realignAll() {
 
     // Reorder only: skip MAFFT. Apply RC to gapped rows if needed, then permute.
     if (reorderOnly) {
+        _pushUndoEntry(undoEntry);
         if (flippedNames.size > 0) {
             state.seqs.forEach((s, i) => {
                 if (flippedNames.has(rowNames[i])) {
@@ -20150,6 +20164,7 @@ async function realignAll() {
             }
         }
 
+        _pushUndoEntry(undoEntry);
         state.seqs = newSeqs;
         state.selectedRows.clear();
         state.selectedColumns.clear();
@@ -24402,24 +24417,19 @@ function handleGeneDocGapToolClick(rowIndex, pos, tool) {
         }
     }
 
-    pushUndo(`geneDoc-${tool}`);
+    const undoEntry = _makeUndoEntry(`geneDoc-${tool}`);
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
-    let changed = false;
-    targets.forEach(i => {
+    const results = targets.map(i => {
         const s = state.seqs[i];
-        const result = deleting
-            ? geneDocDeleteDashString(s.seq, pos)
-            : geneDocInsertDashString(s.seq, pos);
-        if (result.changed) {
-            s.seq = result.seq;
-            changed = true;
-        }
+        return [s, deleting ? geneDocDeleteDashString(s.seq, pos) : geneDocInsertDashString(s.seq, pos)];
     });
-    if (!changed) {
+    if (!results.some(([, r]) => r.changed)) {
         showMessage('No GeneDoc edit was applied.', 1800);
         return;
     }
+    _pushUndoEntry(undoEntry);
+    results.forEach(([s, r]) => { if (r.changed) s.seq = r.seq; });
     const label = deleting ? 'gap deleted' : 'gap inserted';
     applyColumnEdit({ type: deleting ? 'delete' : 'insert', at: pos, cols: [pos], newWidth: Math.max(...state.seqs.map(q => q.seq.length)) },
         targets.length === state.seqs.length ? 'all' : targets);
@@ -24619,7 +24629,7 @@ function insertGapColumn(skipSelected = false) {
 function insertSingleGap(rowIndex, pos) {
     const s = state.seqs[rowIndex];
     if (!s) return;
-    pushUndo('insertSingleGap');
+    const undoEntry = _makeUndoEntry('insertSingleGap');
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
     const result = geneDocInsertDashString(s.seq, pos);
@@ -24627,6 +24637,7 @@ function insertSingleGap(rowIndex, pos) {
         showMessage('No gap inserted.', 1800);
         return;
     }
+    _pushUndoEntry(undoEntry);
     s.seq = result.seq;
     applyColumnEdit({ type: 'insert', at: pos, newWidth: Math.max(...state.seqs.map(q => q.seq.length)) }, [rowIndex]);
     finalizeGeneDocEdit('Single GeneDoc gap inserted.', 1800, pos, oldWidth);
@@ -24639,7 +24650,7 @@ function removeSingleGap(rowIndex, pos) {
         showMessage("Not a gap.", 2000);
         return;
     }
-    pushUndo('removeSingleGap');
+    const undoEntry = _makeUndoEntry('removeSingleGap');
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
     const result = geneDocDeleteDashString(s.seq, pos);
@@ -24647,6 +24658,7 @@ function removeSingleGap(rowIndex, pos) {
         showMessage('No gap removed.', 1800);
         return;
     }
+    _pushUndoEntry(undoEntry);
     s.seq = result.seq;
     applyColumnEdit({ type: 'delete', cols: [pos] }, [rowIndex]);
     finalizeGeneDocEdit('Single GeneDoc gap removed.', 1800, pos, oldWidth);

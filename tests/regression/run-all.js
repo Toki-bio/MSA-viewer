@@ -3316,6 +3316,37 @@ check('Audit: right-click Rename uses the rename box (Esc cancels, Enter saves) 
   return { pass, detail: JSON.stringify(out) };
 });
 
+check('Audit: edits that change nothing add no undo entry and keep the redo list', async (page) => {
+  // Used to: Ctrl+Up on the top row (and Ctrl+Down on the last, Ctrl+Home/End when already
+  // there, a gap tool click that changed nothing) pushed an undo entry first, so the history
+  // filled with phantom steps and the redo list was wiped.
+  await loadFasta(page, '>a\nACGT--\n>b\nTTTT--\n>c\nGGGG--\n');
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Home'); await page.keyboard.press('Control+Home');   // the 2nd is a no-op
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(200);
+  // one undo takes c back to the bottom (the no-op added no step): history 0, redo 1. Now
+  // more no-op moves:
+  const h0 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  await page.keyboard.press('Control+ArrowDown'); await page.keyboard.press('Control+End');
+  await auditCtrlClickName(page, 2); await auditCtrlClickName(page, 0);   // only row 0
+  await page.keyboard.press('Control+ArrowUp'); await page.keyboard.press('Control+Home');
+  const h1 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  // Ins Gap Seq inside the trailing gap run changes nothing
+  await page.click('#editToggleButton'); await page.click('#editInsertGapButton');
+  const c = await auditCell(page, 1, 5); await page.mouse.click(c.x, c.y); await page.waitForTimeout(200);
+  const h2 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  // Realign All declined at MAFFT's large-job prompt (no dialog handler: Playwright
+  // dismisses it) changes nothing either
+  await loadFasta(page, makeFasta(100, 3000));
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Home'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  const h3 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  await page.evaluate(() => el('realignAllButton').click()); await page.waitForTimeout(500);
+  const h4 = await page.evaluate(() => state.deletedHistory.length + '/' + state.redoHistory.length);
+  return { pass: h0 === '0/1' && h1 === h0 && h2 === h0 && h3 === '0/1' && h4 === h3, detail: JSON.stringify({ h0, h1, h2, h3, h4 }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
