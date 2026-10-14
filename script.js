@@ -3126,18 +3126,22 @@ function _computeBlockColumnWindow(start, end, scrollLeft, visibleDataWidth, cha
 //
 // Sizes come from a budget of residue spans, so a tall alignment gets a
 // shorter column buffer and a wide one a shorter row buffer.
+//
+// The budget is about 2.5 screens, not 6. Every change of the window (a re-centre of the columns,
+// rows added at an end) costs style, layout and paint of ALL built rows, not just of the changed
+// part: on 1500 x 4,000 (1400 x 900 window) the old window was ~130 rows x 510 columns (63k
+// spans), and each horizontal re-centre took 0.9-1.9 s (up to 4.5 s with real wheel events),
+// each vertical step ~330 ms. Measured with a window of half a screen of rows and a third of a
+// screen of columns on each side (~30k spans): a re-centre ~0.2-0.4 s, vertical steps ~170 ms.
+// The guard is a quarter of the buffer, so a re-centre still comes only every ~3/4 buffer.
 function _unifiedWindowBudget(visibleRows, visibleCols, nSeq, blockLen) {
     const vc = Math.max(1, Math.min(visibleCols, blockLen));
-    let bufferRows = Math.max(20, 2 * visibleRows);
-    const colsFor = (renderedRows) => Math.min(3 * vc, Math.max(vc, Math.floor(20000 / Math.max(1, renderedRows))));
-    let renderedRows = Math.min(nSeq, visibleRows + 2 * bufferRows);
-    let bufferCols = colsFor(renderedRows);
-    if (renderedRows * Math.min(blockLen, vc + 2 * bufferCols) > 70000) {
-        bufferRows = Math.max(10, Math.floor(bufferRows / 2));
-        renderedRows = Math.min(nSeq, visibleRows + 2 * bufferRows);
-        bufferCols = colsFor(renderedRows);
-    }
-    return { bufferRows, bufferCols, guardRows: Math.ceil(bufferRows / 2), guardCols: Math.ceil(bufferCols / 2) };
+    const bufferRows = Math.max(8, Math.ceil(visibleRows / 2));
+    const renderedRows = Math.max(1, Math.min(nSeq, visibleRows + 2 * bufferRows));
+    // A third of a screen of columns each side; more when few rows are built (up to 25,000 spans
+    // in all), never more than two screens
+    const bufferCols = Math.min(2 * vc, Math.max(20, Math.ceil(vc * 0.35), Math.floor((25000 / renderedRows - vc) / 2)));
+    return { bufferRows, bufferCols, guardRows: Math.ceil(bufferRows / 4), guardCols: Math.ceil(bufferCols / 4) };
 }
 
 // Rows per animation frame when a block's row window grows (a block entering
@@ -3175,6 +3179,7 @@ function _runUnifiedBlockJobs() {
         if (done && _unifiedBlockJobs.get(b) === step) _unifiedBlockJobs.delete(b);
     }
     if (_unifiedBlockJobs.size) _unifiedBlockJobRaf = requestAnimationFrame(_runUnifiedBlockJobs);
+    _scheduleBlockMaskOverlay();   // rows were added or dropped
 }
 
 // Brings a block's rendered row range to targetS..targetE: rows beyond the
@@ -3255,15 +3260,13 @@ function _rangeWithinGuard(rendS, rendE, visS, visE, guard, minS, maxE) {
     return (rendS <= minS || rendS <= visS - guard) && (rendE >= maxE || rendE >= visE + guard);
 }
 
+// One node at a time: Range.deleteContents spent ~1.3 ms a row (2 s of a 30-step horizontal scroll
+// on 1500 x 4,000 in a profile), about 40% more than removing the spans directly.
 function _removeLeadingChildren(el, n) {
-    const r = document.createRange();
-    r.setStart(el, 0); r.setEnd(el, n);
-    r.deleteContents();
+    for (let i = 0; i < n && el.firstChild; i++) el.removeChild(el.firstChild);
 }
 function _removeTrailingChildren(el, n) {
-    const r = document.createRange();
-    r.setStart(el, el.childNodes.length - n); r.setEnd(el, el.childNodes.length);
-    r.deleteContents();
+    for (let i = 0; i < n && el.lastChild; i++) el.removeChild(el.lastChild);
 }
 
 // Moves one data row's rendered column window from oldS..oldE to newS..newE
@@ -4099,6 +4102,7 @@ function _refreshUnifiedWindowOnScroll(container) {
     // note above _unifiedWindowBudget); only touch spacers and selection
     // classes when something was actually rebuilt.
     if (!changed) return;
+    _scheduleBlockMaskOverlay();
     const topH = G.top(blockStart) + 'px';
     const bottomH = Math.max(0, G.top(numBlocks) - G.top(blockEnd + 1)) + 'px';
     if (topSpacer.style.height !== topH) topSpacer.style.height = topH;
@@ -9282,12 +9286,24 @@ function _blockMaskGroupContiguity(rows) {
     return best / s.length;
 }
 
+// The windowed views (above ALIGN_WINDOWED_DOM_THRESHOLD) build only the rows and columns near the
+// screen and rebuild them as it moves: the overlay is drawn over what is built and redrawn after
+// each change of the window (one frame later, _scheduleBlockMaskOverlay). The rectangles sit in
+// their block's own coordinates, so scrolling alone moves them with the residues. Which rows form
+// a run, and the dashed outline of a scattered group or a lone row, are decided on all of the
+// mask's rows, not on the built ones, so a rectangle does not change style at the window's edge.
+let _blockMaskOverlayRaf = 0;
+function _scheduleBlockMaskOverlay() {
+    if (!state.blockMask || _blockMaskOverlayRaf) return;
+    _blockMaskOverlayRaf = requestAnimationFrame(() => { _blockMaskOverlayRaf = 0; renderBlockMaskOverlay(); });
+}
+
 function renderBlockMaskOverlay() {
     document.querySelectorAll('.block-mask-layer').forEach(el => el.remove());
     const mask = state.blockMask;
     if (!mask || !Array.isArray(mask.blocks) || !Array.isArray(mask.row_headers)) return;
     if (document.getElementById('modeCanvas')?.checked) return;   // Canvas: unsupported
-    if (state._needsWindowedDom) return;                          // windowed DOM: unsupported yet
+    const windowed = !!state._needsWindowedDom;
     const container = document.getElementById('alignmentContainer');
     if (!container) return;
     const blockEls = container.querySelectorAll('.block-block');
@@ -9406,9 +9422,27 @@ function renderBlockMaskOverlay() {
                 const si = rowVis[k];
                 if (si >= 0 && rowElByIdx.has(si)) vis.push(si);
             }
+            const localOnly = !!mb.localOnly;
+            if (windowed) {
+                // Runs of consecutive rows over the whole mask, each clipped to the built rows
+                const all = [];
+                for (const k of mb.rows) if (rowVis[k] >= 0) all.push(rowVis[k]);
+                if (!all.length || !vis.length) return;
+                all.sort((a, b) => a - b);
+                const builtLo = Math.min(...vis), builtHi = Math.max(...vis);
+                const dashedAll = !localOnly && _blockMaskGroupContiguity(all) < 0.6;
+                let a = 0;
+                for (let i = 1; i <= all.length; i++) {
+                    if (i < all.length && all[i] === all[i - 1] + 1) continue;
+                    const lo = Math.max(all[a], builtLo), hi = Math.min(all[i - 1], builtHi);
+                    const ya = lo <= hi ? rowTop(lo) : null, yz = lo <= hi ? rowTop(hi) : null;
+                    if (ya != null && yz != null) addRect(ya, (yz - ya) + rowH, _blockMaskOpacity, dashedAll || (!localOnly && i - a === 1), localOnly);
+                    a = i;
+                }
+                return;
+            }
             if (!vis.length) return;
             vis.sort((a, b) => rowElByIdx.get(a).getBoundingClientRect().top - rowElByIdx.get(b).getBoundingClientRect().top);
-            const localOnly = !!mb.localOnly;
             const groupDashed = !localOnly && _blockMaskGroupContiguity(vis) < 0.6;
             let runStart = vis[0], prev = vis[0], runLen = 1;
             const flush = (a, z, len) => {
@@ -11024,10 +11058,14 @@ const ALIGN_CRAZY_VOLUME = 5_000_000;
 // Canvas auto-switch (both still gated by ALIGN_CRAZY_VOLUME).
 // Measured 2026-10 at 300 x 1,000: the full build blocks the page 2.3 s on a
 // switch to Full (1.3 s Block, 1.2 s on load); windowed it is 0.4 s with
-// similar scrolling. Lowering this to ~100,000 would remove those freezes but
-// also the Show 2D block-mask overlay, which the windowed display does not
-// support yet (renderBlockMaskOverlay), so it stays at 500,000 for now.
-const ALIGN_WINDOWED_DOM_THRESHOLD = 500_000;
+// similar scrolling. At 500,000 (the old value) there was a cliff: 400 x 1,245
+// loaded in 3.4-4.7 s and switched to Full in 5.7-8.4 s, 400 x 1,255 (windowed)
+// in under 1 s. Measured 2026-10-14 (headless, 400 rows): full DOM load / Full
+// switch 1.1 / 1.2 s at 100k residues, 1.5 / 1.9 s at 150k, 2.0 / 3.8 s at 300k;
+// windowed 0.6-1.0 s for both at every size from 50k up. 100,000 is where the
+// full DOM stops being as fast. Show 2D (renderBlockMaskOverlay) draws on the
+// windowed view too, so nothing is lost above it.
+const ALIGN_WINDOWED_DOM_THRESHOLD = 100_000;
 
 /** Single-pass FASTA scan: counts sequences and lengths without building seq objects. */
 function scanFastaIndex(text) {
@@ -11581,6 +11619,16 @@ async function parseAndRender(isFromDrop = false) {
         // doing this only after render left the on-screen content overflowing
         // even though the size slider showed a "corrected" value.
         fitBlockSizeBeforeInitialRender();
+        // A new file opens at its first row and column. The windowed views keep scrollTop and
+        // scrollLeft through a redraw (renderAlignment) and Canvas keeps its pan offset, so a file
+        // opened over a scrolled view used to open at the old file's place.
+        if (alignmentContainer.scrollTop || alignmentContainer.scrollLeft) {
+            _unifiedScrollController.suppressNextEvent();
+            alignmentContainer.scrollTop = 0;
+            alignmentContainer.scrollLeft = 0;
+        }
+        _canvasState.offsetX = 0;
+        _canvasState.offsetY = 0;
         renderAlignment();
         updateBamButtonVisibility();
         // Auto-fit block size to screen width on every load
