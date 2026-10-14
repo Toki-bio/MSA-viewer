@@ -1575,6 +1575,27 @@ function updateVersionIndicator() {
         .catch(() => {});
 }
 
+// The windowed views and Canvas are their own scrollers, with a fixed height: the window's height
+// below the alignment's top. It was set once per render, so after the window was made smaller the
+// bottom of the alignment (and of its scrollbar) hung below the window, and after it was made
+// taller part of the window stayed empty. Refit on window resize and when the toolbar wraps.
+function _fitFixedAlignmentViewport() {
+    const c = alignmentContainer;
+    if (!c || !/px$/.test(c.style.height || '')) return;
+    const canvasMode = isCanvasMode();
+    const windowed = !!state._needsWindowedDom && !!(el('modeSingle')?.checked || el('modeBlocks')?.checked);
+    if (!canvasMode && !windowed) return;
+    const top = c.getBoundingClientRect().top;
+    // the same formulas as renderAlignment (windowed) and _renderCanvasAlignment
+    const h = canvasMode ? window.innerHeight - top - 28 : Math.max(100, window.innerHeight - top - 28);
+    if (Math.abs(parseFloat(c.style.height) - h) < 0.5) return;
+    c.style.height = h + 'px';
+    if (canvasMode) _canvasState.resizeHandler?.();
+    else if (_unifiedWindowRenderParams) _refreshUnifiedWindowOnScroll(c);
+    window._syncVerticalScrollbar?.();
+    window._syncHorizontalScrollbar?.();
+}
+
 function updateControlsOffset() {
     const controls = document.getElementById('controls');
     const rootStyle = document.documentElement.style;
@@ -22211,11 +22232,12 @@ function initializeAppUI() {
     const controls = el('controls');
     if (controls && typeof ResizeObserver !== 'undefined') {
         const controlsResizeObserver = new ResizeObserver(() => {
-            window.requestAnimationFrame(updateControlsOffset);
+            window.requestAnimationFrame(() => { updateControlsOffset(); _fitFixedAlignmentViewport(); });
         });
         controlsResizeObserver.observe(controls);
     }
     window.addEventListener('resize', () => window.requestAnimationFrame(updateControlsOffset));
+    window.addEventListener('resize', () => window.requestAnimationFrame(_fitFixedAlignmentViewport));
 
     // Initialize slider backgrounds
     ['blackSlider', 'darkSlider', 'lightSlider', 'nameLengthSlider', 'zoomSlider', 'blockSizeSlider', 'consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(id => {
