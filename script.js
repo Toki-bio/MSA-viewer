@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v246';
+const BUILD_TAG = 'v247';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -5228,9 +5228,10 @@ const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen
 let _canvasDeferredToken = null;
 
 function _initCanvasMetrics(ctx, fontSizePx) {
-    // Cache is keyed on font size so zoom changes (which resize the DOM font)
-    // invalidate stale metrics instead of leaving Canvas mode stuck at 12px.
-    if (_canvasState.metrics && _canvasState.metrics.fontSizePx === fontSizePx) return _canvasState.metrics;
+    // Cache is keyed on font size and device pixel ratio so zoom changes (which resize the
+    // DOM font) and a move to another screen invalidate stale metrics.
+    const dpr = window.devicePixelRatio || 1;
+    if (_canvasState.metrics && _canvasState.metrics.fontSizePx === fontSizePx && _canvasState.metrics.dpr === dpr) return _canvasState.metrics;
     ctx.font = fontSizePx + 'px "Courier New", monospace';
     const m = ctx.measureText('X');
     const ascent = (m.fontBoundingBoxAscent != null)
@@ -5239,13 +5240,17 @@ function _initCanvasMetrics(ctx, fontSizePx) {
     const descent = (m.fontBoundingBoxDescent != null)
         ? m.fontBoundingBoxDescent
         : Math.ceil(fontSizePx * 0.15);
-    const charH = Math.ceil(ascent + descent);
+    // Cells are a whole number of DEVICE pixels (rounded up), expressed in CSS px: at 125 % or
+    // 150 % scaling a 15 CSS px row would be 18.75 or 22.5 device px, every row edge would be
+    // antialiased, and the scroll frame copy (which ends on a row edge) would not be exact.
+    const charH = Math.ceil(Math.ceil(ascent + descent) * dpr) / dpr;
     _canvasState.metrics = {
-        charW: Math.ceil(m.width),
+        charW: Math.ceil(Math.ceil(m.width) * dpr) / dpr,
         charH,
         fontSizePx,
         ascent,
-        descent
+        descent,
+        dpr
     };
     return _canvasState.metrics;
 }
@@ -5550,7 +5555,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // Consensus row: letters CHAR_H high plus the DOM row's 1 px rule and 4 px margin
     // (.consensus-top / .consensus-bottom). At the top it is part of the header, so hit
     // tests and scroll anchors (m.headerH) see the rows start below it.
-    const CONS_H = consInfo ? CHAR_H + 5 : 0;
+    const CONS_GAP = Math.ceil(5 * dpr) / dpr;             // the DOM row's 1 px rule + 4 px margin, on device pixels
+    const HAIR = 1 / dpr;                                   // one device pixel
+    const CONS_H = consInfo ? CHAR_H + CONS_GAP : 0;
     const consTop = !!consInfo && consInfo.position !== 'bottom';
     _canvasState.consensus = consInfo ? { len, values: consInfo.values, position: consInfo.position,
         threshold: consInfo.threshold, caseCache: null } : null;
@@ -5585,7 +5592,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     _canvasState.seqsLen = nSeqs;
     const SCALE_H = CHAR_H; // one row at top, matching Full/Block .scale-ruler-line
     const HEADER_H = TRACK_H + SCALE_H + (consTop ? CONS_H : 0); // track (if any) + ruler + consensus (if on top): where the rows start
-    let _lastOffX = -1, _lastOffY = -1, _dirty = false;
+    let _lastOffX = -1, _lastOffY = -1, _dirty = false, _lastSig = null;
     function _markDirty() { _dirty = true; }
 
     const totalContentW = NAME_W + len * CHAR_W + 4;
@@ -5633,6 +5640,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // Outside callers ask for a redraw because state changed (selection, search, edit), not
     // the offset; without marking dirty, draw() skipped them unless the view had moved.
     _canvasState.scheduleDraw = () => { _markDirty(); scheduleDraw(); };
+    // For callers that only moved the view (a page key): no dirty flag, so the frame copy applies
+    _canvasState.scheduleDrawMoved = () => scheduleDraw();
 
     resize(true);
     if (_canvasState.resizeHandler) window.removeEventListener('resize', _canvasState.resizeHandler);
@@ -5709,7 +5718,17 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const oy = _canvasState.offsetY;
         const W = canvas.width, H = canvas.height;
         const dxDev = Math.round((ox - _lastOffX) * dpr), dyDev = Math.round((oy - _lastOffY) * dpr);
-        const canBlit = !_dirty && _lastOffX >= 0 && ((dxDev === 0) !== (dyDev === 0))
+        // Anything that changes what a cell looks like must force a full redraw even when
+        // the caller forgot to mark the view dirty (safety net for the frame copy).
+        const sig = [state.seqs, state.seqs.length, state.deletedHistory.length, state.redoHistory.length,
+            state.conservationDataCache?.data, state.consensusCache?.values, state.selectedRows.size,
+            state.selectedColumns.size, state.selectedNucs.size, state.pendingNucStart, state.trimBoundaries,
+            state.softTrimBoundaries, state.editCell, state.editModeActive, state._diffColumns, state.tsdMarks,
+            state.searchHistory?.length, _canvasState.rowDrag, getEffectiveColorScheme()];
+        let same = !!_lastSig && _lastSig.length === sig.length;
+        for (let i = 0; same && i < sig.length; i++) if (_lastSig[i] !== sig[i]) same = false;
+        _lastSig = sig;
+        const canBlit = !_dirty && same && _lastOffX >= 0 && ((dxDev === 0) !== (dyDev === 0))
             && Math.abs(dxDev) < W && Math.abs(dyDev) < H;
         _lastOffX = ox; _lastOffY = oy; _dirty = false;
         // Draws what intersects a device-pixel rectangle of the viewport, nothing else.
@@ -5740,11 +5759,25 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 ctx.drawImage(back, sx, sy, cw, ch, dx, dy, cw, ch);
                 ctx.restore();
             }
-            // The exposed strip
-            if (dxDev > 0) drawClipped(W - dxDev, 0, W, H);
-            else if (dxDev < 0) drawClipped(fixed, 0, fixed - dxDev, H);
-            else if (dyDev > 0) drawClipped(0, H - dyDev, W, H);
-            else drawClipped(0, 0, W, -dyDev);
+            // The exposed strip, widened to the nearest row edge (or column edge) so that every
+            // cell is either copied whole or drawn whole: a cell cut by the clip would have
+            // its antialiased edge pixels composited twice (copy, then draw).
+            const rowEdgeDev = (yDev, up) => {   // device y of the row edge at/above (up) or at/below yDev
+                const k = (yDev / dpr - HEADER_H + oy) / rowPitch;
+                const kk = up ? Math.floor(k + 1e-6) : Math.ceil(k - 1e-6);
+                const e = Math.round((HEADER_H + kk * rowPitch - oy) * dpr);
+                return up ? Math.max(0, Math.min(e, yDev)) : Math.min(H, Math.max(e, yDev));
+            };
+            const colEdgeDev = (xDev, left) => {
+                const k = (xDev / dpr - NAME_W + ox) / CHAR_W;
+                const kk = left ? Math.floor(k + 1e-6) : Math.ceil(k - 1e-6);
+                const e = Math.round((NAME_W + kk * CHAR_W - ox) * dpr);
+                return left ? Math.max(fixed, Math.min(e, xDev)) : Math.min(W, Math.max(e, xDev));
+            };
+            if (dxDev > 0) drawClipped(colEdgeDev(W - dxDev, true), 0, W, H);
+            else if (dxDev < 0) drawClipped(fixed, 0, colEdgeDev(fixed - dxDev, false), H);
+            else if (dyDev > 0) drawClipped(0, rowEdgeDev(H - dyDev, true), W, H);
+            else drawClipped(0, 0, W, rowEdgeDev(-dyDev, false));
             // When NAME_W * dpr is not whole, the device pixel column the name edge falls into
             // holds both name backing and content: redraw it.
             const edge = Math.floor(NAME_W * dpr);
@@ -5810,13 +5843,15 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 ctx.fillText(ch, x, scaleY);
             }
             ctx.fillStyle = '#ddd';
-            ctx.fillRect(Math.max(0, NAME_W - ox), scaleY + SCALE_H - 1, w, 1);
+            ctx.fillRect(Math.max(0, NAME_W - ox), scaleY + SCALE_H - HAIR, w, HAIR);
         }
 
+        // Edits reshade changed columns into state.conservationDataCache; use it when current
+        const consPos = (state.conservationDataCache?.len === len && state.conservationDataCache?.shadeMode === shadeMode)
+            ? state.conservationDataCache.data : conservationData;
         for (let i = firstRow; i <= lastRow; i++) {
             const y = HEADER_H +i * rowPitch - oy;
             const seq = state.seqs[i].seq;
-            const consPos = conservationData;
             const ovCtx = _overlayRowCtx(i);
             const trim = state.trimBoundaries;
 
@@ -6000,11 +6035,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // (consensusDisplayBase); trim preview colours as in the DOM row.
         if (consInfo) {
             const cons = _canvasState.consensus;
+            // Edits recompute the consensus into state.consensusCache without a re-render
+            const live = state.consensusCache?.len === len ? state.consensusCache.values : cons.values;
+            if (live && cons.values !== live) { cons.values = live; cons.caseCache = null; }
             const consY = consTop ? TRACK_H + SCALE_H - oy : HEADER_H + nSeqs * rowPitch - oy;
-            const textY = consTop ? consY : consY + 5;
+            const textY = consTop ? consY : consY + CONS_GAP;
             if (consY + CONS_H > cy0 && consY < cy1) {
                 ctx.fillStyle = '#ccc';
-                ctx.fillRect(stickyNames ? NAME_W : Math.max(0, NAME_W - ox), consTop ? consY + CHAR_H : consY, w, 1);
+                ctx.fillRect(stickyNames ? NAME_W : Math.max(0, NAME_W - ox), consTop ? consY + CHAR_H : consY, w, HAIR);
                 if (cons.values) {
                     if (!cons.caseCache) cons.caseCache = new Uint8Array(len);   // 0 unknown, 1 upper, 2 lower
                     const trim = state.trimBoundaries;
@@ -12697,8 +12735,14 @@ function handleKeyDown(e) {
     if (e.key === 'PageUp' || e.key === 'PageDown') {
         const container = alignmentContainer;
         const direction = e.key === 'PageUp' ? -1 : 1;
-        const scrollAmount = container.clientHeight * 0.8;
-        container.scrollTop += direction * scrollAmount;
+        if (isCanvasMode() && _canvasState.canvas) {
+            _canvasState.offsetY += direction * (parseInt(_canvasState.canvas.style.height) || container.clientHeight) * 0.8;
+            (_canvasState.scheduleDrawMoved || _canvasState.scheduleDraw)?.();
+            _canvasState.onOffsetChange?.();
+        } else {
+            const scrollAmount = container.clientHeight * 0.8;
+            container.scrollTop += direction * scrollAmount;
+        }
         e.preventDefault();
     }
 }

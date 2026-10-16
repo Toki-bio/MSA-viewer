@@ -3209,6 +3209,63 @@ check('Canvas mode: typing, gap, move and slide tools give the same sequences as
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : 'typing, undo, gap insert/delete, Move and Slide identical in Full and Canvas' };
 });
 
+// Hardening of the Canvas frame copy (v246). (1) Windows laptops run at 125 % or 150 % scaling,
+// where a CSS pixel is not a device pixel: the copy must still be exact. (2) An edit, an undo
+// or a selection change under a copied frame must force a full redraw even when the caller
+// did not mark the view dirty (the copy would otherwise keep stale cells). (3) PageDown pages
+// the Canvas view (the container is not scrollable there).
+check('Canvas frame copy stays pixel-identical at 125 % and 150 % scaling, after edits, and PageDown pages the view', async (page) => {
+  const browser = page.context().browser();
+  const out = {};
+  for (const dpr of [1.25, 1.5]) {
+    const ctx = await browser.newContext({ viewport: { width: 1200, height: 700 }, deviceScaleFactor: dpr });
+    const p2 = await ctx.newPage();
+    await p2.goto(page.url().replace(/[?#].*$/, ''));
+    await loadSyntheticFasta(p2, 300, 400);
+    await setMode(p2, 'canvas');
+    await p2.waitForTimeout(300);
+    const box = await p2.evaluate(() => { const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { x: r.left + r.width * 0.6, y: r.top + r.height * 0.6 }; });
+    await p2.mouse.move(box.x, box.y);
+    const res = {};
+    for (const [label, dx, dy] of [['down', 0, 100], ['right', 100, 0], ['trackpad', 0, 33.3]]) {
+      await p2.evaluate(() => { _canvasState.stats.full = 0; _canvasState.stats.blit = 0; });
+      for (let i = 0; i < 5; i++) { await p2.mouse.wheel(dx, dy); await p2.waitForTimeout(40); }
+      await p2.waitForTimeout(150);
+      res[label] = await p2.evaluate(() => { const c = document.getElementById('alignmentCanvas'); const fast = c.toDataURL(); const st = { blit: _canvasState.stats.blit, full: _canvasState.stats.full, dpr: devicePixelRatio, w: c.width }; _canvasState.scheduleDraw(); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r({ ...st, same: c.toDataURL() === fast })))); });
+    }
+    out['dpr' + dpr] = res;
+    await ctx.close();
+  }
+  // edits under a copied frame
+  await loadSyntheticFasta(page, 200, 300);
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(300);
+  const box = await page.evaluate(() => { const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { x: r.left + r.width * 0.6, y: r.top + r.height * 0.6 }; });
+  await page.mouse.move(box.x, box.y);
+  await page.mouse.wheel(0, 100); await page.waitForTimeout(100);
+  await page.click('#editToggleButton'); await page.waitForTimeout(300);
+  await page.click('[data-edit-tool="residue"]'); await page.waitForTimeout(150);
+  const cell = await page.evaluate(() => { const cv = document.getElementById('alignmentCanvas'), b = cv.getBoundingClientRect(), m = _canvasState.metrics; return { x: b.left + m.nameW + 5.5 * m.charW - _canvasState.offsetX, y: b.top + m.headerH + 8.5 * _canvasState.rowPitch - _canvasState.offsetY }; });
+  await page.mouse.click(cell.x, cell.y); await page.waitForTimeout(100);
+  const edited = {};
+  for (const [label, act] of [['type', async () => { await page.keyboard.press('g'); }], ['undo', async () => { await page.keyboard.press('Control+z'); }], ['selectRow', async () => page.evaluate(() => { state.selectedRows.add(3); updateRowSelections(); })]]) {
+    await act(); await page.waitForTimeout(150);
+    await page.mouse.move(box.x, box.y); await page.mouse.wheel(0, 60); await page.waitForTimeout(150);   // a copy-sized step right after the change
+    edited[label] = await page.evaluate(() => { const c = document.getElementById('alignmentCanvas'); const fast = c.toDataURL(); _canvasState.scheduleDraw(); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(c.toDataURL() === fast)))); });
+  }
+  await page.click('#editToggleButton'); await page.waitForTimeout(200);
+  // PageDown
+  const y0 = await page.evaluate(() => _canvasState.offsetY);
+  await page.keyboard.press('PageDown'); await page.waitForTimeout(200);
+  const y1 = await page.evaluate(() => _canvasState.offsetY);
+  out.edited = edited; out.pageDown = { from: y0, to: y1 };
+  const bad = [];
+  for (const [k, res] of Object.entries(out)) if (k.startsWith('dpr')) for (const [l, r] of Object.entries(res)) { if (r.blit < 4) bad.push(`${k}/${l}: only ${r.blit} copy frames`); if (!r.same) bad.push(`${k}/${l}: pixels differ from a full redraw`); }
+  for (const [l, same] of Object.entries(edited)) if (!same) bad.push(`after ${l}: a copied frame differs from a full redraw`);
+  if (!(y1 > y0 + 100)) bad.push(`PageDown moved the view from ${y0} to ${y1}`);
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
