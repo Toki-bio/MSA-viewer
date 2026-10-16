@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v247';
+const BUILD_TAG = 'v248';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -5523,6 +5523,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     canvas.style.top = '0';
     canvas.style.left = '0';
     alignmentContainer.appendChild(canvas);
+    // Overlay layer (selections, pending/edit cell, row drag indicator): transparent, above
+    // the content, no pointer events. Selection changes redraw only this layer.
+    const overlay = document.createElement('canvas');
+    overlay.id = 'alignmentCanvasOverlay';
+    overlay.style.cssText = 'display:block;position:absolute;top:0;left:0;pointer-events:none';
+    alignmentContainer.appendChild(overlay);
+    const octx = overlay.getContext('2d');
+    _canvasState.overlay = overlay;
 
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
@@ -5594,6 +5602,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const HEADER_H = TRACK_H + SCALE_H + (consTop ? CONS_H : 0); // track (if any) + ruler + consensus (if on top): where the rows start
     let _lastOffX = -1, _lastOffY = -1, _dirty = false, _lastSig = null;
     function _markDirty() { _dirty = true; }
+    // What can change the look of a cell (selections live on the overlay and are not here)
+    const contentSig = () => [state.seqs, state.seqs.length, state.deletedHistory.length, state.redoHistory.length,
+        state.conservationDataCache?.data, state.consensusCache?.values, state.trimBoundaries, state.softTrimBoundaries,
+        state._diffColumns, state.tsdMarks, state.searchHistory?.length, getEffectiveColorScheme()];
 
     const totalContentW = NAME_W + len * CHAR_W + 4;
     const totalContentH = HEADER_H +nSeqs * rowPitch + (consInfo && !consTop ? CONS_H : 0) + 4;
@@ -5622,6 +5634,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         back.width = canvas.width;
         back.height = canvas.height;
+        overlay.width = canvas.width;
+        overlay.height = canvas.height;
+        overlay.style.width = canvas.style.width;
+        overlay.style.height = canvas.style.height;
+        octx.setTransform(dpr, 0, 0, dpr, 0, 0);
         return true;
     }
     // Scratch copy of the last frame for the scroll copy in draw(): drawImage composites
@@ -5629,7 +5646,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // antialiased pixels with what was there; copying via a cleared buffer is exact.
     const back = document.createElement('canvas');
     const bctx = back.getContext('2d');
-    let drawRaf = 0;
+    let drawRaf = 0, overlayRaf = 0;
     function scheduleDraw() {
         if (drawRaf) return;
         drawRaf = requestAnimationFrame(() => {
@@ -5637,6 +5654,16 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             draw();
         });
     }
+    // Selection-only change: redraw the overlay layer, leave the cells alone
+    function scheduleOverlay() {
+        if (overlayRaf) return;
+        overlayRaf = requestAnimationFrame(() => {
+            overlayRaf = 0;
+            if (drawRaf) return;            // the pending content draw redraws the overlay too
+            drawOverlay(_canvasState.offsetX, _canvasState.offsetY, parseInt(canvas.style.width) || 800, parseInt(canvas.style.height) || 600);
+        });
+    }
+    _canvasState.scheduleOverlay = scheduleOverlay;
     // Outside callers ask for a redraw because state changed (selection, search, edit), not
     // the offset; without marking dirty, draw() skipped them unless the view had moved.
     _canvasState.scheduleDraw = () => { _markDirty(); scheduleDraw(); };
@@ -5660,7 +5687,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 canvas.style.cursor = 'grabbing';
             }
             const t = _canvasRowDropTarget(e.clientY);
-            if (t && (t.row !== rd.target || t.above !== rd.above)) { rd.target = t.row; rd.above = t.above; _markDirty(); scheduleDraw(); }
+            if (t && (t.row !== rd.target || t.above !== rd.above)) { rd.target = t.row; rd.above = t.above; scheduleOverlay(); }
             e.preventDefault();
             return;
         }
@@ -5678,7 +5705,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             if (rd.started) {
                 const t = e ? _canvasRowDropTarget(e.clientY) : null;
                 // _moveDraggedSequences re-renders; when it declines (drop onto itself) clear the indicator
-                if (!t || !_moveDraggedSequences(rd.from, t.row, t.above)) { _markDirty(); scheduleDraw(); }
+                if (!t || !_moveDraggedSequences(rd.from, t.row, t.above)) scheduleOverlay();
             }
             return;
         }
@@ -5720,11 +5747,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const dxDev = Math.round((ox - _lastOffX) * dpr), dyDev = Math.round((oy - _lastOffY) * dpr);
         // Anything that changes what a cell looks like must force a full redraw even when
         // the caller forgot to mark the view dirty (safety net for the frame copy).
-        const sig = [state.seqs, state.seqs.length, state.deletedHistory.length, state.redoHistory.length,
-            state.conservationDataCache?.data, state.consensusCache?.values, state.selectedRows.size,
-            state.selectedColumns.size, state.selectedNucs.size, state.pendingNucStart, state.trimBoundaries,
-            state.softTrimBoundaries, state.editCell, state.editModeActive, state._diffColumns, state.tsdMarks,
-            state.searchHistory?.length, _canvasState.rowDrag, getEffectiveColorScheme()];
+        const sig = contentSig();
         let same = !!_lastSig && _lastSig.length === sig.length;
         for (let i = 0; same && i < sig.length; i++) if (_lastSig[i] !== sig[i]) same = false;
         _lastSig = sig;
@@ -5790,6 +5813,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             _canvasState.stats.full++;
             _canvasState.stats.fullMs.push(performance.now() - t0);
         }
+        drawOverlay(ox, oy, w, h);
         if (_canvasState.stats.fullMs.length > 64) _canvasState.stats.fullMs.shift();
         if (_canvasState.stats.blitMs.length > 64) _canvasState.stats.blitMs.shift();
         _canvasState.stats.lastDrawMs = performance.now() - t0;
@@ -5797,6 +5821,122 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // persistent horizontal scrollbar to mirror our internal pan offset.
         _canvasState.onOffsetChange?.();
     }
+    // An edit changed rows r0..r1 and columns c0..c1 (typing: one row, one column): redraw
+    // the row band and the column band (and the consensus band) now, nothing else, and
+    // accept the new state as drawn so the next scroll step can still copy the frame.
+    _canvasState.redrawCells = (r0, r1, c0, c1) => {
+        if (drawRaf || _dirty) return;                      // a full draw is coming anyway
+        const w = parseInt(canvas.style.width) || 800, h = parseInt(canvas.style.height) || 600;
+        const ox = _canvasState.offsetX, oy = _canvasState.offsetY, W = canvas.width, H = canvas.height;
+        const clipDraw = (x0, y0, x1, y1) => {
+            x0 = Math.max(0, Math.round(x0 * dpr)); y0 = Math.max(0, Math.round(y0 * dpr)); x1 = Math.min(W, Math.round(x1 * dpr)); y1 = Math.min(H, Math.round(y1 * dpr));
+            if (x1 <= x0 || y1 <= y0) return;
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, w, h);
+            drawRegion(ox, oy, w, h, x0 / dpr, y0 / dpr, x1 / dpr, y1 / dpr);
+            ctx.restore();
+        };
+        clipDraw(0, HEADER_H + r0 * rowPitch - oy, w, HEADER_H + (r1 + 1) * rowPitch - oy);
+        clipDraw(NAME_W + c0 * CHAR_W - ox, 0, NAME_W + (c1 + 1) * CHAR_W - ox, h);
+        if (consInfo) { const consY = consTop ? TRACK_H + SCALE_H - oy : HEADER_H + nSeqs * rowPitch - oy; clipDraw(0, consY, w, consY + CONS_H); }
+        _lastSig = contentSig();
+        drawOverlay(ox, oy, w, h);
+    };
+
+    // The overlay layer: selections, the pending/edit cell and the row drag indicator, in
+    // content coordinates. Cleared and redrawn whole; a few fills, under a millisecond.
+    function drawOverlay(ox, oy, w, h) {
+        octx.clearRect(0, 0, w, h);
+        // Row reorder in progress: tint the dragged names, draw the drop bar in the name column
+        const rd = _canvasState.rowDrag;
+        if (rd && rd.started) {
+            const nx = stickyNames ? 0 : -ox;
+            octx.fillStyle = 'rgba(25, 118, 210, 0.18)';
+            for (const r of _getDraggedIndices(rd.from)) {
+                const y = HEADER_H + r * rowPitch - oy;
+                if (y + rowPitch >= 0 && y <= h) octx.fillRect(nx, y, NAME_W, CHAR_H);
+            }
+            if (rd.target >= 0) {
+                const y = HEADER_H + (rd.target + (rd.above ? 0 : 1)) * rowPitch - oy;
+                octx.fillStyle = '#1976D2';
+                octx.fillRect(nx + 6, y - 1, NAME_W - 12, 2);
+            }
+        }
+
+        // Highlight selected columns (semi-transparent vertical strips)
+        if (state.selectedColumns.size > 0) {
+            octx.fillStyle = 'rgba(25, 118, 210, 0.15)';
+            state.selectedColumns.forEach(pos => {
+                const x = NAME_W + pos * CHAR_W - ox;
+                if (x + CHAR_W < 0 || x > w) return;
+                const dataTop = Math.max(0, HEADER_H - oy);
+                const dataBottom = Math.min(h, HEADER_H +nSeqs * CHAR_H - oy);
+                octx.fillRect(x, dataTop, CHAR_W, dataBottom - dataTop);
+            });
+        }
+
+        // Highlight selected rows (semi-transparent horizontal strips; same tint as the DOM)
+        if (state.selectedRows.size > 0) {
+            octx.fillStyle = 'rgba(40, 167, 69, 0.30)';
+            state.selectedRows.forEach(rowIdx => {
+                const y = HEADER_H +rowIdx * rowPitch - oy;
+                if (y + rowPitch < 0 || y > h) return;
+                octx.fillRect(0, y, w, rowPitch);
+            });
+        }
+
+        // Highlight selected nucleotides (mirrors DOM .nuc-selected in Full/Block mode)
+        if (state.selectedNucs.size > 0) {
+            octx.fillStyle = 'rgba(25, 118, 210, 0.25)';
+            octx.strokeStyle = '#1976D2';
+            octx.lineWidth = 1;
+            state.selectedNucs.forEach((posSet, rowIdx) => {
+                if (rowIdx < 0 || !posSet || posSet.size === 0) return;
+                const y = HEADER_H +rowIdx * rowPitch - oy;
+                if (y + CHAR_H < 0 || y > h) return;
+                posSet.forEach(pos => {
+                    const x = NAME_W + pos * CHAR_W - ox;
+                    if (x + CHAR_W < 0 || x > w) return;
+                    octx.fillRect(x, y, CHAR_W, CHAR_H);
+                    octx.strokeRect(x + 0.5, y + 0.5, CHAR_W - 1, CHAR_H - 1);
+                });
+            });
+        }
+        // Draw pending nucleotide start indicator (dashed border, two-click system)
+        if (state.pendingNucStart) {
+            const pr = state.pendingNucStart.row, pp = state.pendingNucStart.pos;
+            if (pr >= 0) {
+                const y = HEADER_H +pr * rowPitch - oy;
+                const x = NAME_W + pp * CHAR_W - ox;
+                if (x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
+                    octx.strokeStyle = '#1976D2';
+                    octx.setLineDash([3, 2]);
+                    octx.lineWidth = 1.5;
+                    octx.strokeRect(x + 0.5, y + 0.5, CHAR_W - 1, CHAR_H - 1);
+                    octx.setLineDash([]);
+                }
+            }
+        }
+
+        // Draw active edit cell highlight (residue typing mode)
+        if (state.editModeActive && state.editTool === 'residue' && state.editCell) {
+            const er = state.editCell.row, ep = state.editCell.pos;
+            if (er >= 0 && er < nSeqs && ep >= 0) {
+                const y = HEADER_H +er * rowPitch - oy;
+                const x = NAME_W + ep * CHAR_W - ox;
+                if (x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
+                    octx.strokeStyle = '#e74c3c';
+                    octx.lineWidth = 2;
+                    octx.strokeRect(x + 1, y + 1, CHAR_W - 2, CHAR_H - 2);
+                }
+            }
+        }
+
+    }
+
     // Draws the cells, ruler, names and overlays that intersect the CSS-pixel rectangle
     // [cx0, cx1) x [cy0, cy1) of the viewport (the caller has set the clip).
     function drawRegion(ox, oy, w, h, cx0, cy0, cx1, cy1) {
@@ -6013,22 +6153,6 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             ctx.font = fontStr;
         }
 
-        // Row reorder in progress: tint the dragged names, draw the drop bar in the name column
-        const rd = _canvasState.rowDrag;
-        if (rd && rd.started) {
-            const nx = stickyNames ? 0 : -ox;
-            ctx.fillStyle = 'rgba(25, 118, 210, 0.18)';
-            for (const r of _getDraggedIndices(rd.from)) {
-                const y = HEADER_H + r * rowPitch - oy;
-                if (y + rowPitch >= 0 && y <= h) ctx.fillRect(nx, y, NAME_W, CHAR_H);
-            }
-            if (rd.target >= 0) {
-                const y = HEADER_H + (rd.target + (rd.above ? 0 : 1)) * rowPitch - oy;
-                ctx.fillStyle = '#1976D2';
-                ctx.fillRect(nx + 6, y - 1, NAME_W - 12, 2);
-            }
-        }
-
         // Consensus row (top: between ruler and rows; bottom: after the last row), scrolling
         // with the content like the DOM row. Bold #555 letters, no background; upper case
         // where the column's majority reaches the consensus threshold, lower case otherwise
@@ -6076,75 +6200,6 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     }
                     ctx.textBaseline = 'top';
                     ctx.font = fontStr;
-                }
-            }
-        }
-
-        // Highlight selected columns (semi-transparent vertical strips)
-        if (state.selectedColumns.size > 0) {
-            ctx.fillStyle = 'rgba(25, 118, 210, 0.15)';
-            state.selectedColumns.forEach(pos => {
-                const x = NAME_W + pos * CHAR_W - ox;
-                if (x + CHAR_W < 0 || x > w) return;
-                const dataTop = Math.max(0, HEADER_H - oy);
-                const dataBottom = Math.min(h, HEADER_H +nSeqs * CHAR_H - oy);
-                ctx.fillRect(x, dataTop, CHAR_W, dataBottom - dataTop);
-            });
-        }
-
-        // Highlight selected rows (semi-transparent horizontal strips; same tint as the DOM)
-        if (state.selectedRows.size > 0) {
-            ctx.fillStyle = 'rgba(40, 167, 69, 0.30)';
-            state.selectedRows.forEach(rowIdx => {
-                const y = HEADER_H +rowIdx * rowPitch - oy;
-                if (y + rowPitch < 0 || y > h) return;
-                ctx.fillRect(0, y, w, rowPitch);
-            });
-        }
-
-        // Highlight selected nucleotides (mirrors DOM .nuc-selected in Full/Block mode)
-        if (state.selectedNucs.size > 0) {
-            ctx.fillStyle = 'rgba(25, 118, 210, 0.25)';
-            ctx.strokeStyle = '#1976D2';
-            ctx.lineWidth = 1;
-            state.selectedNucs.forEach((posSet, rowIdx) => {
-                if (rowIdx < 0 || !posSet || posSet.size === 0) return;
-                const y = HEADER_H +rowIdx * rowPitch - oy;
-                if (y + CHAR_H < 0 || y > h) return;
-                posSet.forEach(pos => {
-                    const x = NAME_W + pos * CHAR_W - ox;
-                    if (x + CHAR_W < 0 || x > w) return;
-                    ctx.fillRect(x, y, CHAR_W, CHAR_H);
-                    ctx.strokeRect(x + 0.5, y + 0.5, CHAR_W - 1, CHAR_H - 1);
-                });
-            });
-        }
-        // Draw pending nucleotide start indicator (dashed border, two-click system)
-        if (state.pendingNucStart) {
-            const pr = state.pendingNucStart.row, pp = state.pendingNucStart.pos;
-            if (pr >= 0) {
-                const y = HEADER_H +pr * rowPitch - oy;
-                const x = NAME_W + pp * CHAR_W - ox;
-                if (x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
-                    ctx.strokeStyle = '#1976D2';
-                    ctx.setLineDash([3, 2]);
-                    ctx.lineWidth = 1.5;
-                    ctx.strokeRect(x + 0.5, y + 0.5, CHAR_W - 1, CHAR_H - 1);
-                    ctx.setLineDash([]);
-                }
-            }
-        }
-
-        // Draw active edit cell highlight (residue typing mode)
-        if (state.editModeActive && state.editTool === 'residue' && state.editCell) {
-            const er = state.editCell.row, ep = state.editCell.pos;
-            if (er >= 0 && er < nSeqs && ep >= 0) {
-                const y = HEADER_H +er * rowPitch - oy;
-                const x = NAME_W + ep * CHAR_W - ox;
-                if (x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
-                    ctx.strokeStyle = '#e74c3c';
-                    ctx.lineWidth = 2;
-                    ctx.strokeRect(x + 1, y + 1, CHAR_W - 2, CHAR_H - 2);
                 }
             }
         }
@@ -6216,7 +6271,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 }
                 if (col >= 0) {
                     startGeneDocColumnDrag(col);
-                    _canvasState.scheduleDraw?.();
+                    scheduleOverlay();
                     e.preventDefault();
                     return;
                 }
@@ -6248,8 +6303,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 }
                 state.lastSelectedColumn = col;
                 hideTooltip();
-                _markDirty();
-                scheduleDraw();
+                scheduleOverlay();
                 return;
             }
         }
@@ -6267,8 +6321,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 scheduleNucSelectionRefresh();
                 toggleRowSelection(index);
                 hideTooltip();
-                _markDirty();
-                scheduleDraw();
+                scheduleOverlay();
                 return;
             }
         }
@@ -6284,8 +6337,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 state.lastSelectedIndex = index;
                 updateRowSelections();
                 hideTooltip();
-                _markDirty();
-                scheduleDraw();
+                scheduleOverlay();
                 return;
             }
         }
@@ -6315,8 +6367,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 state.selectedNucs.set(idx, new Set([pos]));
             }
             hideTooltip();
-            _markDirty();
-            scheduleDraw();
+            scheduleOverlay();
             return;
         }
         // Plain press on a name: drag to reorder rows (the DOM view's _startRowReorderDrag;
@@ -12408,7 +12459,7 @@ function handleMouseMove(e) {
                 const end = Math.max(state.dragStartRow, index);
                 for (let i = start; i <= end; i++) state.selectedRows.add(i);
                 updateRowSelections();
-                _canvasState.scheduleDraw?.();
+                (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
             }
         } else {
             const row = closestFromEvent(e, '.seq-line');
@@ -12435,7 +12486,7 @@ function handleMouseMove(e) {
                 const end = Math.max(state.dragStartCol, pos);
                 for (let p = start; p <= end; p++) state.selectedColumns.add(p);
                 updateColumnSelections();
-                _canvasState.scheduleDraw?.();
+                (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
             }
         } else {
             const span = closestFromEvent(e, '.seq-data span[data-pos]');
@@ -12458,7 +12509,7 @@ function handleMouseMove(e) {
                 const rowSet = buildNucSelectionSet(hit.row, state.dragStartCol, hit.col);
                 state.selectedNucs.clear();
                 state.selectedNucs.set(hit.row, rowSet);
-                _canvasState.scheduleDraw?.();
+                (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
             }
         } else {
             const span = closestFromEvent(e, '.seq-data span[data-pos]');
@@ -23926,7 +23977,7 @@ function updateEditActiveCell() {
     }
     if (!state.editModeActive || state.editTool !== 'residue' || !state.editCell) return;
     if (isCanvasMode()) {
-        _canvasState.scheduleDraw?.();
+        (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
         return;
     }
     const span = getSpanElement(state.editCell.row, state.editCell.pos);
@@ -24748,7 +24799,8 @@ function handleGeneDocResidueKey(e) {
  */
 function fastUpdateEditCellAt(row, pos) {
     if (isCanvasMode()) {
-        _canvasState.scheduleDraw?.();
+        if (_canvasState.redrawCells) _canvasState.redrawCells(row, row, pos, pos);
+        else _canvasState.scheduleDraw?.();
         return;
     }
     const span = getSpanElement(row, pos);

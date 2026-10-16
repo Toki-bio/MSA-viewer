@@ -3266,6 +3266,59 @@ check('Canvas frame copy stays pixel-identical at 125 % and 150 % scaling, after
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
 });
 
+// Canvas overlay layer (v248). Before, every selection click, every mouse move of a drag
+// selection and every typed residue redrew the whole viewport (30-45 ms at 600 x 600).
+// Selections now live on a transparent overlay canvas (redrawn alone, ~1 ms) and typing
+// repaints only the edited row and column. The picture must still be what a full redraw
+// gives: the element screenshot after each action equals the one after a forced full redraw.
+check('Canvas mode: selections and typing do not redraw the cells, and look identical to a full redraw', async (page) => {
+  await loadSyntheticFasta(page, 600, 600);
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(400);
+  const g = await page.evaluate(() => { const cv = document.getElementById('alignmentCanvas'), b = cv.getBoundingClientRect(), m = _canvasState.metrics; return { left: b.left, top: b.top, nameW: m.nameW, charW: m.charW, headerH: m.headerH, pitch: _canvasState.rowPitch }; });
+  const cell = (r, c) => ({ x: g.left + g.nameW + (c + 0.5) * g.charW, y: g.top + g.headerH + (r + 0.5) * g.pitch });
+  const fulls = () => page.evaluate(() => _canvasState.stats.full);
+  const shot = () => page.locator('#alignmentContainer').screenshot();
+  const sameAsFull = async () => { const a = await shot(); await page.evaluate(() => { _canvasState.scheduleDraw(); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); }); const b = await shot(); return a.equals(b); };
+  const out = {};
+  // 1. click a residue, Ctrl+Alt+click a column, Ctrl+click a name, drag a residue range
+  let f0 = await fulls();
+  const c0 = cell(5, 20); await page.mouse.click(c0.x, c0.y); await page.waitForTimeout(120);
+  await page.keyboard.down('Control'); await page.keyboard.down('Alt'); await page.mouse.click(cell(7, 30).x, cell(7, 30).y); await page.keyboard.up('Alt'); await page.keyboard.up('Control'); await page.waitForTimeout(120);
+  await page.keyboard.down('Control'); await page.mouse.click(g.left + 20, cell(9, 0).y); await page.keyboard.up('Control'); await page.waitForTimeout(120);
+  const d0 = cell(12, 10), d1 = cell(12, 40);
+  await page.mouse.move(d0.x, d0.y); await page.mouse.down(); await page.mouse.move(d1.x, d1.y, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(150);
+  out.selections = { fullRedraws: (await fulls()) - f0, overlayHasInk: await page.evaluate(() => { const o = document.getElementById('alignmentCanvasOverlay'); if (!o) return false; const d = o.getContext('2d').getImageData(0, 0, o.width, o.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; return n > 100; }), sameAsFull: await sameAsFull(),
+    state: await page.evaluate(() => ({ rows: state.selectedRows.size, cols: state.selectedColumns.size, nucRows: state.selectedNucs.size })) };
+  // 2. typing: 8 keystrokes repaint the row, not the viewport
+  await page.click('#editToggleButton'); await page.waitForTimeout(400);
+  await page.click('[data-edit-tool="residue"]'); await page.waitForTimeout(150);
+  const g2 = await page.evaluate(() => { const cv = document.getElementById('alignmentCanvas'), b = cv.getBoundingClientRect(), m = _canvasState.metrics; return { left: b.left, top: b.top, nameW: m.nameW, charW: m.charW, headerH: m.headerH, pitch: _canvasState.rowPitch }; });
+  const t = { x: g2.left + g2.nameW + 30.5 * g2.charW, y: g2.top + g2.headerH + 8.5 * g2.pitch };
+  await page.mouse.click(t.x, t.y); await page.waitForTimeout(150);
+  f0 = await fulls();
+  const before = await page.evaluate(() => state.seqs[8].seq);
+  for (const k of 'gattaca'.split('')) { await page.keyboard.press(k); await page.waitForTimeout(40); }
+  await page.waitForTimeout(150);
+  const after = await page.evaluate(() => state.seqs[8].seq);
+  out.typing = { fullRedraws: (await fulls()) - f0, typed: after.slice(30, 37), changed: before !== after, sameAsFull: await sameAsFull() };
+  // 3. after typing, a scroll step still copies the frame and matches a full redraw
+  await page.mouse.move(cell(20, 60).x, cell(20, 60).y);
+  const b0 = await page.evaluate(() => _canvasState.stats.blit);
+  await page.mouse.wheel(0, 120); await page.waitForTimeout(150);
+  out.scrollAfterTyping = { copies: (await page.evaluate(() => _canvasState.stats.blit)) - b0, sameAsFull: await sameAsFull() };
+  await page.click('#editToggleButton'); await page.waitForTimeout(200);
+  const bad = [];
+  if (out.selections.fullRedraws !== 0) bad.push(`${out.selections.fullRedraws} full redraws for four selection actions`);
+  if (!out.selections.overlayHasInk) bad.push('no overlay canvas with the selection drawn');
+  if (!out.selections.sameAsFull) bad.push('after selections the view differs from a full redraw');
+  if (out.typing.fullRedraws !== 0) bad.push(`${out.typing.fullRedraws} full redraws for 7 keystrokes`);
+  if (out.typing.typed !== 'GATTACA' || !out.typing.changed) bad.push(`typing gave "${out.typing.typed}"`);
+  if (!out.typing.sameAsFull) bad.push('after typing the view differs from a full redraw');
+  if (out.scrollAfterTyping.copies < 1 || !out.scrollAfterTyping.sameAsFull) bad.push(`scroll after typing: ${JSON.stringify(out.scrollAfterTyping)}`);
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
