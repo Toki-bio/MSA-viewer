@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v252';
+const BUILD_TAG = 'v253';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -5237,6 +5237,55 @@ const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen
 // superseded background job can't clobber a newer one's results.
 let _canvasDeferredToken = null;
 
+// The translation rows of sequence i for the current codon state, in the DOM's order: by gene
+// one row per lane (a second only where genes overlap), Frame: All 3 one row per frame, else
+// one row. Each: { aaData, tag (All 3: "frame N"), frame, best, frameShifts }.
+function _canvasCodonRows(i) {
+    const cd = state._codonData;
+    if (!cd || !cd.aaSeq || !cd.aaSeq[i]) return [];
+    if (cd.byGene) {
+        const n = cd.lanes || 1, rows = [];
+        for (let lane = 0; lane < n; lane++) rows.push({ aaData: cd.aaSeq[i].filter(e => (e.lane || 0) === lane), tag: null, frame: -1, best: false, frameShifts: lane === 0 ? cd.frameShifts?.[i] : null });
+        return rows;
+    }
+    if (state._codonFrames && state._codonActiveFrame === -1) {
+        const best = state._codonFrames.bestFrame;
+        return [0, 1, 2].map(fr => { const fd = state._codonFrames.frames[fr]; return { aaData: fd?.aaSeq?.[i], tag: 'frame ' + (fr + 1), frame: fr, best: fr === best, frameShifts: fd?.frameShifts?.[i] }; });
+    }
+    return [{ aaData: cd.aaSeq[i], tag: null, frame: -1, best: false, frameShifts: cd.frameShifts?.[i] }];
+}
+
+// The translation track's colours, read from the stylesheet through probe elements (.aa-data
+// > .aa-<class>, the frame tags, the best-frame name) so Canvas and Full/Block cannot differ.
+let _canvasAaPaletteCache = null;
+function _canvasAaPalette() {
+    if (_canvasAaPaletteCache) return _canvasAaPaletteCache;
+    const host = document.createElement('div');
+    host.style.cssText = 'position:absolute;visibility:hidden;left:-10000px;top:0;pointer-events:none;';
+    const data = document.createElement('div'); data.className = 'aa-data'; host.appendChild(data);
+    document.body.appendChild(host);
+    const pal = {};
+    for (const cls of ['hyd', 'aro', 'pos', 'neg', 'pol', 'gly', 'pro', 'unk', 'stop', 'fs']) {
+        const sp = document.createElement('span'); sp.className = 'aa-c aa-' + cls; data.appendChild(sp);
+        const cs = getComputedStyle(sp);
+        pal[cls] = { bg: _cssColourToHex(cs.backgroundColor) || '#ffffff', fg: _cssColourToHex(cs.color) || '#222222' };
+    }
+    pal.tag = [];
+    for (let fr = 0; fr < 3; fr++) {
+        const row = document.createElement('div'); row.className = 'aa-row aa-row-f' + fr;
+        const name = document.createElement('div'); name.className = 'aa-name';
+        const tag = document.createElement('span'); tag.className = 'aa-tag'; tag.textContent = 'x';
+        name.appendChild(tag); row.appendChild(name); host.appendChild(row);
+        pal.tag.push(_cssColourToHex(getComputedStyle(tag).color) || '#666666');
+    }
+    const bestRow = document.createElement('div'); bestRow.className = 'aa-row aa-row-best';
+    const bestName = document.createElement('div'); bestName.className = 'aa-name'; bestRow.appendChild(bestName); host.appendChild(bestRow);
+    pal.bestBold = (parseInt(getComputedStyle(bestName).fontWeight, 10) || 400) >= 600;
+    host.remove();
+    _canvasAaPaletteCache = pal;
+    return pal;
+}
+
 function _initCanvasMetrics(ctx, fontSizePx) {
     // Cache is keyed on font size and device pixel ratio so zoom changes (which resize the
     // DOM font) and a move to another screen invalidate stale metrics.
@@ -5315,7 +5364,7 @@ function _canvasSlotIsMarker(slot) {
     return !!sl && slot >= 0 && slot < sl.length && sl[slot] < 0;
 }
 
-function _canvasHitTest(clientX, clientY) {
+function _canvasHitTest(clientX, clientY, opts) {
     const canvas = _canvasState.canvas;
     if (!canvas) return null;
     const m = _canvasState.metrics;
@@ -5341,6 +5390,18 @@ function _canvasHitTest(clientX, clientY) {
         ? Math.max(...state.seqs.map(s => s.seq.length))
         : 0;
     if (row >= nSeqs || col >= (_canvasState.nSlots || len)) return null;
+    // Codon analysis: below the bases of a row lies its translation track, which is not a cell
+    // (the DOM has no span[data-pos] there); with AA only the bases of a translated row are
+    // hidden. Only the hover tooltip asks for track hits (opts.aaRows).
+    if (_canvasState.aaRows) {
+        const hasAa = !!(state._codonData?.aaSeq?.[row]?.length);
+        const baseH = (_canvasState.aaOnly && hasAa) ? 0 : (_canvasState.charH || CHAR_H);
+        const inRow = (y - HEADER_H + _canvasState.offsetY) - row * rowPitch;
+        if (inRow >= baseH) {
+            if (!(opts && opts.aaRows) || !hasAa) return null;
+            return { row, col: _canvasSlotToCol(col), slot: col, aaLane: Math.floor((inRow - baseH) / (_canvasState.aaRowH || 1)) };
+        }
+    }
     if (_canvasSlotIsMarker(col)) return { row, col: _canvasSlotToCol(col), slot: col, brk: true };
     return { row, col: _canvasSlotToCol(col), slot: col };
 }
@@ -5522,15 +5583,15 @@ function _canvasCellStyler(scheme, pal, config) {
     const { map, ann } = _canvasStyleCache;
     const noData = { hasData: false, hasValidCoverage: false };
     let probe = null;
-    return function (base, posData) {
+    return function (base, posData, extraCls) {
         const shade = applyConservationShadeClass(base.toUpperCase(), posData || noData, config);
-        const key = shade + '|' + base;
+        const key = shade + '|' + base + (extraCls ? '|' + extraCls : '');
         let st = map.get(key);
         if (!st) {
             let a = ann.get(base);
             if (a === undefined) { a = getResidueAnnotationClasses(base, RENDER_STANDARD_BASES, RENDER_AMBIGUOUS_BASES, scheme); ann.set(base, a); }
             if (!probe) probe = _makeCellStyleProbe();
-            st = probe.style(a ? shade + ' ' + a : shade);
+            st = probe.style((a ? shade + ' ' + a : shade) + (extraCls ? ' ' + extraCls : ''));
             map.set(key, st);
             // the probe is only needed while new class lists turn up
             queueMicrotask(() => { if (probe) { probe.dispose(); probe = null; } });
@@ -5591,9 +5652,24 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // sequence (frames 0, 1, 2), matching DOM mode's 3-row layout.
     const hasCodon = !!(state._codonData && state._codonData.aaSeq);
     const aaRowCount = hasCodon ? (state._codonData.byGene ? (state._codonData.lanes || 1) : (state._codonActiveFrame === -1 ? 3 : 1)) : 0;
-    const aaRowH = hasCodon ? CHAR_H : 0;
-    const rowPitch = CHAR_H + aaRowCount * aaRowH;
+    // The translation track (DOM .aa-row): codon boxes 1.3 em tall with 1 px above and 3 px
+    // below, on device pixels so the frame copy stays exact. AA only (body.aa-only): the first
+    // track row takes the place of the bases, so the row pitch is the track's.
+    const dpx = v => Math.ceil(v * dpr) / dpr;
+    const AA_BOX_H = hasCodon ? dpx(fontSizePx * 1.3) : 0;
+    const AA_PAD_T = hasCodon ? dpx(1) : 0;
+    const aaRowH = hasCodon ? AA_PAD_T + AA_BOX_H + dpx(3) : 0;
+    const aaOnly = hasCodon && _aaOnlyActive();
+    const rowPitch = (aaOnly ? 0 : CHAR_H) + aaRowCount * aaRowH;
     _canvasState.rowPitch = rowPitch;
+    _canvasState.aaRowH = aaRowH;
+    _canvasState.aaRows = aaRowCount;
+    _canvasState.aaOnly = aaOnly;
+    _canvasState.charH = CHAR_H;
+    const aaPal = hasCodon ? _canvasAaPalette() : null;
+    const aaFontStr = 'bold ' + fontStr;                                   // .aa-data > span.aa-c
+    const aaTagFont = 'italic ' + (Math.round(fontSizePx * 0.75 * 100) / 100) + 'px "Courier New", monospace';   // .aa-tag
+    const CSS1 = Math.max(1 / dpr, Math.round(dpr) / dpr);                   // one CSS pixel on device pixels
     // Annotation track above the ruler: its height shifts the ruler and every
     // row down, and the hit tests read it from the metrics.
     const TRACK_H = _annotTrackHeightPx(CHAR_H);
@@ -5611,6 +5687,30 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // Glyph cache: pre-rendered (char, bg-color, fg-color) -> off-screen canvas
     // Turns fillRect()+fillText() into a single drawImage() per cell after warm-up
     const _glyphCache = new Map();
+    // Rounded end of a codon box (one cell wide), with its 1 px white seam, on an opaque white
+    // cell: side 'l', 'r' or 'lr' (a one-column codon)
+    const _boxEndCache = new Map();
+    function _boxEnd(bg, side) {
+        const k = bg + '|' + side;
+        let g = _boxEndCache.get(k);
+        if (!g) {
+            g = document.createElement('canvas');
+            g.width = Math.ceil(CHAR_W * dpr);
+            g.height = Math.ceil(AA_BOX_H * dpr);
+            const c2 = g.getContext('2d', { alpha: false });
+            c2.setTransform(dpr, 0, 0, dpr, 0, 0);
+            c2.fillStyle = '#fff'; c2.fillRect(0, 0, CHAR_W, AA_BOX_H);
+            c2.fillStyle = bg;
+            const l = side.includes('l'), r = side.includes('r');
+            if (typeof c2.roundRect === 'function') { c2.beginPath(); c2.roundRect(0, 0, CHAR_W, AA_BOX_H, [l ? 3 : 0, r ? 3 : 0, r ? 3 : 0, l ? 3 : 0]); c2.fill(); }
+            else c2.fillRect(0, 0, CHAR_W, AA_BOX_H);
+            c2.fillStyle = '#fff';
+            if (l) c2.fillRect(0, 0, CSS1, AA_BOX_H);
+            if (r) c2.fillRect(CHAR_W - CSS1, 0, CSS1, AA_BOX_H);
+            _boxEndCache.set(k, g);
+        }
+        return g;
+    }
     // variant: '' or the overlay's font ('b' bold, 'i' italic, 's' second font), same cell size
     function _makeGlyph(ch, bg, fg, variant = '') {
         const k = ch + '| ' + (bg||' ') + '| ' + fg + '| ' + dpr + '| ' + variant;
@@ -6105,9 +6205,16 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             const seq = state.seqs[i].seq;
             const ovCtx = _overlayRowCtx(i);
             const trim = state.trimBoundaries;
+            // Codon analysis on this row: stop codon bases (span.codon-stop), synonymous /
+            // non-synonymous underlines (span.codon-syn / .codon-nonsyn); AA only hides the bases
+            const cd = hasCodon ? state._codonData : null;
+            const codonRows = cd ? _canvasCodonRows(i) : null;
+            const basesHidden = aaOnly && codonRows && codonRows.some(r => r.aaData && r.aaData.length);
+            const stopSet = cd && cd.stops && cd.stops[i] && cd.stops[i].length ? new Set(cd.stops[i]) : null;
+            const snRow = cd && cd.synNonSyn ? cd.synNonSyn[i] : null;
 
             // Residues (glyph-cached: 1 drawImage per cell vs fillRect+fillText)
-            for (let sI = firstCol; sI <= lastCol; sI++) {
+            if (!basesHidden) for (let sI = firstCol; sI <= lastCol; sI++) {
                 const x = NAME_W + sI * CHAR_W - ox;
                 const p = slotPos(sI);
                 if (p < 0) { drawMarker(x, y); continue; }
@@ -6135,8 +6242,18 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     if (!dim && !variant.includes('b')) variant = 'b' + variant;
                     if (dim !== dimmed) { dimmed = dim; ctx.globalAlpha = dim ? 0.4 : 1; }
                 }
+                let sn = null;
+                if (cd) {
+                    if (stopSet && stopSet.has(p)) { const st = canvasCellStyle(base, pd, 'codon-stop'); bgFill = st.bg === '#ffffff' ? null : st.bg; textFill = st.fg; if (st.bold && !variant.includes('b')) variant = 'b' + variant; }
+                    if (snRow && snRow[p]) sn = snRow[p];
+                }
                 // Single blit from glyph cache (eliminates fillStyle+fillRect+fillStyle+fillText)
                 ctx.drawImage(_makeGlyph(base, bgFill, textFill, variant), x, y, CHAR_W, CHAR_H);
+                if (sn) {   // text-decoration underline, 2 px under the baseline; non-synonymous 2 px thick
+                    ctx.fillStyle = sn === 'nonsyn' ? '#d93025' : '#2e9d57';
+                    const th = sn === 'nonsyn' ? 2 * CSS1 : CSS1;
+                    ctx.fillRect(x, Math.min(y + CHAR_H - th, y + Math.round((m.ascent + 2) * dpr) / dpr), CHAR_W, th);
+                }
                 // Decorations: underline (TSD bold style), overline (covered repeat), line-through (trim)
                 const deco = ov ? ov.deco : null;
                 if ((deco && deco.length) || trimmed) {
@@ -6148,70 +6265,88 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
             if (dimmed) { dimmed = false; ctx.globalAlpha = 1; }
 
-            // AA translation row(s) (codon analysis)
-            if (hasCodon && state._codonData.aaSeq[i]) {
-                const bestFrame = state._codonFrames?.bestFrame ?? 0;
-                // The translation rows of this sequence: by gene (one per lane, a second
-                // lane for the shared codons of overlapping genes), all three frames, or one
-                let rowsToDraw;
-                if (state._codonData.byGene) {
-                    const nLanes = state._codonData.lanes || 1;
-                    rowsToDraw = [];
-                    for (let lane = 0; lane < nLanes; lane++) {
-                        rowsToDraw.push({ aaData: state._codonData.aaSeq[i].filter(e => (e.lane || 0) === lane), label: nLanes > 1 ? 'genes ' + (lane + 1) + ':' : 'genes:' });
-                    }
-                } else if (state._codonActiveFrame === -1) {
-                    rowsToDraw = [2, 1, 0].map(fr => ({ aaData: state._codonFrames?.frames[fr]?.aaSeq[i], label: 'Pos ' + (fr + 1) + ':' }));   // frame 2 at top, 0 at bottom (matches DOM)
-                } else {
-                    const fr = state._codonActiveFrame >= 0 ? state._codonActiveFrame : bestFrame;
-                    rowsToDraw = [{ aaData: state._codonData.aaSeq[i], label: 'Pos ' + (fr + 1) + ':' }];
-                }
-
-                for (let frIdx = 0; frIdx < rowsToDraw.length; frIdx++) {
-                    const aaY = y + CHAR_H + frIdx * aaRowH;
-                    const aaData = rowsToDraw[frIdx].aaData;
+            // The translation track (codon analysis), as Full/Block draw it: a box per codon over
+            // its bases coloured by amino-acid class, the bold letter over the middle base, white
+            // seams between boxes, a red edge where a frameshift starts on a base of the codon,
+            // a red "!" where it starts on a gap, "frame N" tags with Frame: All 3.
+            if (codonRows && codonRows.length) {
+                for (let frIdx = 0; frIdx < codonRows.length; frIdx++) {
+                    const spec = codonRows[frIdx];
+                    const aaY = y + (basesHidden ? 0 : CHAR_H) + frIdx * aaRowH;
+                    const boxY = aaY + AA_PAD_T;
+                    const aaData = spec.aaData;
                     if (!aaData) continue;
-
-                    // Name label in the name column
-                    const aaLabel = rowsToDraw[frIdx].label;
-                    ctx.font = fontStr;
-                    if (stickyNames) {
-                        ctx.fillStyle = '#fff';
-                        ctx.fillRect(0, aaY, NAME_W, aaRowH);
-                        ctx.fillStyle = '#666';
-                        ctx.textAlign = 'right';
-                        ctx.fillText(aaLabel, NAME_W - 4, aaY);
-                    } else if (ox < NAME_W) {
+                    const fsStart = new Map();
+                    for (const f of spec.frameShifts || []) if (f.type === 'indel' && f.runStart != null && !fsStart.has(f.runStart)) fsStart.set(f.runStart, f);
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.font = aaFontStr;
+                    for (const entry of aaData) {
+                        const cols = entry.cols;
+                        if (!cols || cols.length === 0) continue;
+                        // the slots of the codon's shown columns (Variable sites only hides some)
+                        let sA = posSlot(cols[0]), sB = posSlot(cols[cols.length - 1]);
+                        if (slotOf) {
+                            sA = Infinity; sB = -1;
+                            for (const c of cols) { const sc = slotOf[c]; if (sc >= 0) { if (sc < sA) sA = sc; if (sc > sB) sB = sc; } }
+                            if (sB < 0) continue;
+                        }
+                        const x0 = NAME_W + sA * CHAR_W - ox, x1 = NAME_W + (sB + 1) * CHAR_W - ox;
+                        if (x1 < 0 || x0 > w) continue;
+                        const cls = entry.aa === '*' ? 'stop' : (_AA_CLASS[entry.aa] || 'unk');
+                        const colr = aaPal[cls] || aaPal.unk;
+                        const firstShown = !slotOf || slotOf[cols[0]] === sA, lastShown = !slotOf || slotOf[cols[cols.length - 1]] === sB;
+                        // The box: rounded ends (.aa-first / .aa-last, 3 px) come from cached images, the
+                        // middle is a plain rectangle. An antialiased path fill under the strip clip can
+                        // differ by one unit from the same fill unclipped, so a path here would make
+                        // the scroll frame copy differ from a full redraw; image blits are exact.
+                        const oneCell = x1 - x0 <= CHAR_W;
+                        let xm0 = x0, xm1 = x1;
+                        if (firstShown || lastShown) {
+                            const side = oneCell ? ((firstShown ? 'l' : '') + (lastShown ? 'r' : '')) : null;
+                            if (side) { ctx.drawImage(_boxEnd(colr.bg, side), x0, boxY, CHAR_W, AA_BOX_H); xm0 = x1; }
+                            else {
+                                if (firstShown) { ctx.drawImage(_boxEnd(colr.bg, 'l'), x0, boxY, CHAR_W, AA_BOX_H); xm0 = x0 + CHAR_W; }
+                                if (lastShown) { ctx.drawImage(_boxEnd(colr.bg, 'r'), x1 - CHAR_W, boxY, CHAR_W, AA_BOX_H); xm1 = x1 - CHAR_W; }
+                            }
+                        }
+                        if (xm1 > xm0) { ctx.fillStyle = colr.bg; ctx.fillRect(xm0, boxY, xm1 - xm0, AA_BOX_H); }
+                        if (fsStart.size) for (const c of cols) if (fsStart.has(c)) { const sc = posSlot(c); if (sc >= 0) { ctx.fillStyle = aaPal.fs.fg; ctx.fillRect(NAME_W + sc * CHAR_W - ox, boxY, 2 * CSS1, AA_BOX_H); } }   // .aa-fs-at
+                        const sm = posSlot(cols[Math.floor(cols.length / 2)]);
+                        if (sm >= 0) { ctx.fillStyle = colr.fg; ctx.fillText(entry.aa, NAME_W + sm * CHAR_W - ox + CHAR_W / 2, boxY + AA_BOX_H / 2); }
+                    }
+                    if (fsStart.size) {   // a frameshift starting on a gap: no codon box there, a red "!" on a pale cell (.aa-fs)
+                        const covered = new Set();
+                        for (const e of aaData) if (e.cols) for (const c of e.cols) covered.add(c);
+                        for (const c of fsStart.keys()) {
+                            if (covered.has(c)) continue;
+                            const sc = posSlot(c);
+                            if (sc < 0) continue;
+                            const xc = NAME_W + sc * CHAR_W - ox;
+                            if (xc + CHAR_W < 0 || xc > w) continue;
+                            ctx.fillStyle = aaPal.fs.bg; ctx.fillRect(xc, boxY, CHAR_W, AA_BOX_H);
+                            ctx.fillStyle = aaPal.fs.fg; ctx.fillText('!', xc + CHAR_W / 2, boxY + AA_BOX_H / 2);
+                        }
+                    }
+                    // The name column of the track row: white backing (sticky names cover scrolled
+                    // cells), and with Frame: All 3 the frame tag, right-aligned, the best frame bold
+                    if (stickyNames || ox < NAME_W) {
+                        const nx = stickyNames ? 0 : -ox;
                         ctx.save();
-                        ctx.beginPath();
-                        ctx.rect(0, aaY, NAME_W, aaRowH);
-                        ctx.clip();
-                        ctx.fillStyle = '#666';
-                        ctx.textAlign = 'right';
-                        ctx.fillText(aaLabel, NAME_W - 4 - ox, aaY);
+                        ctx.beginPath(); ctx.rect(nx, aaY, NAME_W, aaRowH); ctx.clip();
+                        ctx.fillStyle = '#fff';
+                        ctx.fillRect(nx, aaY, NAME_W, aaRowH);
+                        if (spec.tag) {
+                            ctx.font = (spec.best && aaPal.bestBold ? 'bold ' : '') + aaTagFont;
+                            ctx.fillStyle = aaPal.tag[spec.frame] || '#666';
+                            ctx.textAlign = 'right';
+                            ctx.fillText(spec.tag, nx + NAME_W - 4, boxY + AA_BOX_H / 2);
+                        }
                         ctx.restore();
                     }
-
-                    // AA characters
-                    ctx.textAlign = 'center';
-                    for (const entry of aaData) {
-                        if (!entry.cols || entry.cols.length === 0) continue;
-                        let colStart = entry.cols[0];
-                        let colEnd = entry.cols[entry.cols.length - 1];
-                        if (slotOf) {   // the slots of the codon's shown columns; none shown: nothing to draw
-                            colStart = Infinity; colEnd = -1;
-                            for (const c of entry.cols) { const sc = posSlot(c); if (sc >= 0) { if (sc < colStart) colStart = sc; if (sc > colEnd) colEnd = sc; } }
-                            if (colEnd < 0) continue;
-                        }
-                        const xStart = NAME_W + colStart * CHAR_W - ox;
-                        const xEnd = NAME_W + (colEnd + 1) * CHAR_W - ox;
-                        if (xEnd < 0 || xStart > w) continue;
-                        const width = (colEnd - colStart + 1) * CHAR_W;
-                        const centerX = xStart + width / 2;
-                        ctx.fillStyle = entry.aa === '*' ? '#e74c3c' : '#333';
-                        ctx.fillText(entry.aa, centerX, aaY);
-                    }
                     ctx.textAlign = 'start';
+                    ctx.textBaseline = 'top';
+                    ctx.font = fontStr;
                 }
             }
         }
@@ -6516,7 +6651,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // a modifier-drag (column select) is in progress.
     let _lastTooltipCell = null;
     canvas.addEventListener('mousemove', (e) => {
-        _canvasHoverCell = _canvasHitTest(e.clientX, e.clientY);
+        _canvasHoverCell = _canvasHitTest(e.clientX, e.clientY, { aaRows: true });
 
         // Suppress tooltip during pan-drag, selection drag, or column-select mode
         if (canvas.style.cursor === 'grabbing' || state.isDragging) {
@@ -6547,8 +6682,38 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             const { row, col } = _canvasHoverCell;
             // Only update tooltip when the cell changes (like DOM mouseover
             // fires once per element, not per pixel).
-            if (_lastTooltipCell && _lastTooltipCell.row === row && _lastTooltipCell.col === col) return;
-            _lastTooltipCell = { row, col };
+            const lane = _canvasHoverCell.aaLane;
+            if (_lastTooltipCell && _lastTooltipCell.row === row && _lastTooltipCell.col === col && _lastTooltipCell.lane === lane) return;
+            _lastTooltipCell = { row, col, lane };
+
+            // Translation track: the codon box's title or the frameshift mark's (as the DOM spans)
+            if (lane != null) {
+                const spec = _canvasCodonRows(row)[lane];
+                const entry = spec && spec.aaData ? spec.aaData.find(en => en.cols && en.cols.includes(col)) : null;
+                let tipText = null;
+                if (entry) {
+                    const what = entry.partial ? `Stop (${entry.codon}), completed by polyadenylation of the mRNA` : `${entry.aa === '*' ? 'Stop' : entry.aa} (${entry.codon})`;
+                    const where = entry.gene ? `${entry.gene}${entry.strand === '-' ? ' (minus strand)' : ''}, ` : '';
+                    tipText = `${what}, ${where}columns ${entry.cols[0] + 1}-${entry.cols[entry.cols.length - 1] + 1}`;
+                    const f = (spec.frameShifts || []).find(ff => ff.type === 'indel' && ff.runStart === col);
+                    if (f) tipText = `Frameshift: from here this sequence reads ${f.shift === 1 ? 'one base ahead of' : 'one base behind'} most sequences`;
+                } else {
+                    const f = (spec && spec.frameShifts || []).find(ff => ff.type === 'indel' && ff.runStart === col);
+                    if (f) tipText = `Frameshift: from column ${f.at + 1} on, this sequence reads ${f.shift === 1 ? 'one base ahead of' : 'one base behind'} most sequences (a gap or insertion here whose length is not a multiple of 3, columns ${f.runStart + 1}-${f.runStart + f.runLen})`;
+                }
+                if (tipText) {
+                    const m = _canvasState.metrics;
+                    const rect = canvas.getBoundingClientRect();
+                    const target = _getCanvasTooltipTarget();
+                    target.style.left = (rect.left + m.nameW + _canvasHoverCell.slot * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
+                    target.style.top = (rect.top + (m.headerH || m.charH) + row * (_canvasState.rowPitch || m.charH) - _canvasState.offsetY) + 'px';
+                    showTooltipAt(tipText, target);
+                    return;
+                }
+                _lastTooltipCell = null;
+                hideTooltip();
+                return;
+            }
 
             // Breakpoint marker hover tooltip (mirrors DOM .col-breakpoint title)
             if (_canvasHoverCell.brk && state._brkInfo && state._brkInfo[col]) {
@@ -11908,18 +12073,12 @@ async function parseAndRender(isFromDrop = false) {
 // top-bar quick switcher. Called after any change to the real radios,
 // including ones the quick switcher itself didn't trigger (Display dropdown,
 // the auto-switch-to-Canvas heuristic, snapshot/session restore, etc).
+// The "Canvas" chip next to the mode radios duplicated the radio once Canvas became the default
+// view (owner: "two Canvas buttons at the top"); the radio's title carries what the chip said.
 function ensureCanvasModeNotice() {
-    let notice = document.getElementById('canvasModeNotice');
-    if (notice) return notice;
-    const quickSwitch = document.getElementById('quickModeSwitch');
-    if (!quickSwitch || !quickSwitch.parentNode) return null;
-    notice = document.createElement('span');
-    notice.id = 'canvasModeNotice';
-    notice.className = 'canvas-mode-chip';
-    notice.title = 'Canvas mode: editing, selections, rename, row drag, Highlight diffs and Variable sites only work here. Show 2D needs Full or Block.';
-    notice.textContent = 'Canvas';
-    quickSwitch.parentNode.insertBefore(notice, quickSwitch.nextSibling);
-    return notice;
+    const notice = document.getElementById('canvasModeNotice');
+    if (notice) notice.remove();
+    return null;
 }
 
 // The mode row (codon frame, Canvas notice, reads) is shown only while one of its
@@ -12410,7 +12569,6 @@ function setAaOnly(on) {
     syncAaOnly();
     _invalidateUnifiedWindowMeasurements();
     renderAlignment({ deferConservation: true });
-    if (on && document.getElementById('modeCanvas')?.checked) showMessage('AA only applies in Full and Block mode', 3000);
 }
 
 function domEventTarget(e) {

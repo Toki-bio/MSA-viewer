@@ -3583,6 +3583,126 @@ check('Canvas mode: content canvas and glyphs are opaque (subpixel text like the
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(r) : JSON.stringify(r) };
 });
 
+// Codon analysis in the Canvas view (v252). Full/Block mark the bases of an in-frame stop
+// (pink cell, red bold letter), underline synonymous (green, thin) and non-synonymous (red,
+// 2 px) differences, and draw a translation track per row: a box per codon coloured by
+// amino-acid class with the bold letter over the middle base, red stop boxes, a red "!" where a
+// frameshift starts, "frame N" tags in All-3 mode, and AA only puts the track in place of the
+// bases. Canvas drew plain letters only. Now every one of these appears in Canvas with the
+// stylesheet's colours, the tooltip of a codon box says what it is, and the frame copy stays
+// exact with the track on.
+check('Canvas mode: codon analysis draws stops, syn/nonsyn, the codon track, frame tags and AA only like Full/Block', async (page) => {
+  const cds = 'ATGGCTAAAGGTCTGCAAGAATTCGGTACCTGGAAACCGATGCTTGCAGGTAAAGAACTGTTCCCGGGATCCTAA';
+  const sub = 'ATGGCCGAAGGTCTGCAAGAATTCGGTACCTGGAAACCGATGCTTGCAGGTAAAGAACTGTTCCCGGGATCCTAA';   // codon 2 GCT>GCC (syn), codon 3 AAA>GAA (nonsyn)
+  const rows = [['ref', cds], ['sub', sub], ['del1', cds.slice(0, 20) + '-' + cds.slice(21)], ['ok', cds]];
+  await page.setInputFiles('#fileInput', { name: 'cds.fa', mimeType: 'text/plain', buffer: Buffer.from(rows.map(([n, q]) => `>${n}\n${q}`).join('\n') + '\n') });
+  await page.waitForTimeout(1200);
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  const settle = () => page.evaluate(() => new Promise(r => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), 700)));
+  const tick = (id, on) => page.evaluate(({ id, on }) => { const e = document.getElementById(id); e.checked = on; e.dispatchEvent(new Event('change', { bubbles: true })); }, { id, on });
+  await tick('codonAnalysis', true); await settle();
+  // palette: the stylesheet's own colours, read from probe elements
+  const want = await page.evaluate(() => {
+    const d = document.createElement('div'); d.className = 'aa-data'; d.style.cssText = 'position:absolute;left:-9999px';
+    const mk = c => { const sp = document.createElement('span'); sp.className = 'aa-c ' + c; d.appendChild(sp); return sp; };
+    const ss = { hyd: mk('aa-hyd'), stop: mk('aa-stop'), fs: mk('aa-fs') };
+    document.body.appendChild(d);
+    const col = (el, prop) => getComputedStyle(el)[prop];
+    const r = { hydBg: col(ss.hyd, 'backgroundColor'), hydFg: col(ss.hyd, 'color'), stopBg: col(ss.stop, 'backgroundColor'), stopFg: col(ss.stop, 'color'), fsBg: col(ss.fs, 'backgroundColor') };
+    d.remove();
+    const ntStop = document.createElement('span'); ntStop.className = 'codon-stop'; document.body.classList.add('codon-mode'); document.body.appendChild(ntStop);
+    r.ntStopBg = col(ntStop, 'backgroundColor'); r.ntStopFg = col(ntStop, 'color'); ntStop.remove();
+    return r;
+  });
+  const geom = () => page.evaluate(() => { const m = _canvasState.metrics; const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { left: r.left, top: r.top, nameW: m.nameW, charW: m.charW, charH: m.charH, headerH: m.headerH, pitch: _canvasState.rowPitch, aaRowH: _canvasState.aaRowH, aaRows: _canvasState.aaRows, aaOnly: _canvasState.aaOnly, dpr: m.dpr || 1 }; });
+  // colours inside a CSS-pixel box, composited over white; as "rgb(r, g, b)" strings with counts
+  const colors = (x, y, w, h) => page.evaluate(({ x, y, w, h }) => {
+    const cv = document.getElementById('alignmentCanvas'), dpr = _canvasState.metrics.dpr || 1;
+    const d = cv.getContext('2d').getImageData(Math.round(x * dpr), Math.round(y * dpr), Math.max(1, Math.round(w * dpr)), Math.max(1, Math.round(h * dpr))).data;
+    const f = new Map();
+    for (let i = 0; i < d.length; i += 4) { const a = d[i + 3] / 255; const k = `rgb(${Math.round(d[i] * a + 255 * (1 - a))}, ${Math.round(d[i + 1] * a + 255 * (1 - a))}, ${Math.round(d[i + 2] * a + 255 * (1 - a))})`; f.set(k, (f.get(k) || 0) + 1); }
+    return [...f.entries()].sort((a, b) => b[1] - a[1]);
+  }, { x, y, w, h });
+  const has = (list, c) => list.some(([k]) => k === c);
+  const top = list => list[0] && list[0][0];
+  const bad = [];
+  let g = await geom();
+  if (!g.aaRowH || g.aaRows !== 1) bad.push('no translation row geometry: ' + JSON.stringify(g));
+  const cellX = c => g.nameW + c * g.charW, rowY = r => g.headerH + r * g.pitch, aaY = (r, lane = 0) => rowY(r) + g.charH + lane * g.aaRowH;
+  // 1. stop codon bases (ref, last three columns) are pink with a red letter
+  const stopCols = await page.evaluate(() => state._codonData.stops[0]);
+  const stopCell = await colors(cellX(stopCols[0]), rowY(0), g.charW, g.charH);
+  if (top(stopCell) !== want.ntStopBg || !has(stopCell, want.ntStopFg)) bad.push(`stop base cell: ${JSON.stringify(stopCell.slice(0, 3))}, wanted bg ${want.ntStopBg} + fg ${want.ntStopFg}`);
+  // 2. syn (green) and nonsyn (red) underlines on the sub row
+  const sn = await page.evaluate(() => { const r = state._codonData.synNonSyn[1]; const out = {}; for (let p = 0; p < 12; p++) if (r && r[p]) out[r[p]] = out[r[p]] ?? p; return out; });
+  if (sn.syn == null || sn.nonsyn == null) bad.push('fixture has no syn/nonsyn codon: ' + JSON.stringify(sn));
+  else {
+    const synCell = await colors(cellX(sn.syn), rowY(1), g.charW, g.charH), nonCell = await colors(cellX(sn.nonsyn), rowY(1), g.charW, g.charH);
+    if (!has(synCell, 'rgb(46, 157, 87)')) bad.push('synonymous codon base has no green underline: ' + JSON.stringify(synCell.slice(0, 4)));
+    if (!has(nonCell, 'rgb(217, 48, 37)')) bad.push('non-synonymous codon base has no red underline: ' + JSON.stringify(nonCell.slice(0, 4)));
+  }
+  // 3. codon track: ATG box (hydrophobic class) with its letter, stop box red
+  const mBox = await colors(cellX(0), aaY(0), 3 * g.charW, g.aaRowH);
+  if (top(mBox) !== want.hydBg || !has(mBox, want.hydFg)) bad.push(`ATG codon box: ${JSON.stringify(mBox.slice(0, 3))}, wanted ${want.hydBg} + ${want.hydFg}`);
+  const stopBox = await colors(cellX(stopCols[0]), aaY(0), 3 * g.charW, g.aaRowH);
+  if (top(stopBox) !== want.stopBg || !has(stopBox, want.stopFg)) bad.push(`stop codon box: ${JSON.stringify(stopBox.slice(0, 3))}, wanted ${want.stopBg} + ${want.stopFg}`);
+  // 4. frameshift mark on del1 (gap at column 21): a red "!" cell on the track at the run start
+  const fsAt = await page.evaluate(() => (state._codonData.frameShifts[2] || []).filter(f => f.type === 'indel').map(f => f.runStart));
+  if (!fsAt.length) bad.push('fixture has no frameshift on del1');
+  else { const fsCell = await colors(cellX(fsAt[0]), aaY(2), g.charW, g.aaRowH); const reddish = fsCell.some(([k]) => { const m = k.match(/\d+/g).map(Number); return m[0] > 180 && m[1] < 90 && m[2] < 90; }); if (!has(fsCell, want.fsBg) || !reddish) bad.push(`frameshift mark: ${JSON.stringify(fsCell.slice(0, 4))}, wanted ${want.fsBg} + red`); }
+  // 5. tooltip over a codon box names the amino acid and codon
+  await page.mouse.move(g.left + cellX(1) + g.charW / 2, g.top + aaY(0) + g.aaRowH / 2); await page.waitForTimeout(400);
+  const tip = await page.evaluate(() => document.body.innerText.includes('M (ATG)'));
+  if (!tip) bad.push('no "M (ATG)" tooltip over the codon box');
+  await page.mouse.move(10, 10); await page.waitForTimeout(100);
+  // 6. All 3 frames: three rows per sequence with coloured frame tags in the name column
+  await page.evaluate(() => { const s = document.getElementById('codonFrame'); s.value = 'all'; s.dispatchEvent(new Event('change', { bubbles: true })); }); await settle();
+  g = await geom();
+  if (g.aaRows !== 3) bad.push(`All 3 frames: ${g.aaRows} translation rows`);
+  else {
+    const tagCols = await Promise.all([0, 1, 2].map(k => colors(0, aaY(0, k), g.nameW, g.aaRowH)));
+    const tagColors = ['rgb(59, 111, 214)', 'rgb(42, 138, 68)', 'rgb(194, 120, 0)'];   // frame 1, 2, 3 tags (styles.css .aa-row-fN .aa-tag)
+    // rows are frame 1 at the top .. frame 3 at the bottom, as _codonRowsFor appends them in the DOM
+    const seen = tagCols.map(c => tagColors.findIndex(t => has(c, t)));
+    if (JSON.stringify(seen) !== JSON.stringify([0, 1, 2])) bad.push(`frame tags per row: ${JSON.stringify(seen)} (expected [0,1,2])`);
+  }
+  await page.evaluate(() => { const s = document.getElementById('codonFrame'); s.value = 'auto'; s.dispatchEvent(new Event('change', { bubbles: true })); }); await settle();
+  // 7. AA only: the track replaces the bases, the pitch is the track's, cells are not hit
+  await page.evaluate(() => setAaOnly(true)); await settle();
+  g = await geom();
+  if (!g.aaOnly || g.pitch !== g.aaRows * g.aaRowH) bad.push(`AA only geometry: ${JSON.stringify(g)}`);
+  const aaOnlyRow = await colors(cellX(0), rowY(0), 3 * g.charW, g.aaRowH);
+  if (top(aaOnlyRow) !== want.hydBg) bad.push(`AA only: row 0 does not start with the ATG box: ${JSON.stringify(aaOnlyRow.slice(0, 3))}`);
+  const hitAaOnly = await page.evaluate(() => { const m = _canvasState.metrics, r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return _canvasHitTest(r.left + m.nameW + 1.5 * m.charW, r.top + m.headerH + 0.5 * _canvasState.rowPitch); });
+  if (hitAaOnly) bad.push('AA only: a hidden base cell still hit-tests: ' + JSON.stringify(hitAaOnly));
+  const noMsg = await page.evaluate(() => !document.body.innerText.includes('AA only applies in Full and Block'));
+  if (!noMsg) bad.push('AA only still says it applies in Full and Block only');
+  await page.evaluate(() => setAaOnly(false)); await settle();
+  // 8. a scrollable alignment with the track on: wheel steps copy the frame and equal a full redraw
+  await page.evaluate((cds) => {
+    let fasta = '';
+    for (let i = 0; i < 200; i++) { const q = cds + cds + cds; fasta += `>s${i}\n${i % 7 === 3 ? q.slice(0, 20) + '-' + q.slice(21) : q}\n`; }
+    document.getElementById('fastaInput').value = fasta;
+    window.__loadPromise = parseAndRender(false);
+  }, cds);
+  await page.evaluate(() => window.__loadPromise); await page.waitForTimeout(300);
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  const on = await page.evaluate(() => !!(state._codonData && state._codonData.aaSeq));
+  if (!on) { await tick('codonAnalysis', true); await settle(); }
+  const box = await page.evaluate(() => { const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { x: r.left + r.width * 0.6, y: r.top + r.height * 0.6 }; });
+  await page.mouse.move(box.x, box.y);
+  const scroll = {};
+  for (const [label, dx, dy] of [['down', 0, 60], ['right', 60, 0], ['up', 0, -37]]) {
+    const b0 = await page.evaluate(() => ({ b: _canvasState.stats.blit, ox: _canvasState.offsetX, oy: _canvasState.offsetY }));
+    await page.mouse.wheel(dx, dy); await page.waitForTimeout(150);
+    scroll[label] = await page.evaluate((b0) => { const c = document.getElementById('alignmentCanvas'); const fast = c.toDataURL(); const copies = _canvasState.stats.blit - b0.b, moved = [_canvasState.offsetX - b0.ox, _canvasState.offsetY - b0.oy]; _canvasState.scheduleDraw(); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r({ copies, moved, same: c.toDataURL() === fast })))); }, b0);
+  }
+  for (const [l, r] of Object.entries(scroll)) if (r.copies < 1 || !r.same || (r.moved[0] === 0 && r.moved[1] === 0)) bad.push(`scroll ${l}: ${JSON.stringify(r)}`);
+  await tick('codonAnalysis', false); await settle();
+  const out = { want, stopCols, sn, fsAt, tip, scroll };
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(out) : JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
