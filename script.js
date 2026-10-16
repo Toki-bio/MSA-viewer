@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v245';
+const BUILD_TAG = 'v246';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -1574,6 +1574,8 @@ function updateControlsOffset() {
     }
     const height = Math.ceil(controls.getBoundingClientRect().height);
     rootStyle.setProperty('--controls-offset', `${Math.max(0, height)}px`);
+    // Canvas mode sizes its container from its position: follow the controls' new height
+    if (typeof isCanvasMode === 'function' && isCanvasMode()) _canvasState.resizeHandler?.();
 }
 
 // ============ SSH FILE FETCH ============
@@ -5337,12 +5339,74 @@ function _canvasHitTestName(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const x = clientX - rect.left;
     const y = clientY - rect.top;
-    if (x < 0 || x >= m.nameW) return null;   // not in name column
+    const nx = el('stickyNames')?.checked ? 0 : -_canvasState.offsetX;   // static names scroll with the content
+    if (x < nx || x >= nx + m.nameW) return null;   // not in name column
     if (y < (m.headerH || m.charH)) return null; // ruler / annotation corner
     const row = Math.floor((y - (m.headerH || m.charH) + _canvasState.offsetY) / (_canvasState.rowPitch || m.charH));
     const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
     if (row < 0 || row >= nSeqs) return null;
     return { row };
+}
+
+// Where a dragged row would land for a pointer at clientY: the row under the pointer and
+// whether the drop goes above it (upper half) or below. Clamped to the first/last row.
+function _canvasRowDropTarget(clientY) {
+    const canvas = _canvasState.canvas, m = _canvasState.metrics;
+    if (!canvas || !m) return null;
+    const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
+    if (!nSeqs) return null;
+    const pitch = _canvasState.rowPitch || m.charH;
+    const y = clientY - canvas.getBoundingClientRect().top - (m.headerH || m.charH) + _canvasState.offsetY;
+    const row = Math.max(0, Math.min(nSeqs - 1, Math.floor(y / pitch)));
+    const above = row === 0 ? y < pitch / 2 : (row === nSeqs - 1 ? y < row * pitch + pitch / 2 : (y - row * pitch) < pitch / 2);
+    return { row, above };
+}
+
+// Rename in Canvas mode: an input laid over the name cell (position: absolute inside the
+// container), the same keys and commit as the DOM view's _startSeqNameEdit.
+function _startSeqNameEditCanvas(index) {
+    const m = _canvasState.metrics, canvas = _canvasState.canvas;
+    if (!m || !canvas || !state.seqs[index]) return;
+    if (alignmentContainer.querySelector('.seq-name-edit')) return;
+    hideTooltip();
+    const sticky = !!el('stickyNames')?.checked;
+    const pitch = _canvasState.rowPitch || m.charH;
+    const y = (m.headerH || m.charH) + index * pitch - _canvasState.offsetY;
+    const x = sticky ? 0 : -_canvasState.offsetX;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'seq-name-edit canvas-name-edit';
+    input.value = state.seqs[index].header;
+    input.spellcheck = false;
+    input.setAttribute('aria-label', 'Sequence name');
+    Object.assign(input.style, {
+        position: 'absolute', left: (x + 2) + 'px', top: (y - 1) + 'px', width: (m.nameW - 4) + 'px', height: (m.charH + 2) + 'px',
+        boxSizing: 'border-box', margin: '0', padding: '0 2px', border: '1px solid #1976D2', borderRadius: '2px', outline: 'none',
+        background: '#fff', color: '#000', font: 'bold ' + m.fontSizePx + 'px "Courier New", monospace', zIndex: 70,
+    });
+    alignmentContainer.appendChild(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (commit) => {
+        if (done) return;
+        done = true;
+        document.removeEventListener('mousedown', onOutside, true);
+        const newName = input.value.trim();
+        input.remove();
+        if (commit && _commitSeqRename(index, newName)) _canvasState.scheduleDraw?.();
+    };
+    input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('keyup', e => e.stopPropagation());
+    input.addEventListener('keypress', e => e.stopPropagation());
+    ['mousedown', 'click', 'dblclick', 'wheel'].forEach(t => input.addEventListener(t, e => e.stopPropagation()));
+    input.addEventListener('blur', () => finish(true));
+    const onOutside = (e) => { if (e.target !== input) finish(true); };
+    document.addEventListener('mousedown', onOutside, true);
 }
 
 // Get the row index from a y coordinate in canvas viewport space.
@@ -5532,9 +5596,18 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     _canvasState.totalContentW = totalContentW;
     _canvasState.totalContentH = totalContentH;
 
-    // Resize canvas to viewport
-    function resize() {
+    // Resize canvas to viewport. The container's height is set from its position (the
+    // controls above it change height: edit toolbar, menus), so recompute both here; cheap
+    // to call when nothing moved.
+    let _lastRect = '';
+    function resize(force) {
+        const top0 = alignmentContainer.getBoundingClientRect().top;
+        const hCss = Math.max(100, window.innerHeight - top0 - 28);
+        if (parseInt(alignmentContainer.style.height) !== hCss) alignmentContainer.style.height = hCss + 'px';
         const rect = alignmentContainer.getBoundingClientRect();
+        const key = rect.width + 'x' + rect.height + '@' + rect.top;
+        if (!force && key === _lastRect) return false;
+        _lastRect = key;
         canvas.width = rect.width * dpr;
         canvas.height = rect.height * dpr;
         canvas.style.width = rect.width + 'px';
@@ -5542,6 +5615,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         back.width = canvas.width;
         back.height = canvas.height;
+        return true;
     }
     // Scratch copy of the last frame for the scroll copy in draw(): drawImage composites
     // (source-over), so copying a canvas onto itself where the regions overlap would blend
@@ -5560,18 +5634,45 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // the offset; without marking dirty, draw() skipped them unless the view had moved.
     _canvasState.scheduleDraw = () => { _markDirty(); scheduleDraw(); };
 
-    resize();
+    resize(true);
     if (_canvasState.resizeHandler) window.removeEventListener('resize', _canvasState.resizeHandler);
     if (_canvasState.mousemoveHandler) window.removeEventListener('mousemove', _canvasState.mousemoveHandler);
     if (_canvasState.mouseupHandler) window.removeEventListener('mouseup', _canvasState.mouseupHandler);
-    _canvasState.resizeHandler = () => { resize(); _markDirty(); scheduleDraw(); };
+    _canvasState.resizeHandler = () => { if (resize(false)) { _markDirty(); scheduleDraw(); } };
     _canvasState.mousemoveHandler = (e) => {
+        // Row reorder drag (press on a name, move 4 px): the drop target follows the pointer
+        const rd = _canvasState.rowDrag;
+        if (rd) {
+            const dx = e.clientX - rd.startX, dy = e.clientY - rd.startY;
+            if (!rd.started) {
+                if (dx * dx + dy * dy < 16) return;
+                rd.started = true;
+                document.body.classList.add('no-select');
+                canvas.style.cursor = 'grabbing';
+            }
+            const t = _canvasRowDropTarget(e.clientY);
+            if (t && (t.row !== rd.target || t.above !== rd.above)) { rd.target = t.row; rd.above = t.above; _markDirty(); scheduleDraw(); }
+            e.preventDefault();
+            return;
+        }
         if (!dragging) return;
         _canvasState.offsetX = dragOx - (e.clientX - dragStartX);
         _canvasState.offsetY = dragOy - (e.clientY - dragStartY);
         scheduleDraw();
     };
-    _canvasState.mouseupHandler = () => {
+    _canvasState.mouseupHandler = (e) => {
+        const rd = _canvasState.rowDrag;
+        if (rd) {
+            _canvasState.rowDrag = null;
+            document.body.classList.remove('no-select');
+            canvas.style.cursor = 'default';
+            if (rd.started) {
+                const t = e ? _canvasRowDropTarget(e.clientY) : null;
+                // _moveDraggedSequences re-renders; when it declines (drop onto itself) clear the indicator
+                if (!t || !_moveDraggedSequences(rd.from, t.row, t.above)) { _markDirty(); scheduleDraw(); }
+            }
+            return;
+        }
         dragging = false;
         canvas.style.cursor = 'default';
     };
@@ -5877,6 +5978,22 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             ctx.font = fontStr;
         }
 
+        // Row reorder in progress: tint the dragged names, draw the drop bar in the name column
+        const rd = _canvasState.rowDrag;
+        if (rd && rd.started) {
+            const nx = stickyNames ? 0 : -ox;
+            ctx.fillStyle = 'rgba(25, 118, 210, 0.18)';
+            for (const r of _getDraggedIndices(rd.from)) {
+                const y = HEADER_H + r * rowPitch - oy;
+                if (y + rowPitch >= 0 && y <= h) ctx.fillRect(nx, y, NAME_W, CHAR_H);
+            }
+            if (rd.target >= 0) {
+                const y = HEADER_H + (rd.target + (rd.above ? 0 : 1)) * rowPitch - oy;
+                ctx.fillStyle = '#1976D2';
+                ctx.fillRect(nx + 6, y - 1, NAME_W - 12, 2);
+            }
+        }
+
         // Consensus row (top: between ruler and rows; bottom: after the last row), scrolling
         // with the content like the DOM row. Bold #555 letters, no background; upper case
         // where the column's majority reaches the consensus threshold, lower case otherwise
@@ -5999,7 +6116,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         ctx.fillStyle = '#ddd';
         ctx.fillRect((stickyNames ? NAME_W : NAME_W - ox) - 2, 0, 1, totalContentH - oy);
     }
-    resize();
+    resize(true);
     draw();
 
     // Scroll handling
@@ -6164,6 +6281,17 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             scheduleDraw();
             return;
         }
+        // Plain press on a name: drag to reorder rows (the DOM view's _startRowReorderDrag;
+        // the drop calls the same _moveDraggedSequences, so multi-row selections move too)
+        if (!isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
+            const nameHit = _canvasHitTestName(e.clientX, e.clientY);
+            if (nameHit) {
+                hideTooltip();
+                _canvasState.rowDrag = { from: nameHit.row, startX: e.clientX, startY: e.clientY, started: false, target: -1, above: true };
+                e.preventDefault();
+                return;
+            }
+        }
         // Pan (existing behavior)
         dragging = true;
         dragStartX = e.clientX;
@@ -6172,6 +6300,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         dragOy = _canvasState.offsetY;
         canvas.style.cursor = 'grabbing';
         _markDirty();
+    });
+    // Double-click on a name renames it in place (as in the DOM view)
+    canvas.addEventListener('dblclick', (e) => {
+        if (isCtrlModifier(e) || isAltModifier(e) || e.shiftKey) return;
+        const nameHit = _canvasHitTestName(e.clientX, e.clientY);
+        if (nameHit) { e.preventDefault(); _startSeqNameEditCanvas(nameHit.row); }
     });
     window.addEventListener('mousemove', _canvasState.mousemoveHandler);
     window.addEventListener('mouseup', _canvasState.mouseupHandler);
@@ -10359,6 +10493,22 @@ function _relabelSeqNameCells(index) {
     });
 }
 
+// Applies a rename (undoable), relabels the DOM name cells, resizes a "No limit" name
+// column. Returns false when nothing changed.
+function _commitSeqRename(index, newName) {
+    if (!newName || !state.seqs[index] || newName === state.seqs[index].header) return false;
+    const oldName = state.seqs[index].header;
+    pushUndo('rename');
+    state.seqs[index].header = newName;
+    state.seqs[index].fullHeader = newName;
+    _migrateColourMapping(oldName, newName);
+    _relabelSeqNameCells(index);
+    // "No limit" sizes the name column to the longest name, which may just have changed
+    if (el('nameLengthNoLimit')?.checked) applyNameLengthLive(effectiveNameLength());
+    showMessage('Sequence renamed', 1500);
+    return true;
+}
+
 function _startSeqNameEdit(nameSpan, index) {
     if (!state.seqs[index] || nameSpan.querySelector('.seq-name-edit')) return;
     hideTooltip();
@@ -10383,16 +10533,7 @@ function _startSeqNameEdit(nameSpan, index) {
         input.remove();
         nameSpan.classList.remove('renaming');
         if (label) label.style.visibility = '';
-        if (!commit || !newName || newName === state.seqs[index].header) return;
-        const oldName = state.seqs[index].header;
-        pushUndo('rename');
-        state.seqs[index].header = newName;
-        state.seqs[index].fullHeader = newName;
-        _migrateColourMapping(oldName, newName);
-        _relabelSeqNameCells(index);
-        // "No limit" sizes the name column to the longest name, which may just have changed
-        if (el('nameLengthNoLimit')?.checked) applyNameLengthLive(effectiveNameLength());
-        showMessage('Sequence renamed', 1500);
+        if (commit) _commitSeqRename(index, newName);
     };
     // Keys typed here are for the name only: none may reach the viewer's shortcuts
     input.addEventListener('keydown', (e) => {
@@ -11572,8 +11713,8 @@ function ensureCanvasModeNotice() {
     notice = document.createElement('span');
     notice.id = 'canvasModeNotice';
     notice.className = 'canvas-mode-chip';
-    notice.title = 'Canvas mode is view-only. Switch to Full or Block to edit sequences or select columns (Ctrl+Alt+click).';
-    notice.textContent = `Canvas ${SYM.sep} view-only`;
+    notice.title = 'Canvas mode: editing, selections, rename and row drag work here. Show 2D and the hidden columns of var-sites mode need Full or Block.';
+    notice.textContent = 'Canvas';
     quickSwitch.parentNode.insertBefore(notice, quickSwitch.nextSibling);
     return notice;
 }

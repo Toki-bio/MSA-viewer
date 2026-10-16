@@ -3116,6 +3116,99 @@ check('Canvas mode: consensus row drawn at top or bottom with the DOM consensus 
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(Object.fromEntries(Object.entries(out).map(([k, r]) => [k, { ink: r.ink, hit0: r.hit0, same: r.same }]))) };
 });
 
+// Editing in Canvas mode (v246). The residue, gap, move, slide and column tools already worked
+// there; dragging a name did not reorder rows, double-clicking a name did not rename, the chip
+// said "view-only", and the edit toolbar pushed the canvas down without resizing it, so its
+// bottom rows were off screen. Real mouse and keyboard events throughout.
+check('Canvas mode: drag a name to reorder, double-click to rename, toolbar does not push the canvas off screen', async (page) => {
+  let fa = ''; for (let i = 0; i < 30; i++) { let q = ''; for (let j = 0; j < 80; j++) q += (j % 9 === 4 && i % 3 === 0) ? '-' : 'ACGT'[(i + j) % 4]; fa += `>seq${i}\n${q}\n`; }
+  await loadFasta(page, fa);
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(300);
+  const geom = () => page.evaluate(() => { const c = document.getElementById('alignmentCanvas'); const r = c.getBoundingClientRect(), m = _canvasState.metrics; return { left: r.left, top: r.top, bottom: r.bottom, innerH: innerHeight, nameW: m.nameW, headerH: m.headerH, pitch: _canvasState.rowPitch, oy: _canvasState.offsetY }; });
+  const namePt = async (row) => { const g = await geom(); return { x: g.left + 20, y: g.top + g.headerH + (row + 0.5) * g.pitch - g.oy }; };
+  const out = {};
+  // 1. toolbar: the canvas must stay inside the window after the edit panel appears
+  await page.click('#editToggleButton'); await page.waitForTimeout(400);
+  const g1 = await geom();
+  out.toolbar = { bottom: Math.round(g1.bottom), innerH: g1.innerH, chip: document => null };
+  out.toolbar.chip = await page.evaluate(() => document.getElementById('canvasModeNotice')?.textContent || null);
+  await page.click('#editToggleButton'); await page.waitForTimeout(400);
+  // 2. drag seq0's name onto the lower half of seq3: expect seq1, seq2, seq3, seq0
+  const names0 = await page.evaluate(() => state.seqs.slice(0, 5).map(q => q.header));
+  const a = await namePt(0), b = await namePt(3);
+  await page.mouse.move(a.x, a.y); await page.mouse.down();
+  await page.mouse.move(a.x, a.y + 8, { steps: 3 });
+  await page.mouse.move(b.x, b.y + 3, { steps: 6 });
+  await page.waitForTimeout(100);
+  const during = await page.evaluate(() => _canvasState.rowDrag ? { started: _canvasState.rowDrag.started, target: _canvasState.rowDrag.target, above: _canvasState.rowDrag.above } : null);
+  await page.mouse.up(); await page.waitForTimeout(500);
+  out.reorder = { before: names0, during, after: await page.evaluate(() => state.seqs.slice(0, 5).map(q => q.header)) };
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  out.reorderUndone = (await page.evaluate(() => state.seqs.slice(0, 5).map(q => q.header))).join() === names0.join();
+  // 3. rename seq2 by double-click, type, Enter
+  const c = await namePt(2);
+  await page.mouse.dblclick(c.x, c.y); await page.waitForTimeout(300);
+  out.renameBox = await page.evaluate(() => { const i = document.querySelector('#alignmentContainer input.seq-name-edit'); return i ? { value: i.value, focused: document.activeElement === i } : null; });
+  await page.keyboard.press('Control+a'); await page.keyboard.type('renamed_two'); await page.keyboard.press('Enter'); await page.waitForTimeout(400);
+  out.renamed = await page.evaluate(() => ({ header: state.seqs[2].header, boxGone: !document.querySelector('#alignmentContainer input.seq-name-edit') }));
+  // the canvas shows the new name: ink differs in the name cell of row 2 between before/after a redraw is implicit; compare with Full mode's DOM
+  await setMode(page, 'full'); await page.waitForTimeout(300);
+  out.domName = await page.evaluate(() => document.querySelector('.seq-line[data-seq-index="2"] .seq-name')?.textContent.trim());
+  const bad = [];
+  if (out.toolbar.bottom > out.toolbar.innerH + 1) bad.push(`with the edit toolbar open the canvas bottom is at ${out.toolbar.bottom} px in a ${out.toolbar.innerH} px window`);
+  if (/view-only/i.test(out.toolbar.chip || '')) bad.push(`chip still says "${out.toolbar.chip}"`);
+  if (out.reorder.after.join() !== ['seq1', 'seq2', 'seq3', 'seq0', 'seq4'].join()) bad.push(`drag of seq0 below seq3 gave ${JSON.stringify(out.reorder.after)}`);
+  if (!out.reorderUndone) bad.push('Ctrl+Z did not undo the reorder');
+  if (!out.renameBox || out.renameBox.value !== 'seq2' || !out.renameBox.focused) bad.push(`double-click did not open a focused rename box (${JSON.stringify(out.renameBox)})`);
+  if (!out.renamed || out.renamed.header !== 'renamed_two' || !out.renamed.boxGone) bad.push(`rename gave ${JSON.stringify(out.renamed)}`);
+  if (out.domName !== 'renamed_two') bad.push(`Full view shows "${out.domName}" for the renamed row`);
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
+});
+
+// The edit tools in Canvas mode must change the sequences exactly as the same real clicks and
+// drags do in Full mode (typing + undo, gap insert/delete, Move, Slide). Guard for the Canvas
+// edit paths, which share the model code but have their own hit-testing.
+check('Canvas mode: typing, gap, move and slide tools give the same sequences as in Full mode', async (page) => {
+  let fa = ''; for (let i = 0; i < 20; i++) { let q = ''; for (let j = 0; j < 60; j++) q += (j % 9 === 4 && i % 3 === 0) ? '-' : 'ACGT'[(i + j) % 4]; fa += `>seq${i}\n${q}\n`; }
+  const run = async (mode) => {
+    await loadFasta(page, fa);
+    await setMode(page, mode);
+    await page.waitForTimeout(300);
+    const pt = async (row, col) => page.evaluate(([r, c]) => {
+      if (document.getElementById('modeCanvas').checked) { const cv = document.getElementById('alignmentCanvas'), b = cv.getBoundingClientRect(), m = _canvasState.metrics; return { x: b.left + m.nameW + (c + 0.5) * m.charW - _canvasState.offsetX, y: b.top + m.headerH + (r + 0.5) * _canvasState.rowPitch - _canvasState.offsetY }; }
+      const sp = document.querySelector(`.seq-line[data-seq-index="${r}"] .seq-data > span[data-pos="${c}"]`); const b = sp.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+    }, [row, col]);
+    const seqs = () => page.evaluate(() => state.seqs.map(q => q.seq).join('|'));
+    const out = {};
+    await page.click('#editToggleButton'); await page.waitForTimeout(300);
+    await page.click('[data-edit-tool="residue"]'); await page.waitForTimeout(150);
+    let p = await pt(2, 5); await page.mouse.click(p.x, p.y); await page.waitForTimeout(100); await page.keyboard.press('g'); await page.waitForTimeout(200);
+    out.typed = await seqs();
+    await page.keyboard.press('Control+z'); await page.waitForTimeout(200); out.undone = await seqs();
+    await page.click('[data-edit-tool="insertGapSeq"]'); await page.waitForTimeout(150);
+    p = await pt(3, 10); await page.mouse.click(p.x, p.y); await page.waitForTimeout(200); out.gapIn = await seqs();
+    await page.click('[data-edit-tool="deleteGapSeq"]'); await page.waitForTimeout(150);
+    p = await pt(3, 10); await page.mouse.click(p.x, p.y); await page.waitForTimeout(200); out.gapOut = await seqs();
+    await page.click('[data-edit-tool="moveNoGaps"]'); await page.waitForTimeout(150);
+    let q0 = await pt(0, 2), q1 = await pt(0, 4);
+    await page.mouse.move(q0.x, q0.y); await page.mouse.down(); await page.mouse.move((q0.x + q1.x) / 2, q0.y, { steps: 4 }); await page.mouse.move(q1.x, q1.y, { steps: 4 }); await page.waitForTimeout(100); await page.mouse.up(); await page.waitForTimeout(250);
+    out.moved = await seqs();
+    await page.click('[data-edit-tool="slideKeepGaps"]'); await page.waitForTimeout(150);
+    q0 = await pt(5, 20); q1 = await pt(5, 22);
+    await page.mouse.move(q0.x, q0.y); await page.mouse.down(); await page.mouse.move(q1.x, q1.y, { steps: 6 }); await page.waitForTimeout(100); await page.mouse.up(); await page.waitForTimeout(250);
+    out.slid = await seqs();
+    await page.click('#editToggleButton'); await page.waitForTimeout(200);
+    return out;
+  };
+  const full = await run('full'), canvas = await run('canvas');
+  const bad = [];
+  for (const k of Object.keys(full)) if (full[k] !== canvas[k]) bad.push(`${k}: Canvas differs from Full`);
+  if (full.typed === full.undone) bad.push('typing changed nothing in Full mode (the check itself is broken)');
+  if (full.moved === full.gapOut) bad.push('Move changed nothing in Full mode (the check itself is broken)');
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : 'typing, undo, gap insert/delete, Move and Slide identical in Full and Canvas' };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

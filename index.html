@@ -191,7 +191,7 @@
                                 <span style="font-size:10px;font-weight:bold;width:70px;text-align:right;">Mode</span>
                                 <input type="radio" id="modeSingle" name="mode" value="single" title="Full: continuous scrolling alignment for browsing and editing"><label for="modeSingle" style="font-size:10px;margin-right:5px;">Full</label>
                                 <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Block: fixed-width wrapped blocks with repeating labels, for publication-style layout"><label for="modeBlocks" style="font-size:10px;margin-right:5px;">Block</label>
-                                <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas: viewport-culled renderer for very large alignments (view-only)"><label for="modeCanvas" style="font-size:10px;margin-right:5px;">Canvas</label>
+                                <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas: draws only the visible region; the default from 100,000 residues; editing and selections work, Show 2D and var-sites column hiding do not"><label for="modeCanvas" style="font-size:10px;margin-right:5px;">Canvas</label>
                                 <input type="radio" id="modeReads" name="mode" value="reads" title="Reads: IGV-style read tracks for mapped SAM/BAM data against a reference"><label for="modeReads" style="font-size:10px;">Reads</label>
                             </div>
                             <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-left:74px;">
@@ -786,11 +786,11 @@
                 <div class="quick-mode-switch" id="quickModeSwitch" title="Display mode: Full / Block / Canvas / Reads">
                     <input type="radio" name="quickMode" id="qmSingle" data-target="modeSingle" title="Full mode"><label for="qmSingle">Full</label>
                     <input type="radio" name="quickMode" id="qmBlocks" data-target="modeBlocks" title="Block mode"><label for="qmBlocks">Block</label>
-                    <input type="radio" name="quickMode" id="qmCanvas" data-target="modeCanvas" title="Canvas mode (large alignments, view-only)"><label for="qmCanvas">Canvas</label>
+                    <input type="radio" name="quickMode" id="qmCanvas" data-target="modeCanvas" title="Canvas mode (large alignments; editing works)"><label for="qmCanvas">Canvas</label>
                     <input type="radio" name="quickMode" id="qmReads" data-target="modeReads" title="Reads mode (mapped SAM/BAM data)"><label for="qmReads" id="qmReadsLabel" style="display:none;">Reads</label>
                 </div>
 
-                <span id="canvasModeNotice" class="canvas-mode-chip" title="Canvas mode is view-only. Switch to Full or Block to edit sequences or select columns (Ctrl+Alt+click).">Canvas | view-only</span>
+                <span id="canvasModeNotice" class="canvas-mode-chip" title="Canvas mode: editing, selections, rename and row drag work here. Show 2D and the hidden columns of var-sites mode need Full or Block.">Canvas</span>
 
                 <div class="codon-mode-panel" id="codonModePanel" hidden title="Reading frame: which alignment column starts the first codon (Pos 1 = column 1)">
                     <span class="codon-panel-label">Codon</span>
@@ -1381,7 +1381,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=1"></script>
     <script src="chromatogram-viewer.js?v=1"></script>
     <script src="realign-region.js?v=2"></script>
-    <script src="script.js?v=295"></script>
+    <script src="script.js?v=296"></script>
     <script src="a11y.js?v=1"></script>
     <script src="tree-draw.js?v=165"></script>
     <script src="block-mask.js?v=1"></script>
