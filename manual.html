@@ -1275,7 +1275,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     columns were hidden). Both choices are saved and restored automatically the next time
     you open the viewer.
   </p>
-  <p>Both features can be combined with Codon analysis (Full and Block modes only - see above).</p>
+  <p>Both features can be combined with Codon analysis.</p>
 
   <h3 id="di-colors">5.3 Alignment Colour Schemes</h3>
   <p>
@@ -1318,8 +1318,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     Activates codon-aware viewing for coding sequences (CDS) in any nucleotide alignment
     (IUPAC ambiguity codes allowed; a codon containing one translates to X). The length need
     not be a multiple of 3. The reading frame is chosen automatically (most rows starting
-    with ATG, then fewest stops) or set with the <strong>Frame</strong> selector next to the checkbox. Full and Block draw the
-    annotations below. Canvas draws the amino-acid translation track only.
+    with ATG, then fewest stops) or set with the <strong>Frame</strong> selector next to the checkbox. Full, Block and Canvas draw the
+    annotations below.
   </p>
   <p>
     <strong>By gene.</strong> With an annotation track that has CDS features (<a href="#an-track">6.4</a>),
@@ -1338,7 +1338,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     as in a one-gene file) while the code is Standard switches the <strong>Code</strong> to Vert Mito and says so. <strong>Copy AA</strong> and <strong>Save AA</strong>
     then give one record per sequence and gene, each read in the gene's direction. <strong>AA only</strong> (Codon bar, or
     the checkbox next to Codon analysis) shows the translation in place of the nucleotides, one amino-acid line per
-    sequence, in Full and Block mode; rows in a block without a CDS keep their nucleotides, and the names work as usual. A codon with IUPAC
+    sequence, in Full, Block and Canvas; rows in a block without a CDS keep their nucleotides, and the names work as usual. A codon with IUPAC
     ambiguity letters translates to the amino acid all its readings share (<code>CCN</code> = P), else X.
     Checked against GenBank: the 13 CDS of NC_069019.1 translate exactly to the record's own
     <code>/translation</code> fields (functional test "Codon analysis by gene (oracle)").
