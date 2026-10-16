@@ -197,11 +197,14 @@ check('Default view by size: below ALIGN_CANVAS_DEFAULT_RESIDUES a DOM mode, at/
       canvasEl: !!document.querySelector('#alignmentContainer canvas'),
       domRows: document.querySelectorAll('.seq-line[data-seq-index]').length,
       canvasRadio: document.getElementById('modeCanvas').checked,
+      note: document.getElementById('statusMessage')?.textContent || '',
     }));
   }
   const bad = [];
   if (out.below.canvasEl || out.below.domRows === 0) bad.push(`${out.below.residues} residues (below the limit) did not open in a DOM mode`);
   if (!out.atOrAbove.canvasEl || !out.atOrAbove.canvasRadio) bad.push(`${out.atOrAbove.residues} residues (above the limit) did not open in Canvas`);
+  // v249: the switch is announced with what still needs Full or Block (10 s note)
+  if (!/Full or Block/.test(out.atOrAbove.note)) bad.push(`no limitation note after the switch (status: "${out.atOrAbove.note.slice(0, 80)}")`);
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
 });
 

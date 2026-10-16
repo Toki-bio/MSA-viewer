@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v248';
+const BUILD_TAG = 'v249';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -2226,11 +2226,21 @@ if (!fastaInput || !alignmentContainer || !statusMessage) {
 // A note from an aligner (e.g. the codon aligner's frameshift summary) that should ride along with the caller's
 // own completion message instead of being overwritten by it. Consumed by the next showMessage call.
 let _pendingAlignNote = null;
+// The Canvas auto-switch note: shown at once, and appended to the next status message for a
+// few seconds so the load path's own "File loaded" message does not hide it.
+let _canvasSwitchNote = null, _canvasSwitchNoteUntil = 0;
 function showMessage(msg, duration = 2000) {
     if (_pendingAlignNote) {
         msg = msg + ' ' + _pendingAlignNote;
         _pendingAlignNote = null;
         if (duration > 0) duration = Math.max(duration, 6000);
+    }
+    if (_canvasSwitchNote) {
+        if (performance.now() < _canvasSwitchNoteUntil && !msg.includes(_canvasSwitchNote)) {
+            msg = msg + ' ' + _canvasSwitchNote;
+            if (duration > 0) duration = Math.max(duration, 10000);
+        }
+        _canvasSwitchNote = null;
     }
     statusMessage.textContent = msg;
     statusMessage.style.display = 'block';
@@ -9167,10 +9177,11 @@ function renderAlignment(options = {}) {
         _lastModeRadioId = 'modeCanvas'; // bypasses onModeChange, so sync explicitly
         syncQuickModeSwitch();
         syncCodonModePanel(); // this bypasses onModeChange, so sync explicitly
-        showMessage(
-            `Auto-switched to Canvas mode for ${TOTAL_RESIDUES.toLocaleString()} residues.`,
-            6000
-        );
+        const note = `Canvas view (${TOTAL_RESIDUES.toLocaleString()} residues): scrolling, editing and selections work here; `
+            + `Show 2D and hidden columns in var-sites mode need Full or Block (mode switch at the top).`;
+        showMessage(note, 10000);
+        _canvasSwitchNote = note;                       // survives the caller's own "File loaded" message
+        _canvasSwitchNoteUntil = performance.now() + 5000;
         // Re-read to pick up the new checked state
         // Canvas dispatch is handled below
     }
@@ -11213,8 +11224,9 @@ const ALIGN_WINDOWED_DOM_THRESHOLD = 500_000;
 // the full-DOM view scrolls at 110-160 ms a frame because every row entering the viewport is
 // laid out and the whole layer repainted (content-visibility: auto), and turning that rule
 // off makes mode switches and Highlight diffs 2-3x slower (5-10 s) while Canvas scrolls at
-// 8-9 ms a frame. Below this size the DOM view is fine and keeps editing and the overlays.
-const ALIGN_CANVAS_DEFAULT_RESIDUES = 100_000;
+// 8-9 ms a frame. The DOM view is smooth only up to ~30-40k residues (150 x 150 fine,
+// 200 x 200 a few 50 ms frames, 300 x 300 p95 67 ms), hence 40,000 (v249; 100,000 in v245).
+const ALIGN_CANVAS_DEFAULT_RESIDUES = 40_000;
 
 /** Single-pass FASTA scan: counts sequences and lengths without building seq objects. */
 function scanFastaIndex(text) {
@@ -11357,14 +11369,15 @@ function showLargeAlignmentDialog(stats, classification, context = 'load') {
         const bodyText = context === 'full-mode-switch'
             ? `Full mode windows both rows and columns, so it won't freeze - but the very first paint
                still computes shading for the whole alignment once, which can take several seconds on
-               an alignment this size. Canvas mode stays instant if you're only viewing, not editing.`
+               an alignment this size. Canvas mode stays instant, and editing works there too.`
             : context === 'block-mode-switch'
             ? `Block mode now windows column-chunks vertically, so it won't freeze - but the very
                first paint still computes shading for the whole alignment once, which can take
-               several seconds on an alignment this size. Canvas mode stays instant if you're only
-               viewing, not editing.`
+               several seconds on an alignment this size. Canvas mode stays instant, and editing
+               works there too.`
             : `Loading may be slow or briefly freeze the browser because ${reasonText}.
-               Canvas mode is recommended for viewing; switch to Block/Full only for editing.`;
+               Canvas mode is recommended (scrolling and editing stay instant); switch to Block/Full
+               only for Show 2D or hidden columns in var-sites mode.`;
 
         content.innerHTML = `
             <p style="margin:0 0 10px;">

@@ -1159,7 +1159,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
     <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block.</td></tr>
     <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40–300 chars; <strong>Screen</strong> fits the block to the window width). Sequence names repeat per block.</td></tr>
-    <tr><td><strong>Canvas</strong></td><td>Large alignments (>= 100,000 residues, e.g. 600 x 600)</td><td>The default view from 100,000 residues (reported on load; Full or Block can still be chosen). Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name); Show 2D and the hidden columns of var-sites mode still need Full or Block. From about 500,000 residues, Full and Block draw a window rather than every cell.</td></tr>
+    <tr><td><strong>Canvas</strong></td><td>Alignments from 40,000 residues (e.g. 200 x 200 and up)</td><td>The default view from 40,000 residues (a 10-second note on load says what still needs Full or Block; either can still be chosen). Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name); Show 2D and the hidden columns of var-sites mode still need Full or Block. From about 500,000 residues, Full and Block draw a window rather than every cell.</td></tr>
     <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5). A <strong>Show bases</strong> checkbox next to the mode switch draws every base of each read instead of mismatches only.</td></tr>
   </table>
   <p>
@@ -1682,16 +1682,10 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     current alignment length so you can verify changes.
   </div>
   <div class="note">
-    <strong>Editing needs Block or Full view.</strong> Canvas and Reads draw no per-residue
-    cells for the tools to act on, so Edit Mode is unavailable there and says so. Switch back
-    to Block or Full to edit. Very large alignments switch to Canvas automatically, which is
-    why editing can appear to be missing on them. Manually switching into Full or Block mode on
-    such an alignment shows a confirmation dialog first, as a safety net - both modes now window
-    their rendering (only the currently-visible cells render as DOM), so alignments with huge
-    sequence counts and/or huge column counts stay responsive and scroll smoothly in either. Full
-    mode windows rows and columns together; Block mode windows whichever column-chunk is currently
-    scrolled into view. The dialog in both cases is mainly about the one-time first-paint cost of
-    computing shading for the whole alignment once, which can still take several seconds.
+    <strong>Editing works in Full, Block and Canvas views.</strong> Reads view draws no per-residue
+    cells for the tools to act on, so Edit Mode is unavailable there and says so. In Canvas
+    (the default from 40,000 residues) the tools, typing, undo, rename and row drag behave as
+    in Full view; only Show 2D and the hidden columns of var-sites mode need Full or Block.
   </div>
 
   <h3 id="ed-move-slide">8.4 Move &amp; Slide Tools</h3>
@@ -2225,7 +2219,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <!-- Compact mode removed -->
     <li>Turn on <strong>Highlight Diffs</strong> to visually compress conserved regions</li>
     <li>Use <strong>Block mode</strong> with smaller block sizes (40-60 columns; the minimum is 40) for very wide alignments</li>
-    <li><strong>Canvas</strong> is the default view from 100,000 residues and scrolls smoothly at any size; from about 500,000 residues, <strong>Full</strong> and <strong>Block</strong> draw a window of the alignment instead of every cell</li>
+    <li><strong>Canvas</strong> is the default view from 40,000 residues and scrolls smoothly at any size; from about 500,000 residues, <strong>Full</strong> and <strong>Block</strong> draw a window of the alignment instead of every cell</li>
     <li>For extremely large files (&gt; 500 sequences x 5,000 columns), consider splitting the input</li>
     <li>Use <strong>Variable sites only</strong> with the <strong>threshold slider</strong> to strip conserved columns and focus on variation. Set the threshold to ≥20% or higher to highlight only the most polymorphic sites.</li>
   </ul>
