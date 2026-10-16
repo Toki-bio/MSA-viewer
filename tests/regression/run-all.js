@@ -203,7 +203,7 @@ check('Default view by size: below ALIGN_CANVAS_DEFAULT_RESIDUES a DOM mode, at/
   const bad = [];
   if (out.below.canvasEl || out.below.domRows === 0) bad.push(`${out.below.residues} residues (below the limit) did not open in a DOM mode`);
   if (!out.atOrAbove.canvasEl || !out.atOrAbove.canvasRadio) bad.push(`${out.atOrAbove.residues} residues (above the limit) did not open in Canvas`);
-  // v249: the switch is announced with what still needs Full or Block (10 s note)
+  // v249: the switch is announced (10 s note); v254: nothing needs Full or Block any more, the note names them as the DOM views
   if (!/Full or Block/.test(out.atOrAbove.note)) bad.push(`no limitation note after the switch (status: "${out.atOrAbove.note.slice(0, 80)}")`);
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
 });
@@ -3700,6 +3700,70 @@ check('Canvas mode: codon analysis draws stops, syn/nonsyn, the codon track, fra
   for (const [l, r] of Object.entries(scroll)) if (r.copies < 1 || !r.same || (r.moved[0] === 0 && r.moved[1] === 0)) bad.push(`scroll ${l}: ${JSON.stringify(r)}`);
   await tick('codonAnalysis', false); await settle();
   const out = { want, stopCols, sn, fsAt, tip, scroll };
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(out) : JSON.stringify(out) };
+});
+
+// Show 2D in the Canvas view (v254). Full/Block draw the 2D block mask as SVG rectangles over the
+// rows of each block (one per run of consecutive rows, dashed when the rows are scattered or the
+// block is local-only, a click on a typed block stacks its rows). Canvas returned early. Now the
+// overlay layer draws the same rectangles from the same mask, a click on a typed block stacks it,
+// hovering says so, opacity changes touch the overlay only, and a snapshot made in Canvas comes
+// back in Canvas.
+check('Canvas mode: Show 2D blocks drawn, clickable to stack a type, hover title; snapshots restore Canvas', async (page) => {
+  await loadSyntheticFasta(page, 60, 120);
+  await setMode(page, 'full');
+  await page.waitForTimeout(300);
+  const settle = () => page.evaluate(() => new Promise(r => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), 400)));
+  const mask = () => page.evaluate(() => {
+    state.blockMask = { blocks: [
+      { type: 'CONSERVATIVE', col_start: 10, col_end: 19, rows: [0, 1, 2], sourceRows: [0, 1, 2] },
+      { type: 'MOSAIC', col_start: 30, col_end: 34, rows: 'all' },
+      { type: 'DIVERGENT', col_start: 50, col_end: 55, rows: [5, 7], localOnly: true },
+    ], row_headers: state.seqs.map(q => q.header) };
+    renderBlockMaskOverlay();
+  });
+  await mask(); await settle();
+  const domRects = await page.evaluate(() => document.querySelectorAll('.block-mask-layer rect').length);
+  await setMode(page, 'canvas'); await settle();
+  await page.evaluate(() => { window.__stacked = []; const o = window.groupRowsByType; window.groupRowsByType = function (rows) { window.__stacked.push(rows.slice()); return o.apply(this, arguments); }; });
+  await mask(); await settle();
+  const g = await page.evaluate(() => { const m = _canvasState.metrics; const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { left: r.left, top: r.top, nameW: m.nameW, charW: m.charW, charH: m.charH, headerH: m.headerH, pitch: _canvasState.rowPitch, rects: (_canvasState.maskRects || []).length, full: _canvasState.stats.full }; });
+  const bad = [];
+  if (g.rects !== domRects || domRects !== 4) bad.push(`${g.rects} Canvas rectangles for ${domRects} DOM rectangles (4 expected)`);
+  const overlayAt = (col, row) => page.evaluate(({ col, row }) => { const o = document.getElementById('alignmentCanvasOverlay'), m = _canvasState.metrics, dpr = m.dpr || 1; const d = o.getContext('2d').getImageData(Math.round((m.nameW + (col + 0.5) * m.charW) * dpr), Math.round((m.headerH + (row + 0.5) * _canvasState.rowPitch) * dpr), 1, 1).data; return Array.from(d); }, { col, row });
+  const inBlock = await overlayAt(14, 1), outside = await overlayAt(14, 20), allRows = await overlayAt(32, 50);
+  const near = (px, hex) => { const want = [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)]; return px[3] > 40 && Math.abs(px[0] - want[0]) < 30 && Math.abs(px[1] - want[1]) < 30 && Math.abs(px[2] - want[2]) < 30; };
+  if (!near(inBlock, '#16a34a')) bad.push(`block 1 not drawn on the overlay: ${JSON.stringify(inBlock)}`);
+  if (outside[3] !== 0) bad.push(`overlay ink outside the blocks: ${JSON.stringify(outside)}`);
+  if (!near(allRows, '#f59e0b')) bad.push(`rows:'all' block not drawn down the alignment: ${JSON.stringify(allRows)}`);
+  // opacity change: overlay only, no content redraw
+  await page.evaluate(() => setBlockMaskOpacity(0.9)); await settle();
+  const after = await overlayAt(14, 1);
+  const full2 = await page.evaluate(() => _canvasState.stats.full);
+  if (!(after[3] > inBlock[3])) bad.push(`opacity 0.9 did not darken the block: ${inBlock[3]} -> ${after[3]}`);
+  if (full2 !== g.full) bad.push(`${full2 - g.full} content redraws for an opacity change`);
+  await page.evaluate(() => setBlockMaskOpacity(0.45)); await settle();
+  // real input: hover says what a click does, a click on the typed block stacks its rows
+  const pt = { x: g.left + g.nameW + 14.5 * g.charW, y: g.top + g.headerH + 1.5 * g.pitch };
+  await page.mouse.move(pt.x, pt.y); await page.waitForTimeout(400);
+  const tip = await page.evaluate(() => document.body.innerText.includes('Click to stack this type'));
+  if (!tip) bad.push('no stack tooltip over the typed block');
+  await page.mouse.click(pt.x, pt.y); await page.waitForTimeout(300);
+  const stacked = await page.evaluate(() => window.__stacked);
+  if (!(stacked.length === 1 && stacked[0].join(',') === '0,1,2')) bad.push(`click on the typed block stacked ${JSON.stringify(stacked)}`);
+  // a click on the rows:'all' block (no type) is an ordinary cell click, as in the DOM
+  await page.mouse.click(g.left + g.nameW + 32.5 * g.charW, g.top + g.headerH + 20.5 * g.pitch); await page.waitForTimeout(200);
+  const plain = await page.evaluate(() => ({ stacked: window.__stacked.length, pending: !!state.pendingNucStart }));
+  if (plain.stacked !== 1 || !plain.pending) bad.push(`click on an untyped block: ${JSON.stringify(plain)}`);
+  await page.evaluate(() => { state.pendingNucStart = null; clearBlockMask(); }); await settle();
+  const cleared = await overlayAt(14, 1);
+  if (cleared[3] !== 0) bad.push('overlay still shows a block after Clear');
+  // snapshots: a view saved in Canvas restores Canvas
+  await setMode(page, 'full'); await page.waitForTimeout(300);
+  await page.evaluate(() => _applySnapshotView({ mode: 'canvas' })); await page.waitForTimeout(600);
+  const restored = await page.evaluate(() => ({ canvas: document.getElementById('modeCanvas').checked, el: !!document.getElementById('alignmentCanvas') }));
+  if (!restored.canvas || !restored.el) bad.push('snapshot view mode canvas did not restore Canvas: ' + JSON.stringify(restored));
+  const out = { domRects, rects: g.rects, inBlock, allRows, after, tip, stacked, plain, restored };
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(out) : JSON.stringify(out) };
 });
 

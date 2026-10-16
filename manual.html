@@ -589,8 +589,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>
     Snapshots capture alignment data, zoom, conservation settings, colour scheme, selected
     rows/columns, search highlights, and custom colour assignments. They are stored as JSON
-    files. Only the Full and Block view modes are restored - a snapshot taken in Canvas or
-    Reads mode reopens in Full/Block.
+    files. The Full, Block and Canvas view modes are restored; a snapshot taken in Reads mode
+    reopens in Full/Block.
   </p>
   <ul>
     <li><strong>Save Preset</strong> (<kbd>Ctrl+Shift+S</kbd>) - saves the current view settings (shading
@@ -1159,7 +1159,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
     <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block.</td></tr>
     <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40–300 chars; <strong>Screen</strong> fits the block to the window width). Sequence names repeat per block.</td></tr>
-    <tr><td><strong>Canvas</strong></td><td>Alignments from 40,000 residues (e.g. 200 x 200 and up)</td><td>The default view from 40,000 residues (a 10-second note on load says what still needs Full or Block; either can still be chosen). Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name); Show 2D and the hidden columns of var-sites mode still need Full or Block. From about 500,000 residues, Full and Block draw a window rather than every cell.</td></tr>
+    <tr><td><strong>Canvas</strong></td><td>Alignments from 40,000 residues (e.g. 200 x 200 and up)</td><td>The default view from 40,000 residues (a 10-second note on load says so; Full or Block can still be chosen). Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name), and so do Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots. From about 500,000 residues, Full and Block draw a window rather than every cell.</td></tr>
     <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5). A <strong>Show bases</strong> checkbox next to the mode switch draws every base of each read instead of mismatches only.</td></tr>
   </table>
   <p>
@@ -1687,7 +1687,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <strong>Editing works in Full, Block and Canvas views.</strong> Reads view draws no per-residue
     cells for the tools to act on, so Edit Mode is unavailable there and says so. In Canvas
     (the default from 40,000 residues) the tools, typing, undo, rename and row drag behave as
-    in Full view; only Show 2D needs Full or Block.
+    in Full view, and so do Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots.
   </div>
 
   <h3 id="ed-move-slide">8.4 Move &amp; Slide Tools</h3>

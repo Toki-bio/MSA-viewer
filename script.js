@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v253';
+const BUILD_TAG = 'v254';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -6042,6 +6042,25 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
         }
 
+        // Show 2D: the block mask rectangles (DOM: .block-mask-layer SVG), kept for hit-testing
+        _canvasState.maskRects = state.blockMask ? _canvasBlockMaskRects(CHAR_W, rowPitch, nSeqs, posSlot) : null;
+        if (_canvasState.maskRects && _canvasState.maskRects.length) {
+            for (const r of _canvasState.maskRects) {
+                const x = NAME_W + r.x - ox, y = HEADER_H + r.y - oy;
+                if (x + r.w < 0 || x > w || y + r.h < 0 || y > h) continue;
+                octx.globalAlpha = r.op;
+                octx.fillStyle = r.fill;
+                octx.fillRect(x, y, Math.max(0.5, r.w), Math.max(1, r.h));
+                octx.globalAlpha = 0.95;
+                octx.strokeStyle = r.dashed && !r.localOnly ? '#c0392b' : r.fill;
+                octx.lineWidth = r.localOnly ? 2 : 1;
+                octx.setLineDash(r.localOnly ? [4, 3] : (r.dashed ? [3, 2] : []));
+                octx.strokeRect(x + 0.5, y + 0.5, Math.max(0.5, r.w) - 1, Math.max(1, r.h) - 1);
+            }
+            octx.setLineDash([]);
+            octx.globalAlpha = 1;
+        }
+
         // Highlight selected columns (semi-transparent vertical strips)
         if (state.selectedColumns.size > 0) {
             octx.fillStyle = 'rgba(25, 118, 210, 0.15)';
@@ -6588,6 +6607,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
         }
 
+        // Show 2D: a typed block's rectangle takes the click (DOM: the SVG rect's click handler)
+        if (!isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
+            const mr = _canvasBlockMaskHit(e.clientX, e.clientY);
+            if (mr) { e.preventDefault(); hideTooltip(); groupRowsByType(mr.typeRows); return; }
+        }
+
         const hit = _canvasHitTest(e.clientX, e.clientY);
         if (hit) {
             // Selection: mirror handleNucleotideSelectMouseDown's state mutations
@@ -6676,6 +6701,19 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             return;
         }
         if (_lastTooltipCell && _lastTooltipCell.annot != null) { _lastTooltipCell = null; hideTooltip(); }
+        // Show 2D: a typed block's rectangle shows its title (DOM: the SVG rect's title)
+        const maskHit = _canvasBlockMaskHit(e.clientX, e.clientY);
+        if (maskHit) {
+            if (_lastTooltipCell && _lastTooltipCell.mask === maskHit) return;
+            _lastTooltipCell = { row: -1, col: -1, mask: maskHit };
+            const target = _getCanvasTooltipTarget();
+            target.style.left = e.clientX + 'px';
+            target.style.top = (e.clientY + 10) + 'px';
+            showTooltipAt(maskHit.title, target);
+            canvas.style.cursor = 'pointer';
+            return;
+        }
+        if (_lastTooltipCell && _lastTooltipCell.mask) { _lastTooltipCell = null; hideTooltip(); }
         if (canvas.style.cursor === 'pointer') canvas.style.cursor = 'default';
 
         if (_canvasHoverCell) {
@@ -9443,8 +9481,8 @@ function renderAlignment(options = {}) {
         _lastModeRadioId = 'modeCanvas'; // bypasses onModeChange, so sync explicitly
         syncQuickModeSwitch();
         syncCodonModePanel(); // this bypasses onModeChange, so sync explicitly
-        const note = `Canvas view (${TOTAL_RESIDUES.toLocaleString()} residues): scrolling, editing, selections, Highlight diffs and Variable sites only work here; `
-            + `Show 2D needs Full or Block (mode switch at the top).`;
+        const note = `Canvas view (${TOTAL_RESIDUES.toLocaleString()} residues): everything works here as in Full view; `
+            + `Full or Block (mode switch at the top) give the DOM views, Block with wrapped rows.`;
         showMessage(note, 10000);
         _canvasSwitchNote = note;                       // survives the caller's own "File loaded" message
         _canvasSwitchNoteUntil = performance.now() + 5000;
@@ -9749,6 +9787,65 @@ function _dropColumnAnalysesAfterRealign() {
 // order (which mirrors MAFFT's similarity ordering). A low value means the
 // group crosscuts that ordering - real localized mosaic, or noise - and is
 // drawn with a dashed warning stroke rather than a clean rectangle.
+// The 2D block rectangles for the Canvas view, in content coordinates (CSS px from the top-left
+// of the alignment, names excluded), the same rectangles renderBlockMaskOverlay() builds for
+// the DOM: one per run of rows that are consecutive on screen, dashed when the rows are
+// scattered (contiguity < 0.6) or the block is local-only, the whole alignment for rows 'all'.
+function _canvasBlockMaskRects(charW, rowPitch, nSeqs, posSlot) {
+    const mask = state.blockMask;
+    if (!mask || !Array.isArray(mask.blocks) || !Array.isArray(mask.row_headers)) return [];
+    const headerToIdx = new Map();
+    for (let i = 0; i < state.seqs.length; i++) { const h = state.seqs[i].header; if (!headerToIdx.has(h)) headerToIdx.set(h, i); }
+    const rowVis = mask.row_headers.map(h => headerToIdx.has(h) ? headerToIdx.get(h) : -1);
+    const rects = [];
+    for (const mb of mask.blocks) {
+        // the slots of the block's shown columns (Variable sites only hides some)
+        let s0 = Infinity, s1 = -1;
+        for (let c = mb.col_start; c <= mb.col_end; c++) { const sc = posSlot(c); if (sc >= 0) { if (sc < s0) s0 = sc; if (sc > s1) s1 = sc; } }
+        if (s1 < 0) continue;
+        const x = s0 * charW, w = (s1 - s0 + 1) * charW;
+        const fill = BLOCKMASK_COLORS[mb.type] || '#999';
+        const typeRows = (Array.isArray(mb.sourceRows) && mb.sourceRows.length >= 2) ? mb.sourceRows
+            : (Array.isArray(mb.rows) && mb.rows.length >= 2 ? mb.rows : null);
+        let title = null;
+        if (typeRows) {
+            title = 'Click to stack this type (all members, including orphans). Undoable.';
+            const agr = mb.typeAgreement;
+            if (agr && agr.kind === 'inside') title = 'Stack inside ' + (agr.typeName || 'type') + '. ' + title;
+            else if (agr && agr.kind === 'supports') title = 'Supports ' + (agr.typeName || 'type') + '. ' + title;
+            else if (agr && agr.kind === 'discordant') title = 'Discordant with current types. ' + title;
+        }
+        const add = (y, h, op, dashed, localOnly) => rects.push({ x, y, w, h, fill, op: localOnly ? op * 0.35 : (dashed ? op * 0.7 : op), dashed: !!dashed, localOnly: !!localOnly, typeRows, title });
+        if (mb.rows === 'all') { add(0, nSeqs * rowPitch, _blockMaskOpacity * 0.8, false, false); continue; }
+        if (!Array.isArray(mb.rows)) continue;
+        const vis = [];
+        for (const k of mb.rows) { const si = rowVis[k]; if (si >= 0 && si < nSeqs) vis.push(si); }
+        if (!vis.length) continue;
+        vis.sort((a, b) => a - b);
+        const localOnly = !!mb.localOnly;
+        const groupDashed = !localOnly && _blockMaskGroupContiguity(vis) < 0.6;
+        let runStart = vis[0], prev = vis[0], runLen = 1;
+        const flush = (a, z, len) => add(a * rowPitch, (z - a + 1) * rowPitch, _blockMaskOpacity, groupDashed || (!localOnly && len === 1), localOnly);
+        for (let i = 1; i < vis.length; i++) {
+            if (vis[i] === prev + 1) { prev = vis[i]; runLen++; continue; }
+            flush(runStart, prev, runLen);
+            runStart = vis[i]; prev = vis[i]; runLen = 1;
+        }
+        flush(runStart, prev, runLen);
+    }
+    return rects;
+}
+// The typed block rectangle under a viewport point of the Canvas (for its click and tooltip)
+function _canvasBlockMaskHit(clientX, clientY) {
+    const rects = _canvasState.maskRects;
+    if (!rects || !rects.length || !_canvasState.canvas) return null;
+    const m = _canvasState.metrics, rect = _canvasState.canvas.getBoundingClientRect();
+    const x = clientX - rect.left - m.nameW + _canvasState.offsetX;
+    const y = clientY - rect.top - (m.headerH || m.charH) + _canvasState.offsetY;
+    for (let i = rects.length - 1; i >= 0; i--) { const r = rects[i]; if (r.typeRows && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return r; }
+    return null;
+}
+
 function _blockMaskGroupContiguity(rows) {
     if (!rows || rows.length < 2) return 1;
     const s = rows.slice().sort((a, b) => a - b);
@@ -9762,9 +9859,9 @@ function _blockMaskGroupContiguity(rows) {
 
 function renderBlockMaskOverlay() {
     document.querySelectorAll('.block-mask-layer').forEach(el => el.remove());
+    if (document.getElementById('modeCanvas')?.checked) { _canvasState.scheduleOverlay?.(); return; }   // Canvas: the overlay layer draws (or clears) it
     const mask = state.blockMask;
     if (!mask || !Array.isArray(mask.blocks) || !Array.isArray(mask.row_headers)) return;
-    if (document.getElementById('modeCanvas')?.checked) return;   // Canvas: unsupported
     if (state._needsWindowedDom) return;                          // windowed DOM: unsupported yet
     const container = document.getElementById('alignmentContainer');
     if (!container) return;
@@ -13859,7 +13956,7 @@ function savePreset() {
         light: el('lightSlider').value,
         zoom: el('zoomSlider').value,
         zoomFormat: 'logSlider',
-        mode: el('modeBlocks').checked ? 'blocks' : 'single',
+        mode: el('modeCanvas')?.checked ? 'canvas' : (el('modeBlocks').checked ? 'blocks' : 'single'),
         blockSize: el('blockSizeSlider').value,
         nameLen: el('nameLengthSlider').value,
         consensusThreshold: el('consensusThreshold').value,
@@ -14015,7 +14112,7 @@ function _buildSnapshotPayload() {
             lightColor: el('lightColorPicker')?.value,
             zoom: el('zoomSlider')?.value,
             zoomFormat: 'logSlider',
-            mode: el('modeBlocks')?.checked ? 'blocks' : 'single',
+            mode: el('modeCanvas')?.checked ? 'canvas' : (el('modeBlocks')?.checked ? 'blocks' : 'single'),
             blockSize: el('blockSizeSlider')?.value,
             nameLen: el('nameLengthSlider')?.value,
             consensusThreshold: el('consensusThreshold')?.value,
@@ -14096,9 +14193,10 @@ function _applySnapshotView(view) {
         if (inputEl) inputEl.value = clamped;
     });
 
-    if (view.mode === 'single' || view.mode === 'blocks') {
+    if (view.mode === 'single' || view.mode === 'blocks' || view.mode === 'canvas') {
         el('modeBlocks').checked = view.mode === 'blocks';
         el('modeSingle').checked = view.mode === 'single';
+        if (el('modeCanvas')) el('modeCanvas').checked = view.mode === 'canvas';
         onModeChange();
     }
 
