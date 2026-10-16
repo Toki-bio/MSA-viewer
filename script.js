@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v244';
+const BUILD_TAG = 'v245';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -5439,7 +5439,7 @@ function _canvasCellStyler(scheme, pal, config) {
 }
 
 function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
-                                  enableBlack, enableDark, enableLight, nameLen, stickyNames) {
+                                  enableBlack, enableDark, enableLight, nameLen, stickyNames, consInfo = null) {
     alignmentContainer.innerHTML = '';
     alignmentContainer.style.overflow = 'hidden';
     alignmentContainer.style.position = 'relative';
@@ -5483,7 +5483,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // row down, and the hit tests read it from the metrics.
     const TRACK_H = _annotTrackHeightPx(CHAR_H);
     m.trackH = TRACK_H;
-    m.headerH = CHAR_H + TRACK_H;
+    // Consensus row: letters CHAR_H high plus the DOM row's 1 px rule and 4 px margin
+    // (.consensus-top / .consensus-bottom). At the top it is part of the header, so hit
+    // tests and scroll anchors (m.headerH) see the rows start below it.
+    const CONS_H = consInfo ? CHAR_H + 5 : 0;
+    const consTop = !!consInfo && consInfo.position !== 'bottom';
+    _canvasState.consensus = consInfo ? { len, values: consInfo.values, position: consInfo.position,
+        threshold: consInfo.threshold, caseCache: null } : null;
+    m.headerH = CHAR_H + TRACK_H + (consTop ? CONS_H : 0);
     // Glyph cache: pre-rendered (char, bg-color, fg-color) -> off-screen canvas
     // Turns fillRect()+fillText() into a single drawImage() per cell after warm-up
     const _glyphCache = new Map();
@@ -5513,12 +5520,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const nSeqs = state.seqs.length;
     _canvasState.seqsLen = nSeqs;
     const SCALE_H = CHAR_H; // one row at top, matching Full/Block .scale-ruler-line
-    const HEADER_H = TRACK_H + SCALE_H; // annotation track (if any) + ruler: where the rows start
+    const HEADER_H = TRACK_H + SCALE_H + (consTop ? CONS_H : 0); // track (if any) + ruler + consensus (if on top): where the rows start
     let _lastOffX = -1, _lastOffY = -1, _dirty = false;
     function _markDirty() { _dirty = true; }
 
     const totalContentW = NAME_W + len * CHAR_W + 4;
-    const totalContentH = HEADER_H +nSeqs * rowPitch + 4;
+    const totalContentH = HEADER_H +nSeqs * rowPitch + (consInfo && !consTop ? CONS_H : 0) + 4;
     // Exposed so the persistent horizontal/vertical scrollbars (real DOM
     // elements, since Canvas mode's own content isn't natively scrollable)
     // can size their thumbs and mirror pan position.
@@ -5868,6 +5875,54 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
             ctx.textBaseline = 'top';
             ctx.font = fontStr;
+        }
+
+        // Consensus row (top: between ruler and rows; bottom: after the last row), scrolling
+        // with the content like the DOM row. Bold #555 letters, no background; upper case
+        // where the column's majority reaches the consensus threshold, lower case otherwise
+        // (consensusDisplayBase); trim preview colours as in the DOM row.
+        if (consInfo) {
+            const cons = _canvasState.consensus;
+            const consY = consTop ? TRACK_H + SCALE_H - oy : HEADER_H + nSeqs * rowPitch - oy;
+            const textY = consTop ? consY : consY + 5;
+            if (consY + CONS_H > cy0 && consY < cy1) {
+                ctx.fillStyle = '#ccc';
+                ctx.fillRect(stickyNames ? NAME_W : Math.max(0, NAME_W - ox), consTop ? consY + CHAR_H : consY, w, 1);
+                if (cons.values) {
+                    if (!cons.caseCache) cons.caseCache = new Uint8Array(len);   // 0 unknown, 1 upper, 2 lower
+                    const trim = state.trimBoundaries;
+                    const soft = !trim && state.softTrimBoundaries;
+                    for (let p = firstCol; p <= lastCol; p++) {
+                        let ch = cons.values[p] || '-';
+                        if (ch !== '-' && ch !== '.') {
+                            if (!cons.caseCache[p]) cons.caseCache[p] = _canvasConsensusUpper(ch, p, cons.threshold) ? 1 : 2;
+                            ch = cons.caseCache[p] === 1 ? ch.toUpperCase() : ch.toLowerCase();
+                        }
+                        const x = NAME_W + p * CHAR_W - ox;
+                        let bg = null, fg = 'rgba(85,85,85,0.9)';
+                        if (trim && p <= trim.leftTrimEnd) { bg = '#ff6b6b'; fg = '#fff'; }
+                        else if (trim && p >= trim.rightTrimStart) { bg = '#4ecdc4'; fg = '#fff'; }
+                        else if (soft && (p <= soft.leftTrimEnd || p >= soft.rightTrimStart)) { bg = '#f0f0f0'; fg = 'rgba(85,85,85,0.35)'; }
+                        ctx.drawImage(_makeGlyph(ch, bg, fg, 'b'), x, textY, CHAR_W, CHAR_H);
+                    }
+                }
+                if (withNames) {
+                    ctx.font = nameFontStr;
+                    ctx.textBaseline = 'alphabetic';
+                    const nx = stickyNames ? 0 : -ox;
+                    if (stickyNames || ox < NAME_W) {
+                        ctx.save();
+                        ctx.beginPath(); ctx.rect(stickyNames ? 0 : nx, textY, NAME_W, CHAR_H); ctx.clip();
+                        ctx.fillStyle = '#fff';
+                        ctx.fillRect(nx, textY, NAME_W, CHAR_H);
+                        ctx.fillStyle = '#555';
+                        ctx.fillText('Consensus', nx + 4, textY + ((_canvasState.metrics && _canvasState.metrics.ascent) || (CHAR_H - 3)));
+                        ctx.restore();
+                    }
+                    ctx.textBaseline = 'top';
+                    ctx.font = fontStr;
+                }
+            }
         }
 
         // Highlight selected columns (semi-transparent vertical strips)
@@ -8874,24 +8929,16 @@ function renderAlignment(options = {}) {
     // Edit mode keeps it at any size: the cache is what lets a GeneDoc drag repaint one row
     // instead of re-rendering the whole alignment on every column step.
     state._enableSpanCache = (TOTAL_RESIDUES <= 80000) || !!state.editModeActive;
-    // Was 150,000 (~100 seq x 1500 col) - a holdover from before DOM mode had
-    // windowing at all, when unwindowed DOM genuinely froze well below that
-    // size. Measured directly after the windowing fixes: DOM mode's windowed
-    // scroll-refresh cost is now flat and comparable to Canvas mode's own
-    // frame cost across the entire tested range (6M to 100M residues, ~50-65ms
-    // either way - see the fix that made addConsensusLine respect column
-    // windowing instead of building a span per column across the whole
-    // alignment width on every scroll). Aligned to ALIGN_CRAZY_VOLUME - the
-    // same threshold that already gates windowing and the "Large alignment"
-    // warning dialog - so alignments below it keep using plain DOM mode
-    // exactly as before, and at/above it the user gets an informed choice via
-    // that dialog instead of being silently switched to read-only Canvas mode
-    // at a size where DOM editing was already going to work fine.
-    const CANVAS_AUTO_THRESHOLD = ALIGN_CRAZY_VOLUME;
+    // History: 150,000 before DOM windowing existed, then ALIGN_CRAZY_VOLUME (5M) once the
+    // windowed DOM scroll refresh was as cheap as a Canvas frame (~50-65 ms either way, 6M to
+    // 100M residues). Since v245 it is ALIGN_CANVAS_DEFAULT_RESIDUES: Canvas scrolls by copying
+    // the frame (v244, ~8 ms) while the DOM view at 100k-500k residues lays out and repaints
+    // on every scroll step; see the comment at that constant for the measurements.
+    const CANVAS_AUTO_THRESHOLD = ALIGN_CANVAS_DEFAULT_RESIDUES;
     let _renderStartTime = performance.now();
     const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
 
-    if (!userWantsCanvas && !_userDismissedAutoCanvas && TOTAL_RESIDUES > CANVAS_AUTO_THRESHOLD) {
+    if (!userWantsCanvas && !_userDismissedAutoCanvas && TOTAL_RESIDUES >= CANVAS_AUTO_THRESHOLD) {
         const canvasRadio = document.getElementById('modeCanvas');
         if (canvasRadio) canvasRadio.checked = true;
         _lastModeRadioId = 'modeCanvas'; // bypasses onModeChange, so sync explicitly
@@ -8936,16 +8983,29 @@ function renderAlignment(options = {}) {
     _prepareAnnotLayout(len);
 
     // -- Canvas fast path (UGENE-style: first paint costs only the visible region) --
-    // Canvas shows no consensus row, so consensus is skipped entirely here.
     // Conservation shading is deferred: draw an unshaded frame immediately, then
     // compute conservation off the critical path (idle, time-sliced) and repaint shaded.
+    // The consensus row (v245) is drawn like the DOM one: top or bottom of the alignment,
+    // scrolling with it. Up to 2M residues it is computed here (a few ms at 600 x 600);
+    // above that the band shows empty until the time-sliced computation below repaints it.
     if (useCanvas) {
         _updateCodonAnalysisState(len);
         const cachedConservation = (state.conservationDataCache?.len === len
             && state.conservationDataCache?.shadeMode === shadeMode)
             ? state.conservationDataCache.data : null;
+        let consInfo = null;
+        if (showConsensus) {
+            let values = state.consensusCache?.len === len ? state.consensusCache.values : null;
+            if (!values && TOTAL_RESIDUES <= 2_000_000) {
+                const consStr = computeConsensusForSequences(state.seqs.map(s => s.seq));
+                values = consStr.split('');
+                state.consensusCache = { len, values: values.slice() };
+                state.consensusSeq = consStr.replace(/-/g, '');
+            }
+            consInfo = { values, position: _checkedRadioValue('consensusPosition', 'top'), threshold };
+        }
         _renderCanvasAlignment(len, cachedConservation || [], shadeMode, blackThresh, darkThresh, lightThresh,
-            enableBlack, enableDark, enableLight, nameLen, stickyNames);
+            enableBlack, enableDark, enableLight, nameLen, stickyNames, consInfo);
 
         // Invalidate any still-running chunked jobs from a previous load/render
         // so they don't write stale results (or fight over the main thread)
@@ -8972,9 +9032,8 @@ function renderAlignment(options = {}) {
             }
         }
 
-        // Consensus is not displayed in Canvas mode. Compute it lazily (time-sliced)
-        // so features that consume it (Copy Consensus, etc.) still work without
-        // blocking paint.
+        // Consensus of a very large alignment: computed time-sliced so the first paint is
+        // not delayed, then the row is repainted (also feeds Copy Consensus etc.).
         if (showConsensus && state.consensusCache?.len !== len) {
             const computeConsensusIdle = () => {
                 if (myToken.cancelled) return;
@@ -8985,6 +9044,11 @@ function renderAlignment(options = {}) {
                     const cons = consStr.split('');
                     state.consensusCache = { len, values: cons.slice() };
                     state.consensusSeq = consStr.replace(/-/g, '');
+                    if (_canvasState.consensus && _canvasState.consensus.len === len) {
+                        _canvasState.consensus.values = cons;
+                        _canvasState.consensus.caseCache = null;
+                        _canvasState.scheduleDraw?.();
+                    }
                 }, myToken);
             };
             if (typeof requestIdleCallback === 'function') {
@@ -10533,6 +10597,23 @@ function consensusDisplayBase(base, pos, threshold) {
     return (maxCount / col.length) >= threshold ? baseUp : baseUp.toLowerCase();
 }
 
+// consensusDisplayBase's rule for Canvas mode: is the column's majority base at or above the
+// consensus threshold (fraction of ALL rows, gaps included, as in the DOM row)?
+function _canvasConsensusUpper(base, pos, threshold) {
+    const seqs = state.seqs, n = seqs.length;
+    const counts = Object.create(null);
+    let max = 0, nonGap = 0;
+    for (let i = 0; i < n; i++) {
+        const c = (seqs[i].seq[pos] || '-').toUpperCase();
+        if (c === '-' || c === '.') continue;
+        nonGap++;
+        const k = (counts[c] = (counts[c] || 0) + 1);
+        if (k > max) max = k;
+    }
+    if (nonGap === 0) return true;
+    return max / n >= threshold;
+}
+
 function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false, position = 'bottom', options = {}) {
     const consLine = document.createElement('div');
     consLine.className = `seq-line consensus-line consensus-${position}`;
@@ -10897,6 +10978,13 @@ const ALIGN_CRAZY_VOLUME = 5_000_000;
 // also the Show 2D block-mask overlay, which the windowed display does not
 // support yet (renderBlockMaskOverlay), so it stays at 500,000 for now.
 const ALIGN_WINDOWED_DOM_THRESHOLD = 500_000;
+// At or above this many residues a freshly loaded alignment opens in Canvas mode (the user
+// can still pick Full/Block). Measured 2026-10-16 at 600 x 600 (360k residues, Radeon 780M):
+// the full-DOM view scrolls at 110-160 ms a frame because every row entering the viewport is
+// laid out and the whole layer repainted (content-visibility: auto), and turning that rule
+// off makes mode switches and Highlight diffs 2-3x slower (5-10 s) while Canvas scrolls at
+// 8-9 ms a frame. Below this size the DOM view is fine and keeps editing and the overlays.
+const ALIGN_CANVAS_DEFAULT_RESIDUES = 100_000;
 
 /** Single-pass FASTA scan: counts sequences and lengths without building seq objects. */
 function scanFastaIndex(text) {

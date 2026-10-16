@@ -783,8 +783,10 @@ check('Annotation track: BED features map through gaps, stack in lanes, draw in 
     if (sel.join(',') !== '0,1,2') return { pass: false, detail: `selected columns after click: ${sel}` };
     // Canvas: the track height is in the metrics and shifts the rows down
     await setMode(page, 'canvas');
-    const c = await page.evaluate(() => ({ trackH: _canvasState.metrics.trackH, charH: _canvasState.metrics.charH, headerH: _canvasState.metrics.headerH }));
-    if (c.trackH !== 2 * c.charH || c.headerH !== 3 * c.charH) return { pass: false, detail: `canvas metrics: ${JSON.stringify(c)}` };
+    // header = track (2 rows) + ruler (1 row) + the consensus row when it is shown at the top (v245: letters + 5 px rule/margin)
+    const c = await page.evaluate(() => ({ trackH: _canvasState.metrics.trackH, charH: _canvasState.metrics.charH, headerH: _canvasState.metrics.headerH,
+      consTop: document.getElementById('showConsensus').checked && document.querySelector('input[name="consensusPosition"]:checked')?.value !== 'bottom' }));
+    if (c.trackH !== 2 * c.charH || c.headerH !== 3 * c.charH + (c.consTop ? c.charH + 5 : 0)) return { pass: false, detail: `canvas metrics: ${JSON.stringify(c)}` };
     await setMode(page, 'full');
     // Hide, then clear
     await page.evaluate(() => { const cb = document.getElementById('showAnnotation'); cb.checked = false; cb.dispatchEvent(new Event('change')); });
@@ -935,6 +937,7 @@ check('Codon analysis by gene, windowed Block mode: blocks without CDS have no t
     let fasta = `>NC_069019.1\n${gb.seq}\n`;
     for (let i = 1; i < 85; i++) fasta += `>copy${i}\n${gb.seq}\n`;
     await loadFasta(page, fasta);
+    await setMode(page, 'block');   // 1.4M residues open in Canvas since v245; this check is about the windowed Block view
     const r = await page.evaluate(async (bed) => {
         const wait = ms => new Promise(res => setTimeout(res, ms));
         setAnnotation(bed, 'NC_069019.bed');

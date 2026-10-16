@@ -179,26 +179,30 @@ check('column selection highlights only currently-visible rows after scroll', as
   return { pass: true };
 });
 
-check('Canvas auto-switch threshold matches ALIGN_CRAZY_VOLUME (v179 regression)', async (page) => {
-  // CANVAS_AUTO_THRESHOLD is intentionally local to renderAlignment(), not a
-  // global - can't be read directly from page.evaluate's global context, so
-  // test the actual BEHAVIOR it controls instead: an alignment just below
-  // ALIGN_CRAZY_VOLUME should default to a DOM mode (has .seq-line rows) on
-  // load, not auto-switch to Canvas.
-  const crazyVolume = await page.evaluate(() => typeof ALIGN_CRAZY_VOLUME !== 'undefined' ? ALIGN_CRAZY_VOLUME : null);
-  if (crazyVolume === null) return { pass: false, detail: 'could not read ALIGN_CRAZY_VOLUME from page' };
-  // Pick a size just under the threshold (small enough to load fast).
-  const nCol = 4000;
-  const nSeq = Math.max(1, Math.floor((crazyVolume * 0.9) / nCol));
-  await loadSyntheticFasta(page, nSeq, nCol);
-  const info = await page.evaluate(() => ({
-    canvasEl: !!document.querySelector('#alignmentContainer canvas'),
-    domRows: document.querySelectorAll('.seq-line[data-seq-index]').length,
-  }));
-  if (info.canvasEl && info.domRows === 0) {
-    return { pass: false, detail: `a ${nSeq * nCol}-residue alignment (90% of ALIGN_CRAZY_VOLUME=${crazyVolume}) auto-switched to Canvas - threshold looks too low` };
+check('Default view by size: below ALIGN_CANVAS_DEFAULT_RESIDUES a DOM mode, at/above it Canvas (v179, v245)', async (page) => {
+  // v179: the auto-switch threshold was once so low that ordinary alignments opened read-only in
+  // Canvas - the small case guards against that. v245 (2026-10-16): at or above
+  // ALIGN_CANVAS_DEFAULT_RESIDUES (100k) a loaded alignment opens in Canvas, because the DOM
+  // view at 100k-500k residues laid out and repainted on every scroll step (110-160 ms frames
+  // at 600 x 600) while Canvas scrolls by copying the frame (~8 ms). CANVAS_AUTO_THRESHOLD is
+  // local to renderAlignment(), so the behaviour is tested, not the constant.
+  const lim = await page.evaluate(() => typeof ALIGN_CANVAS_DEFAULT_RESIDUES !== 'undefined' ? ALIGN_CANVAS_DEFAULT_RESIDUES : null);
+  if (lim === null) return { pass: false, detail: 'could not read ALIGN_CANVAS_DEFAULT_RESIDUES from page' };
+  const nCol = 500;
+  const out = {};
+  for (const [label, nSeq] of [['below', Math.floor((lim * 0.9) / nCol)], ['atOrAbove', Math.ceil((lim * 1.1) / nCol)]]) {
+    await loadSyntheticFasta(page, nSeq, nCol);
+    out[label] = await page.evaluate(() => ({
+      residues: state.seqs.length * state.seqs[0].seq.length,
+      canvasEl: !!document.querySelector('#alignmentContainer canvas'),
+      domRows: document.querySelectorAll('.seq-line[data-seq-index]').length,
+      canvasRadio: document.getElementById('modeCanvas').checked,
+    }));
   }
-  return { pass: true, detail: `${nSeq * nCol} residues stayed in DOM mode as expected` };
+  const bad = [];
+  if (out.below.canvasEl || out.below.domRows === 0) bad.push(`${out.below.residues} residues (below the limit) did not open in a DOM mode`);
+  if (!out.atOrAbove.canvasEl || !out.atOrAbove.canvasRadio) bad.push(`${out.atOrAbove.residues} residues (above the limit) did not open in Canvas`);
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
 });
 
 check('recent-files history: max-count setting survives a real page reload', async (page) => {
@@ -1400,6 +1404,9 @@ check('Selection speed: column click and 150 rows on 300k spans', async (page) =
   await page.setInputFiles('#fileInput', { name: 'big.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
   await page.waitForFunction(() => state.seqs && state.seqs.length === 420, null, { timeout: 60000 });
   await page.waitForTimeout(3000);
+  // 294k residues open in Canvas since v245; this check is about the DOM view, so choose Full.
+  await setMode(page, 'full');
+  await page.waitForTimeout(1500);
   const r = await page.evaluate(async () => {
     const frames = () => new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
     const time = (fn) => { const t0 = performance.now(); fn(); void document.body.offsetHeight; return Math.round(performance.now() - t0); };
@@ -1477,6 +1484,9 @@ check('Slow redraw: notice shown before and hidden after; none for small files',
   await page.setInputFiles('#fileInput', { name: 'big.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
   await page.waitForFunction(() => state.seqs && state.seqs.length === 420, null, { timeout: 60000 });
   await page.waitForTimeout(3000);
+  // 294k residues open in Canvas since v245; this check is about the DOM view, so choose Full.
+  await setMode(page, 'full');
+  await page.waitForTimeout(1500);
   await page.evaluate(() => { window.__busy = []; });
   const big = await toggle();
   const ok = small.log.length === 0 && big.log.length === 2 && /^show:Redrawing/.test(big.log[0]) && big.log[1] === 'hide' && big.hiddenNow;
@@ -2452,19 +2462,20 @@ check('Overlapping marks all stay visible, in any order, in DOM and Canvas (conf
     out.colSelOverSnp = [/gradient/.test(c20.backgroundImage), c20.backgroundColor];
     out.rowSelTint = /gradient/.test(r3.backgroundImage);
     out.moved = left().filter((v, i) => Math.abs(v - x0[i]) > 0).length;
-    // Canvas shows the TSD colour and the name colour
+    // Canvas shows the TSD colour and the name colour. Rows start at m.headerH (ruler, annotation
+    // track and, since v245, the consensus row when it is at the top), not at one ruler row.
     document.getElementById('modeCanvas').checked = true; onModeChange();
     await new Promise(r => setTimeout(r, 500));
     const c = document.getElementById('alignmentCanvas'), m = _canvasState.metrics, k = devicePixelRatio, g = c.getContext('2d');
     const px = (xx, yy) => Array.from(g.getImageData(Math.round(xx * k), Math.round(yy * k), 1, 1).data).slice(0, 3).join(',');
     // the most common colour in the cell is its background (a single pixel can hit the glyph)
     const cellBg = (col, row) => {
-      const d = g.getImageData(Math.round((m.nameW + col * m.charW) * k), Math.round((m.charH + row * _canvasState.rowPitch) * k), Math.round(m.charW * k), Math.round(m.charH * k)).data;
+      const d = g.getImageData(Math.round((m.nameW + col * m.charW) * k), Math.round((m.headerH + row * _canvasState.rowPitch) * k), Math.round(m.charW * k), Math.round(m.charH * k)).data;
       const n = {}; for (let i = 0; i < d.length; i += 4) { const key = d[i] + ',' + d[i + 1] + ',' + d[i + 2]; n[key] = (n[key] || 0) + 1; }
       return Object.entries(n).sort((a, b) => b[1] - a[1])[0][0];
     };
     out.canvasTsd = cellBg(5, 2);
-    out.canvasName = px(20, m.charH + 1 * _canvasState.rowPitch + 2);
+    out.canvasName = px(20, m.headerH + 1 * _canvasState.rowPitch + 2);
     return out;
   });
   const ok = r.nameAB === r.nameBA && r.nameBA === r.nameRedraw && /255, 136, 0/.test(r.nameAB) && /inset/.test(r.nameAB)
@@ -3063,6 +3074,46 @@ check('Canvas mode: wheel scroll copies the frame and draws only the exposed str
   }
   const summary = Object.fromEntries(Object.entries(out).map(([m, res]) => [m, Object.fromEntries(Object.entries(res).map(([l, r]) => [l, `${r.blits}c/${r.fulls}f ${med(r.blitMs).toFixed(1)}/${med(r.fullMs).toFixed(1)}ms same=${r.same}`]))]));
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(summary) };
+});
+
+// Canvas mode draws the consensus row (v245). Before, Canvas showed no consensus at all, which
+// is why it could not be the default view. The row must show the same string the DOM view
+// computes, at the top or the bottom as chosen, and the data rows must still hit-test to the
+// right sequence below it (the band is part of the header geometry).
+check('Canvas mode: consensus row drawn at top or bottom with the DOM consensus string; rows hit-test below it', async (page) => {
+  await loadFasta(page, makeFasta(40, 300));
+  const out = {};
+  for (const position of ['top', 'bottom']) {
+    await page.evaluate((pos) => { const el = document.querySelector(`input[name="consensusPosition"][value="${pos}"]`); el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }, position);
+    await page.waitForTimeout(300);
+    await setMode(page, 'full');
+    const domCons = await page.evaluate(() => Array.from(document.querySelectorAll('.consensus-line .seq-data > span[data-pos]')).map(sp => sp.textContent).join(''));
+    await setMode(page, 'canvas');
+    await page.waitForTimeout(300);
+    const r = await page.evaluate((pos) => {
+      const c = document.getElementById('alignmentCanvas'), m = _canvasState.metrics, cons = _canvasState.consensus;
+      const rect = c.getBoundingClientRect();
+      // the band: top -> right under the ruler; bottom -> after the last row
+      const bandY = pos === 'top' ? m.trackH + m.charH : m.headerH + state.seqs.length * _canvasState.rowPitch + 5;
+      const g = c.getContext('2d'), dpr = devicePixelRatio;
+      const band = g.getImageData(Math.round((m.nameW + 2) * dpr), Math.round(bandY * dpr), Math.round(40 * m.charW * dpr), Math.round(m.charH * dpr)).data;
+      let ink = 0; for (let i = 3; i < band.length; i += 4) if (band[i] > 0) ink++;
+      // what the DOM view shows: consensus string with the same case rule
+      const shown = cons && cons.values ? cons.values.map((ch, p) => (ch === '-' || ch === '.') ? ch : (_canvasConsensusUpper(ch, p, cons.threshold) ? ch.toUpperCase() : ch.toLowerCase())).join('') : null;
+      const hit0 = _canvasHitTest(rect.left + m.nameW + m.charW * 1.5, rect.top + m.headerH + _canvasState.rowPitch * 0.5);
+      const hitBand = _canvasHitTest(rect.left + m.nameW + m.charW * 1.5, rect.top + bandY + m.charH * 0.5);
+      return { shown, ink, hit0, hitBand, position: cons && cons.position, bandY };
+    }, position);
+    out[position] = { ...r, domCons, same: r.shown === domCons };
+  }
+  const bad = [];
+  for (const [pos, r] of Object.entries(out)) {
+    if (!r.same) bad.push(`${pos}: canvas consensus "${(r.shown || '').slice(0, 30)}..." differs from DOM "${r.domCons.slice(0, 30)}..."`);
+    if (r.ink < 50) bad.push(`${pos}: no ink in the consensus band (${r.ink} px)`);
+    if (!r.hit0 || r.hit0.row !== 0 || r.hit0.col !== 1) bad.push(`${pos}: first data row hit-tests to ${JSON.stringify(r.hit0)}, expected row 0 col 1`);
+    if (r.hitBand !== null) bad.push(`${pos}: the consensus band hit-tests to a sequence row ${JSON.stringify(r.hitBand)}`);
+  }
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(Object.fromEntries(Object.entries(out).map(([k, r]) => [k, { ink: r.ink, hit0: r.hit0, same: r.same }]))) };
 });
 
 async function main() {

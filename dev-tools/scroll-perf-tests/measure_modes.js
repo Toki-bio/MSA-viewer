@@ -42,6 +42,7 @@ const q = (a, p) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x
       return performance.now() - t0;
     }, mode);
     await waitFor(page, (m) => m === 'canvas' ? document.getElementById('alignmentCanvas') : document.querySelector('.block-block'), mode, 120000);
+    if (process.env.INJECT_CSS) { await page.evaluate(css => { const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st); }, process.env.INJECT_CSS); console.log('injected:', process.env.INJECT_CSS); await page.waitForTimeout(3000); }
     await page.waitForTimeout(1200);
     const info = await page.evaluate(() => { const c = document.getElementById('alignmentContainer'); return { spans: c.querySelectorAll('.seq-data > *').length, rows: c.querySelectorAll('.seq-line').length, scrollW: c.scrollWidth, scrollH: c.scrollHeight, cw: c.clientWidth, ch: c.clientHeight }; });
     // frame recorder
