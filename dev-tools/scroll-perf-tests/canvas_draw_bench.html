@@ -1,0 +1,51 @@
+<!doctype html><meta charset=utf-8><canvas id=c></canvas><pre id=o></pre>
+<script>
+// Micro-benchmark: ways to paint a viewport of cols x rows cells (letter on coloured bg), 60 frames each, scrolling 8 rows per frame.
+const CW = 8, CH = 15, FONT = '13px "Courier New", monospace';
+const cols = Math.floor(1580 / CW), rows = Math.floor(820 / CH);
+const canvas = document.getElementById('c'); canvas.width = cols * CW; canvas.height = rows * CH;
+const ctx = canvas.getContext('2d', { alpha: false });
+const letters = 'ACGT-', bgs = { A: '#64f73f', C: '#ffb340', G: '#eb413c', T: '#3c88ee', '-': '#ffffff' };
+const N = 1200, L = 1200; const data = new Uint8Array(N * L); for (let i = 0; i < data.length; i++) data[i] = Math.random() < 0.3 ? 4 : (Math.random() * 4) | 0;
+const cell = (r, c) => letters[data[(r % N) * L + (c % L)]];
+function frames(name, fn, nf = 60) { const t = []; let off = 0; for (let i = 0; i < nf; i++) { const t0 = performance.now(); fn(off, i); t.push(performance.now() - t0); off += 8; } t.sort((a, b) => a - b); return `${name.padEnd(34)} p50 ${t[30].toFixed(2).padStart(6)} ms  p95 ${t[57].toFixed(2).padStart(6)} ms  max ${t[59].toFixed(2).padStart(6)} ms`; }
+// A: fillRect + fillText per cell
+function A(off) { ctx.font = FONT; ctx.textBaseline = 'top'; for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const ch = cell(r + off, c); ctx.fillStyle = bgs[ch]; ctx.fillRect(c * CW, r * CH, CW, CH); ctx.fillStyle = '#000'; ctx.fillText(ch, c * CW, r * CH); } }
+// A2: rects batched by colour, then all text in one pass
+function A2(off) { ctx.font = FONT; ctx.textBaseline = 'top'; for (const k of letters) { ctx.fillStyle = bgs[k]; for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (cell(r + off, c) === k) ctx.fillRect(c * CW, r * CH, CW, CH); } ctx.fillStyle = '#000'; for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const ch = cell(r + off, c); if (ch !== '-') ctx.fillText(ch, c * CW, r * CH); } }
+// B: per-glyph small canvases (ViewAlign today), Map lookup with string key
+const gmap = new Map(); function glyphCanvas(ch) { const k = ch + '|' + bgs[ch] + '|#000|1|'; let g = gmap.get(k); if (!g) { g = document.createElement('canvas'); g.width = CW; g.height = CH; const c2 = g.getContext('2d'); c2.fillStyle = bgs[ch]; c2.fillRect(0, 0, CW, CH); c2.font = FONT; c2.textBaseline = 'top'; c2.fillStyle = '#000'; c2.fillText(ch, 0, 0); gmap.set(k, g); } return g; }
+function B(off) { for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) ctx.drawImage(glyphCanvas(cell(r + off, c)), c * CW, r * CH, CW, CH); }
+// C: one atlas canvas, glyph index -> x offset, 9-arg drawImage
+const atlas = document.createElement('canvas'); atlas.width = CW * 5; atlas.height = CH; { const a = atlas.getContext('2d'); a.font = FONT; a.textBaseline = 'top'; for (let i = 0; i < 5; i++) { a.fillStyle = bgs[letters[i]]; a.fillRect(i * CW, 0, CW, CH); a.fillStyle = '#000'; a.fillText(letters[i], i * CW, 0); } }
+function C(off) { for (let r = 0; r < rows; r++) { const base = ((r + off) % N) * L; const y = r * CH; for (let c = 0; c < cols; c++) ctx.drawImage(atlas, data[base + c] * CW, 0, CW, CH, c * CW, y, CW, CH); } }
+// C2: atlas as ImageBitmap
+let atlasBmp = null;
+function C2(off) { for (let r = 0; r < rows; r++) { const base = ((r + off) % N) * L; const y = r * CH; for (let c = 0; c < cols; c++) ctx.drawImage(atlasBmp, data[base + c] * CW, 0, CW, CH, c * CW, y, CW, CH); } }
+// D: blit previous frame up by 8 rows, draw only the 8 exposed rows from the atlas
+function D(off, i) { if (i === 0) { C(off); return; } const dy = 8 * CH; ctx.drawImage(canvas, 0, dy, canvas.width, canvas.height - dy, 0, 0, canvas.width, canvas.height - dy); for (let r = rows - 8; r < rows; r++) { const base = ((r + off) % N) * L; const y = r * CH; for (let c = 0; c < cols; c++) ctx.drawImage(atlas, data[base + c] * CW, 0, CW, CH, c * CW, y, CW, CH); } }
+// E: rects only, batched by colour (zoomed-out look, no text)
+function E(off) { for (let k = 0; k < 5; k++) { ctx.fillStyle = bgs[letters[k]]; for (let r = 0; r < rows; r++) { const base = ((r + off) % N) * L; for (let c = 0; c < cols; c++) if (data[base + c] === k) ctx.fillRect(c * CW, r * CH, CW, CH); } } }
+// F: whole-row strips pre-rendered once (row cache), frame = rows drawImage of strips
+const rowCache = new Map();
+function rowStrip(r) { let s = rowCache.get(r); if (!s) { s = document.createElement('canvas'); s.width = cols * CW; s.height = CH; const c2 = s.getContext('2d'); const base = (r % N) * L; for (let c = 0; c < cols; c++) c2.drawImage(atlas, data[base + c] * CW, 0, CW, CH, c * CW, 0, CW, CH); rowCache.set(r, s); } return s; }
+function F(off) { for (let r = 0; r < rows; r++) ctx.drawImage(rowStrip(r + off), 0, r * CH); }
+(async () => {
+  await document.fonts.ready; atlasBmp = await createImageBitmap(atlas);
+  const out = [];
+  out.push(`cells per frame ${cols * rows} (${cols} x ${rows}), cell ${CW}x${CH}px, dpr ${devicePixelRatio}`);
+  A(0); B(0); C(0); C2(0); E(0); F(0);
+  out.push(frames('A fillRect+fillText per cell', A));
+  out.push(frames('A2 rects by colour + text pass', A2));
+  out.push(frames('B drawImage per-glyph canvases', B));
+  out.push(frames('C drawImage single atlas canvas', C));
+  out.push(frames('C2 drawImage atlas ImageBitmap', C2));
+  out.push(frames('D blit + 8 exposed rows (atlas)', D));
+  out.push(frames('E rects only by colour (no text)', E));
+  out.push(frames('F cached row strips (warm)', F));
+  async function rafFrames(name, fn, nf = 30) { const t = []; let off = 0; for (let i = 0; i < nf; i++) { const t0 = performance.now(); fn(off, i); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); t.push(performance.now() - t0); off += 8; } t.sort((a, b) => a - b); return `${name.padEnd(34)} draw-to-2nd-rAF p50 ${t[15].toFixed(1).padStart(6)} ms  max ${t[29].toFixed(1).padStart(6)} ms`; }
+  out.push('--- including presentation (two rAFs after draw):');
+  for (const [n, f] of [['A fillRect+fillText per cell', A], ['B drawImage per-glyph canvases', B], ['C drawImage single atlas canvas', C], ['D blit + 8 exposed rows (atlas)', D], ['F cached row strips (warm)', F]]) out.push(await rafFrames(n, f));
+  document.getElementById('o').textContent = out.join('\n'); window.__done = out.join('\n');
+})();
+</script>

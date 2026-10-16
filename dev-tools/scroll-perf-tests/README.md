@@ -109,3 +109,29 @@ Prefer `page.screenshot()` liberally and actually look at the image with an
 image-capable tool - several "bugs" in this codebase's history turned out to
 be broken tests, not broken app behavior, and a screenshot is the fastest way
 to tell which one you're looking at.
+
+## 2026-10-16: mode comparison, tracing and canvas draw benchmark
+
+Added while comparing ViewAlign with other viewers (write-up: Toki-bio/knowlege
+`projects/viewalign-scroll-responsiveness-2026-10.md`). All run with
+`NODE_PATH=<repo>/node_modules` from the repo root and serve the repo root themselves.
+
+- **`measure_modes.js <served fasta> [single,blocks,canvas] [port]`** - loads the file,
+  forces each mode, dispatches 60 wheel steps of 120 px at 16 ms cadence in all four
+  directions through CDP, and prints per run: rAF frame p50/p95/max, frames > 34 ms, Long
+  Animation Frames (count, max, script attribution), which element actually scrolled, and
+  the distance moved. `HEADFUL=1` runs a visible Chrome.
+- **`trace_mode.js <mode> <served fasta> [port]`** - CPU profile (top self-time functions)
+  and devtools trace (time per event name: Paint, Layout, Layerize, FireAnimationFrame,
+  GPUTask...) of 20 vertical steps in one mode. `INJECT_CSS='...'` adds a style sheet first.
+- **`inval_trace.js <single|blocks> <served fasta> [port]`** - which DOM nodes and reasons
+  invalidate style/layout/paint per wheel step (uses the invalidationTracking trace
+  category), plus Paint clip rects and Layout dirty/total object counts.
+- **`canvas_draw_bench.html`** + **`run_canvas_draw_bench.js`** - standalone Canvas 2D
+  benchmark of ways to paint a ~10,600-cell viewport (fillText per cell, rects by colour,
+  per-glyph canvases, one atlas canvas / ImageBitmap, blit + exposed strip, cached row
+  strips, rects only), headless and headful.
+
+Fixture used for the 2026-10-16 numbers: 600 rows x the densest 600-column window of
+`CURATE__oma__subfam600_23seeds.aln.fa` (SINE-discriminator repo), written to
+`_perf_600x600.fas` in the repo root (not committed; regenerate by slicing that file).
