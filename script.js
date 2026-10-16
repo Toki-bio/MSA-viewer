@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v243';
+const BUILD_TAG = 'v244';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -5533,7 +5533,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         canvas.style.width = rect.width + 'px';
         canvas.style.height = rect.height + 'px';
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        back.width = canvas.width;
+        back.height = canvas.height;
     }
+    // Scratch copy of the last frame for the scroll copy in draw(): drawImage composites
+    // (source-over), so copying a canvas onto itself where the regions overlap would blend
+    // antialiased pixels with what was there; copying via a cleared buffer is exact.
+    const back = document.createElement('canvas');
+    const bctx = back.getContext('2d');
     let drawRaf = 0;
     function scheduleDraw() {
         if (drawRaf) return;
@@ -5568,26 +5575,97 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     function clampOffsets() {
         const w = parseInt(canvas.style.width) || 800;
         const h = parseInt(canvas.style.height) || 600;
-        _canvasState.offsetX = Math.max(0, Math.min(_canvasState.offsetX, totalContentW - w));
-        _canvasState.offsetY = Math.max(0, Math.min(_canvasState.offsetY, totalContentH - h));
+        // Whole device pixels: the frame copy in draw() then moves pixels exactly and the
+        // strip it draws next to them lands on the same pixel phase.
+        const q = v => Math.round(v * dpr) / dpr;
+        _canvasState.offsetX = q(Math.max(0, Math.min(_canvasState.offsetX, totalContentW - w)));
+        _canvasState.offsetY = q(Math.max(0, Math.min(_canvasState.offsetY, totalContentH - h)));
     }
 
-    // Draw
+    // Draw. A scroll step moves the pixels already on screen: when only one axis changed, by
+    // less than the viewport, and nothing else is dirty, the previous frame is copied by the
+    // whole device-pixel delta and only the exposed strip is drawn (Jalview's fastPaint and
+    // Glide Data Grid's blitLastFrame do the same). Anything else is a full redraw.
+    // Measured 2026-10-16 at 600 x 600 on a Radeon 780M: a full viewport is ~10,600
+    // drawImage calls (30-58 ms), a 120 px wheel step exposes ~8 rows (~4 ms). The copy
+    // is exact because clampOffsets keeps the offsets on whole device pixels.
+    _canvasState.stats = { full: 0, blit: 0, lastDrawMs: 0, fullMs: [], blitMs: [] };
     function draw() {
         clampOffsets();
         // Skip if offset hasn't changed and not explicitly marked dirty
         if (!_dirty && _canvasState.offsetX === _lastOffX && _canvasState.offsetY === _lastOffY) return;
-        _lastOffX = _canvasState.offsetX; _lastOffY = _canvasState.offsetY; _dirty = false;
+        const t0 = performance.now();
         const w = parseInt(canvas.style.width) || 800;
         const h = parseInt(canvas.style.height) || 600;
         const ox = _canvasState.offsetX;
         const oy = _canvasState.offsetY;
-        const firstCol = Math.max(0, Math.floor((ox - NAME_W) / CHAR_W));
-        const lastCol = Math.min(len - 1, Math.ceil((ox - NAME_W + w) / CHAR_W));
-        const firstRow = Math.max(0, Math.floor((oy - HEADER_H) / rowPitch));
-        const lastRow = Math.min(nSeqs - 1, Math.floor((oy - HEADER_H +h - 1) / rowPitch));
+        const W = canvas.width, H = canvas.height;
+        const dxDev = Math.round((ox - _lastOffX) * dpr), dyDev = Math.round((oy - _lastOffY) * dpr);
+        const canBlit = !_dirty && _lastOffX >= 0 && ((dxDev === 0) !== (dyDev === 0))
+            && Math.abs(dxDev) < W && Math.abs(dyDev) < H;
+        _lastOffX = ox; _lastOffY = oy; _dirty = false;
+        // Draws what intersects a device-pixel rectangle of the viewport, nothing else.
+        const drawClipped = (x0, y0, x1, y1) => {
+            if (x1 <= x0 || y1 <= y0) return;
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, w, h);
+            drawRegion(ox, oy, w, h, x0 / dpr, y0 / dpr, x1 / dpr, y1 / dpr);
+            ctx.restore();
+        };
+        if (canBlit) {
+            // With sticky names a horizontal step leaves the name column [0, NAME_W) in place.
+            const fixed = (stickyNames && dxDev !== 0) ? Math.ceil(NAME_W * dpr) : 0;
+            const cw = W - fixed - Math.abs(dxDev), ch = H - Math.abs(dyDev);
+            if (cw > 0 && ch > 0) {
+                const sx = fixed + Math.max(0, dxDev), sy = Math.max(0, dyDev);
+                const dx = fixed + Math.max(0, -dxDev), dy = Math.max(0, -dyDev);
+                bctx.setTransform(1, 0, 0, 1, 0, 0);
+                bctx.clearRect(0, 0, W, H);
+                bctx.drawImage(canvas, 0, 0);
+                ctx.save();
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.imageSmoothingEnabled = false;
+                ctx.clearRect(dx, dy, cw, ch);
+                ctx.drawImage(back, sx, sy, cw, ch, dx, dy, cw, ch);
+                ctx.restore();
+            }
+            // The exposed strip
+            if (dxDev > 0) drawClipped(W - dxDev, 0, W, H);
+            else if (dxDev < 0) drawClipped(fixed, 0, fixed - dxDev, H);
+            else if (dyDev > 0) drawClipped(0, H - dyDev, W, H);
+            else drawClipped(0, 0, W, -dyDev);
+            // When NAME_W * dpr is not whole, the device pixel column the name edge falls into
+            // holds both name backing and content: redraw it.
+            const edge = Math.floor(NAME_W * dpr);
+            if (fixed && edge !== fixed) drawClipped(edge, 0, fixed, H);
+            _canvasState.stats.blit++;
+            _canvasState.stats.blitMs.push(performance.now() - t0);
+        } else {
+            ctx.clearRect(0, 0, w, h);
+            drawRegion(ox, oy, w, h, 0, 0, w, h);
+            _canvasState.stats.full++;
+            _canvasState.stats.fullMs.push(performance.now() - t0);
+        }
+        if (_canvasState.stats.fullMs.length > 64) _canvasState.stats.fullMs.shift();
+        if (_canvasState.stats.blitMs.length > 64) _canvasState.stats.blitMs.shift();
+        _canvasState.stats.lastDrawMs = performance.now() - t0;
+        // Canvas mode has no native scrollable DOM node, so notify the
+        // persistent horizontal scrollbar to mirror our internal pan offset.
+        _canvasState.onOffsetChange?.();
+    }
+    // Draws the cells, ruler, names and overlays that intersect the CSS-pixel rectangle
+    // [cx0, cx1) x [cy0, cy1) of the viewport (the caller has set the clip).
+    function drawRegion(ox, oy, w, h, cx0, cy0, cx1, cy1) {
+        const firstCol = Math.max(0, Math.floor((ox - NAME_W + cx0) / CHAR_W));
+        const lastCol = Math.min(len - 1, Math.ceil((ox - NAME_W + cx1) / CHAR_W));
+        const firstRow = Math.max(0, Math.floor((oy - HEADER_H + cy0) / rowPitch));
+        const lastRow = Math.min(nSeqs - 1, Math.floor((oy - HEADER_H + cy1 - 1) / rowPitch));
+        // The name column is at [0, NAME_W) when sticky, else scrolls with the content
+        const withNames = stickyNames ? cx0 < NAME_W : cx0 < NAME_W - ox;
 
-        ctx.clearRect(0, 0, w, h);
         ctx.font = fontStr;
         ctx.textBaseline = 'top';
 
@@ -5688,40 +5766,6 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 ctx.textAlign = 'start';
             }
 
-            // Sequence name - drawn last so it sits on top of any residues that
-            // scrolled underneath it. Sticky mode pins it at a fixed screen x=0
-            // with an opaque backing (matching Normal mode's sticky name column,
-            // position:sticky + white background); non-sticky mode scrolls it
-            // away with the content, like .seq-name.static.
-            const name = state.seqs[i].header || ('Seq' + (i + 1));
-            const displayName = _truncName(name, nameLen);
-            ctx.font = nameFontStr;
-            const nameAscent = (_canvasState.metrics && _canvasState.metrics.ascent) || (CHAR_H - 3);
-            const nameBaselineY = y + nameAscent;
-            const look = nameCellLook(i);
-            const nameX0 = stickyNames ? 0 : -ox;
-            if (stickyNames) {
-                ctx.fillStyle = look?.bg || '#fff';
-                ctx.fillRect(0, y, NAME_W, CHAR_H);
-                if (look?.stripe) { ctx.fillStyle = look.stripe; ctx.fillRect(0, y, 6, CHAR_H); }
-                ctx.fillStyle = look?.bg ? look.fg : '#333';
-                ctx.textBaseline = 'alphabetic';
-                ctx.fillText(displayName, 4, nameBaselineY);
-            } else if (ox < NAME_W) {
-                ctx.save();
-                ctx.beginPath();
-                ctx.rect(0, y, NAME_W, CHAR_H);
-                ctx.clip();
-                if (look?.bg) { ctx.fillStyle = look.bg; ctx.fillRect(nameX0, y, NAME_W, CHAR_H); }
-                if (look?.stripe) { ctx.fillStyle = look.stripe; ctx.fillRect(nameX0, y, 6, CHAR_H); }
-                ctx.fillStyle = look?.bg ? look.fg : '#333';
-                ctx.textBaseline = 'alphabetic';
-                ctx.fillText(displayName, 4 - ox, nameBaselineY);
-                ctx.restore();
-            }
-            ctx.textBaseline = 'top';
-            ctx.font = fontStr;
-
             // AA translation row(s) (codon analysis)
             if (hasCodon && state._codonData.aaSeq[i]) {
                 const bestFrame = state._codonFrames?.bestFrame ?? 0;
@@ -5783,6 +5827,47 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     ctx.textAlign = 'start';
                 }
             }
+        }
+
+        // Names, one pass for all rows: a ctx.font switch is not free and the
+        // residue loop above never changes it.
+        if (withNames) {
+            ctx.font = nameFontStr;
+            for (let i = firstRow; i <= lastRow; i++) {
+                const y = HEADER_H + i * rowPitch - oy;
+                // Sequence name - drawn after the residues so it sits on top of any that
+                // scrolled underneath it. Sticky mode pins it at a fixed screen x=0
+                // with an opaque backing (matching Normal mode's sticky name column,
+                // position:sticky + white background); non-sticky mode scrolls it
+                // away with the content, like .seq-name.static.
+                const name = state.seqs[i].header || ('Seq' + (i + 1));
+                const displayName = _truncName(name, nameLen);
+                const nameAscent = (_canvasState.metrics && _canvasState.metrics.ascent) || (CHAR_H - 3);
+                const nameBaselineY = y + nameAscent;
+                const look = nameCellLook(i);
+                const nameX0 = stickyNames ? 0 : -ox;
+                if (stickyNames) {
+                    ctx.fillStyle = look?.bg || '#fff';
+                    ctx.fillRect(0, y, NAME_W, CHAR_H);
+                    if (look?.stripe) { ctx.fillStyle = look.stripe; ctx.fillRect(0, y, 6, CHAR_H); }
+                    ctx.fillStyle = look?.bg ? look.fg : '#333';
+                    ctx.textBaseline = 'alphabetic';
+                    ctx.fillText(displayName, 4, nameBaselineY);
+                } else if (ox < NAME_W) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.rect(0, y, NAME_W, CHAR_H);
+                    ctx.clip();
+                    if (look?.bg) { ctx.fillStyle = look.bg; ctx.fillRect(nameX0, y, NAME_W, CHAR_H); }
+                    if (look?.stripe) { ctx.fillStyle = look.stripe; ctx.fillRect(nameX0, y, 6, CHAR_H); }
+                    ctx.fillStyle = look?.bg ? look.fg : '#333';
+                    ctx.textBaseline = 'alphabetic';
+                    ctx.fillText(displayName, 4 - ox, nameBaselineY);
+                    ctx.restore();
+                }
+            }
+            ctx.textBaseline = 'top';
+            ctx.font = fontStr;
         }
 
         // Highlight selected columns (semi-transparent vertical strips)
@@ -5858,10 +5943,6 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // content otherwise, matching the name column's own behaviour above)
         ctx.fillStyle = '#ddd';
         ctx.fillRect((stickyNames ? NAME_W : NAME_W - ox) - 2, 0, 1, totalContentH - oy);
-
-        // Canvas mode has no native scrollable DOM node, so notify the
-        // persistent horizontal scrollbar to mirror our internal pan offset.
-        _canvasState.onOffsetChange?.();
     }
     resize();
     draw();

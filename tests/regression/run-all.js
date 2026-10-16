@@ -3019,6 +3019,52 @@ check('Group explorer: gather and move group never lose rows when sequence names
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+// Canvas mode scrolls by copying the pixels already on screen and drawing only the exposed
+// strip (2026-10-16). Before that every wheel step redrew the whole viewport: ~10,600
+// drawImage calls, 30-58 ms a frame at 600 x 600 on a Radeon 780M, visible stutter. The
+// check is a real wheel scroll in each direction, with sticky names on and off, and asks
+// (1) that the copy path was used, (2) that the pixels equal a full redraw at the same
+// offset (so the fast path can never show something different), and (3) that a copy
+// frame costs well under a full frame.
+check('Canvas mode: wheel scroll copies the frame and draws only the exposed strip, pixel-identical to a full redraw', async (page) => {
+  await loadSyntheticFasta(page, 600, 600);
+  await setMode(page, 'canvas');
+  const out = {};
+  for (const sticky of [true, false]) {
+    await page.evaluate((s) => { const el = document.getElementById('stickyNames'); if (el.checked !== s) { el.checked = s; el.dispatchEvent(new Event('change', { bubbles: true })); } }, sticky);
+    await page.waitForTimeout(400);
+    const box = await page.evaluate(() => { const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { x: r.left + r.width * 0.6, y: r.top + r.height * 0.6 }; });
+    await page.mouse.move(box.x, box.y);
+    const res = {};
+    for (const [label, dx, dy] of [['down', 0, 120], ['right', 120, 0], ['up', 0, -100], ['left', -100, 0], ['trackpad', 0, 37.5]]) {
+      await page.evaluate(() => { _canvasState.stats.full = 0; _canvasState.stats.blit = 0; _canvasState.stats.blitMs = []; _canvasState.stats.fullMs = []; });
+      for (let i = 0; i < 6; i++) { await page.mouse.wheel(dx, dy); await page.waitForTimeout(40); }
+      await page.waitForTimeout(150);
+      const r = await page.evaluate(() => {
+        const c = document.getElementById('alignmentCanvas');
+        const fast = c.toDataURL();
+        const st = _canvasState.stats, blits = st.blit, fulls = st.full, blitMs = st.blitMs.slice();
+        _canvasState.scheduleDraw();                      // dirty -> full redraw at the same offset
+        return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => {
+          res({ blits, fulls, same: c.toDataURL() === fast, blitMs, fullMs: _canvasState.stats.fullMs.slice(), off: [_canvasState.offsetX, _canvasState.offsetY] });
+        })));
+      });
+      res[label] = r;
+    }
+    out[sticky ? 'sticky' : 'static'] = res;
+  }
+  const med = a => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[s.length >> 1] : NaN; };
+  const bad = [];
+  for (const [mode, res] of Object.entries(out)) for (const [label, r] of Object.entries(res)) {
+    if (r.blits < 5) bad.push(`${mode}/${label}: only ${r.blits} copy frames for 6 wheel steps (${r.fulls} full redraws)`);
+    if (!r.same) bad.push(`${mode}/${label}: pixels after copy-scrolling differ from a full redraw`);
+    const b = med(r.blitMs), f = med(r.fullMs);
+    if (!(b < 0.6 * f)) bad.push(`${mode}/${label}: copy frame ${b.toFixed(1)} ms is not well under a full frame ${f.toFixed(1)} ms`);
+  }
+  const summary = Object.fromEntries(Object.entries(out).map(([m, res]) => [m, Object.fromEntries(Object.entries(res).map(([l, r]) => [l, `${r.blits}c/${r.fulls}f ${med(r.blitMs).toFixed(1)}/${med(r.fullMs).toFixed(1)}ms same=${r.same}`]))]));
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(summary) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
