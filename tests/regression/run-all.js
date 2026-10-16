@@ -3322,6 +3322,79 @@ check('Canvas mode: selections and typing do not redraw the cells, and look iden
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
 });
 
+// Highlight diffs in the Canvas view (v250). Full/Block dim every residue, consensus letter and
+// ruler digit in a conserved column to 40 % opacity and set the variable columns in bold
+// (styles.css body.highlight-diffs). Canvas computed the same column set but never used it, so
+// the manual had to say "Full or Block only". Now: a conserved cell gets lighter, a variable cell
+// does not and gains ink (bold), the consensus row follows, switching off restores the exact
+// previous picture, and a scroll step with diffs on still copies the frame exactly.
+check('Canvas mode: Highlight diffs dims conserved columns and bolds variable ones like Full/Block', async (page) => {
+  const path = require('path');
+  await page.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples', 'svk_k4.fa'));
+  await page.waitForTimeout(1500);
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(500);
+  const settle = () => page.evaluate(() => new Promise(r => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), 500)));
+  const toggle = (on) => page.evaluate((on) => { const e = document.getElementById('highlightDiffs'); e.checked = on; e.dispatchEvent(new Event('change', { bubbles: true })); }, on);
+  // darkest pixel (min of R+G+B, composited over the white page: untouched canvas pixels are
+  // transparent) and letter pixel count (bold = more of them) inside a cell band
+  const measure = (cells) => page.evaluate((cells) => {
+    const cv = document.getElementById('alignmentCanvas'), m = _canvasState.metrics, dpr = m.dpr || 1;
+    const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    return cells.map(({ x, y, w, h }) => {
+      const x0 = Math.round(x * dpr), y0 = Math.round(y * dpr), x1 = Math.round((x + w) * dpr), y1 = Math.round((y + h) * dpr);
+      let min = 765; const vals = [];
+      for (let yy = y0; yy < y1; yy++) for (let xx = x0; xx < x1; xx++) { const i = (yy * cv.width + xx) * 4; const a = d[i + 3] / 255; const s = Math.round((d[i] + d[i + 1] + d[i + 2]) * a + 765 * (1 - a)); if (s < min) min = s; vals.push(s); }
+      // the background is the most frequent value; the letter is every pixel far from it
+      const freq = new Map(); for (const v of vals) freq.set(v, (freq.get(v) || 0) + 1);
+      const bg = [...freq.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      const ink = vals.filter(v => Math.abs(v - bg) > 150).length;
+      return { min, ink };
+    });
+  }, cells);
+  const snap = () => page.evaluate(() => document.getElementById('alignmentCanvas').toDataURL());
+  const before = await snap();
+  await toggle(true); await settle();
+  // pick a conserved and a variable column in the visible area where row 0 and the consensus have a letter
+  const pick = await page.evaluate(() => {
+    const m = _canvasState.metrics, cols = state._diffColumns, cv = document.getElementById('alignmentCanvas');
+    const visible = Math.floor((cv.getBoundingClientRect().width - m.nameW) / m.charW) - 1;
+    const seq = state.seqs[0].seq, cons = _canvasState.consensus?.values || '';
+    const ok = p => /[A-Za-z]/.test(seq[p] || '') && /[A-Za-z]/.test(cons[p] || '');
+    let cons0 = -1, var0 = -1;
+    for (let p = 0; p < visible; p++) { if (!cols.has(p) && cons0 < 0 && ok(p)) cons0 = p; if (cols.has(p) && var0 < 0 && ok(p)) var0 = p; }
+    return { cons0, var0, nameW: m.nameW, charW: m.charW, charH: m.charH, headerH: m.headerH, pitch: _canvasState.rowPitch, consTop: _checkedRadioValue('consensusPosition', 'top') === 'top', diffCols: cols.size, bodyClass: document.body.classList.contains('highlight-diffs') };
+  });
+  if (pick.cons0 < 0 || pick.var0 < 0) return { pass: false, detail: 'no usable conserved/variable column in view: ' + JSON.stringify(pick) };
+  const cell = (p, row) => ({ x: pick.nameW + p * pick.charW, y: pick.headerH + row * pick.pitch, w: pick.charW, h: pick.charH });
+  const consCell = (p) => ({ x: pick.nameW + p * pick.charW, y: pick.consTop ? pick.headerH - pick.charH : pick.headerH + state_n * pick.pitch, w: pick.charW, h: pick.charH });
+  const state_n = await page.evaluate(() => state.seqs.length);
+  const cells = [cell(pick.cons0, 0), cell(pick.var0, 0), consCell(pick.cons0), consCell(pick.var0)];
+  const on = await measure(cells);
+  await toggle(false); await settle();
+  const afterOff = await snap();
+  const off = await measure(cells);
+  // scroll with diffs on: the copied frame equals a full redraw (the file fits the test window, so shrink it)
+  await page.setViewportSize({ width: 700, height: 400 }); await page.waitForTimeout(300);
+  await toggle(true); await settle();
+  const box = await page.evaluate(() => { const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { x: r.left + r.width * 0.6, y: r.top + r.height * 0.6 }; });
+  await page.mouse.move(box.x, box.y);
+  const b0 = await page.evaluate(() => _canvasState.stats.blit);
+  await page.mouse.wheel(0, 60); await page.waitForTimeout(150);
+  const scroll = await page.evaluate((b0) => { const c = document.getElementById('alignmentCanvas'); const fast = c.toDataURL(); const copies = _canvasState.stats.blit - b0; _canvasState.scheduleDraw(); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r({ copies, same: c.toDataURL() === fast })))); }, b0);
+  await toggle(false); await settle();
+  await page.setViewportSize({ width: 1400, height: 900 }); await page.waitForTimeout(300);
+  const out = { pick: { cons0: pick.cons0, var0: pick.var0, diffCols: pick.diffCols }, row0: { conserved: { off: off[0], on: on[0] }, variable: { off: off[1], on: on[1] } }, consensus: { conserved: { off: off[2], on: on[2] }, variable: { off: off[3], on: on[3] } }, restored: before === afterOff, scroll };
+  const bad = [];
+  if (!(on[0].min > off[0].min + 60)) bad.push('conserved residue not dimmed');
+  if (!(on[2].min > off[2].min + 60)) bad.push('conserved consensus letter not dimmed');
+  if (on[1].min > off[1].min + 10) bad.push('variable residue got lighter');
+  if (!(on[1].ink > off[1].ink)) bad.push('variable residue not bold');
+  if (!out.restored) bad.push('switching off did not restore the previous picture');
+  if (scroll.copies < 1 || !scroll.same) bad.push('scroll with diffs on: ' + JSON.stringify(scroll));
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(out) : JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

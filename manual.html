@@ -1184,10 +1184,10 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   sites only is on switches that one off.</p>
   <ul>
     <li>
-      <strong>Highlight diffs</strong> - dims fully-conserved columns to 40% opacity.
-      Full and Block modes only, like Variable sites only below - Canvas and
-      Reads use separate renderers that don't apply either overlay. Rapidly
-      reveals where variation occurs.
+      <strong>Highlight diffs</strong> - dims fully-conserved columns to 40% opacity and sets
+      the variable ones in bold. Works in Full, Block and Canvas (the Reads view has its own
+      renderer and does not apply it); Variable sites only below still needs Full or Block.
+      Rapidly reveals where variation occurs.
     </li>
     <li>
       <strong>Variable sites only</strong> - hides conserved columns entirely,

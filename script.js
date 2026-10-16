@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v249';
+const BUILD_TAG = 'v250';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -5976,6 +5976,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             _canvasDrawAnnotTrack(ctx, { ox, oy, w, NAME_W, CHAR_W, CHAR_H, TRACK_H, firstCol, lastCol, stickyNames, fontSizePx });
             ctx.font = fontStr;
         }
+        // Highlight diffs: the same rule as styles.css body.highlight-diffs - every cell, consensus
+        // letter and ruler digit in a conserved column at 40 % opacity, variable columns in bold.
+        const hdCols = document.body.classList.contains('highlight-diffs') ? state._diffColumns : null;
         const scaleY = TRACK_H - oy;
         if (scaleY + SCALE_H > 0 && scaleY < h && firstCol <= lastCol) {
             const visCols = lastCol - firstCol + 1;
@@ -5985,13 +5988,20 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 ctx.fillRect(0, scaleY, NAME_W, SCALE_H);
             }
             ctx.fillStyle = '#666';
+            let rulerBold = false;
             for (let j = 0; j < scaleText.length; j++) {
                 const ch = scaleText[j];
                 if (ch === ' ') continue;
                 const x = NAME_W + (firstCol + j) * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) continue;
+                if (hdCols) {
+                    const variable = hdCols.has(firstCol + j);
+                    ctx.globalAlpha = variable ? 1 : 0.4;
+                    if (variable !== rulerBold) { rulerBold = variable; ctx.font = variable ? 'bold ' + fontStr : fontStr; }
+                }
                 ctx.fillText(ch, x, scaleY);
             }
+            if (hdCols) { ctx.globalAlpha = 1; if (rulerBold) ctx.font = fontStr; }
             ctx.fillStyle = '#ddd';
             ctx.fillRect(Math.max(0, NAME_W - ox), scaleY + SCALE_H - HAIR, w, HAIR);
         }
@@ -5999,6 +6009,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // Edits reshade changed columns into state.conservationDataCache; use it when current
         const consPos = (state.conservationDataCache?.len === len && state.conservationDataCache?.shadeMode === shadeMode)
             ? state.conservationDataCache.data : conservationData;
+        let dimmed = false;   // ctx.globalAlpha is 0.4 while this is true (Highlight diffs, conserved column)
         for (let i = firstRow; i <= lastRow; i++) {
             const y = HEADER_H +i * rowPitch - oy;
             const seq = state.seqs[i].seq;
@@ -6027,6 +6038,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     if (ov.fg) textFill = ov.fg;
                     variant = (ov.bold || cellStyle.bold ? 'b' : '') + (ov.italic ? 'i' : '') + (ov.sans ? 's' : '');
                 }
+                if (hdCols) {
+                    const dim = !hdCols.has(p);
+                    if (!dim && !variant.includes('b')) variant = 'b' + variant;
+                    if (dim !== dimmed) { dimmed = dim; ctx.globalAlpha = dim ? 0.4 : 1; }
+                }
                 // Single blit from glyph cache (eliminates fillStyle+fillRect+fillStyle+fillText)
                 ctx.drawImage(_makeGlyph(base, bgFill, textFill, variant), x, y, CHAR_W, CHAR_H);
                 // Decorations: underline (TSD bold style), overline (covered repeat), line-through (trim)
@@ -6038,6 +6054,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     if (trimmed) { ctx.fillStyle = textFill; ctx.fillRect(x, y + CHAR_H / 2, CHAR_W, 1); }
                 }
             }
+            if (dimmed) { dimmed = false; ctx.globalAlpha = 1; }
 
             // Breakpoint markers (var-sites mode) — drawn on top of residues at
             // the breakpoint position. In DOM mode these replace hidden columns;
@@ -6192,8 +6209,13 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                         if (trim && p <= trim.leftTrimEnd) { bg = '#ff6b6b'; fg = '#fff'; }
                         else if (trim && p >= trim.rightTrimStart) { bg = '#4ecdc4'; fg = '#fff'; }
                         else if (soft && (p <= soft.leftTrimEnd || p >= soft.rightTrimStart)) { bg = '#f0f0f0'; fg = 'rgba(85,85,85,0.35)'; }
+                        if (hdCols) {
+                            const dim = !hdCols.has(p);
+                            if (dim !== dimmed) { dimmed = dim; ctx.globalAlpha = dim ? 0.4 : 1; }
+                        }
                         ctx.drawImage(_makeGlyph(ch, bg, fg, 'b'), x, textY, CHAR_W, CHAR_H);
                     }
+                    if (dimmed) { dimmed = false; ctx.globalAlpha = 1; }
                 }
                 if (withNames) {
                     ctx.font = nameFontStr;
