@@ -1186,12 +1186,14 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li>
       <strong>Highlight diffs</strong> - dims fully-conserved columns to 40% opacity and sets
       the variable ones in bold. Works in Full, Block and Canvas (the Reads view has its own
-      renderer and does not apply it); Variable sites only below still needs Full or Block.
+      renderer and does not apply it).
       Rapidly reveals where variation occurs.
     </li>
     <li>
       <strong>Variable sites only</strong> - hides conserved columns entirely,
       showing only positions with variation. Useful for scanning SNP-dense regions.
+      Works in Full, Block and Canvas (in Canvas the hidden runs collapse to the same
+      marker cells, and the ruler, consensus row, selections and editing follow the shown columns).
     </li>
   </ul>
   <p>
@@ -1467,7 +1469,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     select those columns (Shift adds to the selection), then use the column tools as
     usual. Features on a name that is not in the alignment are skipped and counted in
     the menu's status line. The track is not drawn while <em>Variable sites only</em>
-    hides columns in Full or Block mode. With Codon analysis on, the CDS features of the
+    hides columns (in any view). With Codon analysis on, the CDS features of the
     track set the reading frame and strand of each gene (<a href="#di-codons">5.4</a>).
   </p>
 </section>
@@ -1685,7 +1687,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <strong>Editing works in Full, Block and Canvas views.</strong> Reads view draws no per-residue
     cells for the tools to act on, so Edit Mode is unavailable there and says so. In Canvas
     (the default from 40,000 residues) the tools, typing, undo, rename and row drag behave as
-    in Full view; only Show 2D and the hidden columns of var-sites mode need Full or Block.
+    in Full view; only Show 2D needs Full or Block.
   </div>
 
   <h3 id="ed-move-slide">8.4 Move &amp; Slide Tools</h3>

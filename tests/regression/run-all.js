@@ -3395,6 +3395,119 @@ check('Canvas mode: Highlight diffs dims conserved columns and bolds variable on
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(out) : JSON.stringify(out) };
 });
 
+
+// Variable sites only in the Canvas view (v251). Full/Block hide every conserved column and put a
+// breakpoint marker cell before the first shown column after a hidden run. Canvas drew every
+// column and painted the marker over a residue. Now the content is laid out in slots (shown
+// columns + marker cells): the picture of slot s equals the picture of its column in the
+// unfiltered view, marker cells carry the marker colour, hit-testing maps a slot back to its
+// column, the marker tooltip says what is hidden, the frame copy stays exact on a scrollable
+// alignment, and switching off restores the previous picture.
+check('Canvas mode: Variable sites only hides columns, keeps markers, hit-tests and copies frames', async (page) => {
+  const path = require('path');
+  const settle = () => page.evaluate(() => new Promise(r => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), 600)));
+  const tick = (id, on) => page.evaluate(({ id, on }) => { const e = document.getElementById(id); e.checked = on; e.dispatchEvent(new Event('change', { bubbles: true })); }, { id, on });
+  const snap = () => page.evaluate(() => document.getElementById('alignmentCanvas').toDataURL());
+  const cellsAt = (slots, rowY) => page.evaluate(({ slots, rowY }) => {
+    const cv = document.getElementById('alignmentCanvas'), m = _canvasState.metrics, dpr = m.dpr || 1, c = cv.getContext('2d');
+    return slots.map(s => Array.from(c.getImageData(Math.round((m.nameW + s * m.charW) * dpr), Math.round(rowY * dpr), Math.round(m.charW * dpr), Math.round(m.charH * dpr)).data).join(','));
+  }, { slots, rowY });
+  const geom = () => page.evaluate(() => { const m = _canvasState.metrics; const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { left: r.left, top: r.top, nameW: m.nameW, charW: m.charW, charH: m.charH, headerH: m.headerH, pitch: _canvasState.rowPitch, len: Math.max(...state.seqs.map(s => s.seq.length)), nSeq: state.seqs.length, consTop: _checkedRadioValue('consensusPosition', 'top') === 'top', totalW: _canvasState.totalContentW }; });
+  const consY = g => g.consTop ? g.headerH - g.charH : g.headerH + g.nSeq * g.pitch;
+  const bad = [];
+
+  // Part 1: a real file that fits the window (40 x 231, 203 variable columns)
+  await page.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples', 'svk_k4.fa'));
+  await page.waitForTimeout(1500);
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(500);
+  const g0 = await geom();
+  const before = await snap();
+  const visibleCols = Math.min(g0.len, Math.floor((1400 - g0.nameW - 40) / g0.charW));
+  const allCols = [...Array(visibleCols).keys()];
+  const plainRow0 = await cellsAt(allCols, g0.headerH);
+  const plainCons = await cellsAt(allCols, consY(g0));
+  await tick('varSitesOnly', true); await settle();
+  const lay = await page.evaluate(() => ({ nSlots: _canvasState.nSlots, slots: _canvasState.slots ? Array.from(_canvasState.slots) : null, diff: state._diffColumns.size, brk: state._brkBeforePos.size, totalW: _canvasState.totalContentW }));
+  const g1 = await geom();
+  if (!lay.slots) return { pass: false, detail: 'no slot layout in Canvas with Variable sites only: ' + JSON.stringify(lay) };
+  if (lay.nSlots !== lay.diff + lay.brk) bad.push(`slots ${lay.nSlots} != shown ${lay.diff} + markers ${lay.brk}`);
+  if (lay.totalW !== g1.nameW + lay.nSlots * g1.charW + 4) bad.push(`content width ${lay.totalW} is not for ${lay.nSlots} slots`);
+  const shownSlots = [], markerSlots = [];
+  lay.slots.forEach((p, s) => { if (s < visibleCols) (p >= 0 ? shownSlots : markerSlots).push(s); });
+  const filtRow0 = await cellsAt(shownSlots, g1.headerH);
+  const filtCons = await cellsAt(shownSlots, consY(g1));
+  let mism = 0, mismCons = 0;
+  shownSlots.forEach((s, i) => { const p = lay.slots[s]; if (p < visibleCols) { if (filtRow0[i] !== plainRow0[p]) mism++; if (filtCons[i] !== plainCons[p]) mismCons++; } });
+  if (mism) bad.push(`${mism} of ${shownSlots.length} shown cells in row 0 differ from the plain view`);
+  if (mismCons) bad.push(`${mismCons} consensus cells differ from the plain view`);
+  const markerLook = await page.evaluate((slots) => {
+    const cv = document.getElementById('alignmentCanvas'), m = _canvasState.metrics, dpr = m.dpr || 1, c = cv.getContext('2d');
+    const hex = (r, g, b) => '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+    const want = (brkStyle.color || '#d0d0d0').toLowerCase();
+    return slots.map(s => { const d = c.getImageData(Math.round((m.nameW + s * m.charW) * dpr), Math.round(m.headerH * dpr), Math.round(m.charW * dpr), Math.round(m.charH * dpr)).data; const f = new Map(); for (let i = 0; i < d.length; i += 4) { const k = hex(d[i], d[i + 1], d[i + 2]); f.set(k, (f.get(k) || 0) + 1); } const top = [...f.entries()].sort((a, b) => b[1] - a[1])[0][0]; return { top, want, ok: top === want }; });
+  }, markerSlots);
+  if (!markerSlots.length) bad.push('no marker slot in view');
+  if (markerLook.some(x => !x.ok)) bad.push('marker cell is not the marker colour: ' + JSON.stringify(markerLook.filter(x => !x.ok).slice(0, 2)));
+  const s0 = shownSlots[Math.min(5, shownSlots.length - 1)], ms = markerSlots[0];
+  const hits = await page.evaluate(({ s0, ms }) => {
+    const m = _canvasState.metrics, r = document.getElementById('alignmentCanvas').getBoundingClientRect();
+    const at = s => _canvasHitTest(r.left + m.nameW + (s + 0.5) * m.charW, r.top + m.headerH + 0.5 * _canvasState.rowPitch);
+    return { shown: at(s0), marker: at(ms), slotPos: _canvasState.slots[s0], ruler: _canvasHitTestRuler(r.left + m.nameW + (s0 + 0.5) * m.charW, r.top + (m.trackH || 0) + 0.5 * m.charH), colFromX: _canvasColFromClientX(r.left + m.nameW + (s0 + 0.5) * m.charW) };
+  }, { s0, ms });
+  if (!hits.shown || hits.shown.col !== hits.slotPos) bad.push(`hit at slot ${s0} gave ${JSON.stringify(hits.shown)}, column ${hits.slotPos} expected`);
+  if (!hits.marker || !hits.marker.brk) bad.push(`hit on the marker slot gave ${JSON.stringify(hits.marker)}`);
+  if (!hits.ruler || hits.ruler.col !== hits.slotPos || hits.colFromX !== hits.slotPos) bad.push(`ruler/drag hit gave ${JSON.stringify(hits.ruler)} / ${hits.colFromX}`);
+  // real input: Ctrl+Alt+click a shown slot selects its column; hovering a marker says what is hidden
+  await page.keyboard.down('Control'); await page.keyboard.down('Alt');
+  await page.mouse.click(g1.left + g1.nameW + (s0 + 0.5) * g1.charW, g1.top + g1.headerH + 2.5 * g1.pitch);
+  await page.keyboard.up('Alt'); await page.keyboard.up('Control'); await page.waitForTimeout(150);
+  const selected = await page.evaluate(() => Array.from(state.selectedColumns));
+  if (!(selected.length === 1 && selected[0] === hits.slotPos)) bad.push(`column click selected ${JSON.stringify(selected)}, expected [${hits.slotPos}]`);
+  await page.mouse.move(g1.left + g1.nameW + (ms + 0.5) * g1.charW, g1.top + g1.headerH + 2.5 * g1.pitch); await page.waitForTimeout(400);
+  const tip = await page.evaluate(() => document.body.innerText.includes('hidden (positions'));
+  if (!tip) bad.push('no "columns hidden" tooltip over the marker');
+  await page.mouse.move(10, 10); await page.waitForTimeout(100);
+  await page.evaluate(() => { state.selectedColumns.clear(); updateColumnSelections(); _canvasState.scheduleOverlay?.(); });
+  // markers off: slots are the shown columns only
+  await tick('varSitesBreakpoints', false); await settle();
+  const noBrk = await page.evaluate(() => ({ nSlots: _canvasState.nSlots, diff: state._diffColumns.size }));
+  if (noBrk.nSlots !== noBrk.diff) bad.push(`without markers ${noBrk.nSlots} slots for ${noBrk.diff} shown columns`);
+  await tick('varSitesBreakpoints', true); await settle();
+  // off again: the plain picture is back
+  await tick('varSitesOnly', false); await settle();
+  const after = await snap();
+  const off = await page.evaluate(() => ({ slots: _canvasState.slots, nSlots: _canvasState.nSlots }));
+  if (off.slots) bad.push('slot layout still active after switching off');
+  if (after !== before) bad.push('switching off did not restore the previous picture');
+
+  // Part 2: a synthetic alignment larger than the window (300 x 400, every third column
+  // conserved): with hidden columns a wheel step still copies the frame and equals a full redraw
+  await page.evaluate(() => {
+    let fasta = '';
+    for (let i = 0; i < 300; i++) { const ch = new Array(400); for (let j = 0; j < 400; j++) ch[j] = j % 3 === 0 ? 'A' : 'ACGT'[(i * 7 + j) % 4]; fasta += `>seq${i}\n${ch.join('')}\n`; }
+    document.getElementById('fastaInput').value = fasta;
+    window.__loadPromise = parseAndRender(false);
+  });
+  await page.evaluate(() => window.__loadPromise); await page.waitForTimeout(300);
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await tick('varSitesOnly', true); await settle();
+  const lay2 = await page.evaluate(() => ({ nSlots: _canvasState.nSlots, diff: state._diffColumns.size, brk: state._brkBeforePos.size }));
+  if (!(lay2.nSlots < 400 && lay2.nSlots === lay2.diff + lay2.brk)) bad.push('synthetic alignment: ' + JSON.stringify(lay2));
+  const box = await page.evaluate(() => { const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { x: r.left + r.width * 0.6, y: r.top + r.height * 0.6 }; });
+  await page.mouse.move(box.x, box.y);
+  const scroll = {};
+  for (const [label, dx, dy] of [['down', 0, 60], ['right', 60, 0], ['right2', 100, 0], ['up', 0, -45]]) {
+    const b0 = await page.evaluate(() => ({ b: _canvasState.stats.blit, ox: _canvasState.offsetX, oy: _canvasState.offsetY }));
+    await page.mouse.wheel(dx, dy); await page.waitForTimeout(150);
+    scroll[label] = await page.evaluate((b0) => { const c = document.getElementById('alignmentCanvas'); const fast = c.toDataURL(); const copies = _canvasState.stats.blit - b0.b, moved = [_canvasState.offsetX - b0.ox, _canvasState.offsetY - b0.oy]; _canvasState.scheduleDraw(); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r({ copies, moved, same: c.toDataURL() === fast })))); }, b0);
+  }
+  for (const [l, r] of Object.entries(scroll)) if (r.copies < 1 || !r.same || (r.moved[0] === 0 && r.moved[1] === 0)) bad.push(`scroll ${l}: ${JSON.stringify(r)}`);
+  await tick('varSitesOnly', false); await settle();
+  const out = { lay: { nSlots: lay.nSlots, diff: lay.diff, brk: lay.brk }, compared: shownSlots.length, markers: markerSlots.length, hits: { shown: hits.shown, marker: hits.marker }, selected, tip, noBrk, lay2, scroll };
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(out) : JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v250';
+const BUILD_TAG = 'v251';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -5297,6 +5297,24 @@ function _initCanvasMetrics(ctx, fontSizePx) {
 //   4. clientX=900, clientY=900 (past last col/row) → canvas-relative (800, 850)
 //      If alignment is 50 cols × 20 rows: col=74, row=55 → both out of range → null
 //      → null  ✓
+// Variable sites only lays the Canvas out in slots (shown columns and marker cells): a viewport
+// x gives a slot, these give the column. A marker maps to the column shown after it.
+function _canvasSlotToCol(slot) {
+    const sl = _canvasState.slots;
+    if (!sl) return slot;
+    if (slot >= sl.length) return -1;
+    const p = sl[slot];
+    return p >= 0 ? p : -1 - p;
+}
+function _canvasColToSlot(col) {
+    const so = _canvasState.slotOf;
+    return so ? (col >= 0 && col < so.length ? so[col] : -1) : col;
+}
+function _canvasSlotIsMarker(slot) {
+    const sl = _canvasState.slots;
+    return !!sl && slot >= 0 && slot < sl.length && sl[slot] < 0;
+}
+
 function _canvasHitTest(clientX, clientY) {
     const canvas = _canvasState.canvas;
     if (!canvas) return null;
@@ -5319,8 +5337,9 @@ function _canvasHitTest(clientX, clientY) {
     const len = state.seqs && state.seqs.length > 0
         ? Math.max(...state.seqs.map(s => s.seq.length))
         : 0;
-    if (row >= nSeqs || col >= len) return null;
-    return { row, col };
+    if (row >= nSeqs || col >= (_canvasState.nSlots || len)) return null;
+    if (_canvasSlotIsMarker(col)) return { row, col: _canvasSlotToCol(col), slot: col, brk: true };
+    return { row, col: _canvasSlotToCol(col), slot: col };
 }
 
 // Hit-test the scale ruler area (top row, y < SCALE_H in canvas coords).
@@ -5340,8 +5359,8 @@ function _canvasHitTestRuler(clientX, clientY) {
     const len = state.seqs && state.seqs.length > 0
         ? Math.max(...state.seqs.map(s => s.seq.length))
         : 0;
-    if (col < 0 || col >= len) return null;
-    return { col };
+    if (col < 0 || col >= (_canvasState.nSlots || len)) return null;
+    return { col: _canvasSlotToCol(col) };
 }
 
 // Hit-test the name column area (left side, x < NAME_W in canvas coords).
@@ -5453,8 +5472,8 @@ function _canvasColFromClientX(clientX) {
     const len = state.seqs && state.seqs.length > 0
         ? Math.max(...state.seqs.map(s => s.seq.length))
         : 0;
-    if (col < 0 || col >= len) return -1;
-    return col;
+    if (col < 0 || col >= (_canvasState.nSlots || len)) return -1;
+    return _canvasSlotToCol(col);
 }
 
 // Module-level hover tracking: updated by mousemove, read by future phases
@@ -5612,12 +5631,42 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const HEADER_H = TRACK_H + SCALE_H + (consTop ? CONS_H : 0); // track (if any) + ruler + consensus (if on top): where the rows start
     let _lastOffX = -1, _lastOffY = -1, _dirty = false, _lastSig = null;
     function _markDirty() { _dirty = true; }
+
+    // Variable sites only: the content is laid out in SLOTS, one per shown column plus one per
+    // breakpoint marker (the DOM puts a .col-breakpoint cell before the first shown column after
+    // a hidden run). slots[s] = column, or -1 - column for the marker before that column;
+    // slotOf[column] = slot, or -1 when hidden. Without the filter a slot is a column.
+    const varHide = document.body.classList.contains('var-sites-only') && state._diffColumns && state._varSiteHiddenRanges;
+    let slots = null, slotOf = null;
+    if (varHide) {
+        const arr = [];
+        slotOf = new Int32Array(len).fill(-1);
+        const brk = state._brkBeforePos;
+        for (let p = 0; p < len; p++) {
+            if (!state._diffColumns.has(p)) continue;
+            if (brk && brk.has(p)) arr.push(-1 - p);
+            slotOf[p] = arr.length;
+            arr.push(p);
+        }
+        slots = Int32Array.from(arr);
+    }
+    const nSlots = slots ? slots.length : len;
+    const slotPos = s => slots ? slots[s] : s;       // column, or -1 - column for a marker
+    const posSlot = c => slotOf ? (c < len ? slotOf[c] : -1) : c;   // -1 when the column is hidden
+    _canvasState.slots = slots;
+    _canvasState.slotOf = slotOf;
+    _canvasState.nSlots = nSlots;
+    // The ruler text for the whole alignment, indexed by column. generateScale() drops a label
+    // that does not fit the window it is asked for, so a text made per drawn strip would lose
+    // the labels straddling the strip's edge and the frame copy would not equal a full redraw.
+    const scaleTextAll = generateScale(len, _canvasScaleInterval(CHAR_W), 0);
+
     // What can change the look of a cell (selections live on the overlay and are not here)
     const contentSig = () => [state.seqs, state.seqs.length, state.deletedHistory.length, state.redoHistory.length,
         state.conservationDataCache?.data, state.consensusCache?.values, state.trimBoundaries, state.softTrimBoundaries,
         state._diffColumns, state.tsdMarks, state.searchHistory?.length, getEffectiveColorScheme()];
 
-    const totalContentW = NAME_W + len * CHAR_W + 4;
+    const totalContentW = NAME_W + nSlots * CHAR_W + 4;
     const totalContentH = HEADER_H +nSeqs * rowPitch + (consInfo && !consTop ? CONS_H : 0) + 4;
     // Exposed so the persistent horizontal/vertical scrollbars (real DOM
     // elements, since Canvas mode's own content isn't natively scrollable)
@@ -5850,7 +5899,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             ctx.restore();
         };
         clipDraw(0, HEADER_H + r0 * rowPitch - oy, w, HEADER_H + (r1 + 1) * rowPitch - oy);
-        clipDraw(NAME_W + c0 * CHAR_W - ox, 0, NAME_W + (c1 + 1) * CHAR_W - ox, h);
+        let s0 = c0, s1 = c1;
+        if (slotOf) {   // hidden columns have no slot; repaint the band of the shown ones
+            s0 = Infinity; s1 = -1;
+            for (let c = Math.max(0, c0); c <= Math.min(len - 1, c1); c++) { const sc = slotOf[c]; if (sc >= 0) { if (sc < s0) s0 = sc; if (sc > s1) s1 = sc; } }
+        }
+        if (s1 >= s0) clipDraw(NAME_W + s0 * CHAR_W - ox, 0, NAME_W + (s1 + 1) * CHAR_W - ox, h);
         if (consInfo) { const consY = consTop ? TRACK_H + SCALE_H - oy : HEADER_H + nSeqs * rowPitch - oy; clipDraw(0, consY, w, consY + CONS_H); }
         _lastSig = contentSig();
         drawOverlay(ox, oy, w, h);
@@ -5880,7 +5934,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         if (state.selectedColumns.size > 0) {
             octx.fillStyle = 'rgba(25, 118, 210, 0.15)';
             state.selectedColumns.forEach(pos => {
-                const x = NAME_W + pos * CHAR_W - ox;
+                const sc = posSlot(pos);
+                if (sc < 0) return;
+                const x = NAME_W + sc * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) return;
                 const dataTop = Math.max(0, HEADER_H - oy);
                 const dataBottom = Math.min(h, HEADER_H +nSeqs * CHAR_H - oy);
@@ -5908,7 +5964,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const y = HEADER_H +rowIdx * rowPitch - oy;
                 if (y + CHAR_H < 0 || y > h) return;
                 posSet.forEach(pos => {
-                    const x = NAME_W + pos * CHAR_W - ox;
+                    const sc = posSlot(pos);
+                    if (sc < 0) return;
+                    const x = NAME_W + sc * CHAR_W - ox;
                     if (x + CHAR_W < 0 || x > w) return;
                     octx.fillRect(x, y, CHAR_W, CHAR_H);
                     octx.strokeRect(x + 0.5, y + 0.5, CHAR_W - 1, CHAR_H - 1);
@@ -5920,8 +5978,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             const pr = state.pendingNucStart.row, pp = state.pendingNucStart.pos;
             if (pr >= 0) {
                 const y = HEADER_H +pr * rowPitch - oy;
-                const x = NAME_W + pp * CHAR_W - ox;
-                if (x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
+                const x = NAME_W + posSlot(pp) * CHAR_W - ox;
+                if (posSlot(pp) >= 0 && x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
                     octx.strokeStyle = '#1976D2';
                     octx.setLineDash([3, 2]);
                     octx.lineWidth = 1.5;
@@ -5936,8 +5994,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             const er = state.editCell.row, ep = state.editCell.pos;
             if (er >= 0 && er < nSeqs && ep >= 0) {
                 const y = HEADER_H +er * rowPitch - oy;
-                const x = NAME_W + ep * CHAR_W - ox;
-                if (x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
+                const x = NAME_W + posSlot(ep) * CHAR_W - ox;
+                if (posSlot(ep) >= 0 && x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
                     octx.strokeStyle = '#e74c3c';
                     octx.lineWidth = 2;
                     octx.strokeRect(x + 1, y + 1, CHAR_W - 2, CHAR_H - 2);
@@ -5950,8 +6008,21 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // Draws the cells, ruler, names and overlays that intersect the CSS-pixel rectangle
     // [cx0, cx1) x [cy0, cy1) of the viewport (the caller has set the clip).
     function drawRegion(ox, oy, w, h, cx0, cy0, cx1, cy1) {
+        // firstCol/lastCol are SLOTS (columns without Variable sites only)
         const firstCol = Math.max(0, Math.floor((ox - NAME_W + cx0) / CHAR_W));
-        const lastCol = Math.min(len - 1, Math.ceil((ox - NAME_W + cx1) / CHAR_W));
+        const lastCol = Math.min(nSlots - 1, Math.ceil((ox - NAME_W + cx1) / CHAR_W));
+        // A breakpoint marker cell (DOM .col-breakpoint): marker colour, hairline borders, symbol
+        const drawMarker = (x, y) => {
+            ctx.fillStyle = brkStyle.color || '#d0d0d0';
+            ctx.fillRect(x, y, CHAR_W, CHAR_H);
+            ctx.fillStyle = '#b0b0b0';
+            ctx.fillRect(x, y, HAIR, CHAR_H);
+            ctx.fillRect(x + CHAR_W - HAIR, y, HAIR, CHAR_H);
+            ctx.fillStyle = '#333';
+            ctx.textAlign = 'center';
+            ctx.fillText(brkStyle.symbol || '\u22EE', x + CHAR_W / 2, y);
+            ctx.textAlign = 'start';
+        };
         const firstRow = Math.max(0, Math.floor((oy - HEADER_H + cy0) / rowPitch));
         const lastRow = Math.min(nSeqs - 1, Math.floor((oy - HEADER_H + cy1 - 1) / rowPitch));
         // The name column is at [0, NAME_W) when sticky, else scrolls with the content
@@ -5981,29 +6052,36 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const hdCols = document.body.classList.contains('highlight-diffs') ? state._diffColumns : null;
         const scaleY = TRACK_H - oy;
         if (scaleY + SCALE_H > 0 && scaleY < h && firstCol <= lastCol) {
-            const visCols = lastCol - firstCol + 1;
-            const scaleText = generateScale(visCols, _canvasScaleInterval(CHAR_W), firstCol);
+            // Each digit is drawn in its column's slot (a marker slot shows nothing, like the DOM
+            // ruler, but keeps the width). With sticky names the digits stop at the name column,
+            // as the DOM's sticky name cell covers them.
             if (stickyNames) {
                 ctx.fillStyle = '#fff';
                 ctx.fillRect(0, scaleY, NAME_W, SCALE_H);
+                ctx.save();
+                ctx.beginPath(); ctx.rect(NAME_W, scaleY, w, SCALE_H); ctx.clip();
             }
             ctx.fillStyle = '#666';
             let rulerBold = false;
-            for (let j = 0; j < scaleText.length; j++) {
-                const ch = scaleText[j];
-                if (ch === ' ') continue;
-                const x = NAME_W + (firstCol + j) * CHAR_W - ox;
+            for (let sI = firstCol; sI <= lastCol; sI++) {
+                const pc = slotPos(sI);
+                if (pc < 0) continue;
+                const ch = scaleTextAll[pc];
+                if (!ch || ch === ' ') continue;
+                const x = NAME_W + sI * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) continue;
                 if (hdCols) {
-                    const variable = hdCols.has(firstCol + j);
+                    const variable = hdCols.has(pc);
                     ctx.globalAlpha = variable ? 1 : 0.4;
                     if (variable !== rulerBold) { rulerBold = variable; ctx.font = variable ? 'bold ' + fontStr : fontStr; }
                 }
                 ctx.fillText(ch, x, scaleY);
             }
             if (hdCols) { ctx.globalAlpha = 1; if (rulerBold) ctx.font = fontStr; }
+            if (stickyNames) ctx.restore();
             ctx.fillStyle = '#ddd';
-            ctx.fillRect(Math.max(0, NAME_W - ox), scaleY + SCALE_H - HAIR, w, HAIR);
+            // the rule under the ruler starts at the data, not under sticky names (the consensus rule does the same)
+            ctx.fillRect(stickyNames ? NAME_W : Math.max(0, NAME_W - ox), scaleY + SCALE_H - HAIR, w, HAIR);
         }
 
         // Edits reshade changed columns into state.conservationDataCache; use it when current
@@ -6017,8 +6095,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             const trim = state.trimBoundaries;
 
             // Residues (glyph-cached: 1 drawImage per cell vs fillRect+fillText)
-            for (let p = firstCol; p <= lastCol; p++) {
-                const x = NAME_W + p * CHAR_W - ox;
+            for (let sI = firstCol; sI <= lastCol; sI++) {
+                const x = NAME_W + sI * CHAR_W - ox;
+                const p = slotPos(sI);
+                if (p < 0) { drawMarker(x, y); continue; }
                 const base = seq[p] || '-';
                 const pd = consPos[p];
                 // Same class list and stylesheet colours as a Full/Block cell
@@ -6055,26 +6135,6 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 }
             }
             if (dimmed) { dimmed = false; ctx.globalAlpha = 1; }
-
-            // Breakpoint markers (var-sites mode) — drawn on top of residues at
-            // the breakpoint position. In DOM mode these replace hidden columns;
-            // Canvas mode doesn't hide columns yet, so the marker overlays the
-            // residue at that position with the breakpoint colour + symbol.
-            if (state._brkBeforePos && state._brkBeforePos.size > 0) {
-                ctx.font = fontStr;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'top';
-                state._brkBeforePos.forEach(brkPos => {
-                    if (brkPos < firstCol || brkPos > lastCol) return;
-                    const bx = NAME_W + brkPos * CHAR_W - ox;
-                    if (bx + CHAR_W < 0 || bx > w) return;
-                    ctx.fillStyle = brkStyle.color || '#d0d0d0';
-                    ctx.fillRect(bx, y, CHAR_W, CHAR_H);
-                    ctx.fillStyle = '#333';
-                    ctx.fillText(brkStyle.symbol || '\u22EE', bx + CHAR_W / 2, y);
-                });
-                ctx.textAlign = 'start';
-            }
 
             // AA translation row(s) (codon analysis)
             if (hasCodon && state._codonData.aaSeq[i]) {
@@ -6124,8 +6184,13 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     ctx.textAlign = 'center';
                     for (const entry of aaData) {
                         if (!entry.cols || entry.cols.length === 0) continue;
-                        const colStart = entry.cols[0];
-                        const colEnd = entry.cols[entry.cols.length - 1];
+                        let colStart = entry.cols[0];
+                        let colEnd = entry.cols[entry.cols.length - 1];
+                        if (slotOf) {   // the slots of the codon's shown columns; none shown: nothing to draw
+                            colStart = Infinity; colEnd = -1;
+                            for (const c of entry.cols) { const sc = posSlot(c); if (sc >= 0) { if (sc < colStart) colStart = sc; if (sc > colEnd) colEnd = sc; } }
+                            if (colEnd < 0) continue;
+                        }
                         const xStart = NAME_W + colStart * CHAR_W - ox;
                         const xEnd = NAME_W + (colEnd + 1) * CHAR_W - ox;
                         if (xEnd < 0 || xStart > w) continue;
@@ -6198,13 +6263,15 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     if (!cons.caseCache) cons.caseCache = new Uint8Array(len);   // 0 unknown, 1 upper, 2 lower
                     const trim = state.trimBoundaries;
                     const soft = !trim && state.softTrimBoundaries;
-                    for (let p = firstCol; p <= lastCol; p++) {
+                    for (let sI = firstCol; sI <= lastCol; sI++) {
+                        const x = NAME_W + sI * CHAR_W - ox;
+                        const p = slotPos(sI);
+                        if (p < 0) { drawMarker(x, textY); continue; }
                         let ch = cons.values[p] || '-';
                         if (ch !== '-' && ch !== '.') {
                             if (!cons.caseCache[p]) cons.caseCache[p] = _canvasConsensusUpper(ch, p, cons.threshold) ? 1 : 2;
                             ch = cons.caseCache[p] === 1 ? ch.toUpperCase() : ch.toLowerCase();
                         }
-                        const x = NAME_W + p * CHAR_W - ox;
                         let bg = null, fg = 'rgba(85,85,85,0.9)';
                         if (trim && p <= trim.leftTrimEnd) { bg = '#ff6b6b'; fg = '#fff'; }
                         else if (trim && p >= trim.rightTrimStart) { bg = '#4ecdc4'; fg = '#fff'; }
@@ -6472,14 +6539,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             _lastTooltipCell = { row, col };
 
             // Breakpoint marker hover tooltip (mirrors DOM .col-breakpoint title)
-            if (state._brkBeforePos && state._brkBeforePos.has(col)) {
+            if (_canvasHoverCell.brk && state._brkInfo && state._brkInfo[col]) {
                 const brkInfo = state._brkInfo[col];
                 if (brkInfo) {
                     const tipText = `${brkInfo.count} column${brkInfo.count > 1 ? 's' : ''} hidden (positions ${brkInfo.start + 1}\u2013${brkInfo.end + 1})`;
                     const m = _canvasState.metrics;
                     const rect = canvas.getBoundingClientRect();
                     const target = _getCanvasTooltipTarget();
-                    target.style.left = (rect.left + m.nameW + col * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
+                    target.style.left = (rect.left + m.nameW + _canvasHoverCell.slot * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
                     target.style.top = (rect.top + (m.headerH || m.charH) + row *(_canvasState.rowPitch || m.charH) - _canvasState.offsetY) + 'px';
                     showTooltipAt(tipText, target);
                     return;
@@ -6497,7 +6564,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     const m = _canvasState.metrics;
                     const rect = canvas.getBoundingClientRect();
                     const target = _getCanvasTooltipTarget();
-                    target.style.left = (rect.left + m.nameW + col * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
+                    target.style.left = (rect.left + m.nameW + _canvasColToSlot(col) * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
                     target.style.top = (rect.top + (m.headerH || m.charH) + row *m.charH - _canvasState.offsetY) + 'px';
                     showTooltipAt(`${seqObj.header}: ${gaplessPos}`, target);
                     return;
@@ -7364,7 +7431,7 @@ function _prepareAnnotLayout(len) {
     state._annotReport = { placed: feats.length, lanes: Math.max(1, laneEnd.length), unmatched, outside, chroms };
     // The placed features, whether or not the track is shown (codon analysis by gene reads them)
     state._annotPlaced = feats.length ? { feats } : null;
-    const hiddenByVarSites = !!state._varSiteHiddenRanges && isSpanRenderMode();
+    const hiddenByVarSites = !!state._varSiteHiddenRanges && (isSpanRenderMode() || isCanvasMode());
     if (feats.length && _annotTrackVisible() && !hiddenByVarSites) {
         state._annotLayout = { feats, lanes: Math.max(1, laneEnd.length), label: a.trackName || a.sourceName || 'annotation' };
     }
@@ -9199,8 +9266,8 @@ function renderAlignment(options = {}) {
         _lastModeRadioId = 'modeCanvas'; // bypasses onModeChange, so sync explicitly
         syncQuickModeSwitch();
         syncCodonModePanel(); // this bypasses onModeChange, so sync explicitly
-        const note = `Canvas view (${TOTAL_RESIDUES.toLocaleString()} residues): scrolling, editing and selections work here; `
-            + `Show 2D and hidden columns in var-sites mode need Full or Block (mode switch at the top).`;
+        const note = `Canvas view (${TOTAL_RESIDUES.toLocaleString()} residues): scrolling, editing, selections, Highlight diffs and Variable sites only work here; `
+            + `Show 2D needs Full or Block (mode switch at the top).`;
         showMessage(note, 10000);
         _canvasSwitchNote = note;                       // survives the caller's own "File loaded" message
         _canvasSwitchNoteUntil = performance.now() + 5000;
@@ -11399,7 +11466,7 @@ function showLargeAlignmentDialog(stats, classification, context = 'load') {
                works there too.`
             : `Loading may be slow or briefly freeze the browser because ${reasonText}.
                Canvas mode is recommended (scrolling and editing stay instant); switch to Block/Full
-               only for Show 2D or hidden columns in var-sites mode.`;
+               only for Show 2D.`;
 
         content.innerHTML = `
             <p style="margin:0 0 10px;">
@@ -11837,7 +11904,7 @@ function ensureCanvasModeNotice() {
     notice = document.createElement('span');
     notice.id = 'canvasModeNotice';
     notice.className = 'canvas-mode-chip';
-    notice.title = 'Canvas mode: editing, selections, rename and row drag work here. Show 2D and the hidden columns of var-sites mode need Full or Block.';
+    notice.title = 'Canvas mode: editing, selections, rename, row drag, Highlight diffs and Variable sites only work here. Show 2D needs Full or Block.';
     notice.textContent = 'Canvas';
     quickSwitch.parentNode.insertBefore(notice, quickSwitch.nextSibling);
     return notice;
@@ -16508,7 +16575,8 @@ function _geJumpToCol(pos1) {
     if (typeof isCanvasMode === 'function' && isCanvasMode()) {
         const charW = _canvasState.metrics?.charW || 8;
         const viewW = (el('alignmentContainer') && el('alignmentContainer').clientWidth) || 600;
-        _canvasState.offsetX = Math.max(0, pos0 * charW - Math.min(viewW / 3, charW * 10));
+        const slot0 = _canvasColToSlot(pos0);
+        _canvasState.offsetX = Math.max(0, (slot0 >= 0 ? slot0 : pos0) * charW - Math.min(viewW / 3, charW * 10));
         state.selectedColumns = new Set([pos0]);
         _canvasState.scheduleDraw?.();
         _canvasState.onOffsetChange?.();
@@ -29827,7 +29895,8 @@ function _scrollToColumn(colIndex) {
     if (document.getElementById('modeCanvas')?.checked) {
         const m = _canvasState.metrics;
         if (m?.charW) {
-            _canvasState.offsetX = Math.max(0, colIndex * m.charW - 120);
+            const slotI = _canvasColToSlot(colIndex);
+            _canvasState.offsetX = Math.max(0, (slotI >= 0 ? slotI : colIndex) * m.charW - 120);
             _canvasState.scheduleDraw?.();
         }
         return;
