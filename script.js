@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v251';
+const BUILD_TAG = 'v252';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -5328,6 +5328,9 @@ function _canvasHitTest(clientX, clientY) {
     const CHAR_W = m.charW;
     const CHAR_H = m.charH;
     const rowPitch = _canvasState.rowPitch || CHAR_H;
+    // The name column covers the cells that scrolled under it (sticky names), so a press
+    // there is on a name, never on a cell; without sticky names the names scroll away.
+    if (x < (el('stickyNames')?.checked ? NAME_W : NAME_W - _canvasState.offsetX)) return null;
     // Subtract the name column and scale ruler offsets, then add back the pan
     // offset so the result is in content (not viewport) coordinates.
     const col = Math.floor((x - NAME_W + _canvasState.offsetX) / CHAR_W);
@@ -5354,7 +5357,7 @@ function _canvasHitTestRuler(clientX, clientY) {
     const y = clientY - rect.top;
     const trackH = m.trackH || 0;             // annotation track above the ruler
     if (y < trackH || y >= trackH + m.charH) return null;  // not in ruler row
-    if (x < m.nameW) return null;             // name column corner
+    if (x < (el('stickyNames')?.checked ? m.nameW : m.nameW - _canvasState.offsetX)) return null;   // name column corner
     const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
     const len = state.seqs && state.seqs.length > 0
         ? Math.max(...state.seqs.map(s => s.seq.length))
@@ -5467,7 +5470,7 @@ function _canvasColFromClientX(clientX) {
     if (!m || !m.nameW) return -1;
     const rect = canvas.getBoundingClientRect();
     const x = clientX - rect.left;
-    if (x < m.nameW) return -1;
+    if (x < (el('stickyNames')?.checked ? m.nameW : m.nameW - _canvasState.offsetX)) return -1;
     const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
     const len = state.seqs && state.seqs.length > 0
         ? Math.max(...state.seqs.map(s => s.seq.length))
@@ -5561,8 +5564,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const octx = overlay.getContext('2d');
     _canvasState.overlay = overlay;
 
-    const ctx = canvas.getContext('2d');
+    // Opaque: Chrome gives text on an opaque canvas the same subpixel (ClearType) antialiasing
+    // as DOM text; on a transparent canvas it falls back to greyscale, which next to the DOM
+    // text of the page reads as blurred (owner: "canvas loads sequences in low resolution").
+    // The glyph canvases and the scroll scratch copy are opaque for the same reason, and
+    // every clear below is a white fill.
+    const ctx = canvas.getContext('2d', { alpha: false });
     const dpr = window.devicePixelRatio || 1;
+    const clearWhite = (c, x, y, cw, ch) => { c.fillStyle = '#fff'; c.fillRect(x, y, cw, ch); };
     // Match the current zoom level so Canvas mode's text size tracks Normal
     // mode's font-size (set on this same container by setZoom) instead of
     // staying pinned at a hardcoded size regardless of the zoom slider.
@@ -5610,13 +5619,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             g = document.createElement('canvas');
             g.width = Math.ceil(CHAR_W * dpr);
             g.height = Math.ceil(CHAR_H * dpr);
-            const c2 = g.getContext('2d');
+            const c2 = g.getContext('2d', { alpha: false });
             c2.setTransform(dpr, 0, 0, dpr, 0, 0);
             const sans = variant.includes('s');
             c2.font = (variant.includes('i') ? 'italic ' : '') + (variant.includes('b') ? 'bold ' : '')
                 + (sans ? fontSizePx + 'px ' + _OVERLAY_SANS : fontStr);
             c2.textBaseline = 'top';
-            if (bg) { c2.fillStyle = bg; c2.fillRect(0, 0, CHAR_W, CHAR_H); }
+            c2.fillStyle = '#fff'; c2.fillRect(0, 0, CHAR_W, CHAR_H);          // the row is white under every cell
+            if (bg) { c2.fillStyle = bg; c2.fillRect(0, 0, CHAR_W, CHAR_H); }   // a translucent tint composes over it as in the DOM
             c2.fillStyle = fg;
             if (sans) { c2.textAlign = 'center'; c2.fillText(ch, CHAR_W / 2, 0); }
             else c2.fillText(ch, 0, 0);
@@ -5679,6 +5689,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // to call when nothing moved.
     let _lastRect = '';
     function resize(force) {
+        if ((window.devicePixelRatio || 1) !== dpr) {   // another screen scale: everything is sized for the old one
+            if (!_canvasState._dprRerender) { _canvasState._dprRerender = true; setTimeout(() => { _canvasState._dprRerender = false; if (document.getElementById('modeCanvas')?.checked) renderAlignment(); }, 0); }
+            return false;
+        }
         const top0 = alignmentContainer.getBoundingClientRect().top;
         const hCss = Math.max(100, window.innerHeight - top0 - 28);
         if (parseInt(alignmentContainer.style.height) !== hCss) alignmentContainer.style.height = hCss + 'px';
@@ -5704,7 +5718,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // (source-over), so copying a canvas onto itself where the regions overlap would blend
     // antialiased pixels with what was there; copying via a cleared buffer is exact.
     const back = document.createElement('canvas');
-    const bctx = back.getContext('2d');
+    const bctx = back.getContext('2d', { alpha: false });
     let drawRaf = 0, overlayRaf = 0;
     function scheduleDraw() {
         if (drawRaf) return;
@@ -5820,7 +5834,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            ctx.clearRect(0, 0, w, h);
+            clearWhite(ctx, 0, 0, w, h);
             drawRegion(ox, oy, w, h, x0 / dpr, y0 / dpr, x1 / dpr, y1 / dpr);
             ctx.restore();
         };
@@ -5832,13 +5846,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const sx = fixed + Math.max(0, dxDev), sy = Math.max(0, dyDev);
                 const dx = fixed + Math.max(0, -dxDev), dy = Math.max(0, -dyDev);
                 bctx.setTransform(1, 0, 0, 1, 0, 0);
-                bctx.clearRect(0, 0, W, H);
-                bctx.drawImage(canvas, 0, 0);
+                bctx.drawImage(canvas, 0, 0);   // opaque source covering the whole scratch: no clear needed
                 ctx.save();
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.imageSmoothingEnabled = false;
-                ctx.clearRect(dx, dy, cw, ch);
-                ctx.drawImage(back, sx, sy, cw, ch, dx, dy, cw, ch);
+                ctx.drawImage(back, sx, sy, cw, ch, dx, dy, cw, ch);   // opaque: replaces the pixels, nothing to clear
                 ctx.restore();
             }
             // The exposed strip, widened to the nearest row edge (or column edge) so that every
@@ -5867,7 +5879,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             _canvasState.stats.blit++;
             _canvasState.stats.blitMs.push(performance.now() - t0);
         } else {
-            ctx.clearRect(0, 0, w, h);
+            clearWhite(ctx, 0, 0, w, h);
             drawRegion(ox, oy, w, h, 0, 0, w, h);
             _canvasState.stats.full++;
             _canvasState.stats.fullMs.push(performance.now() - t0);
@@ -5894,7 +5906,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            ctx.clearRect(0, 0, w, h);
+            clearWhite(ctx, 0, 0, w, h);
             drawRegion(ox, oy, w, h, x0 / dpr, y0 / dpr, x1 / dpr, y1 / dpr);
             ctx.restore();
         };

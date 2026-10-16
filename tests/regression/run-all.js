@@ -3508,6 +3508,81 @@ check('Canvas mode: Variable sites only hides columns, keeps markers, hit-tests 
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(out) : JSON.stringify(out) };
 });
 
+// Reported by the owner (v252): in Canvas, after a horizontal scroll a click on a sequence name
+// selected one residue (the cell that had scrolled under the sticky name column), and Ctrl+C
+// then copied that residue instead of the name being renamed. The name column covers those
+// cells: a press on it is a name press. Real input: a single click on a name selects nothing,
+// a double click opens the rename box with the whole name selected and focused, and Ctrl+C
+// there is left to the browser (the app's own copy is not called).
+check('Canvas mode: a click on a name never hits the cell under it, double-click renames with the whole name selected', async (page) => {
+  await loadSyntheticFasta(page, 300, 300);
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { window.__copied = 0; const o = window.copySelected; window.copySelected = function () { window.__copied++; return o.apply(this, arguments); }; });
+  const g = await page.evaluate(() => { const m = _canvasState.metrics; const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { left: r.left, top: r.top, nameW: m.nameW, headerH: m.headerH, pitch: _canvasState.rowPitch, charW: m.charW }; });
+  const st = () => page.evaluate(() => ({ pending: !!state.pendingNucStart, nucs: state.selectedNucs.size, active: document.activeElement ? document.activeElement.tagName : null, sel: document.activeElement && document.activeElement.tagName === 'INPUT' ? [document.activeElement.value, document.activeElement.selectionStart, document.activeElement.selectionEnd] : null, copied: window.__copied }));
+  const out = {};
+  const bad = [];
+  for (const sticky of [true, false]) {
+    await page.evaluate((on) => { const c = document.getElementById('stickyNames'); if (c.checked !== on) { c.checked = on; c.dispatchEvent(new Event('change', { bubbles: true })); } }, sticky);
+    await page.waitForTimeout(400);
+    for (const ox of [0, 200]) {
+      await page.evaluate((ox) => { _canvasState.offsetX = ox; _canvasState.scheduleDraw(); state.pendingNucStart = null; state.selectedNucs.clear(); window.__copied = 0; }, ox);
+      await page.waitForTimeout(200);
+      // with static names and a scrolled view the names are off screen: the press at x=20 is then on cells, skip
+      if (!sticky && ox > 0) continue;
+      const p = { x: g.left + 20, y: g.top + g.headerH + 5.5 * g.pitch };
+      await page.mouse.click(p.x, p.y); await page.waitForTimeout(150);
+      const single = await st();
+      await page.mouse.dblclick(p.x, p.y); await page.waitForTimeout(300);
+      const dbl = await st();
+      await page.keyboard.press('Control+c'); await page.waitForTimeout(150);
+      const copy = await st();
+      await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+      const key = `${sticky ? 'sticky' : 'static'}@${ox}`;
+      out[key] = { single, dbl, copy };
+      if (single.pending || single.nucs) bad.push(`${key}: a single click on the name selected a cell`);
+      if (dbl.active !== 'INPUT' || !dbl.sel || dbl.sel[0] !== 'seq5' || dbl.sel[1] !== 0 || dbl.sel[2] !== 4) bad.push(`${key}: double click did not open the rename box with the whole name selected: ${JSON.stringify(dbl)}`);
+      if (copy.copied) bad.push(`${key}: Ctrl+C in the rename box ran the app's copy`);
+      if (copy.nucs) bad.push(`${key}: a residue was selected by the time of Ctrl+C`);
+    }
+  }
+  // the cell under a sticky name is reachable again once the names are static (the press is on a cell then)
+  const cellHit = await page.evaluate(() => { const m = _canvasState.metrics, r = document.getElementById('alignmentCanvas').getBoundingClientRect(); _canvasState.offsetX = 200; const sticky = document.getElementById('stickyNames'); const h = { withStatic: _canvasHitTest(r.left + 20, r.top + m.headerH + 5.5 * _canvasState.rowPitch) }; sticky.checked = true; h.withSticky = _canvasHitTest(r.left + 20, r.top + m.headerH + 5.5 * _canvasState.rowPitch); sticky.checked = false; _canvasState.offsetX = 0; return h; });
+  out.cellHit = cellHit;
+  if (cellHit.withSticky !== null) bad.push('with sticky names a point in the name column still hit-tests a cell');
+  if (!cellHit.withStatic || cellHit.withStatic.row !== 5) bad.push('with static names a scrolled cell under x=20 is not hit: ' + JSON.stringify(cellHit.withStatic));
+  await page.evaluate(() => { const c = document.getElementById('stickyNames'); if (!c.checked) { c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); } });
+  await page.waitForTimeout(300);
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(out) : JSON.stringify(out) };
+});
+
+// Owner report (v252): "canvas loads sequences in low resolution". Chrome antialiases text on a
+// transparent canvas in greyscale and on an opaque one with subpixel (ClearType) rendering like
+// DOM text; measured headful on Windows: 0 colour-fringe pixels in the Canvas view against
+// 10,375 in Full, and 9,704 once the canvas is opaque. Headless Chrome has no subpixel text, so
+// this checks the contract: the content canvas, its scroll scratch copy and the glyph canvases
+// are opaque, the overlay stays transparent, and nothing in the picture changed except that
+// every untouched pixel is now white (the frame copy and the highlight checks cover the rest).
+check('Canvas mode: content canvas and glyphs are opaque (subpixel text like the DOM), overlay transparent', async (page) => {
+  await loadSyntheticFasta(page, 200, 200);
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(300);
+  const r = await page.evaluate(() => {
+    const c = document.getElementById('alignmentCanvas'), o = document.getElementById('alignmentCanvasOverlay');
+    const ca = c.getContext('2d').getContextAttributes(), oa = o.getContext('2d').getContextAttributes();
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let transparent = 0, white = 0; for (let i = 3; i < d.length; i += 4) { if (d[i] !== 255) transparent++; else if (d[i - 3] === 255 && d[i - 2] === 255 && d[i - 1] === 255) white++; }
+    return { contentAlpha: ca.alpha, overlayAlpha: oa.alpha, transparent, white, px: d.length / 4 };
+  });
+  const bad = [];
+  if (r.contentAlpha !== false) bad.push('content canvas is transparent');
+  if (r.overlayAlpha !== true) bad.push('overlay canvas is not transparent');
+  if (r.transparent !== 0) bad.push(`${r.transparent} non-opaque pixels in the content canvas`);
+  if (!(r.white > r.px * 0.1)) bad.push('no white background pixels');
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(r) : JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
