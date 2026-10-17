@@ -20450,6 +20450,15 @@ function _codonEngine() {
     return el('codonEngine')?.value === 'fast' ? 'fast' : 'macse';
 }
 
+// While Realign all / selected / region run, rows go to the aligner as r<row index> (rows with the same name stay
+// apart); the codon reference and the codon statistics are translated between those ids and the row names.
+let _alignRowIds = false;
+function _alignIdRow(id) {
+    const m = _alignRowIds && /^r(\d+)$/.exec(String(id).split(/\s+/)[0]);
+    return m ? state.seqs[+m[1]] || null : null;
+}
+function _alignIdName(id) { const r = _alignIdRow(id); return r ? (r.fullHeader || r.header) : id; }
+
 function _codonAlignOpts(fasta) {
     const num = (id, dflt) => { const v = parseFloat(el(id)?.value); return isNaN(v) ? dflt : v; };
     if (_codonEngine() === 'macse') {
@@ -20458,10 +20467,16 @@ function _codonAlignOpts(fasta) {
     }
     const typed = (el('codonRef')?.value || '').trim();
     let ref = typed;
-    if (!ref) {
+    const names = new Set(parseMafftOutput(fasta).map(r => r.name));
+    if (_alignRowIds) {
+        // rows are sent as r<index>: the reference is the id of the first row (typed: the first row of that name)
+        const isRef = (s) => !typed || s.header === typed || s.fullHeader === typed || String(s.header).split(/\s+/)[0] === typed;
+        const i = state.seqs.findIndex((s, k) => names.has('r' + k) && isRef(s));
+        if (i >= 0) ref = 'r' + i;
+        else if (!typed) ref = 0;
+    } else if (!ref) {
         // Default reference: the first row as displayed among the sequences being aligned (not whatever comes
         // first in the FASTA, which Reorder by similarity / Add at top can change).
-        const names = new Set(parseMafftOutput(fasta).map(r => r.name));
         const first = state.seqs.find(s => names.has(s.fullHeader || s.header) || names.has(s.header));
         ref = first ? (first.fullHeader || first.header) : 0;
     }
@@ -20553,6 +20568,10 @@ async function _codonAlignWithUi(fasta, label) {
             return null;
         }
         const st = window._lastCodonAlignStats;
+        if (st && _alignRowIds) {
+            if (st.ref != null) st.ref = _alignIdName(st.ref);
+            for (const list of [st.frameshifts, st.internalStops]) for (const x of (list || [])) x.name = _alignIdName(x.name);
+        }
         if (st && st.frameshifts) {
             const fsTot = st.frameshifts.reduce((a, x) => a + x.n, 0);
             const stTot = (st.internalStops || []).reduce((a, x) => a + x.n, 0);
@@ -20576,7 +20595,8 @@ async function _codonAlignWithUi(fasta, label) {
     } catch (err) {
         if (cancelled || String(err?.message || '').includes('cancelled')) return null;
         // Report here (callers would label it as a MAFFT error) and return null, which callers treat as "no result".
-        const msg = String(err?.message || err).replace(/^codon-align:\s*/, '');
+        const msg = String(err?.message || err).replace(/^codon-align:\s*/, '')
+            .replace(/"(r\d+)"/g, (m, id) => `"${_alignIdName(id)}"`);   // row ids back to names
         showMessage('Codon alignment: ' + msg, 8000);
         console.error('Codon alignment error:', err);
         return null;
@@ -20666,6 +20686,7 @@ async function realignSelectedBlock(opts) {
     }
 
     try {
+        _alignRowIds = true;   // RealignRegion sends rows as r<index> too
         const result = await RealignRegion.run(state.seqs, state.selectedColumns, {
             adjustDir: extra.adjustDir && extra.seqType === '2',
             reorder: extra.reorder,
@@ -20678,7 +20699,7 @@ async function realignSelectedBlock(opts) {
             adjustDirection: (fa) => _adjustDirection(fa),
             reorderByGuideTree: (fa) => _reorderByGuideTree(fa),
             reverseComplement: _reverseComplement
-        });
+        }).finally(() => { _alignRowIds = false; });
         if (result.cancelled) {
             showMessage('Region realign cancelled.', 2500);
             return;
@@ -20793,7 +20814,10 @@ async function realignAll() {
     }
 
     try {
-        const result = await _mafftAlignWithUi(fasta, extraArgs, 'Aligning all sequences with MAFFT...');
+        _alignRowIds = true;
+        let result;
+        try { result = await _mafftAlignWithUi(fasta, extraArgs, 'Aligning all sequences with MAFFT...'); }
+        finally { _alignRowIds = false; }
         if (!result) return;
         const aligned = parseMafftOutput(result);
         if (aligned.length === 0) {
@@ -20888,11 +20912,12 @@ function realignSelected() {
     const originalCaseByHeader = new Map();
     for (const entry of parseMafftOutput(fasta)) originalCaseByHeader.set(entry.name, entry.seq);
 
+    _alignRowIds = true;
     _mafftAlignWithUi(
         fasta,
         extraArgs,
         `Realigning ${selectedIndices.length} selected sequences with MAFFT...`
-    ).then(result => {
+    ).finally(() => { _alignRowIds = false; }).then(result => {
         if (!result) return;
         const aligned = parseMafftOutput(result);
         if (aligned.length === 0) {
