@@ -3975,6 +3975,67 @@ check('An alignment with 160,000 rows loads and renders (no argument-spread stac
   return { pass: ok, detail: ok ? '' : JSON.stringify({ r, stack: stack.slice(0, 3) }) };
 });
 
+check('Audit batch 2: RNA reverse complement, multi-row editor undo, trim preview clamp, drop next to the consensus, long pastes in Recent, short MAFFT output', async (page) => {
+  const fa = '>a\nACGTACGTAC\n>b\nACGTTCGTAC\n>c\nACGAACGTAC\n';
+  await page.setInputFiles('#fileInput', { name: 'b2.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+  await page.waitForTimeout(1000);
+  const r = await page.evaluate(async () => {
+    const out = {};
+    // 1. RNA in, RNA out; DNA unchanged
+    out.rc = [_reverseComplement('AUGCu-'), RealignRegion.reverseComplement('AUGCu-'), _reverseComplement('ATGC')];
+    // 2. the multi-row editor does not undo into an earlier single-row session
+    openSeqEditor(0);
+    const ta = document.getElementById('seqEditTextarea');
+    ta.value = ta.value + 'GGGG'; ta.dispatchEvent(new Event('input', { bubbles: true }));
+    document.getElementById('seqEditModal').style.display = 'none';
+    state.selectedRows.clear(); state.selectedRows.add(0); state.selectedRows.add(1);
+    openSeqEditorMulti();
+    const multiText = ta.value;
+    _seqEditUndo();
+    out.multiUndoKept = ta.value === multiText;
+    document.getElementById('seqEditModal').style.display = 'none';
+    // 3. a preview on an alignment that is all gaps at the edges still keeps a column
+    const saved = state.seqs.map(q => q.seq);
+    state.seqs.forEach((q, i) => { q.seq = i === 0 ? 'A---------' : '---------C'; });
+    previewTrimming();
+    const b = state.trimBoundaries;
+    out.trimKeeps = b.leftTrimEnd + 1 < b.rightTrimStart;
+    state.trimBoundaries = null;
+    state.seqs.forEach((q, i) => { q.seq = saved[i]; });
+    renderAlignment();
+    await new Promise(res => setTimeout(res, 200));
+    // 4. the consensus line is never a drop target
+    const lines = [...document.querySelectorAll('#alignmentContainer .seq-line[data-seq-index]')];
+    const cons = lines.find(l => l.classList.contains('consensus-line'));
+    if (cons) { const rc = cons.getBoundingClientRect(); const n = _findNearestSequenceLine(rc.top + rc.height / 2); out.dropTarget = n && n.line.dataset.seqIndex; }
+    else out.dropTarget = 'no consensus line';
+    // 5. a paste above the Recent cache limit is not reopened cut off
+    let msg = ''; const om = showMessage; showMessage = (m, t) => { msg = m; return om(m, t); };
+    _historyManager.add('clipboard', { name: 'big paste', text: '>x\n' + 'A'.repeat(99997), nSeqs: 1, length: 99997 });   // as v255 stored a long paste: cut at 100,000
+    _historyManager.renderDropdown();
+    const before = fastaInput.value;
+    const item = [...document.querySelectorAll('.recent-item')].find(e => e.textContent.includes('big paste'));
+    if (item) { item.click(); await new Promise(res => setTimeout(res, 300)); }
+    showMessage = om;
+    out.bigPaste = { msg, reloaded: fastaInput.value !== before, hadItem: !!item };
+    _historyManager.items = _historyManager.items.filter(e => e.name !== 'big paste'); _historyManager.save();
+    // 6. MAFFT output with fewer sequences than sent changes nothing
+    const seqs = [{ header: 'a', seq: 'ACGTACGTAC' }, { header: 'b', seq: 'ACGTTCGTAC' }];
+    let err = null, res = null;
+    try { res = await RealignRegion.run(seqs, new Set([2, 3, 4, 5]), { mafftAlign: async () => '>a\nGTAC\n' }); } catch (e) { err = e.message; }
+    out.shortMafft = err ? 'refused' : JSON.stringify(res && res.seqs.map(q => q.seq));
+    return out;
+  });
+  const bad = [];
+  if (r.rc[0] !== '-aGCAU' || r.rc[1] !== '-aGCAU' || r.rc[2] !== 'GCAT') bad.push('reverse complement ' + JSON.stringify(r.rc));
+  if (!r.multiUndoKept) bad.push('multi-row editor undo went back to an earlier session');
+  if (!r.trimKeeps) bad.push('trim preview would remove every column');
+  if (r.dropTarget === '-1') bad.push('consensus line taken as a drop target');
+  if (!r.bigPaste.hadItem || r.bigPaste.reloaded) bad.push('cut-off paste reopened ' + JSON.stringify(r.bigPaste));
+  if (r.shortMafft !== 'refused') bad.push('short MAFFT output applied: ' + r.shortMafft);
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

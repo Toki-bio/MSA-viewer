@@ -96,13 +96,14 @@
             A: 'T', T: 'A', C: 'G', G: 'C', a: 't', t: 'a', c: 'g', g: 'c',
             R: 'Y', Y: 'R', S: 'S', W: 'W', K: 'M', M: 'K', B: 'V', V: 'B', D: 'H', H: 'D',
             r: 'y', y: 'r', s: 's', w: 'w', k: 'm', m: 'k', b: 'v', v: 'b', d: 'h', h: 'd',
-            N: 'N', n: 'n', '-': '-', '.': '.'
+            N: 'N', n: 'n', '-': '-', '.': '.', U: 'A', u: 'a'
         };
         var out = '';
         for (var i = seq.length - 1; i >= 0; i--) {
             var c = seq.charAt(i);
             out += comp[c] || c;
         }
+        if (/[Uu]/.test(seq) && !/[Tt]/.test(seq)) out = out.replace(/T/g, 'U').replace(/t/g, 'u');   // RNA stays RNA
         return out;
     }
 
@@ -482,6 +483,9 @@
                 var origUgByName = {};
                 for (var oi = 0; oi < recs.length; oi++) origUgByName[recs[oi].name] = recs[oi].seq;
                 var aligned = parseFn(raw);
+                if (aligned.length !== recs.length) {
+                    throw new Error('the aligner returned ' + aligned.length + ' of ' + recs.length + ' sequences; nothing was changed');
+                }
                 for (var a = 0; a < aligned.length; a++) {
                     var nm = aligned[a].name.split(/\s+/)[0];
                     var origUg = origUgByName[nm] || origUgByName[aligned[a].name];

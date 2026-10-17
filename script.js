@@ -1352,6 +1352,7 @@ const _historyManager = {
             preview: data.preview || '',
             source: data.source || '',
             text: data.text || null, // stored for clipboard items (small), null for files
+            tooLarge: !!data.tooLarge, // a paste too long to keep
             handleId: data.handleId || null // File System Access handle in IndexedDB, if captured (Chromium only)
         };
         // Remove duplicate (same name + source)
@@ -1431,6 +1432,11 @@ const _historyManager = {
                 const entry = this.items[idx];
                 if (!entry) return;
                 document.getElementById('recentDropdown').style.display = 'none';
+                // entries from before v256 kept only the first 100,000 characters of a long paste
+                if (entry.tooLarge || (entry.type === 'clipboard' && entry.text && entry.text.length >= 100000)) {
+                    showMessage('This paste was too large to keep in Recent (over 100,000 characters) - paste it again.', 4500);
+                    return;
+                }
                 if (entry.text) {
                     fastaInput.value = entry.text;
                     state.currentFilename = entry.name;
@@ -1853,7 +1859,7 @@ function _getDraggedIndices(draggedIndex) {
 function _findNearestSequenceLine(clientY) {
     const container = document.getElementById('alignmentContainer');
     if (!container) return null;
-    const lines = container.querySelectorAll('.seq-line[data-seq-index]');
+    const lines = container.querySelectorAll('.seq-line[data-seq-index]:not(.consensus-line)');
     if (!lines.length) return null;
     let bestLine = null;
     let bestDist = Infinity;
@@ -2026,7 +2032,7 @@ function handleDragEnd(e) {
 
 function _showDragInsertPreview(e, container) {
     // Find the closest seq-line to the cursor
-    const lines = container.querySelectorAll('.seq-line[data-seq-index]');
+    const lines = container.querySelectorAll('.seq-line[data-seq-index]:not(.consensus-line)');
     if (!lines.length) return;
 
     let bestLine = null;
@@ -2099,7 +2105,7 @@ window.handleDrop = function(e) {
         if (!targetLine || targetLine.classList.contains('consensus-line') || targetLine.classList.contains('scale-ruler-line')) {
             const container = document.getElementById('alignmentContainer');
             if (!container) return;
-            const lines = container.querySelectorAll('.seq-line[data-seq-index]');
+            const lines = container.querySelectorAll('.seq-line[data-seq-index]:not(.consensus-line)');
             let bestLine = null;
             let bestDist = Infinity;
             for (const line of lines) {
@@ -12175,7 +12181,9 @@ async function parseAndRender(isFromDrop = false) {
                 // capped at 100KB) silently truncated any file above that cap
                 // on reopen, with no warning: a 3,408-sequence / 6.28MB FASTA
                 // reopened as just 55 sequences.
-                text: isClipboard ? inputText.substring(0, 100000) : null,
+                // a paste above the limit is not kept at all: a cut-off copy reopened as a smaller alignment
+                text: isClipboard && inputText.length <= 100000 ? inputText : null,
+                tooLarge: isClipboard && inputText.length > 100000,
                 handleId
             }
         );
@@ -16383,7 +16391,7 @@ function previewTrimming() {
 
     const params = getTrimParameters();
     const trimBounds = getTrimBoundaries(sequences, params);
-    state.trimBoundaries = trimBounds;
+    state.trimBoundaries = _clampTrimBounds(trimBounds.leftTrimEnd, trimBounds.rightTrimStart, _trimAlnLen());
     state.trimManualLeft = false;
     state.trimManualRight = false;
     _ensureConsensusVisible();
@@ -18529,8 +18537,9 @@ function _reverseComplement(seq) {
     const comp = { A:'T', T:'A', C:'G', G:'C', a:'t', t:'a', c:'g', g:'c',
                    R:'Y', Y:'R', S:'S', W:'W', K:'M', M:'K', B:'V', V:'B', D:'H', H:'D',
                    r:'y', y:'r', s:'s', w:'w', k:'m', m:'k', b:'v', v:'b', d:'h', h:'d',
-                   N:'N', n:'n', '-':'-', '.':'.' };
-    return seq.split('').reverse().map(c => comp[c] || c).join('');
+                   N:'N', n:'n', '-':'-', '.':'.', U:'A', u:'a' };
+    const out = seq.split('').reverse().map(c => comp[c] || c).join('');
+    return (/[Uu]/.test(seq) && !/[Tt]/.test(seq)) ? out.replace(/T/g, 'U').replace(/t/g, 'u') : out;   // RNA stays RNA
 }
 
 /**
@@ -21541,6 +21550,7 @@ function openSeqEditorMulti() {
     }
     textarea.value = text.trimEnd();
     _updateSeqEditLength();
+    _seqEditResetUndo(textarea.value);
 
     showExclusiveModal('seqEditModal');
     textarea.focus();
