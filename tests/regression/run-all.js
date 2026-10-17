@@ -3862,6 +3862,20 @@ check('File and BLAST text is escaped in the BLAST dialog, hit table, hit toolti
   return { pass: ok, detail: ok ? '' : JSON.stringify(r) };
 });
 
+check('BLAST worker FASTA parser ends on a last record without a newline', async () => {
+  const vm = require('vm'), fs = require('fs'), path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'blast-worker.js'), 'utf8');
+  const ctx = { self: { postMessage() {}, addEventListener() {} }, postMessage() {}, importScripts() {}, console };
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx, { timeout: 5000 });
+  const seq = 'ACGTACGTACGTACGTACGTACGT';
+  let res;
+  try {
+    res = vm.runInContext(`parseFasta(${JSON.stringify('>s1 one\n' + seq + '\n>s2')}).map(r => r.id).join(',')`, ctx, { timeout: 3000 });
+  } catch (e) { return { pass: false, detail: 'parseFasta did not finish: ' + e.message }; }
+  return { pass: res === 's1', detail: res === 's1' ? '' : 'ids ' + res };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

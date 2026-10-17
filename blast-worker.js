@@ -664,7 +664,7 @@ function parseFasta(content) {
         const next = content.indexOf('>', start + 1);
         const block = next < 0 ? content.substring(start + 1) : content.substring(start + 1, next);
         const nl = block.indexOf('\n');
-        if (nl < 0) { start = next; continue; }
+        if (nl < 0) { start = next < 0 ? content.length : next; continue; }
 
         const header = block.substring(0, nl).trim();
         const seq = block.substring(nl + 1).replace(/\s/g, '').toUpperCase()
