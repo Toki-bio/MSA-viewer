@@ -26465,7 +26465,7 @@ function getBlastWorkerPool() {
     const hc = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
     const n = Math.max(1, Math.min(MAX_SHARD_WORKERS, hc));
     while (blastWorkerPool.length < n) {
-        blastWorkerPool.push(new Worker('./blast-worker.js'));
+        blastWorkerPool.push(new Worker(`./blast-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`));
         workerPrimed.push(new Set());
     }
     return blastWorkerPool.slice(0, n);
