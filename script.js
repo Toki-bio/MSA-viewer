@@ -7236,7 +7236,9 @@ async function readSequenceFile(file) {
     const looksAb1ByName = /\.ab1$/i.test(file.name);
     const buf = await file.arrayBuffer();
     if (looksAb1ByName || (typeof AB1Parser !== 'undefined' && AB1Parser.looksLikeAb1(buf))) {
-        const parsed = typeof AB1Parser !== 'undefined' ? AB1Parser.parse(buf) : null;
+        let parsed = null;
+        try { parsed = typeof AB1Parser !== 'undefined' ? AB1Parser.parse(buf) : null; }
+        catch (e) { throw new Error(`${file.name} is not a readable AB1 trace (truncated or damaged file)`); }
         if (parsed && parsed.sequence) {
             const header = file.name.replace(/\.[^.]+$/, ''); // any extension: detected by content
             state.ab1Traces[header] = parsed;
@@ -20922,18 +20924,22 @@ function initAddSeqBrowse() {
         if (!files.length) return;
         label.textContent = `Reading ${files.length} file(s)...`;
         let allContent = textarea.value.trim();
+        const read = [], failed = [];
         for (const file of files) {
             try {
                 const { text } = await readSequenceFile(file);
                 const trimmed = text.trim();
                 if (allContent) allContent += '\n' + trimmed;
                 else allContent = trimmed;
+                read.push(file.name);
             } catch (e) {
                 console.error('Error reading file:', file.name, e);
+                failed.push(file.name);
             }
         }
         textarea.value = allContent;
-        label.textContent = `Loaded ${files.length} file(s): ${files.map(f => f.name).join(', ')}`;
+        label.textContent = (read.length ? `Loaded ${read.length} file(s): ${read.join(', ')}` : '')
+            + (failed.length ? `${read.length ? '. ' : ''}Could not read ${failed.length} file(s): ${failed.join(', ')}` : '');
         fileInput.value = '';
     });
 }

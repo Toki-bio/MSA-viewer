@@ -3898,6 +3898,19 @@ check('Chromatogram: clicking a base call edits that base', async (page) => {
   return { pass: ok, detail: ok ? '' : JSON.stringify(r) };
 });
 
+check('Add Sequences: a damaged AB1 file is reported, not listed as loaded', async (page) => {
+  // ABIF magic + a directory entry whose data offset points past the end of the file
+  const b = Buffer.alloc(40); b.write('ABIF', 0); b.writeInt16BE(101, 4);
+  b.write('tdir', 6); b.writeInt32BE(1, 10); b.writeInt16BE(1023, 14); b.writeInt16BE(28, 16);
+  b.writeInt32BE(5, 18); b.writeInt32BE(140, 22); b.writeInt32BE(100000, 26);
+  await page.evaluate(() => { const m = document.getElementById('addSeqModal'); if (m) m.style.display = 'block'; });
+  await page.setInputFiles('#addSeqFileInput', { name: 'bad.ab1', mimeType: 'application/octet-stream', buffer: b });
+  await page.waitForTimeout(800);
+  const label = await page.evaluate(() => document.getElementById('addSeqFileLabel').textContent);
+  const ok = /could not read/i.test(label) && !/Loaded 1 file/.test(label);
+  return { pass: ok, detail: ok ? '' : 'label: ' + label };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
