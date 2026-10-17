@@ -12,17 +12,22 @@
 }(typeof self !== 'undefined' ? self : this, function () {
     'use strict';
 
+    // Inside run() every row carries a unique internal key (_rk): rows are matched by it, never by
+    // name, so two rows with the same name (or the same first word) keep their own data.
     function headerKey(s) {
+        if (s && s._rk) return s._rk;
         var h = (s && (s.header || s.fullHeader || s.name)) || '';
         return String(h).split(/\s+/)[0];
     }
 
     function cloneSeq(s) {
-        return {
+        var c = {
             header: s.header,
             fullHeader: s.fullHeader || s.header,
             seq: s.seq
         };
+        if (s._rk) c._rk = s._rk;
+        return c;
     }
 
     function padTo(seq, len) {
@@ -294,14 +299,18 @@
         var mafftAlign = options.mafftAlign;
         var extraArgs = options.extraArgs || [];
 
-        var orig = (seqs || []).map(cloneSeq);
+        var orig = (seqs || []).map(function (s, i) { var c = cloneSeq(s); c._rk = 'r' + i; return c; });
+        var nameOfKey = {};
+        orig.forEach(function (s) { nameOfKey[s._rk] = String(s.header || s.fullHeader || '').split(/\s+/)[0]; });
+        function names(keys) { return keys ? keys.map(function (k) { return nameOfKey[k] !== undefined ? nameOfKey[k] : k; }) : keys; }
+        function plain(list) { return list.map(function (s) { var c = cloneSeq(s); delete c._rk; return c; }); }
         if (!orig.length) {
-            return { seqs: orig, cancelled: false, noop: true, aligned: false, flipped: [], order: null, orderApplied: false, runs: [], mafftCalls: 0, message: 'No sequences' };
+            return { seqs: plain(orig), cancelled: false, noop: true, aligned: false, flipped: [], order: null, orderApplied: false, runs: [], mafftCalls: 0, message: 'No sequences' };
         }
 
         var runs = columnRuns(selectedCols);
         if (!runs.length) {
-            return { seqs: orig, cancelled: false, noop: true, aligned: false, flipped: [], order: null, orderApplied: false, runs: [], mafftCalls: 0, message: 'Need at least one span of 2+ selected columns' };
+            return { seqs: plain(orig), cancelled: false, noop: true, aligned: false, flipped: [], order: null, orderApplied: false, runs: [], mafftCalls: 0, message: 'Need at least one span of 2+ selected columns' };
         }
 
         var alen = orig[0].seq.length;
@@ -385,7 +394,8 @@
         }
 
         var flippedNames = [];
-        flippedSet.forEach(function (h) {
+        flippedSet.forEach(function (k) {
+            var h = nameOfKey[k] !== undefined ? nameOfKey[k] : k;
             if (flippedNames.indexOf(h) < 0 && h.indexOf(' ') < 0) flippedNames.push(h);
         });
 
@@ -394,12 +404,12 @@
             var order = tree.order || [];
             if (!applyReorder) {
                 return {
-                    seqs: padAll(working),
+                    seqs: plain(padAll(working)),
                     cancelled: false,
                     noop: !adjustDir || flippedNames.length === 0,
                     aligned: false,
                     flipped: flippedNames,
-                    order: order,
+                    order: names(order),
                     orderApplied: false,
                     runs: runs,
                     mafftCalls: 0,
@@ -408,12 +418,12 @@
             }
             working = applyOrder(working, order);
             return {
-                seqs: padAll(working),
+                seqs: plain(padAll(working)),
                 cancelled: false,
                 noop: false,
                 aligned: false,
                 flipped: flippedNames,
-                order: order,
+                order: names(order),
                 orderApplied: true,
                 runs: runs,
                 mafftCalls: 0,
@@ -457,7 +467,7 @@
                 var raw = await mafftAlign(toFasta(recs), extraArgs);
                 if (raw === null || raw === undefined) {
                     return {
-                        seqs: orig,
+                        seqs: plain(orig),
                         cancelled: true,
                         noop: true,
                         aligned: false,
@@ -506,12 +516,12 @@
         }
 
         return {
-            seqs: working,
+            seqs: plain(working),
             cancelled: false,
             noop: false,
             aligned: true,
             flipped: flippedNames,
-            order: order,
+            order: names(order),
             orderApplied: orderApplied,
             runs: runs,
             mafftCalls: mafftCalls,

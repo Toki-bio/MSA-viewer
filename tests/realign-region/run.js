@@ -431,6 +431,20 @@ async function multiBlockContrast() {
     void spanning;
 }
 
+// Two rows with the same name (and two sharing a first word) each keep their own region.
+async function duplicateNameTest() {
+    const seqs = [
+        { header: 's1', fullHeader: 's1', seq: 'AAAACCGGTTAACCAAAA' },
+        { header: 's1', fullHeader: 's1', seq: 'AAAAGGTTCCAAGGAAAA' },
+        { header: 'x a', fullHeader: 'x a', seq: 'AAAATTTTGGGGCCAAAA' },
+        { header: 'x b', fullHeader: 'x b', seq: 'AAAACACACACACAAAAA' }
+    ];
+    const result = await RR.run(seqs, range(4, 13), optsBase({ mafftAlign: async fa => fa }));
+    seqs.forEach((s, i) => ok('duplicate names: row ' + i + ' keeps its own region',
+        result.seqs[i] && result.seqs[i].seq.replace(/-/g, '') === s.seq && result.seqs[i].header === s.header,
+        JSON.stringify(result.seqs[i])));
+}
+
 async function cancelTest() {
     const seqs = loadFa(DATASETS.ds01.file);
     const result = await RR.run(seqs, DATASETS.ds01.cols, optsBase({
@@ -445,6 +459,7 @@ async function cancelTest() {
         await comboTests();
         await multiBlockContrast();
         await cancelTest();
+        await duplicateNameTest();
     } catch (err) {
         failed++;
         failures.push('THROWN: ' + (err && err.stack ? err.stack : err));
