@@ -3911,6 +3911,22 @@ check('Add Sequences: a damaged AB1 file is reported, not listed as loaded', asy
   return { pass: ok, detail: ok ? '' : 'label: ' + label };
 });
 
+check('Realign all keeps every row when two rows share a name', async (page) => {
+  const fa = '>s1\nACGTACGTTTGGCCAAGT\n>s1\nACGAACGTTTGGCCTTGT\n>s2\nACGTACGTTGGCCAAGT\n';
+  await page.setInputFiles('#fileInput', { name: 'd.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+  await page.waitForTimeout(1000);
+  const r = await page.evaluate(async () => {
+    document.getElementById('mafftReorderOnly').checked = false;
+    window.confirm = () => true;
+    await realignAll();
+    await new Promise(res => setTimeout(res, 400));
+    return state.seqs.map(s => (s.fullHeader || s.header) + '=' + s.seq.replace(/[-.]/g, ''));
+  });
+  const want = ['s1=ACGTACGTTTGGCCAAGT', 's1=ACGAACGTTTGGCCTTGT', 's2=ACGTACGTTGGCCAAGT'];
+  const ok = want.every(w => r.includes(w)) && r.length === 3;
+  return { pass: ok, detail: ok ? '' : JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

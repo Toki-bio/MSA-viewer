@@ -20696,11 +20696,14 @@ async function realignAll() {
     // Save undo state
     pushUndo('realign-all');
 
-    // Build ungapped FASTA
+    // Build ungapped FASTA. Rows go to MAFFT under internal ids (r0, r1, ...) and come back by row,
+    // not by name: two rows with the same name used to both receive the first one's sequence.
+    const rowById = new Map(state.seqs.map((s, i) => ['r' + i, s]));
+    const nameOfId = (id) => { const s = rowById.get(id); return s ? s.header : id; };
     let fasta = '';
-    for (const s of state.seqs) {
-        fasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
-    }
+    state.seqs.forEach((s, i) => {
+        fasta += `>r${i}\n${s.seq.replace(/[-.]/g, '')}\n`;
+    });
 
     const { args: extraArgs, seqType, adjustDir, reorder, reorderOnly } = getMafftExtraArgs();
 
@@ -20718,20 +20721,18 @@ async function realignAll() {
     // Reorder only: skip MAFFT. Apply RC to gapped rows if needed, then permute.
     if (reorderOnly) {
         if (flippedNames.size > 0) {
-            for (const s of state.seqs) {
-                if (flippedNames.has(s.header) || flippedNames.has(s.fullHeader)) {
+            for (const [id, s] of rowById) {
+                if (flippedNames.has(id)) {
                     s.seq = _reverseComplement(s.seq);
                     s.gaplessPositions = calculateGaplessPositions(s.seq);
                 }
             }
         }
         const reordered = _reorderByGuideTree(fasta);
-        const byFull = new Map(state.seqs.map(s => [s.fullHeader || s.header, s]));
-        const byHdr = new Map(state.seqs.map(s => [s.header, s]));
         const newSeqs = [];
         const used = new Set();
-        for (const hdr of reordered.order) {
-            const s = byFull.get(hdr) || byHdr.get(hdr) || byHdr.get(String(hdr).split(/\s+/)[0]);
+        for (const id of reordered.order) {
+            const s = rowById.get(String(id).split(/\s+/)[0]);
             if (s && !used.has(s)) {
                 newSeqs.push(s);
                 used.add(s);
@@ -20742,7 +20743,7 @@ async function realignAll() {
         state.selectedColumns.clear();
         renderAlignment();
         const msgs = [`Reordered ${state.seqs.length} sequences (no alignment).`];
-        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].join(', ')}`);
+        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].map(nameOfId).join(', ')}`);
         showMessage(msgs.join(' '), flippedNames.size > 0 ? 5000 : 2000);
         return;
     }
@@ -20774,10 +20775,12 @@ async function realignAll() {
         // Build new seqs array
         const newSeqs = [];
         // Determine output order: guide tree order or original input order
-        const outputOrder = guideOrder || state.seqs.map(s => s.fullHeader || s.header);
-        for (const hdr of outputOrder) {
-            const a = aligned.find(x => x.name === hdr || x.name === hdr.split(/\s+/)[0]);
-            const orig = state.seqs.find(s => s.header === hdr || s.fullHeader === hdr);
+        const outputOrder = guideOrder || state.seqs.map((s, i) => 'r' + i);
+        const alignedById = new Map(aligned.map(x => [x.name.split(/\s+/)[0], x]));
+        for (const id of outputOrder) {
+            const key = String(id).split(/\s+/)[0];
+            const a = alignedById.get(key);
+            const orig = rowById.get(key);
             if (a) {
                 const origCase = originalCaseByHeader.get(a.name);
                 newSeqs.push({
@@ -20791,11 +20794,11 @@ async function realignAll() {
         // Fallback: use aligned in MAFFT output order
         if (newSeqs.length === 0) {
             for (const a of aligned) {
-                const name = a.name.split(/\s+/)[0];
+                const orig = rowById.get(a.name.split(/\s+/)[0]);
                 const origCase = originalCaseByHeader.get(a.name);
                 newSeqs.push({
-                    header: name,
-                    fullHeader: a.name,
+                    header: orig ? orig.header : a.name.split(/\s+/)[0],
+                    fullHeader: orig ? orig.fullHeader : a.name,
                     seq: origCase ? _remapCaseOntoAligned(origCase, a.seq) : a.seq,
                     gaplessPositions: calculateGaplessPositions(a.seq)
                 });
@@ -20809,7 +20812,7 @@ async function realignAll() {
         _dropColumnAnalysesAfterRealign();
         renderAlignment();
         const msgs = [`Aligned ${state.seqs.length} sequences successfully!`];
-        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].join(', ')}`);
+        if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].map(nameOfId).join(', ')}`);
         showMessage(msgs.join(' '), flippedNames.size > 0 ? 5000 : 2000);
     } catch (err) {
         showMessage("MAFFT alignment error: " + err.message, 4000);
