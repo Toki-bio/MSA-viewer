@@ -3817,6 +3817,51 @@ check('Canvas mode: consensus and shading follow a same-length change; column ti
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify({ f1, pic, f2 }) };
 });
 
+check('Copy this color (gapped/ungapped) copies what the label says', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'g.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nAC--GT\n>b\nACG-TT\n') });
+  await page.waitForTimeout(1000);
+  const r = await page.evaluate(async () => {
+    window._copied = null; navigator.clipboard.writeText = t => { window._copied = t; return Promise.resolve(); };
+    colourState.mappings.set('a', '#ff0000');
+    const out = {};
+    for (const label of ['Copy this color (gapped)', 'Copy this color (ungapped)']) {
+      window._copied = null;
+      showContextMenu({ target: document.querySelector(".seq-line") || document.body, preventDefault() {}, stopPropagation() {}, clientX: 50, clientY: 50, pageX: 50, pageY: 50 }, 0);
+      const item = [...document.querySelectorAll('div')].find(d => d.textContent === label);
+      if (!item) { out[label] = 'menu item not found'; continue; }
+      item.click();
+      await new Promise(res => setTimeout(res, 200));
+      out[label] = window._copied;
+    }
+    return out;
+  });
+  const g = r['Copy this color (gapped)'], u = r['Copy this color (ungapped)'];
+  const ok = typeof g === 'string' && g.includes('AC--GT') && typeof u === 'string' && u.includes('ACGT') && !u.includes('-');
+  return { pass: ok, detail: ok ? '' : JSON.stringify(r) };
+});
+
+check('File and BLAST text is escaped in the BLAST dialog, hit table, hit tooltip and recent-files list', async (page) => {
+  const evil = 'x<img data-xss="1" src="data:,">';
+  const r = await page.evaluate(async (evil) => {
+    const out = {};
+    const count = () => document.querySelectorAll('img[data-xss]').length;
+    showBlastDialog(evil, 'ACGTACGTACGT');
+    out.dialog = count();
+    document.querySelectorAll('.blast-dialog-backdrop, .blast-dialog').forEach(n => n.remove());
+    document.querySelectorAll('img[data-xss]').forEach(n => n.remove());
+    const hsp = { bitScore: 50, score: 24, evalue: 1e-5, identity: 12, gaps: 0, percent: 100, alignLen: 12, queryStart: 1, queryEnd: 12, hitStart: 1, hitEnd: 12, strand: '+', querySeq: 'ACGTACGTACGT', hitSeq: 'ACGTACGTACGT', midline: '||||||||||||' };
+    displayBlastResults('q', 12, { db1: { hits: [{ id: 'h1', def: evil, length: 12, hsps: [hsp] }] } });
+    out.table = count();
+    const bar = document.querySelector('.blast-hitdist [class*="bar"], .blast-hitdist div[style*="left"]');
+    if (bar) bar.dispatchEvent(new MouseEvent('mouseenter', { clientX: 10, clientY: 10, bubbles: true }));
+    out.tooltip = count() - out.table;
+    out.history = _historyManager._escapeHtml('a"b').includes('"');
+    return out;
+  }, evil);
+  const ok = r.dialog === 0 && r.table === 0 && r.tooltip <= 0 && r.history === false;
+  return { pass: ok, detail: ok ? '' : JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

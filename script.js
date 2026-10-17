@@ -1486,7 +1486,7 @@ const _historyManager = {
 
     _escapeHtml(s) {
         if (!s) return '';
-        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 };
 
@@ -5214,7 +5214,7 @@ function _populateAlignedAARow(dataCol, aaSeqData, viewStart, viewEnd, frameShif
             const f = fsStart.get(c);
             html += `<span class="aa-c aa-${x.cls} aa-fs-at${x.first ? ' aa-first' : ''}${x.last ? ' aa-last' : ''}" title="Frameshift: from here this sequence reads ${f.shift === 1 ? 'one base ahead of' : 'one base behind'} most sequences">${x.text || ' '}</span>`;
         } else if (x) {
-            html += `<span class="aa-c aa-${x.cls}${x.first ? ' aa-first' : ''}${x.last ? ' aa-last' : ''}" title="${x.title}">${x.text || '\u00A0'}</span>`;
+            html += `<span class="aa-c aa-${x.cls}${x.first ? ' aa-first' : ''}${x.last ? ' aa-last' : ''}" title="${_escapeHtml(x.title)}">${x.text || '\u00A0'}</span>`;
         } else if (fsStart.has(c)) {
             const f = fsStart.get(c);
             html += `<span class="aa-fs" title="Frameshift: from column ${f.at + 1} on, this sequence reads ${f.shift === 1 ? 'one base ahead of' : 'one base behind'} most sequences (a gap or insertion here whose length is not a multiple of 3, columns ${f.runStart + 1}-${f.runStart + f.runLen})">!</span>`;
@@ -21967,14 +21967,14 @@ function showContextMenu(e, index) {
         const copySameColorGapped = document.createElement('div');
         copySameColorGapped.textContent = 'Copy this color (gapped)';
         copySameColorGapped.addEventListener('click', () => {
-            copySequencesByColor(colour, true, true);
+            copySequencesByColor(colour, false, true);
             closeContextMenu();
         });
 
         const copySameColorUngapped = document.createElement('div');
         copySameColorUngapped.textContent = 'Copy this color (ungapped)';
         copySameColorUngapped.addEventListener('click', () => {
-            copySequencesByColor(colour, false, true);
+            copySequencesByColor(colour, true, true);
             closeContextMenu();
         });
 
@@ -26520,7 +26520,7 @@ function showBlastDialog(sequenceHeader, sequenceSeq) {
     content.className = 'blast-dialog-content';
 
     const seqLabel = document.createElement('div');
-    seqLabel.innerHTML = `<strong>Sequence:</strong> ${sequenceHeader}`;
+    seqLabel.innerHTML = `<strong>Sequence:</strong> ${_escapeHtml(sequenceHeader)}`;
     seqLabel.style.marginBottom = '12px';
     seqLabel.style.fontSize = '12px';
     seqLabel.style.wordBreak = 'break-word';
@@ -26758,9 +26758,9 @@ function showDbManagementModal() {
                 row.style.borderBottom = '1px solid #eee';
                 row.style.fontSize = '12px';
                 const info = document.createElement('span');
-                info.innerHTML = '<strong>' + db.label + '</strong>' +
+                info.innerHTML = '<strong>' + _escapeHtml(db.label) + '</strong>' +
                     (db.available ? '' : ' <span style="color:#c00;font-size:10px;">(unavailable)</span>') +
-                    (db.description && db.description !== db.name ? ' <span style="color:#666;font-size:10px;">' + db.description + '</span>' : '');
+                    (db.description && db.description !== db.name ? ' <span style="color:#666;font-size:10px;">' + _escapeHtml(db.description) + '</span>' : '');
                 const delBtn = document.createElement('button');
                 delBtn.textContent = 'Delete';
                 delBtn.style.padding = '1px 8px';
@@ -27264,7 +27264,7 @@ function buildHitDistributionDiagram(hits, queryLen, onHitClick) {
         // where the hovered bar sits in its scroll container.
         const evalueStr = (typeof hsp.evalue === 'number')
             ? (hsp.evalue < 0.001 ? hsp.evalue.toExponential(2) : hsp.evalue.toFixed(4)) : 'n/a';
-        const tipHtml = `<b>${(hit.def || hit.id).substring(0, 60)}</b><br>` +
+        const tipHtml = `<b>${_escapeHtml((hit.def || hit.id).substring(0, 60))}</b><br>` +
             `score = ${hsp.bitScore} bits &nbsp; e-value = ${evalueStr}<br>` +
             `Q ${hsp.queryStart}..${hsp.queryEnd} (${hsp.strand === '-' ? 'Plus/Minus' : 'Plus/Plus'})`;
         bar.addEventListener('mouseenter', (e) => _showBlastHitTooltip(tipHtml, e));
@@ -27401,7 +27401,7 @@ function displayBlastResults(queryName, queryLen, results) {
                     <td>${hsp.hitStart}..${hsp.hitEnd}</td>
                     <td>${hit.length}</td>
                     <td class="${strandCls}">${strandTxt}</td>
-                    <td class="desc">${(hit.def || hit.id).substring(0, 80)}</td>`;
+                    <td class="desc">${_escapeHtml((hit.def || hit.id).substring(0, 80))}</td>`;
                 tr.addEventListener('click', () => {
                     const target = hitsSection.querySelector(`#blast-hit-${di}-${hi}`);
                     if (target) hitsSection.scrollTop = target.offsetTop;
