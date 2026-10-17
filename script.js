@@ -20836,11 +20836,12 @@ function realignSelected() {
 
     const selectedIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
 
-    // Build ungapped FASTA from selected sequences
+    // Build ungapped FASTA from selected sequences, under internal ids (r<row>) so rows with the
+    // same name each get their own aligned sequence back
     let fasta = '';
     for (const idx of selectedIndices) {
         const s = state.seqs[idx];
-        fasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
+        fasta += `>r${idx}\n${s.seq.replace(/[-.]/g, '')}\n`;
     }
 
     const { args: extraArgs, seqType, adjustDir } = getMafftExtraArgs();
@@ -20850,7 +20851,7 @@ function realignSelected() {
         const adj = _adjustDirection(fasta);
         fasta = adj.fasta;
         if (adj.flipped.size > 0) {
-            console.log('Adjust direction (selected): reverse-complemented', [...adj.flipped]);
+            console.log('Adjust direction (selected): reverse-complemented', [...adj.flipped].map(id => state.seqs[+id.slice(1)]?.header || id));
         }
     }
 
@@ -20871,9 +20872,9 @@ function realignSelected() {
         }
 
         // Replace selected sequences with aligned versions
+        const alignedById = new Map(aligned.map(a => [a.name.split(/\s+/)[0], a]));
         for (const idx of selectedIndices) {
-            const s = state.seqs[idx];
-            const match = aligned.find(a => a.name === s.header || a.name === s.fullHeader);
+            const match = alignedById.get('r' + idx);
             if (match) {
                 const origCase = originalCaseByHeader.get(match.name);
                 const recased = origCase ? _remapCaseOntoAligned(origCase, match.seq) : match.seq;

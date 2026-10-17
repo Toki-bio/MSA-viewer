@@ -3927,6 +3927,23 @@ check('Realign all keeps every row when two rows share a name', async (page) => 
   return { pass: ok, detail: ok ? '' : JSON.stringify(r) };
 });
 
+check('Realign selected keeps every row when two selected rows share a name', async (page) => {
+  const fa = '>s1\nACGTACGTTTGGCCAAGT\n>s1\nACGAACGTTTGGCCTTGT\n>s2\nACGTACGTTGGCCAAGT\n';
+  await page.setInputFiles('#fileInput', { name: 'd.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+  await page.waitForTimeout(1000);
+  const r = await page.evaluate(async () => {
+    window.confirm = () => true;
+    state.selectedRows.clear(); [0, 1, 2].forEach(i => state.selectedRows.add(i));
+    realignSelected();
+    for (let t = 0; t < 50 && !/Realigned/.test(document.body.innerText); t++) await new Promise(res => setTimeout(res, 100));
+    await new Promise(res => setTimeout(res, 300));
+    return state.seqs.map(s => s.header + '=' + s.seq.replace(/[-.]/g, ''));
+  });
+  const want = ['s1=ACGTACGTTTGGCCAAGT', 's1=ACGAACGTTTGGCCTTGT', 's2=ACGTACGTTGGCCAAGT'];
+  const ok = want.every((w, i) => r[i] === w) && r.length === 3;
+  return { pass: ok, detail: ok ? '' : JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
