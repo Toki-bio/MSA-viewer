@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v254';
+const BUILD_TAG = 'v255';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -6070,7 +6070,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const x = NAME_W + sc * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) return;
                 const dataTop = Math.max(0, HEADER_H - oy);
-                const dataBottom = Math.min(h, HEADER_H +nSeqs * CHAR_H - oy);
+                const dataBottom = Math.min(h, HEADER_H + nSeqs * rowPitch - oy);   // rowPitch: translation rows included
                 octx.fillRect(x, dataTop, CHAR_W, dataBottom - dataTop);
             });
         }
@@ -9356,6 +9356,21 @@ function _flushRenderMessage() {
     if (m && performance.now() - m.at < 3000) showMessage(m.text, m.ms);
 }
 
+// FNV-1a over every sequence (and the row order): the consensus and conservation caches are
+// stamped with it, so a change that keeps the alignment length (reverse complement, a
+// same-length paste) can no longer reuse a stale consensus row or shading in Canvas.
+// ~1 ms per 360k residues; computed once per render, never per frame.
+function _seqsFingerprint() {
+    let h = 0x811c9dc5;
+    const seqs = state.seqs || [];
+    for (let i = 0; i < seqs.length; i++) {
+        const q = seqs[i].seq || '';
+        for (let k = 0; k < q.length; k++) { h ^= q.charCodeAt(k); h = Math.imul(h, 16777619); }
+        h ^= 0x2c; h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0) + ':' + seqs.length;
+}
+
 function renderAlignment(options = {}) {
     if (typeof _cancelPendingSpanRepaint === 'function') _cancelPendingSpanRepaint();
     _remapRowKeyedSelections();
@@ -9528,6 +9543,9 @@ function renderAlignment(options = {}) {
     // above that the band shows empty until the time-sliced computation below repaints it.
     if (useCanvas) {
         _updateCodonAnalysisState(len);
+        const fpNow = _seqsFingerprint();
+        if (state.conservationDataCache && state.conservationDataCache.fp !== fpNow) state.conservationDataCache = null;
+        if (state.consensusCache && state.consensusCache.fp !== fpNow) state.consensusCache = null;
         const cachedConservation = (state.conservationDataCache?.len === len
             && state.conservationDataCache?.shadeMode === shadeMode)
             ? state.conservationDataCache.data : null;
@@ -9537,7 +9555,7 @@ function renderAlignment(options = {}) {
             if (!values && TOTAL_RESIDUES <= 2_000_000) {
                 const consStr = computeConsensusForSequences(state.seqs.map(s => s.seq));
                 values = consStr.split('');
-                state.consensusCache = { len, values: values.slice() };
+                state.consensusCache = { len, values: values.slice(), fp: _seqsFingerprint() };
                 state.consensusSeq = consStr.replace(/-/g, '');
             }
             consInfo = { values, position: _checkedRadioValue('consensusPosition', 'top'), threshold };
@@ -9559,7 +9577,7 @@ function renderAlignment(options = {}) {
                 if (Math.max(...state.seqs.map(s => s.seq.length)) !== len) return; // alignment changed
                 preCalculateConservationChunked(state.seqs, len, shadeMode, (data) => {
                     if (myToken.cancelled) return;
-                    state.conservationDataCache = { len, shadeMode, data };
+                    state.conservationDataCache = { len, shadeMode, data, fp: _seqsFingerprint() };
                     if (document.getElementById('modeCanvas')?.checked) renderAlignment(options);
                 }, myToken);
             };
@@ -9580,7 +9598,7 @@ function renderAlignment(options = {}) {
                 computeConsensusForSequencesChunked(state.seqs.map(s => s.seq), (consStr) => {
                     if (myToken.cancelled) return;
                     const cons = consStr.split('');
-                    state.consensusCache = { len, values: cons.slice() };
+                    state.consensusCache = { len, values: cons.slice(), fp: _seqsFingerprint() };
                     state.consensusSeq = consStr.replace(/-/g, '');
                     if (_canvasState.consensus && _canvasState.consensus.len === len) {
                         _canvasState.consensus.values = cons;
@@ -9613,7 +9631,7 @@ function renderAlignment(options = {}) {
         } else {
             // Use unified helper for consensus computation
             consensus = computeConsensusForSequences(state.seqs.map(s => s.seq)).split('');
-            state.consensusCache = { len, values: consensus.slice() };
+            state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint() };
         }
     }
     state.consensusSeq = consensus.join('').replace(/-/g, '');
@@ -9628,7 +9646,7 @@ function renderAlignment(options = {}) {
     const conservationData = (options.deferConservation && getDeferredConservationData(len, shadeMode))
         || preCalculateConservation(state.seqs, len, shadeMode);
     if (!options.deferConservation) {
-        state.conservationDataCache = { len, shadeMode, data: conservationData };
+        state.conservationDataCache = { len, shadeMode, data: conservationData, fp: _seqsFingerprint() };
     }
 
     // Var-sites / highlight-diffs already computed above (before Canvas path)
@@ -23914,7 +23932,7 @@ function reshadeChangedColumnsInPlace(cols) {
     } else {
         conservationData = preCalculateConservation(state.seqs, len, shadeMode);
     }
-    state.conservationDataCache = { len, shadeMode, data: conservationData };
+    state.conservationDataCache = { len, shadeMode, data: conservationData, fp: _seqsFingerprint() };
 
     // Passing each row its own current sequence as the reference means no column counts
     // as in-flux, so every repainted column takes the freshly computed shading.
@@ -23936,7 +23954,7 @@ function reshadeChangedColumnsInPlace(cols) {
         } else {
             consensus = computeConsensusForSequences(seqArray).split('');
         }
-        state.consensusCache = { len, values: consensus.slice() };
+        state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint() };
         state.consensusSeq = consensus.join('').replace(/-/g, '');
         const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
         consRow.forEach((span, pos) => {
@@ -24163,7 +24181,7 @@ function patchColumnsInPlace(fromPos, oldWidth) {
     } else {
         conservationData = preCalculateConservation(state.seqs, len, shadeMode);
     }
-    state.conservationDataCache = { len, shadeMode, data: conservationData };
+    state.conservationDataCache = { len, shadeMode, data: conservationData, fp: _seqsFingerprint() };
 
     if (el('showConsensus')?.checked) {
         const opts = _getConsensusOptions();
@@ -24174,7 +24192,7 @@ function patchColumnsInPlace(fromPos, oldWidth) {
         } else {
             consensus = computeConsensusForSequences(seqArray).split('');
         }
-        state.consensusCache = { len, values: consensus.slice() };
+        state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint() };
         state.consensusSeq = consensus.join('').replace(/-/g, '');
         // Rebuild the consensus line of every block the edit reaches (one row each; their
         // hover tooltips close over the consensus array, so patching would leave them stale)

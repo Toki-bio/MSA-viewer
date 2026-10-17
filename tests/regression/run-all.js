@@ -3767,6 +3767,56 @@ check('Canvas mode: Show 2D blocks drawn, clickable to stack a type, hover title
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(out) : JSON.stringify(out) };
 });
 
+// GLM audit of v244-v254 (2026-10-17), findings confirmed by reproducer. (1) Canvas trusted the
+// consensus and conservation caches whenever the alignment length matched, so a same-length
+// change (reverse complement of rows) kept the old consensus row and shading. (2) A selected
+// column's tint stopped at nSeqs * charH instead of nSeqs * rowPitch, short of the translation
+// rows when codon analysis is on.
+check('Canvas mode: consensus and shading follow a same-length change; column tint covers translation rows', async (page) => {
+  const rows = []; for (let i = 0; i < 6; i++) rows.push(`>s${i}\nAAAAACCCCCGGGGGTTTTTAAAAACCCCC`);
+  await page.setInputFiles('#fileInput', { name: 'a.fa', mimeType: 'text/plain', buffer: Buffer.from(rows.join('\n') + '\n') });
+  await page.waitForTimeout(1200);
+  await setMode(page, 'canvas'); await page.waitForTimeout(500);
+  const f1 = await page.evaluate(async () => {
+    for (let i = 0; i < 6; i++) state.selectedRows.add(i);
+    updateRowSelections();
+    reverseComplementSelected();
+    await new Promise(r => setTimeout(r, 2500));
+    const truth = computeConsensusForSequences(state.seqs.map(s => s.seq));
+    const shown = (_canvasState.consensus?.values || []).join('');
+    return { truth, shown, consOk: shown === truth };
+  });
+  // shading: the Canvas picture equals the one after a cold re-render (caches dropped)
+  const pic = await page.evaluate(async () => {
+    const c = document.getElementById('alignmentCanvas'); const a = c.toDataURL();
+    state.conservationDataCache = null; state.consensusCache = null; renderAlignment();
+    await new Promise(r => setTimeout(r, 2500));
+    return a === document.getElementById('alignmentCanvas').toDataURL();
+  });
+  const cds = 'ATGGCTAAAGGTCTGCAAGAATTCGGTACCTGGAAACCGATGCTTGCAGGTAAAGAACTGTTCCCGGGATCCTAA';
+  const r2 = []; for (let i = 0; i < 8; i++) r2.push(`>c${i}\n${cds}`);
+  await page.setInputFiles('#fileInput', { name: 'c.fa', mimeType: 'text/plain', buffer: Buffer.from(r2.join('\n') + '\n') });
+  await page.waitForTimeout(1200);
+  await setMode(page, 'canvas'); await page.waitForTimeout(400);
+  await page.evaluate(() => { const c = document.getElementById('codonAnalysis'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(1200);
+  const f2 = await page.evaluate(async () => {
+    state.selectedColumns.add(10); updateColumnSelections(); _canvasState.scheduleOverlay();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const o = document.getElementById('alignmentCanvasOverlay'), m = _canvasState.metrics, dpr = m.dpr || 1;
+    const a = o.getContext('2d').getImageData(Math.round((m.nameW + 10.5 * m.charW) * dpr), Math.round((m.headerH + 7.8 * _canvasState.rowPitch) * dpr), 1, 1).data[3];
+    state.selectedColumns.clear(); updateColumnSelections(); _canvasState.scheduleOverlay();
+    return { alpha: a };
+  });
+  await page.evaluate(() => { const c = document.getElementById('codonAnalysis'); c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(600);
+  const bad = [];
+  if (!f1.consOk) bad.push(`consensus after reverse complement: shown ${f1.shown}, true ${f1.truth}`);
+  if (!pic) bad.push('the picture after reverse complement differs from a cold re-render (stale shading)');
+  if (!f2.alpha) bad.push('column tint missing over the last row\'s translation track');
+  return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify({ f1, pic, f2 }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
