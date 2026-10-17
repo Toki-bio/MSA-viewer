@@ -3944,6 +3944,24 @@ check('Realign selected keeps every row when two selected rows share a name', as
   return { pass: ok, detail: ok ? '' : JSON.stringify(r) };
 });
 
+check('Group explorer: Copy FASTA/consensus keep rows that share a name', async (page) => {
+  const fa = '>s1\nAAAAAAAAAA\n>s1\nCCCCCCCCCC\n>s1\nCCCCCCCCCC\n>s2\nGGGGGGGGGG\n';
+  await page.setInputFiles('#fileInput', { name: 'd.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+  await page.waitForTimeout(1000);
+  const r = await page.evaluate(async () => {
+    const copied = []; navigator.clipboard.writeText = t => { copied.push(t); return Promise.resolve(); };
+    state.clusterResults = { clusters: [{ sequences: [{ id: 's1', obj: state.seqs[0] }, { id: 's1', obj: state.seqs[1] }, { id: 's1', obj: state.seqs[2] }] }], unassigned: [{ id: 's2', obj: state.seqs[3] }] };
+    _geCopyAction('fasta', 'cluster', 0);
+    _geCopyAction('consensus', 'cluster', 0);
+    await new Promise(res => setTimeout(res, 200));
+    return copied;
+  });
+  const fasta = r[0] || '', cons = (r[1] || '').split('\n')[1] || '';
+  // two of the three members are C in every column: the consensus is C, not the first row repeated
+  const ok = fasta.includes('AAAAAAAAAA') && fasta.includes('CCCCCCCCCC') && cons.toUpperCase() === 'CCCCCCCCCC';
+  return { pass: ok, detail: ok ? '' : JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

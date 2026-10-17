@@ -17604,18 +17604,24 @@ function _geMemberIds(kind, idx) {
     return c ? (c.sequences || []).map(s => s.id) : [];
 }
 
-function _geGroupFasta(ids, ungapped) {
-    return ids.map(id => {
-        const s = _geSeqById(id);
-        if (!s) return '';
+// The rows of a group, each member claimed once (rows with the same name stay separate rows)
+function _geMemberRows(kind, idx) {
+    const results = state.clusterResults;
+    if (!results) return [];
+    const list = kind === 'unassigned' ? results.unassigned : (results.clusters && results.clusters[idx] ? results.clusters[idx].sequences : []);
+    const claim = _geRowClaimer();
+    return (list || []).map(m => claim(m)).filter(Boolean);
+}
+
+function _geGroupFasta(kind, idx, ungapped) {
+    return _geMemberRows(kind, idx).map(s => {
         const body = ungapped ? degapResidues(s.seq) : s.seq;
         return '>' + (s.fullHeader || s.header) + '\n' + body;
-    }).filter(Boolean).join('\n');
+    }).join('\n');
 }
 
 function _geGroupConsensusFasta(kind, idx) {
-    const ids = _geMemberIds(kind, idx);
-    const seqs = ids.map(id => _geSeqById(id)).filter(Boolean).map(s => s.seq);
+    const seqs = _geMemberRows(kind, idx).map(s => s.seq);
     const name = kind === 'unassigned'
         ? 'Unassigned consensus'
         : ((state.clusterResults.clusters[idx] && state.clusterResults.clusters[idx]._typeName) || ('Group ' + (idx + 1))) + ' consensus';
@@ -17989,8 +17995,8 @@ function _geCopyAction(what, kind, idx) {
         return;
     }
     if (what === 'names') _geCopyText(ids.join('\n'), 'Copied ' + ids.length + ' names');
-    else if (what === 'fasta') _geCopyText(_geGroupFasta(ids, false), 'Copied FASTA (' + ids.length + ')');
-    else if (what === 'ungapped') _geCopyText(_geGroupFasta(ids, true), 'Copied ungapped FASTA');
+    else if (what === 'fasta') _geCopyText(_geGroupFasta(kind, idx, false), 'Copied FASTA (' + ids.length + ')');
+    else if (what === 'ungapped') _geCopyText(_geGroupFasta(kind, idx, true), 'Copied ungapped FASTA');
     else if (what === 'consensus') _geCopyText(_geGroupConsensusFasta(kind, idx), 'Copied ungapped consensus FASTA');
 }
 
