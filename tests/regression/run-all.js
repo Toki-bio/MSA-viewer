@@ -3962,6 +3962,19 @@ check('Group explorer: Copy FASTA/consensus keep rows that share a name', async 
   return { pass: ok, detail: ok ? '' : JSON.stringify(r) };
 });
 
+check('An alignment with 160,000 rows loads and renders (no argument-spread stack overflow)', async (page) => {
+  const errs = []; page.on('pageerror', e => errs.push(e.message));
+  page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
+  const rows = []; for (let i = 0; i < 160000; i++) rows.push('>r' + i + '\nACGTACGTAC');
+  await page.setInputFiles('#fileInput', { name: 'tall.fa', mimeType: 'text/plain', buffer: Buffer.from(rows.join('\n') + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 160000, null, { timeout: 60000 }).catch(() => {});
+  await page.waitForTimeout(2000);
+  const r = await page.evaluate(() => { try { _isLargeAlignmentPending(); renderAlignment(); return { n: state.seqs.length, ok: true }; } catch (e) { return { n: state.seqs.length, ok: false, e: e.message }; } });
+  const stack = errs.filter(e => /call stack/i.test(e));
+  const ok = r.ok && r.n === 160000 && !stack.length;
+  return { pass: ok, detail: ok ? '' : JSON.stringify({ r, stack: stack.slice(0, 3) }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

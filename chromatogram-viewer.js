@@ -208,7 +208,9 @@
     function drawTraces(d, top, height) {
         const n = d.numSamples;
         if (!n) return;
-        const maxVal = Math.max(1, ...['A', 'C', 'G', 'T'].flatMap(b => d.traces[b] || []));
+        // a loop, not Math.max(...): four long traces exceed the call-stack argument limit
+        let maxVal = 1;
+        for (const b of ['A', 'C', 'G', 'T']) for (const v of (d.traces[b] || [])) if (v > maxVal) maxVal = v;
         const xScale = 3; // px per sample before canvas-level zoom
         ['A', 'C', 'G', 'T'].forEach(base => {
             const arr = d.traces[base];

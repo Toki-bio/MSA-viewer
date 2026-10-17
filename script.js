@@ -56,6 +56,20 @@ if (typeof location !== 'undefined' && location.protocol === 'file:') {
     });
 }
 
+// Largest / smallest value of a list (optionally of f(item)), as a loop: Math.max(...list) passes one
+// argument per item and overflows the call stack from about 125,000 items (a tall alignment, a long
+// column selection). Empty list: -Infinity / Infinity, like Math.max() / Math.min().
+function _maxOf(list, f) {
+    let m = -Infinity;
+    for (const x of list) { const v = f ? f(x) : x; if (v > m) m = v; }
+    return m;
+}
+function _minOf(list, f) {
+    let m = Infinity;
+    for (const x of list) { const v = f ? f(x) : x; if (v < m) m = v; }
+    return m;
+}
+
 function _escapeHtml(s) {
     if (!s) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -2725,7 +2739,7 @@ function updateNameLengthSliderRange() {
 
     // Use the display header (first token) only to size the name column,
     // so long descriptions in fullHeader don't blow up spacing.
-    const maxNameLength = Math.max(...state.seqs.map(s => s.header.length));
+    const maxNameLength = _maxOf(state.seqs, s => s.header.length);
 
     const slider = el('nameLengthSlider');
     const input = el('nameLengthInput');
@@ -2912,7 +2926,7 @@ function toggleStickyNames() {
     // Skip the forced-immediate part above that size; the class toggle above
     // still applies on the next natural paint either way.
     const _totalRes = state.alignmentIndex?.totalResidues || (state.seqs.length > 0
-        ? state.seqs.length * Math.max(...state.seqs.map(s => s.seq.length))
+        ? state.seqs.length * _maxOf(state.seqs, s => s.seq.length)
         : 0);
     if (!(state.alignmentIndex?.isCrazy) && _totalRes <= 80000) {
         alignmentContainer.offsetHeight; // Force reflow
@@ -4243,7 +4257,7 @@ function _computeConsensusCharForColumn(seqArray, pos, opts) {
 
 function computeConsensusForSequences(seqArray) {
     if (!seqArray || seqArray.length === 0) return '';
-    const len = Math.max(...seqArray.map(s => s.length));
+    const len = _maxOf(seqArray, s => s.length);
     const opts = _getConsensusOptions();
     let out = '';
     for (let pos = 0; pos < len; pos++) {
@@ -4258,7 +4272,7 @@ function computeConsensusForSequences(seqArray) {
 // than ~8ms per slice, regardless of alignment size.
 function computeConsensusForSequencesChunked(seqArray, onDone, token) {
     if (!seqArray || seqArray.length === 0) { onDone(''); return; }
-    const len = Math.max(...seqArray.map(s => s.length));
+    const len = _maxOf(seqArray, s => s.length);
     const opts = _getConsensusOptions();
     const chars = new Array(len);
     let pos = 0;
@@ -5387,7 +5401,7 @@ function _canvasHitTest(clientX, clientY, opts) {
     if (col < 0 || row < 0) return null;
     const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
     const len = state.seqs && state.seqs.length > 0
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxOf(state.seqs, s => s.seq.length)
         : 0;
     if (row >= nSeqs || col >= (_canvasState.nSlots || len)) return null;
     // Codon analysis: below the bases of a row lies its translation track, which is not a cell
@@ -5421,7 +5435,7 @@ function _canvasHitTestRuler(clientX, clientY) {
     if (x < (el('stickyNames')?.checked ? m.nameW : m.nameW - _canvasState.offsetX)) return null;   // name column corner
     const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
     const len = state.seqs && state.seqs.length > 0
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxOf(state.seqs, s => s.seq.length)
         : 0;
     if (col < 0 || col >= (_canvasState.nSlots || len)) return null;
     return { col: _canvasSlotToCol(col) };
@@ -5534,7 +5548,7 @@ function _canvasColFromClientX(clientX) {
     if (x < (el('stickyNames')?.checked ? m.nameW : m.nameW - _canvasState.offsetX)) return -1;
     const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
     const len = state.seqs && state.seqs.length > 0
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxOf(state.seqs, s => s.seq.length)
         : 0;
     if (col < 0 || col >= (_canvasState.nSlots || len)) return -1;
     return _canvasSlotToCol(col);
@@ -7179,8 +7193,8 @@ function _pushParsedFastaSequence(seqs, header, seq) {
 function _checkLengthMismatch(seqs) {
     if (!seqs || seqs.length < 2) return null;
     const lengths = seqs.map(s => s.seq.length);
-    const maxLen = Math.max(...lengths);
-    const minLen = Math.min(...lengths);
+    const maxLen = _maxOf(lengths);
+    const minLen = _minOf(lengths);
     if (maxLen === minLen) return null;
 
     // Find the majority length
@@ -7216,7 +7230,7 @@ function _checkLengthMismatch(seqs) {
  */
 function _normalizeSequenceLengths(seqs) {
     if (!seqs || seqs.length === 0) return;
-    const maxLen = Math.max(...seqs.map(s => s.seq.length));
+    const maxLen = _maxOf(seqs, s => s.seq.length);
     for (const s of seqs) {
         if (s.seq.length < maxLen) {
             s.seq = s.seq.padEnd(maxLen, '-');
@@ -7337,7 +7351,7 @@ function _expandA3mInsertions(seqs) {
         return { slots, match };
     };
     const parts = seqs.map(s => split(s.seq));
-    const widths = parts[0].slots.map((_, i) => Math.max(...parts.map(p => p.slots[i].length)));
+    const widths = parts[0].slots.map((_, i) => _maxOf(parts, p => p.slots[i].length));
     for (let k = 0; k < seqs.length; k++) {
         const { slots, match } = parts[k];
         let out = '';
@@ -9405,7 +9419,7 @@ function renderAlignment(options = {}) {
     // and the render-path dispatch both depend on these.  _needsWindowed must
     // be declared before its first use to avoid a temporal-dead-zone
     // ReferenceError that would throw on every call to renderAlignment.
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxOf(state.seqs, s => s.seq.length);
     const TOTAL_RESIDUES = state.seqs.length * len;
     const _needsWindowed = TOTAL_RESIDUES > ALIGN_WINDOWED_DOM_THRESHOLD || !!state.alignmentIndex?.needsWindowedDom;
     state._needsWindowedDom = _needsWindowed;
@@ -9576,7 +9590,7 @@ function renderAlignment(options = {}) {
             const computeShadingAndRepaint = () => {
                 if (myToken.cancelled) return;
                 if (!state.seqs || !state.seqs.length) return;
-                if (Math.max(...state.seqs.map(s => s.seq.length)) !== len) return; // alignment changed
+                if (_maxOf(state.seqs, s => s.seq.length) !== len) return; // alignment changed
                 preCalculateConservationChunked(state.seqs, len, shadeMode, (data) => {
                     if (myToken.cancelled) return;
                     state.conservationDataCache = { len, shadeMode, data, fp: _seqsFingerprint() };
@@ -9596,7 +9610,7 @@ function renderAlignment(options = {}) {
             const computeConsensusIdle = () => {
                 if (myToken.cancelled) return;
                 if (!state.seqs || !state.seqs.length) return;
-                if (Math.max(...state.seqs.map(s => s.seq.length)) !== len) return;
+                if (_maxOf(state.seqs, s => s.seq.length) !== len) return;
                 computeConsensusForSequencesChunked(state.seqs.map(s => s.seq), (consStr) => {
                     if (myToken.cancelled) return;
                     const cons = consStr.split('');
@@ -10431,10 +10445,10 @@ function updateSourceInfo() {
         .replace(/'/g, '&#39;');
 
     const seqCount = state.seqs.length;
-    const aliLength = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLength = _maxOf(state.seqs, s => s.seq.length);
     const gaplessLengths = state.seqs.map(seq => seq.gaplessPositions[seq.gaplessPositions.length - 1] || 0);
-    const minLength = Math.min(...gaplessLengths);
-    const maxLength = Math.max(...gaplessLengths);
+    const minLength = _minOf(gaplessLengths);
+    const maxLength = _maxOf(gaplessLengths);
     const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
 
     const fullFilename = state.currentFilename || '';
@@ -10555,7 +10569,7 @@ function resolveNucRowIndex(row) {
 
 function getConsensusSequenceGapped() {
     const len = state.seqs?.length
-        ? Math.max(...state.seqs.map(s => s.seq.length))
+        ? _maxOf(state.seqs, s => s.seq.length)
         : 0;
     if (len > 0 && state.consensusCache?.values?.length === len) {
         return state.consensusCache.values.join('');
@@ -10934,7 +10948,7 @@ function refreshSequenceRowDom(rowIndex, limitPositions = null, referenceSeq = n
     const rowCache = state.spanCache?.get(rowIndex);
     if (!rowCache || rowCache.size === 0) return false;
 
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxOf(state.seqs, s => s.seq.length);
     const config = getSequenceRenderConfig();
     const conservationData = (state.editLiveConservation || referenceSeq)
         ? (getDeferredConservationData(len, config.shadeMode) || state.conservationDataCache?.data || [])
@@ -12054,7 +12068,7 @@ async function parseAndRender(isFromDrop = false) {
         if (!state.alignmentIndex) {
             const _stats = {
                 nSeqs: state.seqs.length,
-                maxLen: state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0,
+                maxLen: state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0,
                 totalResidues: state.seqs.reduce((sum, s) => sum + s.seq.length, 0)
             };
             state.alignmentIndex = { ..._stats, ...classifyAlignmentSize(_stats) };
@@ -12417,7 +12431,7 @@ async function onModeChange() {
 const LARGE_ALIGNMENT_RESIDUE_THRESHOLD = 80000;
 
 function _isLargeAlignmentPending() {
-    const _aliLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+    const _aliLen = state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0;
     return (state.seqs.length * _aliLen) > LARGE_ALIGNMENT_RESIDUE_THRESHOLD;
 }
 
@@ -13689,7 +13703,7 @@ function copySelectedConsensus() {
         return;
     }
     const selectedSeqs = Array.from(state.selectedRows).map(i => state.seqs[i].seq);
-    const len = Math.max(...selectedSeqs.map(s => s.length));
+    const len = _maxOf(selectedSeqs, s => s.length);
     const opts = _getConsensusOptions();
     const consArr = [];
     for (let pos = 0; pos < len; pos++) consArr.push(_computeConsensusCharForColumn(selectedSeqs, pos, opts));
@@ -13877,7 +13891,7 @@ function replaceSelectedWithConsensus() {
 
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     const selectedSeqs = indices.map(i => state.seqs[i].seq);
-    const len = Math.max(...selectedSeqs.map(s => s.length));
+    const len = _maxOf(selectedSeqs, s => s.length);
 
     // Generate consensus sequence
     const cons = computeConsensusForSequences(selectedSeqs);
@@ -14706,7 +14720,7 @@ function _exportCellClass(base, posData, config) {
 // with a position ruler, the consensus row where the screen shows it, and
 // one line per sequence.
 function _exportLayout({ wrapAlways = false } = {}) {
-    const len = Math.max(...state.seqs.map(q => q.seq.length));
+    const len = _maxOf(state.seqs, q => q.seq.length);
     const blockSlider = parseInt(el('blockSizeSlider')?.value, 10) || 60;
     const blockMode = !!el('modeBlocks')?.checked;
     const blockWidth = Math.max(1, (blockMode || wrapAlways) ? blockSlider : len);
@@ -15946,7 +15960,7 @@ function _gotoSelectionItem(item) {
         if (!rows.length) return;
         const i = ((_gotoCursor.nucs ?? -1) + 1) % rows.length;
         _gotoCursor.nucs = i;
-        _showRowInAlignment(rows[i], Math.min(...state.selectedNucs.get(rows[i])));
+        _showRowInAlignment(rows[i], _minOf(state.selectedNucs.get(rows[i])));
     } else if (item.entry) {
         _gotoNextSearchHit(item.entry);
     }
@@ -16612,7 +16626,7 @@ function _geSortClustersToAlignment() {
         const i = _geSeqAlignIndex(id);
         return i < 0 ? Infinity : i;
     };
-    const firstRow = (c) => Math.min(...((c.sequences || []).map(s => idxOf(s.id)).concat(Infinity)));
+    const firstRow = (c) => _minOf(c.sequences || [], s => idxOf(s.id));
     results.clusters.forEach(c => {
         if (Array.isArray(c.sequences)) c.sequences.sort((a, b) => idxOf(a.id) - idxOf(b.id));
     });
@@ -17046,7 +17060,7 @@ async function analyzeClusterability() {
                 label: g.label,
                 clusters: res.clusters.length,
                 assigned: res.summary.nAssigned,
-                largest: res.clusters.length ? Math.max(...res.clusters.map(c => c.size)) : 0
+                largest: res.clusters.length ? _maxOf(res.clusters, c => c.size) : 0
             });
         } catch (e) {
             rows.push({ label: g.label, error: e.message });
@@ -17161,7 +17175,7 @@ async function clusterSequences() {
         showMessage("Need at least 3 sequences to cluster.", 3000);
         return;
     }
-    const residues = state.seqs.length * Math.max(...state.seqs.map(s => s.seq.length));
+    const residues = state.seqs.length * _maxOf(state.seqs, s => s.seq.length);
     if (!confirmIfLarge('Clustering', residues, 200000,
         'can take several minutes - its cost grows much faster than the alignment does')) {
         return;
@@ -20890,7 +20904,7 @@ function realignSelected() {
         }
 
         // Pad all sequences to the same length
-        const maxLen = Math.max(...state.seqs.map(s => s.seq.length));
+        const maxLen = _maxOf(state.seqs, s => s.seq.length);
         for (const s of state.seqs) {
             s.seq = s.seq.padEnd(maxLen, '-');
         }
@@ -21045,7 +21059,7 @@ async function addSequencesJustAdd() {
         }
     } else {
         // Pad to current alignment length
-        const alignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+        const alignLen = state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0;
         for (const ns of newSeqs) {
             if (alignLen > 0 && ns.seq.length < alignLen) {
                 ns.seq = ns.seq.padEnd(alignLen, '-');
@@ -21467,7 +21481,7 @@ function openSeqEditor(index) {
             // Multi-sequence mode
             return openSeqEditorMulti();
         } else if (state.selectedRows.size === 1) {
-            index = Math.min(...state.selectedRows);
+            index = _minOf(state.selectedRows);
         } else {
             index = -1; // freeform mode
         }
@@ -21675,7 +21689,7 @@ function seqEditApply() {
 
         pushUndo('seqedit-multi');
         const padCheckbox = document.getElementById('seqEditPadGaps');
-        const alignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+        const alignLen = state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0;
 
         // Update existing sequences (matched by index order)
         const updateCount = Math.min(entries.length, indices.length);
@@ -21695,7 +21709,7 @@ function seqEditApply() {
         }
         // If user added extra sequences in the textarea, append them
         // Recompute alignment length in case updates above changed it
-        const updatedAlignLen = state.seqs.length > 0 ? Math.max(...state.seqs.map(s => s.seq.length)) : 0;
+        const updatedAlignLen = state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0;
         for (let i = updateCount; i < entries.length; i++) {
             let seq = entries[i].seq;
             if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) {
@@ -21746,7 +21760,7 @@ function seqEditApply() {
     // Pad or trim if checkbox is checked
     const padCheckbox = document.getElementById('seqEditPadGaps');
     if (padCheckbox && padCheckbox.checked && state.seqs.length > 0) {
-        const alignLen = Math.max(...state.seqs.map(s => s.seq.length));
+        const alignLen = _maxOf(state.seqs, s => s.seq.length);
         if (alignLen > 0) {
             if (seq.length < alignLen) {
                 seq = seq.padEnd(alignLen, '-');
@@ -24410,7 +24424,7 @@ function isGeneDocGapChar(char) {
 
 function normalizeAlignmentLengths() {
     if (!state.seqs.length) return 0;
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxOf(state.seqs, s => s.seq.length);
     state.seqs.forEach(s => {
         if (s.seq.length < len) s.seq = s.seq.padEnd(len, GENEDOC_FILLER);
     });
@@ -24822,7 +24836,7 @@ function startGeneDocMoveDrag(e, rowIndex, pos, tool, span) {
         originalSeq: state.seqs[rowIndex].seq,
         // what the DOM row shows now, for the overlay's "unchanged cell" test
         startHits: state.searchHistory?.length ? _computeSearchHitsForSeq(state.seqs[rowIndex].seq) : new Map(),
-        originalAlignmentLength: Math.max(...state.seqs.map(seqObj => seqObj.seq.length)),
+        originalAlignmentLength: _maxOf(state.seqs, seqObj => seqObj.seq.length),
         moved: 0,
         visiblePositions: null,
         visibleComputedAtMoved: 0,
@@ -25015,7 +25029,7 @@ function handleGeneDocEditDragEnd() {
         normalizeAlignmentLengths();
         refreshAllGaplessPositions();
         state.editCell = { row: drag.rowIndex, pos: drag.anchorPos };
-        const nextAlignmentLength = Math.max(...state.seqs.map(seqObj => seqObj.seq.length));
+        const nextAlignmentLength = _maxOf(state.seqs, seqObj => seqObj.seq.length);
         const toolLabel = drag.tool === 'slideKeepGaps' ? 'SlideText' : 'MoveText';
         const columns = Math.abs(drag.moved);
         const fullName = state.seqs[drag.rowIndex]?.header || `row ${drag.rowIndex + 1}`;
@@ -25099,7 +25113,7 @@ function handleGeneDocGapToolClick(rowIndex, pos, tool) {
         return;
     }
     const label = deleting ? 'gap deleted' : 'gap inserted';
-    applyColumnEdit({ type: deleting ? 'delete' : 'insert', at: pos, cols: [pos], newWidth: Math.max(...state.seqs.map(q => q.seq.length)) },
+    applyColumnEdit({ type: deleting ? 'delete' : 'insert', at: pos, cols: [pos], newWidth: _maxOf(state.seqs, q => q.seq.length) },
         targets.length === state.seqs.length ? 'all' : targets);
     finalizeGeneDocEdit(`${targets.length} sequence(s): ${label}.`, 1600, pos, oldWidth);
 }
@@ -25247,7 +25261,7 @@ function fastUpdateEditCell() {
 
 function removeGapColumns() {
     if (state.seqs.length === 0) return;
-    const len = Math.max(...state.seqs.map(s => s.seq.length));
+    const len = _maxOf(state.seqs, s => s.seq.length);
     const colsToRemove = [];
     for (let pos = 0; pos < len; pos++) {
         if (state.seqs.every(s => isGeneDocGapChar(s.seq[pos] || GENEDOC_FILLER))) {
@@ -25278,7 +25292,7 @@ function insertGapColumn(skipSelected = false) {
         showMessage("Select a column position by Ctrl+Alt+click on a nucleotide to insert gap there.", 5000);
         return;
     }
-    const pos = Math.min(...state.selectedColumns);
+    const pos = _minOf(state.selectedColumns);
     pushUndo('insertGap');
     normalizeAlignmentLengths();
     const edited = [];
@@ -25307,7 +25321,7 @@ function insertSingleGap(rowIndex, pos) {
         return;
     }
     s.seq = result.seq;
-    applyColumnEdit({ type: 'insert', at: pos, newWidth: Math.max(...state.seqs.map(q => q.seq.length)) }, [rowIndex]);
+    applyColumnEdit({ type: 'insert', at: pos, newWidth: _maxOf(state.seqs, q => q.seq.length) }, [rowIndex]);
     finalizeGeneDocEdit('Single GeneDoc gap inserted.', 1800, pos, oldWidth);
 }
 
@@ -28980,7 +28994,7 @@ function _syncTsdModeSubUI() {
 
 function _initTsdColumnDefaults() {
     if (!state.seqs?.length) return;
-    const aliLen = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLen = _maxOf(state.seqs, s => s.seq.length);
     const flank = parseInt(document.getElementById('tsdFlankSize')?.value, 10) || 30;
     const upEnd = document.getElementById('tsdUpEnd');
     const downStart = document.getElementById('tsdDownStart');
@@ -29010,7 +29024,7 @@ function _fillTsdRegionsFromSelection() {
         return;
     }
     const cols = [...state.selectedColumns].sort((a, b) => a - b);
-    const aliLen = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLen = _maxOf(state.seqs, s => s.seq.length);
     const manual = document.querySelector('input[name="tsdMode"][value="manual"]');
     if (manual) manual.checked = true;
     const upStartEl = document.getElementById('tsdUpStart');
@@ -29728,7 +29742,7 @@ function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, m
  */
 function _findTSD(seqs, mode, params) {
     const results = [];
-    const aliLen = Math.max(...seqs.map(seqObj => seqObj.seq.length));
+    const aliLen = _maxOf(seqs, seqObj => seqObj.seq.length);
     const minTsdLen = params.minLen || 4;
     const maxTsdLen = params.maxLen || 20;
     const maxDiv = (Number.isFinite(params.maxDiv) ? params.maxDiv : 20) / 100;
@@ -29901,7 +29915,7 @@ function runTsdAnalysis() {
     if (!resultsEl) return;
     const tsdMode = document.querySelector('input[name="tsdMode"]:checked')?.value || 'auto';
     const params = _readTsdParams();
-    const aliLen = Math.max(...state.seqs.map(s => s.seq.length));
+    const aliLen = _maxOf(state.seqs, s => s.seq.length);
 
     if (tsdMode === 'manual') {
         if (params.upStart < 1 || params.upEnd < params.upStart) {
