@@ -4036,6 +4036,42 @@ check('Audit batch 2: RNA reverse complement, multi-row editor undo, trim previe
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(r) };
 });
 
+check('Undo: a hard trim is one undo step, and a new file starts with no undo history', async (page) => {
+  const fa = '>a\n----ACGTACGTAC----\n>b\n----ACGTTCGTAC----\n>c\n--GGACGAACGTACTT--\n';
+  await page.setInputFiles('#fileInput', { name: 'u.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+  await page.waitForTimeout(1000);
+  const r = await page.evaluate(async () => {
+    const out = {};
+    window.confirm = () => true;
+    const rows = () => state.seqs.map(q => q.seq).join('|');
+    const original = rows();
+    pushUndo('delete'); const removed = state.seqs.splice(2, 1);   // an earlier step: delete row c
+    renderAlignment();
+    const afterDelete = rows();
+    document.querySelector('input[name="trimMode"][value="hard"]').checked = true;
+    state.trimBoundaries = { leftTrimEnd: 3, rightTrimStart: 14 };
+    executeTrimming();
+    const afterTrim = rows();
+    undoDelete(true);
+    out.undoTrim = rows() === afterDelete ? 'back to before the trim' : (rows() === original ? 'jumped past the trim' : rows());
+    out.trimmedWidth = afterTrim.split('|')[0].length;
+    // a new file: Ctrl+Z must not bring back the old rows (one step of the old file is still on the stack)
+    pushUndo('delete'); state.seqs.splice(1, 1); renderAlignment();
+    out.historyBeforeLoad = state.deletedHistory.length;
+    const fa2 = '>x\nTTTTTTTT\n>y\nTTTTATTT\n';
+    fastaInput.value = fa2; state.currentFilename = 'second.fa';
+    await parseAndRender(true);
+    await new Promise(res => setTimeout(res, 300));
+    out.historyAfterLoad = state.deletedHistory.length;
+    undoDelete(true);
+    out.afterUndo = rows();
+    void removed;
+    return out;
+  });
+  const ok = r.undoTrim === 'back to before the trim' && r.trimmedWidth === 10 && r.historyBeforeLoad > 0 && r.historyAfterLoad === 0 && r.afterUndo === 'TTTTTTTT|TTTTATTT';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

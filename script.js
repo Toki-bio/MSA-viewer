@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v255';
+const BUILD_TAG = 'v256';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -12038,6 +12038,9 @@ async function parseAndRender(isFromDrop = false) {
         }
         _clearClusterTrimState();
         _dropColumnAnalyses();
+        // Undo/redo hold the previous file's rows: Ctrl+Z after a load put them back under the new file's name
+        state.deletedHistory = [];
+        state.redoHistory = [];
         // Clear any loaded reads - they belong to the previous reference
         bamState = {
             reads: [],
@@ -16431,7 +16434,9 @@ function executeTrimming() {
         return;
     }
 
-    // Hard trim: actually delete columns
+    // Hard trim: actually delete columns (an undo step like any other column edit: without one, Ctrl+Z went
+    // back past the trim to the step before it)
+    pushUndo('trim');
     state.trimBackupColState = _snapshotColumnState();
     {
         const dead = [];
@@ -21836,6 +21841,7 @@ function seqEditApply() {
 // Names shown in the Undo / Redo history lists and messages. Entries carry the internal
 // action type; typing and drag edits also carry their own label.
 const UNDO_TYPE_LABELS = {
+    'trim': 'Hard trim',
     'order': 'Reorder rows', 'reorder': 'Reorder rows', 'rename': 'Rename', 'delete': 'Delete sequences',
     'duplicate': 'Duplicate sequences', 'revcomp': 'Reverse complement',
     'sort-name': 'Sort by name', 'sort-length': 'Sort by length', 'sort-similarity': 'Sort by similarity',
