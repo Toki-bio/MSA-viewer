@@ -1017,7 +1017,10 @@ app.get('/api/ssh-poll-file', (req, res) => {
         const via = SSH_SERVERS[srv.via];
         const port = srv.port || 22;
         const innerPortArgs = port !== 22 ? ` -p ${port}` : '';
-        const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new${innerPortArgs} ${srv.user}@${srv.host} "if [ -f /tmp/.msa_viewer_queue ]; then cat /tmp/.msa_viewer_queue && rm /tmp/.msa_viewer_queue; fi"`;
+        // Same queue command as the direct path: the reply below is parsed between the markers,
+        // so without them a queued file was read, deleted and reported as "nothing queued".
+        const queueCmd = 'Q=/tmp/.msa_viewer_queue; if [ -s "$Q" ]; then echo "=START_QUEUE="; cat "$Q"; echo "=END_QUEUE="; cp /dev/null "$Q" 2>/dev/null || true; fi';
+        const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new${innerPortArgs} ${srv.user}@${srv.host} '${queueCmd}'`;
         sshArgs = [...getPlinkBaseArgs(via), `${via.user}@${via.host}`, innerCmd];
     }
 

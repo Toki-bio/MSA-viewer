@@ -52,13 +52,16 @@ async function main() {
     fs.writeFileSync(path.join(bin, 'plink'),
         `#!/usr/bin/env node\nrequire('fs').writeFileSync(${JSON.stringify(argLog)}, JSON.stringify(process.argv.slice(2)));\nprocess.stdout.write('>x\\nACGT\\n');\n`);
     fs.chmodSync(path.join(bin, 'plink'), 0o755);
+    // Windows: spawn('plink') finds plink.cmd, not a shebang script
+    if (process.platform === 'win32') fs.writeFileSync(path.join(bin, 'plink.cmd'), `@"${process.execPath}" "%~dp0plink" %*
+`);
 
     // server.js reads ssh-servers.json from its own folder; run a copy of the
     // app files in a scratch folder so the real config is never touched.
     const app = path.join(tmp, 'app');
     fs.mkdirSync(app);
     fs.copyFileSync(path.join(ROOT, 'server.js'), path.join(app, 'server.js'));
-    fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(app, 'node_modules'));
+    fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(app, 'node_modules'), 'junction');   // a junction needs no admin rights on Windows
     fs.writeFileSync(path.join(app, 'index.html'), '<!doctype html><title>t</title>');
     fs.writeFileSync(path.join(app, 'ssh-servers.json'), JSON.stringify({
         direct: { label: 'Direct', user: 'u', host: 'target.example' },
@@ -171,6 +174,23 @@ async function main() {
         const lsArgs = fs.existsSync(argLog) ? JSON.parse(fs.readFileSync(argLog, 'utf8')) : [];
         const lsOut = spawnSync('sh', ['-c', lsArgs[lsArgs.length - 1] || ''], { env: remoteEnv, encoding: 'utf8' }).stdout.trim().split('\n');
         check('ssh-ls with no folder lists the remote home', lsOut.join('|') === '-1p|--|/home/remote', JSON.stringify(lsOut));
+
+        // ---- push-to-load queue: the jump-host command prints the same markers as the direct one ----
+        const sshOnly = path.join(tmp, 'sshonly');
+        fs.mkdirSync(sshOnly);
+        fs.copyFileSync(path.join(fakeRemote, 'ssh'), path.join(sshOnly, 'ssh'));
+        fs.chmodSync(path.join(sshOnly, 'ssh'), 0o755);
+        const qFile = path.join(tmp, 'queue').replace(/\\/g, '/');
+        for (const srv of ['direct', 'inner']) {
+            fs.writeFileSync(qFile, '/data/dir\naln.fa\n');
+            if (fs.existsSync(argLog)) fs.unlinkSync(argLog);
+            await request(port, `/api/ssh-poll-file?server=${srv}`);
+            const qArgs = fs.existsSync(argLog) ? JSON.parse(fs.readFileSync(argLog, 'utf8')) : [];
+            const qCmd = (qArgs[qArgs.length - 1] || '').split('/tmp/.msa_viewer_queue').join(qFile);
+            const qOut = spawnSync('sh', ['-c', qCmd], { env: { PATH: sshOnly + ':/usr/bin:/bin' }, encoding: 'utf8' }).stdout;
+            check(`queue poll (${srv}) prints the queued path between the markers`,
+                /=START_QUEUE=\s*\/data\/dir\s+aln\.fa\s*=END_QUEUE=/.test(qOut), JSON.stringify({ qCmd, qOut }));
+        }
     } finally {
         server.kill();
         fs.rmSync(tmp, { recursive: true, force: true });
