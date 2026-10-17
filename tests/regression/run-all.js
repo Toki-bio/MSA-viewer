@@ -3876,6 +3876,28 @@ check('BLAST worker FASTA parser ends on a last record without a newline', async
   return { pass: res === 's1', detail: res === 's1' ? '' : 'ids ' + res };
 });
 
+check('Chromatogram: clicking a base call edits that base', async (page) => {
+  const r = await page.evaluate(() => {
+    const n = 20, spacing = 12, numSamples = n * spacing + 12;
+    const tr = () => Array.from({ length: numSamples }, (_, i) => 50 + 40 * Math.sin(i));
+    state.ab1Traces = state.ab1Traces || {};
+    state.ab1Traces.t1 = { sequence: 'ACGTACGTACGTACGTACGT', quality: Array(n).fill(40), numSamples,
+      peakLocations: Array.from({ length: n }, (_, i) => 6 + i * spacing), traces: { A: tr(), C: tr(), G: tr(), T: tr() } };
+    ChromatogramViewer.open('t1');
+    const c = document.querySelector('#chromatogramModal canvas') || [...document.querySelectorAll('canvas')].find(x => x.width >= 2000);
+    const rect = c.getBoundingClientRect(), k = 5;
+    const canvasX = state.ab1Traces.t1.peakLocations[k] * parseFloat(c.dataset.xScale || '3');
+    const clientX = rect.left + canvasX * rect.width / c.width;
+    let asked = null; const orig = window.prompt; window.prompt = (msg) => { asked = msg; return null; };
+    c.dispatchEvent(new MouseEvent('click', { clientX, clientY: rect.top + 50, bubbles: true }));
+    window.prompt = orig;
+    ChromatogramViewer.close();
+    return { asked, want: k + 1 };
+  });
+  const ok = !!r.asked && r.asked.includes(`position ${r.want} `);
+  return { pass: ok, detail: ok ? '' : JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

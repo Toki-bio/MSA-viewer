@@ -111,7 +111,9 @@
         const d = current.data;
         if (styleSelect.value !== 'full' || !d.peakLocations.length) return;
         const rect = canvas.getBoundingClientRect();
-        const x = (e.clientX - rect.left - viewState.offsetX) / viewState.scale;
+        // client px -> canvas px -> undo pan/zoom -> sample units (traces are drawn at peak * xScale)
+        const cx = (e.clientX - rect.left) * (rect.width ? canvas.width / rect.width : 1);
+        const x = (cx - viewState.offsetX) / viewState.scale / parseFloat(canvas.dataset.xScale || '3');
         // find nearest peak
         let best = -1, bestDist = Infinity;
         for (let i = 0; i < d.peakLocations.length; i++) {
