@@ -4796,6 +4796,22 @@ check('Context menu Rename from a residue opens the name editor (the residue sta
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Colour reset clears name colours but keeps SNP-group colours (DOM and Canvas)', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'cr.fa', mimeType: 'text/plain', buffer: Buffer.from('>g1\nACGTACGTAC\n>n1\nACGTTCGTAC\n') });
+  await page.waitForTimeout(800);
+  await setMode(page, 'full'); await page.waitForTimeout(400);
+  const r = await page.evaluate(async () => {
+    state.clusterMap = { g1: { color: '#ff0000', name: 'Group 1' } };
+    colourState.mappings.set('n1', '#00ff00');
+    renderAlignment(); await new Promise(res => setTimeout(res, 200));
+    resetAllColours(); await new Promise(res => setTimeout(res, 300));
+    const bg = (h) => { const i = state.seqs.findIndex(q => q.header === h); return getComputedStyle(document.querySelector(`.seq-name[data-seq-index="${i}"]`)).backgroundColor; };
+    return { group: bg('g1'), named: bg('n1'), mapped: colourState.mappings.size };
+  });
+  const ok = r.group === 'rgb(255, 0, 0)' && r.named !== 'rgb(0, 255, 0)' && r.mapped === 0;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

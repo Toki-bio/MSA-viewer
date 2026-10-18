@@ -26220,11 +26220,10 @@ function loadColourPreset() {
 function resetAllColours() {
     colourState.mappings.clear();
     colourState.history.clear();
-    const seqNameElements = document.querySelectorAll('.seq-name');
-    seqNameElements.forEach(el => {
-        el.removeAttribute('style');
-        el.title = '';
-    });
+    // repaint every name from the state: wiping the inline style of each .seq-name also removed the
+    // SNP-group fill/stripe and titles (not name colours), and did nothing in Canvas
+    if (typeof paintNameCells === 'function') paintNameCells();
+    renderAlignment();
     showMessage('All colors reset', 2000);
 }
 
