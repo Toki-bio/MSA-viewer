@@ -1828,7 +1828,10 @@ async function fetchFileFromServer(filePath, serverKey) {
         const fname = filePath.split('/').pop() || filePath;
         state.currentFilename = fname;
         state.currentFilePath = filePath;
-        parseAndRender(true);
+        // the count is known once the load has run (parseAndRender stops at its first await before
+        // parsing: the message used to give the previous file's count)
+        await parseAndRender(true);
+        if (state.currentFilePath !== filePath) { _sshLog(`${fname}: load cancelled`); return; }
         _sshSuccess(`${fname} | ${state.seqs.length} seq${state.seqs.length !== 1 ? 's' : ''} | ${serverKey}`);
         // Auto-focus browser window and bring to front
         window.focus();
