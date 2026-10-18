@@ -226,6 +226,12 @@ function parseBAMRecord(buf, offset) {
 
         switch (type) {
             case 'A': tags[tag] = String.fromCharCode(buf[pos]); pos += 1; break;
+            // the 1- and 2-byte integer types (samtools writes NM, AS, ... in the smallest that fits):
+            // unhandled, they ended the tag loop and every later tag of the record was lost
+            case 'c': tags[tag] = dv.getInt8(pos); pos += 1; break;
+            case 'C': tags[tag] = dv.getUint8(pos); pos += 1; break;
+            case 's': tags[tag] = dv.getInt16(pos, true); pos += 2; break;
+            case 'S': tags[tag] = dv.getUint16(pos, true); pos += 2; break;
             case 'i': case 'I': {
                 let val = 0;
                 if (type === 'i') {
@@ -257,7 +263,7 @@ function parseBAMRecord(buf, offset) {
                         case 'i': arr.push(dv.getInt32(pos, true)); pos += 4; break;
                         case 'I': arr.push(dv.getUint32(pos, true)); pos += 4; break;
                         case 'f': arr.push(dv.getFloat32(pos, true)); pos += 4; break;
-                        default: pos += count * 4; break;
+                        default: pos = tagEnd; j = count; break;   // unknown element type: stop at the record end
                     }
                 }
                 tags[tag] = arr;

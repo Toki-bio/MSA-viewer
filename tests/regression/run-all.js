@@ -4851,6 +4851,36 @@ check('Skim fixes: protein search for U finds selenocysteine only; Ctrl+Delete i
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('BAM: 1- and 2-byte integer tags (NM:C, AS:c, XS:S) are read and the tags after them kept', async (page) => {
+  const r = await page.evaluate(() => {
+    // one BAM record: name r1, 4 bases ACGT, cigar 4M, tags NM:C:2 AS:c:-5 XS:S:300 MD:Z:4
+    const enc = new TextEncoder(), parts = [];
+    const u8 = a => parts.push(Uint8Array.from(a));
+    const i32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setInt32(0, v, true); parts.push(b); };
+    const u16 = v => { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, v, true); parts.push(b); };
+    const u32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, true); parts.push(b); };
+    const body = [];
+    const push = (fn, v) => { const before = parts.length; fn(v); body.push(...parts.splice(before)); };
+    push(i32, 0); push(i32, 9); push(u8, [3]); push(u8, [60]); push(u16, 0); push(u16, 1); push(u16, 0); push(u32, 4); push(i32, -1); push(i32, -1); push(i32, 0);
+    body.push(enc.encode('r1\0'));
+    push(u32, (4 << 4) | 0);                       // 4M
+    body.push(Uint8Array.from([0x12, 0x48]));      // ACGT (A=1 C=2 G=4 T=8)
+    body.push(Uint8Array.from([30, 30, 30, 30]));  // qualities
+    body.push(enc.encode('NMC'), Uint8Array.from([2]));
+    body.push(enc.encode('ASc'), Uint8Array.from([0xFB]));
+    body.push(enc.encode('XSS'), Uint8Array.from([0x2C, 0x01]));
+    body.push(enc.encode('MDZ4\0'));
+    const len = body.reduce((a, b) => a + b.length, 0);
+    const buf = new Uint8Array(4 + len); new DataView(buf.buffer).setUint32(0, len, true);
+    let o = 4; body.forEach(b => { buf.set(b, o); o += b.length; });
+    const rec = BamParser.parseBAMRecord(buf, 0);
+    return { seq: rec?.record?.seq, tags: rec?.record?.tags };
+  });
+  const t = r.tags || {};
+  const ok = r.seq === 'ACGT' && t.NM === 2 && t.AS === -5 && t.XS === 300 && t.MD === '4';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
