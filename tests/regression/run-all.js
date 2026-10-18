@@ -4760,6 +4760,24 @@ check('Chromatogram: each click asks once, for the clicked base; a drag does not
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Search hit counts follow edits (a search with no hit counts the matches an edit creates)', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'sc.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTAC\n>b\nACGTACGTAC\n') });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(async () => {
+    el('searchRegex').checked = false; el('maxMismatches').value = '0'; el('searchBothStrands').checked = false;
+    el('searchInput').value = 'GGG'; el('searchButton').click();
+    await new Promise(res => setTimeout(res, 300));
+    const before = state.searchHistory[0]?.matchCount;
+    pushUndo('test-edit');
+    state.seqs[0] = { ...state.seqs[0], seq: 'ACGGGCGTAC' }; state.seqs[0].gaplessPositions = calculateGaplessPositions(state.seqs[0].seq);
+    renderAlignment();
+    await new Promise(res => setTimeout(res, 1000));
+    return { before, after: state.searchHistory[0]?.matchCount, label: document.querySelector('#searchList')?.textContent || '' };
+  });
+  const ok = r.before === 0 && r.after === 1 && /GGG \(1\)/.test(r.label);
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

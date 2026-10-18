@@ -13525,6 +13525,7 @@ function _dropNoOpUndo(redoBefore) {
 
 function pushUndo(type) {
     _noteRowSelectionForReorder();
+    _scheduleSearchRecount();
     state.deletedHistory.push({
         type: type,
         seqs: JSON.parse(JSON.stringify(state.seqs)),
@@ -13539,6 +13540,7 @@ function pushUndo(type) {
 // row via normalizeAlignmentLengths(), so a patch that records only the edited row cannot
 // undo it — the other rows keep their padding and the alignment never shrinks back.
 function pushUndoRowPatch(type, rowIndex, beforeSeq, afterSeq, beforeWidth, afterWidth, label) {
+    _scheduleSearchRecount();
     if (!state.seqs[rowIndex] || beforeSeq === afterSeq) return;
     state.deletedHistory.push({
         type,
@@ -13634,6 +13636,7 @@ function applyRowSeqPatch(entry, useAfter, skipDom = false) {
 function undoDelete(quiet) {
     quiet = quiet === true;   // also called as a click handler, with the event as argument
     _rowSelAtPush = null;     // undo restores the selection that belongs to the restored order
+    _scheduleSearchRecount();
     if (state.deletedHistory.length === 0) {
         if (!quiet) showMessage("Nothing to undo.", 3000);
         return;
@@ -13671,6 +13674,7 @@ function undoDelete(quiet) {
 
 function redoAction(quiet) {
     _rowSelAtPush = null;
+    _scheduleSearchRecount();
     quiet = quiet === true;   // also called as a click handler, with the event as argument
     if (state.redoHistory.length === 0) {
         if (!quiet) showMessage("Nothing to redo.", 3000);
@@ -15708,7 +15712,7 @@ function searchMotif(options = {}) {
         if (invalid) return;   // validated above; kept as a guard
 
         const displayMatches = options.countMode === 'alignmentSites' ? motifAlignmentSites.size : motifMatches;
-        Object.assign(entry, { matchCount: displayMatches, rawMatchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size });
+        Object.assign(entry, { matchCount: displayMatches, rawMatchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size, countMode: options.countMode || null });
         state.searchHistory.push(entry);
         searchResults.push({ label, strand, matchCount: displayMatches, rawMatchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size, sequenceIndices: Array.from(motifSeqsWithMatches) });
     });
@@ -15733,6 +15737,38 @@ function searchMotif(options = {}) {
         }
     }
     return { totalMatches, fwdMatches, revMatches, fwdSeqs: fwdSeqs.size, revSeqs: revSeqs.size, results: searchResults };
+}
+
+// The hit counts of the active searches follow edits: they were set once, at search time, so a search
+// with no hit kept '(0)' (and no 'go' arrow) after an edit made matches. Recounted a moment after an edit
+// (pushUndo / pushUndoRowPatch / Undo / Redo), over the same rows the search covers.
+let _searchRecountTimer = null;
+function _scheduleSearchRecount() {
+    if (!state.searchHistory || !state.searchHistory.length) return;
+    clearTimeout(_searchRecountTimer);
+    _searchRecountTimer = setTimeout(_recountSearches, 600);
+}
+function _recountSearches() {
+    if (!state.searchHistory || !state.searchHistory.length) return;
+    const degapped = state.seqs.map(q => _degapForSearch(q.seq));
+    let changed = false;
+    for (const entry of state.searchHistory) {
+        let raw = 0, seqsWith = 0; const sites = new Set();
+        let invalid = false;
+        degapped.forEach(({ cols, text }) => {
+            if (invalid || !text) return;
+            const m = _searchMatchesInDegapped(text, entry);
+            if (m === null) { invalid = true; return; }
+            if (!m.length) return;
+            seqsWith++; raw += m.length;
+            m.forEach(x => { if (cols[x.idx] !== undefined) sites.add(cols[x.idx] + ':' + x.len); });
+        });
+        if (invalid) continue;
+        const shown = entry.countMode === 'alignmentSites' ? sites.size : raw;
+        if (shown !== entry.matchCount || seqsWith !== entry.sequencesWithMatches) changed = true;
+        Object.assign(entry, { matchCount: shown, rawMatchCount: raw, sequencesWithMatches: seqsWith });
+    }
+    if (changed) updateActiveSearchesPanel();
 }
 
 function updateActiveSearchesPanel() {
