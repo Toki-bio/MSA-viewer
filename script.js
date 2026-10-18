@@ -22052,6 +22052,7 @@ function seqEditApply() {
 // Names shown in the Undo / Redo history lists and messages. Entries carry the internal
 // action type; typing and drag edits also carry their own label.
 const UNDO_TYPE_LABELS = {
+    'tsd-unmark-lowercase': 'Undo TSD lower case',
     'trim': 'Hard trim',
     'order': 'Reorder rows', 'reorder': 'Reorder rows', 'rename': 'Rename', 'delete': 'Delete sequences',
     'duplicate': 'Duplicate sequences', 'revcomp': 'Reverse complement',
@@ -29498,6 +29499,7 @@ function undoTsdMarking() {
     }
 
     if (backup.style === 'lowercase' && backup.lowered) {
+        pushUndo('tsd-unmark-lowercase');   // a step of the main Undo like the marking itself
         // upper-case exactly the residues that marking lowercased, wherever they are now (a
         // restored copy of the old string would undo edits made since, and was keyed by row)
         backup.lowered.forEach((cols, row) => {

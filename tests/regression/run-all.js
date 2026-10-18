@@ -4555,6 +4555,25 @@ check('Gap edits that change nothing add no Undo step and keep Redo', async (pag
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('TSD lower case: "Undo marking" is a step of the main Undo (Ctrl+Z brings the marks back)', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 't.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTAC\n>b\nACGTACGTAC\n') });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(async () => {
+    // the state Apply marks (lower case) leaves: residues 2-4 of row 0 lowered, the panel's backup, a main Undo entry
+    pushUndo('tsd-mark-lowercase');
+    state.seqs[0] = { ...state.seqs[0], seq: 'ACgtaCGTAC' };
+    state.tsdMarkStyle = 'lowercase';
+    state.tsdMarkUndo = { style: 'lowercase', lowered: new Map([[0, [2, 3, 4]]]) };
+    renderAlignment();
+    undoTsdMarking(); await new Promise(res => setTimeout(res, 200));
+    const unmarked = state.seqs[0].seq;
+    undoDelete(true); await new Promise(res => setTimeout(res, 200));
+    return { unmarked, afterCtrlZ: state.seqs[0].seq };
+  });
+  const ok = r.unmarked === 'ACGTACGTAC' && r.afterCtrlZ === 'ACgtaCGTAC';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
