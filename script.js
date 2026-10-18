@@ -5306,6 +5306,16 @@ function _canvasAaPalette() {
     return pal;
 }
 
+// Baseline of a text line in a Canvas row of height rowH, placed as CSS places it with
+// line-height 1.0 (half of the font box's overflow above, half below): the full ascent put
+// the baseline ~1.4 px lower than in Full/Block once rows became the font size (v259), and
+// each name's underscores fell under the next row's name background
+function _canvasTextBaseline(rowH) {
+    const m = _canvasState.metrics;
+    if (!m || !(m.ascent > 0)) return rowH - 3;
+    return m.ascent - (m.ascent + (m.descent || 0) - rowH) / 2;
+}
+
 function _initCanvasMetrics(ctx, fontSizePx) {
     // Cache is keyed on font size and device pixel ratio so zoom changes (which resize the
     // DOM font) and a move to another screen invalidate stale metrics.
@@ -6461,8 +6471,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 // away with the content, like .seq-name.static.
                 const name = state.seqs[i].header || ('Seq' + (i + 1));
                 const displayName = _truncName(name, nameLen);
-                const nameAscent = (_canvasState.metrics && _canvasState.metrics.ascent) || (CHAR_H - 3);
-                const nameBaselineY = y + nameAscent;
+                const nameBaselineY = y + _canvasTextBaseline(CHAR_H);
                 const look = nameCellLook(i);
                 const nameX0 = stickyNames ? 0 : -ox;
                 if (stickyNames) {
@@ -6542,7 +6551,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                         ctx.fillStyle = '#fff';
                         ctx.fillRect(nx, textY, NAME_W, CHAR_H);
                         ctx.fillStyle = '#555';
-                        ctx.fillText('Consensus', nx + 4, textY + ((_canvasState.metrics && _canvasState.metrics.ascent) || (CHAR_H - 3)));
+                        ctx.fillText('Consensus', nx + 4, textY + _canvasTextBaseline(CHAR_H));
                         ctx.restore();
                     }
                     ctx.textBaseline = 'top';
@@ -15393,9 +15402,11 @@ function initResEnzymeSearch() {
     });
 }
 
+// Every view but Reads: matches are found in the sequences, and Full, Block and Canvas
+// draw them through the residue overlay (Canvas is the default view from 40,000 residues,
+// so excluding it greyed the Search menu out on most real alignments).
 function isMotifSearchSupported() {
-    return !document.getElementById('modeCanvas')?.checked
-        && !document.getElementById('modeReads')?.checked;
+    return !document.getElementById('modeReads')?.checked;
 }
 
 /**
@@ -15459,14 +15470,14 @@ function syncSearchControlsAvailability() {
     if (findBtn) {
         findBtn.title = supported
             ? 'Find motif in sequences (shortcut: Ctrl+F)'
-            : 'Motif search requires Full or Block mode (not Canvas/Reads)';
+            : 'Motif search works in Full, Block and Canvas (not Reads)';
     }
 }
 
 function searchMotif(options = {}) {
     if (!isMotifSearchSupported()) {
         if (!options.suppressMessage) {
-            showMessage('Motif search requires Full or Block mode. Switch out of Canvas/Reads.', 3500);
+            showMessage('Motif search works in Full, Block and Canvas: switch out of Reads.', 3500);
         }
         return null;
     }

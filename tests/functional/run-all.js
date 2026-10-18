@@ -1047,6 +1047,48 @@ check('Codon analysis: AA only shows the translation in place of the bases, by g
     return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Search in the Canvas view (the default from 40,000 residues): menu enabled, matches found and drawn, cleared', async (page) => {
+    await loadFasta(page, '>a\nTTGCAGAGCACTAA\n>b\nTTGCAGAGCACTAA\n>c\nTTTTTTTTTTTTTT\n');
+    await setMode(page, 'canvas');
+    const r = await page.evaluate(async () => {
+        const wait = ms => new Promise(res => setTimeout(res, ms));
+        const yellow = () => { const c = document.querySelector('#alignmentContainer canvas'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 245 && d[i + 1] > 245 && d[i + 2] < 20) n++; return n; };
+        syncSearchControlsAvailability();
+        const menuOn = getComputedStyle(document.getElementById('search-controls')).pointerEvents !== 'none';
+        document.getElementById('searchColor').value = '#ffff00';
+        const res = searchMotif({ motif: 'GCAGAGCACT' });
+        await wait(400);
+        const drawn = yellow();
+        clearAllSearches(true);
+        await wait(400);
+        return { canvas: isCanvasMode(), menuOn, total: res?.totalMatches, seqs: res?.fwdSeqs, drawn, after: yellow() };
+    });
+    const ok = r.canvas && r.menuOn && r.total === 2 && r.seqs === 2 && r.drawn > 50 && r.after === 0;
+    return { pass: ok, detail: JSON.stringify(r) };
+});
+
+check('Canvas names keep their underscores (baseline placed as in Full, not covered by the next row)', async (page) => {
+    await loadFasta(page, '>a__________\nACGTACGTAC\n>b\nACGTACGTAC\n');
+    await page.evaluate(() => { const c = document.getElementById('showConsensus'); if (c?.checked) { c.checked = false; c.dispatchEvent(new Event('change')); } });
+    await setMode(page, 'canvas');
+    const r = await page.evaluate(async () => {
+        await new Promise(res => setTimeout(res, 400));
+        const c = document.querySelector('#alignmentContainer canvas'), dpr = window.devicePixelRatio || 1;
+        const m = _canvasState.metrics, H = m.charH;
+        // Dark pixels right of the letter 'a' in the name column: only row 1's underscores are
+        // there (row 2's name is one letter, the consensus row is off)
+        const x0 = Math.round((4 + m.charW * 1.5) * dpr), x1 = Math.round((4 + m.charW * 10) * dpr);
+        const d = c.getContext('2d').getImageData(x0, 0, x1 - x0, c.height).data;
+        let dark = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i] < 200 && d[i + 1] < 200 && d[i + 2] < 200) dark++;   // a 1 px line is antialiased grey
+        return { dark, width: x1 - x0, H };
+    });
+    // ten underscores draw a line about as wide as the scanned strip
+    const ok = r.dark > r.width * 0.6;
+    return { pass: ok, detail: JSON.stringify(r) };
+});
+
 check('Codon analysis: "Frameshifts vs Row 1" marks the rows that share an indel, not the reference they outnumber', async (page) => {
     // Row 1 (reference) and one more real copy of a 30-nt CDS; three "pseudogene" rows share one extra base after nt 12.
     // The majority rule takes the three rows' codon phase and marks the two real rows; Row 1 mode marks the three.
