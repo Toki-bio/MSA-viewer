@@ -14024,7 +14024,13 @@ function duplicateSelected() {
     if (state.selectedRows.size === 0) return;
     pushUndo('duplicate');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    const copies = indices.map(i => ({...state.seqs[i], header: state.seqs[i].header + '_copy'}));
+    // the copy's full name gets '_copy' after its first word too: exports write the full name,
+    // which used to be the original's ('s1 desc' twice)
+    const copies = indices.map(i => {
+        const q = state.seqs[i], h = q.header + '_copy';
+        const full = q.fullHeader ? q.fullHeader.replace(/^\S*/, h) : h;
+        return { ...q, header: h, fullHeader: full };
+    });
     state.seqs.push(...copies);
     renderAlignment();
     showMessage("Selected sequences duplicated!", 2000);
@@ -20804,11 +20810,12 @@ async function realignSelectedBlock(opts) {
         }
 
         pushUndo('realign-block');
+        // each row comes back with its own names (RealignRegion matches rows by an internal key);
+        // looking them up by name gave rows whose short names repeat the first one's full name
         state.seqs = result.seqs.map(r => {
-            const orig = state.seqs.find(s => s.header === r.header || s.fullHeader === r.fullHeader);
             return {
-                header: orig ? orig.header : r.header,
-                fullHeader: orig ? orig.fullHeader : (r.fullHeader || r.header),
+                header: r.header,
+                fullHeader: r.fullHeader || r.header,
                 seq: r.seq,
                 gaplessPositions: calculateGaplessPositions(r.seq)
             };

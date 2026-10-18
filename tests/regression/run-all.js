@@ -4312,6 +4312,25 @@ check('Realign all keeps a row that has only gaps (MAFFT and codon/MACSE), as a 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+check('Names: a duplicated row exports under its new name; Realign region keeps each row\'s own full name when short names repeat', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'n.fa', mimeType: 'text/plain', buffer: Buffer.from('>s1 first copy\nACGTACGTACGTAC\n>s1 second copy\nACGAACGTACGTTC\n>s2\nACGTACGTTCGTAC\n') });
+  await page.waitForTimeout(900);
+  const r = await page.evaluate(async () => {
+    const out = {};
+    state.selectedRows.clear(); state.selectedRows.add(2); duplicateSelected();
+    out.dup = state.seqs.map(q => q.fullHeader || q.header);
+    state.seqs.pop(); renderAlignment();
+    window.confirm = () => true;
+    state.selectedColumns.clear(); for (let c = 2; c <= 8; c++) state.selectedColumns.add(c);
+    await realignSelectedBlock({ applyAdjustFull: true, applyReorder: false });
+    await new Promise(res => setTimeout(res, 500));
+    out.region = state.seqs.map(q => q.fullHeader || q.header);
+    return out;
+  });
+  const ok = r.dup[3] === 's2_copy' && new Set(r.dup).size === 4 && r.region.join('|') === 's1 first copy|s1 second copy|s2';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
