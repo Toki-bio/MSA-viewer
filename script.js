@@ -29728,7 +29728,8 @@ function _findTandemRepeats(seq, minUnitLen, maxDivPct) {
 
 function _tsdBase(char) {
     const base = (char || '').toUpperCase().replace('U', 'T');
-    return /^[ACGTN]$/.test(base) ? base : '';
+    // IUPAC codes are bases too: dropping them shortened TSDs and shifted their columns
+    return /^[ACGTNRYSWKMBDHV]$/.test(base) ? base : '';
 }
 
 function _collectUngappedBasesWithColumns(seq, startCol, endCol) {

@@ -4697,6 +4697,15 @@ check('Copy with no selection and a stale row does not throw; codon toFasta wrap
   return { pass: ok, detail: JSON.stringify({ err1, fasta, r }) };
 });
 
+check('TSD: an IUPAC code in a flank is a base (TSD length and columns stay right)', async (page) => {
+  const r = await page.evaluate(() => {
+    const got = _collectUngappedBasesWithColumns('AC-RTG', 0, 5);
+    return { bases: (got.bases || []).join(''), columns: (got.columns || []).join(',') };
+  });
+  const ok = r.bases === 'ACRTG' && r.columns === '0,1,3,4,5';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
