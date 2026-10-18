@@ -4476,6 +4476,31 @@ check('Chromatograms: a new file\'s same-named row does not open the old trace; 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('A load that fails or is cancelled leaves the loaded file\'s name, text and size class as they were', async (page) => {
+  const A = '>a1\nACGTACGT\n>a2\nACGTACGA\n';
+  await page.setInputFiles('#fileInput', { name: 'A.fa', mimeType: 'text/plain', buffer: Buffer.from(A) });
+  await page.waitForTimeout(900);
+  // a damaged AB1 file
+  const bad = Buffer.alloc(40); bad.write('ABIF', 0); bad.writeInt16BE(101, 4); bad.write('tdir', 6); bad.writeInt32BE(1, 10); bad.writeInt16BE(1023, 14); bad.writeInt16BE(28, 16); bad.writeInt32BE(5, 18); bad.writeInt32BE(140, 22); bad.writeInt32BE(100000, 26);
+  await page.setInputFiles('#fileInput', { name: 'broken.ab1', mimeType: 'application/octet-stream', buffer: bad });
+  await page.waitForTimeout(900);
+  const afterError = await page.evaluate(() => ({ name: state.currentFilename, rows: state.seqs.map(q => q.header).join(','), text: fastaInput.value.startsWith('>a1'), shown: !!document.querySelector('#alignmentContainer .error-message') }));
+  // a load cancelled in the large-alignment dialog
+  const afterCancel = await page.evaluate(async () => {
+    const origC = classifyAlignmentSize, origD = showLargeAlignmentDialog;
+    const before = JSON.stringify(state.alignmentIndex);
+    classifyAlignmentSize = (st) => ({ ...origC(st), mode: 'crazy' });
+    showLargeAlignmentDialog = async () => 'cancel';
+    state.currentFilename = 'B.fa'; fastaInput.value = '>b1\nTTTT\n>b2\nTTTA\n';
+    await parseAndRender(true);
+    classifyAlignmentSize = origC; showLargeAlignmentDialog = origD;
+    return { name: state.currentFilename, rows: state.seqs.map(q => q.header).join(','), text: fastaInput.value.startsWith('>a1'), indexSame: JSON.stringify(state.alignmentIndex) === before };
+  });
+  const ok = afterError.name === 'A.fa' && afterError.rows === 'a1,a2' && afterError.text && !afterError.shown
+    && afterCancel.name === 'A.fa' && afterCancel.rows === 'a1,a2' && afterCancel.text && afterCancel.indexSame;
+  return { pass: ok, detail: JSON.stringify({ afterError, afterCancel }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

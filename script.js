@@ -11937,6 +11937,27 @@ function showLargeAlignmentDialog(stats, classification, context = 'load') {
 }
 
 /** Run pre-parse scan; for crazy alignments prompt before parse. Returns false if cancelled. */
+// What is loaded now (name, path, input text, size class): a load that is cancelled or cannot be read
+// puts these back, so the header, copies and Recent do not name a file that never loaded.
+let _loadedIdentity = null;
+function _rememberLoadedIdentity(text) {
+    _loadedIdentity = { name: state.currentFilename, path: state.currentFilePath, text, index: state.alignmentIndex };
+}
+function _restoreLoadedIdentity() {
+    const L = _loadedIdentity;
+    state.currentFilename = L ? L.name : '';
+    state.currentFilePath = L ? L.path : '';
+    state.alignmentIndex = L ? L.index : null;
+    if (L && typeof fastaInput !== 'undefined' && fastaInput) fastaInput.value = L.text;
+}
+function _fileReadFailed(file, err) {
+    console.error('Error reading file:', file && file.name, err);
+    _restoreLoadedIdentity();
+    const why = err && err.message ? ': ' + err.message : '';
+    if (!state.seqs.length) alignmentContainer.innerHTML = '<div class="error-message">Error reading file.</div>';
+    showMessage(`Could not read ${file ? file.name : 'the file'}${why}`, 6000);
+}
+
 async function runAlignmentPreflight(inputText) {
     const stats = scanAlignmentText(inputText);
     if (!stats || stats.nSeqs < 1) {
@@ -12072,6 +12093,7 @@ async function parseAndRender(isFromDrop = false) {
     const proceed = await runAlignmentPreflight(inputText);
     if (!proceed) {
         statusMessage.style.display = 'none';
+        _restoreLoadedIdentity();   // the alignment on screen is still the previous one
         showMessage('Load cancelled.', 2500);
         return;
     }
@@ -12309,6 +12331,7 @@ async function parseAndRender(isFromDrop = false) {
                 handleId
             }
         );
+        _rememberLoadedIdentity(inputText);
         // Ensure menus don't have inline styles that interfere with hover
         setTimeout(() => {
             try {
@@ -22856,9 +22879,7 @@ function initializeAppUI() {
                 fastaInput.value = text;
                 parseAndRender(true);
             } catch (err) {
-                console.error('Error reading file:', err);
-                alignmentContainer.innerHTML = '<div class="error-message">Error:Error reading file.</div>';
-                showMessage("Error reading file.", 5000);
+                _fileReadFailed(file, err);
             }
         });
         dropZone.addEventListener('click', async (e) => {
@@ -22871,7 +22892,10 @@ function initializeAppUI() {
                     state.currentFilename = file.name;
                     state.currentFilePath = '';
                     state._pendingFileHandle = handle;
-                    fastaInput.value = (await readSequenceFile(file)).text;
+                    let text;
+                    try { text = (await readSequenceFile(file)).text; }
+                    catch (readErr) { _fileReadFailed(file, readErr); return; }   // the file, not the picker, failed
+                    fastaInput.value = text;
                     parseAndRender(true);
                 } catch (err) {
                     if (err && err.name === 'AbortError') return; // user cancelled the picker
@@ -22898,11 +22922,7 @@ function initializeAppUI() {
         readSequenceFile(file).then(({ text }) => {
             fastaInput.value = text;
             parseAndRender(true);
-        }).catch((err) => {
-            console.error('Error reading file:', err);
-            alignmentContainer.innerHTML = '<div class="error-message">Error:Error reading file.</div>';
-            showMessage("Error reading file.", 5000);
-        });
+        }).catch((err) => _fileReadFailed(file, err));
     });
 
     // Text typed or pasted by the user is not the file loaded before: forget its name
