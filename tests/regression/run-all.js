@@ -4115,6 +4115,21 @@ check('Chromatogram: Apply Edits lands on the traced base after the row was trim
   return { pass: okTrim && okRc && okRefuse, detail: JSON.stringify(r) };
 });
 
+check('Server: output read for one reply is capped (ssh-cat, bam2sam) and multi-byte text survives chunking', async () => {
+  const fs = require('fs'), path = require('path'), { spawn } = require('child_process');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'server.js'), 'utf8');
+  const a = src.indexOf('const CHILD_OUTPUT_MAX_BYTES'), b = src.indexOf('function stripBanner');
+  if (a < 0 || a > b) return { pass: false, detail: 'no capped output collector in server.js (ssh-cat/bam2sam read output without a limit)' };
+  const env = { env: { CHILD_OUTPUT_MAX_BYTES: '1000' } };
+  const collect = new Function('process', 'Buffer', src.slice(a, b) + '; return collectChildOutput;')(env, Buffer);
+  const run = (code) => new Promise(res => collect(spawn(process.execPath, ['-e', code]), (over, out) => res(over ? 'over:' + over.status : out)));
+  const big = await run("process.stdout.write('A'.repeat(5000))");
+  const small = await run("process.stdout.write('A'.repeat(500))");
+  const text = await run("const b = Buffer.from('выравнивание'); process.stdout.write(b.subarray(0, 3)); setTimeout(() => process.stdout.write(b.subarray(3)), 50)");
+  const ok = big === 'over:413' && small.length === 500 && text === 'выравнивание';
+  return { pass: ok, detail: JSON.stringify({ big, small: small.length, text }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

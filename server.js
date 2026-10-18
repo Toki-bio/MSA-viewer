@@ -954,6 +954,27 @@ function buildSshCatArgs(serverKey, filePath) {
     return buildSshArgs(serverKey, `cat -- ${shellQuoteRemotePath(filePath)}`);
 }
 
+// Output of a child process read into memory for one JSON reply, with a size cap: without one a huge
+// remote file or a whole BAM grew one string until V8's string limit threw inside the 'data' handler
+// and took the server down. Bytes are kept as Buffers and decoded once, so a multi-byte character split
+// across two chunks is not garbled. onDone(err, text): err.status 413 when the cap was hit.
+const CHILD_OUTPUT_MAX_BYTES = Number(process.env.CHILD_OUTPUT_MAX_BYTES) || 200 * 1024 * 1024;
+function collectChildOutput(child, onDone) {
+    const out = [], err = [];
+    let bytes = 0, over = false;
+    child.stdout.on('data', (d) => {
+        if (over) return;
+        bytes += d.length;
+        if (bytes > CHILD_OUTPUT_MAX_BYTES) { over = true; out.length = 0; try { child.kill(); } catch (e) {} return; }
+        out.push(d);
+    });
+    child.stderr.on('data', (d) => { if (err.length < 1000) err.push(d); });
+    child.on('close', (code) => {
+        if (over) return onDone({ status: 413, message: `Output too large (over ${Math.round(CHILD_OUTPUT_MAX_BYTES / 1048576)} MB) to load this way` });
+        onDone(null, Buffer.concat(out).toString('utf8'), code, Buffer.concat(err).toString('utf8'));
+    });
+}
+
 function stripBanner(stdout) {
     const fastaStart = stdout.indexOf('>');
     const msfStart   = stdout.indexOf('!!');
@@ -1077,11 +1098,9 @@ app.get('/api/ssh-cat', (req, res) => {
     if (!sshArgs) return res.status(400).json({ error: 'Bad server config' });
 
     const child = spawn('plink', sshArgs, { timeout: 30000 });
-    let stdout = '', stderr = '';
-    child.stdout.on('data', (d) => { stdout += d.toString(); });
-    child.stderr.on('data', (d) => { stderr += d.toString(); });
-    child.on('close', (code) => {
+    collectChildOutput(child, (over, stdout, code, stderr) => {
         if (res.headersSent) return;
+        if (over) return res.status(over.status).json({ error: over.message });
         if (code !== 0) return res.status(500).json({ error: stderr.trim() || `SSH exited with code ${code}` });
         if (!stdout.trim()) return res.status(404).json({ error: 'File is empty or not found' });
         res.json({ content: stripBanner(stdout), file: filePath, server: serverKey });
@@ -1179,12 +1198,10 @@ app.post('/api/bam2sam', (req, res) => {
         if (region && /^[\w.-]+:\d+-\d+$/.test(region)) args.push(region);
         args.push(resolved.path);
 
-        const child = spawn('samtools', args, { timeout: 30000, maxBuffer: 100 * 1024 * 1024 });
-        let stdout = '', stderr = '';
-        child.stdout.on('data', d => { stdout += d.toString(); });
-        child.stderr.on('data', d => { stderr += d.toString(); });
-        child.on('close', code => {
+        const child = spawn('samtools', args, { timeout: 30000 });   // spawn has no maxBuffer: the cap is in collectChildOutput
+        collectChildOutput(child, (over, stdout, code, stderr) => {
             if (res.headersSent) return;
+            if (over) return res.status(over.status).json({ error: over.message + ' - give a region (chr:start-end)' });
             if (code !== 0) return res.status(500).json({ error: stderr || 'samtools failed' });
             res.json({ success: true, sam: stdout });
         });
