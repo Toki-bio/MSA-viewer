@@ -1007,10 +1007,28 @@ class ResidueMarks {
 // when rows are deleted, moved, sorted or restored by undo: every such operation ends in a
 // render, which compares the row order with the one it last drew.
 let _lastRenderedRowObjs = null;
+// The selected rows as sequences, noted by pushUndo (every reorder pushes one first). If the rows were
+// reordered and the selection still names the positions it had then (a Sort leaves it alone; a row drag
+// selects the moved rows itself), it is moved onto the same sequences. Undo/Redo restore their own.
+let _rowSelAtPush = null;
+const _rowSelKey = () => [...state.selectedRows].sort((a, b) => a - b).join(',');
+function _noteRowSelectionForReorder() {
+    _rowSelAtPush = state.selectedRows.size
+        ? { key: _rowSelKey(), objs: [...state.selectedRows].map(i => state.seqs[i]).filter(Boolean) }
+        : null;
+}
 function _remapRowKeyedSelections() {
     const prev = _lastRenderedRowObjs;
     _lastRenderedRowObjs = state.seqs.slice();
+    const sel = _rowSelAtPush;
     if (!prev || (prev.length === state.seqs.length && prev.every((o, i) => o === state.seqs[i]))) return;
+    _rowSelAtPush = null;
+    if (sel && _rowSelKey() === sel.key) {
+        const at = new Map(state.seqs.map((o, i) => [o, i]));
+        const next = sel.objs.map(o => at.get(o)).filter(i => i !== undefined);
+        state.selectedRows.clear();
+        next.forEach(i => state.selectedRows.add(i));
+    }
     const find = _seqObjResolver();
     const newIndex = oldRow => (prev[oldRow] ? find(prev[oldRow]) : -1);
     if (state.selectedNucs?.size) {
@@ -13445,6 +13463,7 @@ function deleteSelected() {
  * Push current state onto undo stack. Call BEFORE mutating state.
  */
 function pushUndo(type) {
+    _noteRowSelectionForReorder();
     state.deletedHistory.push({
         type: type,
         seqs: JSON.parse(JSON.stringify(state.seqs)),
@@ -13553,6 +13572,7 @@ function applyRowSeqPatch(entry, useAfter, skipDom = false) {
 // quiet: one of several steps taken from the history list; no redraw or message
 function undoDelete(quiet) {
     quiet = quiet === true;   // also called as a click handler, with the event as argument
+    _rowSelAtPush = null;     // undo restores the selection that belongs to the restored order
     if (state.deletedHistory.length === 0) {
         if (!quiet) showMessage("Nothing to undo.", 3000);
         return;
@@ -13589,6 +13609,7 @@ function undoDelete(quiet) {
 }
 
 function redoAction(quiet) {
+    _rowSelAtPush = null;
     quiet = quiet === true;   // also called as a click handler, with the event as argument
     if (state.redoHistory.length === 0) {
         if (!quiet) showMessage("Nothing to redo.", 3000);

@@ -4415,6 +4415,27 @@ check('Dot plot: Copy aligned context copies the diagonal pair the panel shows (
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Row selection follows its sequences through Sort (name, length) and Undo; a row drag still selects the moved rows', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'srt.fa', mimeType: 'text/plain', buffer: Buffer.from('>delta\nACGT-\n>alpha\nACG--\n>charlie\nACGTA\n>bravo\nAC---\n') });
+  await page.waitForTimeout(900);
+  const r = await page.evaluate(async () => {
+    const sel = () => [...state.selectedRows].map(i => state.seqs[i].header).sort().join(',');
+    const out = {};
+    state.selectedRows.clear(); state.selectedRows.add(1); state.selectedRows.add(2); updateRowSelections();   // alpha, charlie
+    sortByName(); await new Promise(r => setTimeout(r, 300)); out.byName = sel();
+    sortByLength(); await new Promise(r => setTimeout(r, 300)); out.byLength = sel();
+    undoDelete(true); await new Promise(r => setTimeout(r, 300)); out.afterUndo = sel();
+    // row drag: the moved row ends selected at its new place
+    state.selectedRows.clear(); updateRowSelections(); renderAlignment();
+    const moved = state.seqs[0].header;
+    _moveDraggedSequences(0, 3, false); await new Promise(r => setTimeout(r, 300));
+    out.drag = sel() + ' (moved ' + moved + ')';
+    return out;
+  });
+  const ok = r.byName === 'alpha,charlie' && r.byLength === 'alpha,charlie' && r.afterUndo === 'alpha,charlie' && r.drag.startsWith(r.drag.split(' (moved ')[1].replace(')', ''));
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
