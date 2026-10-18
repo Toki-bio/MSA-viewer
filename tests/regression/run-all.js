@@ -4361,6 +4361,31 @@ check('Realign selected rows and a reorder-only run that reverse-complements row
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+check('Consensus row hidden: Copy Consensus and Add > Align to consensus use the current consensus, not an empty or old one', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'c.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTACGTACGTACGT\n>b\nACGTACGTACGTACGTACGT\n>c\nACGTACGTACGTACGTACGT\n') });
+  await page.waitForTimeout(900);
+  const r = await page.evaluate(async () => {
+    const out = {};
+    const sc = document.getElementById('showConsensus'); sc.checked = false; sc.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(res => setTimeout(res, 300));
+    // an edit while the row is hidden: every row now has T at column 0
+    state.seqs.forEach(q => { q.seq = 'T' + q.seq.slice(1); q.gaplessPositions = calculateGaplessPositions(q.seq); });
+    renderAlignment(); await new Promise(res => setTimeout(res, 300));
+    let copied = null; navigator.clipboard.writeText = t => { copied = t; return Promise.resolve(); };
+    copyConsensus(); await new Promise(res => setTimeout(res, 200));
+    out.copied = (copied || '').split('\n')[1] || null;
+    // Add & align to consensus: the new sequence lacks the first 4 bases and must land at column 4
+    document.getElementById('addSeqInput').value = '>new\nACGTACGTACGTACGT';
+    document.getElementById('addSeqAlignCons').checked = true;
+    await addSequencesJustAdd(); await new Promise(res => setTimeout(res, 800));
+    const nw = state.seqs.find(q => q.header === 'new');
+    out.newRow = nw ? nw.seq : null;
+    return out;
+  });
+  const ok = !!r.copied && r.copied.toUpperCase().startsWith('TCGTACGT') && !!r.newRow && /^-{4}ACGTACGTACGTACGT/.test(r.newRow);
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

@@ -13779,7 +13779,18 @@ function copyPlainSingle(index) {
         showMessage("Failed to copy. Check console.", 5000);
     });
 }
+// The consensus of the rows as they are now (gaps removed): the cached one while it still matches
+// the rows, else computed. state.consensusSeq is refreshed only while the Consensus row is shown.
+function _currentConsensusUngapped() {
+    if (!state.seqs.length) return '';
+    const len = _maxOf(state.seqs, q => q.seq.length);
+    const c = state.consensusCache;
+    const values = (c && c.len === len && c.fp === _seqsFingerprint()) ? c.values.join('') : computeConsensusForSequences(state.seqs.map(q => q.seq));
+    return values.replace(/-/g, '');
+}
+
 function copyConsensus() {
+    state.consensusSeq = _currentConsensusUngapped();
     if (!state.consensusSeq) {
         showMessage("No consensus available to copy.", 3000);
         return;
@@ -21174,7 +21185,8 @@ async function addSequencesJustAdd() {
     pushUndo('add-sequences');
 
     // If align-to-consensus, do pairwise alignment of each new seq against consensus
-    if (alignToCons && state.seqs.length > 0 && state.consensusSeq) {
+    // computes its own consensus below; state.consensusSeq is only kept up to date while the row is shown
+    if (alignToCons && state.seqs.length > 0) {
         try {
             const { args: extraArgs, seqType } = getMafftExtraArgs();
             const consensusArgs = [...extraArgs];
@@ -21223,7 +21235,7 @@ async function addSequencesJustAdd() {
         }
     }
 
-    if (!(alignToCons && state.seqs.length > 0 && state.consensusSeq)) {
+    if (!(alignToCons && state.seqs.length > 0)) {
         if (atTop) {
             state.seqs.unshift(...newSeqs);
         } else {
