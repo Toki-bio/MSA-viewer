@@ -5038,6 +5038,7 @@ function _computeAnnotatedCodonAnalysis(seqs, len) {
     const code = _getActiveCode();
     const polyAStop = code['TAA'] === '*';
     let genes = 0, lanes = 1;
+    const hidden = new Set();   // genes with codons where two others already overlap (only 2 lanes are drawn)
     for (const d of cds) {
         const cs = d.cs, ce = d.ce, L = ce - cs + 1;
         const minus = d.f.strand === '-';
@@ -5065,7 +5066,7 @@ function _computeAnnotatedCodonAnalysis(seqs, len) {
             for (const e of entries) {
                 let lane = 0;
                 if (e.cols.some(c => claimed[0][i][c])) {
-                    if (e.cols.some(c => claimed[1][i][c])) continue;
+                    if (e.cols.some(c => claimed[1][i][c])) { hidden.add(d.f.name || 'CDS'); continue; }
                     lane = 1;
                     lanes = 2;
                 }
@@ -5088,7 +5089,7 @@ function _computeAnnotatedCodonAnalysis(seqs, len) {
         aaSeq[i].sort((a, b) => a.cols[0] - b.cols[0]);
         for (const e of aaSeq[i]) for (const c of e.cols) if (colLanes[c] <= e.lane) colLanes[c] = e.lane + 1;
     }
-    return { phase, stops, frameShifts, synNonSyn, aaSeq, refIdx: 0, frameOffset: 0, byGene: true, genes, lanes, colLanes };
+    return { phase, stops, frameShifts, synNonSyn, aaSeq, refIdx: 0, frameOffset: 0, byGene: true, genes, lanes, colLanes, hidden: [...hidden] };
 }
 
 // The translations of one row by gene, each read in its gene's direction:
@@ -9300,7 +9301,9 @@ function _updateCodonAnalysisState(len) {
                         // Name where the translations start: the first screen may hold no CDS at all
                         const first = _annotCdsFeatures().reduce((a, d) => (!a || d.cs < a.cs ? d : a), null);
                         const where = first ? `; first: ${first.f.name || 'CDS'} at column ${(first.cs + 1).toLocaleString()}` : '';
-                        showMessage(`Codon analysis: ${byGene.genes} CDS from the annotation track, each in its own frame and strand${where}`, 5000);
+                        // a third overlapping CDS has no lane: say so instead of claiming every CDS is shown
+                        const hid = byGene.hidden && byGene.hidden.length ? `. Not shown where two other CDS already overlap: ${byGene.hidden.slice(0, 3).join(', ')}${byGene.hidden.length > 3 ? ' and more' : ''}` : '';
+                        showMessage(`Codon analysis: ${byGene.genes} CDS from the annotation track, each in its own frame and strand${where}${hid}`, hid ? 8000 : 5000);
                     }
                     return;
                 }

@@ -4706,6 +4706,24 @@ check('TSD: an IUPAC code in a flank is a base (TSD length and columns stay righ
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Codon analysis by gene: a third overlapping CDS is reported as not shown (not claimed shown)', async (page) => {
+  const cds = 'ATGGCTAAAGGTCTGCAAGAATTCGGTACCTGGAAACCGATGCTTGCAGGTAAAGAACTGTTCCCGGGATCCTAA';
+  await page.setInputFiles('#fileInput', { name: 'cds3.fa', mimeType: 'text/plain', buffer: Buffer.from(`>chr\n${cds}\n>b\n${cds}\n`) });
+  await page.waitForTimeout(900);
+  const r = await page.evaluate(async () => {
+    const bed = ['chr\t0\t60\tgeneA\t0\t+', 'chr\t3\t63\tgeneB\t0\t+', 'chr\t6\t66\tgeneC\t0\t+'].map(l => l + '\t0\t0\t0\t1\t60\t0\tCDS').join('\n');
+    let msg = ''; const om = showMessage; showMessage = (m, t) => { msg = m; return om(m, t); };
+    state._lastAnnouncedCodonFrame = null;
+    setAnnotation(bed, 'three.bed');
+    const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+    await new Promise(res => setTimeout(res, 900));
+    showMessage = om;
+    return { msg, hidden: state._codonData?.hidden };
+  });
+  const ok = /Not shown/.test(r.msg) && /geneC/.test(r.msg);
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
