@@ -2,17 +2,20 @@
 // setTimeout(0) has a minimum delay of ~4ms in some browsers; MessageChannel
 // fires on the next event loop turn with no artificial delay, cutting yield
 // overhead roughly in half.
-let _yieldResolver = null;
+// One resolver per posted message, in order: a single shared slot let a second clustering run
+// overwrite the first run's resolver, and the first run never resumed.
+const _yieldQueue = [];
 const _yieldChannel = typeof MessageChannel !== 'undefined' ? new MessageChannel() : null;
 if (_yieldChannel) {
     _yieldChannel.port1.onmessage = () => {
-        if (_yieldResolver) { const r = _yieldResolver; _yieldResolver = null; r(); }
+        const r = _yieldQueue.shift();
+        if (r) r();
     };
 }
 function _yieldToBrowser() {
     return new Promise(r => {
         if (_yieldChannel) {
-            _yieldResolver = r;
+            _yieldQueue.push(r);
             _yieldChannel.port2.postMessage(null);
         } else {
             setTimeout(r, 0);

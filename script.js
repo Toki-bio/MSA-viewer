@@ -11986,6 +11986,7 @@ function _restoreLoadedIdentity() {
 }
 function _fileReadFailed(file, err) {
     console.error('Error reading file:', file && file.name, err);
+    state._pendingFileHandle = null;
     _restoreLoadedIdentity();
     const why = err && err.message ? ': ' + err.message : '';
     if (!state.seqs.length) alignmentContainer.innerHTML = '<div class="error-message">Error reading file.</div>';
@@ -12212,6 +12213,9 @@ async function parseAndRender(isFromDrop = false) {
                 if (!res || !(tr.includes(res) || rc(tr).includes(res))) delete state.ab1Traces[name];
             }
         }
+        // Repeat/TSD results name rows and columns of the previous alignment
+        _lastRepeatResults = [];
+        _lastTsdResults = [];
         // Undo/redo hold the previous file's rows: Ctrl+Z after a load put them back under the new file's name
         state.deletedHistory = [];
         state.redoHistory = [];
@@ -13541,6 +13545,14 @@ function deleteSelected() {
 /**
  * Push current state onto undo stack. Call BEFORE mutating state.
  */
+// The group order an undo entry recorded, if it holds the same groups (a new clustering since is left alone)
+function _restoreGroupOrder(order) {
+    const cur = state.clusterResults?.clusters;
+    if (!order || !cur || order.length !== cur.length || !order.every(c => cur.includes(c))) return;
+    state.clusterResults.clusters = order.slice();
+    if (typeof renderGroupExplorer === 'function') renderGroupExplorer();
+}
+
 // An edit that turned out to change nothing: take back the undo entry it pushed and give back the
 // redo steps the push cleared (a no-op used to add an empty Undo step and lose Redo)
 function _dropNoOpUndo(redoBefore) {
@@ -13556,6 +13568,7 @@ function pushUndo(type) {
         // name colours are keyed by name: a step that renames (RevComp's rc_ prefix, Rename) left the
         // colour under the new name after Undo
         colours: colourState?.mappings ? new Map(colourState.mappings) : null,
+        groupOrder: state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null,   // moving a group reorders these
         seqs: JSON.parse(JSON.stringify(state.seqs)),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
@@ -13685,6 +13698,7 @@ function undoDelete(quiet) {
         label: last.label,
         seqs: JSON.parse(JSON.stringify(state.seqs)),
         colours: colourState?.mappings ? new Map(colourState.mappings) : null,
+        groupOrder: state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null,
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
     };
@@ -13692,6 +13706,7 @@ function undoDelete(quiet) {
     state.redoHistory.push(redoEntry);
     state.seqs = last.seqs;
     if (last.colours && colourState?.mappings) { colourState.mappings.clear(); last.colours.forEach((v, k) => colourState.mappings.set(k, v)); }
+    _restoreGroupOrder(last.groupOrder);
     if (last.colStateBefore) _restoreColumnState(last.colStateBefore);
     state.selectedRows = last.selectedRows || new Set();
     state.selectedColumns = last.selectedColumns || new Set();
@@ -13729,9 +13744,11 @@ function redoAction(quiet) {
     };
     if (next.colStateAfter) undoEntry.colStateBefore = _snapshotColumnState();
     undoEntry.colours = colourState?.mappings ? new Map(colourState.mappings) : null;
+    undoEntry.groupOrder = state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null;
     state.deletedHistory.push(undoEntry);
     state.seqs = next.seqs;
     if (next.colours && colourState?.mappings) { colourState.mappings.clear(); next.colours.forEach((v, k) => colourState.mappings.set(k, v)); }
+    _restoreGroupOrder(next.groupOrder);
     if (next.colStateAfter) _restoreColumnState(next.colStateAfter);
     state.selectedRows = next.selectedRows || new Set();
     state.selectedColumns = next.selectedColumns || new Set();
@@ -22983,6 +23000,7 @@ function initializeAppUI() {
     el('fileInput')?.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
+        state._pendingFileHandle = null;   // this path has no file handle (a stale one from a failed drop reopened the wrong file)
         if (await _routeReadsFile(file)) return;
         state.currentFilename = file.name;
         state.currentFilePath = '';

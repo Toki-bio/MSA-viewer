@@ -5009,6 +5009,34 @@ check('Group explorer: selecting a group selects its own rows, not other rows wi
   return { pass: r === '0', detail: r };
 });
 
+check('Uncertain batch: Undo of moving a group restores the group order; repeat/TSD results go with a new file; overlapping clustering yields all resume', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'u3.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nAAAA\n>b\nCCCC\n>c\nGGGG\n') });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(async () => {
+    const out = {};
+    const g0 = { sequences: [{ id: 'a', obj: state.seqs[0] }] }, g1 = { sequences: [{ id: 'b', obj: state.seqs[1] }] };
+    state.clusterResults = { clusters: [g0, g1], unassigned: [{ id: 'c', obj: state.seqs[2] }] };
+    _geMoveGroup(0, 1);
+    out.moved = state.clusterResults.clusters[0] === g1;
+    undoDelete(true);
+    out.undone = state.clusterResults.clusters[0] === g0;
+    _lastTsdResults = [{ row: 0 }]; _lastRepeatResults = [{ row: 0 }];
+    fastaInput.value = '>x\nTTTT\n>y\nTTTA\n'; await parseAndRender(true); await new Promise(res => setTimeout(res, 300));
+    out.resultsCleared = _lastTsdResults.length === 0 && _lastRepeatResults.length === 0;
+    return out;
+  });
+  // two overlapping yield loops in cluster.js must both finish
+  const yields = await page.evaluate(async () => {
+    if (typeof _yieldToBrowser !== 'function') return 'no helper';
+    let a = 0, b = 0;
+    const run = async (inc) => { for (let i = 0; i < 20; i++) { await _yieldToBrowser(); inc(); } };
+    await Promise.race([Promise.all([run(() => a++), run(() => b++)]), new Promise(res => setTimeout(res, 2000))]);
+    return a + ',' + b;
+  });
+  const ok = r.moved && r.undone && r.resultsCleared && yields === '20,20';
+  return { pass: ok, detail: JSON.stringify({ r, yields }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
