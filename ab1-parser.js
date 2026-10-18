@@ -45,7 +45,9 @@
         let value = null;
         if (type === 'char' && numElements > 0) {
             const bytes = new Uint8Array(buf, dataOffset, numElements);
-            value = String.fromCharCode.apply(null, bytes);
+            // in slices: one argument per byte overflowed the call stack on large char tags
+            value = '';
+            for (let k = 0; k < bytes.length; k += 8192) value += String.fromCharCode.apply(null, bytes.subarray(k, k + 8192));
         } else if (type === 'pString') {
             const len = view.getUint8(dataOffset);
             const bytes = new Uint8Array(buf, dataOffset + 1, len);

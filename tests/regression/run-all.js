@@ -4891,6 +4891,31 @@ check('MSF: a name listed twice gives two rows, each with its own residues', asy
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('No empty undo steps: Move Up at the top, a cancelled Realign all; negative mismatches still finds exact hits', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'u2.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTAC\n>b\nACGTTCGTAC\n') });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(async () => {
+    const out = {};
+    insertSingleGap(1, 2); undoDelete(true);              // one Redo step to keep
+    const base = { undo: state.deletedHistory.length, redo: state.redoHistory.length };
+    state.selectedRows.clear(); state.selectedRows.add(0); moveSelectedUp();
+    out.move = { undo: state.deletedHistory.length, redo: state.redoHistory.length };
+    const orig = window._mafftAlignWithUi; window._mafftAlignWithUi = async () => null;   // the user cancels
+    document.getElementById('mafftReorderOnly').checked = false;
+    await realignAll(); window._mafftAlignWithUi = orig;
+    out.cancel = { undo: state.deletedHistory.length, redo: state.redoHistory.length };
+    out.base = base;
+    el('searchRegex').checked = false; el('searchBothStrands').checked = false; el('maxMismatches').value = '-2';
+    el('searchInput').value = 'ACGTAC'; el('searchButton').click();
+    await new Promise(res => setTimeout(res, 300));
+    out.hits = state.searchHistory[0]?.matchCount; el('maxMismatches').value = '0';
+    return out;
+  });
+  const same = o => o.undo === r.base.undo && o.redo === r.base.redo;
+  const ok = r.base.redo === 1 && same(r.move) && same(r.cancel) && r.hits > 0;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

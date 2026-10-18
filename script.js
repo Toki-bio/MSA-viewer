@@ -14006,9 +14006,9 @@ function selectAllSequences() {
 }
 function moveSelectedUp() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices[0] === 0) return;
+    if (indices[0] === 0) return;   // already at the top: no undo step (it used to push one and clear Redo)
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -14026,9 +14026,9 @@ function moveSelectedUp() {
 }
 function moveSelectedDown() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
-    if (indices[indices.length - 1] === state.seqs.length - 1) return;
+    if (indices[indices.length - 1] === state.seqs.length - 1) return;   // already at the bottom
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -15638,7 +15638,7 @@ function searchMotif(options = {}) {
         }
     }
     const color = options.color || el('searchColor').value;
-    const maxMismatches = options.maxMismatches ?? (parseInt(el('maxMismatches').value) || 0);
+    const maxMismatches = Math.max(0, options.maxMismatches ?? (parseInt(el('maxMismatches').value) || 0));   // a negative box value matched nothing, not even exact hits
     const checkboxEl = el('searchBothStrands');
     // A regex is not a sequence: complementing its text letter by letter turns [AT] into
     // N...N. Restriction sites build their own reverse-complement regex instead.
@@ -21001,6 +21001,7 @@ async function realignAll() {
     }
 
     // Save undo state
+    const redoBeforeRealign = state.redoHistory;
     pushUndo('realign-all');
 
     // Build ungapped FASTA. Rows go to MAFFT under internal ids (r0, r1, ...) and come back by row,
@@ -21075,7 +21076,7 @@ async function realignAll() {
         let result;
         try { result = await _mafftAlignWithUi(fasta, extraArgs, 'Aligning all sequences with MAFFT...'); }
         finally { _alignRowIds = false; }
-        if (!result) return;
+        if (!result) { _dropNoOpUndo(redoBeforeRealign); return; }   // cancelled: no change, no undo step
         const aligned = parseMafftOutput(result);
         if (aligned.length === 0) {
             showMessage("Error: MAFFT returned no sequences.", 3000);
@@ -21093,7 +21094,7 @@ async function realignAll() {
         const hasResidues = (q) => /[^-.\s]/.test(q.seq);
         const lost = [...rowById].filter(([id, q]) => !alignedById.has(id) && hasResidues(q)).map(([, q]) => q.header);
         if (lost.length) {
-            state.deletedHistory.pop();   // the undo entry pushed for this realign: nothing changed
+            _dropNoOpUndo(redoBeforeRealign);   // the undo entry pushed for this realign: nothing changed
             showMessage(`The aligner returned no sequence for ${lost.slice(0, 3).join(', ')}${lost.length > 3 ? ` and ${lost.length - 3} more` : ''}; the alignment was not changed.`, 6000);
             return;
         }
@@ -21142,7 +21143,7 @@ async function realignAll() {
         if (flippedNames.size > 0) msgs.push(`RC'd: ${[...flippedNames].map(nameOfId).join(', ')}`);
         showMessage(msgs.join(' '), flippedNames.size > 0 ? 5000 : 2000);
     } catch (err) {
-        showMessage("MAFFT alignment error: " + err.message, 4000);
+        _dropNoOpUndo(redoBeforeRealign); showMessage("MAFFT alignment error: " + err.message, 4000);
         console.error("MAFFT alignment error:", err);
     }
 }
@@ -21159,6 +21160,7 @@ function realignSelected() {
     }
 
     // Save undo state
+    const redoBeforeRealign = state.redoHistory;
     pushUndo('realign-selected');
 
     const selectedIndices = Array.from(state.selectedRows).sort((a, b) => a - b);
@@ -21192,7 +21194,7 @@ function realignSelected() {
         extraArgs,
         `Realigning ${selectedIndices.length} selected sequences with MAFFT...`
     ).finally(() => { _alignRowIds = false; }).then(result => {
-        if (!result) return;
+        if (!result) { _dropNoOpUndo(redoBeforeRealign); return; }   // cancelled: no change, no undo step
         const aligned = parseMafftOutput(result);
         if (aligned.length === 0) {
             showMessage("Error: MAFFT returned no sequences.", 3000);
@@ -21222,7 +21224,7 @@ function realignSelected() {
         renderAlignment();
         showMessage(`Realigned ${selectedIndices.length} selected sequences!`, 2000);
     }).catch(err => {
-        showMessage("Realign selected error: " + err.message, 4000);
+        _dropNoOpUndo(redoBeforeRealign); showMessage("Realign selected error: " + err.message, 4000);
         console.error("Realign selected error:", err);
     });
 }
