@@ -304,7 +304,10 @@ function _degapForSearch(seq) {
             chars.push(ch);
         }
     }
-    return { cols, text: chars.join('').toUpperCase().replace(/U/g, 'T') };
+    // U is uracil in nucleotides (searched as T) but selenocysteine in proteins: kept there, or a
+    // search for U matched every threonine
+    const text = chars.join('').toUpperCase();
+    return { cols, text: isProteinAlignment() ? text : text.replace(/U/g, 'T') };
 }
 
 // Map(col -> search entry) for one sequence string. With mismatches allowed only
@@ -13189,6 +13192,8 @@ function handleKeyDown(e) {
             if ((key === 'v' || key === 'c' || key === 'x' || key === 'a') && !e.shiftKey) {
                 return; // native copy/paste/cut/select-all in single-line inputs
             }
+            // delete a word in the field: Ctrl+Delete was the shortcut to delete the selected sequences
+            if (key === 'delete' || key === 'backspace') return;
         }
         if (e.ctrlKey || e.metaKey || e.altKey) {
             // other modifier shortcuts may still apply
@@ -15639,7 +15644,7 @@ function searchMotif(options = {}) {
     debugLog('===============================');
 
     const fwdMotifRaw = motif;
-    const fwdMotif = fwdMotifRaw.replace(/U/g, 'T');
+    const fwdMotif = isProteinAlignment() ? fwdMotifRaw : fwdMotifRaw.replace(/U/g, 'T');   // U is selenocysteine in proteins
     const baseLabel = options.label || fwdMotifRaw;
     const baseKey = options.key || fwdMotif;
     const motifsToSearch = [{

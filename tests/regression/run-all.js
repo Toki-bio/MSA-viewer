@@ -4830,6 +4830,27 @@ check('Codon marks: a synonymous codon reached by several changes is marked apar
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Skim fixes: protein search for U finds selenocysteine only; Ctrl+Delete in the search box does not delete sequences', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'pu.fa', mimeType: 'text/plain', buffer: Buffer.from('>p1\nMKTULLEFGHIKLMNPQRSTVWY\n>p2\nMKTTLLEFGHIKLMNPQRSTVWY\n') });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(async () => {
+    el('searchRegex').checked = false; el('maxMismatches').value = '0'; el('searchBothStrands').checked = false;
+    el('searchInput').value = 'TU'; el('searchButton').click();
+    await new Promise(res => setTimeout(res, 300));
+    const hits = state.searchHistory[0]?.matchCount;
+    window.confirm = () => true;
+    state.selectedRows.clear(); state.selectedRows.add(0);
+    const box = el('searchInput');
+    for (let n = box; n && n !== document.body; n = n.parentElement) if (getComputedStyle(n).display === 'none') n.style.display = 'block';   // the menu holding it is open while one types in it
+    box.focus(); const focused = document.activeElement === box;
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', ctrlKey: true, bubbles: true }));
+    await new Promise(res => setTimeout(res, 200));
+    return { hits, rows: state.seqs.length, focused };
+  });
+  const ok = r.hits === 1 && r.rows === 2;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
