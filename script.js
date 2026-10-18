@@ -7525,16 +7525,22 @@ function parseMsf(text) {
         }
         i += 1;
     }
-    const namesByLength = names.slice().sort((a, b) => b.length - a.length);
+    const namesByLength = [...new Set(names)].sort((a, b) => b.length - a.length);
+    // A name listed on two Name: lines stands for two rows: within each block its k-th row belongs
+    // to its k-th Name: entry (both used to be appended to one sequence, which was then output twice)
+    const rowKey = (name, k) => name + '\u0000' + k;
+    let seenInBlock = {};
     // Parse alignment blocks
     while (i < lines.length) {
         let line = lines[i].trim();
         if (!line) {
+            seenInBlock = {};
             i += 1;
             continue;
         }
         // Skip position lines like "1 50"
         if (/^\d+\s+\d+$/.test(line)) {
+            seenInBlock = {};
             i += 1;
             continue;
         }
@@ -7546,10 +7552,13 @@ function parseMsf(text) {
                 foundName = n;
                 let seqPart = line.substring(n.length).trim();
                 let blockSeq = seqPart.replace(/\s+/g, '').replace(/~/g, '-');
-                if (!seqMap[foundName]) {
-                    seqMap[foundName] = { header: foundName, fullHeader: foundName, seq: '' };
+                const k = seenInBlock[foundName] || 0;
+                seenInBlock[foundName] = k + 1;
+                const key = rowKey(foundName, k);
+                if (!seqMap[key]) {
+                    seqMap[key] = { header: foundName, fullHeader: foundName, seq: '' };
                 }
-                const seqObj = seqMap[foundName];
+                const seqObj = seqMap[key];
                 seqObj.seq += blockSeq;
                 if (seqObj.seq.length > maxLen) maxLen = seqObj.seq.length;
                 break;
@@ -7564,9 +7573,11 @@ function parseMsf(text) {
     const isNucleic = declaredType ? declaredType === 'N'
         : !Object.values(seqMap).some(o => /[EFIJLOPQZ]/i.test(o.seq));
     const seqs = [];
+    const nth = {};
     for (let name of names) {
-        if (seqMap[name]) {
-            let seqObj = seqMap[name];
+        const key = rowKey(name, nth[name] = (nth[name] ?? -1) + 1);
+        if (seqMap[key]) {
+            let seqObj = seqMap[key];
             let processedSeq = seqObj.seq.replace(/[^A-Za-z.*\-]/g, isNucleic ? 'N' : 'X');
             processedSeq = processedSeq.replace(/\./g, '-');
             while (processedSeq.length < maxLen) {

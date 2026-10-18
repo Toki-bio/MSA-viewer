@@ -4881,6 +4881,16 @@ check('BAM: 1- and 2-byte integer tags (NM:C, AS:c, XS:S) are read and the tags 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('MSF: a name listed twice gives two rows, each with its own residues', async (page) => {
+  const msf = [' t.msf  MSF: 8  Type: N  Check: 1234  ..', '',
+    ' Name: dup  Len: 8  Check: 1  Weight: 1.00', ' Name: dup  Len: 8  Check: 2  Weight: 1.00', ' Name: other  Len: 8  Check: 3  Weight: 1.00', '', '//', '',
+    'dup    ACGT', 'dup    TTTT', 'other  GGGG', '',
+    'dup    AAAA', 'dup    CCCC', 'other  GGGG', ''].join('\n');
+  const r = await page.evaluate((msf) => (parseMsf(msf) || []).map(q => q.header + '=' + q.seq), msf);
+  const ok = r.join('|') === 'dup=ACGTAAAA|dup=TTTTCCCC|other=GGGGGGGG';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
