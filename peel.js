@@ -99,11 +99,12 @@
     // column that sets the whole subfamily apart). Then the larger branch is the group: grow to the largest ancestor that still
     // carries at least `keep` of the columns (and leaves a real remainder). Complements are not ancestors, so the tie-break to the
     // smaller group still settles "X versus everything but X".
-    function growToAncestor(best, cands, keep) {
+    function growToAncestor(best, cands, keep, minDiag) {
         let cur = best;
         for (;;) {
             const up = cands.byNode.get(cands.parent[cur.node]);
             if (!up || !up.cols.length) break;
+            if (minDiag != null && up.diag < minDiag) break;   // the group must keep the configured number of diagnostic columns
             const have = new Set(up.cols); let hit = 0; cur.cols.forEach(c => { if (have.has(c)) hit++; });
             if (hit < keep * cur.cols.length) break;
             cur = up;
@@ -173,7 +174,7 @@
                 const cands = diagCandidates(codes, dist, remaining, minSize, opts);
                 best = cands.filter(c => c.diag >= minDiag)
                     .sort((p, q) => (byEnrich ? q.enrich - p.enrich : q.diag - p.diag) || p.size - q.size)[0];
-                if (best && opts.grow !== false) best = growToAncestor(best, cands, opts.growKeep || 0.8);
+                if (best && opts.grow !== false) best = growToAncestor(best, cands, opts.growKeep || 0.8, minDiag);
                 if (best && opts.pattern !== false) best = expandByPattern(best, remaining, codes, opts.patternTheta || 0.85);
                 if (best && opts.misfits !== false) best = dropMisfits(best, codes, opts.misfitTheta || 0.5);
                 if (best && best.size < minSize) best = null;
