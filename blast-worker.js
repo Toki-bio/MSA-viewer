@@ -629,6 +629,11 @@ function scoreRankedCandidates(workItems, querySeq, qRevComp, dbTotalLen, useBan
                     : smithWatermanAffine(qRevComp, window);
                 if (hit && (!bestHit || hit.score > bestHit.score)) {
                     hit.hitStart += winStart; hit.hitEnd += winStart; hit.strand = '-';
+                    // the alignment ran on the query's reverse complement: give the query positions on
+                    // the query as given (1-based, ascending), as for a Plus/Minus hit in BLAST
+                    const qs = hit.queryStart;
+                    hit.queryStart = querySeq.length - hit.queryEnd + 1;
+                    hit.queryEnd = querySeq.length - qs + 1;
                     bestHit = hit;
                 }
             }

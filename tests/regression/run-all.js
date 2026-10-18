@@ -4590,6 +4590,26 @@ check('Trim Undo puts group feature letters back on their columns, also when the
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('BLAST worker: a minus-strand hit reports query positions on the query as given', async () => {
+  const vm = require('vm'), fs = require('fs'), path = require('path');
+  const ctx = { self: { postMessage() {}, addEventListener() {} }, postMessage() {}, importScripts() {}, console };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '..', 'blast-worker.js'), 'utf8'), ctx, { timeout: 5000 });
+  const r = vm.runInContext(`(() => {
+    applyScoringPreset(ACTIVE_PRESET);
+    const rnd = (n, s) => { let x = s, o = ''; for (let i = 0; i < n; i++) { x = (x * 1103515245 + 12345) % 2147483648; o += 'ACGT'[(x >> 16) % 4]; } return o; };
+    const q = rnd(300, 7);
+    const rc = s => s.split('').reverse().map(c => ({ A: 'T', C: 'G', G: 'C', T: 'A' })[c]).join('');
+    const subj = 'N'.repeat(200) + rc(q.substring(150, 300)) + 'N'.repeat(200);   // query 151..300, reversed; N flanks do not extend
+    const db = [{ id: 's', def: 's', seq: subj, length: subj.length, _enc: encodeSeq(subj) }];   // _enc: as the worker prepares a database
+    const hits = searchDatabase(q, db, buildInvertedIndex(db), 5);
+    const h = hits[0] && hits[0].hsps[0];
+    return h ? { strand: h.strand, q: [h.queryStart, h.queryEnd], s: [h.hitStart, h.hitEnd] } : { none: true };
+  })()`, ctx, { timeout: 20000 });
+  const ok = r.strand === '-' && Math.abs(r.q[0] - 151) <= 2 && Math.abs(r.q[1] - 300) <= 2 && Math.abs(r.s[0] - 201) <= 2;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

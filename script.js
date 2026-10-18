@@ -27358,7 +27358,9 @@ function buildBlastHitElement(hit, hitIndex, dbIndex, queryLen) {
     const pre = document.createElement('pre');
     pre.className = 'blast-alignment-block';
     let alnText = '';
-    let qPos = hsp.queryStart;
+    // Plus/Minus: the query letters shown are its reverse complement, so their positions count down
+    const qDown = hsp.strand === '-';
+    let qPos = qDown ? hsp.queryEnd : hsp.queryStart;
     let sPos = hsp.hitStart;
     const numW = Math.max(String(hsp.queryEnd).length, String(hsp.hitEnd).length, 1);
     for (let i = 0; i < hsp.querySeq.length; i += W) {
@@ -27367,13 +27369,13 @@ function buildBlastHitElement(hit, hitIndex, dbIndex, queryLen) {
         const sBlock = hsp.hitSeq.substring(i, i + W);
         const qAdv = qBlock.replace(/-/g, '').length;
         const sAdv = sBlock.replace(/-/g, '').length;
-        const qEnd = qPos + qAdv - 1;
+        const qEnd = qDown ? qPos - qAdv + 1 : qPos + qAdv - 1;
         const sEnd = sPos + sAdv - 1;
         const pad = ' '.repeat(7 + numW + 2);
         alnText += `Query  ${String(qPos).padStart(numW)}  ${qBlock}  ${qEnd}\n`;
         alnText += `${pad}${mBlock}\n`;
         alnText += `Sbjct  ${String(sPos).padStart(numW)}  ${sBlock}  ${sEnd}\n\n`;
-        qPos = qEnd + 1;
+        qPos = qDown ? qEnd - 1 : qEnd + 1;
         sPos = sEnd + 1;
     }
     pre.textContent = alnText;
