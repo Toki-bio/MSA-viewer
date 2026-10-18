@@ -28067,11 +28067,14 @@ function _dotUpdateHoverInfo(row, col, options = {}) {
             ' '.repeat(9) + guide + '\n' +
             'B ' + String(bLabel).padStart(5) + '  ' + bLine;
 
+        // the pair the panel shows: A[row+k] above B[col+k], only where both exist (cutting A and B
+        // independently gave two records of different length, not aligned to each other)
+        const diag = _dotDiagonalSlices(S.seqA, S.seqB, row, col, ctx);
         S._copyRegion = {
-            aSlice: S.seqA.substring(aStart, aEnd),
-            bSlice: S.seqB.substring(bStart, bEnd),
-            aStart: aStart,
-            bStart: bStart,
+            aSlice: diag.a,
+            bSlice: diag.b,
+            aStart: diag.aStart,
+            bStart: diag.bStart,
             nameA: S.nameA,
             nameB: S.nameB
         };
@@ -28080,6 +28083,14 @@ function _dotUpdateHoverInfo(row, col, options = {}) {
     if (panelEl) panelEl.style.display = 'block';
 }
 
+
+// The context around (row, col) on the diagonal: A[row+k] and B[col+k] for |k| <= ctx where both exist
+function _dotDiagonalSlices(seqA, seqB, row, col, ctx) {
+    const kLo = Math.max(-ctx, -row, -col);
+    const kHi = Math.min(ctx, seqA.length - 1 - row, seqB.length - 1 - col);
+    if (kHi < kLo) return { a: '', b: '', aStart: row, bStart: col };
+    return { a: seqA.substring(row + kLo, row + kHi + 1), b: seqB.substring(col + kLo, col + kHi + 1), aStart: row + kLo, bStart: col + kLo };
+}
 
 function _dotClearHoverInfo() {
     const S = _dotPlotState;

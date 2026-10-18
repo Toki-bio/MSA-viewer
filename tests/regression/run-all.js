@@ -4403,6 +4403,18 @@ check('Add & Align: a result computed for an alignment that changed meanwhile is
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Dot plot: Copy aligned context copies the diagonal pair the panel shows (same length, aligned)', async (page) => {
+  const r = await page.evaluate(() => {
+    if (typeof _dotDiagonalSlices !== 'function') return { missing: true };
+    const A = 'ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT';   // 72
+    const B = 'TTTTGCATGCAT';                                                                // 12
+    const d = _dotDiagonalSlices(A, B, 61, 4, 30);
+    return { d, sameLen: d.a.length === d.b.length, pairOk: d.a === A.substring(57, 69) && d.b === B.substring(0, 12) };
+  });
+  const ok = !r.missing && r.sameLen && r.pairOk;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
