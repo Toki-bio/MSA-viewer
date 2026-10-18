@@ -4436,6 +4436,19 @@ check('Row selection follows its sequences through Sort (name, length) and Undo;
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Delete with every row selected keeps the alignment (says at least one row must stay)', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'd2.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGT\n>b\nACGA\n') });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(() => {
+    window.confirm = () => true;
+    let msg = ''; const om = showMessage; showMessage = (m, t) => { msg = m; return om(m, t); };
+    state.selectedRows.clear(); state.selectedRows.add(0); state.selectedRows.add(1);
+    deleteSelected(); showMessage = om;
+    return { n: state.seqs.length, msg };
+  });
+  return { pass: r.n === 2 && /at least one/i.test(r.msg), detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

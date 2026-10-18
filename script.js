@@ -13440,8 +13440,9 @@ function deleteSelected() {
         showMessage("No sequences selected for deletion.", 3000);
         return;
     }
-    if (state.seqs.length === 1) {
-        showMessage("Cannot delete the last sequence.", 3000);
+    // the selection, not the alignment size: deleting every selected row must leave one
+    if (state.selectedRows.size >= state.seqs.length) {
+        showMessage(state.seqs.length === 1 ? "Cannot delete the last sequence." : "Cannot delete every sequence: at least one row must stay (load another file to replace them).", 4000);
         return;
     }
     if (confirm(`Delete ${state.selectedRows.size} sequence(s)?`)) {
