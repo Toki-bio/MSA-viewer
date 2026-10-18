@@ -13549,7 +13549,8 @@ function deleteSelected() {
 function _restoreGroupOrder(order) {
     const cur = state.clusterResults?.clusters;
     if (!order || !cur || order.length !== cur.length || !order.every(c => cur.includes(c))) return;
-    state.clusterResults.clusters = order.slice();
+    if (order.every((c, i) => c === cur[i])) return;
+    cur.splice(0, cur.length, ...order);   // in place: the column-state snapshots are tied to this array
     if (typeof renderGroupExplorer === 'function') renderGroupExplorer();
 }
 
