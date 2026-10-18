@@ -4986,6 +4986,17 @@ check('BLAST: the E-value threshold from the dialog drops weaker hits', async (p
   return { pass: r.ids === 'a,c', detail: JSON.stringify(r) };
 });
 
+check('Reads (SAM): a reference row with alignment gaps is used ungapped, so reads sit on the right bases', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'ref.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrT\nACGTA--CGTACGTACGTAC\n>other\nACGTAAACGTACGTACGTAC\n') });
+  await page.waitForTimeout(900);
+  const sam = '@SQ\tSN:chrT\tLN:18\nr1\t0\tchrT\t5\t60\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\n';
+  await page.setInputFiles('#fileInput', { name: 'reads.sam', mimeType: 'text/plain', buffer: Buffer.from(sam) });
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => ({ ref: bamState.refSeq, start: bamState.refStart, n: (bamState.reads || []).length }));
+  const ok = r.n === 1 && typeof r.ref === 'string' && !/[-.]/.test(r.ref);
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

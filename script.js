@@ -8500,9 +8500,11 @@ async function handleBamFile(event) {
         // so reading s.name matched undefined against every BAM reference and no BAM or SAM
         // could ever load. Compare on the first whitespace-delimited token, which is what
         // a SAM/BAM @SQ SN: field holds for a FASTA header like ">chr1 description".
+        // read positions count reference bases: the alignment's gaps go (as for CRAM), or reads on a
+        // reference row with gaps sat shifted and the length check against the header failed
         const loadedSeqs = state.seqs.map(s => ({
             name: String(s.fullHeader || s.header || '').trim().split(/\s+/)[0],
-            seq: s.seq
+            seq: s.seq.replace(/[-.]/g, '')
         }));
         const { matchedRef, warnings } = BamParser.checkRefMatch(
             header.refNames, header.refLengths, loadedSeqs
