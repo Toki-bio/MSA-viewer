@@ -4916,6 +4916,23 @@ check('No empty undo steps: Move Up at the top, a cancelled Realign all; negativ
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Undo/Redo of Reverse complement keep the name colour on the row (rc_ rename)', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'rcc.fa', mimeType: 'text/plain', buffer: Buffer.from('>s1\nAACCGGTT\n>s2\nACGTACGT\n') });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(async () => {
+    colourState.mappings.set('s1', '#ff0000');
+    reverseComplementSequences([0]);
+    const afterRc = colourState.mappings.get(state.seqs[0].header);
+    undoDelete(true);
+    const afterUndo = colourState.mappings.get(state.seqs[0].header);
+    redoAction(true);
+    const afterRedo = colourState.mappings.get(state.seqs[0].header);
+    return { afterRc, afterUndo, afterRedo, name: state.seqs[0].header };
+  });
+  const ok = r.afterRc === '#ff0000' && r.afterUndo === '#ff0000' && r.afterRedo === '#ff0000';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

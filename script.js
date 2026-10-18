@@ -13551,6 +13551,9 @@ function pushUndo(type) {
     _scheduleSearchRecount();
     state.deletedHistory.push({
         type: type,
+        // name colours are keyed by name: a step that renames (RevComp's rc_ prefix, Rename) left the
+        // colour under the new name after Undo
+        colours: colourState?.mappings ? new Map(colourState.mappings) : null,
         seqs: JSON.parse(JSON.stringify(state.seqs)),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
@@ -13679,12 +13682,14 @@ function undoDelete(quiet) {
         type: last.type,
         label: last.label,
         seqs: JSON.parse(JSON.stringify(state.seqs)),
+        colours: colourState?.mappings ? new Map(colourState.mappings) : null,
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
     };
     if (last.colStateBefore) redoEntry.colStateAfter = _snapshotColumnState();
     state.redoHistory.push(redoEntry);
     state.seqs = last.seqs;
+    if (last.colours && colourState?.mappings) { colourState.mappings.clear(); last.colours.forEach((v, k) => colourState.mappings.set(k, v)); }
     if (last.colStateBefore) _restoreColumnState(last.colStateBefore);
     state.selectedRows = last.selectedRows || new Set();
     state.selectedColumns = last.selectedColumns || new Set();
@@ -13721,8 +13726,10 @@ function redoAction(quiet) {
         selectedColumns: new Set(state.selectedColumns)
     };
     if (next.colStateAfter) undoEntry.colStateBefore = _snapshotColumnState();
+    undoEntry.colours = colourState?.mappings ? new Map(colourState.mappings) : null;
     state.deletedHistory.push(undoEntry);
     state.seqs = next.seqs;
+    if (next.colours && colourState?.mappings) { colourState.mappings.clear(); next.colours.forEach((v, k) => colourState.mappings.set(k, v)); }
     if (next.colStateAfter) _restoreColumnState(next.colStateAfter);
     state.selectedRows = next.selectedRows || new Set();
     state.selectedColumns = next.selectedColumns || new Set();
