@@ -1459,6 +1459,9 @@ const _historyManager = {
                     fastaInput.value = entry.text;
                     state.currentFilename = entry.name;
                     state.currentFilePath = entry.source || '';
+                    // a paste reopened from Recent is recorded again as that paste (with its text),
+                    // not as a 'file' without text, which lost the paste from Recent
+                    state._reopenedPaste = entry.type === 'clipboard' ? entry.name : null;
                     parseAndRender(false);
                     return;
                 }
@@ -12298,7 +12301,9 @@ async function parseAndRender(isFromDrop = false) {
         }
 
         // Record in history
-        const isClipboard = !isFromDrop && state.currentFilename === 'Clipboard';
+        const reopenedPaste = state._reopenedPaste && state._reopenedPaste === state.currentFilename ? state._reopenedPaste : null;
+        state._reopenedPaste = null;
+        const isClipboard = !isFromDrop && (state.currentFilename === 'Clipboard' || !!reopenedPaste);
         const previewNames = parsed.slice(0, 3).map(s => s.header).join(', ');
         const previewSeq = (parsed[0]?.seq?.substring(0, 50) || '').replace(/-/g, '');
         // If this load came with a reusable File System Access handle
@@ -12313,7 +12318,7 @@ async function parseAndRender(isFromDrop = false) {
         _historyManager.add(
             isClipboard ? 'clipboard' : 'file',
             {
-                name: isClipboard ? ('Paste ' + new Date().toLocaleTimeString()) : (state.currentFilename || 'Unknown'),
+                name: isClipboard ? (reopenedPaste || ('Paste ' + new Date().toLocaleTimeString())) : (state.currentFilename || 'Unknown'),
                 nSeqs: parsed.length,
                 length: (parsed[0]?.seq?.length || 0),
                 preview: previewNames + (previewSeq ? '  [' + previewSeq + '...]' : ''),

@@ -4501,6 +4501,26 @@ check('A load that fails or is cancelled leaves the loaded file\'s name, text an
   return { pass: ok, detail: JSON.stringify({ afterError, afterCancel }) };
 });
 
+check('Recent: reopening a paste keeps it as a paste with its text (opens again the next time)', async (page) => {
+  const r = await page.evaluate(async () => {
+    _historyManager.items = []; _historyManager.save();
+    state.currentFilename = 'Clipboard'; fastaInput.value = '>p1\nACGTACGT\n>p2\nACGTACGA\n';
+    await parseAndRender(false); await new Promise(res => setTimeout(res, 300));
+    const name = _historyManager.items[0]?.name;
+    for (let k = 0; k < 2; k++) {
+      fastaInput.value = '>x\nTTTT\n>y\nTTTA\n'; state.currentFilename = 'other.fa'; await parseAndRender(true); await new Promise(res => setTimeout(res, 300));
+      _historyManager.renderDropdown();
+      const item = [...document.querySelectorAll('.recent-item')].find(e => e.textContent.includes(name));
+      if (!item) return { name, missing: k };
+      item.click(); await new Promise(res => setTimeout(res, 600));
+    }
+    const e = _historyManager.items.find(i => i.name === name);
+    return { name, rows: state.seqs.map(q => q.header).join(','), type: e?.type, hasText: !!e?.text, copies: _historyManager.items.filter(i => i.name === name).length };
+  });
+  const ok = !r.missing && r.rows === 'p1,p2' && r.type === 'clipboard' && r.hasText && r.copies === 1;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
