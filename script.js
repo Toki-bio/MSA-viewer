@@ -795,7 +795,9 @@ function _snapshotColumnState() {
     return {
         trim: b(state.trimBoundaries), soft: b(state.softTrimBoundaries),
         clusters,
-        feats: clusters ? clusters.map(c => _FEATURE_LISTS.map(k => (c[k] || []).map(ft => ft.pos))) : null,
+        // whole copies of each feature list: an edit that removes a feature's column shortens the list,
+        // and positions alone could then not be put back (SNP letters stayed shifted after Trim Undo)
+        feats: clusters ? clusters.map(c => _FEATURE_LISTS.map(k => (c[k] || []).map(ft => ({ ...ft })))) : null,
         reps: [...(state.repeatHighlights || [])].filter(([, i]) => i.row === null).map(([id, i]) => [id, i.segs.map(x => x.slice())])
     };
 }
@@ -806,8 +808,7 @@ function _restoreColumnState(snap) {
     state.softTrimBoundaries = snap.soft ? { ...snap.soft } : null;
     if (snap.feats && state.clusterResults?.clusters === snap.clusters) {
         snap.clusters.forEach((c, ci) => _FEATURE_LISTS.forEach((k, ki) => {
-            const pos = snap.feats[ci][ki];
-            if (c[k] && c[k].length === pos.length) c[k].forEach((ft, i) => { ft.pos = pos[i]; });
+            if (c[k] || snap.feats[ci][ki].length) c[k] = snap.feats[ci][ki].map(ft => ({ ...ft }));
         }));
         _rebuildClusterCharMap();
     }

@@ -4574,6 +4574,22 @@ check('TSD lower case: "Undo marking" is a step of the main Undo (Ctrl+Z brings 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Trim Undo puts group feature letters back on their columns, also when the trim removed one', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'f.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\n-ACGTACGTAC-\n>b\n-ACGTTCGTAC-\n>c\nTACGAACGTACT\n') });
+  await page.waitForTimeout(900);
+  const r = await page.evaluate(async () => {
+    state.clusterResults = { clusters: [{ id: 0, sequences: [], perfectFeatures: [{ pos: 1, char: 'T' }, { pos: 9, char: 'T' }], cloudyFeatures: [], imperfectFeatures: [] }], unassigned: [] };
+    document.querySelector('input[name="trimMode"][value="hard"]').checked = true;
+    state.trimBoundaries = { leftTrimEnd: 0, rightTrimStart: 11 };
+    executeTrimming();
+    const trimmed = (state.clusterResults?.clusters?.[0]?.perfectFeatures || []).map(f => f.pos).join(',');
+    undoTrimming(); await new Promise(res => setTimeout(res, 200));
+    return { trimmed, restored: (state.clusterResults?.clusters?.[0]?.perfectFeatures || []).map(f => f.pos).join(','), width: state.seqs[0].seq.length };
+  });
+  const ok = r.restored === '1,9' && r.width === 12;   // positions are 1-based: column 0 (pos 1) is trimmed away
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
