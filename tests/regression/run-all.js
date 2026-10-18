@@ -4243,6 +4243,37 @@ check('Canvas rows have the Full row height; Highlight diffs in Full draws no da
   return { pass: ok, detail: JSON.stringify({ domPitch, cvPitch, edgeColumn: col.rows, darkLine }) };
 });
 
+check('Canvas: motif search runs in Canvas mode (Find, Ctrl+F) and paints its hits', async (page) => {
+  await loadFasta(page, makeFasta(30, 300));
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(300);
+  const r = await page.evaluate(async () => {
+    const ctl = el('search-controls');
+    const usable = !ctl || (getComputedStyle(ctl).pointerEvents !== 'none' && parseFloat(getComputedStyle(ctl).opacity) === 1);
+    el('searchInput').value = 'GTAC'; el('searchButton').click();
+    await new Promise(res => setTimeout(res, 300));
+    const c = document.getElementById('alignmentCanvas'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let y = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 240 && d[i + 1] > 240 && d[i + 2] < 60) y++;
+    return { usable, entries: state.searchHistory.length, count: state.searchHistory[0]?.matchCount || 0, yellow: y, mode: document.querySelector('input[name="mode"]:checked').id };
+  });
+  const ok = r.usable && r.entries === 1 && r.count > 0 && r.yellow > 1000 && r.mode === 'modeCanvas';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+check('Colour Names > Pattern colours every matching row in Canvas and in windowed views, not only rows on screen', async (page) => {
+  const rows = []; for (let i = 0; i < 40; i++) rows.push('>' + (i % 2 ? 'Mouse_' : 'Human_') + i + '\nACGTACGTAC');
+  await loadFasta(page, rows.join('\n') + '\n');
+  await setMode(page, 'canvas');
+  const r = await page.evaluate(() => {
+    colourState.mappings.clear();
+    el('colourPatternInput').value = '^Human'; el('colourPatternColor').value = '#ff0000';
+    applyPatternColour();
+    return { coloured: [...colourState.mappings.keys()].filter(n => n.startsWith('Human_')).length, wrong: [...colourState.mappings.keys()].filter(n => !n.startsWith('Human_')).length };
+  });
+  const ok = r.coloured === 20 && r.wrong === 0;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

@@ -25875,10 +25875,10 @@ function applyPatternColour() {
 
     try {
         const regex = new RegExp(pattern, 'i');
-        const seqNameElements = document.querySelectorAll('.seq-name');
-        seqNameElements.forEach(el => {
-            const idx = el.dataset.seqIndex;
-            const header = idx !== undefined ? (state.seqs[parseInt(idx)]?.header || el.textContent.trim()) : el.textContent.trim();
+        // every row of the alignment, not the name elements on the page: Canvas has none, and the
+        // windowed Full/Block views only hold the rows near the screen
+        state.seqs.forEach(q => {
+            const header = q.header;
             if (regex.test(header) && !matchedNames.has(header)) {
                 matchedNames.add(header);
                 colourState.mappings.set(header, colour);
