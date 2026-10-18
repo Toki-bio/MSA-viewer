@@ -4933,6 +4933,30 @@ check('Undo/Redo of Reverse complement keep the name colour on the row (rc_ rena
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Context menu: closing it through an item leaves no document click listener behind', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'cm.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGT\n>b\nACGA\n') });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(async () => {
+    let live = 0;
+    const add = document.addEventListener, rem = document.removeEventListener;
+    const tracked = new Set();
+    document.addEventListener = function (t, f, o) { if (t === 'click') tracked.add(f); return add.call(this, t, f, o); };
+    document.removeEventListener = function (t, f, o) { if (t === 'click') tracked.delete(f); return rem.call(this, t, f, o); };
+    const before = tracked.size;
+    window._copied = null; navigator.clipboard.writeText = t => Promise.resolve();
+    for (let k = 0; k < 5; k++) {
+      showContextMenu({ target: document.querySelector('.seq-line'), preventDefault() {}, stopPropagation() {}, clientX: 50, clientY: 50, pageX: 50, pageY: 50 }, 0);
+      await new Promise(res => setTimeout(res, 20));
+      [...document.querySelectorAll('.context-menu div')].find(d => d.textContent === 'Copy as FASTA gapped').click();
+      await new Promise(res => setTimeout(res, 20));
+    }
+    live = tracked.size - before;
+    document.addEventListener = add; document.removeEventListener = rem;
+    return { leftOver: live };
+  });
+  return { pass: r.leftOver === 0, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

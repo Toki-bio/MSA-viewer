@@ -22255,7 +22255,11 @@ function deleteSequence(index) {
 let contextMenu = null;
 let contextMenuHighlightedRow = null;
 
+// The document listener that closes the open menu on an outside click: removed whenever the menu
+// closes (closing through a menu item used to leave one more listener behind each time)
+let _ctxOutsideHandler = null;
 function closeContextMenu() {
+    if (_ctxOutsideHandler) { document.removeEventListener('click', _ctxOutsideHandler); _ctxOutsideHandler = null; }
     if (contextMenu) {
         contextMenu.remove();
         contextMenu = null;
@@ -22603,19 +22607,12 @@ function showContextMenu(e, index) {
 
     // Close menu when clicking outside
     const closeOnClickOutside = (event) => {
-        if (contextMenu && !contextMenu.contains(event.target)) {
-            contextMenu.remove();
-            // Remove highlight when menu closes
-            if (contextMenuHighlightedRow !== null) {
-                document.querySelectorAll(`.seq-line[data-seq-index="${contextMenuHighlightedRow}"]`)
-                    .forEach(line => line.classList.remove('context-menu-highlight'));
-                contextMenuHighlightedRow = null;
-            }
-            document.removeEventListener('click', closeOnClickOutside);
-        }
+        if (contextMenu && !contextMenu.contains(event.target)) closeContextMenu();
     };
     // Use setTimeout to avoid immediate closure from the same click that opened the menu
     setTimeout(() => {
+        if (!contextMenu) return;   // closed already
+        _ctxOutsideHandler = closeOnClickOutside;
         document.addEventListener('click', closeOnClickOutside);
     }, 0);
 }
