@@ -22360,41 +22360,12 @@ function showContextMenu(e, index) {
         const renameItem = document.createElement('div');
         renameItem.textContent = 'Rename sequence';
         renameItem.addEventListener('click', () => {
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.value = state.seqs[index].header;
-            input.style.width = `${e.target.offsetWidth}px`;
-            input.style.fontSize = getComputedStyle(e.target).fontSize;
-            input.style.fontFamily = getComputedStyle(e.target).fontFamily;
-            input.style.padding = '0';
-            input.style.border = '1px solid #ccc';
-            e.target.innerHTML = '';
-            e.target.appendChild(input);
-            input.focus();
-            input.select();
-            const save = () => {
-                const newName = input.value.trim();
-                if (newName && newName !== state.seqs[index].header) {
-                    const oldName = state.seqs[index].header;
-                    pushUndo('rename');
-                    state.seqs[index].header = newName;
-                    state.seqs[index].fullHeader = newName;
-                    _migrateColourMapping(oldName, newName);
-                    renderAlignment();
-                    showMessage("Sequence renamed!", 2000);
-                } else {
-                    renderAlignment();
-                }
-            };
-            input.addEventListener('blur', save);
-            input.addEventListener('keydown', (ev) => {
-                if (ev.key === 'Enter') {
-                    save();
-                } else if (ev.key === 'Escape') {
-                    renderAlignment();
-                }
-            });
             closeContextMenu();
+            // the row's name, wherever the menu was opened: e.target may be a residue in the sequence,
+            // which the old inline box replaced (the residue vanished and the box sat inside the row)
+            if (document.getElementById('modeCanvas')?.checked) { _startSeqNameEditCanvas(index); return; }
+            const nameEl = document.querySelector(`#alignmentContainer .seq-line[data-seq-index="${index}"] .seq-name`);
+            if (nameEl) _startSeqNameEdit(nameEl, index);
         });
         contextMenu.appendChild(renameItem);
     }

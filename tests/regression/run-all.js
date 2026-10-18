@@ -4778,6 +4778,24 @@ check('Search hit counts follow edits (a search with no hit counts the matches a
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Context menu Rename from a residue opens the name editor (the residue stays)', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'rn.fa', mimeType: 'text/plain', buffer: Buffer.from('>alpha\nACGTACGTAC\n>beta\nACGTTCGTAC\n') });
+  await page.waitForTimeout(800);
+  await setMode(page, 'full'); await page.waitForTimeout(500);
+  const r = await page.evaluate(async () => {
+    const base = document.querySelector('.seq-line[data-seq-index="1"] .seq-data span[data-pos="3"]');
+    showContextMenu({ target: base, preventDefault() {}, stopPropagation() {}, clientX: 50, clientY: 50, pageX: 50, pageY: 50 }, 1);
+    const item = [...document.querySelectorAll('.context-menu div')].find(d => d.textContent === 'Rename sequence');
+    item.click(); await new Promise(res => setTimeout(res, 200));
+    const input = document.activeElement;
+    const inName = !!input && input.tagName === 'INPUT' && !!input.closest('.seq-name, .seq-name-edit, .name-edit-box') || (input && !input.closest('.seq-data'));
+    const baseNow = document.querySelector('.seq-line[data-seq-index="1"] .seq-data span[data-pos="3"]')?.textContent;
+    return { inputValue: input?.value, inSeqData: !!(input && input.closest && input.closest('.seq-data')), baseNow };
+  });
+  const ok = r.inputValue === 'beta' && !r.inSeqData && r.baseNow === 'T';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
