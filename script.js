@@ -18109,11 +18109,9 @@ function _geToggleSeq(header) {
 }
 
 function _geSelectGroup(kind, idx) {
-    const ids = new Set(_geMemberIds(kind, idx));
-    const memberIdx = [];
-    state.seqs.forEach((s, i) => {
-        if (ids.has(s.header)) memberIdx.push(i);
-    });
+    // the group's own rows (by name, rows outside the group that share a member's name were selected too)
+    const at = new Map(state.seqs.map((q, i) => [q, i]));
+    const memberIdx = _geMemberRows(kind, idx).map(q => at.get(q)).filter(i => i !== undefined).sort((a, b) => a - b);
     const allOn = memberIdx.length && memberIdx.every(i => state.selectedRows.has(i));
     if (allOn) memberIdx.forEach(i => state.selectedRows.delete(i));
     else state.selectedRows = new Set(memberIdx);

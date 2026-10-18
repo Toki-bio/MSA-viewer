@@ -4997,6 +4997,18 @@ check('Reads (SAM): a reference row with alignment gaps is used ungapped, so rea
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Group explorer: selecting a group selects its own rows, not other rows with the same name', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'gs.fa', mimeType: 'text/plain', buffer: Buffer.from('>s1\nAAAA\n>s1\nCCCC\n>s2\nGGGG\n') });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(() => {
+    state.clusterResults = { clusters: [{ sequences: [{ id: 's1', obj: state.seqs[0] }] }], unassigned: [{ id: 's1', obj: state.seqs[1] }, { id: 's2', obj: state.seqs[2] }] };
+    state.selectedRows.clear();
+    _geSelectGroup('cluster', 0);
+    return [...state.selectedRows].sort().join(',');
+  });
+  return { pass: r === '0', detail: r };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
