@@ -529,7 +529,8 @@
             orderApplied: orderApplied,
             runs: runs,
             mafftCalls: mafftCalls,
-            message: 'Region realigned'
+            // the aligner never ran: every selected run was gaps only (or a single column)
+            message: mafftCalls ? 'Region realigned' : 'Nothing to realign: the selected columns hold gaps only'
         };
     }
 

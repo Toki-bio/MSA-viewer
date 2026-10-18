@@ -129,7 +129,7 @@
 
     function promptBaseEdit(pos) {
         const current2 = baseAt(pos);
-        const choice = prompt(`Correct base call at position ${pos + 1} (current: ${current2}). Enter A, C, G, T, or N:`, current2);
+        const choice = prompt(`Correct base call at position ${pos + 1} (current: ${current2}). Enter A, C, G, T, N, or - for no base:`, current2);
         if (!choice) return;
         const b = choice.trim().toUpperCase()[0];
         if (!'ACGTN-'.includes(b)) { showStatus('Invalid base.'); return; }

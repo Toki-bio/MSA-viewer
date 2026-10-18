@@ -9,7 +9,7 @@ self.onmessage = (ev) => {
     if (type !== 'align') return;
     try {
         const records = CodonAlign.parseFasta(fasta).map(r => ({ name: r.name, seq: r.seq.replace(/[-.!]/g, '') }));
-        if (records.length < 2) throw new Error('Codon alignment needs at least 2 sequences');
+        if (records.length < 2) throw new Error(records.length === 1 ? 'Codon alignment needs at least 2 sequences with nucleotides (the others are gaps only)' : 'Codon alignment needs at least 2 sequences');
         const res = CodonAlign.alignMultiple(records, opts || {});
         self.postMessage({ id, ok: true, result: CodonAlign.toFasta(res.nt), aa: CodonAlign.toFasta(res.aa), stats: Object.assign({ engine: 'fast' }, res.stats) });
     } catch (err) {

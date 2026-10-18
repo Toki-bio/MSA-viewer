@@ -8522,7 +8522,7 @@ async function handleBamFile(event) {
         if (exceededLimit) {
             statusMessage.style.display = 'none';
             showMessage(
-                `BAM has >${BamParser.MAX_READS} reads (found ${totalReads}). ` +
+                `${(ext || 'bam').toUpperCase()} has >${BamParser.MAX_READS} reads (found ${totalReads}). ` +
                 'Please subset with samtools view -s or filter by region.',
                 5000
             );
@@ -13498,7 +13498,7 @@ function importOrder() {
                 state.lastAction = 'sort';
                 renderAlignment();
                 let msg = 'Order loaded (' + reordered.length + ' matched';
-                if (unmatched.length) msg += ', ' + unmatched.length + ' new';
+                if (unmatched.length) msg += ', ' + unmatched.length + ' not in the order file (kept after the listed ones)';
                 if (extra.length) msg += ', ' + extra.length + ' missing';
                 msg += ')';
                 showMessage(msg, 2500);
@@ -19547,7 +19547,7 @@ function _statsRenderIdCard() {
     };
     const zero = d.mode === 'esl' ? d.counts.emptyPairs : d.counts.noSharedCols;
     const row = (key, label, value) => `<tr><td><span class="tip" data-tip="${key}">${label}</span></td><td>${value}</td></tr>`;
-    card.innerHTML = `<b>Pairwise identity <span class="src">esl-alipid</span></b><table>` +
+    card.innerHTML = `<b>Pairwise identity${d.mode === 'esl' ? ' <span class="src">esl-alipid</span>' : ''}</b><table>` +   // the shared-columns definition is not esl-alipid's
         row(d.mode === 'esl' ? 'defEsl' : 'defCols', 'Identity', d.mode === 'esl' ? 'identical ÷ shorter sequence' : 'identical ÷ shared columns') +
         row('mean', 'Mean', `${s.mean.toFixed(1)}%`) +
         row('min', 'Min', `${s.min.toFixed(1)}% &nbsp;${pairLinks(s.minP)}`) +

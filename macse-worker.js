@@ -178,7 +178,7 @@ self.onmessage = async (ev) => {
     const { id, fasta, opts } = data;
     try {
         const records = parseFasta(fasta).map(r => ({ name: r.name, seq: r.seq.replace(/[-.!\s]/g, '') })).filter(r => r.seq.length);
-        if (records.length < 2) throw new Error('Codon alignment needs at least 2 sequences');
+        if (records.length < 2) throw new Error(records.length === 1 ? 'Codon alignment needs at least 2 sequences with nucleotides (the others are gaps only)' : 'Codon alignment needs at least 2 sequences');
         checkNucleotide(records);
         let last = 0;
         const res = await alignMacse(records, opts || {}, (stage, done, total, iter) => {
