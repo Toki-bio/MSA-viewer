@@ -38,7 +38,7 @@ async function main() {
       const page = await ctx.newPage();
       const errors = [];
       page.on('pageerror', e => errors.push(e.message));
-      await page.goto(baseUrl + '/index.html?view=full', { waitUntil: 'networkidle' });
+      await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
       await loadFasta(page, '>a\nACGT\n>b\nACGA\n');
       const r = await page.evaluate(async () => {
         const hasShim = !!(navigator.clipboard && navigator.clipboard.writeText);
@@ -59,7 +59,7 @@ async function main() {
       const page = await ctx.newPage();
       const errors = [];
       page.on('pageerror', e => errors.push(e.message));
-      await page.goto(baseUrl + '/index.html?view=full', { waitUntil: 'networkidle' });
+      await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
       const ok = await page.evaluate(() => typeof AbortSignal.timeout === 'function' && AbortSignal.timeout(10) instanceof AbortSignal);
       report('AbortSignal.timeout is provided when missing', ok && errors.length === 0, JSON.stringify(errors));
       await ctx.close();

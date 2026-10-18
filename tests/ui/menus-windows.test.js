@@ -18,7 +18,7 @@ const check = (ok, msg) => { console.log(`${ok ? 'PASS' : 'FAIL'} ${msg}`); if (
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
-    await page.goto(baseUrl + '/index.html?view=full&url=' + encodeURIComponent(baseUrl + '/examples/svk_k4.fa'), { waitUntil: 'networkidle' });
+    await page.goto(baseUrl + '/index.html?view=block&url=' + encodeURIComponent(baseUrl + '/examples/svk_k4.fa'), { waitUntil: 'networkidle' });
     await page.waitForTimeout(1500);
     const tag = `${w}x${h}`;
 

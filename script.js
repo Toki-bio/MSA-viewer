@@ -14054,7 +14054,9 @@ function openSelectedInNewTab() {
     const base = (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '');
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     _newTabHandoffs.set(id, { fasta, name: `${base} (${rows.length} selected)` });
-    const w = window.open(location.pathname + '?handoff=' + id, '_blank');
+    // the new tab opens in the view of this one
+    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    const w = window.open(location.pathname + '?handoff=' + id + (view ? '&view=' + view : ''), '_blank');
     if (!w) {
         _newTabHandoffs.delete(id);
         showMessage("The browser blocked the new tab: allow pop-ups for this site.", 5000);

@@ -55,7 +55,7 @@ const SCAN = () => {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
-    await page.goto(baseUrl + '/index.html?view=full', { waitUntil: 'networkidle' });
+    await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
     const open = async rel => { await page.setInputFiles('#fileInput', path.join(ROOT, rel)); await page.waitForTimeout(1500); };
     const scan = async state => (await page.evaluate(SCAN)).forEach(p => problems.push(`${w}x${h} ${state}: ${p}`));
     const setMode = id => page.evaluate(id => { document.getElementById(id).checked = true; onModeChange(); }, id);

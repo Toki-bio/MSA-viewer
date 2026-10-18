@@ -33,10 +33,10 @@ const SCAN = () => {
   const add = (ctx, list) => list.forEach(x => { if (!seen.has(x)) seen.set(x, ctx); });
   for (const [w, h, dpr] of [[1366, 768, 1], [1366, 768, 1.25], [1536, 864, 1.25], [1920, 1080, 1.5], [1280, 720, 1]]) {
     const p = await b.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: dpr });
-    await p.goto(baseUrl + '/index.html?view=full', { waitUntil: 'networkidle' }); await p.waitForTimeout(500);
+    await p.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' }); await p.waitForTimeout(500);
     const tag = `${w}x${h}@${dpr}`;
     add(`${tag} empty`, await p.evaluate(SCAN));
-    await p.goto(baseUrl + '/index.html?view=full&url=' + encodeURIComponent(baseUrl + '/examples/svk_k4.fa'), { waitUntil: 'networkidle' });
+    await p.goto(baseUrl + '/index.html?view=block&url=' + encodeURIComponent(baseUrl + '/examples/svk_k4.fa'), { waitUntil: 'networkidle' });
     await p.waitForTimeout(1500);
     for (const mode of ['modeBlocks', 'modeSingle', 'modeCanvas']) {
       await p.evaluate(id => { document.getElementById(id).checked = true; onModeChange(); }, mode); await p.waitForTimeout(700);

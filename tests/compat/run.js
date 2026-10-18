@@ -69,7 +69,7 @@ async function main() {
     const errors = [];
     page.on('pageerror', err => errors.push(err.message));
     page.on('dialog', d => d.accept());
-    await page.goto(baseUrl + '/index.html?view=full', { waitUntil: 'networkidle' });
+    await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
     const file = path.join(ROOT, 'examples', dir, name);
     let res, problems = [], warnings = [];
     try {
