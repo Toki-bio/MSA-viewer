@@ -81,14 +81,17 @@
             viewState.offsetX = viewState.dragStartOffset + (e.clientX - viewState.dragStartX);
             render();
         });
+        // A press without movement is a click (handled by 'click' alone); a drag pans and must not edit.
+        // mouseup used to call handleClick with the PREVIOUS click's event, so every click after the first
+        // raised two prompts, the first one for the wrong base.
         window.addEventListener('mouseup', () => {
-            if (viewState.isDragging && Math.abs(viewState.offsetX - viewState.dragStartOffset) < 3) {
-                handleClick(lastClickEvent);
-            }
+            viewState.justDragged = viewState.isDragging && Math.abs(viewState.offsetX - viewState.dragStartOffset) >= 3;
             viewState.isDragging = false;
         });
-        let lastClickEvent = null;
-        canvas.addEventListener('click', (e) => { lastClickEvent = e; if (!viewState.isDragging) handleClick(e); });
+        canvas.addEventListener('click', (e) => {
+            if (viewState.justDragged) { viewState.justDragged = false; return; }
+            handleClick(e);
+        });
     }
 
     function zoom(factor, aroundX) {

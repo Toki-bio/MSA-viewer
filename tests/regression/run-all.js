@@ -4736,6 +4736,30 @@ check('Tree: re-rooting on the only branch below a one-child root adds no empty 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Chromatogram: each click asks once, for the clicked base; a drag does not ask', async (page) => {
+  const r = await page.evaluate(() => {
+    const n = 20, sp = 12, ns = n * sp + 12, tr = () => Array.from({ length: ns }, (_, i) => 50 + 40 * Math.sin(i));
+    state.ab1Traces = { t1: { sequence: 'ACGTACGTACGTACGTACGT', quality: Array(n).fill(40), numSamples: ns, peakLocations: Array.from({ length: n }, (_, i) => 6 + i * sp), traces: { A: tr(), C: tr(), G: tr(), T: tr() } } };
+    ChromatogramViewer.open('t1');
+    const c = [...document.querySelectorAll('canvas')].find(x => x.width >= 2000), rect = c.getBoundingClientRect();
+    const xOf = k => rect.left + state.ab1Traces.t1.peakLocations[k] * 3 * rect.width / c.width;
+    const asked = []; const orig = window.prompt; window.prompt = (m) => { asked.push(m.match(/position (\d+)/)[1]); return null; };
+    const press = (k, dx = 0) => {
+      c.dispatchEvent(new MouseEvent('mousedown', { clientX: xOf(k), clientY: rect.top + 50, bubbles: true }));
+      if (dx) window.dispatchEvent(new MouseEvent('mousemove', { clientX: xOf(k) + dx, clientY: rect.top + 50, bubbles: true }));
+      window.dispatchEvent(new MouseEvent('mouseup', { clientX: xOf(k) + dx, clientY: rect.top + 50, bubbles: true }));
+      c.dispatchEvent(new MouseEvent('click', { clientX: xOf(k) + dx, clientY: rect.top + 50, bubbles: true }));
+    };
+    press(2); press(7);              // two clicks: one prompt each, bases 3 and 8
+    const afterClicks = asked.slice();
+    press(4, 60);                    // a drag
+    window.prompt = orig; ChromatogramViewer.close();
+    return { afterClicks: afterClicks.join(','), all: asked.join(',') };
+  });
+  const ok = r.afterClicks === '3,8' && r.all === '3,8';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

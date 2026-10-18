@@ -6898,7 +6898,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     const rect = canvas.getBoundingClientRect();
                     const target = _getCanvasTooltipTarget();
                     target.style.left = (rect.left + m.nameW + _canvasColToSlot(col) * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
-                    target.style.top = (rect.top + (m.headerH || m.charH) + row *m.charH - _canvasState.offsetY) + 'px';
+                    target.style.top = (rect.top + (m.headerH || m.charH) + row * (_canvasState.rowPitch || m.charH) - _canvasState.offsetY) + 'px';   // rows are rowPitch apart (translation tracks)
                     showTooltipAt(`${seqObj.header}: ${gaplessPos}`, target);
                     return;
                 }
