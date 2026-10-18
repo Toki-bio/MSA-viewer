@@ -6462,37 +6462,41 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // residue loop above never changes it.
         if (withNames) {
             ctx.font = nameFontStr;
+            // Two passes: every row's name box first, then every name. A name's underscores and
+            // descenders hang about a pixel below its 13 px row (Courier New on Windows), as in Full;
+            // painted row by row, the next row's box covered them ('Sb1_own_mtDNA' read 'Sb1 own mtDNA').
+            // The text pass starts one row above the region, so a strip drawn while scrolling gets the
+            // same pixels from that overhang as a full redraw.
+            const nameLook = new Map();
             for (let i = firstRow; i <= lastRow; i++) {
                 const y = HEADER_H + i * rowPitch - oy;
-                // Sequence name - drawn after the residues so it sits on top of any that
-                // scrolled underneath it. Sticky mode pins it at a fixed screen x=0
-                // with an opaque backing (matching Normal mode's sticky name column,
-                // position:sticky + white background); non-sticky mode scrolls it
-                // away with the content, like .seq-name.static.
-                const name = state.seqs[i].header || ('Seq' + (i + 1));
-                const displayName = _truncName(name, nameLen);
-                const nameBaselineY = y + _canvasTextBaseline(CHAR_H);
                 const look = nameCellLook(i);
+                nameLook.set(i, look);
                 const nameX0 = stickyNames ? 0 : -ox;
                 if (stickyNames) {
                     ctx.fillStyle = look?.bg || '#fff';
                     ctx.fillRect(0, y, NAME_W, CHAR_H);
                     if (look?.stripe) { ctx.fillStyle = look.stripe; ctx.fillRect(0, y, 6, CHAR_H); }
-                    ctx.fillStyle = look?.bg ? look.fg : '#333';
-                    ctx.textBaseline = 'alphabetic';
-                    ctx.fillText(displayName, 4, nameBaselineY);
                 } else if (ox < NAME_W) {
                     ctx.save();
-                    ctx.beginPath();
-                    ctx.rect(0, y, NAME_W, CHAR_H);
-                    ctx.clip();
+                    ctx.beginPath(); ctx.rect(0, y, NAME_W, CHAR_H); ctx.clip();
                     if (look?.bg) { ctx.fillStyle = look.bg; ctx.fillRect(nameX0, y, NAME_W, CHAR_H); }
                     if (look?.stripe) { ctx.fillStyle = look.stripe; ctx.fillRect(nameX0, y, 6, CHAR_H); }
-                    ctx.fillStyle = look?.bg ? look.fg : '#333';
-                    ctx.textBaseline = 'alphabetic';
-                    ctx.fillText(displayName, 4 - ox, nameBaselineY);
                     ctx.restore();
                 }
+            }
+            ctx.textBaseline = 'alphabetic';
+            for (let i = Math.max(0, firstRow - 1); i <= lastRow; i++) {
+                if (!stickyNames && ox >= NAME_W) break;
+                const y = HEADER_H + i * rowPitch - oy;
+                const name = state.seqs[i].header || ('Seq' + (i + 1));
+                const displayName = _truncName(name, nameLen);
+                const look = nameLook.has(i) ? nameLook.get(i) : nameCellLook(i);
+                ctx.fillStyle = look?.bg ? look.fg : '#333';
+                ctx.save();
+                ctx.beginPath(); ctx.rect(0, 0, stickyNames ? NAME_W : Math.max(0, NAME_W - ox), h); ctx.clip();   // the name column only
+                ctx.fillText(displayName, stickyNames ? 4 : 4 - ox, y + _canvasTextBaseline(CHAR_H));
+                ctx.restore();
             }
             ctx.textBaseline = 'top';
             ctx.font = fontStr;
