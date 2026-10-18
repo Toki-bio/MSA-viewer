@@ -4957,6 +4957,19 @@ check('Context menu: closing it through an item leaves no document click listene
   return { pass: r.leftOver === 0, detail: JSON.stringify(r) };
 });
 
+check('Canvas: jumping to a column keeps the column selection the user had', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'jc.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTACGTACGTACGT\n>b\nACGTACGTACGTACGTACGT\n') });
+  await page.waitForTimeout(800);
+  await setMode(page, 'canvas'); await page.waitForTimeout(400);
+  const r = await page.evaluate(async () => {
+    state.selectedColumns.clear(); [2, 3, 4].forEach(c => state.selectedColumns.add(c));
+    _geJumpToCol(10);
+    await new Promise(res => setTimeout(res, 1300));
+    return [...state.selectedColumns].sort((a, b) => a - b).join(',');
+  });
+  return { pass: r === '2,3,4', detail: r };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

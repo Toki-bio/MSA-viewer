@@ -17148,12 +17148,14 @@ function _geJumpToCol(pos1) {
         const viewW = (el('alignmentContainer') && el('alignmentContainer').clientWidth) || 600;
         const slot0 = _canvasColToSlot(pos0);
         _canvasState.offsetX = Math.max(0, (slot0 >= 0 ? slot0 : pos0) * charW - Math.min(viewW / 3, charW * 10));
-        state.selectedColumns = new Set([pos0]);
+        // flash the column without losing the user's own column selection (it was replaced, then emptied)
+        const hadCol = state.selectedColumns.has(pos0);
+        state.selectedColumns.add(pos0);
         _canvasState.scheduleDraw?.();
         _canvasState.onOffsetChange?.();
         setTimeout(() => {
             if (token !== _geColFlashGen) return;
-            state.selectedColumns.delete(pos0);
+            if (!hadCol) state.selectedColumns.delete(pos0);
             _canvasState.scheduleDraw?.();
         }, 1000);
         return;
@@ -20210,8 +20212,12 @@ function _attachStatsWindow(body) {
         _statsMarkFocus(table);
     };
     place();
+    // one listener and one observer per scroll box: each fill used to add another pair
+    if (sc._statsPlace) sc.removeEventListener('scroll', sc._statsPlace);
+    if (sc._statsRO) sc._statsRO.disconnect();
+    sc._statsPlace = place;
     sc.addEventListener('scroll', place, { passive: true });
-    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(place).observe(sc);   // window resized taller
+    if (typeof ResizeObserver !== 'undefined') { sc._statsRO = new ResizeObserver(place); sc._statsRO.observe(sc); }   // window resized taller
 }
 
 function _fillStatsMatrices(bodies) {
