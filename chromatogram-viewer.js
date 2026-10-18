@@ -141,18 +141,49 @@
         const seqs = (typeof state !== 'undefined' && state.seqs) || [];
         const seqObj = seqs.find(s => s.header === current.header);
         if (!seqObj) { showStatus('Sequence not found in current alignment.'); return; }
+        // Where is the trace in the row now? The row may have been trimmed or reverse-complemented since
+        // the trace was loaded (trace base k is then not the k-th residue); edits applied earlier are part
+        // of what the row should read. Anything else: refuse rather than write bases into the wrong places.
+        const d = current.data;
+        const applied = d._appliedEdits || (d._appliedEdits = new Map());
+        const expected = d.sequence.split('').map((b, k) => (applied.has(k) ? applied.get(k) : b)).join('').toUpperCase();
+        const COMP = { A: 'T', T: 'A', C: 'G', G: 'C', N: 'N', R: 'Y', Y: 'R', S: 'S', W: 'W', K: 'M', M: 'K' };
+        const rc = (s) => s.split('').reverse().map(c => COMP[c] || c).join('');
+        const chars = seqObj.seq.split('');
+        const resIdx = [];
+        for (let i = 0; i < chars.length; i++) if (chars[i] !== '-' && chars[i] !== '.') resIdx.push(i);
+        const residues = resIdx.map(i => chars[i]).join('').toUpperCase();
+        let map = null;   // trace position -> { col, complement }
+        const fwd = expected.indexOf(residues);
+        if (residues.length && fwd >= 0 && expected.indexOf(residues, fwd + 1) < 0) {
+            map = (k) => (k - fwd >= 0 && k - fwd < resIdx.length) ? { col: resIdx[k - fwd], comp: false } : null;
+        } else {
+            const exRc = rc(expected), off = exRc.indexOf(residues);
+            if (residues.length && off >= 0 && exRc.indexOf(residues, off + 1) < 0) {
+                // trace position k is position (L-1-k) of the reverse complement
+                map = (k) => { const j = expected.length - 1 - k - off; return (j >= 0 && j < resIdx.length) ? { col: resIdx[j], comp: true } : null; };
+            }
+        }
+        if (!map) {
+            showStatus(`The row "${current.header}" no longer matches its trace (edited since loading); edits not applied.`);
+            return;
+        }
         if (typeof pushUndo === 'function') pushUndo('ab1-base-edit');
-        let seq = seqObj.seq;
-        let gapless = -1;
-        const chars = seq.split('');
-        for (let i = 0; i < chars.length; i++) {
-            if (chars[i] === '-') continue;
-            gapless++;
-            if (current.edits.has(gapless)) chars[i] = current.edits.get(gapless);
+        let placed = 0;
+        for (const [k, base] of current.edits) {
+            const m = map(k);
+            if (!m) continue;   // base trimmed out of the row
+            const b = m.comp ? (COMP[base] || base) : base;
+            const old = chars[m.col];
+            chars[m.col] = old === old.toLowerCase() && old !== old.toUpperCase() ? b.toLowerCase() : b;
+            applied.set(k, base);
+            placed++;
         }
         seqObj.seq = chars.join('');
+        if (typeof calculateGaplessPositions === 'function') seqObj.gaplessPositions = calculateGaplessPositions(seqObj.seq);
         if (typeof renderAlignment === 'function') renderAlignment();
-        showStatus(`Applied ${current.edits.size} edit(s) to ${current.header}.`);
+        const skipped = current.edits.size - placed;
+        showStatus(`Applied ${placed} edit(s) to ${current.header}.` + (skipped ? ` ${skipped} fell in trimmed-off bases and were not applied.` : ''));
         current.edits.clear();
     }
 

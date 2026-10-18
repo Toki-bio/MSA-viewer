@@ -4072,6 +4072,49 @@ check('Undo: a hard trim is one undo step, and a new file starts with no undo hi
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Chromatogram: Apply Edits lands on the traced base after the row was trimmed or reverse-complemented, and refuses a row that no longer matches', async (page) => {
+  const trace = 'ACGTTGCAAGGCTTAC';
+  await page.setInputFiles('#fileInput', { name: 'c.fa', mimeType: 'text/plain', buffer: Buffer.from(`>t1\n${trace}\n>o\n${trace}\n`) });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(async (trace) => {
+    const n = trace.length, tr = () => Array.from({ length: n * 12 }, () => 10);
+    state.ab1Traces = { t1: { sequence: trace, quality: Array(n).fill(40), numSamples: n * 12, peakLocations: Array.from({ length: n }, (_, i) => 6 + i * 12), traces: { A: tr(), C: tr(), G: tr(), T: tr() } } };
+    const row = () => state.seqs.find(s => s.header === 't1');
+    const applyAt = (pos, base) => {
+      ChromatogramViewer.open('t1');
+      const orig = window.prompt; window.prompt = () => base;
+      const c = [...document.querySelectorAll('canvas')].find(x => x.width >= 2000);
+      const rect = c.getBoundingClientRect();
+      const cx = state.ab1Traces.t1.peakLocations[pos] * parseFloat(c.dataset.xScale || '3');
+      c.dispatchEvent(new MouseEvent('click', { clientX: rect.left + cx * rect.width / c.width, clientY: rect.top + 50, bubbles: true }));
+      window.prompt = orig;
+      document.getElementById('chromatogramApplyEdits').click();
+      const st = document.getElementById('chromatogramStatus')?.textContent || '';
+      ChromatogramViewer.close();
+      return st;
+    };
+    const out = {};
+    // trimmed: first 3 bases cut off, gaps inside
+    row().seq = '---TT-GCAAGGCTTAC';   // trace[3..] with one gap
+    applyAt(5, 'A');                     // trace base 6 (G at index 5 -> A)
+    out.trimmed = row().seq;
+    // reverse-complemented row
+    const rc = s => s.split('').reverse().map(c => ({ A: 'T', C: 'G', G: 'C', T: 'A', '-': '-' })[c] || c).join('');
+    row().seq = rc(trace.slice(0, 5) + 'A' + trace.slice(6));   // the row as it is after the first edit, flipped
+    applyAt(0, 'T');                     // trace base 1 (A -> T) is the last residue of the RC row, complemented: A
+    out.rc = row().seq;
+    // a row edited into something else: refused, unchanged
+    row().seq = 'GGGGGGGGGGGGGGGG';
+    out.refusedMsg = applyAt(2, 'A');
+    out.unchanged = row().seq;
+    return out;
+  }, trace);
+  const okTrim = r.trimmed === '---TT-ACAAGGCTTAC';
+  const okRc = r.rc === 'GTAAGCCTTGTAACGA';
+  const okRefuse = r.unchanged === 'GGGGGGGGGGGGGGGG' && /no longer matches/i.test(r.refusedMsg);
+  return { pass: okTrim && okRc && okRefuse, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
