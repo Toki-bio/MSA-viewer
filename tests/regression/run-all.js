@@ -4175,6 +4175,50 @@ check('Canvas: scrolled to the right end, the last column is not under the scrol
   return { pass: notCovered && badge && endsAtBar, detail: JSON.stringify(r) };
 });
 
+check('Canvas vs Full: every cell has the same letter, background colour and letter position (shading and Highlight diffs)', async (page) => {
+  // A screenshot of the alignment area in each view, decoded in the page; cells located from the DOM
+  // spans and from the Canvas grid. The grids differ in size by design (Canvas cells are whole device
+  // pixels: 8 x 15 against 7.81 x 13 at 100 %), so each cell is compared in place: letter, background,
+  // and the letter's ink box (within 1 px).
+  const unit = 'ACGTACGTTGCAACGTAGCTAGCTAGGATCCAGTTTGGCCAAGT';
+  const rows = []; for (let i = 0; i < 24; i++) { let s = unit.repeat(3).slice(0, 100).split(''); for (let k = 0; k < 100; k += 7 + (i % 5)) s[k] = 'ACGT'[(i + k) % 4]; if (i % 6 === 0) for (let k = 0; k < 8; k++) s[k] = '-'; rows.push('>r' + i + '\n' + s.join('')); }
+  await page.setInputFiles('#fileInput', { name: 'par.fa', mimeType: 'text/plain', buffer: Buffer.from(rows.join('\n') + '\n') });
+  await page.waitForTimeout(1200);
+  const grab = async (clip) => { const b = await page.screenshot({ clip }); return page.evaluate(async (b64) => { const i = new Image(); i.src = 'data:image/png;base64,' + b64; await i.decode(); const c = document.createElement('canvas'); c.width = i.width; c.height = i.height; const x = c.getContext('2d'); x.drawImage(i, 0, 0); return { w: c.width, h: c.height, d: Array.from(x.getImageData(0, 0, c.width, c.height).data) }; }, b.toString('base64')); };
+  const dist = (a, b) => Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
+  const cell = (I, x0, y0, W, H) => {
+    const px = (x, y) => { const i = (y * I.w + x) * 4; return [I.d[i], I.d[i + 1], I.d[i + 2]]; };
+    const cnt = new Map(); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const k = px(x0 + x, y0 + y).join(); cnt.set(k, (cnt.get(k) || 0) + 1); }
+    let bg, n = -1; for (const [k, v] of cnt) if (v > n) { n = v; bg = k.split(',').map(Number); }
+    // from the second pixel row: Full rows are 13.5 px boxes 13 px apart, so their top pixel row holds a seam
+    // (visible when Highlight diffs makes cells translucent) that is not part of the letter
+    let t = 99, b = -1; for (let y = 1; y < H; y++) for (let x = 0; x < W; x++) if (dist(px(x0 + x, y0 + y), bg) > 40) { t = Math.min(t, y); b = Math.max(b, y); }
+    return { bg, t, b };
+  };
+  const out = {};
+  for (const hd of [false, true]) {
+    await page.evaluate((hd) => { const c = document.getElementById('highlightDiffs'); if (c.checked !== hd) { c.checked = hd; c.dispatchEvent(new Event('change', { bubbles: true })); } }, hd);
+    await setMode(page, 'full'); await page.waitForTimeout(800);
+    const dom = await page.evaluate(() => { const o = []; for (let r = 0; r < 24; r++) { const line = document.querySelector(`#alignmentContainer .seq-line[data-seq-index="${r}"]`); for (let c = 0; c < 100; c++) { const sp = line && line.querySelector(`.seq-data span[data-pos="${c}"]`); if (sp) { const b = sp.getBoundingClientRect(); o.push([r, c, b.left, b.top, sp.textContent]); } } } return o; });
+    const dx0 = Math.floor(dom[0][2]), dy0 = Math.floor(dom[0][3]);
+    const A = await grab({ x: dx0, y: dy0, width: 820, height: 24 * 13 + 4 });
+    await setMode(page, 'canvas'); await page.waitForTimeout(800);
+    const cv = await page.evaluate(async () => { _canvasState.offsetX = 0; _canvasState.offsetY = 0; _canvasState.scheduleDraw(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); const m = _canvasState.metrics, cr = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { L: cr.left + m.nameW, T: cr.top + m.headerH, w: m.charW, h: m.charH, p: _canvasState.rowPitch, seqs: state.seqs.map(s => s.seq) }; });
+    const B = await grab({ x: Math.floor(cv.L), y: Math.floor(cv.T), width: Math.ceil(100 * cv.w) + 2, height: Math.ceil(24 * cv.p) + 2 });
+    let cells = 0, sameCh = 0, sameBg = 0, samePos = 0; const bad = [];
+    for (const [r, c, x, y, ch] of dom) {
+      cells++; if (cv.seqs[r][c] === ch) sameCh++;
+      const s1 = cell(A, Math.round(x) - dx0, Math.round(y) - dy0, 7, 13), s2 = cell(B, Math.round(cv.L + c * cv.w) - Math.floor(cv.L), Math.round(cv.T + r * cv.p) - Math.floor(cv.T), 7, 13);
+      const bgOk = dist(s1.bg, s2.bg) <= 8, posOk = (s1.b < 0 && s2.b < 0) || (Math.abs(s1.t - s2.t) <= 1 && Math.abs(s1.b - s2.b) <= 1);
+      if (bgOk) sameBg++; if (posOk) samePos++;
+      if ((!bgOk || !posOk) && bad.length < 4) bad.push({ r, c, ch, dom: s1, canvas: s2 });
+    }
+    out[hd ? 'highlightDiffs' : 'shading'] = { cells, sameCh, sameBg, samePos, bad };
+  }
+  const ok = Object.values(out).every(o => o.cells === 2400 && o.sameCh === o.cells && o.sameBg === o.cells && o.samePos === o.cells);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
