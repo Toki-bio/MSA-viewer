@@ -4130,6 +4130,25 @@ check('Server: output read for one reply is capped (ssh-cat, bam2sam) and multi-
   return { pass: ok, detail: JSON.stringify({ big, small: small.length, text }) };
 });
 
+check('Show 2D: an all-gap reference row gives real column ranges (no NaN blocks), an all-gap alignment gives none', async () => {
+  const BM = require(require('path').join(__dirname, '..', '..', 'block-mask.js'));
+  const rows = (f) => Array.from({ length: 8 }, (_, i) => '>s' + i + '\n' + f(i)).join('\n') + '\n';
+  const unit = 'ACGTACGTTGCAACGTAGCTAGCTAGGATCCAGT'.repeat(3);
+  const out = {};
+  try {
+    const r = BM.computeBlockMask(rows(i => (i === 0 ? '-'.repeat(unit.length) : unit)), {}, {});
+    out.nan = (r.blocks || []).filter(b => !Number.isFinite(b.col_start) || !Number.isFinite(b.col_end)).length;
+    out.blocks = (r.blocks || []).length;
+    out.elem = [r.elem_col_start, r.elem_col_end];
+  } catch (e) { out.err1 = e.message; }
+  try {
+    const r2 = BM.computeBlockMask(rows(() => '-'.repeat(20)), {}, {});
+    out.allGapBlocks = (r2.blocks || []).length;
+  } catch (e) { out.err2 = e.message; }
+  const ok = !out.err1 && !out.err2 && out.nan === 0 && out.blocks > 0 && Number.isFinite(out.elem[0]) && out.allGapBlocks === 0;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

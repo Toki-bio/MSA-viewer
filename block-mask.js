@@ -639,7 +639,16 @@
     var parsed = parseAln(fastaText);
     var A = parsed.A, names = parsed.names, nCols = parsed.ncols;
     var ci = consensusIndex(names);
-    var nzc = nonGapIndices(A[ci]);
+    var nzc = A.length ? nonGapIndices(A[ci]) : [];
+    // A reference row without residues (an emptied first row) has no columns to measure from: use the
+    // first row that has some. With none at all there is nothing to mask (was: NaN column ranges).
+    if (!nzc.length) {
+      for (var r = 0; r < A.length && !nzc.length; r++) { var z = nonGapIndices(A[r]); if (z.length) { ci = r; nzc = z; } }
+    }
+    if (!nzc.length) {
+      return { alignment_id: opts.alignmentId != null ? opts.alignmentId : '', preset: opts.preset != null ? opts.preset : null,
+        n_rows: A.length, n_cols: nCols, elem_col_start: null, elem_col_end: null, row_headers: names.slice(), params: P, blocks: [] };
+    }
     var col0 = nzc[0], col1 = nzc[nzc.length - 1];
     var L = nzc.length;
     var flank = P.FLANK;
