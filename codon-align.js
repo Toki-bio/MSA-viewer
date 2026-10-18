@@ -316,7 +316,8 @@
         if (recs.length === 0) return { nt: [], aa: [], stats: {} };
         checkNucleotide(recs);
         let refIdx = 0, refFound = true;
-        if (typeof o.ref === 'number') refIdx = Math.max(0, Math.min(recs.length - 1, o.ref));
+        // a whole index into the records (NaN or a fraction gave recs[NaN] and a crash)
+        if (typeof o.ref === 'number') refIdx = Number.isFinite(o.ref) ? Math.max(0, Math.min(recs.length - 1, Math.trunc(o.ref))) : 0;
         else if (typeof o.ref === 'string' && o.ref) {
             const f = recs.findIndex(r => r.name === o.ref || r.name.split(/\s+/)[0] === o.ref);
             if (f >= 0) refIdx = f; else refFound = false;

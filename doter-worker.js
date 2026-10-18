@@ -58,7 +58,8 @@ self.addEventListener('message', (event) => {
     }
 
     self.postMessage(
-      { scores, rows: N, cols: M, min: globalMin, max: globalMax },
+      // empty or gap-only input scored nothing: a 0..0 range, not the starting sentinels (min > max)
+      { scores, rows: N, cols: M, min: globalMin <= globalMax ? globalMin : 0, max: globalMin <= globalMax ? globalMax : 0 },
       [scores.buffer]
     );
   } catch (err) {

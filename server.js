@@ -786,6 +786,10 @@ function runMafft(args, inputFiles, env, timeout) {
 // Realign all sequences or add new sequences to existing alignment
 app.post('/api/mafft', async (req, res) => {
     const { mode = 'align', sequences, existingAlignment, newSequences, options = [] } = req.body;
+    // each mode's input must be there (mode=add without newSequences fell through and crashed: 500)
+    if (mode === 'add' ? !(existingAlignment && newSequences) : !sequences) {
+        return res.status(400).json({ error: mode === 'add' ? 'mode "add" needs existingAlignment and newSequences' : 'sequences required' });
+    }
 
     if (!sequences && !existingAlignment) {
         return res.status(400).json({ error: 'No sequences provided' });

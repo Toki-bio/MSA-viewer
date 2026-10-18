@@ -4970,6 +4970,13 @@ check('Canvas: jumping to a column keeps the column selection the user had', asy
   return { pass: r === '2,3,4', detail: r };
 });
 
+check('Codon library: a reference index that is NaN or a fraction does not crash alignMultiple', async () => {
+  const CA = require(require('path').join(__dirname, '..', '..', 'codon-align.js'));
+  const out = {};
+  for (const ref of [NaN, 1.7]) { try { out[String(ref)] = CA.alignMultiple([{ name: 'a', seq: 'ATGAAACCC' }, { name: 'b', seq: 'ATGAAGCCC' }], { ref }).nt.length; } catch (e) { out[String(ref)] = 'throws: ' + e.message; } }
+  return { pass: out.NaN === 2 && out['1.7'] === 2, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
