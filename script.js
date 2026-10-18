@@ -5322,7 +5322,10 @@ function _initCanvasMetrics(ctx, fontSizePx) {
     // Cells are a whole number of DEVICE pixels (rounded up), expressed in CSS px: at 125 % or
     // 150 % scaling a 15 CSS px row would be 18.75 or 22.5 device px, every row edge would be
     // antialiased, and the scroll frame copy (which ends on a row edge) would not be exact.
-    const charH = Math.ceil(Math.ceil(ascent + descent) * dpr) / dpr;
+    // Row height = the font size, as in Full/Block (line-height 1.0): the font box (ascent + descent,
+    // ~15 px at 13 px) left 2 px of empty space under every row and ~15 % fewer rows on screen.
+    // Letters keep the same place in the cell (measured: ink rows 2-9 in both views).
+    const charH = Math.ceil(fontSizePx * dpr) / dpr;
     _canvasState.metrics = {
         charW: Math.ceil(Math.ceil(m.width) * dpr) / dpr,
         charH,

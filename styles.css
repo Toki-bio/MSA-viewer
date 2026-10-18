@@ -3509,7 +3509,14 @@ span.diagnostic-mutation {
 .blast-alignment-block { background:#f6f8f6; border:1px solid #ddd; border-radius:3px; padding:8px 12px; margin:0 0 8px; font-family:'Courier New',monospace; font-size:12px; line-height:1.5; white-space:pre; overflow-x:auto; }
 
 /* Highlight-diffs mode: dim columns that match the consensus (highlight differences) */
-body.highlight-diffs .seq-data > span:not(.diff-highlight) { opacity: 0.4; }
+/* Dimmed = 60 % white over the cell (what opacity 0.4 on white gives), drawn as a veil over the cell's own
+   box only: with opacity the 0.5 px overlap below each cell (see .seq-data span) was painted twice and showed
+   as a dark line between rows. Same result as Canvas, which dims with globalAlpha 0.4 over white. */
+body.highlight-diffs .seq-data > span:not(.diff-highlight) { position: relative; }
+body.highlight-diffs .seq-data > span:not(.diff-highlight)::after {
+    content: ''; position: absolute; left: 0; right: 0; top: 0; bottom: 0.5px;
+    background: rgba(255, 255, 255, 0.6); pointer-events: none;
+}
 body.highlight-diffs .seq-data > span.diff-highlight { font-weight: bold; }
 
 

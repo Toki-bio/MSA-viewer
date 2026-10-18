@@ -2692,7 +2692,10 @@ check('Highlight diffs / Variable sites only work out of the box and pause each 
     out.defaults = [el('varThresholdMode').value, el('varSitesThreshold').value];
     await tick('highlightDiffs');
     out.diffCols = [...state._diffColumns].join();          // only the differing column
-    const dim = p => getComputedStyle(document.querySelector(`.seq-line[data-seq-index="0"] span[data-pos="${p}"]`)).opacity;
+    // how much of the cell shows: opacity, or a white veil over it (Highlight diffs since v259: 60 % white = 0.4)
+    const dim = p => { const sp = document.querySelector(`.seq-line[data-seq-index="0"] span[data-pos="${p}"]`);
+      const m = /rgba\(255, 255, 255, ([\d.]+)\)/.exec(getComputedStyle(sp, '::after').backgroundColor || '');
+      return String(m ? +(1 - parseFloat(m[1])).toFixed(2) * parseFloat(getComputedStyle(sp).opacity) : parseFloat(getComputedStyle(sp).opacity)); };
     out.opacity = [dim(3), dim(5)];                          // differing column normal, identical dimmed
     await tick('varSitesOnly');
     out.afterVar = [el('highlightDiffs').checked, el('varSitesOnly').checked, state._diffsPausedByVarSites === true, /paused/.test(msg())];
@@ -4217,6 +4220,27 @@ check('Canvas vs Full: every cell has the same letter, background colour and let
   }
   const ok = Object.values(out).every(o => o.cells === 2400 && o.sameCh === o.cells && o.sameBg === o.cells && o.samePos === o.cells);
   return { pass: ok, detail: JSON.stringify(out) };
+});
+
+check('Canvas rows have the Full row height; Highlight diffs in Full draws no dark line between dimmed rows', async (page) => {
+  const rows = []; for (let i = 0; i < 12; i++) rows.push('>r' + i + '\n' + 'ACGTACGTTGCAACGTAGCT'.split('').map((c, k) => (k === 5 && i % 3 === 0 ? 'T' : c)).join(''));
+  await page.setInputFiles('#fileInput', { name: 'rh.fa', mimeType: 'text/plain', buffer: Buffer.from(rows.join('\n') + '\n') });
+  await page.waitForTimeout(1000);
+  await setMode(page, 'full'); await page.waitForTimeout(600);
+  const domPitch = await page.evaluate(() => { const y = (r) => document.querySelector(`.seq-line[data-seq-index="${r}"] .seq-data span[data-pos="0"]`).getBoundingClientRect().top; return (y(10) - y(0)) / 10; });
+  // Highlight diffs: dimmed cells are a flat tint; the 0.5 px overlap between rows must not show as a darker line
+  await page.evaluate(() => { const c = document.getElementById('highlightDiffs'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(500);
+  const box = await page.evaluate(() => { const b = document.querySelector('.seq-line[data-seq-index="4"] .seq-data span[data-pos="2"]').getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width }; });
+  const shot = await page.screenshot({ clip: { x: Math.floor(box.x), y: Math.floor(box.y) - 1, width: Math.ceil(box.w), height: 15 } });
+  const col = await page.evaluate(async (b64) => { const i = new Image(); i.src = 'data:image/png;base64,' + b64; await i.decode(); const c = document.createElement('canvas'); c.width = i.width; c.height = i.height; const x = c.getContext('2d'); x.drawImage(i, 0, 0); const d = x.getImageData(0, 0, c.width, c.height).data; const row = (y) => [d[(y * c.width) * 4], d[(y * c.width) * 4 + 1], d[(y * c.width) * 4 + 2]]; return { rows: Array.from({ length: c.height }, (_, y) => row(y)[0]) }; }, shot.toString('base64'));
+  // left edge column of the cell, top to bottom: background tint, no darker band at a row edge
+  const bgRows = col.rows.slice(2, 13), tint = Math.max(...bgRows);
+  const darkLine = col.rows.some((v, y) => y <= 2 && v < tint - 12);
+  await setMode(page, 'canvas'); await page.waitForTimeout(600);
+  const cvPitch = await page.evaluate(() => _canvasState.rowPitch);
+  const ok = Math.abs(cvPitch - domPitch) < 0.01 && !darkLine;
+  return { pass: ok, detail: JSON.stringify({ domPitch, cvPitch, edgeColumn: col.rows, darkLine }) };
 });
 
 async function main() {
