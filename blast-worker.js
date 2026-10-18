@@ -674,7 +674,9 @@ function parseFasta(content) {
         const header = block.substring(0, nl).trim();
         const seq = block.substring(nl + 1).replace(/\s/g, '').toUpperCase()
                          .replace(/[^ACGTRYSWKMBDHVN]/g, 'N');
-        if (!seq || seq.length < 20) { start = next < 0 ? content.length : next; continue; }
+        // shorter than one seed word it can never be found; anything longer is kept (a primer
+        // database of 18-nt records used to lose every record, under a 20-nt minimum)
+        if (!seq || seq.length < KMER) { start = next < 0 ? content.length : next; continue; }
 
         const tabIdx   = header.indexOf('\t');
         const spaceIdx = header.indexOf(' ');

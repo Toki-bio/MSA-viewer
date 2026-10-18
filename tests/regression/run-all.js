@@ -4610,6 +4610,22 @@ check('BLAST worker: a minus-strand hit reports query positions on the query as 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('BLAST worker: database records shorter than 20 nt (primers) are kept and found', async () => {
+  const vm = require('vm'), fs = require('fs'), path = require('path');
+  const ctx = { self: { postMessage() {}, addEventListener() {} }, postMessage() {}, importScripts() {}, console };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '..', 'blast-worker.js'), 'utf8'), ctx, { timeout: 5000 });
+  const r = vm.runInContext(`(() => {
+    applyScoringPreset(ACTIVE_PRESET);
+    const recs = parseFasta('>p1 primer\\nACGTTGCAAGGCTTACGA\\n>p2\\nTTGACCAGTCAAGGTCCA\\n');
+    recs.forEach(e => { e._enc = encodeSeq(e.seq); });
+    const hits = searchDatabase('GGGGGACGTTGCAAGGCTTACGAGGGGG', recs, buildInvertedIndex(recs), 5);
+    return { n: recs.length, ids: recs.map(e => e.id).join(','), hit: hits[0] ? hits[0].id : null };
+  })()`, ctx, { timeout: 20000 });
+  const ok = r.n === 2 && r.hit === 'p1';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
