@@ -1136,7 +1136,7 @@ async function main() {
             let outcome;
             const t0 = Date.now();
             try {
-                await page.goto(baseUrl + '/index.html', { waitUntil: 'networkidle' });
+                await page.goto(baseUrl + '/index.html?view=full', { waitUntil: 'networkidle' });
                 outcome = await fn(page);
             } catch (e) {
                 outcome = { pass: false, detail: `threw: ${e.message}` };

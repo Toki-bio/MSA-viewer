@@ -9247,6 +9247,11 @@ function clearReadsData() {
 // back to Canvas on every subsequent render. Reset per-file in parseAndRender
 // so a newly loaded large alignment still gets the initial suggestion.
 let _userDismissedAutoCanvas = false;
+// Canvas is the default view at every size (v261). Choosing Full or Block (or ?view=full|block in the
+// link) is remembered for the session: smaller files then open in that view, and only alignments from
+// ALIGN_CANVAS_DEFAULT_RESIDUES still go to Canvas, as before v261.
+let _userChoseDomView = false;
+let _canvasNoteShown = false;
 
 function _updateCodonAnalysisState(len) {
     const codonAnalysis = document.getElementById('codonAnalysis')?.checked;
@@ -9587,17 +9592,20 @@ function renderAlignment(options = {}) {
     let _renderStartTime = performance.now();
     const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
 
-    if (!userWantsCanvas && !_userDismissedAutoCanvas && TOTAL_RESIDUES >= CANVAS_AUTO_THRESHOLD) {
+    if (!userWantsCanvas && !_userDismissedAutoCanvas && (TOTAL_RESIDUES >= CANVAS_AUTO_THRESHOLD || !_userChoseDomView)) {
         const canvasRadio = document.getElementById('modeCanvas');
         if (canvasRadio) canvasRadio.checked = true;
         _lastModeRadioId = 'modeCanvas'; // bypasses onModeChange, so sync explicitly
         syncQuickModeSwitch();
         syncCodonModePanel(); // this bypasses onModeChange, so sync explicitly
-        const note = `Canvas view (${TOTAL_RESIDUES.toLocaleString()} residues): everything works here as in Full view; `
+        const note = `Canvas view: everything works here as in Full view; `
             + `Full or Block (mode switch at the top) give the DOM views, Block with wrapped rows.`;
-        showMessage(note, 10000);
-        _canvasSwitchNote = note;                       // survives the caller's own "File loaded" message
-        _canvasSwitchNoteUntil = performance.now() + 5000;
+        if (!_canvasNoteShown) {                        // once per session: Canvas is simply the default view
+            _canvasNoteShown = true;
+            showMessage(note, 10000);
+            _canvasSwitchNote = note;                   // survives the caller's own "File loaded" message
+            _canvasSwitchNoteUntil = performance.now() + 5000;
+        }
         // Re-read to pick up the new checked state
         // Canvas dispatch is handled below
     }
@@ -12158,7 +12166,8 @@ async function parseAndRender(isFromDrop = false) {
             state.alignmentIndex = { ..._stats, ...classifyAlignmentSize(_stats) };
         }
 
-        _userDismissedAutoCanvas = false; // fresh file: allow the Canvas suggestion again if it's large
+        // fresh file: Canvas unless the user chose Full/Block this session and the file is small
+        _userDismissedAutoCanvas = _userChoseDomView && (state.alignmentIndex?.totalResidues || 0) < ALIGN_CANVAS_DEFAULT_RESIDUES;
         state.selectedRows.clear();
         state.selectedColumns.clear();
         state.selectedNucs.clear();
@@ -12477,6 +12486,7 @@ async function onModeChange() {
     // not dispatch 'change'), so this is an unambiguous signal to stop
     // auto-switching back to Canvas for the rest of this file's session.
     _userDismissedAutoCanvas = true;
+    _userChoseDomView = !!(document.getElementById('modeSingle')?.checked || document.getElementById('modeBlocks')?.checked);
     const enteringCanvasFromDom = document.getElementById('modeCanvas')?.checked && _lastModeRadioId !== 'modeCanvas';
     const leavingCanvasToDom = !document.getElementById('modeCanvas')?.checked && _lastModeRadioId === 'modeCanvas';
     // Capture the current scroll position BEFORE renderAlignment() wipes
@@ -23048,6 +23058,9 @@ function initializeAppUI() {
 
     // Trigger initial render/setup based on defaults
     onModeChange();
+    // that was the page setting itself up, not the user choosing the default Block view
+    _userChoseDomView = false;
+    _userDismissedAutoCanvas = false;
     toggleStickyNames();
 
     // -- Residue case toggle (GeneDoc-style upper/lower/asis) --
@@ -23119,7 +23132,19 @@ function initializeAppUI() {
     //   ?title=<text>                      - optional display title
     //   ?mask=<url>                        - fetch a 2D block-mask JSON and overlay it
     //   ?bed=<url>                         - fetch a BED file and show it as the annotation track
+    //   ?view=full|block|canvas             - open in this view (full/block is remembered as the user's choice)
     const urlParams = new URLSearchParams(window.location.search);
+    {
+        const v = (urlParams.get('view') || '').toLowerCase();
+        const id = { full: 'modeSingle', single: 'modeSingle', block: 'modeBlocks', blocks: 'modeBlocks', canvas: 'modeCanvas' }[v];
+        if (id && document.getElementById(id)) {
+            document.getElementById(id).checked = true;
+            _lastModeRadioId = id;
+            _userChoseDomView = id !== 'modeCanvas';
+            _userDismissedAutoCanvas = _userChoseDomView;
+            syncQuickModeSwitch?.();
+        }
+    }
     const autoSnapshot = urlParams.get('snapshot');
     const autoSnapshotFile = urlParams.get('snapshotFile');
     const autoUrl   = urlParams.get('url');

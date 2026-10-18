@@ -347,7 +347,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>Paste &amp; Load</td><td>Paste FASTA or MSF text into the Input textarea and click <strong>Load</strong> (or press <kbd>Ctrl+L</kbd>)</td></tr>
     <tr><td>Drag &amp; Drop</td><td>Drop a file onto the drop zone - any format in 1.3; the format is recognised from the content, not the extension, and gzip-compressed files (<code>.gz</code>) are unpacked first</td></tr>
     <tr><td>File Picker</td><td>Click the drop zone to browse for a file</td></tr>
-    <tr><td>URL parameter</td><td>Open the viewer with <code>?url=&lt;fasta-url&gt;</code> (optional <code>&amp;title=</code>). See the starter alignment below</td></tr>
+    <tr><td>URL parameter</td><td>Open the viewer with <code>?url=&lt;fasta-url&gt;</code> (optional <code>&amp;title=</code>, and <code>&amp;view=full</code>, <code>block</code> or <code>canvas</code> to choose the view). See the starter alignment below</td></tr>
     <tr><td>SAM Paste</td><td>Paste SAM text directly - auto-detected and parsed with CIGAR expansion</td></tr>
     <tr><td>SSH Remote</td><td>Fetch files from a remote server via SSH (requires server with SSH configuration)</td></tr>
     <tr><td>Accession</td><td>Paste one or more GenBank/RefSeq accessions (nucleotide or protein, separated by spaces, commas or new lines) and click <strong>Load</strong>; the records are fetched from NCBI. Works without the server</td></tr>
@@ -1159,7 +1159,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
     <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block.</td></tr>
     <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40–300 chars; <strong>Screen</strong> fits the block to the window width). Sequence names repeat per block.</td></tr>
-    <tr><td><strong>Canvas</strong></td><td>Alignments from 40,000 residues (e.g. 200 x 200 and up)</td><td>The default view from 40,000 residues (a 10-second note on load says so; Full or Block can still be chosen). Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name), and so do motif search, Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots. From about 500,000 residues, Full and Block draw a window rather than every cell.</td></tr>
+    <tr><td><strong>Canvas</strong></td><td>Any alignment; the default view</td><td>The default view at every size (a note on the first load says so). Choosing Full or Block keeps that view for smaller files for the rest of the session; alignments from 40,000 residues still open in Canvas. A link can choose the view with <code>&amp;view=full</code>, <code>block</code> or <code>canvas</code>. Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name), and so do motif search, Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots. From about 500,000 residues, Full and Block draw a window rather than every cell.</td></tr>
     <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5). A <strong>Show bases</strong> checkbox next to the mode switch draws every base of each read instead of mismatches only.</td></tr>
   </table>
   <p>
@@ -1686,7 +1686,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <div class="note">
     <strong>Editing works in Full, Block and Canvas views.</strong> Reads view draws no per-residue
     cells for the tools to act on, so Edit Mode is unavailable there and says so. In Canvas
-    (the default from 40,000 residues) the tools, typing, undo, rename and row drag behave as
+    (the default view) the tools, typing, undo, rename and row drag behave as
     in Full view, and so do motif search, Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots.
   </div>
 
@@ -2221,7 +2221,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <!-- Compact mode removed -->
     <li>Turn on <strong>Highlight Diffs</strong> to visually compress conserved regions</li>
     <li>Use <strong>Block mode</strong> with smaller block sizes (40-60 columns; the minimum is 40) for very wide alignments</li>
-    <li><strong>Canvas</strong> is the default view from 40,000 residues and scrolls smoothly at any size; from about 500,000 residues, <strong>Full</strong> and <strong>Block</strong> draw a window of the alignment instead of every cell</li>
+    <li><strong>Canvas</strong> is the default view and scrolls smoothly at any size; from about 500,000 residues, <strong>Full</strong> and <strong>Block</strong> draw a window of the alignment instead of every cell</li>
     <li>For extremely large files (&gt; 500 sequences x 5,000 columns), consider splitting the input</li>
     <li>Use <strong>Variable sites only</strong> with the <strong>threshold slider</strong> to strip conserved columns and focus on variation. Set the threshold to ≥20% or higher to highlight only the most polymorphic sites.</li>
   </ul>

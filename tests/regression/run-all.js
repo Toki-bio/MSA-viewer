@@ -4274,6 +4274,25 @@ check('Colour Names > Pattern colours every matching row in Canvas and in window
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Default view: Canvas at every size; a chosen Full/Block holds for small files in the session; ?view= in the link', async (page) => {
+  const base = page.url().replace(/[?#].*$/, '');
+  const small = Buffer.from('>a\nACGTACGTAC\n>b\nACGTTCGTAC\n');
+  const big = Buffer.from(Array.from({ length: 220 }, (_, i) => '>r' + i + '\n' + 'ACGT'.repeat(50)).join('\n') + '\n');   // 44,000 residues
+  const mode = () => page.evaluate(() => document.querySelector('input[name="mode"]:checked').id);
+  const load = async (buf, name) => { await page.setInputFiles('#fileInput', { name, mimeType: 'text/plain', buffer: buf }); await page.waitForTimeout(1200); };
+  const out = {};
+  await page.goto(base, { waitUntil: 'networkidle' });
+  await load(small, 's1.fa'); out.firstSmall = await mode();
+  await page.evaluate(() => { const r = document.getElementById('modeSingle'); r.checked = true; onModeChange(); });   // the user picks Full
+  await page.waitForTimeout(400);
+  await load(small, 's2.fa'); out.smallAfterFull = await mode();
+  await load(big, 'b.fa'); out.bigAfterFull = await mode();
+  await page.goto(base + '?view=block', { waitUntil: 'networkidle' });
+  await load(small, 's3.fa'); out.linkBlock = await mode();
+  const ok = out.firstSmall === 'modeCanvas' && out.smallAfterFull === 'modeSingle' && out.bigAfterFull === 'modeCanvas' && out.linkBlock === 'modeBlocks';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
@@ -4296,7 +4315,7 @@ async function main() {
       let outcome;
       const t0 = Date.now();
       try {
-        await page.goto(baseUrl + '/index.html', { waitUntil: 'networkidle' });
+        await page.goto(baseUrl + '/index.html?view=full', { waitUntil: 'networkidle' });
         outcome = await fn(page);
       } catch (e) {
         outcome = { pass: false, detail: `threw: ${e.message}` };
