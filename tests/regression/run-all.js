@@ -4521,6 +4521,23 @@ check('Recent: reopening a paste keeps it as a paste with its text (opens again 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Trim Undo still restores a hard trim after a later soft trim', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'tr.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\n----ACGTACGTAC----\n>b\n----ACGTTCGTAC----\n>c\n--GGACGAACGTACTT--\n') });
+  await page.waitForTimeout(900);
+  const r = await page.evaluate(async () => {
+    const original = state.seqs.map(q => q.seq).join('|');
+    document.querySelector('input[name="trimMode"][value="hard"]').checked = true;
+    state.trimBoundaries = { leftTrimEnd: 1, rightTrimStart: 16 }; executeTrimming();
+    document.querySelector('input[name="trimMode"][value="soft"]').checked = true;
+    state.trimBoundaries = { leftTrimEnd: 0, rightTrimStart: 13 }; executeTrimming();
+    let msg = ''; const om = showMessage; showMessage = (m, t) => { msg = m; return om(m, t); };
+    undoTrimming(); showMessage = om;
+    await new Promise(res => setTimeout(res, 300));
+    return { restored: state.seqs.map(q => q.seq).join('|') === original, msg };
+  });
+  return { pass: r.restored, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

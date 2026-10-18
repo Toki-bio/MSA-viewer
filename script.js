@@ -16597,7 +16597,7 @@ function executeTrimming() {
     if (trimMode === 'soft') {
         // Soft trim: mark columns as excluded without deleting them
         state.softTrimBoundaries = { leftTrimEnd, rightTrimStart };
-        state.trimBackup = null;
+        // the alignment is unchanged: a hard trim done before stays undoable (Trim Undo)
         const clearBtn = document.getElementById('clearSoftTrimButton');
         if (clearBtn) clearBtn.style.display = '';
         const status = `Soft trim: ${leftRemoved} left + ${rightRemoved} right marked for clustering. Alignment unchanged.`;
