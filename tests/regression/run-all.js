@@ -4645,6 +4645,24 @@ check('Server API: MAFFT option values kept, BLAST hit count as requested, real 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+check('Audit batch 4a: thresholds stay ordered, fuzzy search needs a matching letter, reverse complement keeps ~ gaps', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'b4.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTAC\n>b\nACGTACGTAC\n') });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(() => {
+    const out = {};
+    const set = (id, v) => { el(id + 'Slider').value = v; el(id + 'Input').value = v; };
+    set('black', 55); set('dark', 80); set('light', 70);   // within the slider ranges; Dark and Light both above Black
+    validateThresholds();
+    out.th = [el('blackSlider').value, el('darkSlider').value, el('lightSlider').value].map(Number);
+    out.fuzzy = findFuzzyMatches('TTTTTTTT', 'ACG', 3).length;          // every window mismatches everywhere
+    out.fuzzyReal = findFuzzyMatches('TTACGTT', 'ACG', 1).length;
+    out.rc = reverseComplement('AC~~GT');
+    return out;
+  });
+  const ok = r.th[0] >= r.th[1] && r.th[1] >= r.th[2] && r.fuzzy === 0 && r.fuzzyReal > 0 && r.rc === 'AC~~GT';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

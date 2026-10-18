@@ -4084,7 +4084,7 @@ function _setupUnifiedScrollListener(container) {
 }
 
 function reverseComplement(seq) {
-    const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.', 'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H' };
+    const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.','~':'~', 'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H' };
     return seq.split('').reverse().map(b => {
         const rc = complement[b.toUpperCase()];
         if (!rc) return /[a-z]/.test(b) ? 'n' : 'N';
@@ -7574,8 +7574,9 @@ function validateThresholds() {
         el('darkSlider').value = el('darkInput').value = b;
         showMessage("Dark threshold adjusted to match Black threshold", 3000);
     }
-    if (d < l) {
-        el('lightSlider').value = el('lightInput').value = d;
+    const dNow = Math.min(d, b);   // Dark as it is now: compared before it was lowered, Light stayed above it
+    if (dNow < l) {
+        el('lightSlider').value = el('lightInput').value = dNow;
         showMessage("Light threshold adjusted to match Dark threshold", 3000);
     }
     ['blackSlider', 'darkSlider', 'lightSlider'].forEach(id => updateSliderBackground(el(id)));
@@ -15264,7 +15265,9 @@ function findFuzzyMatches(degapped, motif, maxMismatches) {
                 if (mismatches > maxMismatches) break;
             }
         }
-        if (mismatches <= maxMismatches) {
+        // at least one letter must match: with as many mismatches allowed as the motif is long, every
+        // window used to count as a hit
+        if (mismatches <= maxMismatches && matchingPositions.length > 0) {
             matches.push({ idx: i, len: motifLen, matchingPositions });
         }
     }
