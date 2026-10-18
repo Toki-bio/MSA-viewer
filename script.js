@@ -27256,6 +27256,17 @@ function _rcStr(s) {
     return s.split('').reverse().map(c => comp[c] || 'N').join('');
 }
 
+// The E-value threshold from the dialog: hits above it are dropped (it was accepted and never applied)
+function _applyEvalueCutoff(results, evalue) {
+    const cut = parseFloat(evalue);
+    if (!Number.isFinite(cut) || cut <= 0) return results;
+    for (const k of Object.keys(results)) {
+        const r = results[k];
+        if (r && Array.isArray(r.hits)) r.hits = r.hits.filter(h => !(h.hsps && h.hsps[0] && h.hsps[0].evalue > cut));
+    }
+    return results;
+}
+
 async function runBlastSearch(seqHeader, seqSeq, databases, evalue) {
     showMessage('Running BLAST search...', 0);
     const queryLen = seqSeq.replace(/[-\s]/g, '').length;
@@ -27336,7 +27347,7 @@ async function runBlastSearch(seqHeader, seqSeq, databases, evalue) {
     activeSearchCount++;
     try {
         const pairs = await Promise.all(databases.map(db => makeSearch(db)));
-        const results = Object.fromEntries(pairs);
+        const results = _applyEvalueCutoff(Object.fromEntries(pairs), evalue);
         showMessage('BLAST search complete!', 2000);
         displayBlastResults(seqHeader, queryLen, results);
     } catch (err) {

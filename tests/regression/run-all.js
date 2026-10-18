@@ -4977,6 +4977,15 @@ check('Codon library: a reference index that is NaN or a fraction does not crash
   return { pass: out.NaN === 2 && out['1.7'] === 2, detail: JSON.stringify(out) };
 });
 
+check('BLAST: the E-value threshold from the dialog drops weaker hits', async (page) => {
+  const r = await page.evaluate(() => {
+    if (typeof _applyEvalueCutoff !== 'function') return { missing: true };
+    const res = { db: { hits: [{ id: 'a', hsps: [{ evalue: 1e-20 }] }, { id: 'b', hsps: [{ evalue: 0.5 }] }, { id: 'c', hsps: [{ evalue: 1e-6 }] }] } };
+    return { ids: _applyEvalueCutoff(res, '1e-5').db.hits.map(h => h.id).join(',') };
+  });
+  return { pass: r.ids === 'a,c', detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
