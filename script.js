@@ -21651,6 +21651,9 @@ function copySequences(gapped, isFasta, index) {
     if (indices.length === 0) {
         indices = [index];
     }
+    // rows that exist (the menu's row may have been deleted since it opened)
+    indices = indices.filter(i => Number.isInteger(i) && state.seqs[i]);
+    if (!indices.length) { showMessage('Nothing to copy: select rows first.', 2500); return; }
     let text = '';
     if (isFasta) {
         text = indices.map(i => {

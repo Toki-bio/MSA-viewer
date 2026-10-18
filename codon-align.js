@@ -425,7 +425,7 @@
     function toFasta(records, width) {
         width = width || 0;
         return records.map(r => {
-            const s = width > 0 ? r.seq.match(new RegExp('.{1,' + width + '}', 'g')).join('\n') : r.seq;
+            const s = width > 0 ? (r.seq.match(new RegExp('.{1,' + width + '}', 'g')) || []).join('\n') : r.seq;   // an empty sequence has no lines
             return '>' + r.name + '\n' + s;
         }).join('\n') + '\n';
     }

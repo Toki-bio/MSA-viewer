@@ -4686,6 +4686,17 @@ check('Audit batch 4b: NEXUS title with "interleaved", asked group count, peel i
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+check('Copy with no selection and a stale row does not throw; codon toFasta wraps an empty sequence', async (page) => {
+  const CA = require(require('path').join(__dirname, '..', '..', 'codon-align.js'));
+  let fasta, err1 = null;
+  try { fasta = CA.toFasta([{ name: 'x', seq: '' }, { name: 'y', seq: 'ACGTAC' }], 4); } catch (e) { err1 = e.message; }
+  await page.setInputFiles('#fileInput', { name: 'cp.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGT\n>b\nACGA\n') });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(() => { state.selectedRows.clear(); let err = null, msg = ''; const om = showMessage; showMessage = (m, t) => { msg = m; return om(m, t); }; try { copySequences(true, true, 7); } catch (e) { err = e.message; } showMessage = om; return { err, msg }; });
+  const ok = !err1 && fasta === '>x\n\n>y\nACGT\nAC\n' && !r.err && /Nothing to copy/.test(r.msg);
+  return { pass: ok, detail: JSON.stringify({ err1, fasta, r }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
