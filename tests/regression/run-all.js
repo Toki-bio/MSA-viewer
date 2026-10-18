@@ -4538,6 +4538,23 @@ check('Trim Undo still restores a hard trim after a later soft trim', async (pag
   return { pass: r.restored, detail: JSON.stringify(r) };
 });
 
+check('Gap edits that change nothing add no Undo step and keep Redo', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'g.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGT----\n>b\nACGTACGT\n') });
+  await page.waitForTimeout(900);
+  const r = await page.evaluate(() => {
+    // a real edit, undone: one Redo step available
+    insertSingleGap(1, 2); undoDelete(true);
+    const before = { undo: state.deletedHistory.length, redo: state.redoHistory.length };
+    let msg = ''; const om = showMessage; showMessage = (m, t) => { msg = m; return om(m, t); };
+    removeSingleGap(0, 6);   // a gap in the row's trailing run: removing it gives the same row
+    showMessage = om;
+    return { before, after: { undo: state.deletedHistory.length, redo: state.redoHistory.length }, msg };
+  });
+  const noop = /No gap removed/.test(r.msg);
+  const ok = noop && r.after.undo === r.before.undo && r.after.redo === r.before.redo && r.before.redo === 1;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

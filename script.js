@@ -13508,6 +13508,13 @@ function deleteSelected() {
 /**
  * Push current state onto undo stack. Call BEFORE mutating state.
  */
+// An edit that turned out to change nothing: take back the undo entry it pushed and give back the
+// redo steps the push cleared (a no-op used to add an empty Undo step and lose Redo)
+function _dropNoOpUndo(redoBefore) {
+    state.deletedHistory.pop();
+    state.redoHistory = redoBefore || [];
+}
+
 function pushUndo(type) {
     _noteRowSelectionForReorder();
     state.deletedHistory.push({
@@ -25351,6 +25358,7 @@ function handleGeneDocGapToolClick(rowIndex, pos, tool) {
         }
     }
 
+    const redoBefore = state.redoHistory;
     pushUndo(`geneDoc-${tool}`);
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
@@ -25366,6 +25374,7 @@ function handleGeneDocGapToolClick(rowIndex, pos, tool) {
         }
     });
     if (!changed) {
+        _dropNoOpUndo(redoBefore);
         showMessage('No GeneDoc edit was applied.', 1800);
         return;
     }
@@ -25569,11 +25578,13 @@ function insertGapColumn(skipSelected = false) {
 function insertSingleGap(rowIndex, pos) {
     const s = state.seqs[rowIndex];
     if (!s) return;
+    const redoBefore = state.redoHistory;
     pushUndo('insertSingleGap');
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
     const result = geneDocInsertDashString(s.seq, pos);
     if (!result.changed) {
+        _dropNoOpUndo(redoBefore);
         showMessage('No gap inserted.', 1800);
         return;
     }
@@ -25589,11 +25600,13 @@ function removeSingleGap(rowIndex, pos) {
         showMessage("Not a gap.", 2000);
         return;
     }
+    const redoBefore = state.redoHistory;
     pushUndo('removeSingleGap');
     normalizeAlignmentLengths();
     const oldWidth = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
     const result = geneDocDeleteDashString(s.seq, pos);
     if (!result.changed) {
+        _dropNoOpUndo(redoBefore);
         showMessage('No gap removed.', 1800);
         return;
     }
