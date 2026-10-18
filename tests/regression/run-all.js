@@ -4293,6 +4293,25 @@ check('Default view: Canvas at every size; a chosen Full/Block holds for small f
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+check('Realign all keeps a row that has only gaps (MAFFT and codon/MACSE), as a gap row of the new width', async (page) => {
+  const fa = '>a\nATGGCTAAAGGTCTGCAAGAATTCGGTACC\n>empty\n------------------------------\n>b\nATGGCTAAGGGTCTGCAAGAATTCGGAACC\n>c\nATGGCAAAAGGTCTGCAGGAATTCGGTACC\n';
+  const out = {};
+  for (const type of ['2', 'codon']) {
+    await page.setInputFiles('#fileInput', { name: 'e.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+    await page.waitForTimeout(900);
+    out[type] = await page.evaluate(async (type) => {
+      const sel = document.getElementById('mafftSeqType'); sel.value = type; sel.dispatchEvent(new Event('change'));
+      document.getElementById('mafftReorderOnly').checked = false;
+      window.confirm = () => true;
+      await realignAll(); await new Promise(r => setTimeout(r, 500));
+      const e = state.seqs.find(q => q.header === 'empty');
+      return { n: state.seqs.length, names: state.seqs.map(q => q.header).join(','), emptyOk: !!e && /^-+$/.test(e.seq) && e.seq.length === state.seqs[0].seq.length };
+    }, type);
+  }
+  const ok = Object.values(out).every(o => o.n === 4 && o.emptyOk);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

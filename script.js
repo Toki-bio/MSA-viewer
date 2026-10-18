@@ -20924,10 +20924,25 @@ async function realignAll() {
         // Determine output order: guide tree order or original input order
         const outputOrder = guideOrder || state.seqs.map((s, i) => 'r' + i);
         const alignedById = new Map(aligned.map(x => [x.name.split(/\s+/)[0], x]));
+        // Every row must come back. A row with no residues (all gaps) may be dropped by the aligner
+        // (the codon/MACSE engine does): it returns as a gap row of the new width, in its place. Any
+        // other missing row means the result is incomplete, and nothing is changed.
+        const hasResidues = (q) => /[^-.\s]/.test(q.seq);
+        const lost = [...rowById].filter(([id, q]) => !alignedById.has(id) && hasResidues(q)).map(([, q]) => q.header);
+        if (lost.length) {
+            state.deletedHistory.pop();   // the undo entry pushed for this realign: nothing changed
+            showMessage(`The aligner returned no sequence for ${lost.slice(0, 3).join(', ')}${lost.length > 3 ? ` and ${lost.length - 3} more` : ''}; the alignment was not changed.`, 6000);
+            return;
+        }
+        const newWidth = aligned.reduce((m, x) => Math.max(m, x.seq.length), 0);
+        const placed = new Set();
+        const gapRow = (orig) => ({ header: orig.header, fullHeader: orig.fullHeader, seq: '-'.repeat(newWidth), gaplessPositions: calculateGaplessPositions('-'.repeat(newWidth)) });
         for (const id of outputOrder) {
             const key = String(id).split(/\s+/)[0];
             const a = alignedById.get(key);
             const orig = rowById.get(key);
+            placed.add(key);
+            if (!a && orig) { newSeqs.push(gapRow(orig)); continue; }
             if (a) {
                 const origCase = originalCaseByHeader.get(a.name);
                 newSeqs.push({
@@ -20938,6 +20953,8 @@ async function realignAll() {
                 });
             }
         }
+        for (const [key, orig] of rowById) if (!placed.has(key)) newSeqs.push(alignedById.has(key) ? null : gapRow(orig));   // not in the guide-tree order
+        for (let i = newSeqs.length - 1; i >= 0; i--) if (!newSeqs[i]) newSeqs.splice(i, 1);
         // Fallback: use aligned in MAFFT output order
         if (newSeqs.length === 0) {
             for (const a of aligned) {
