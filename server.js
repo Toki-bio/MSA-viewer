@@ -405,11 +405,15 @@ function searchDatabase(querySeq, dbSeqs, index, maxHits = 10) {
 
     // Smith-Waterman on top candidates only
     const scored = [];
+    // E = m * n * 2^-bits (search space: query length x database length); it was always 0, so any
+    // E-value threshold kept every hit, however weak
+    const dbTotal = dbSeqs.reduce((a, e) => a + (e.length || 0), 0) || 1;
     for (const { entry } of top) {
         const sw = smithWaterman(querySeq, entry.seq);
         if (sw && sw.score > 0 && sw.identity > 0) {
+            const evalue = querySeq.length * dbTotal * Math.pow(2, -sw.bitScore);
             scored.push({ id: entry.id, def: entry.def, length: entry.length,
-                          hsps: [{ ...sw, evalue: 0 }] });
+                          hsps: [{ ...sw, evalue }] });
         }
     }
     scored.sort((a, b) => b.hsps[0].bitScore - a.hsps[0].bitScore);
@@ -417,7 +421,7 @@ function searchDatabase(querySeq, dbSeqs, index, maxHits = 10) {
 }
 
 // ============ BLAST XML PARSER (for when real BLAST is available) ============
-function parseBlastResults(xmlOutput) {
+function parseBlastResults(xmlOutput, maxHits = 10) {
     const results = [];
     
     // Simple XML parsing - extract Hit elements
@@ -486,7 +490,7 @@ function parseBlastResults(xmlOutput) {
         }
     }
     
-    return results.slice(0, 10); // Return top 10 hits
+    return results.slice(0, maxHits);   // as many as the request asked for (blastn got -max_target_seqs maxHits)
 }
 
 
@@ -512,11 +516,12 @@ app.post('/api/blast', (req, res) => {
         return res.status(400).json({ error: `Database file not found: ${dbPath}` });
     }
 
+    // the search's temporary files: removed in the finally below, also when blastn or the parse fails
+    // (each failed search used to leave both in the temp folder)
+    const tmpDir = os.tmpdir();
+    const queryFile = path.join(tmpDir, `query_${Date.now()}.fasta`);
+    const outputFile = path.join(tmpDir, `blast_${Date.now()}.xml`);
     try {
-        // Create temporary FASTA file for query
-        const tmpDir = os.tmpdir();
-        const queryFile = path.join(tmpDir, `query_${Date.now()}.fasta`);
-        const outputFile = path.join(tmpDir, `blast_${Date.now()}.xml`);
 
         // Write query to file
         fs.writeFileSync(queryFile, query);
@@ -530,8 +535,7 @@ app.post('/api/blast', (req, res) => {
 
         if (process.arch === 'arm64' || !blastAvailable) {
             console.log('Using local SW search for: ' + dbName);
-            const querySeq = fs.readFileSync(queryFile, 'utf8').split('\n').filter(l => !l.startsWith('>')).join('').toUpperCase();
-            fs.unlinkSync(queryFile);
+            const querySeq = fs.readFileSync(queryFile, 'utf8').split(/\r?\n/).filter(l => !l.startsWith('>')).join('').replace(/\s+/g, '').toUpperCase();
             const cached = DB_CACHE[dbName];
             if (!cached || cached.length === 0) {
                 return res.status(400).json({ error: `Database ${dbName} not loaded` });
@@ -554,11 +558,7 @@ app.post('/api/blast', (req, res) => {
 
         // Read and parse results
         const xmlOutput = fs.readFileSync(outputFile, 'utf8');
-        const results = parseBlastResults(xmlOutput);
-
-        // Cleanup
-        fs.unlinkSync(queryFile);
-        fs.unlinkSync(outputFile);
+        const results = parseBlastResults(xmlOutput, maxHits);
 
         res.json({
             success: true,
@@ -573,6 +573,8 @@ app.post('/api/blast', (req, res) => {
             error: 'BLAST search failed',
             details: err.message
         });
+    } finally {
+        for (const f of [queryFile, outputFile]) { try { fs.unlinkSync(f); } catch (_) {} }
     }
 });
 
@@ -613,18 +615,17 @@ app.post('/api/blast-all', (req, res) => {
                     '-out', outputFile,
                 ], { stdio: 'ignore' });
 
-                const xmlOutput = fs.readFileSync(outputFile, 'utf8');
-                const results = parseBlastResults(xmlOutput);
-
-                allResults[dbName] = {
-                    success: true,
-                    numHits: results.length,
-                    hits: results
-                };
-
-                // Cleanup
-                fs.unlinkSync(queryFile);
-                fs.unlinkSync(outputFile);
+                try {
+                    const xmlOutput = fs.readFileSync(outputFile, 'utf8');
+                    const results = parseBlastResults(xmlOutput, 5);
+                    allResults[dbName] = {
+                        success: true,
+                        numHits: results.length,
+                        hits: results
+                    };
+                } finally {
+                    for (const f of [queryFile, outputFile]) { try { fs.unlinkSync(f); } catch (_) {} }   // also when blastn failed
+                }
 
             } catch (err) {
                 console.error(`BLAST error for ${dbName}:`, err.message);
@@ -752,6 +753,21 @@ const ALLOWED_MAFFT_OPTS = new Set([
     '--amino', '--nuc', '--clustalout', '--phylipout'
 ]);
 
+// The allowed options of a request, in order, with the number that follows an option taking one
+// (--maxiterate 1000): checking token by token kept the flag and dropped its value, and MAFFT then took
+// the input file name as the value.
+const MAFFT_VALUE_OPTS = new Set(['--maxiterate', '--retree', '--thread']);
+function allowedMafftArgs(opts) {
+    const out = [];
+    for (let i = 0; i < opts.length; i++) {
+        const opt = opts[i];
+        if (!ALLOWED_MAFFT_OPTS.has(opt)) continue;
+        out.push(opt);
+        if (MAFFT_VALUE_OPTS.has(opt) && /^-?\d+(\.\d+)?$/.test(String(opts[i + 1] ?? ''))) out.push(String(opts[++i]));
+    }
+    return out;
+}
+
 // Spawn MAFFT as child process to avoid shell injection
 function runMafft(args, inputFiles, env, timeout) {
     return new Promise((resolve, reject) => {
@@ -791,9 +807,7 @@ app.post('/api/mafft', async (req, res) => {
             const addMode = options.includes('--addfragments') ? '--addfragments' : '--add';
             mafftArgs.push(addMode, addFile, '--keeplength', inputFile);
             const extraOpts = options.filter(o => o !== '--addfragments' && o !== '--add');
-            for (const opt of extraOpts) {
-                if (ALLOWED_MAFFT_OPTS.has(opt)) mafftArgs.unshift(opt);
-            }
+            mafftArgs.unshift(...allowedMafftArgs(extraOpts));
             inputPath = inputFile;
         } else if (mode === 'realign-block') {
             fs.writeFileSync(inputFile, sequences);
@@ -802,9 +816,7 @@ app.post('/api/mafft', async (req, res) => {
         } else {
             fs.writeFileSync(inputFile, sequences);
             const mafftOpts = options.length > 0 ? options : ['--auto'];
-            for (const opt of mafftOpts) {
-                if (ALLOWED_MAFFT_OPTS.has(opt)) mafftArgs.push(opt);
-            }
+            mafftArgs.push(...allowedMafftArgs(mafftOpts));
             mafftArgs.push(inputFile);
             inputPath = inputFile;
         }
@@ -1195,7 +1207,13 @@ app.post('/api/bam2sam', (req, res) => {
 
     try {
         const args = ['view', '-h'];
-        if (region && /^[\w.-]+:\d+-\d+$/.test(region)) args.push(region);
+        // chr1:1,000-5,000 as copied from IGV/UCSC; a region that still does not read as name:start-end
+        // is refused (it used to be dropped, and the whole BAM was converted)
+        if (region) {
+            const reg = String(region).replace(/,/g, '').trim();
+            if (!/^[\w.-]+:\d+-\d+$/.test(reg)) return res.status(400).json({ error: `Region not understood: ${region} (use name:start-end)` });
+            args.push(reg);
+        }
         args.push(resolved.path);
 
         const child = spawn('samtools', args, { timeout: 30000 });   // spawn has no maxBuffer: the cap is in collectChildOutput

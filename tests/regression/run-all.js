@@ -4626,6 +4626,25 @@ check('BLAST worker: database records shorter than 20 nt (primers) are kept and 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Server API: MAFFT option values kept, BLAST hit count as requested, real E-values in the fallback search', async () => {
+  const vm = require('vm'), fs = require('fs'), path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'server.js'), 'utf8');
+  // cut a top-level declaration out of server.js by brace matching (the server itself would start listening)
+  const cut = (head) => { const a = src.indexOf(head); if (a < 0) return ''; let i = src.indexOf('{', a), d = 0; for (; i < src.length; i++) { if (src[i] === '{') d++; else if (src[i] === '}' && --d === 0) break; } let j = i + 1; if (src[j] === ')') j++; if (src[j] === ';') j++; return src.slice(a, j); };
+  const decl = (head) => { const a = src.indexOf(head); return a < 0 ? '' : src.slice(a, src.indexOf(']);', a) + 3); };   // a const Set([...]) declaration
+  const code = [decl('const ALLOWED_MAFFT_OPTS'), decl('const MAFFT_VALUE_OPTS'), cut('function allowedMafftArgs'), cut('function parseBlastResults')].join('\n');
+  const ctx = {}; vm.createContext(ctx); vm.runInContext(code, ctx);
+  const out = {};
+  out.mafft = typeof ctx.allowedMafftArgs === 'function' ? vm.runInContext("allowedMafftArgs(['--maxiterate','1000','--localpair','--thread','4','--bogus','x'])", ctx).join(' ') : 'no helper';
+  const hit = (n) => `<Hit><Hit_num>${n}</Hit_num><Hit_id>h${n}</Hit_id><Hit_def>d</Hit_def><Hit_len>100</Hit_len><Hit_hsps><Hsp><Hsp_bit-score>50</Hsp_bit-score><Hsp_score>40</Hsp_score><Hsp_evalue>1e-10</Hsp_evalue><Hsp_query-from>1</Hsp_query-from><Hsp_query-to>40</Hsp_query-to><Hsp_hit-from>1</Hsp_hit-from><Hsp_hit-to>40</Hsp_hit-to><Hsp_identity>40</Hsp_identity><Hsp_align-len>40</Hsp_align-len><Hsp_qseq>A</Hsp_qseq><Hsp_hseq>A</Hsp_hseq><Hsp_midline>|</Hsp_midline></Hsp></Hit_hsps></Hit>`;
+  ctx.xml = Array.from({ length: 30 }, (_, i) => hit(i + 1)).join('');
+  out.hits = vm.runInContext('parseBlastResults(xml, 25).length', ctx);
+  out.evalueCode = /evalue: 0 \}/.test(src) ? 'evalue 0' : (/Math\.pow\(2, -sw\.bitScore\)/.test(src) ? 'computed' : 'unknown');
+  out.crlf = src.includes(String.raw`.split(/\r?\n/).filter(l => !l.startsWith('>')).join('').replace(/\s+/g, '').toUpperCase()`);   // the fallback search's query: no CR or spaces
+  const ok = out.mafft === '--maxiterate 1000 --localpair --thread 4' && out.hits === 25 && out.evalueCode === 'computed' && out.crlf;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
