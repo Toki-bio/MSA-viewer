@@ -4812,6 +4812,24 @@ check('Colour reset clears name colours but keeps SNP-group colours (DOM and Can
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Codon marks: a synonymous codon reached by several changes is marked apart (dashed), a single synonymous change stays plain', async (page) => {
+  // codon 2: TCG (Ser) in the reference; AGT (Ser, all three bases changed) in row 2; codon 3: CTG -> TTG (Leu, one change) in row 3
+  const fa = '>ref\nATGTCGCTGAAATAA\n>multi\nATGAGTCTGAAATAA\n>single\nATGTCGTTGAAATAA\n';
+  await page.setInputFiles('#fileInput', { name: 'syn.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+  await page.waitForTimeout(900);
+  await setMode(page, 'full'); await page.waitForTimeout(300);
+  const r = await page.evaluate(async () => {
+    document.getElementById('codonCode').value = '1'; document.getElementById('codonFrame').value = '0';
+    const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+    await new Promise(res => setTimeout(res, 800));
+    const sn = state._codonData.synNonSyn;
+    const cls = (row, pos) => document.querySelector(`.seq-line[data-seq-index="${row}"] .seq-data span[data-pos="${pos}"]`)?.className || '';
+    return { multi: [3, 4, 5].map(p => sn[1][p]).join(','), single: sn[2][6], domMulti: /codon-synmulti/.test(cls(1, 3)), domSingle: /codon-syn\b/.test(cls(2, 6)) && !/synmulti/.test(cls(2, 6)) };
+  });
+  const ok = r.multi === 'synmulti,synmulti,synmulti' && r.single === 'syn' && r.domMulti && r.domSingle;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

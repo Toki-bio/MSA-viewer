@@ -4872,9 +4872,12 @@ function _computeCodonAnalysis(seqs, len, frameOffset) {
                         // Codons with an ambiguous base (N, R, Y, ...) are left unmarked: the
                         // change cannot be classed (AAN vs AAA was marked non-synonymous)
                         if (codon !== refCodon && /^[ACGT]{3}$/.test(codon) && /^[ACGT]{3}$/.test(refCodon)) {
+                            const nDiff = [0, 1, 2].filter(k => codon[k] !== refCodon[k]).length;
                             for (let k = 0; k < 3; k++) {
                                 if (codon[k] === refCodon[k]) continue;
-                                if (aa === refAA) { synNonSyn[i][codonCols[k]] = 'syn'; continue; }
+                                // the same amino acid through two or three changed bases: synonymous, marked apart
+                                // (dashed), since one of those changes alone may change the amino acid
+                                if (aa === refAA) { synNonSyn[i][codonCols[k]] = nDiff > 1 ? 'synmulti' : 'syn'; continue; }
                                 const mutCodon = refCodon.substring(0, k) + codon[k] + refCodon.substring(k + 1);
                                 const mutAA = activeCode[mutCodon] || 'X';
                                 synNonSyn[i][codonCols[k]] = (mutAA !== refAA) ? 'nonsyn' : 'syn';
@@ -6365,7 +6368,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 if (sn) {   // text-decoration underline, 2 px under the baseline; non-synonymous 2 px thick
                     ctx.fillStyle = sn === 'nonsyn' ? '#d93025' : '#2e9d57';
                     const th = sn === 'nonsyn' ? 2 * CSS1 : CSS1;
-                    ctx.fillRect(x, Math.min(y + CHAR_H - th, y + Math.round((m.ascent + 2) * dpr) / dpr), CHAR_W, th);
+                    const uy = Math.min(y + CHAR_H - th, y + Math.round((m.ascent + 2) * dpr) / dpr);
+                    if (sn === 'synmulti') {   // dashed, like the DOM's text-decoration-style: dashed
+                        const dash = Math.max(CSS1, Math.round(2 * dpr) / dpr);
+                        for (let dx = 0; dx < CHAR_W; dx += 2 * dash) ctx.fillRect(x + dx, uy, Math.min(dash, CHAR_W - dx), th);
+                    } else ctx.fillRect(x, uy, CHAR_W, th);
                 }
                 // Decorations: underline (TSD bold style), overline (covered repeat), line-through (trim)
                 const deco = ov ? ov.deco : null;

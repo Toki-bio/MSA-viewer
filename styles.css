@@ -3544,6 +3544,12 @@ body.codon-mode span.codon-syn {
     text-decoration-color: #2e9d57;
     text-underline-offset: 2px;
 }
+/* Synonymous through two or three changed bases: dashed (one of the changes alone may change the amino acid) */
+body.codon-mode span.codon-synmulti {
+    text-decoration: underline dashed;
+    text-decoration-color: #2e9d57;
+    text-underline-offset: 2px;
+}
 body.codon-mode span.codon-nonsyn {
     text-decoration: underline;
     text-decoration-color: #d93025;
