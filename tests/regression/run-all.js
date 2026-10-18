@@ -4663,6 +4663,29 @@ check('Audit batch 4a: thresholds stay ordered, fuzzy search needs a matching le
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Audit batch 4b: NEXUS title with "interleaved", asked group count, peel ignores N, no NaN distances, a and A cluster together', async (page) => {
+  const path = require('path');
+  const KT = require(path.join(__dirname, '..', '..', 'kmer-tree.js'));
+  const out = {};
+  // k-mer groups: 12 sequences, Groups = 8 with Min size 10 cannot be made; the message must still say 8
+  const seqs = Array.from({ length: 12 }, (_, i) => ({ seq: 'ACGTACGTAC'.split('').map((c, k) => (k === i % 10 ? 'T' : c)).join('') }));
+  const tree = KT.guideTree(seqs, 3);
+  const cut = KT.cutTree(tree, 8, 10);
+  out.asked = cut.asked; out.reached = cut.reached;
+  out.nan = Array.from(KT.pDistanceMatrix([{ seq: '' }, { seq: '' }, { seq: '' }])[0]).some(Number.isNaN);
+  const r = await page.evaluate(() => {
+    const o = {};
+    o.interleave = _nexusBlockSettings('BEGIN DATA; TITLE Matrix not interleaved; DIMENSIONS NTAX=2 NCHAR=8; FORMAT DATATYPE=DNA; MATRIX').interleave;
+    o.interleaveReal = _nexusBlockSettings('BEGIN DATA; DIMENSIONS NTAX=2 NCHAR=8; FORMAT DATATYPE=DNA INTERLEAVE; MATRIX').interleave;
+    const sc = new SINEClusterer([{ id: 'a', seq: 'ACGTa' }, { id: 'b', seq: 'ACGTA' }, { id: 'c', seq: 'ACGTC' }]);
+    o.casePatterns = Object.keys(sc.getPositionPatterns(4, [0, 1, 2])).sort().join(',');
+    return o;
+  });
+  Object.assign(out, r);
+  const ok = out.asked === 8 && out.reached === false && !out.nan && out.interleave === false && out.interleaveReal === true && out.casePatterns === 'A,C';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

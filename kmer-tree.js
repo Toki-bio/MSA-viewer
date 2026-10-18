@@ -160,7 +160,7 @@
         for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
             const a = M[i], b = M[j]; let both = 0, diff = 0;
             for (let c = 0; c < L; c++) { const x = a[c], y = b[c]; if (x < 0 || y < 0) continue; both++; if (x !== y) diff++; }
-            const d = both >= need ? Math.min(0.75, diff / both) / 0.75 : 1;
+            const d = both >= need && both > 0 ? Math.min(0.75, diff / both) / 0.75 : 1;   // no shared column: 0/0 was NaN
             dist[i][j] = d; dist[j][i] = d;
         }
         return dist;
@@ -247,6 +247,7 @@
             let best = runs[0]; runs.forEach(r => { if (r.v > best.v) best = r; });
             pick = { r: best, s: runBounds(merges, best).span };
         }
+        const asked = target;   // what the user asked for; target becomes the count actually made
         target = pick.r.v;
         const b = runBounds(merges, pick.r);
         const mid = (b.lo + b.hi) / 2;
@@ -269,7 +270,7 @@
             if (cnt && sat / cnt > 0.5) warnings.push('k-too-long');
         }
         return {
-            groups: part.groups, unassigned: part.unassigned, target, reached, auto, minSize,
+            groups: part.groups, unassigned: part.unassigned, target, asked: auto ? null : asked, reached, auto, minSize,
             cutHeight: mid, merges: m, plateau: info(pick.r), alternatives, warnings,
             k: tree.k, metric: tree.metric
         };

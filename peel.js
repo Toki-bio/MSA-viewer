@@ -135,7 +135,7 @@
         for (const i of best.members) {
             let hit = 0, known = 0; const c = codes[i];
             best.cols.forEach((j, q) => { if (c[j] === 5) return; known++; if (c[j] === want[q]) hit++; });
-            (known === 0 || hit >= theta * best.cols.length ? keep : drop).push(i);
+            (known === 0 || hit >= theta * known ? keep : drop).push(i);   // of the columns it has data for (N skipped)
         }
         if (!drop.length) return best;
         return Object.assign({}, best, { members: keep, size: keep.length, dropped: drop.length });

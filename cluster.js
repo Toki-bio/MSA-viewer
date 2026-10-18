@@ -25,7 +25,7 @@ class SINEClusterer {
         this.sequences = sequences;
         this.nSeqs = sequences.length;
         this.alnLen = sequences[0].seq.length;
-        this.matrix = sequences.map(s => s.seq.split(''));
+        this.matrix = sequences.map(s => s.seq.toUpperCase().split(''));   // a and A are the same base (soft-masked rows)
         this._allSeqIndices = Array.from({length: this.nSeqs}, (_, i) => i);
         this._globalMaxSizeCache = null;
         this._columnCharCounts = null;

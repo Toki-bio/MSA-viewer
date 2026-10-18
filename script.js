@@ -7083,7 +7083,7 @@ function _nexusBlockSettings(blockText) {
         ntax: ntax ? parseInt(ntax, 10) : null,
         nchar: nchar ? parseInt(nchar, 10) : null,
         datatype: (opt(/\bDATATYPE\s*=\s*(\w+)/i) || 'standard').toLowerCase(),
-        interleave: /\bINTERLEAVE(?!\s*=\s*NO\b)/i.test(blockText),
+        interleave: /\bFORMAT\b[^;]*\bINTERLEAVE\b(?!\s*=\s*NO\b)/i.test(blockText),
         gap: sym('GAP'),
         missing: sym('MISSING') || '?',
         matchchar: sym('MATCHCHAR'),
@@ -17173,7 +17173,7 @@ async function clusterByGuideTree() {
             summary: { nClusters: clusters.length, nAssigned, nUnassigned: unassigned.length, nTotal: state.seqs.length }
         }, 'kmers', canPeel ? 'peeled groups' : k + '-mer groups');
         const warn = clampNote.slice();
-        if (!cut.auto && !cut.reached) warn.push(`Only ${clusters.length} group${clusters.length === 1 ? '' : 's'} of at least ${minSize} sequences exist (asked for ${cut.target}); lower Min size or Groups.`);
+        if (!cut.auto && !cut.reached) warn.push(`Only ${clusters.length} group${clusters.length === 1 ? '' : 's'} of at least ${minSize} sequences exist (asked for ${cut.asked ?? cut.target}); lower Min size or Groups.`);
         if (cut.warnings.includes('k-too-long')) warn.push(`k=${k} is too long for these sequences: most pairs share no ${k}-mers, so the tree is unreliable. Use a smaller k or the aligned-columns distance.`);
         if (cut.warnings.includes('one-giant-group')) warn.push('Almost everything fell into one group: the sequences may be too similar to split, or k is too short to tell them apart.');
         if (wantAligned && metric !== 'pdist') warn.push('The rows differ in length, so the k-mer distance was used.');
@@ -17191,7 +17191,7 @@ async function clusterByGuideTree() {
             k: cut.k || k,
             cut: cut.cutHeight,
             auto: cut.auto,
-            target: cut.target,
+            target: cut.target, asked: cut.asked,
             peelDiag: canPeel ? peelDiag : null,
             source: 'kmers',
             sourceLabel: canPeel ? 'peeled groups' : k + '-mer groups'
@@ -18416,7 +18416,7 @@ function _geSummaryHtml() {
         const aligned = m.metric === 'pdist';
         if (m.metric === 'peel') sub = 'peeled by diagnostic columns (at least <span class="ge-var">' + (m.peelDiag || 2) + '</span>) · ' + (m.nGroups || 0) + ' group' + (m.nGroups === 1 ? '' : 's') + ' of at least ' + (m.minSize || 1);
         else sub = (aligned ? 'aligned columns' : ('k-mer tree · k=<span class="ge-var">' + (m.k || 6) + '</span>'))
-            + ' · ' + (m.auto ? 'auto' : 'asked for ' + m.target) + ' (' + (m.nGroups || 0) + ' group' + (m.nGroups === 1 ? '' : 's') + ' of at least ' + (m.minSize || 1) + ')'
+            + ' · ' + (m.auto ? 'auto' : 'asked for ' + (m.asked ?? m.target)) + ' (' + (m.nGroups || 0) + ' group' + (m.nGroups === 1 ? '' : 's') + ' of at least ' + (m.minSize || 1) + ')'
             + (cut ? (' · cut <span class="ge-var">' + cut + '</span>') : '');
         if (m.plateau && m.plateau.share != null) {
             sub += ' · stable over <span class="ge-var">' + Math.round(m.plateau.share * 100) + '%</span> of the tree height';
