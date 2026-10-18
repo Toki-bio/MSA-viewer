@@ -20821,7 +20821,9 @@ async function realignSelectedBlock(opts) {
             };
         });
         state.selectedColumns.clear();
-        if (result.aligned) _dropColumnAnalysesAfterRealign();
+        // aligned columns, or whole rows reverse-complemented (reorder-only with Adjust direction): the
+        // groups and 2D blocks describe columns that no longer hold what they did
+        if (result.aligned || (result.flipped && result.flipped.length)) _dropColumnAnalysesAfterRealign();
         renderAlignment();
         const bits = [];
         if (result.aligned) bits.push('Region realigned');
@@ -21062,6 +21064,7 @@ function realignSelected() {
         }
 
         state.selectedColumns.clear();
+        _dropColumnAnalysesAfterRealign();   // the realigned rows' columns changed
         renderAlignment();
         showMessage(`Realigned ${selectedIndices.length} selected sequences!`, 2000);
     }).catch(err => {

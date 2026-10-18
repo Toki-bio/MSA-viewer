@@ -4331,6 +4331,36 @@ check('Names: a duplicated row exports under its new name; Realign region keeps 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Realign selected rows and a reorder-only run that reverse-complements rows clear groups and 2D blocks (they describe the old columns)', async (page) => {
+  const fa = '>a\nATGGCTAAAGGTCTGCAAGAATTCGGTACC\n>b\nATGGCTAAGGGTCTGCAAGAATTCGGAACC\n>c\nGGTACCGAATTCTTGCAGACCTTTAGCCAT\n';
+  const out = {};
+  for (const path of ['selected', 'reorderOnlyRc']) {
+    await page.setInputFiles('#fileInput', { name: 'p.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+    await page.waitForTimeout(900);
+    out[path] = await page.evaluate(async (path) => {
+      window.confirm = () => true;
+      state.clusterResults = { clusters: [{ sequences: [] }], unassigned: [] };
+      state.blockMask = { blocks: [], row_headers: [] };
+      if (path === 'selected') {
+        state.selectedRows.clear(); [0, 1].forEach(i => state.selectedRows.add(i));
+        realignSelected();
+        for (let t = 0; t < 60 && !/Realigned/.test(document.body.innerText); t++) await new Promise(r => setTimeout(r, 100));
+      } else {
+        document.getElementById('mafftAdjustDir').checked = true;
+        document.getElementById('mafftReorderOnly').checked = true;
+        const sel = document.getElementById('mafftSeqType'); sel.value = '2'; sel.dispatchEvent(new Event('change'));
+        state.selectedColumns.clear(); for (let c = 0; c < 30; c++) state.selectedColumns.add(c);
+        await realignSelectedBlock({ applyAdjustFull: true, applyReorder: true });
+        document.getElementById('mafftAdjustDir').checked = false; document.getElementById('mafftReorderOnly').checked = false;
+      }
+      await new Promise(r => setTimeout(r, 400));
+      return { clusters: !!state.clusterResults, mask: !!state.blockMask, flipped: state.seqs[2].seq.startsWith('ATGG') };
+    }, path);
+  }
+  const ok = !out.selected.clusters && !out.selected.mask && (!out.reorderOnlyRc.flipped || (!out.reorderOnlyRc.clusters && !out.reorderOnlyRc.mask));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
