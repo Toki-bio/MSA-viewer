@@ -21191,6 +21191,9 @@ async function addSequencesJustAdd() {
             const { args: extraArgs, seqType } = getMafftExtraArgs();
             const consensusArgs = [...extraArgs];
 
+            // the alignment this result is computed for: if it changes while MAFFT runs (an edit, an undo,
+            // another file), the result would bring back the old rows
+            const startSeqs = state.seqs, startFp = _seqsFingerprint();
             let workingSeqs = state.seqs.map(seqObj => ({ ...seqObj }));
             const alignedNewSeqs = [];
             for (const ns of newSeqs) {
@@ -21212,6 +21215,11 @@ async function addSequencesJustAdd() {
                 workingSeqs.push({ ...ns });
             }
 
+            if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp) {
+                state.deletedHistory.pop();   // the undo entry pushed for this add: nothing was added
+                showMessage('The alignment changed while the new sequences were being aligned; nothing was added. Add them again.', 6000);
+                return;
+            }
             const existingCount = workingSeqs.length - alignedNewSeqs.length;
             if (atTop) {
                 state.seqs = [...alignedNewSeqs, ...workingSeqs.slice(0, existingCount)];
@@ -21221,6 +21229,7 @@ async function addSequencesJustAdd() {
             _dropColumnAnalysesAfterRealign();
         } catch (err) {
             console.error('Add-to-consensus alignment failed:', err);
+            state.deletedHistory.pop();   // nothing was added
             showMessage(`Add-to-consensus alignment failed: ${err.message}`, 4000);
             return;
         }

@@ -4386,6 +4386,23 @@ check('Consensus row hidden: Copy Consensus and Add > Align to consensus use the
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Add & Align: a result computed for an alignment that changed meanwhile is not applied', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'x.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTACGTACGTACGT\n>b\nACGTACGTACGTACGTACGT\n>c\nACGTACGTACGTACGTACGT\n') });
+  await page.waitForTimeout(900);
+  const r = await page.evaluate(async () => {
+    const orig = window.alignSequenceToConsensusProfile;
+    window.alignSequenceToConsensusProfile = async (...a) => { const res = await orig(...a); state.seqs = state.seqs.slice(0, 2); return res; };   // the user deletes row c meanwhile
+    let msg = ''; const om = showMessage; showMessage = (m, t) => { msg = m; return om(m, t); };
+    document.getElementById('addSeqInput').value = '>new\nACGTACGTACGTACGT';
+    document.getElementById('addSeqAlignCons').checked = true;
+    await addSequencesJustAdd(); await new Promise(res => setTimeout(res, 500));
+    window.alignSequenceToConsensusProfile = orig; showMessage = om;
+    return { names: state.seqs.map(q => q.header).join(','), msg };
+  });
+  const ok = r.names === 'a,b' && /changed/i.test(r.msg);
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
