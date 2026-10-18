@@ -7353,7 +7353,11 @@ async function readSequenceFile(file) {
         try { parsed = typeof AB1Parser !== 'undefined' ? AB1Parser.parse(buf) : null; }
         catch (e) { throw new Error(`${file.name} is not a readable AB1 trace (truncated or damaged file)`); }
         if (parsed && parsed.sequence) {
-            const header = file.name.replace(/\.[^.]+$/, ''); // any extension: detected by content
+            // any extension: detected by content. Another trace under the same name (two runs saved as
+            // sample.ab1) gets its own name, so each row opens its own chromatogram
+            const base = file.name.replace(/\.[^.]+$/, '');
+            let header = base, k = 1;
+            while (state.ab1Traces[header] && state.ab1Traces[header].sequence !== parsed.sequence) header = base + '_' + (++k);
             state.ab1Traces[header] = parsed;
             return { text: `>${header}\n${parsed.sequence}\n`, header };
         }
@@ -12139,6 +12143,19 @@ async function parseAndRender(isFromDrop = false) {
         }
         _clearClusterTrimState();
         _dropColumnAnalyses();
+        // Chromatograms belong to the rows they were read for: keep a trace only if a row of the new
+        // alignment has its name and its bases (forward, trimmed or reverse-complemented); a row of
+        // another file that happens to share the name must not open it
+        if (state.ab1Traces) {
+            const COMP = { A: 'T', T: 'A', C: 'G', G: 'C' };
+            const rc = (t) => t.split('').reverse().map(c => COMP[c] || c).join('');
+            for (const name of Object.keys(state.ab1Traces)) {
+                const row = parsed.find(q => q.header === name);
+                const res = row ? row.seq.replace(/[-.]/g, '').toUpperCase() : '';
+                const tr = String(state.ab1Traces[name].sequence || '').toUpperCase();
+                if (!res || !(tr.includes(res) || rc(tr).includes(res))) delete state.ab1Traces[name];
+            }
+        }
         // Undo/redo hold the previous file's rows: Ctrl+Z after a load put them back under the new file's name
         state.deletedHistory = [];
         state.redoHistory = [];

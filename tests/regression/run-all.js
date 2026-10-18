@@ -4449,6 +4449,33 @@ check('Delete with every row selected keeps the alignment (says at least one row
   return { pass: r.n === 2 && /at least one/i.test(r.msg), detail: JSON.stringify(r) };
 });
 
+check('Chromatograms: a new file\'s same-named row does not open the old trace; two runs called sample.ab1 keep separate traces', async (page) => {
+  await page.goto(page.url(), { waitUntil: 'networkidle' });
+  const r = await page.evaluate(async () => {
+    const out = {};
+    // two different runs, both saved as sample.ab1
+    const origParse = AB1Parser.parse, origLooks = AB1Parser.looksLikeAb1;
+    let next = null; AB1Parser.parse = () => next; AB1Parser.looksLikeAb1 = () => true;
+    next = { sequence: 'ACGTACGTAAACCCGGGTTT' }; const h1 = (await readSequenceFile(new File(['x'], 'sample.ab1'))).header;
+    next = { sequence: 'TTTTGGGGCCCCAAAATTTT' }; const h2 = (await readSequenceFile(new File(['y'], 'sample.ab1'))).header;
+    AB1Parser.parse = origParse; AB1Parser.looksLikeAb1 = origLooks;
+    out.names = [h1, h2];
+    out.distinct = state.ab1Traces[h1]?.sequence !== state.ab1Traces[h2]?.sequence;
+    // a new file with a row called "sample" but other bases: the old trace must not stay attached to it
+    fastaInput.value = '>sample\nGGGGGGGGGGGGGGGGGGGG\n>other\nACGTACGTACGTACGTACGT\n';
+    await parseAndRender(true); await new Promise(res => setTimeout(res, 300));
+    out.staleKept = !!state.ab1Traces.sample;
+    // a file that contains the read itself (trimmed) keeps it
+    state.ab1Traces.sample = { sequence: 'ACGTACGTAAACCCGGGTTT' };
+    fastaInput.value = '>sample\n--GTACGTAAACCCGG--\n>other\nACGTACGTACGTACGTAC\n';
+    await parseAndRender(true); await new Promise(res => setTimeout(res, 300));
+    out.realKept = !!state.ab1Traces.sample;
+    return out;
+  });
+  const ok = r.names[0] === 'sample' && r.names[1] === 'sample_2' && r.distinct && !r.staleKept && r.realKept;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
