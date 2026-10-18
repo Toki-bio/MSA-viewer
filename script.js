@@ -8512,6 +8512,8 @@ async function handleBamFile(event) {
 
         if (warnings.length) {
             warnings.forEach(w => console.warn('BAM:', w));
+            // shown, not only logged: a reference length that differs means the reads may not line up
+            showMessage('Reads: ' + warnings.join(' '), 6000);
         }
 
         if (!matchedRef) {
@@ -19005,7 +19007,7 @@ function _modelPairDistance(seqOne, seqTwo, model, protein = false) {
 
 function _newickName(name) {
     const cleaned = String(name || 'seq').replace(/\s+/g, '_');
-    if (/^[A-Za-z0-9_.:-]+$/.test(cleaned)) return cleaned;
+    if (/^[A-Za-z0-9_.-]+$/.test(cleaned)) return cleaned;   // ':' starts a branch length in Newick: such a name is quoted
     return `'${cleaned.replace(/'/g, "''")}'`;
 }
 

@@ -519,8 +519,9 @@ app.post('/api/blast', (req, res) => {
     // the search's temporary files: removed in the finally below, also when blastn or the parse fails
     // (each failed search used to leave both in the temp folder)
     const tmpDir = os.tmpdir();
-    const queryFile = path.join(tmpDir, `query_${Date.now()}.fasta`);
-    const outputFile = path.join(tmpDir, `blast_${Date.now()}.xml`);
+    const uniq = Date.now() + '_' + Math.random().toString(36).slice(2, 8);   // two requests in one millisecond shared files
+    const queryFile = path.join(tmpDir, `query_${uniq}.fasta`);
+    const outputFile = path.join(tmpDir, `blast_${uniq}.xml`);
     try {
 
         // Write query to file
@@ -796,7 +797,8 @@ app.post('/api/mafft', async (req, res) => {
     }
 
     const tmpDir = os.tmpdir();
-    const timestamp = Date.now();
+    // unique per request: two requests in the same millisecond shared (and overwrote) each other's files
+    const timestamp = Date.now() + '_' + process.pid + '_' + Math.random().toString(36).slice(2, 8);
     const inputFile = path.join(tmpDir, `mafft_input_${timestamp}.fasta`);
     const addFile = path.join(tmpDir, `mafft_add_${timestamp}.fasta`);
     const outputFile = path.join(tmpDir, `mafft_output_${timestamp}.fasta`);
@@ -1186,7 +1188,8 @@ app.get('/api/ssh-ls', (req, res) => {
     if (pathErr) return res.status(400).json({ error: pathErr });
     if (!SSH_SERVERS[serverKey]) return res.status(400).json({ error: `Unknown server: ${serverKey}` });
 
-    const sshArgs = buildSshArgs(serverKey, `ls -1p -- ${shellQuoteRemotePath(dirPath)}`);
+    // a marker before the listing: a login banner printed by the server is not a directory entry
+    const sshArgs = buildSshArgs(serverKey, `echo =LS= && ls -1p -- ${shellQuoteRemotePath(dirPath)}`);
     if (!sshArgs) return res.status(400).json({ error: 'Bad server config' });
 
     const child = spawn('plink', sshArgs, { timeout: 10000 });
@@ -1196,7 +1199,9 @@ app.get('/api/ssh-ls', (req, res) => {
     child.on('close', (code) => {
         if (res.headersSent) return;
         if (code !== 0) return res.status(500).json({ error: stderr.trim() || `ls failed` });
-        const entries = stdout.trim().split('\n').filter(Boolean);
+        const at = stdout.indexOf('=LS=');
+        const listing = at >= 0 ? stdout.slice(at + 4) : stdout;
+        const entries = listing.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
         res.json({ dir: dirPath, entries });
     });
     child.on('error', (err) => { if (!res.headersSent) res.status(500).json({ error: `SSH failed: ${err.message}` }); });

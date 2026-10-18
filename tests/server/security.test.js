@@ -172,7 +172,8 @@ async function main() {
         if (fs.existsSync(argLog)) fs.unlinkSync(argLog);
         r = await request(port, '/api/ssh-ls?server=inner');
         const lsArgs = fs.existsSync(argLog) ? JSON.parse(fs.readFileSync(argLog, 'utf8')) : [];
-        const lsOut = spawnSync('sh', ['-c', lsArgs[lsArgs.length - 1] || ''], { env: remoteEnv, encoding: 'utf8' }).stdout.trim().split('\n');
+        const lsRaw = spawnSync('sh', ['-c', lsArgs[lsArgs.length - 1] || ''], { env: remoteEnv, encoding: 'utf8' }).stdout;
+        const lsOut = lsRaw.slice(lsRaw.indexOf('=LS=') + 4).trim().split('\n');   // the listing follows the marker
         check('ssh-ls with no folder lists the remote home', lsOut.join('|') === '-1p|--|/home/remote', JSON.stringify(lsOut));
 
         // ---- push-to-load queue: the jump-host command prints the same markers as the direct one ----
