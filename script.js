@@ -5796,7 +5796,21 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         state.conservationDataCache?.data, state.consensusCache?.values, state.trimBoundaries, state.softTrimBoundaries,
         state._diffColumns, state.tsdMarks, state.searchHistory?.length, getEffectiveColorScheme()];
 
-    const totalContentW = NAME_W + nSlots * CHAR_W + 4;
+    // Length badge after each row's last column, as in Full/Block (.seq-length): the gapless length
+    // in a grey box. Its width is measured once for the longest number.
+    const BADGE_FONT = 'bold ' + Math.round(fontSizePx * 0.85) + 'px "Courier New", monospace';
+    const BADGE_GAP = 6, BADGE_PAD = 4;
+    const _gaplessLen = (q) => { const g = q.gaplessPositions; return (g && g.length) ? (g[g.length - 1] || 0) : q.seq.replace(/[-.]/g, '').length; };
+    const BADGE_W = (() => {
+        let maxLen = 0;
+        for (let i = 0; i < nSeqs; i++) maxLen = Math.max(maxLen, _gaplessLen(state.seqs[i]));
+        ctx.save(); ctx.font = BADGE_FONT;
+        const tw = ctx.measureText(String(Math.max(maxLen, len))).width;
+        ctx.restore();
+        return Math.ceil(tw + 2 * BADGE_PAD + 2);
+    })();
+    const totalContentW = NAME_W + nSlots * CHAR_W + BADGE_GAP + BADGE_W + 4;
+    _canvasState.badgeW = BADGE_GAP + BADGE_W;   // the length-badge column right of the last slot
     const totalContentH = HEADER_H +nSeqs * rowPitch + (consInfo && !consTop ? CONS_H : 0) + 4;
     // Exposed so the persistent horizontal/vertical scrollbars (real DOM
     // elements, since Canvas mode's own content isn't natively scrollable)
@@ -5824,6 +5838,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         canvas.height = rect.height * dpr;
         canvas.style.width = rect.width + 'px';
         canvas.style.height = rect.height + 'px';
+        _canvasState.invalidateInsets?.();
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         back.width = canvas.width;
         back.height = canvas.height;
@@ -5909,9 +5924,29 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     setAlignmentColorSchemeClass();
 
     // Clamp offsets
+    // The persistent scrollbars are drawn over the canvas (the vertical one along its right edge):
+    // the scroll range has to end where they begin, or the last column / row sits under them.
+    let _insetR = 0, _insetB = 0, _insetsOk = false;
+    _canvasState.invalidateInsets = () => { _insetsOk = false; };
+    function scrollbarInsets() {
+        if (_insetsOk) return;
+        const cr = canvas.getBoundingClientRect();
+        const cover = (sel, horiz) => {
+            const b = document.querySelector(sel);
+            if (!b || !b.offsetParent) return null;   // not shown (yet)
+            const r = b.getBoundingClientRect();
+            const ox = Math.min(cr.right, r.right) - Math.max(cr.left, r.left), oy = Math.min(cr.bottom, r.bottom) - Math.max(cr.top, r.top);
+            if (ox <= 0 || oy <= 0) return 0;
+            return horiz ? Math.max(0, cr.bottom - r.top) : Math.max(0, cr.right - r.left);
+        };
+        const v = cover('.vertical-scrollbar', false), hz = cover('.horizontal-scrollbar', true);
+        _insetR = v || 0; _insetB = hz || 0;
+        _insetsOk = v !== null;   // measure again until the vertical bar is shown
+    }
     function clampOffsets() {
-        const w = parseInt(canvas.style.width) || 800;
-        const h = parseInt(canvas.style.height) || 600;
+        scrollbarInsets();
+        const w = (parseInt(canvas.style.width) || 800) - _insetR;
+        const h = (parseInt(canvas.style.height) || 600) - _insetB;
         // Whole device pixels: the frame copy in draw() then moves pixels exactly and the
         // strip it draws next to them lands on the same pixel phase.
         const q = v => Math.round(v * dpr) / dpr;
@@ -6390,6 +6425,26 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
         }
 
+        // Length badges after the last column (only content coordinates: a strip and a full
+        // redraw give the same pixels)
+        const badgeX = NAME_W + nSlots * CHAR_W + BADGE_GAP - ox;
+        const drawBadge = (n, y) => {
+            ctx.fillStyle = '#ccc';
+            ctx.fillRect(badgeX, y + HAIR, BADGE_W, CHAR_H - 2 * HAIR);
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(badgeX + HAIR, y + 2 * HAIR, BADGE_W - 2 * HAIR, CHAR_H - 4 * HAIR);
+            ctx.fillStyle = '#666';
+            ctx.textAlign = 'center';
+            ctx.fillText(String(n), badgeX + BADGE_W / 2, y + 1);
+            ctx.textAlign = 'start';
+        };
+        const badgesVisible = badgeX < cx1 && badgeX + BADGE_W > cx0;
+        if (badgesVisible) {
+            ctx.font = BADGE_FONT;
+            for (let i = firstRow; i <= lastRow; i++) drawBadge(_gaplessLen(state.seqs[i]), HEADER_H + i * rowPitch - oy);
+            ctx.font = fontStr;
+        }
+
         // Names, one pass for all rows: a ctx.font switch is not free and the
         // residue loop above never changes it.
         if (withNames) {
@@ -6469,6 +6524,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                         ctx.drawImage(_makeGlyph(ch, bg, fg, 'b'), x, textY, CHAR_W, CHAR_H);
                     }
                     if (dimmed) { dimmed = false; ctx.globalAlpha = 1; }
+                    if (badgesVisible) {
+                        let n = 0; for (let p = 0; p < cons.values.length; p++) { const c = cons.values[p]; if (c && c !== '-' && c !== '.') n++; }
+                        ctx.font = BADGE_FONT; drawBadge(n, textY); ctx.font = fontStr;
+                    }
                 }
                 if (withNames) {
                     ctx.font = nameFontStr;

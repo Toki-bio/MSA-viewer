@@ -3428,11 +3428,11 @@ check('Canvas mode: Variable sites only hides columns, keeps markers, hit-tests 
   const plainRow0 = await cellsAt(allCols, g0.headerH);
   const plainCons = await cellsAt(allCols, consY(g0));
   await tick('varSitesOnly', true); await settle();
-  const lay = await page.evaluate(() => ({ nSlots: _canvasState.nSlots, slots: _canvasState.slots ? Array.from(_canvasState.slots) : null, diff: state._diffColumns.size, brk: state._brkBeforePos.size, totalW: _canvasState.totalContentW }));
+  const lay = await page.evaluate(() => ({ nSlots: _canvasState.nSlots, slots: _canvasState.slots ? Array.from(_canvasState.slots) : null, diff: state._diffColumns.size, brk: state._brkBeforePos.size, totalW: _canvasState.totalContentW, badgeW: _canvasState.badgeW || 0 }));
   const g1 = await geom();
   if (!lay.slots) return { pass: false, detail: 'no slot layout in Canvas with Variable sites only: ' + JSON.stringify(lay) };
   if (lay.nSlots !== lay.diff + lay.brk) bad.push(`slots ${lay.nSlots} != shown ${lay.diff} + markers ${lay.brk}`);
-  if (lay.totalW !== g1.nameW + lay.nSlots * g1.charW + 4) bad.push(`content width ${lay.totalW} is not for ${lay.nSlots} slots`);
+  if (lay.totalW !== g1.nameW + lay.nSlots * g1.charW + lay.badgeW + 4) bad.push(`content width ${lay.totalW} is not for ${lay.nSlots} slots (+ ${lay.badgeW} px length badges)`);
   const shownSlots = [], markerSlots = [];
   lay.slots.forEach((p, s) => { if (s < visibleCols) (p >= 0 ? shownSlots : markerSlots).push(s); });
   const filtRow0 = await cellsAt(shownSlots, g1.headerH);
@@ -4147,6 +4147,32 @@ check('Show 2D: an all-gap reference row gives real column ranges (no NaN blocks
   } catch (e) { out.err2 = e.message; }
   const ok = !out.err1 && !out.err2 && out.nan === 0 && out.blocks > 0 && Number.isFinite(out.elem[0]) && out.allGapBlocks === 0;
   return { pass: ok, detail: JSON.stringify(out) };
+});
+
+check('Canvas: scrolled to the right end, the last column is not under the scrollbar and each row shows its length badge', async (page) => {
+  const unit = 'ACGTACGTTGCAACGTAGCTAGCTAGGATCCAGTTTGGCCAAGT';
+  const rows = []; for (let i = 0; i < 205; i++) rows.push('>r' + i + '\n' + (unit.repeat(7)).slice(0, 291 - (i % 5)) + '-'.repeat(i % 5));
+  await page.setInputFiles('#fileInput', { name: 'edge.fa', mimeType: 'text/plain', buffer: Buffer.from(rows.join('\n') + '\n') });
+  await page.waitForTimeout(1200);
+  await setMode(page, 'canvas'); await page.waitForTimeout(600);
+  const r = await page.evaluate(async () => {
+    _canvasState.offsetX = 1e9; _canvasState.scheduleDraw();
+    await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+    await new Promise(res => setTimeout(res, 200));
+    _canvasState.offsetX = 1e9; _canvasState.scheduleDraw();
+    await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+    const c = document.getElementById('alignmentCanvas'), m = _canvasState.metrics, cr = c.getBoundingClientRect();
+    const bar = document.querySelector('.vertical-scrollbar').getBoundingClientRect();
+    const lastColRight = cr.left + m.nameW + state.seqs[0].seq.length * m.charW - _canvasState.offsetX;
+    // badge of row 0: grey box right after the last column
+    const dpr = m.dpr || 1, y = Math.round((m.headerH + 0.5 * _canvasState.rowPitch) * dpr);
+    const g = c.getContext('2d').getImageData(Math.round((lastColRight - cr.left + 6 + 2) * dpr), y, 1, 1).data;
+    return { lastColRight, barLeft: bar.left, badgePx: [g[0], g[1], g[2]], contentRight: cr.left + _canvasState.totalContentW - _canvasState.offsetX };
+  });
+  const notCovered = r.lastColRight <= r.barLeft + 0.5;
+  const badge = Math.abs(r.badgePx[0] - 0xf0) <= 12 && Math.abs(r.badgePx[2] - 0xf0) <= 12;
+  const endsAtBar = r.contentRight <= r.barLeft + 1;
+  return { pass: notCovered && badge && endsAtBar, detail: JSON.stringify(r) };
 });
 
 async function main() {
