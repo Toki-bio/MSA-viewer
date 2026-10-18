@@ -95,6 +95,9 @@
     (function walk(n, p) { parent.set(n, p); n.children.forEach(function (c) { walk(c, n); }); })(root, null);
     var p0 = parent.get(target);
     if (!p0) return root;
+    // the only branch below a one-child root: the tree is already rooted there (re-rooting left the old
+    // root behind as an empty '?' tip)
+    if (p0 === root && root.children.length === 1) return root;
 
     var half = (target.len || 0) / 2;
     p0.children = p0.children.filter(function (c) { return c !== target; });

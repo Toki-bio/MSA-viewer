@@ -4724,6 +4724,18 @@ check('Codon analysis by gene: a third overlapping CDS is reported as not shown 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Tree: re-rooting on the only branch below a one-child root adds no empty tip', async (page) => {
+  const r = await page.evaluate(() => {
+    const T = window._treeDraw;
+    const root = T.parseNewick('((A:0.1,B:0.2)X:0.3);');
+    const target = root.children[0];
+    const out = T.toNewick(T.rerootOnBranch(root, target));
+    return { newick: out, leaves: (out.match(/[A-Za-z?]+(?=:)/g) || []).join(',') };
+  });
+  const ok = !/\?|\(\s*,|,\s*\)|\(\)/.test(r.newick) && /A/.test(r.newick) && /B/.test(r.newick) && (r.newick.match(/,/g) || []).length === 1;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
