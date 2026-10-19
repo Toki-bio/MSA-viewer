@@ -138,8 +138,13 @@
                 } else {
                     const back = returnFocusTo.get(id);
                     returnFocusTo.delete(id);
-                    if (back && document.contains(back) && (!document.activeElement || document.activeElement === document.body || node.contains(document.activeElement))) {
-                        back.focus({ preventScroll: true });
+                    if (!document.activeElement || document.activeElement === document.body || node.contains(document.activeElement)) {
+                        if (back && document.contains(back) && isShown(back)) back.focus({ preventScroll: true });
+                        else {
+                            // the opener was rebuilt or hidden meanwhile: focus the alignment, not nothing
+                            const home = document.getElementById('alignmentContainer');
+                            if (home) { if (!home.hasAttribute('tabindex')) home.setAttribute('tabindex', '-1'); home.focus({ preventScroll: true }); }
+                        }
                     }
                 }
             }).observe(node, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });

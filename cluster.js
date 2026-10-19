@@ -289,7 +289,7 @@ class SINEClusterer {
                     best.nPerfect = good;
                     best.nOccurrences = validFeats.length;
                     best.occurrences = validFeats;
-                    if (good < options.minPerfect) best = null;
+                    if (good < options.minPerfect || validFeats.length < minOcc) best = null;
                 }
             }
         }
@@ -523,7 +523,7 @@ class SINEClusterer {
                     best.nPerfect = good;
                     best.nOccurrences = validFeats.length;
                     best.occurrences = validFeats;
-                    if (good < options.minPerfect) best = null;
+                    if (good < options.minPerfect || validFeats.length < minOcc) best = null;
                 }
             }
         }

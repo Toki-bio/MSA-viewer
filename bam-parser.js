@@ -431,12 +431,16 @@ function cigarToString(cigar) {
  * Check if BAM references match loaded sequences.
  * Returns { matchedRef: string|null, warnings: string[] }
  */
-function checkRefMatch(bamRefNames, bamRefLengths, loadedSeqs) {
+function checkRefMatch(bamRefNames, bamRefLengths, loadedSeqs, readsPerRef) {
     const loadedNames = new Set(loadedSeqs.map(s => s.name));
     const warnings = [];
     let matchedRef = null;
 
-    for (let i = 0; i < bamRefNames.length; i++) {
+    // Several header references can be loaded (a region subset keeps the full header): take the one with the
+    // most reads (readsPerRef[refID]), not simply the first, which may have none
+    let pick = -1, most = 0;
+    if (readsPerRef) bamRefNames.forEach((name, i) => { if (loadedNames.has(name) && (readsPerRef[i] || 0) > most) { most = readsPerRef[i]; pick = i; } });
+    for (let i = pick >= 0 ? pick : 0; i < bamRefNames.length; i++) {
         const name = bamRefNames[i];
         if (loadedNames.has(name)) {
             matchedRef = name;

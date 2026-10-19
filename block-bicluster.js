@@ -1893,6 +1893,7 @@
   // Extract overlapping similarity rectangles: Cluster Now groups plus a
   // contiguous column extent. Not a partition of the matrix.
   function extractSimilarityRectangles(A, allRows, spans, P) {
+    if (!A.length) return [];          // no FASTA records (text without '>' headers)
     var nCols = A[0].length;
     var minH = Math.max(2, P.minSize || P.MIN_BLOCK_ROWS || 3);
     var minW = P.minPerfect || 5;
@@ -2023,7 +2024,7 @@
       if (leftover.rows.length >= avail.length && (leftover.good || 0) < (P.minPerfect || 5)) continue;
       var before = rects.length;
       _emitGroupRanges(rects, seen, A, leftover, spans, P, 'leftover', allRows);
-      if (rects.length === before) break;
+      // no rectangle from this group: set its rows aside and keep searching the others (a break here lost them all)
       var drop = {};
       for (var d = 0; d < leftover.rows.length; d++) drop[leftover.rows[d]] = true;
       avail = avail.filter(function (idx) { return !drop[idx]; });

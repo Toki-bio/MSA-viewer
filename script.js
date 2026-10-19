@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v266';
+const BUILD_TAG = 'v267';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -595,6 +595,7 @@ function _syncResidueWidthVar() {
 // residueOverlay records, per residue, which marks lost the fill (o.covered). This counts
 // them over the whole alignment, only where more than one kind of mark exists.
 let _coverageCache = null;
+let _titleFlash = null;          // the running title-bar flash after a server load: { timer, orig }
 function overlayCoverage() {
     const c = _coverageCache;
     if (c && c.search === _searchLayerVersion && c.repeat === _repeatLayerVersion && c.rh === state.repeatHighlights
@@ -1078,7 +1079,7 @@ function _rebuildClusterCharMap() {
                 let leak = 0, others = 0;
                 state.clusterResults.clusters.forEach((other, oi) => {
                     if (oi === clusterIdx) return;
-                    (other.sequences || []).forEach(sq => { others++; if (liveSeq.get(sq.id)?.[pos0] === feature.char) leak++; });
+                    (other.sequences || []).forEach(sq => { const live = liveSeq.get(sq.id); if (live === undefined) return; others++; if (live[pos0] === feature.char) leak++; });   // rows deleted since are not counted
                 });
                 map[pos0].push({
                     color, char: feature.char, headers, isPerfect, isCloudy, clusterName: name,
@@ -1839,7 +1840,9 @@ async function fetchFileFromServer(filePath, serverKey) {
         // Auto-focus browser window and bring to front
         window.focus();
         // Flash title bar to attract attention
-        const origTitle = document.title;
+        // a second load while the first still flashes takes over its timer and keeps the real title
+        if (_titleFlash) clearInterval(_titleFlash.timer);
+        const origTitle = _titleFlash ? _titleFlash.orig : document.title;
         let flashCount = 0;
         const flashInterval = setInterval(() => {
             document.title = (flashCount % 2 === 0) ? `* LOADED: ${fname}` : origTitle;
@@ -1847,8 +1850,10 @@ async function fetchFileFromServer(filePath, serverKey) {
             if (flashCount > 8 || document.hasFocus()) {
                 document.title = origTitle;
                 clearInterval(flashInterval);
+                _titleFlash = null;
             }
         }, 500);
+        _titleFlash = { timer: flashInterval, orig: origTitle };
         if (Notification.permission === 'default') {
             Notification.requestPermission();
         }
@@ -4366,12 +4371,16 @@ function _cigarRefSpan(cigar) {
  */
 function parseGenBank(text) {
     // A flatfile may hold several records, each ending in '//'
-    const out = [];
+    const out = [], skipped = [];
     for (const record of text.split(/^\/\/[^\S\n]*$/m)) {
         if (!/^LOCUS\s/m.test(record)) continue;
         const one = _parseGenBankRecord(record);
         if (one) out.push(...one);
+        else skipped.push((record.match(/^LOCUS\s+(\S+)/m) || [])[1] || '?');
     }
+    // records with no sequence (e.g. CONTIG records without ORIGIN) cannot be rows; the loader says so
+    // instead of dropping them silently
+    out.skipped = skipped;
     return out.length ? out : null;
 }
 
@@ -4501,12 +4510,6 @@ function _parseGenBankRecord(text) {
         const def = definition.length > 80 ? definition.substring(0, 77) + '...' : definition;
         fullHeader += ` ${def}`;
     }
-
-    // Store GenBank annotations in state for display
-    state._genbankAnnotations = {
-        locus, definition, accession, version, organism, lineage,
-        features, sequenceLength: sequence.length
-    };
 
     // Same record shape as the FASTA parser; downstream code (e.g.
     // updateSourceInfo) reads gaplessPositions unconditionally
@@ -8106,7 +8109,7 @@ function generateScale(maxLength, interval = 10, startPos = 0) {
     const firstMultiple = Math.ceil(startAbs / interval) * interval;
 
     // Show position markers at multiples of interval within this block
-    for (let absPos = firstMultiple; absPos < endAbs; absPos += interval) {
+    for (let absPos = firstMultiple; absPos <= endAbs; absPos += interval) {   // endAbs is the block's last column
         let label;
         // Alternate: 10 number, 20 *, 30 number, 40 *, etc.
         if ((absPos / interval) % 2 === 1) {
@@ -8506,8 +8509,10 @@ async function handleBamFile(event) {
             name: String(s.fullHeader || s.header || '').trim().split(/\s+/)[0],
             seq: s.seq.replace(/[-.]/g, '')
         }));
+        const readsPerRef = [];
+        for (const r of records) readsPerRef[r.refID] = (readsPerRef[r.refID] || 0) + 1;
         const { matchedRef, warnings } = BamParser.checkRefMatch(
-            header.refNames, header.refLengths, loadedSeqs
+            header.refNames, header.refLengths, loadedSeqs, readsPerRef
         );
 
         if (warnings.length) {
@@ -8825,7 +8830,10 @@ function ensureReadsDisplayToggle() {
 function renderReadsAlignment() {
     ensureReadsDisplayToggle();
     if (!bamState.reads.length || !bamState.refSeq) {
-        alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">No reads loaded. Open a BAM file with the BAM button.</div>';
+        const msg = bamState.reads.length
+            ? `${bamState.reads.length.toLocaleString()} reads are loaded, but their reference sequence${bamState.refName ? ' "' + _escapeHtml(bamState.refName) + '"' : ''} is empty in the alignment, so there is nothing to show them against.`
+            : 'No reads loaded. Open a BAM file with the BAM button.';
+        alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">' + msg + '</div>';
         return;
     }
 
@@ -8963,11 +8971,11 @@ function renderReadsAlignment() {
 
             // Soft-clip extensions (lighter fill, dashed stroke)
             if (features.softClipLeft > 0) {
-                const scW = features.softClipLeft * cellW;
+                const scX = Math.max(NAME_W, rx - features.softClipLeft * cellW), scW = rx - scX;   // not over the names
                 const scLeft = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                scLeft.setAttribute('x', rx - scW);
+                scLeft.setAttribute('x', scX);
                 scLeft.setAttribute('y', ry + 2);
-                scLeft.setAttribute('width', scW);
+                scLeft.setAttribute('width', Math.max(0, scW));
                 scLeft.setAttribute('height', rh);
                 scLeft.setAttribute('fill', '#e8eef5');
                 scLeft.setAttribute('stroke', '#a0b8d0');
@@ -8978,7 +8986,7 @@ function renderReadsAlignment() {
                 svg.appendChild(scLeft);
             }
             if (features.softClipRight > 0) {
-                const scW = features.softClipRight * cellW;
+                const scW = Math.max(0, Math.min(features.softClipRight * cellW, svgW - (rx + rw)));   // not past the plot
                 const scRight = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
                 scRight.setAttribute('x', rx + rw);
                 scRight.setAttribute('y', ry + 2);
@@ -12158,7 +12166,9 @@ async function parseAndRender(isFromDrop = false) {
             parsed = parseGenBank(inputText);
             if (!parsed) throw new Error('GenBank parsing failed');
             state.currentFilename = state.currentFilename || 'genbank_import';
-            showMessage('Detected GenBank format', 1500);
+            const skipped = parsed.skipped || [];
+            if (skipped.length) showMessage(`Detected GenBank format; ${skipped.length} record${skipped.length !== 1 ? 's' : ''} without a sequence skipped: ${skipped.slice(0, 5).join(', ')}${skipped.length > 5 ? ', ...' : ''}`, 6000);
+            else showMessage('Detected GenBank format', 1500);
         } else if (_isClustalInput(inputText)) {
             parsed = parseClustal(inputText);
             if (!parsed) throw new Error('Clustal parsing failed');
@@ -13026,6 +13036,8 @@ function handleRowSelectMouseDown(e) {
             state.selectedRows.add(i);
         }
         state.lastSelectedIndex = index;
+        // a residue click before this started a two-click range; it must not complete with that old anchor
+        if (state.pendingNucStart) { state.pendingNucStart = null; scheduleNucSelectionRefresh(); }
         updateRowSelections();
         e.preventDefault();
         e.stopPropagation();
@@ -15045,10 +15057,13 @@ function _exportAlignmentAsSvg(mode = 'viewport') {
         const r = span.getBoundingClientRect();
         if (r.right <= containerRect.left || r.left >= viewRight || r.bottom <= containerRect.top || r.top >= viewBottom) return;
 
-        const x = Math.max(0, r.left - containerRect.left + (fullMode ? alignmentContainer.scrollLeft : 0));
-        const y = Math.max(0, r.top - containerRect.top + (fullMode ? alignmentContainer.scrollTop : 0));
-        const w = Math.min(width - x, r.width);
-        const h = Math.min(height - y, r.height);
+        // true position (negative when the span is cut by the left or top edge): the text is drawn there and the
+        // SVG viewport clips it, so the export shows the visible slice, not the span's start moved to the edge
+        const x0 = r.left - containerRect.left + (fullMode ? alignmentContainer.scrollLeft : 0);
+        const y0 = r.top - containerRect.top + (fullMode ? alignmentContainer.scrollTop : 0);
+        const x = Math.max(0, x0), y = Math.max(0, y0);
+        const w = Math.min(width, x0 + r.width) - x;
+        const h = Math.min(height, y0 + r.height) - y;
         if (w <= 0 || h <= 0) return;
 
         const style = window.getComputedStyle(span);
@@ -15058,14 +15073,14 @@ function _exportAlignmentAsSvg(mode = 'viewport') {
         const fontFamily = style.fontFamily || 'monospace';
         const fontWeight = style.fontWeight || '400';
         const fontStyle = style.fontStyle || 'normal';
-        const textY = y + h - Math.max(1, h * 0.18);
+        const textY = y0 + r.height - Math.max(1, r.height * 0.18);
 
         if (!_isTransparentCssColor(bg)) {
             bgRects.push(`<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" fill="${_escapeXmlText(bg)}" />`);
         }
 
         const escaped = _escapeXmlText(rawText);
-        textNodes.push(`<text x="${x.toFixed(2)}" y="${textY.toFixed(2)}" fill="${_escapeXmlText(color)}" font-family="${_escapeXmlText(fontFamily)}" font-size="${fontSize.toFixed(2)}px" font-weight="${_escapeXmlText(fontWeight)}" font-style="${_escapeXmlText(fontStyle)}" xml:space="preserve">${escaped}</text>`);
+        textNodes.push(`<text x="${x0.toFixed(2)}" y="${textY.toFixed(2)}" fill="${_escapeXmlText(color)}" font-family="${_escapeXmlText(fontFamily)}" font-size="${fontSize.toFixed(2)}px" font-weight="${_escapeXmlText(fontWeight)}" font-style="${_escapeXmlText(fontStyle)}" xml:space="preserve">${escaped}</text>`);
     });
 
     if (textNodes.length === 0) {
@@ -15521,8 +15536,12 @@ function searchResEnzyme() {
         colorIdx++;
     });
     state._searchColorOffset = colorIdx;
-    const totalSites = currentResults.reduce((sum, item) => sum + (item.matchCount || 0), 0);
-    const totalRowMatches = currentResults.reduce((sum, item) => sum + (item.rawMatchCount || 0), 0);
+    // the same site found by two entries (two enzymes with one recognition sequence) counts once
+    const unionSize = (field, countField) => currentResults.every(item => Array.isArray(item[field]))
+        ? new Set(currentResults.flatMap(item => item[field])).size
+        : currentResults.reduce((sum, item) => sum + (item[countField] || 0), 0);
+    const totalSites = unionSize('alignmentSites', 'matchCount');
+    const totalRowMatches = unionSize('rowSites', 'rawMatchCount');
     const sequenceSet = new Set();
     currentResults.forEach(item => (item.sequenceIndices || []).forEach(index => sequenceSet.add(index)));
     const totalSeqs = sequenceSet.size;
@@ -15729,6 +15748,7 @@ function searchMotif(options = {}) {
     motifsToSearch.forEach(({ motif: searchMotifValue, color: searchColorValue, label, strand, key }) => {
         let motifMatches = 0;
         const motifAlignmentSites = new Set();
+        const motifRowSites = new Set();
         const motifSeqsWithMatches = new Set();
         const motifKey = `${key || searchMotifValue}:${strand}`;
         const className = 'search-hit-' + Math.random().toString(36).substring(2, 12);
@@ -15758,7 +15778,7 @@ function searchMotif(options = {}) {
             if (isRev) revMatches += matches.length; else fwdMatches += matches.length;
             matches.forEach(m => {
                 const startCol = cols[m.idx];
-                if (startCol !== undefined) motifAlignmentSites.add(`${startCol}:${m.len}`);
+                if (startCol !== undefined) { motifAlignmentSites.add(`${startCol}:${m.len}`); motifRowSites.add(`${index}:${startCol}:${m.len}`); }
             });
         });
         if (invalid) return;   // validated above; kept as a guard
@@ -15766,7 +15786,7 @@ function searchMotif(options = {}) {
         const displayMatches = options.countMode === 'alignmentSites' ? motifAlignmentSites.size : motifMatches;
         Object.assign(entry, { matchCount: displayMatches, rawMatchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size, countMode: options.countMode || null });
         state.searchHistory.push(entry);
-        searchResults.push({ label, strand, matchCount: displayMatches, rawMatchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size, sequenceIndices: Array.from(motifSeqsWithMatches) });
+        searchResults.push({ label, strand, matchCount: displayMatches, rawMatchCount: motifMatches, sequencesWithMatches: motifSeqsWithMatches.size, sequenceIndices: Array.from(motifSeqsWithMatches), alignmentSites: Array.from(motifAlignmentSites), rowSites: Array.from(motifRowSites) });
     });
     bumpSearchLayer();
     reapplySearchHighlights();
@@ -15855,7 +15875,7 @@ function _buildSearchListItem(search) {
     remove.className = 'search-remove';
     remove.textContent = 'x';
     remove.title = 'Remove this search';
-    remove.addEventListener('click', () => removeSearch(search));
+    remove.addEventListener('click', () => { _rememberForUndo('search ' + (search.label || search.searchValue || '')); removeSearch(search); scheduleSelectionsPanelRefresh(); });
     item.append(toggle, swatch, text, remove);
     return item;
 }
@@ -17574,6 +17594,11 @@ function saveClusteringPreset() {
         showMessage("Please enter a preset name", 2000);
         return;
     }
+    // 'optimal' holds the built-in defaults: the Defaults button rewrites it, so a preset saved under that name was lost
+    if (presetName.toLowerCase() === 'optimal') {
+        showMessage('"optimal" is the built-in defaults preset - choose another name', 3000);
+        return;
+    }
 
     const preset = {
         name: presetName,
@@ -17639,7 +17664,7 @@ function createOptimalPreset(silent = false) {
         loadClusteringPreset(true);
     }
 
-    if (!silent) {
+    if (silent !== true) {   // the Defaults button passes its click event here
         showMessage('Standard starting parameters restored - these are defaults, not tuned to your data.', 3000);
     }
     console.log('[Clustering] Created optimal preset:', optimalPreset);
@@ -17668,8 +17693,8 @@ function loadClusteringPreset(silent = false) {
     }
 
     // Apply trimming parameters
-    el('leftGapInput').value = preset.trimming.leftGapThresh * 100;
-    el('rightGapInput').value = preset.trimming.rightGapThresh * 100;
+    el('leftGapInput').value = Math.round(preset.trimming.leftGapThresh * 100);   // 0.29 * 100 = 28.999999999999996
+    el('rightGapInput').value = Math.round(preset.trimming.rightGapThresh * 100);
     el('edgeWindowInput').value = preset.trimming.edgeWindow ?? 15;
 
     // Apply clustering parameters
@@ -20686,9 +20711,10 @@ function _confirmMafftJob(stats, extraArgs) {
             `Cancel = keep current settings`
         );
         if (useFast) {
-            const speedEl = el('mafftSpeed');
-            if (speedEl) speedEl.value = '1';
-            return { ok: true, extraArgs: getMafftExtraArgs().args };
+            // this run only: the Speed setting stays as the user chose it for later alignments
+            const fast = extraArgs.slice();
+            if (eIdx >= 0) fast[eIdx + 1] = '1'; else fast.push('-E', '1');
+            return { ok: true, extraArgs: fast };
         }
     }
     return { ok: true, extraArgs };
@@ -26686,11 +26712,15 @@ function makeBarInputGuard(bar) {
             bar.style.height = rect.height + 'px';
             syncing = true;
             const h = _canvasState.totalContentH || alignment.clientHeight;
-            thumb.style.height = Math.max(h, alignment.clientHeight + 1) + 'px';
+            // shown only when the rows do not fit, like the horizontal bar (visibility, so the layout does not jump)
+            const scrollable = h > alignment.clientHeight + 1;
+            bar.style.visibility = scrollable ? '' : 'hidden';
+            thumb.style.height = (scrollable ? h : 0) + 'px';
             bar.scrollTop = _canvasState.offsetY || 0;
             syncing = false;
         } else if (alignment.scrollHeight > alignment.clientHeight) {
             bar.style.display = 'flex';
+            bar.style.visibility = '';
             const rect = alignment.getBoundingClientRect();
             bar.style.top = alignment.offsetTop + 'px';
             bar.style.height = rect.height + 'px';
@@ -28267,6 +28297,7 @@ function _dotClearHoverInfo() {
     if (hoverEl) hoverEl.textContent = '';
     if (metaEl) metaEl.textContent = '';
     if (panelEl) panelEl.textContent = 'A: -\n   \nB: -';
+    S._copyRegion = null;   // Copy region then uses the pin, like the panel
 }
 
 // Grey level for one cell: SPIN = white dot on black; Dotter = darker = more identical
@@ -28896,6 +28927,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
         S.matchMap = S.scores = S.overview = null;
         S.rows = S.cols = 0;
         if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+        _dotRenderRegionList();   // S.regions was emptied for this pair; the list still showed the previous one
         S.computing = false; return;
     }
     if (gen !== S.gen) return;

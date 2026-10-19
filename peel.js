@@ -156,8 +156,9 @@
     function peel(seqs, opts) {
         opts = opts || {};
         const minSize = Math.max(2, opts.minSize | 0 || 3), minGap = opts.minGap != null ? opts.minGap : 0.04, z = opts.outlierZ != null ? opts.outlierZ : 10;
-        const metric = opts.metric || (KT.isAligned(seqs) ? 'pdist' : 'jaccard');
-        const dist = metric === 'pdist' && KT.isAligned(seqs) ? KT.pDistanceMatrix(seqs) : KT.distanceMatrix(KT.profiles(seqs, opts.k || 6, !!opts.canonical));
+        let metric = opts.metric || (KT.isAligned(seqs) ? 'pdist' : 'jaccard');
+        if (metric === 'pdist' && !KT.isAligned(seqs)) metric = 'jaccard';   // p-distance needs an alignment; report what is used
+        const dist = metric === 'pdist' ? KT.pDistanceMatrix(seqs) : KT.distanceMatrix(KT.profiles(seqs, opts.k || 6, !!opts.canonical));
         const codes = opts.criterion === 'gap' ? null : seqs.map(q => codesOf(q.seq));
         let remaining = seqs.map((_, i) => i);
         const groups = [], outliers = [], steps = [], maxSteps = opts.maxSteps || 200;

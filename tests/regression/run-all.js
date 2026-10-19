@@ -5037,6 +5037,308 @@ check('Uncertain batch: Undo of moving a group restores the group order; repeat/
   return { pass: ok, detail: JSON.stringify({ r, yields }) };
 });
 
+// ---- v267: low-severity audit findings (one check per finding, or two related ones) ----
+
+check('Audit #53: reads on the second loaded reference load (the header\'s first loaded reference had none)', async (page) => {
+  // A region subset keeps the full header: @SQ chr1 and chr2 both loaded, all reads on chr2. The first
+  // loaded header reference was taken, so it said 'No reads map to the matched reference'.
+  await page.setInputFiles('#fileInput', { name: 'two.fa', mimeType: 'text/plain', buffer: Buffer.from('>chr1\nAAAAAAAAAAAAAAAAAAAA\n>chr2\nACGTACGTACGTACGTACGT\n') });
+  await page.waitForTimeout(900);
+  const sam = '@SQ\tSN:chr1\tLN:20\n@SQ\tSN:chr2\tLN:20\nr1\t0\tchr2\t3\t60\t8M\t*\t0\t0\tGTACGTAC\tIIIIIIII\nr2\t0\tchr2\t5\t60\t8M\t*\t0\t0\tACGTACGT\tIIIIIIII\n';
+  await page.setInputFiles('#fileInput', { name: 'sub.sam', mimeType: 'text/plain', buffer: Buffer.from(sam) });
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => ({ ref: bamState.refName, n: (bamState.reads || []).length }));
+  return { pass: r.ref === 'chr2' && r.n === 2, detail: JSON.stringify(r) };
+});
+
+check('Audit #143 #144: a preset cannot be saved as "optimal"; a loaded gap threshold shows 29, not 28.999999999999996', async (page) => {
+  await loadFasta(page, makeFasta(4, 30));
+  const r = await page.evaluate(() => {
+    const el = id => document.getElementById(id);
+    localStorage.removeItem('clusteringPresets');
+    el('leftGapInput').value = '29'; el('rightGapInput').value = '57';
+    // #143: the Defaults button rewrites 'optimal', so a user preset under that name was lost
+    el('presetNameInput').value = 'optimal'; saveClusteringPreset();
+    const afterOptimal = JSON.parse(localStorage.getItem('clusteringPresets') || '{}').optimal;
+    // #144: 0.29 * 100 = 28.999999999999996 was put in the field, and a re-save then stored 0.28
+    el('presetNameInput').value = 'mine'; saveClusteringPreset();
+    el('leftGapInput').value = '50'; el('rightGapInput').value = '50';
+    updateClusteringPresetList();
+    el('clusteringPresetList').value = 'mine'; loadClusteringPreset(true);
+    return { optimalLeft: afterOptimal ? afterOptimal.trimming.leftGapThresh : null, left: el('leftGapInput').value, right: el('rightGapInput').value };
+  });
+  const ok = r.optimalLeft !== 0.29 && r.left === '29' && r.right === '57';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+check('Audit #145: choosing the fast strategy for one large MAFFT run leaves the Speed setting as it was', async (page) => {
+  const r = await page.evaluate(() => {
+    const sp = document.getElementById('mafftSpeed');
+    sp.value = '2';
+    const orig = window.confirm; window.confirm = () => true;
+    let res;
+    try { res = _confirmMafftJob({ seqCount: 50, totalResidues: 600000, maxLen: 12000 }, ['-E', '2']); } finally { window.confirm = orig; }
+    return { speed: sp.value, args: res.extraArgs.join(' ') };
+  });
+  // the select was set to '1' for good, so every later (small) alignment ran FFT-NS-1
+  return { pass: r.speed === '2' && r.args === '-E 1', detail: JSON.stringify(r) };
+});
+
+check('Audit #160 #199: a GenBank record without a sequence is reported, and no stale per-record annotation state is kept', async (page) => {
+  const gb = 'LOCUS       REC1    20 bp    DNA     linear   SYN 01-JAN-2000\nDEFINITION  one.\nACCESSION   REC1\nORIGIN\n        1 acgtacgtac gtacgtacgt\n//\n' +
+    'LOCUS       CTG2    500 bp    DNA     linear   CON 01-JAN-2000\nDEFINITION  contig record, no ORIGIN.\nACCESSION   CTG2\nCONTIG      join(AB000001.1:1..500)\n//\n' +
+    'LOCUS       REC3    20 bp    DNA     linear   SYN 01-JAN-2000\nDEFINITION  three.\nACCESSION   REC3\nORIGIN\n        1 ttttgggggc ccccaaaaat\n//\n';
+  await page.evaluate(() => { window._msgs = []; const o = showMessage; window.showMessage = function (m) { window._msgs.push(String(m)); return o.apply(this, arguments); }; });
+  await page.setInputFiles('#fileInput', { name: 'multi.gb', mimeType: 'text/plain', buffer: Buffer.from(gb) });
+  await page.waitForTimeout(1200);
+  const r = await page.evaluate(() => ({
+    rows: state.seqs.length,
+    // the last GenBank message must say it (one shown from the parser was overwritten at once by 'Detected GenBank format')
+    last: window._msgs.filter(m => /GenBank/.test(m)).pop() || '',
+    // #160: written per record (so it described only the last one), never cleared and never read
+    annot: typeof state._genbankAnnotations
+  }));
+  const ok = r.rows === 2 && /skipped/.test(r.last) && /CTG2/.test(r.last) && r.annot === 'undefined';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+check('Audit #161: the ruler draws the tick on a block\'s last column (60, 590)', async (page) => {
+  const r = await page.evaluate(() => ({ a: generateScale(60, 10, 0), b: generateScale(590, 10, 0), c: generateScale(60, 10, 60) }));
+  // the loop stopped before endAbs, so block boundary ticks (60, 120, ...) were never drawn
+  const ok = r.a.endsWith('*') && r.b.endsWith('590') && r.c.endsWith('*');
+  return { pass: ok, detail: JSON.stringify({ a: r.a.slice(-4), b: r.b.slice(-4), c: r.c.slice(-4) }) };
+});
+
+check('Audit #162: soft-clip boxes of reads stay inside the plot (not over the name column, not past the right edge)', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'ref.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrS\nACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT\n>o\nACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT\n') });
+  await page.waitForTimeout(900);
+  // r1 starts at the reference's first base with a 5-base left clip; r2 ends at its last base with a 20-base right clip
+  const sam = '@SQ\tSN:chrS\tLN:40\nr1\t0\tchrS\t1\t60\t5S10M\t*\t0\t0\tTTTTTACGTACGTAC\tIIIIIIIIIIIIIII\n' +
+    'r2\t0\tchrS\t31\t60\t10M20S\t*\t0\t0\tGTACGTACGTTTTTTTTTTTTTTTTTTTTT\tIIIIIIIIIIIIIIIIIIIIIIIIIIIIII\n';
+  await page.setInputFiles('#fileInput', { name: 'clip.sam', mimeType: 'text/plain', buffer: Buffer.from(sam) });
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => {
+    if (!document.querySelector('#alignmentContainer svg')) renderReadsAlignment();
+    const svg = document.querySelector('#alignmentContainer svg');
+    if (!svg) return { noSvg: true, n: (bamState.reads || []).length };
+    const W = parseFloat(svg.getAttribute('width'));
+    const clips = [...svg.querySelectorAll('rect[fill="#e8eef5"]')].map(c => ({ x: +c.getAttribute('x'), w: +c.getAttribute('width') }));
+    return { W, clips };
+  });
+  const ok = !r.noSvg && r.clips.length === 2 && r.clips.every(c => c.x >= 160 && c.x + c.w <= r.W + 0.01);
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+check('Audit #202: reads loaded on an empty reference row say so, not "No reads loaded"', async (page) => {
+  await loadFasta(page, '>a\nACGT\n>b\nACGA\n');
+  const r = await page.evaluate(() => {
+    const keep = { reads: bamState.reads, refSeq: bamState.refSeq, refName: bamState.refName };
+    bamState.reads = [{ name: 'r1', pos: 0 }]; bamState.refSeq = ''; bamState.refName = 'chrE';
+    renderReadsAlignment();
+    const text = document.getElementById('alignmentContainer').textContent;
+    Object.assign(bamState, keep);
+    return text;
+  });
+  return { pass: !/No reads loaded/.test(r) && /chrE/.test(r), detail: r };
+});
+
+check('Audit #169: Canvas mode hides the vertical scrollbar when all rows fit', async (page) => {
+  await loadFasta(page, makeFasta(4, 200));
+  await setMode(page, 'canvas'); await page.waitForTimeout(600);
+  await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+  await page.waitForTimeout(400);
+  const r = await page.evaluate(() => {
+    const bar = document.querySelector('.vertical-scrollbar');
+    const cs = getComputedStyle(bar);
+    return { display: cs.display, visibility: cs.visibility, contentH: _canvasState.totalContentH, viewH: document.getElementById('alignmentContainer').clientHeight };
+  });
+  // the canvas branch always set display:flex, so an empty track stood beside a short alignment
+  const hidden = r.display === 'none' || r.visibility === 'hidden';
+  return { pass: hidden && r.contentH < r.viewH, detail: JSON.stringify(r) };
+});
+
+check('Audit #169: Canvas mode still shows the vertical scrollbar when rows do not fit', async (page) => {
+  await loadFasta(page, makeFasta(200, 100));
+  await setMode(page, 'canvas'); await page.waitForTimeout(800);
+  const r = await page.evaluate(() => {
+    const bar = document.querySelector('.vertical-scrollbar');
+    const cs = getComputedStyle(bar);
+    return { display: cs.display, visibility: cs.visibility };
+  });
+  return { pass: r.display !== 'none' && r.visibility !== 'hidden', detail: JSON.stringify(r) };
+});
+
+check('Audit #174: the unrooted tree shrinks when zoomed out below 40 %', async (page) => {
+  const r = await page.evaluate(() => {
+    const T = window._treeDraw;
+    const nw = '((a:0.1,b:0.2):0.3,(c:0.15,d:0.25):0.1,(e:0.2,f:0.05):0.2);';
+    const svg = z => T.buildTreeSVGString(T.parseNewick(nw), { layout: 'unrooted', zoom: z, width: 700 });
+    const w = s => parseFloat((s.match(/<svg[^>]*\swidth="([\d.]+)/) || [])[1]);
+    return { w25: w(svg(0.25)), w30: w(svg(0.3)), w40: w(svg(0.4)), same: svg(0.3) === svg(0.4) };
+  });
+  // the scale was clamped at Math.max(0.4, zoom): 25-40 % drew the same picture
+  return { pass: !r.same && r.w30 < r.w40 && r.w25 < r.w30, detail: JSON.stringify(r) };
+});
+
+check('Audit #178: closing a window whose opener is gone puts focus on the alignment, not on nothing', async (page) => {
+  await loadFasta(page, '>a\nACGT\n>b\nACGA\n');
+  const r = await page.evaluate(async () => {
+    const wait = ms => new Promise(res => setTimeout(res, ms));
+    const opener = document.createElement('button'); opener.textContent = 'opener'; document.body.appendChild(opener);
+    opener.focus();
+    const modal = document.getElementById('repeatFinderModal');
+    modal.style.display = 'block'; await wait(80);
+    opener.remove();                      // the opener was rebuilt (e.g. a results panel redrawn) meanwhile
+    modal.style.display = 'none'; await wait(80);
+    const a = document.activeElement;
+    return { active: a ? (a.id || a.tagName) : null };
+  });
+  return { pass: r.active === 'alignmentContainer', detail: JSON.stringify(r) };
+});
+
+check('Audit #194: the cluster leak tooltip does not count rows deleted since clustering', async (page) => {
+  await loadFasta(page, '>a\nACGTACGT\n>b\nTCGTACGT\n>c\nGCGTACGT\n');
+  const r = await page.evaluate(() => {
+    const keep = state.clusterResults;
+    // group 2 also lists 'gone', a row deleted after clustering
+    state.clusterResults = { clusters: [
+      { sequences: [{ id: 'a' }], perfectFeatures: [{ pos: 1, char: 'A' }] },
+      { sequences: [{ id: 'b' }, { id: 'c' }, { id: 'gone' }], perfectFeatures: [] }
+    ], unassigned: [] };
+    _rebuildClusterCharMap();
+    const leak = state._clusterCharMap[_clusterAlignmentColumnOffset()][0].leak;
+    state.clusterResults = keep; _rebuildClusterCharMap();
+    return leak;
+  });
+  return { pass: r && r.total === 2 && r.count === 0, detail: JSON.stringify(r) };
+});
+
+check('Audit #196: two server loads in a row leave the real tab title, not "* LOADED: <first file>"', async (page) => {
+  const r = await page.evaluate(async () => {
+    const wait = ms => new Promise(res => setTimeout(res, ms));
+    document.title = 'ViewAlign';
+    const origFetch = window.fetch, origFocus = document.hasFocus;
+    window.fetch = async () => ({ ok: true, json: async () => ({ content: '>a\nACGT\n>b\nACGA\n' }) });
+    document.hasFocus = () => false;      // the tab stays in the background, so the flash runs its full length
+    try {
+      await fetchFileFromServer('/data/one.fa', 'srv');
+      await wait(650);                   // the first flash shows '* LOADED: one.fa' now
+      const mid = document.title;
+      await fetchFileFromServer('/data/two.fa', 'srv');
+      await wait(6000);
+      return { mid, end: document.title };
+    } finally { window.fetch = origFetch; document.hasFocus = origFocus; }
+  });
+  return { pass: /LOADED/.test(r.mid) && r.end === 'ViewAlign', detail: JSON.stringify(r) };
+});
+
+check('Audit #204: shift-clicking row names drops a pending two-click residue range', async (page) => {
+  await loadFasta(page, '>a\nACGTACGTACGT\n>b\nACGTACGTACGT\n>c\nACGTACGTACGT\n');
+  const name = i => page.locator(`.seq-line[data-seq-index="${i}"] .seq-name`).first();
+  const res = (i, p) => page.locator(`.seq-line[data-seq-index="${i}"] .seq-data span[data-pos="${p}"]`).first();
+  await name(0).click({ modifiers: ['Control'] });   // a row selection, so Shift+click extends it
+  await res(1, 2).click();                 // first click of a two-click range
+  await name(2).click({ modifiers: ['Shift'] });
+  await res(1, 8).click();                 // must start a new selection, not complete 2..8
+  await page.waitForTimeout(200);
+  const r = await page.evaluate(() => { const s = state.selectedNucs.get(1); return s ? [...s].sort((a, b) => a - b) : null; });
+  return { pass: Array.isArray(r) && r.length === 1 && r[0] === 8, detail: JSON.stringify(r) };
+});
+
+check('Audit #207: the viewport SVG export draws a span cut by the left edge at its true position', async (page) => {
+  await loadFasta(page, makeFasta(10, 600));
+  await setMode(page, 'full'); await page.waitForTimeout(500);
+  // names that scroll with the residues, so a name span is cut by the container's left edge
+  await page.evaluate(() => { const c = document.getElementById('stickyNames'); if (c.checked) c.click(); });
+  await page.waitForTimeout(500);
+  const r = await page.evaluate(async () => {
+    const ac = document.getElementById('alignmentContainer');
+    ac.scrollLeft = 13; await new Promise(res => setTimeout(res, 300));
+    const cLeft = ac.getBoundingClientRect().left;
+    const cut = [...ac.querySelectorAll('.seq-line span')].find(s => {
+      const b = s.getBoundingClientRect(); return s.children.length === 0 && s.textContent.length > 2 && b.left < cLeft - 1 && b.right > cLeft + 1;
+    });
+    if (!cut) return { noCut: true, scrollLeft: ac.scrollLeft };
+    const expectX = cut.getBoundingClientRect().left - cLeft;
+    let blob = null;
+    const origURL = URL.createObjectURL;
+    URL.createObjectURL = x => { blob = x; return 'blob:x'; };
+    const origClick = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () {};
+    try { _exportAlignmentAsSvg('viewport'); } finally { URL.createObjectURL = origURL; HTMLAnchorElement.prototype.click = origClick; }
+    const text = blob ? await blob.text() : '';
+    const xs = [...text.matchAll(/<text x="([-\d.]+)"[^>]*>([^<]*)<\/text>/g)].filter(m => m[2] === cut.textContent).map(m => +m[1]);
+    return { text: cut.textContent, expectX: +expectX.toFixed(2), xs };
+  });
+  // the span's start was moved to x=0, so the export showed its beginning instead of the visible slice
+  return { pass: !r.noCut && r.xs.some(x => Math.abs(x - r.expectX) < 0.6), detail: JSON.stringify(r) };
+});
+
+check('Audit #208: two restriction entries with one recognition site count the shared site once', async (page) => {
+  await loadFasta(page, '>a\nAAGGATCCAAAA\n>b\nAAGGATCCAAAA\n');
+  const r = await page.evaluate(() => {
+    const msgs = []; const o = showMessage; window.showMessage = function (m) { msgs.push(String(m)); return o.apply(this, arguments); };
+    document.querySelectorAll('.re-cb').forEach(cb => { cb.checked = false; });
+    document.getElementById('searchBothStrands').checked = false;
+    document.getElementById('reSiteManualInput').value = 'X:GGATCC, Y:GGATCC';
+    searchResEnzyme();
+    window.showMessage = o;
+    return msgs.filter(m => /^Found/.test(m)).pop() || msgs.join(' | ');
+  });
+  // the totals were summed per entry: 'Found 2 unique restriction sites ... (4 row matches)'
+  return { pass: /^Found 1 unique restriction site in 2 sequences \(2 row matches\)/.test(r), detail: r };
+});
+
+check('Audit #210: removing a search with the x in the Active searches list can be undone', async (page) => {
+  await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAC\n');
+  await page.evaluate(() => {
+    document.getElementById('searchRegex').checked = false;
+    document.getElementById('searchInput').value = 'CGTA';
+    document.getElementById('searchButton').click();
+  });
+  await page.waitForTimeout(400);
+  const before = await page.evaluate(() => state.searchHistory.length);
+  // the list sits in the collapsed Search menu: click its x button through the DOM (same handler)
+  await page.evaluate(() => document.querySelector('#searchList .search-remove').click());
+  await page.waitForTimeout(200);
+  const r = await page.evaluate(() => {
+    const removed = state.searchHistory.length;
+    undoSelectionsRemoval();
+    return { removed, restored: state.searchHistory.length };
+  });
+  return { pass: before === 1 && r.removed === 0 && r.restored === 1, detail: JSON.stringify({ before, ...r }) };
+});
+
+check('Audit #221: moving off the dot plot clears the region Copy region would copy', async (page) => {
+  await loadFasta(page, '>a\nACGTACGTTTGACCAGTACGATCGATCGTAGCTAGCTAGG\n>b\nACGTACGTTTGACCAGTACGATCGATCGTAGCTAGCTAGG\n');
+  await page.evaluate(() => openDotPlot(state.seqs[0].seq, state.seqs[1].seq, 'a', 'b'));
+  await page.waitForTimeout(1500);
+  const box = await page.locator('#dotPlotCanvas').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.move(box.x + box.width / 2 + 3, box.y + box.height / 2 + 3);
+  await page.waitForTimeout(200);
+  const hovered = await page.evaluate(() => !!_dotPlotState._copyRegion);
+  await page.mouse.move(box.x - 40, box.y - 40);
+  await page.waitForTimeout(200);
+  const after = await page.evaluate(() => ({ region: _dotPlotState._copyRegion }));
+  // the panel was cleared ('A: -') but _copyRegion kept the last hovered slices for Copy region
+  return { pass: hovered && after.region === null, detail: JSON.stringify({ hovered, ...after }) };
+});
+
+check('Audit #222: a dot-plot run that fails clears the previous pair\'s region list', async (page) => {
+  await loadFasta(page, '>a\nACGTACGTTTGACCAGTACGATCGATCGTAGCTAGCTAGG\n>b\nACGTACGTTTGACCAGTACGATCGATCGTAGCTAGCTAGG\n>c\nTTTTTTTTTTGGGGGGGGGGCCCCCCCCCCAAAAAAAAAA\n');
+  await page.evaluate(() => openDotPlot(state.seqs[0].seq, state.seqs[1].seq, 'a', 'b'));
+  await page.waitForTimeout(1500);
+  const first = await page.evaluate(() => document.getElementById('dotPlotRegionItems').textContent);
+  const r = await page.evaluate(async () => {
+    const orig = window._dotRunWorker;
+    window._dotRunWorker = () => Promise.reject(new Error('worker failed'));
+    try { await openDotPlot(state.seqs[0].seq, state.seqs[2].seq, 'a', 'c'); } finally { window._dotRunWorker = orig; }
+    return { items: document.getElementById('dotPlotRegionItems').textContent, status: document.getElementById('dotPlotStatus').textContent };
+  });
+  const ok = /A\d+-/.test(first) && !/A\d+-/.test(r.items) && /worker failed/.test(r.status);
+  return { pass: ok, detail: JSON.stringify({ first: first.trim().slice(0, 60), ...r }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

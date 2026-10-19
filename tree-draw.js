@@ -235,7 +235,7 @@
     // roughly evenly spread around the boundary, so a genuinely lopsided/clumped topology
     // can still pack some leaves closer than others and overlap locally. Real collision
     // detection would be needed to guarantee zero overlap in every case.
-    var scale = Math.max(fitScale, densityFloorScale) * Math.max(0.4, zoom);
+    var scale = Math.max(fitScale, densityFloorScale) * zoom;   // was clamped at 0.4, so 25-40 % changed only the label
     var totalW = spanX * scale + 2 * margin, totalH = spanY * scale + 2 * margin;
     function PX(n) { return margin + (n.ux - minX) * scale; }
     function PY(n) { return margin + (n.uy - minY) * scale; }
@@ -885,6 +885,6 @@
   // Exposed for tests.
   window._treeDraw = {
     parseNewick: parseNewick, toNewick: toNewick, rerootOnBranch: rerootOnBranch,
-    swapAt: swapAt, cloneTree: cloneTree, state: st
+    swapAt: swapAt, cloneTree: cloneTree, state: st, buildTreeSVGString: buildTreeSVGString
   };
 })();
