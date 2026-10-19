@@ -2162,6 +2162,10 @@ check('Selections panel: lists every kind, on/off, remove + undo, Esc, snapshot 
     colourState.mappings.set(state.seqs[1].header, '#ff0000'); applyColourToSeqNames(colourState.mappings);
   });
   await settle();
+  // the panel redraws on an animation frame after the search and the name colours: a fixed 80 ms was too
+  // short on a loaded machine (it failed in full runs, listing the search but not yet the names). Same
+  // assertion below; this only waits for the redraw, up to 3 s.
+  await page.waitForFunction(() => document.querySelectorAll('#selectionsList .sel-item').length >= 5, null, { timeout: 3000 }).catch(() => {});
   log.all = await panel();
   // rows off: kept, not live (the menu opens on hover, like the others)
   const openPanel = async () => { await page.hover('#selections-menu-section .section-header'); await page.waitForTimeout(200); };
@@ -5337,6 +5341,30 @@ check('Audit #222: a dot-plot run that fails clears the previous pair\'s region 
   });
   const ok = /A\d+-/.test(first) && !/A\d+-/.test(r.items) && /worker failed/.test(r.status);
   return { pass: ok, detail: JSON.stringify({ first: first.trim().slice(0, 60), ...r }) };
+});
+
+check('Undo/redo buttons sit on whole device pixels (their corners repaint identically), at 1x and 2x', async (page) => {
+  const out = {};
+  const pos = () => page.evaluate(() => {
+    const dpr = window.devicePixelRatio || 1;
+    return ['undoButton', 'undoDropdownBtn', 'redoButton', 'redoDropdownBtn'].map(id => {
+      const x = document.getElementById(id).getBoundingClientRect().left * dpr;
+      return Math.abs(x - Math.round(x)) < 0.01 ? 'whole' : x.toFixed(3);
+    }).join(',');
+  });
+  await page.setInputFiles('#fileInput', { name: 'u.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGT\n>b\nACGA\n') });
+  await page.waitForTimeout(800);
+  out.x1 = await pos();
+  const ctx = page.context();
+  const p2 = await ctx.browser().newPage({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2 });   // at 1.25x a 1px border is 1.25 device px: no layout is whole there
+  await p2.goto(page.url(), { waitUntil: 'networkidle' });
+  await p2.waitForTimeout(800);
+  out.x2 = await p2.evaluate(() => {
+    const dpr = window.devicePixelRatio || 1;
+    return ['undoButton', 'undoDropdownBtn', 'redoButton', 'redoDropdownBtn'].map(id => { const x = document.getElementById(id).getBoundingClientRect().left * dpr; return Math.abs(x - Math.round(x)) < 0.01 ? 'whole' : x.toFixed(3); }).join(',');
+  });
+  await p2.close();
+  return { pass: out.x1 === 'whole,whole,whole,whole' && out.x2 === 'whole,whole,whole,whole', detail: JSON.stringify(out) };
 });
 
 async function main() {

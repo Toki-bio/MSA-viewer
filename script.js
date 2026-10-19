@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v267';
+const BUILD_TAG = 'v268';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -12440,6 +12440,33 @@ function placeModeRow() {
     if (wrapped) row.classList.add('own-line');
 }
 window.addEventListener('resize', () => placeModeRow());
+// The undo/redo buttons come after text labels of fractional width (Copy is 35.36px), so they sat at
+// x = 153.33 and Chrome anti-aliased their rounded corners a shade differently after each repaint (two
+// pixels changed with nothing else on screen). A translate (layout untouched; the narrow-screen rule sets
+// their margin with !important) puts them on whole device pixels.
+function snapUndoBarToPixels() {
+    const bar = document.querySelector('#menuRow > .undo-redo-bar');
+    if (!bar) return;
+    const dpr = window.devicePixelRatio || 1;
+    const shift = parseFloat(bar.dataset.snapShift || '0');
+    const x = bar.getBoundingClientRect().left - shift;          // where layout put it
+    let d = Math.ceil(x * dpr - 1e-3) / dpr - x;
+    if (d < 1e-3) d = 0;
+    if (Math.abs(d - shift) < 1e-4) return;
+    bar.dataset.snapShift = String(d);
+    bar.style.transform = d ? `translateX(${d}px)` : '';
+}
+window.addEventListener('resize', snapUndoBarToPixels);
+document.addEventListener('DOMContentLoaded', () => {
+    snapUndoBarToPixels();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(snapUndoBarToPixels);
+    // the labels before it can change (the BAM button appears with a reference, the file name panel)
+    const row = document.getElementById('menuRow');
+    if (row && typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(() => snapUndoBarToPixels());
+        for (const c of row.children) { if (c.classList.contains('undo-redo-bar')) break; ro.observe(c); }
+    }
+});
 (function watchModeRow() {
     const row = document.getElementById('modeRow');
     if (!row || typeof MutationObserver === 'undefined') return;
