@@ -570,31 +570,74 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     is needed. Inserted bases get their own columns, with gaps in every other row, so each read's other
     bases stay in their reference column; soft-clipped bases are left out. If the reads map to more than
     one reference, the reference with the most reads is shown and the others are named in the status line.
+    To look for mutations, open the real reference first and the reads onto it (below): <code>REF</code> here is the
+    reads' own majority, so a change all the reads carry is part of it and is not seen as a change.
   </p>
   <p>
-    <strong>SAM, BAM or CRAM onto a reference:</strong> open the reference sequence first (FASTA or GenBank,
-    named as in the file's <code>@SQ SN:</code> line), then open the reads file. The reads are laid out in
-    the Reads view. Everything happens in the browser, so no server is needed: BAM is decompressed
-    directly, and CRAM, which stores reads as differences from the reference, is decoded against the loaded
-    sequence by the JBrowse CRAM reader (<code>@gmod/cram</code>, loaded only when a CRAM is opened). Reads on
-    references that are not loaded are skipped. BAM and CRAM are recognised by their content, whatever the
-    file is called. Opening a BAM or CRAM with nothing loaded shows how to load it instead.
+    <strong>SAM, BAM or CRAM onto a reference:</strong> open the reference sequence first (FASTA or GenBank),
+    then the reads file (<strong>SAM/BAM</strong> button, Input, drag and drop, or Add sequences). The reads go
+    on the loaded sequence named as in the file's <code>@SQ SN:</code> line; a name that differs only by a
+    <code>chr</code> prefix, a version (<code>.2</code>) or case also matches, as does a single loaded sequence of
+    exactly the reference's length (the message says so), and a region cut out with
+    <code>samtools faidx</code> (a sequence named like <code>chr7:1001-2000</code>): the reads, in chromosome
+    coordinates, are shifted onto it. A SAM without <code>@SQ</code> lines takes the references from its
+    reads. Everything happens in the browser, so no server is needed: BAM is decompressed directly, and CRAM,
+    which stores reads as differences from the reference, is decoded against the loaded sequence by the
+    JBrowse CRAM reader (<code>@gmod/cram</code>, loaded only when a CRAM is opened). BAM and CRAM are recognised
+    by their content, whatever the file is called. Opening a BAM or CRAM with nothing loaded shows how to load
+    it instead.
   </p>
   <p>
-    <strong>Checking a gene for mutations from reads:</strong> open the gene (GenBank with its CDS sets the
-    reading frame by itself), then its BAM. In the Reads view, <strong>Sample &rarr; row</strong> adds the
-    sample under the reference as an ordinary row and switches to the Full view. At each position the row has
-    the base most reads carry; where a second base has at least 20% of the reads (and two reads), an IUPAC code
-    for the two (heterozygous, e.g. R = A/G); a gap where most reads carry a deletion; extra columns where most
-    reads carry an insertion; N where fewer than 3 reads cover it. Duplicate, secondary, supplementary,
-    unmapped and QC-failed reads and bases below quality 13 are not counted. Indels are called as whole
-    events, so a deletion that half the reads carry is not cut into a partial one; heterozygous indels cannot
-    be shown in one row and are listed in the message (and the console) instead. Then switch on
-    <strong>Codon analysis</strong> (Display menu): each change is marked synonymous or non-synonymous against
-    the reference, a codon with a heterozygous base by both its alleles, a possible stop (one allele) as a stop,
-    and a deletion or insertion that breaks the frame as a frameshift. If the row has frameshifts in the CDS,
-    <strong>MACSE&hellip;</strong> in the Codon bar realigns it codon-aware. Undo removes the row again.
+    <strong>Which reads count:</strong> unmapped, secondary, supplementary, QC-failed and duplicate reads are
+    left out (the message says how many). Every other read is kept (up to 2,000,000) and counts for the
+    coverage, the allele counts and the sample row; the view draws at most 50 reads starting in each 100 bp
+    (a fixed random sample, as igv.js does), and marks the windows where reads were not drawn.
   </p>
+  <p>
+    <strong>The Reads view:</strong> the reference, the ruler, a <strong>coverage</strong> row and the reads,
+    packed into tracks. Coverage counts every read; where the non-reference bases reach 20% of the reads the bar
+    is split into base colours. Hover a coverage column for its counts per base and strand
+    (<code>A: 37 (49%, 20+, 17&minus;)</code>), deletions and insertions; click it to sort the reads by their base
+    there (the most common other base first, the reference base last). Read bars are pink on the forward
+    strand and blue on the reverse strand (a change seen on one strand only is a common artefact), faded when
+    their mapping quality is 0; mismatching bases are letters, deletions grey, insertions orange ticks (the
+    inserted bases are in the read's tooltip). <strong>Show bases</strong> draws every base.
+  </p>
+  <p>
+    <strong>Checking a gene for mutations from reads:</strong>
+  </p>
+  <ol>
+    <li>Open the gene: a GenBank file with its CDS (the CDS, tRNA and rRNA features become the annotation
+      track: <code>join()</code> exons, <code>complement()</code>, <code>/codon_start</code>;
+      <code>/transl_table</code> sets the genetic code), or a FASTA plus a BED annotation (BED12 for exons and
+      the coding part).</li>
+    <li>Open its reads. <strong>Variants</strong> (next to Show bases) lists every change the reads carry:
+      position, change, zygosity, depth, allele %, alt and reference reads on each strand, and for each gene
+      the effect (synonymous, missense, stop gained or lost, start lost, frameshift, in-frame deletion or
+      insertion, splice site within 2 bases of an exon, intron, UTR), the coding change (<code>c.419G&gt;A</code>,
+      counted from the A of the start codon, complemented on a minus-strand gene) and the amino-acid change
+      (<code>p.R140Q</code>, <code>p.S51*</code>, <code>p.G170fs</code>). Notes flag alt reads on one strand
+      only, low depth, and heterozygous indels. Click a row for its reads (sorted by their base there),
+      double-click for its column in the alignment. <strong>Copy table</strong> / <strong>Save .tsv</strong>
+      take it to a spreadsheet. A change is called where a second base has at least 20% of the reads (and two
+      reads; heterozygous below 80%), from bases of quality 13 or more, with N where fewer than 3 reads cover a
+      base; indels are called as whole events, left-aligned in repeats.</li>
+    <li><strong>Sample &rarr; row</strong> adds the sample under the reference as an ordinary row and switches to
+      the Full view: the base most reads carry, an IUPAC code for two (heterozygous, e.g. R = A/G), a gap where
+      most reads carry a deletion, extra columns where most carry an insertion, N under 3 reads.
+      Heterozygous indels cannot be shown in one row (they are in the Variants list). Another sample's reads
+      file gets its own row, <code>&lt;reference&gt;_&lt;file name&gt;</code>. Undo removes a row again.</li>
+    <li>Switch on <strong>Codon analysis</strong> (Display menu): with genes on the annotation track each CDS is
+      translated in its own frame and strand, exons joined; each change is marked synonymous or
+      non-synonymous against row 1, a codon with a heterozygous base by both its alleles, a possible stop as a
+      stop, and an indel that breaks the frame as a frameshift. A translated codon's tooltip gives its number
+      in the gene (<code>R (CGA), codon 140</code>).</li>
+    <li>Codon realignment (<strong>MACSE&hellip;</strong>) is for coding sequences: rows with stop codons in every
+      frame (a gene with its flanks or introns) get a warning first, since an aligner explains each stop with
+      frameshifts. To realign one gene, click it on the annotation track (its columns are selected) and use
+      Realign selected region. Its summary counts frameshifts inside the sequences, not the padding of
+      fragments that start or end inside a codon.</li>
+  </ol>
   <p>
     The optional server also exposes <code>POST /api/bam2sam</code> (see 11.4), which converts a BAM or
     CRAM file on the server's disk to SAM text with <code>samtools view -h</code>, for scripted use.
@@ -1175,7 +1218,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block.</td></tr>
     <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks (adjustable via Block Size slider, 40–300 chars; <strong>Screen</strong> fits the block to the window width). Sequence names repeat per block.</td></tr>
     <tr><td><strong>Canvas</strong></td><td>Any alignment; the default view</td><td>The default view at every size (a note on the first load says so). Choosing Full or Block keeps that view for smaller files for the rest of the session; alignments from 40,000 residues still open in Canvas. A link can choose the view with <code>&amp;view=full</code>, <code>block</code> or <code>canvas</code>. Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name), and so do motif search, Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots. From about 500,000 residues, Full and Block draw a window rather than every cell.</td></tr>
-    <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5). A <strong>Show bases</strong> checkbox next to the mode switch draws every base of each read instead of mismatches only.</td></tr>
+    <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5). A <strong>Show bases</strong> checkbox next to the mode switch draws every base of each read instead of mismatches only. A coverage row (counts per base and strand on hover; click to sort the reads there), read strands in colour, and <strong>Variants</strong> / <strong>Sample &rarr; row</strong> buttons (2.5).</td></tr>
   </table>
   <p>
     Mode switching is instant - no re-render delay. The Block Size slider adjusts
