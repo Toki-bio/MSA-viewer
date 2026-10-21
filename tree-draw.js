@@ -508,6 +508,10 @@
     if (spacingGroup) spacingGroup.style.display = st.layout === 'unrooted' ? 'inline-flex' : 'none';
     var unrootedGroup = document.getElementById('treeUnrootedGroup');
     if (unrootedGroup) unrootedGroup.style.display = st.layout === 'unrooted' ? 'inline-flex' : 'none';
+    // the tree on screen is always the one just built, so the method radio says how it was made
+    var rootNote = document.getElementById('treeRootNote');
+    var methodEl = document.querySelector('input[name="treeMethod"]:checked');
+    if (rootNote) rootNote.style.display = st.layout === 'unrooted' && (!methodEl || methodEl.value === 'upgma') ? 'inline' : 'none';
   }
 
   // ---------- export ----------
@@ -721,6 +725,8 @@
           '<span style="width:1px;height:14px;background:#c5d2df;margin:0 2px;"></span>' +
           '<label class="tree-mode" title="Merge overlapping labels into one, hover to see the full list"><input type="checkbox" id="treeGroupOverlap" checked> group overlapping labels</label>' +
         '</span>' +
+        '<span id="treeRootNote" style="display:none;color:#8a9bab;" title="UPGMA assumes equal rates (a molecular clock) and places the root itself; NJ trees have no root of their own">' +
+          'UPGMA trees are rooted by construction; this drawing hides the root</span>' +
         '<span style="width:1px;height:14px;background:#c5d2df;margin:0 2px;"></span>' +
         '<span style="display:inline-flex;align-items:center;gap:6px;">' +
           '<span style="color:#6b8299;">Click</span>' +

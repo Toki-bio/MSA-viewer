@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v268';
+const BUILD_TAG = 'v269';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -8864,7 +8864,9 @@ function renderReadsAlignment() {
     // Reference name label
     const refLabel = document.createElement('span');
     refLabel.className = 'seq-name';
-    refLabel.style.cssText = 'width:160px;min-width:160px;font-weight:bold;font-size:11px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    // Exactly NAME_W wide, as the reads drawing assumes: .seq-name brings the main view's -12px margin
+    // (and the ruler's padding added to its width), which put the reference 12px left of the reads
+    refLabel.style.cssText = `width:${NAME_W}px;min-width:${NAME_W}px;max-width:${NAME_W}px;margin-left:0;box-sizing:border-box;flex:none;font-weight:bold;font-size:11px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
     refLabel.textContent = bamState.refName;
     refLabel.title = bamState.refName;
     refLine.appendChild(refLabel);
@@ -8902,7 +8904,7 @@ function renderReadsAlignment() {
     scaleLine.style.zIndex = '1';
 
     const scaleLabel = document.createElement('span');
-    scaleLabel.style.cssText = 'width:160px;min-width:160px;text-align:right;padding:0 4px;';
+    scaleLabel.style.cssText = `width:${NAME_W}px;min-width:${NAME_W}px;box-sizing:border-box;flex:none;text-align:right;padding:0 4px;`;
     scaleLine.appendChild(scaleLabel);
 
     const scaleData = document.createElement('div');

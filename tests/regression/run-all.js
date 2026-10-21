@@ -579,6 +579,27 @@ check('BAM piles onto a loaded reference (multi-block BGZF decompresses in Chrom
   return { pass: true, detail: r.msg };
 });
 
+// The reference letters, the ruler and the read bars are three separate rows; each base must sit in
+// one column across all three (the reference name label had borrowed the main view's -12px margin)
+check('BAM Reads view: reference bases, ruler and reads line up base for base', async (page) => {
+  await openSynthetic(page, 'synth_ref.fa');
+  await openSynthetic(page, 'synth_reads.bam');
+  const r = await page.evaluate(() => {
+    const L = e => e.getBoundingClientRect().left;
+    const refCells = [...document.querySelectorAll('.ref-track-line .seq-data span')];
+    const rulerCells = [...document.querySelector('.scale-line').children[1].children];
+    const svg = alignmentContainer.querySelector('svg');
+    // read_perfect_a: 40M at position 1, so its bar starts at the reference's first base
+    const read = bamState.reads.find(x => x.name === 'read_perfect_a' || x.readName === 'read_perfect_a');
+    const bar = read && [...svg.querySelectorAll('rect')].find(e => e.getAttribute('width') == String(40 * 12));
+    const p = read ? read.pos - bamState.refStart : -1;
+    return { refBase: refCells[p] && Math.round(L(refCells[p])), ruler: rulerCells[p] && Math.round(L(rulerCells[p])),
+             read: bar && Math.round(L(svg) + +bar.getAttribute('x')), refLetter: refCells[p] && refCells[p].textContent, p };
+  });
+  const ok = r.refBase != null && r.refBase === r.ruler && r.refBase === r.read && r.refLetter === 'A';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };
@@ -4737,6 +4758,31 @@ check('Tree: re-rooting on the only branch below a one-child root adds no empty 
     return { newick: out, leaves: (out.match(/[A-Za-z?]+(?=:)/g) || []).join(',') };
   });
   const ok = !/\?|\(\s*,|,\s*\)|\(\)/.test(r.newick) && /A/.test(r.newick) && /B/.test(r.newick) && (r.newick.match(/,/g) || []).length === 1;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// UPGMA builds a rooted tree by construction, so drawing it unrooted gets a quiet note; NJ does not
+check('Tree: a UPGMA tree drawn unrooted shows a quiet note that UPGMA is rooted (NJ and rooted do not)', async (page) => {
+  const path = require('path');
+  await page.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples', 'svk_k4.fa'));
+  await page.waitForTimeout(1500);
+  const pick = (name, v) => page.evaluate(([name, v]) => { const r = document.querySelector(`input[name="${name}"][value="${v}"]`); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); }, [name, v]);
+  const note = () => page.evaluate(() => { const e = document.getElementById('treeRootNote'); return e && getComputedStyle(e).display !== 'none' ? e.textContent : ''; });
+  await pick('treeMethod', 'upgma');
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1, 2, 3]); openTreeBuilder(); });
+  await page.waitForTimeout(900);
+  const r = {};
+  r.upgmaRooted = await note();
+  await pick('treeLayout', 'unrooted'); await page.waitForTimeout(200);
+  r.upgmaUnrooted = await note();
+  await pick('treeMethod', 'nj'); await page.waitForTimeout(600);
+  r.njUnrooted = await note();
+  await pick('treeMethod', 'upgma'); await page.waitForTimeout(600);
+  r.upgmaAgain = await note();
+  await pick('treeLayout', 'rect'); await page.waitForTimeout(200);
+  r.backToRooted = await note();
+  await page.click('#treeBuilderCloseBtn');
+  const ok = !r.upgmaRooted && /UPGMA/.test(r.upgmaUnrooted) && /root/i.test(r.upgmaUnrooted) && !r.njUnrooted && r.upgmaAgain === r.upgmaUnrooted && !r.backToRooted;
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
