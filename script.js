@@ -4872,7 +4872,10 @@ function _computeCodonAnalysis(seqs, len, frameOffset) {
             if (codonPhase >= 3) {
                 const codon = codonBuf.replace(/[Nn]/g, 'N');
                 const aa = activeCode[codon] || _translateDegenerate(codon, activeCode);
-                aaSeq[i].push({ cols: codonCols.slice(), codon, aa });
+                // n: the codon's number in the reference (row 1) - the row's own count would misnumber a row that
+                // starts inside the gene (a sample from reads); a codon the reference does not have gets none
+                const n = i === refIdx ? aaSeq[i].length + 1 : (refCodonByCol.get(codonCols[0]) || {}).n;
+                aaSeq[i].push({ cols: codonCols.slice(), codon, aa, n });
 
                 if (aa === '*') {
                     for (const c of codonCols) stops[i].push(c);
@@ -5112,7 +5115,7 @@ function _computeAnnotatedCodonAnalysis(seqs, len) {
         genes++;
         const g = j => cols[j];
         for (let i = 0; i < n; i++) {
-            const entries = r.aaSeq[i].map(e => ({ cols: e.cols.map(g).sort((a, b) => a - b), src: e.cols, codon: e.codon, aa: e.aa }));
+            const entries = r.aaSeq[i].map(e => ({ cols: e.cols.map(g).sort((a, b) => a - b), src: e.cols, codon: e.codon, aa: e.aa, n: e.n }));
             // A stop cut short by the gene end: the trailing 1-2 bases after the last codon
             if (polyAStop) {
                 const lastEnd = entries.length ? Math.max(...entries[entries.length - 1].src) : -1;
@@ -5132,7 +5135,7 @@ function _computeAnnotatedCodonAnalysis(seqs, len) {
                 }
                 e.cols.forEach(c => { claimed[lane][i][c] = 1; });
                 if (lane === 0) e.src.forEach(j => { phase[i][g(j)] = r.phase[i][j]; });
-                aaSeq[i].push({ cols: e.cols, codon: e.codon, aa: e.aa, gene: d.f.name, strand: d.f.strand || '+', lane, partial: !!e.partial });
+                aaSeq[i].push({ cols: e.cols, codon: e.codon, aa: e.aa, n: e.n, gene: d.f.name, strand: d.f.strand || '+', lane, partial: !!e.partial });
                 if (e.aa === '*') e.cols.forEach(c => stops[i].push(c));
                 if (lane === 0) for (const j of e.src) { const v = r.synNonSyn[i][j]; if (v) synNonSyn[i][g(j)] = v; }
             }
@@ -5297,7 +5300,8 @@ function _populateAlignedAARow(dataCol, aaSeqData, viewStart, viewEnd, frameShif
         if (!cols.length || cols[cols.length - 1] < viewStart || cols[0] >= viewEnd) continue;
         const cls = entry.aa === '*' ? 'stop' : (_AA_CLASS[entry.aa] || 'unk');
         const mid = cols[Math.floor(cols.length / 2)];
-        const what = entry.partial ? `Stop (${entry.codon}), completed by polyadenylation of the mRNA` : `${entry.aa === '*' ? 'Stop' : entry.aa} (${entry.codon})`;
+        const num = entry.n ? ` ${entry.n}` : '';   // codon number in the reference (row 1), from the gene / frame start
+        const what = entry.partial ? `Stop${num} (${entry.codon}), completed by polyadenylation of the mRNA` : `${entry.aa === '*' ? 'Stop' : entry.aa}${num} (${entry.codon})`;
         const where = entry.gene ? `${entry.gene}${entry.strand === '-' ? ' (minus strand)' : ''}, ` : '';
         cols.forEach((c, k) => {
             if (c < viewStart || c >= viewEnd) return;
@@ -6919,7 +6923,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const entry = spec && spec.aaData ? spec.aaData.find(en => en.cols && en.cols.includes(col)) : null;
                 let tipText = null;
                 if (entry) {
-                    const what = entry.partial ? `Stop (${entry.codon}), completed by polyadenylation of the mRNA` : `${entry.aa === '*' ? 'Stop' : entry.aa} (${entry.codon})`;
+                    const num = entry.n ? ` ${entry.n}` : '';   // codon number in the reference (row 1), from the gene / frame start
+                    const what = entry.partial ? `Stop${num} (${entry.codon}), completed by polyadenylation of the mRNA` : `${entry.aa === '*' ? 'Stop' : entry.aa}${num} (${entry.codon})`;
                     const where = entry.gene ? `${entry.gene}${entry.strand === '-' ? ' (minus strand)' : ''}, ` : '';
                     tipText = `${what}, ${where}columns ${entry.cols[0] + 1}-${entry.cols[entry.cols.length - 1] + 1}`;
                     const f = (spec.frameShifts || []).find(ff => ff.type === 'indel' && ff.runStart === col);
@@ -9854,7 +9859,9 @@ function assignReadTracks(reads) {
 function updateBamButtonVisibility() {
     const bamBtn = document.getElementById('openBamToolbarButton');
     if (!bamBtn) return;
-    const eligible = state.seqs && state.seqs.length === 1;
+    // any loaded alignment: the reads go on the row whose name matches (BamParser.matchReference). With exactly
+    // one row only, the button went away once a sample row was added, so a second sample could not be loaded
+    const eligible = !!(state.seqs && state.seqs.length >= 1);
     bamBtn.style.display = eligible ? '' : 'none';
 
     // Also update the "Clear reads" button visibility
@@ -21967,6 +21974,13 @@ function initAddSeqBrowse() {
         let allContent = textarea.value.trim();
         const read = [], failed = [];
         for (const file of files) {
+            // a SAM/BAM/CRAM picked here is reads, not sequences to add: it went into the box as raw text
+            if (await _sniffReadsKind(file)) {
+                closeAddSequencesModal();
+                await _routeReadsFile(file);
+                read.push(file.name + ' (reads, opened in the Reads view)');
+                continue;
+            }
             try {
                 const { text } = await readSequenceFile(file);
                 const trimmed = text.trim();

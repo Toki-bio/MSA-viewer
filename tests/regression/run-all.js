@@ -983,6 +983,50 @@ check('Reads: Variants window lists each change with depth, strands and gene eff
   return { pass: ok, detail: JSON.stringify({ pOf, effects, tsv: r.tsvLines, cov: r.coverageBars, colours: r.strandColours, g: { ...g, tip: g.tip.slice(0, 160) } }) };
 });
 
+// A translated codon said "Q (CAA)" but not which codon of the gene it is: R140Q could not be read off the alignment
+check('Codon analysis: translation tooltips number codons as the reference does (gene, minus strand, sample row)', async (page) => {
+  const path = require('path');
+  const DIR = path.join(__dirname, '..', 'fixtures', 'reads', 'region');
+  await page.evaluate(() => { if (typeof clearAnnotation === 'function') clearAnnotation(); });
+  await page.setInputFiles('#fileInput', path.join(DIR, 'region.gb'));
+  await page.waitForTimeout(1500);
+  await page.setInputFiles('#bamFileInput', path.join(DIR, 'reads_40x.sam'));
+  await page.waitForTimeout(2500);
+  await page.click('#readsSampleRowButton');
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => { const w = document.getElementById('variantsWindow'); if (w) w.style.display = 'none'; const c = document.getElementById('codonAnalysis'); if (!c.checked) { c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); } });
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => {
+    const d = state._codonData, at = (row, col) => d.aaSeq[row].find(e => e.cols.includes(col));
+    const a0 = at(0, 918), a1 = at(1, 918), b1 = at(1, 2048);
+    _scrollToColumn(918);
+    const span = [...document.querySelectorAll('.seq-line[data-seq-index="1"] ~ .aa-row .aa-c, .aa-row .aa-c')].find(s => /140/.test(s.title || ''));
+    return { ref: a0 && a0.aa + a0.n, sample: a1 && a1.aa + a1.n, stop: b1 && b1.aa + b1.n, title: span ? span.title : null };
+  });
+  const ok = r.ref === 'R140' && r.sample === 'Q140' && r.stop === '*51' && /^(R|Q) 140 \(/.test(r.title || '');
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// With more than one row (e.g. after Sample -> row) the SAM/BAM button was hidden: a second sample could not be
+// loaded. A SAM picked in the Add sequences dialog ("+") went into its box as raw text.
+check('Reads: SAM/BAM stays available with several rows; a reads file picked in Add sequences opens as reads', async (page) => {
+  const path = require('path');
+  const DIR = path.join(__dirname, '..', 'fixtures', 'reads', 'region');
+  await page.setInputFiles('#fileInput', path.join(DIR, 'region.fa'));
+  await page.waitForTimeout(1200);
+  await page.setInputFiles('#bamFileInput', path.join(DIR, 'reads_40x.sam'));
+  await page.waitForTimeout(2500);
+  await page.click('#readsSampleRowButton');
+  await page.waitForTimeout(1200);
+  const r = await page.evaluate(() => ({ rows: state.seqs.length, bam: getComputedStyle(document.getElementById('openBamToolbarButton')).display }));
+  await page.evaluate(() => { clearReadsData(); });
+  await page.setInputFiles('#addSeqFileInput', path.join(DIR, 'reads_40x.sam'));
+  await page.waitForTimeout(3000);
+  r.viaAdd = await page.evaluate(() => ({ reads: (bamState.allReads || []).length, box: document.getElementById('addSeqInput').value.length }));
+  const ok = r.rows === 2 && r.bam !== 'none' && r.viaAdd.reads === 799 && r.viaAdd.box === 0;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };
