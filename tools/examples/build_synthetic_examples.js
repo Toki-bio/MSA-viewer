@@ -228,7 +228,8 @@ function samReads(refSeq) {
     add('read_deletion', 20, '10M1D15M', delSeq);
     const insSeq = refSeq.slice(49, 57) + 'AAA' + refSeq.slice(57, 69);
     add('read_insertion', 50, '8M3I12M', insSeq);
-    add('read_reverse', 70, '20M', revcomp(refSeq.slice(69, 89)), 16);
+    // SAM SEQ is always on the reference's forward strand, flag 16 or not (revcomp here gave 20 false mismatches)
+    add('read_reverse', 70, '20M', refSeq.slice(69, 89), 16);
 
     let text = '@HD\tVN:1.6\tSO:coordinate\n';
     text += '@SQ\tSN:synth_ref\tLN:' + refSeq.length + '\n';
