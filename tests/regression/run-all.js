@@ -827,6 +827,67 @@ check('Reads onto a reference named differently: chr prefix, version, faidx regi
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// A gene from reads, the realistic way (tests/fixtures/reads/region: geneA = join(201..500,801..1100) on +,
+// geneB = complement(1601..2200)). GenBank CDS features were parsed and dropped, so codon analysis guessed a frame
+// from ATG counts and classed the changes wrongly (the synonymous one non-synonymous, R140Q synonymous); BED12
+// exon blocks were ignored, so geneA was translated through its intron (5 stops in the reference itself).
+check('GenBank / BED12 genes: codon analysis splices exons, reads minus-strand genes, classes the sample\'s changes', async (page) => {
+  const path = require('path'), fs = require('fs');
+  const DIR = path.join(__dirname, '..', 'fixtures', 'reads', 'region');
+  const truth = JSON.parse(fs.readFileSync(path.join(DIR, 'truth.json'), 'utf8'));
+  const out = {};
+  for (const via of ['genbank', 'bed12']) {
+    await page.evaluate(() => { if (typeof clearAnnotation === 'function') clearAnnotation(); });
+    await page.setInputFiles('#fileInput', path.join(DIR, via === 'genbank' ? 'region.gb' : 'region.fa'));
+    await page.waitForTimeout(1500);
+    if (via === 'bed12') await page.evaluate(t => setAnnotation(t, 'region_bed12.bed'), fs.readFileSync(path.join(DIR, 'region_bed12.bed'), 'utf8'));
+    await page.setInputFiles('#bamFileInput', path.join(DIR, 'reads_40x.sam'));
+    await page.waitForTimeout(2500);
+    await page.click('#readsSampleRowButton');
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => { const c = document.getElementById('codonAnalysis'); if (!c.checked) { c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); } });
+    await page.waitForTimeout(1500);
+    out[via] = await page.evaluate((muts) => {
+      const d = state._codonData; if (!d) return 'no codon data';
+      const aaOf = (row, gene) => d.aaSeq[row].filter(e => e.gene === gene).sort((a, b) => a.cols[0] - b.cols[0]).map(e => e.aa).join('');
+      const geneA = aaOf(0, 'geneA'), geneB = aaOf(0, 'geneB').split('').reverse().join('');
+      const m = Object.fromEntries(muts.map(x => [x.name, (d.synNonSyn[1][x.pos] || '-') + (d.stops[1].includes(x.pos) ? '*' : '')]));
+      return { byGene: !!d.byGene, geneA: geneA.length + ':' + geneA[0] + '..' + geneA.slice(-1) + ':stops' + (geneA.match(/\*/g) || []).length,
+               geneB: geneB.length + ':' + geneB[0] + '..' + geneB.slice(-1) + ':stops' + (geneB.match(/\*/g) || []).length, m,
+               hetDelInRow: state.seqs[1].seq[muts.find(x => x.name === 'B_del1_het').pos] };
+    }, truth.muts);
+    await page.evaluate(() => { if (bamState.reads.length) clearReadsData(); });
+  }
+  const good = r => r && r.byGene && r.geneA === '200:M..*:stops1' && r.geneB === '200:M..*:stops1'
+    && r.m.A_syn_het_exon1 === 'syn' && r.m.A_missense_hom_exon2 === 'nonsyn' && r.m.intron_hom === '-'
+    && r.m.B_stop_hom === 'nonsyn*' && r.m.B_missense_het === 'nonsyn' && r.hetDelInRow !== '-';
+  return { pass: good(out.genbank) && good(out.bed12), detail: JSON.stringify(out) };
+});
+
+// The annotation track drew a spliced gene as one solid box over its intron
+check('Annotation track: a spliced gene\'s intron is a thin line, in Full and Canvas', async (page) => {
+  const path = require('path');
+  const gb = path.join(__dirname, '..', 'fixtures', 'reads', 'region', 'region.gb');   // geneA join(201..500,801..1100)
+  const out = {};
+  await page.evaluate(() => { if (typeof clearAnnotation === 'function') clearAnnotation(); });
+  await page.setInputFiles('#fileInput', gb);
+  await page.waitForTimeout(1500);
+  out.full = await page.evaluate(() => [...document.querySelectorAll('.annot-intron')].map(e => Math.round(e.getBoundingClientRect().width / (document.querySelector('.seq-line[data-seq-index] .seq-data span[data-pos]').getBoundingClientRect().width))));
+  await page.goto(page.url().replace(/view=\w+/, 'view=canvas').replace(/(index\.html)(?!\?)/, '$1?view=canvas'), { waitUntil: 'networkidle' });
+  await page.setInputFiles('#fileInput', gb);
+  await page.waitForTimeout(1500);
+  out.canvas = await page.evaluate(() => {
+    const m = _canvasState.metrics, dpr = window.devicePixelRatio || 1;
+    _canvasState.offsetX = 600 * m.charW; _canvasState.scheduleDraw(); return new Promise(r => setTimeout(() => {
+      const c = _canvasState.canvas, x = Math.round((m.nameW + 50 * m.charW) * dpr);   // column 650: inside the intron
+      const px = y => [...c.getContext('2d').getImageData(x, Math.round(y * dpr), 1, 1).data].slice(0, 3).join(',');
+      r({ mid: px(m.charH / 2), top: px(2) });
+    }, 300));
+  });
+  const ok = out.full.length >= 1 && Math.abs(out.full.reduce((a, b) => a + b, 0) - 299) <= 3 && out.canvas.top === '255,255,255' && out.canvas.mid !== '255,255,255';   // Full cuts the track per block of columns
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };

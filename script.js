@@ -5058,6 +5058,7 @@ function _computeMultiFrameCodonAnalysis(seqs, len) {
 // A BED feature is a CDS when its description (13th column) starts with "CDS", or,
 // without a description, when its name is not an RNA, origin or control-region name.
 function _annotIsCds(f) {
+    if (f.coding === false) return false;          // BED12 with thickStart = thickEnd: a non-coding transcript
     if (f.desc) return /^CDS\b/i.test(f.desc);
     return !/trn|tRNA|rRNA|rrn|\b(12S|16S|18S|28S|5S)\b|D-loop|control|origin|^OL$|^CR$/i.test(f.name);
 }
@@ -5094,17 +5095,22 @@ function _computeAnnotatedCodonAnalysis(seqs, len) {
     let genes = 0, lanes = 1;
     const hidden = new Set();   // genes with codons where two others already overlap (only 2 lanes are drawn)
     for (const d of cds) {
-        const cs = d.cs, ce = d.ce, L = ce - cs + 1;
+        // The gene's columns in transcript order: its coding blocks (exons) joined, or its whole span; read
+        // backwards (and complemented) for a minus-strand gene. /codon_start (2 or 3) skips 1-2 bases at its 5' end.
         const minus = d.f.strand === '-';
+        const cols = [];
+        for (const [a, b] of (d.cdsCols && d.cdsCols.length ? d.cdsCols : [[d.cs, d.ce]])) for (let c = a; c <= b; c++) cols.push(c);
+        if (minus) cols.reverse();
+        const L = cols.length;
         const sub = seqs.map(s => {
-            let t = s.seq.slice(cs, ce + 1);
-            if (t.length < L) t += '-'.repeat(L - t.length);
-            return { seq: minus ? reverseComplement(t) : t };
+            let t = '';
+            for (const c of cols) t += s.seq[c] || '-';
+            return { seq: minus ? reverseComplement(t.split('').reverse().join('')) : t };   // reversed columns: complement only
         });
-        const r = _computeCodonAnalysis(sub, L, 0);
+        const r = _computeCodonAnalysis(sub, L, Math.max(0, ((d.f.codonStart || 1) - 1)));
         if (!r) continue;
         genes++;
-        const g = j => (minus ? ce - j : cs + j);
+        const g = j => cols[j];
         for (let i = 0; i < n; i++) {
             const entries = r.aaSeq[i].map(e => ({ cols: e.cols.map(g).sort((a, b) => a - b), src: e.cols, codon: e.codon, aa: e.aa }));
             // A stop cut short by the gene end: the trailing 1-2 bases after the last codon
@@ -7734,12 +7740,36 @@ function parseBedText(text) {
         }
         const strand = f[5] === '+' || f[5] === '-' ? f[5] : '';
         const score = f[4] != null && f[4] !== '' && f[4] !== '.' ? Number(f[4]) : null;
+        const desc = f.length > 12 ? f.slice(12).join(' ').trim() : '';
+        // BED12 exons (blocks) and the coding part (thickStart-thickEnd): codon analysis by gene translates only
+        // the coding exons, joined. Without them a two-exon gene was translated straight through its intron.
+        let blocks = null;
+        const nb = parseInt(f[9], 10);
+        if (f.length >= 12 && nb > 0) {
+            const sizes = String(f[10]).split(',').filter(x => x !== '').map(Number), starts = String(f[11]).split(',').filter(x => x !== '').map(Number);
+            if (sizes.length >= nb && starts.length >= nb) {
+                blocks = [];
+                for (let k = 0; k < nb; k++) if (sizes[k] > 0 && starts[k] >= 0) blocks.push([start + starts[k], Math.min(end, start + starts[k] + sizes[k])]);
+                blocks.sort((a, b) => a[0] - b[0]);
+                if (!blocks.length) blocks = null;
+            }
+        }
+        const ts = parseInt(f[6], 10), te = parseInt(f[7], 10);
+        let thick = f.length >= 8 && Number.isFinite(ts) && Number.isFinite(te) ? [Math.max(start, ts), Math.min(end, te)] : null;
+        // a description saying CDS wins over an empty thick part (thickStart = thickEnd = 0 is also written as filler)
+        if (thick && thick[1] <= thick[0] && /^CDS\b/i.test(desc)) thick = null;
+        // the coding blocks: exons cut to the thick part; a feature with an empty thick part is not coding
+        const coding = thick ? thick[1] > thick[0] : true;
+        const cdsBlocks = coding ? (blocks || [[start, end]]).map(([a, b]) => [Math.max(a, thick ? thick[0] : a), Math.min(b, thick ? thick[1] : b)]).filter(([a, b]) => b > a) : [];
+        const cst = /\bcodon_start=([123])\b/.exec(desc);
         features.push({
             chrom: f[0].trim(), start, end,
             name: (f[3] || '').trim() || `${f[0].trim()}:${start + 1}-${end}`,
             score: Number.isFinite(score) ? score : null,
             strand, color,
-            desc: f.length > 12 ? f.slice(12).join(' ').trim() : ''
+            desc,
+            blocks, coding, cdsBlocks,
+            codonStart: cst ? +cst[1] : 1
         });
     }
     return { trackName, features, skipped };
@@ -7829,7 +7859,14 @@ function _prepareAnnotLayout(len) {
             ce = map[Math.min(f.end, map.length) - 1];
         }
         if (!(cs >= 0) || !(ce >= cs) || cs >= len) { outside++; continue; }
-        feats.push({ f, cs, ce: Math.min(ce, len - 1), seqIndex: si, color: f.color || _annotGuessColor(f.name), lane: 0 });
+        // coding blocks (exons cut to the CDS) on alignment columns, inclusive: [[c0, c1], ...]
+        let cdsCols = null;
+        if (f.cdsBlocks && f.cdsBlocks.length && !(f.cdsBlocks.length === 1 && f.cdsBlocks[0][0] === f.start && f.cdsBlocks[0][1] === f.end)) {
+            const map = si === 'cols' ? null : maps.get(si);
+            const col = p => (map ? map[Math.min(p, map.length - 1)] : p);
+            cdsCols = f.cdsBlocks.filter(([a]) => (map ? a < map.length : a < len)).map(([a, b]) => [col(a), Math.min(len - 1, col(b - 1))]).filter(([a, b]) => b >= a);
+        }
+        feats.push({ f, cs, ce: Math.min(ce, len - 1), seqIndex: si, color: f.color || _annotGuessColor(f.name), lane: 0, cdsCols });
     }
     feats.sort((x, y) => x.cs - y.cs || y.ce - x.ce);
     const laneEnd = [];
@@ -7863,6 +7900,13 @@ function _annotFeatsInRange(colStart, colEnd) {
 // Fills a track's .seq-data with the features overlapping colStart..colEnd
 // (inclusive). cw: the measured column width in px for a column-windowed
 // block (positions must agree with the rows' px padding), or null to use ch.
+// The column ranges between a feature's coding blocks (its introns), inclusive
+function _annotIntronCols(d) {
+    const b = d.cdsCols, out = [];
+    if (b && b.length > 1) for (let k = 1; k < b.length; k++) if (b[k][0] - 1 >= b[k - 1][1] + 1) out.push([b[k - 1][1] + 1, b[k][0] - 1]);
+    return out;
+}
+
 function _fillAnnotTrackData(data, colStart, colEnd, cw) {
     const n = colEnd - colStart + 1;
     const u = v => cw ? (v * cw) + 'px' : v + 'ch';
@@ -7874,6 +7918,10 @@ function _fillAnnotTrackData(data, colStart, colEnd, cw) {
         const arrow = d.f.strand === '+' && !clipR ? ' plus' : d.f.strand === '-' && !clipL ? ' minus' : '';
         const label = w >= d.f.name.length * 0.75 + 2 ? `<span class="annot-feat-label">${_escapeHtml(d.f.name)}</span>` : '';
         parts.push(`<div class="annot-feat${arrow}${w < 3 ? ' narrow' : ''}" data-fi="${d.id}" style="left:${u(s - colStart)};width:${u(w)};top:${d.lane}em;background:${d.color};color:${d.fg}">${label}</div>`);
+        for (const [a, b] of _annotIntronCols(d)) {
+            const ia = Math.max(a, colStart), ib = Math.min(b, colEnd);
+            if (ib >= ia) parts.push(`<div class="annot-intron" style="left:${u(ia - colStart)};width:${u(ib - ia + 1)};top:${d.lane}em;--intron-c:${d.color}"></div>`);
+        }
     }
     parts.push('</div>');
     data.innerHTML = parts.join('');
@@ -7950,6 +7998,7 @@ function _annotTooltipHtml(d) {
     let h = `<b>${_escapeHtml(f.name)}</b>`;
     if (f.desc) h += `<br>${_escapeHtml(f.desc)}`;
     h += `<br>${where}: ${fmt(f.start + 1)}&ndash;${fmt(f.end)}${f.strand ? ' (' + f.strand + ')' : ''}, ${fmt(f.end - f.start)} bp`;
+    if (f.cdsBlocks && f.cdsBlocks.length > 1) h += `<br>${f.cdsBlocks.length} coding exons, ${fmt(f.cdsBlocks.reduce((t, [a, b]) => t + b - a, 0))} bp coding`;
     if (d.seqIndex !== 'cols') h += `<br>columns ${fmt(d.cs + 1)}&ndash;${fmt(d.ce + 1)}`;
     if (f.score != null) h += `<br>score ${f.score}`;
     return h;
@@ -7999,6 +8048,11 @@ function _canvasDrawAnnotTrack(ctx, o) {
         }
         ctx.closePath();
         ctx.fill();
+        for (const [a, b] of _annotIntronCols(d)) {    // introns: box cut, a thin line joins the exons (as in the DOM track)
+            const ix0 = NAME_W + a * CHAR_W - ox, ix1 = NAME_W + (b + 1) * CHAR_W - ox;
+            ctx.fillStyle = '#fff'; ctx.fillRect(ix0, y, ix1 - ix0, hh);
+            ctx.fillStyle = d.color; ctx.fillRect(ix0, y + hh / 2 - 1, ix1 - ix0, 2);
+        }
         ctx.font = labelFont;
         const tw = ctx.measureText(d.f.name).width;
         if (tw + 8 + ah <= x1 - x0) {
@@ -8066,6 +8120,62 @@ function setAnnotation(text, sourceName) {
     if (state.seqs?.length) renderAlignment(); else updateAnnotPanel();
     showMessage(`Annotation: ${parsed.features.length} feature${parsed.features.length === 1 ? '' : 's'} from ${sourceName}`, 3000);
     return true;
+}
+
+// A GenBank location as sorted 0-based half-open blocks: join(), order(), complement(), partial < >, single bases.
+// Positions in another record (ACC:12..40) and between-base sites (12^13) are left out.
+function _gbLocationBlocks(loc) {
+    const s = String(loc || '').replace(/\s+/g, '');
+    if (/[A-Za-z0-9_.]+:\d/.test(s.replace(/^(complement|join|order)\(/g, ''))) return null;
+    const blocks = [];
+    for (const m of s.matchAll(/<?(\d+)(?:\.\.>?(\d+))?/g)) {
+        if (s[m.index + m[0].length] === '^' || s[m.index - 1] === '^') continue;
+        const a = +m[1], b = m[2] ? +m[2] : a;
+        if (a >= 1 && b >= a) blocks.push([a - 1, b]);
+    }
+    blocks.sort((x, y) => x[0] - y[0]);
+    return blocks.length ? { blocks, strand: /complement\(/.test(s) ? '-' : '+' } : null;
+}
+
+// The CDS, tRNA and rRNA features of GenBank records as the annotation track (BED12, so snapshots keep it):
+// they were parsed and dropped, so codon analysis never knew a GenBank file's genes and "Auto" guessed a frame
+// from ATG counts. A BED the user loaded is not replaced; a GenBank file's own features are. /transl_table
+// sets the genetic code.
+function _annotFromGenBank(seqs) {
+    if (state.annot && !state.annot.fromGenBank) return;
+    const lines = [];
+    let table = null;
+    for (const s of seqs || []) {
+        const feats = s._genbank && s._genbank.features;
+        if (!feats || !feats.length) continue;
+        const chrom = String(s.header || '').split(/\s+/)[0];
+        for (const f of feats) {
+            if (!/^(CDS|tRNA|rRNA)$/.test(f.type)) continue;
+            const loc = _gbLocationBlocks(f.location);
+            if (!loc) continue;
+            const q = f.qualifiers || {};
+            const name = String(q.gene || q.locus_tag || q.product || f.type).replace(/\s+/g, '_');
+            const start = loc.blocks[0][0], end = loc.blocks[loc.blocks.length - 1][1];
+            const cds = f.type === 'CDS';
+            if (cds && q.transl_table && !table) table = String(q.transl_table);
+            const desc = cds ? `CDS codon_start=${/^[123]$/.test(String(q.codon_start)) ? q.codon_start : 1}${q.product ? ' ' + q.product : ''}`
+                : `${f.type}${q.product ? ' ' + q.product : ''}`;
+            lines.push([chrom, start, end, name, 0, loc.strand, start, cds ? end : start, '.', loc.blocks.length,
+                loc.blocks.map(b => b[1] - b[0]).join(',') + ',', loc.blocks.map(b => b[0] - start).join(',') + ',', desc].join('\t'));
+        }
+    }
+    if (!lines.length) {
+        if (state.annot && state.annot.fromGenBank) state.annot = null;     // the previous GenBank's genes are not this file's
+        return;
+    }
+    const text = lines.join('\n') + '\n';
+    const parsed = parseBedText(text);
+    state.annot = { text, sourceName: 'GenBank features', trackName: 'GenBank features', features: parsed.features, skippedLines: parsed.skipped, fromGenBank: true };
+    const codeSel = el('codonCode');
+    if (table && codeSel && [...codeSel.options].some(o => o.value === table) && codeSel.value !== table) {
+        codeSel.value = table;
+        showMessageAfterRender(`GenBank /transl_table=${table}: genetic code set to ${codeSel.options[codeSel.selectedIndex].text} (Display > Code)`, 5000);
+    }
 }
 
 function clearAnnotation() {
@@ -12457,6 +12567,7 @@ async function parseAndRender(isFromDrop = false) {
         state._codonData = null;
         state._columnConservationScores = null;
         state._columnConservationCache = null;
+        _annotFromGenBank(parsed);
 
         updateNameLengthSliderRange();
 

@@ -4299,3 +4299,13 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 /* The codon-aligner settings, just revealed by "Codon alignment (MACSE)" */
 @keyframes al-flash { from { background: #fff3b0; } to { background: transparent; } }
 .al-checks.al-flash { animation: al-flash 1.6s ease-out; border-radius: 3px; }
+
+/* The intron of a spliced CDS (GenBank join, BED12 blocks) on the annotation track: the feature box is cut
+   there, and a thin line in the gene's colour joins its exons */
+.annot-intron {
+    position: absolute;
+    height: calc(1em - 2px);
+    margin-top: 1px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent calc(50% - 1px), var(--intron-c) calc(50% - 1px), var(--intron-c) calc(50% + 1px), transparent calc(50% + 1px)), #fff;
+}
