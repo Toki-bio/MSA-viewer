@@ -9790,13 +9790,21 @@ function _buildReadsCoverageRow(NAME_W, cellW, refStart, refEnd) {
         const H = _COV_H - 6;
         const COL = { A: '#4caf50', C: '#2196f3', G: '#ff9800', T: '#f44336' };
         const parts = [];
+        // runs of equal plain bars are one rect: one per base made 200,000 nodes for a 200 kb reference
+        let run = null;
+        const flush = () => { if (run) { parts.push(`<rect x="${run.x}" y="${H - run.h}" width="${run.w}" height="${run.h}" fill="#b4b4b4"/>`); run = null; } };
         for (let p = Math.max(refStart, cs.lo); p < Math.min(refEnd, cs.hi); p++) {
             const i = p - cs.lo, x = (p - refStart) * cellW;
             const t = { A: cs.fwd[0][i] + cs.rev[0][i], C: cs.fwd[1][i] + cs.rev[1][i], G: cs.fwd[2][i] + cs.rev[2][i], T: cs.fwd[3][i] + cs.rev[3][i] };
             const n = t.A + t.C + t.G + t.T, refB = (bamState.refSeq[p] || 'N').toUpperCase();
             const hDepth = H * cs.depth[i] / max;
             const mixed = n > 0 && (n - (t[refB] || 0)) / n >= 0.2 || cs.del[i] / Math.max(1, cs.depth[i]) >= 0.2;
-            if (!mixed) { parts.push(`<rect x="${x}" y="${H - hDepth}" width="${cellW}" height="${hDepth}" fill="#b4b4b4"/>`); continue; }
+            if (!mixed) {
+                const hh = Math.round(hDepth * 2) / 2;
+                if (run && run.h === hh && run.x + run.w === x) run.w += cellW; else { flush(); if (hh > 0) run = { x, w: cellW, h: hh }; }
+                continue;
+            }
+            flush();
             // stacked: bases (reference first), deletions on top
             let y = H;
             const seg = (cnt, col) => { if (!cnt) return; const hh = H * cnt / max; y -= hh; parts.push(`<rect x="${x}" y="${y}" width="${cellW}" height="${hh}" fill="${col}"/>`); };
@@ -9804,6 +9812,7 @@ function _buildReadsCoverageRow(NAME_W, cellW, refStart, refEnd) {
             for (const b of ['A', 'C', 'G', 'T']) if (b !== refB) seg(t[b], COL[b]);
             seg(cs.del[i], '#555');
         }
+        flush();
         // windows whose reads were not all drawn
         for (const w of bamState.downsampled || []) {
             const a = Math.max(w.start, refStart), b = Math.min(w.end, refEnd);

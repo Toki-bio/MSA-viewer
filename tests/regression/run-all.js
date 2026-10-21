@@ -588,7 +588,7 @@ check('BAM Reads view: reference bases, ruler and reads line up base for base', 
     const L = e => e.getBoundingClientRect().left;
     const refCells = [...document.querySelectorAll('.ref-track-line .seq-data span')];
     const rulerCells = [...document.querySelector('.scale-line').children[1].children];
-    const svg = alignmentContainer.querySelector('svg');
+    const svg = document.getElementById('readsPileSvg');   // the reads (a coverage row's svg now comes first)
     // read_perfect_a: 40M at position 1, so its bar starts at the reference's first base
     const read = bamState.reads.find(x => x.name === 'read_perfect_a' || x.readName === 'read_perfect_a');
     const bar = read && [...svg.querySelectorAll('rect')].find(e => e.getAttribute('width') == String(40 * 12));
@@ -962,7 +962,7 @@ check('Reads: Variants window lists each change with depth, strands and gene eff
   const r = await page.evaluate(() => ({
     rows: [...document.querySelectorAll('#variantsTable tbody tr[data-pos]')].map(tr => [...tr.children].map(td => td.textContent)),
     tsvLines: _variantsTsv().trim().split('\n').length,
-    coverageBars: document.querySelectorAll('#readsCoverageSvg rect').length,
+    coverageBars: [...document.querySelectorAll('#readsCoverageSvg rect')].filter(x => !x.classList.contains('reads-downsampled')).reduce((t, x) => t + (+x.getAttribute('width')), 0) / 12,   // bases with a bar
     strandColours: new Set([...document.querySelectorAll('#readsPileSvg rect[data-stroke]')].map(b => b.getAttribute('fill'))).size
   }));
   const pOf = r.rows.map(c => c[10]).join(',');
@@ -5742,8 +5742,8 @@ check('Audit #162: soft-clip boxes of reads stay inside the plot (not over the n
   await page.setInputFiles('#fileInput', { name: 'clip.sam', mimeType: 'text/plain', buffer: Buffer.from(sam) });
   await page.waitForTimeout(1500);
   const r = await page.evaluate(() => {
-    if (!document.querySelector('#alignmentContainer svg')) renderReadsAlignment();
-    const svg = document.querySelector('#alignmentContainer svg');
+    if (!document.getElementById('readsPileSvg')) renderReadsAlignment();
+    const svg = document.getElementById('readsPileSvg');   // the reads (a coverage row's svg now comes first)
     if (!svg) return { noSvg: true, n: (bamState.reads || []).length };
     const W = parseFloat(svg.getAttribute('width'));
     const clips = [...svg.querySelectorAll('rect[fill="#e8eef5"]')].map(c => ({ x: +c.getAttribute('x'), w: +c.getAttribute('width') }));
