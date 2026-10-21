@@ -1000,10 +1000,10 @@ check('Codon analysis: translation tooltips number codons as the reference does 
     const d = state._codonData, at = (row, col) => d.aaSeq[row].find(e => e.cols.includes(col));
     const a0 = at(0, 918), a1 = at(1, 918), b1 = at(1, 2048);
     _scrollToColumn(918);
-    const span = [...document.querySelectorAll('.seq-line[data-seq-index="1"] ~ .aa-row .aa-c, .aa-row .aa-c')].find(s => /140/.test(s.title || ''));
+    const span = [...document.querySelectorAll('.aa-row .aa-c')].find(s => /codon 140,/.test(s.title || ''));
     return { ref: a0 && a0.aa + a0.n, sample: a1 && a1.aa + a1.n, stop: b1 && b1.aa + b1.n, title: span ? span.title : null };
   });
-  const ok = r.ref === 'R140' && r.sample === 'Q140' && r.stop === '*51' && /^(R|Q) 140 \(/.test(r.title || '');
+  const ok = r.ref === 'R140' && r.sample === 'Q140' && r.stop === '*51' && /^(R|Q) \(\w{3}\), codon 140,/.test(r.title || '');
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
@@ -1025,6 +1025,30 @@ check('Reads: SAM/BAM stays available with several rows; a reads file picked in 
   r.viaAdd = await page.evaluate(() => ({ reads: (bamState.allReads || []).length, box: document.getElementById('addSeqInput').value.length }));
   const ok = r.rows === 2 && r.bam !== 'none' && r.viaAdd.reads === 799 && r.viaAdd.box === 0;
   return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// Codon realignment of rows that are not coding from end to end (a gene region with flanks and introns): MACSE
+// explained the stops with frameshifts, 21 per row on tests/fixtures/reads/region, and replaced the reads' alignment
+check('Codon realignment warns before aligning rows with stops in every frame; No leaves the alignment as it was', async (page) => {
+  const path = require('path');
+  const DIR = path.join(__dirname, '..', 'fixtures', 'reads', 'region');
+  await page.setInputFiles('#fileInput', path.join(DIR, 'region.fa'));
+  await page.waitForTimeout(1200);
+  await page.setInputFiles('#bamFileInput', path.join(DIR, 'reads_40x.sam'));
+  await page.waitForTimeout(2500);
+  await page.click('#readsSampleRowButton');
+  await page.waitForTimeout(1200);
+  const before = await page.evaluate(() => state.seqs.map(s => s.seq).join('|'));
+  await page.evaluate(() => { openMacsePreset(false); window._lastCodonAlignStats = null; realignAll(); });
+  await page.waitForTimeout(800);
+  const prompt = await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent === 'No' && x.offsetParent); const t = b && b.closest('div').parentElement.innerText; return t ? t.slice(0, 200) : null; });
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent === 'No' && x.offsetParent); if (b) b.click(); });
+  await page.waitForTimeout(1500);
+  const after = await page.evaluate(() => state.seqs.map(s => s.seq).join('|'));
+  const ran = await page.evaluate(() => !!window._lastCodonAlignStats);
+  await page.evaluate(() => { const sel = document.getElementById('mafftSeqType'); sel.value = sel.options[0].value; sel.dispatchEvent(new Event('change', { bubbles: true })); });
+  const ok = !!prompt && /every reading frame/.test(prompt) && after === before && !ran;
+  return { pass: ok, detail: JSON.stringify({ prompt, unchanged: after === before }) };
 });
 
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {

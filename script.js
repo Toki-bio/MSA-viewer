@@ -5300,8 +5300,8 @@ function _populateAlignedAARow(dataCol, aaSeqData, viewStart, viewEnd, frameShif
         if (!cols.length || cols[cols.length - 1] < viewStart || cols[0] >= viewEnd) continue;
         const cls = entry.aa === '*' ? 'stop' : (_AA_CLASS[entry.aa] || 'unk');
         const mid = cols[Math.floor(cols.length / 2)];
-        const num = entry.n ? ` ${entry.n}` : '';   // codon number in the reference (row 1), from the gene / frame start
-        const what = entry.partial ? `Stop${num} (${entry.codon}), completed by polyadenylation of the mRNA` : `${entry.aa === '*' ? 'Stop' : entry.aa}${num} (${entry.codon})`;
+        const num = entry.n ? `, codon ${entry.n}` : '';   // codon number in the reference (row 1), from the gene / frame start
+        const what = entry.partial ? `Stop (${entry.codon})${num}, completed by polyadenylation of the mRNA` : `${entry.aa === '*' ? 'Stop' : entry.aa} (${entry.codon})${num}`;
         const where = entry.gene ? `${entry.gene}${entry.strand === '-' ? ' (minus strand)' : ''}, ` : '';
         cols.forEach((c, k) => {
             if (c < viewStart || c >= viewEnd) return;
@@ -6923,8 +6923,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const entry = spec && spec.aaData ? spec.aaData.find(en => en.cols && en.cols.includes(col)) : null;
                 let tipText = null;
                 if (entry) {
-                    const num = entry.n ? ` ${entry.n}` : '';   // codon number in the reference (row 1), from the gene / frame start
-                    const what = entry.partial ? `Stop${num} (${entry.codon}), completed by polyadenylation of the mRNA` : `${entry.aa === '*' ? 'Stop' : entry.aa}${num} (${entry.codon})`;
+                    const num = entry.n ? `, codon ${entry.n}` : '';   // codon number in the reference (row 1), from the gene / frame start
+                    const what = entry.partial ? `Stop (${entry.codon})${num}, completed by polyadenylation of the mRNA` : `${entry.aa === '*' ? 'Stop' : entry.aa} (${entry.codon})${num}`;
                     const where = entry.gene ? `${entry.gene}${entry.strand === '-' ? ' (minus strand)' : ''}, ` : '';
                     tipText = `${what}, ${where}columns ${entry.cols[0] + 1}-${entry.cols[entry.cols.length - 1] + 1}`;
                     const f = (spec.frameShifts || []).find(ff => ff.type === 'indel' && ff.runStart === col);
@@ -21510,7 +21510,33 @@ function _runCodonAlignInWorker(fasta, opts, onProgress) {
     });
 }
 
+// Rows that are not coding from end to end (internal stops in every frame, e.g. a gene with its flanks or introns):
+// the codon aligners explain each stop with frameshifts. On a 3 kb region with two genes MACSE put 21 frameshifts
+// in each row. [{ name, stops: [frame 1, 2, 3] }] for rows with at least 2 internal stops in every frame.
+function _nonCodingRows(fasta) {
+    const code = _getActiveCode(), out = [];
+    for (const r of parseMafftOutput(fasta)) {
+        const s = String(r.seq || '').replace(/[-.\s]/g, '').toUpperCase().replace(/U/g, 'T');
+        if (s.length < 60) continue;
+        const stops = [0, 1, 2].map(f => { let n = 0; for (let i = f; i + 6 <= s.length; i += 3) if (code[s.substr(i, 3)] === '*') n++; return n; });
+        if (Math.min(...stops) >= 2) out.push({ name: _alignIdName(r.name), stops });
+    }
+    return out;
+}
+
 async function _codonAlignWithUi(fasta, label) {
+    const nonCoding = _nonCodingRows(fasta);
+    if (nonCoding.length) {
+        const list = nonCoding.slice(0, 3).map(x => `${String(x.name).split(/\s+/)[0]} (${x.stops.join(', ')})`).join(', ') + (nonCoding.length > 3 ? ` and ${nonCoding.length - 3} more` : '');
+        const go = await _mafftAskYesNo({
+            message: `${nonCoding.length} sequence${nonCoding.length === 1 ? ' has' : 's have'} stop codons in every reading frame: ${list} (stops in frames 1, 2, 3).\n\n`
+                + 'They are not coding sequences from end to end (flanks, introns, or the wrong genetic code: Display > Code). '
+                + 'A codon aligner will explain each stop with frameshifts.\n\n'
+                + 'To align a gene: click it on the annotation track (selects its columns) and use Realign selected region.\n\nAlign anyway?',
+            defaultYes: false, dontAskKey: 'codonNonCodingAskOff', defaultKey: 'codonNonCodingDefault'
+        });
+        if (!go) { showMessage('Codon alignment not run: the sequences are not coding from end to end.', 5000); return null; }
+    }
     const stats = _mafftFastaStats(fasta);
     const opts = _codonAlignOpts(fasta);
     let cancelled = false;
