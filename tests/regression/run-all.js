@@ -600,6 +600,72 @@ check('BAM Reads view: reference bases, ruler and reads line up base for base', 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+// Reads could only be looked at: codon analysis and MACSE work on rows, and in Full view the reads were gone.
+// "Sample -> row" puts the sample under the reference; codon analysis must then classify each planted change of
+// tests/fixtures/reads (make_gene_reads.js) against the reference, heterozygous ones (IUPAC) included.
+check('Reads: Sample -> row puts the sample under the reference and codon analysis classes its changes', async (page) => {
+  const path = require('path'), fs = require('fs');
+  const DIR = path.join(__dirname, '..', 'fixtures', 'reads');
+  const truth = JSON.parse(fs.readFileSync(path.join(DIR, 'truth.json'), 'utf8'));
+  await page.setInputFiles('#fileInput', path.join(DIR, 'gene_ref.fa'));
+  await page.waitForTimeout(1500);
+  await page.setInputFiles('#bamFileInput', path.join(DIR, 'gene_reads.sam'));
+  await page.waitForTimeout(2500);
+  await page.click('#readsSampleRowButton');
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => { const c = document.getElementById('codonAnalysis'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(1500);
+  const m = Object.fromEntries(truth.muts.map(x => [x.name, x]));
+  const r = await page.evaluate((m) => {
+    const d = state._codonData, i = 1;
+    const at = col => d && d.synNonSyn[i][col];
+    const stopAt = col => !!d && d.stops[i].includes(col);
+    return {
+      rows: state.seqs.map(s => s.header), view: document.getElementById('modeSingle').checked ? 'full' : 'other', frame: d && d.frameOffset,
+      syn: at(m.syn_hom.pos), missense: at(m.missense_het.pos), missenseBase: state.seqs[1].seq[m.missense_het.pos],
+      stopHom: stopAt(m.stop_hom.pos), stopHet: stopAt(m.stop_het.pos), stopHetMark: at(m.stop_het.pos),
+      frameshift: !!d && d.frameShifts[i].some(f => Math.abs(f.pos - m.del1_hom.pos) <= 3), refFrameshifts: d && d.frameShifts[0].length,
+      refStopAtMut: !!d && d.stops[0].includes(m.stop_hom.pos), insCols: state.seqs[0].seq.slice(m.ins3_hom.pos, m.ins3_hom.pos + 3), insSample: state.seqs[1].seq.slice(m.ins3_hom.pos, m.ins3_hom.pos + 3),
+      msg: document.getElementById('statusMessage').innerText.slice(0, 300)
+    };
+  }, m);
+  // Undo takes the row (and the inserted columns) away again
+  await page.click('#undoButton');
+  await page.waitForTimeout(800);
+  r.afterUndo = await page.evaluate(() => state.seqs.map(s => s.seq.length + ':' + s.header).join(','));
+  const ok = r.rows.join() === 'gene,gene_sample' && r.view === 'full' && r.frame === 0
+    && r.syn === 'syn' && r.missense === 'nonsyn' && r.missenseBase === 'R' && r.stopHom && r.stopHet && r.stopHetMark === 'nonsyn'
+    && r.frameshift && r.refFrameshifts === 0 && !r.refStopAtMut && r.insCols === '---' && r.insSample === m.ins3_hom.ins && r.afterUndo === '963:gene';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// Two rows that disagree after a 1-base deletion are a tie for "Frameshifts vs: most rows"; the lowest codon
+// position won it, so the reference row (row 1) got frameshift marks on every codon after the deletion
+check('Codon analysis, two rows: a 1-base deletion marks the row that has it, not the reference', async (page) => {
+  const ref = 'ATGGCTAAACTGGAAGTTCGTAAAGCTGGTCTGTAA';
+  const del = ref.slice(0, 13) + '-' + ref.slice(14);
+  await page.evaluate(f => { document.getElementById('fastaInput').value = f; parseAndRender(false); }, `>ref\n${ref}\n>sample\n${del}\n`);
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { const c = document.getElementById('codonAnalysis'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(() => ({ ref: state._codonData.frameShifts[0].length, sample: state._codonData.frameShifts[1].map(f => f.pos) }));
+  return { pass: r.ref === 0 && r.sample.length === 1 && Math.abs(r.sample[0] - 13) <= 1, detail: JSON.stringify(r) };
+});
+
+// A heterozygous base (IUPAC, e.g. a sample row called from reads) left its codon unmarked: each allele is now
+// classed, and an allele that is a stop marks the codon as a stop
+check('Codon analysis: a heterozygous (IUPAC) base is classed by its alleles; a possible stop is a stop', async (page) => {
+  // codon 2 GCT (Ala): GMT = GCT/GAT (Ala/Asp) -> non-synonymous; codon 3 AAA: AAR = AAA/AAG (Lys) -> synonymous;
+  // codon 4 CTG (Leu): YTG = CTG/TTG (Leu) -> synonymous; codon 5 GAA: KAA = GAA/TAA -> stop
+  const ref = 'ATGGCTAAACTGGAAGTTTAA', smp = 'ATGGMTAARYTGKAAGTTTAA';
+  await page.evaluate(f => { document.getElementById('fastaInput').value = f; parseAndRender(false); }, `>ref\n${ref}\n>sample\n${smp}\n`);
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { const c = document.getElementById('codonAnalysis'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(() => { const d = state._codonData; return { m: [4, 8, 9, 12].map(c => d.synNonSyn[1][c]), stop: [12, 13, 14].every(c => d.stops[1].includes(c)), refStop: d.stops[0].filter(c => c < 18).length }; });
+  return { pass: r.m.join() === 'nonsyn,syn,syn,nonsyn' && r.stop && r.refStop === 0, detail: JSON.stringify(r) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };

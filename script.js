@@ -4771,6 +4771,7 @@ function _translateDegenerate(codon, code) {
 // Compute per-position codon analysis for a single frame (frameOffset = 0,1,2 alignment columns)
 // Gaps are skipped during codon assembly (no frameshift on gaps); incomplete terminal codons flagged.
 // When frameOffset is omitted, defaults to 0 (backward-compatible single-frame mode).
+const _IUPAC_TWO = { R: ['A', 'G'], Y: ['C', 'T'], K: ['G', 'T'], M: ['A', 'C'], S: ['C', 'G'], W: ['A', 'T'] };
 function _computeCodonAnalysis(seqs, len, frameOffset) {
     frameOffset = frameOffset || 0;
     if (seqs.length < 1) return null;
@@ -4888,6 +4889,30 @@ function _computeCodonAnalysis(seqs, len, frameOffset) {
                                 const mutAA = activeCode[mutCodon] || 'X';
                                 synNonSyn[i][codonCols[k]] = (mutAA !== refAA) ? 'nonsyn' : 'syn';
                             }
+                        } else if (/^[ACGT]{3}$/.test(refCodon) && /^[ACGTRYKMSW]{3}$/.test(codon) && codon.replace(/[ACGT]/g, '').length === 1) {
+                            // One heterozygous base (two alleles, e.g. a sample row called from reads): each allele's
+                            // codon is classed as above and a base gets the stronger mark; an allele that is a stop
+                            // marks the codon as a stop (a heterozygous nonsense change)
+                            const j = codon.search(/[RYKMSW]/);
+                            const alleles = _IUPAC_TWO[codon[j]].map(b => codon.substring(0, j) + b + codon.substring(j + 1));
+                            const rank = { syn: 1, synmulti: 2, nonsyn: 3 };
+                            for (const al of alleles) {
+                                if (al === refCodon) continue;
+                                const alAA = activeCode[al] || 'X';
+                                const nDiff = [0, 1, 2].filter(k => al[k] !== refCodon[k]).length;
+                                if (alAA === '*' && refAA !== '*') for (const c of codonCols) if (!stops[i].includes(c)) stops[i].push(c);
+                                for (let k = 0; k < 3; k++) {
+                                    if (al[k] === refCodon[k]) continue;
+                                    let cls;
+                                    if (alAA === refAA) cls = nDiff > 1 ? 'synmulti' : 'syn';
+                                    else {
+                                        const mutCodon = refCodon.substring(0, k) + al[k] + refCodon.substring(k + 1);
+                                        cls = (activeCode[mutCodon] || 'X') !== refAA ? 'nonsyn' : 'syn';
+                                    }
+                                    const prev = synNonSyn[i][codonCols[k]];
+                                    if (!prev || rank[cls] > rank[prev]) synNonSyn[i][codonCols[k]] = cls;
+                                }
+                            }
                         }
                     }
                 }
@@ -4958,7 +4983,11 @@ function _markRelativeFrameshifts(phase, frameShifts, len, mode) {
         if (bases < 2 || bases * 2 < spanning) continue;
         const top = Math.max(a, b, d);
         if (top * 2 < bases) continue;
-        refPhase[c] = a === top ? 0 : b === top ? 1 : 2;
+        // A tie (two rows that disagree, as a reference and a sample with a 1-base deletion) goes to row 1's codon
+        // position: the lowest position used to win, so after the deletion the reference row got the frameshift
+        // marks, on every codon to the end
+        const p0 = phase[0][c];
+        refPhase[c] = (p0 >= 0 && counts[c * 3 + p0] === top) ? p0 : a === top ? 0 : b === top ? 1 : 2;
     }
     _markOffsetChanges(phase, frameShifts, len, refPhase);
 }
@@ -8823,6 +8852,77 @@ function ensureReadsDisplayToggle() {
     return toggle;
 }
 
+// "Sample -> row": the reads become one row under their reference (sample-call.js), so codon analysis and
+// MACSE, which work on rows, can be used on them. Before this, reads could only be looked at: in Full view
+// they were gone, and a SAM opened as an alignment had the reads' majority as its top row, not the reference.
+function ensureSampleRowButton() {
+    let btn = document.getElementById('readsSampleRowButton');
+    if (btn) return btn;
+    const toggle = ensureReadsDisplayToggle();
+    if (!toggle || !toggle.parentNode) return null;
+    btn = document.createElement('button');
+    btn.id = 'readsSampleRowButton';
+    btn.type = 'button';
+    btn.textContent = 'Sample → row';
+    btn.title = 'Add the sample called from these reads as a row under the reference: the majority base, an IUPAC code where a '
+        + 'second allele has at least 20% of the reads (heterozygous), gaps for deletions most reads carry, N under 3 reads. '
+        + 'Then Codon analysis (Display menu) classifies each change against the reference.';
+    btn.style.cssText = 'font-size:10px;height:18px;padding:0 8px;margin-left:8px;cursor:pointer;white-space:nowrap;'
+        + 'border:1px solid #999;border-radius:3px;background:#f0f0f0;display:none;';
+    btn.addEventListener('click', addSampleRowFromReads);
+    toggle.parentNode.insertBefore(btn, toggle.nextSibling);
+    return btn;
+}
+
+function addSampleRowFromReads() {
+    if (!bamState.reads.length || !bamState.refSeq || typeof SampleCall === 'undefined') return;
+    const ri = state.seqs.findIndex(s => String(s.fullHeader || s.header || '').trim().split(/\s+/)[0] === bamState.refName);
+    if (ri < 0) { showMessage(`The reference ${bamState.refName} is no longer in the alignment.`, 4000); return; }
+    const res = SampleCall.call(bamState.reads, bamState.refSeq);
+    const refRow = state.seqs[ri].seq;
+    // sample row over the alignment's columns; outside the reads it is missing ('-', as a leading or trailing gap)
+    const row = [];
+    let p = 0;
+    const colOfPos = [];
+    for (let c = 0; c < refRow.length; c++) {
+        const ch = refRow[c];
+        if (ch === '-' || ch === '.') { row.push('-'); continue; }
+        colOfPos[p] = c;
+        row.push(res.bases[p] || '-');
+        p++;
+    }
+    pushUndo('sample-row');
+    // insertions most reads carry: new columns, gaps in every other row; right to left so columns stay valid
+    const ins = [...res.insAfter].filter(([q]) => colOfPos[q] !== undefined).sort((a, b) => b[0] - a[0]);
+    for (const [q, bases] of ins) {
+        const c = colOfPos[q];
+        const pad = '-'.repeat(bases.length);
+        for (const s of state.seqs) { s.seq = s.seq.slice(0, c) + pad + s.seq.slice(c); s.gaplessPositions = calculateGaplessPositions(s.seq); }
+        row.splice(c, 0, ...bases.split(''));
+    }
+    const seq = row.join('');
+    const name = `${bamState.refName}_sample`;
+    const used = bamState.reads.length;
+    state.seqs.splice(ri + 1, 0, {
+        header: name,
+        fullHeader: `${name} called from ${used.toLocaleString()} reads (depth >= ${SampleCall.DEFAULTS.minDepth}, second allele >= ${Math.round(SampleCall.DEFAULTS.hetFrac * 100)}% = IUPAC)`,
+        seq,
+        gaplessPositions: calculateGaplessPositions(seq)
+    });
+    // to Full view: the rows are what codon analysis and MACSE work on (the reads stay loaded for the Reads view)
+    const full = document.getElementById('modeSingle');
+    if (full) full.checked = true;
+    renderAlignment();
+    updateBamButtonVisibility();
+    const v = res.variants;
+    const fmt = x => `${x.pos} ${x.type === 'snv' ? x.ref + '>' + x.alt : x.type === 'del' ? 'del ' + x.ref : 'ins ' + x.alt} ${x.zyg}`;
+    const het = v.filter(x => x.zyg === 'het' && x.type !== 'snv');
+    console.log('Sample row: changes against ' + bamState.refName, v);
+    showMessage(`Added ${name} under ${bamState.refName}: ${v.length ? v.length + ' change' + (v.length > 1 ? 's' : '') + ' (' + v.slice(0, 8).map(fmt).join(', ') + (v.length > 8 ? ', ...' : '') + ')' : 'no changes'}.`
+        + (het.length ? ` Heterozygous indels are not in the row (one row holds one haplotype): ${het.map(fmt).join(', ')}.` : '')
+        + ' Codon analysis (Display) classifies the changes.', 12000);
+}
+
 /**
  * Render the reads alignment view (BAM mode).
  * Shows reference track at top, reads below in pileup order.
@@ -12506,6 +12606,8 @@ function syncQuickModeSwitch() {
     setCanvasNoticeVisible(!!isCanvasMode);
     const readsToggle = ensureReadsDisplayToggle();
     if (readsToggle) readsToggle.style.display = isReadsMode ? 'flex' : 'none';
+    const sampleBtn = ensureSampleRowButton();
+    if (sampleBtn) sampleBtn.style.display = isReadsMode && bamState?.reads?.length ? '' : 'none';
     syncModeRow();
     syncSearchControlsAvailability();
 }
@@ -22217,7 +22319,7 @@ const UNDO_TYPE_LABELS = {
     'tsd-unmark-lowercase': 'Undo TSD lower case',
     'trim': 'Hard trim',
     'order': 'Reorder rows', 'reorder': 'Reorder rows', 'rename': 'Rename', 'delete': 'Delete sequences',
-    'duplicate': 'Duplicate sequences', 'revcomp': 'Reverse complement',
+    'duplicate': 'Duplicate sequences', 'revcomp': 'Reverse complement', 'sample-row': 'Add sample row from reads',
     'sort-name': 'Sort by name', 'sort-length': 'Sort by length', 'sort-similarity': 'Sort by similarity',
     'sort-by-color': 'Sort by colour', 'group-colored': 'Group coloured rows', 'group-by-type': 'Group by type',
     'import-order': 'Load sequence order',

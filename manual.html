@@ -581,6 +581,21 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     file is called. Opening a BAM or CRAM with nothing loaded shows how to load it instead.
   </p>
   <p>
+    <strong>Checking a gene for mutations from reads:</strong> open the gene (GenBank with its CDS sets the
+    reading frame by itself), then its BAM. In the Reads view, <strong>Sample &rarr; row</strong> adds the
+    sample under the reference as an ordinary row and switches to the Full view. At each position the row has
+    the base most reads carry; where a second base has at least 20% of the reads (and two reads), an IUPAC code
+    for the two (heterozygous, e.g. R = A/G); a gap where most reads carry a deletion; extra columns where most
+    reads carry an insertion; N where fewer than 3 reads cover it. Duplicate, secondary, supplementary,
+    unmapped and QC-failed reads and bases below quality 13 are not counted. Indels are called as whole
+    events, so a deletion that half the reads carry is not cut into a partial one; heterozygous indels cannot
+    be shown in one row and are listed in the message (and the console) instead. Then switch on
+    <strong>Codon analysis</strong> (Display menu): each change is marked synonymous or non-synonymous against
+    the reference, a codon with a heterozygous base by both its alleles, a possible stop (one allele) as a stop,
+    and a deletion or insertion that breaks the frame as a frameshift. If the row has frameshifts in the CDS,
+    <strong>MACSE&hellip;</strong> in the Codon bar realigns it codon-aware. Undo removes the row again.
+  </p>
+  <p>
     The optional server also exposes <code>POST /api/bam2sam</code> (see 11.4), which converts a BAM or
     CRAM file on the server's disk to SAM text with <code>samtools view -h</code>, for scripted use.
   </p>

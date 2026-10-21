@@ -1,0 +1,61 @@
+{
+ "cdsStart": 30,
+ "cdsLength": 903,
+ "reads": 218,
+ "muts": [
+  {
+   "name": "syn_hom",
+   "hom": true,
+   "pos": 89,
+   "ref": "G",
+   "alt": "A",
+   "codon": 20,
+   "change": "CAG>CAA Q>Q"
+  },
+  {
+   "name": "missense_het",
+   "hom": false,
+   "pos": 209,
+   "ref": "G",
+   "alt": "A",
+   "codon": 60,
+   "change": "ATG>ATA M>I"
+  },
+  {
+   "name": "stop_hom",
+   "hom": true,
+   "pos": 398,
+   "ref": "C",
+   "alt": "A",
+   "codon": 123,
+   "change": "TAC>TAA Y>*"
+  },
+  {
+   "name": "stop_het",
+   "hom": false,
+   "pos": 477,
+   "ref": "C",
+   "alt": "T",
+   "codon": 150,
+   "change": "CGA>TGA R>*"
+  },
+  {
+   "name": "del1_hom",
+   "hom": true,
+   "pos": 628,
+   "del": 1
+  },
+  {
+   "name": "del3_het",
+   "hom": false,
+   "pos": 777,
+   "del": 3
+  },
+  {
+   "name": "ins3_hom",
+   "hom": true,
+   "pos": 867,
+   "ins": "GGC"
+  }
+ ]
+}
