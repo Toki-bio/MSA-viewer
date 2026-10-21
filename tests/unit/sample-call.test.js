@@ -4,9 +4,10 @@
 const fs = require('fs'), path = require('path');
 const SC = require('../../sample-call.js');
 const DIR = path.join(__dirname, '..', 'fixtures', 'reads');
-const ref = fs.readFileSync(path.join(DIR, 'gene_ref.fa'), 'utf8').split('\n').slice(1).join('');
+// a Windows checkout gives the fixtures CRLF line ends; a '\r' left in the reference shifts every position
+const ref = fs.readFileSync(path.join(DIR, 'gene_ref.fa'), 'utf8').replace(/\r/g, '').split('\n').slice(1).join('');
 const truth = JSON.parse(fs.readFileSync(path.join(DIR, 'truth.json'), 'utf8'));
-const reads = fs.readFileSync(path.join(DIR, 'gene_reads.sam'), 'utf8').split('\n').filter(l => l && l[0] !== '@').map(l => {
+const reads = fs.readFileSync(path.join(DIR, 'gene_reads.sam'), 'utf8').replace(/\r/g, '').split('\n').filter(l => l && l[0] !== '@').map(l => {
     const f = l.split('\t');
     return { name: f[0], flag: +f[1], pos: +f[3] - 1, cigar: (f[5].match(/\d+[MIDNSHP=X]/g) || []).map(t => ({ op: t.slice(-1), len: parseInt(t) })), seq: f[9], qual: [] };
 });
