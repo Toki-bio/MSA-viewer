@@ -9069,6 +9069,14 @@ function ensureSampleRowButton() {
         + 'border:1px solid #999;border-radius:3px;background:#f0f0f0;display:none;';
     btn.addEventListener('click', addSampleRowFromReads);
     toggle.parentNode.insertBefore(btn, toggle.nextSibling);
+    const vb = document.createElement('button');
+    vb.id = 'readsVariantsButton';
+    vb.type = 'button';
+    vb.textContent = 'Variants';
+    vb.title = 'The changes in these reads: depth, allele %, reads per strand, and the effect on each annotated gene (codon, amino acid). Click a row to see its reads.';
+    vb.style.cssText = btn.style.cssText;
+    vb.addEventListener('click', openVariantsPanel);
+    btn.parentNode.insertBefore(vb, btn.nextSibling);
     return btn;
 }
 
@@ -9076,7 +9084,7 @@ function addSampleRowFromReads() {
     if (!bamState.reads.length || !bamState.refSeq || typeof SampleCall === 'undefined') return;
     const ri = state.seqs.findIndex(s => String(s.fullHeader || s.header || '').trim().split(/\s+/)[0] === bamState.refName);
     if (ri < 0) { showMessage(`The reference ${bamState.refName} is no longer in the alignment.`, 4000); return; }
-    const res = SampleCall.call(bamState.allReads || bamState.reads, bamState.refSeq);   // every read, not only the drawn ones
+    const res = _readsCalls();   // every read, not only the drawn ones
     const refRow = state.seqs[ri].seq;
     // sample row over the alignment's columns; outside the reads it is missing ('-', as a leading or trailing gap)
     const row = [];
@@ -9118,7 +9126,8 @@ function addSampleRowFromReads() {
     console.log('Sample row: changes against ' + bamState.refName, v);
     showMessage(`Added ${name} under ${bamState.refName}: ${v.length ? v.length + ' change' + (v.length > 1 ? 's' : '') + ' (' + v.slice(0, 8).map(fmt).join(', ') + (v.length > 8 ? ', ...' : '') + ')' : 'no changes'}.`
         + (het.length ? ` Heterozygous indels are not in the row (one row holds one haplotype): ${het.map(fmt).join(', ')}.` : '')
-        + ' Codon analysis (Display) classifies the changes.', 12000);
+        + ' The Variants window lists them with depth, strands and their effect on each gene; Codon analysis (Display) marks them in the alignment.', 12000);
+    openVariantsPanel();
 }
 
 /**
@@ -9221,6 +9230,9 @@ function renderReadsAlignment() {
     scaleLine.appendChild(scaleData);
     container.appendChild(scaleLine);
 
+    // -- Coverage (all reads, before downsampling), allele mix, downsampled windows --
+    container.appendChild(_buildReadsCoverageRow(NAME_W, cellW, refStart, refEnd));
+
     // -- Status line for selected read info --
     const statusLine = document.createElement('div');
     statusLine.id = 'readsStatusLine';
@@ -9245,6 +9257,7 @@ function renderReadsAlignment() {
 
     // Group reads by track in a single pass (O(n), not O(nTracks * n))
     const trackGroups = Array.from({ length: nTracks }, () => []);
+    const focus = bamState.focusPos;
     for (const read of reads) {
         if (read.track >= 0 && read.track < nTracks) {
             trackGroups[read.track].push(read);
@@ -9307,10 +9320,15 @@ function renderReadsAlignment() {
             bar.setAttribute('y', ry + 2);
             bar.setAttribute('width', rw);
             bar.setAttribute('height', rh);
-            bar.setAttribute('fill', '#c8d8e8');
-            bar.setAttribute('stroke', '#4a7fa8');
+            // strand, as igv.js colours by strand: forward pink, reverse blue (the bars were one colour, so a change
+            // seen on one strand only - a common artefact - could not be told from a real one); MAPQ 0 faded
+            const rev = !!(read.flag & 0x10);
+            const BAR_STROKE = rev ? '#5a6fb0' : '#b0606a';
+            bar.setAttribute('fill', rev ? '#d3dbf3' : '#f3d3d6');
+            bar.setAttribute('stroke', BAR_STROKE);
             bar.setAttribute('stroke-width', '1.5');
             bar.setAttribute('rx', '2');
+            if (!read.mapq) bar.setAttribute('opacity', '0.35');
             bar.style.cursor = 'pointer';
 
             // Start cap mark (vertical line at read start)
@@ -9336,9 +9354,10 @@ function renderReadsAlignment() {
             // Tooltip text (built once per read)
             const cigarStr = read.cigar.map(c => c.len + c.op).join('');
             const tooltipHtml = `<b>${_escapeHtml(read.name)}</b><br>`
-                + `Pos: ${read.pos + 1}<br>`
+                + `Pos: ${read.pos + 1}${bamState.offset ? ` (${_escapeHtml(bamState.bamRefName)}:${(read.pos + 1 + bamState.offset).toLocaleString()})` : ''}<br>`
+                + `Strand: ${rev ? 'reverse (-)' : 'forward (+)'}<br>`
                 + `CIGAR: ${cigarStr}<br>`
-                + `MAPQ: ${read.mapq}`;
+                + `MAPQ: ${read.mapq}${read.flag & 1 ? '<br>Paired' + (read.flag & 0x40 ? ', first' : read.flag & 0x80 ? ', second' : '') + ' in pair' : ''}`;
 
             // Hover tooltip
             bar.addEventListener('mouseover', () => {
@@ -9352,24 +9371,25 @@ function renderReadsAlignment() {
             bar.addEventListener('click', () => {
                 if (_readsHighlightedBar === bar) {
                     // Deselect
-                    bar.setAttribute('stroke', '#4a7fa8');
+                    bar.setAttribute('stroke', BAR_STROKE);
                     bar.setAttribute('stroke-width', '1.5');
                     _readsHighlightedBar = null;
                     statusLine.textContent = `${reads.length} reads in ${nTracks} track${nTracks !== 1 ? 's' : ''}`;
                 } else {
                     // Reset previous highlight
                     if (_readsHighlightedBar) {
-                        _readsHighlightedBar.setAttribute('stroke', '#4a7fa8');
+                        _readsHighlightedBar.setAttribute('stroke', _readsHighlightedBar.dataset.stroke || '#4a7fa8');
                         _readsHighlightedBar.setAttribute('stroke-width', '1.5');
                     }
                     // Highlight new bar
                     bar.setAttribute('stroke', '#d9402b');
                     bar.setAttribute('stroke-width', '3');
                     _readsHighlightedBar = bar;
-                    statusLine.textContent = `${read.name}  |  pos: ${read.pos + 1}  |  cigar: ${cigarStr}  |  mapq: ${read.mapq}`;
+                    statusLine.textContent = `${read.name}  |  pos: ${read.pos + 1}  |  ${rev ? 'reverse' : 'forward'} strand  |  cigar: ${cigarStr}  |  mapq: ${read.mapq}`;
                 }
             });
 
+            bar.dataset.stroke = BAR_STROKE;
             svg.appendChild(bar);
 
             // Deletion gaps (grey segments inside the bar)
@@ -9470,7 +9490,287 @@ function renderReadsAlignment() {
         }
     }
 
+    if (focus != null && focus >= refStart && focus < refEnd) {
+        // the selected column (a variant, or a click on the coverage row): a translucent band over every track
+        const band = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        band.setAttribute('x', NAME_W + (focus - refStart) * cellW);
+        band.setAttribute('y', 0);
+        band.setAttribute('width', cellW);
+        band.setAttribute('height', svgH);
+        band.setAttribute('fill', 'rgba(255, 193, 7, 0.28)');
+        band.setAttribute('stroke', '#e0a800');
+        band.setAttribute('pointer-events', 'none');
+        band.setAttribute('class', 'reads-focus-band');
+        svg.appendChild(band);
+    }
     container.appendChild(svg);
+}
+
+// ---- Variants: what the reads say, gene by gene ------------------------------------------------------------
+// The changes called from every read (SampleCall), each with its depth, allele fraction, reads per strand and its
+// effect on the annotated genes (VariantEffect: codon, amino acid, c./p.). Before this the changes were only in a
+// message: no depth, no strand, no codon, no amino-acid change, no way back to the reads.
+function _readsRefRowIndex() {
+    return state.seqs.findIndex(s => String(s.fullHeader || s.header || '').trim().split(/\s+/)[0] === bamState.refName);
+}
+function _readsGenes() {
+    const ri = _readsRefRowIndex();
+    if (ri < 0 || !state.annot || !state.annot.features) return [];
+    return state.annot.features.filter(f => _annotResolveChrom(f.chrom) === ri).map(f => ({
+        name: f.name, strand: f.strand || '+', coding: _annotIsCds(f),
+        cdsBlocks: f.cdsBlocks && f.cdsBlocks.length ? f.cdsBlocks : [[f.start, f.end]], blocks: f.blocks, codonStart: f.codonStart || 1
+    }));
+}
+// one row per variant and gene: { v, e } (e from VariantEffect.annotate)
+function _readsVariantRows() {
+    const calls = _readsCalls();
+    if (!calls) return [];
+    const genes = _readsGenes(), code = _getActiveCode();
+    const rows = [];
+    for (const v of calls.variants) for (const e of VariantEffect.annotate(v, bamState.refSeq, genes, code)) rows.push({ v, e });
+    return rows;
+}
+function _variantStrandNote(v) {
+    const alt = (v.altFwd || 0) + (v.altRev || 0);
+    if (alt >= 6 && Math.min(v.altFwd || 0, v.altRev || 0) / alt < 0.1) return 'one strand';
+    return '';
+}
+const _VARIANT_COLUMNS = ['Position', 'Change', 'Zygosity', 'Depth', 'Alt %', 'Alt reads +/-', 'Ref reads +/-', 'Gene', 'Effect', 'c.', 'p.', 'Codon', 'Note'];
+function _variantCells(r) {
+    const v = r.v, e = r.e;
+    const change = v.type === 'snv' ? `${v.ref}>${v.alt}` : v.type === 'del' ? `del ${v.ref}` : `ins ${v.alt}`;
+    const notes = [];
+    if (_variantStrandNote(v)) notes.push('alt reads on one strand only');
+    if (v.depth < 10) notes.push('low depth');
+    if (v.type !== 'snv' && v.zyg === 'het') notes.push('heterozygous indel: not in the sample row');
+    return [String(v.pos) + (bamState.offset ? ` (${bamState.bamRefName}:${v.pos + bamState.offset})` : ''), change, v.zyg, String(v.depth),
+        String(Math.round(100 * v.frac)), `${v.altFwd || 0}/${v.altRev || 0}`, v.type === 'snv' ? `${v.refFwd || 0}/${v.refRev || 0}` : '',
+        e.gene || '', e.effect, e.c || '', e.p || '', e.codon || '', notes.join('; ')];
+}
+function _variantsTsv() {
+    return [_VARIANT_COLUMNS.join('\t')].concat(_readsVariantRows().map(r => _variantCells(r).join('\t'))).join('\n') + '\n';
+}
+const _EFFECT_CLASS = e => /stop gained|frameshift|start lost|stop lost|splice/.test(e) ? 'var-severe' : /missense|in-frame/.test(e) ? 'var-moderate'
+    : /synonymous/.test(e) ? 'var-silent' : 'var-other';
+
+function openVariantsPanel() {
+    if (!_readsCalls()) { showMessage('No reads loaded: open a reference, then its SAM/BAM/CRAM.', 3000); return; }
+    let win = document.getElementById('variantsWindow');
+    if (!win) {
+        win = document.createElement('div');
+        win.id = 'variantsWindow';
+        win.className = 'var-window';
+        win.innerHTML = '<div class="win-rz" data-dir="n"></div><div class="win-rz" data-dir="s"></div><div class="win-rz" data-dir="e"></div><div class="win-rz" data-dir="w"></div>'
+            + '<div class="win-rz" data-dir="ne"></div><div class="win-rz" data-dir="nw"></div><div class="win-rz" data-dir="se"></div><div class="win-rz" data-dir="sw"></div>'
+            + '<div class="win-titlebar" id="variantsTitleBar" style="--win-pad:10px;cursor:move;"><h3 style="pointer-events:none;">Variants</h3>'
+            + '<span class="win-btns"><button type="button" id="variantsMaxBtn" class="win-close win-maxbtn" title="Maximize (or double-click the title bar)">&#9633;</button>'
+            + '<button type="button" id="variantsCloseBtn" class="win-close" title="Close">&times;</button></span></div>'
+            + '<div class="var-toolbar"><span id="variantsSummary"></span>'
+            + '<button type="button" id="variantsCopyBtn" title="Copy the table, tab-separated (paste into a spreadsheet)">Copy table</button>'
+            + '<button type="button" id="variantsSaveBtn" title="Save the table as a .tsv file">Save .tsv</button></div>'
+            + '<div class="var-table-wrap"><table id="variantsTable"></table></div>'
+            + '<div class="var-help">Click a row: the reads at that position, sorted by their base there. Double-click: the column in the alignment. '
+            + 'Effects need genes: a GenBank file with CDS features, or a BED annotation (BED12 for exons).</div>';
+        document.body.appendChild(win);
+        _initWindowFrame(win, win.querySelector('#variantsTitleBar'), win.querySelector('#variantsMaxBtn'), { minW: 520, minH: 200 });
+        win.querySelector('#variantsCloseBtn').addEventListener('click', () => { win.style.display = 'none'; });
+        win.querySelector('#variantsCopyBtn').addEventListener('click', () => {
+            navigator.clipboard.writeText(_variantsTsv()).then(() => showMessage('Variants table copied (tab-separated).', 2000)).catch(() => showMessage('Copy failed.', 2000));
+        });
+        win.querySelector('#variantsSaveBtn').addEventListener('click', () => {
+            const url = URL.createObjectURL(new Blob([_variantsTsv()], { type: 'text/tab-separated-values' }));
+            const a = document.createElement('a');
+            a.href = url; a.download = `${String(bamState.refName || 'reads').replace(/[^A-Za-z0-9_.-]+/g, '_')}_variants.tsv`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 500);
+        });
+        const table = win.querySelector('#variantsTable');
+        table.addEventListener('click', e => {
+            const tr = e.target.closest('tr[data-pos]');
+            if (!tr) return;
+            table.querySelectorAll('tr.var-sel').forEach(x => x.classList.remove('var-sel'));
+            tr.classList.add('var-sel');
+            readsGoTo(+tr.dataset.pos - 1, { sort: true });
+        });
+        table.addEventListener('dblclick', e => {
+            const tr = e.target.closest('tr[data-pos]');
+            if (tr) variantToAlignment(+tr.dataset.pos - 1);
+        });
+    }
+    win.style.display = '';
+    _fillVariantsTable();
+}
+
+function _fillVariantsTable() {
+    const win = document.getElementById('variantsWindow');
+    if (!win) return;
+    const rows = _readsVariantRows();
+    const genes = _readsGenes();
+    const n = new Set(rows.map(r => r.v)).size;
+    win.querySelector('#variantsSummary').textContent = `${n} change${n === 1 ? '' : 's'} from ${(bamState.allReads || bamState.reads).length.toLocaleString()} reads on ${bamState.refName}`
+        + (genes.length ? `; ${genes.filter(g => g.coding).length} coding gene${genes.filter(g => g.coding).length === 1 ? '' : 's'}` : '; no genes annotated (load GenBank or BED for effects)')
+        + `; code: ${el('codonCode')?.selectedOptions?.[0]?.text || 'Standard'}`;
+    const head = '<tr>' + _VARIANT_COLUMNS.map(c => `<th>${_escapeHtml(c)}</th>`).join('') + '</tr>';
+    const body = rows.map(r => `<tr data-pos="${r.v.pos}" class="${_EFFECT_CLASS(r.e.effect)}">` + _variantCells(r).map(c => `<td>${_escapeHtml(c)}</td>`).join('') + '</tr>').join('');
+    win.querySelector('#variantsTable').innerHTML = '<thead>' + head + '</thead><tbody>' + (body || `<tr><td colspan="${_VARIANT_COLUMNS.length}">No changes against the reference.</td></tr>`) + '</tbody>';
+}
+
+// The column of reference position p (0-based) in the alignment (Full view), selected and scrolled to
+function variantToAlignment(p) {
+    const ri = _readsRefRowIndex();
+    if (ri < 0) return;
+    const seq = state.seqs[ri].seq;
+    let col = -1;
+    for (let c = 0, k = 0; c < seq.length; c++) { if (seq[c] === '-' || seq[c] === '.') continue; if (k === p) { col = c; break; } k++; }
+    if (col < 0) return;
+    const full = document.getElementById('modeSingle');
+    if (full && document.getElementById('modeReads')?.checked) full.checked = true;
+    state.selectedColumns.clear();
+    state.selectedColumns.add(col);
+    state.lastSelectedColumn = col;
+    renderAlignment();
+    _scrollToColumn(col);
+    showMessage(`Column ${(col + 1).toLocaleString()} (${bamState.refName}:${p + 1}) selected`, 2500);
+}
+
+// The sample called from every read (cached until other reads are loaded): the coverage row, the variants
+// panel and Sample -> row all read the same counts and calls
+function _readsCalls() {
+    if (!bamState.refSeq || !(bamState.allReads || bamState.reads || []).length || typeof SampleCall === 'undefined') return null;
+    if (!bamState.calls) bamState.calls = SampleCall.call(bamState.allReads || bamState.reads, bamState.refSeq);
+    return bamState.calls;
+}
+
+// Coverage under the ruler: depth of every read (not only the drawn ones), bars split into base colours where the
+// non-reference bases reach 20% of the reads (igv.js's allele-frequency threshold), downsampled windows marked
+// below. Hover: counts per base and strand; click: sort the reads by their base there.
+const _COV_H = 34;
+function _readsCountsHtml(p) {
+    const calls = _readsCalls();
+    const c = calls && SampleCall.countsAt(calls.counts, p);
+    const refB = (bamState.refSeq[p] || 'N').toUpperCase();
+    let h = `<b>${_escapeHtml(bamState.refName)}:${(p + 1).toLocaleString()}</b>`
+        + (bamState.offset ? ` (${_escapeHtml(bamState.bamRefName)}:${(p + 1 + bamState.offset).toLocaleString()})` : '') + `, reference ${refB}`;
+    if (!c) return h + '<br>no reads';
+    const n = c.A[0] + c.A[1] + c.C[0] + c.C[1] + c.G[0] + c.G[1] + c.T[0] + c.T[1];
+    h += `<br>depth ${c.depth} (bases with quality &ge; ${SampleCall.DEFAULTS.minBaseQ}: ${n})`;
+    for (const b of ['A', 'C', 'G', 'T', 'N']) {
+        const t = c[b][0] + c[b][1];
+        if (!t) continue;
+        h += `<br>${b === refB ? '<b>' + b + '</b>' : b}: ${t} (${n ? Math.round(100 * t / n) : 0}%, ${c[b][0]}+, ${c[b][1]}&minus;)`;
+    }
+    if (c.del) h += `<br>deleted: ${c.del}`;
+    if (c.ins) h += `<br>insertion before it: ${c.ins}`;
+    return h + '<br><i>click: sort the reads by their base here</i>';
+}
+
+function _buildReadsCoverageRow(NAME_W, cellW, refStart, refEnd) {
+    const row = document.createElement('div');
+    row.className = 'seq-line reads-coverage-line';
+    row.style.cssText = `display:flex;align-items:flex-end;height:${_COV_H}px;position:sticky;top:36px;z-index:1;background:#fff;border-bottom:1px solid #ddd;`;
+    const label = document.createElement('span');
+    label.style.cssText = `width:${NAME_W}px;min-width:${NAME_W}px;box-sizing:border-box;flex:none;font-size:10px;color:#666;text-align:right;padding:0 4px;align-self:center;`;
+    label.textContent = 'coverage';
+    row.appendChild(label);
+    const calls = _readsCalls();
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    const viewLen = refEnd - refStart;
+    svg.setAttribute('width', viewLen * cellW);
+    svg.setAttribute('height', _COV_H);
+    svg.setAttribute('id', 'readsCoverageSvg');
+    svg.style.flex = 'none';
+    if (calls) {
+        const cs = calls.counts;
+        let max = 1;
+        for (let p = Math.max(refStart, cs.lo); p < Math.min(refEnd, cs.hi); p++) max = Math.max(max, cs.depth[p - cs.lo]);
+        const H = _COV_H - 6;
+        const COL = { A: '#4caf50', C: '#2196f3', G: '#ff9800', T: '#f44336' };
+        const parts = [];
+        for (let p = Math.max(refStart, cs.lo); p < Math.min(refEnd, cs.hi); p++) {
+            const i = p - cs.lo, x = (p - refStart) * cellW;
+            const t = { A: cs.fwd[0][i] + cs.rev[0][i], C: cs.fwd[1][i] + cs.rev[1][i], G: cs.fwd[2][i] + cs.rev[2][i], T: cs.fwd[3][i] + cs.rev[3][i] };
+            const n = t.A + t.C + t.G + t.T, refB = (bamState.refSeq[p] || 'N').toUpperCase();
+            const hDepth = H * cs.depth[i] / max;
+            const mixed = n > 0 && (n - (t[refB] || 0)) / n >= 0.2 || cs.del[i] / Math.max(1, cs.depth[i]) >= 0.2;
+            if (!mixed) { parts.push(`<rect x="${x}" y="${H - hDepth}" width="${cellW}" height="${hDepth}" fill="#b4b4b4"/>`); continue; }
+            // stacked: bases (reference first), deletions on top
+            let y = H;
+            const seg = (cnt, col) => { if (!cnt) return; const hh = H * cnt / max; y -= hh; parts.push(`<rect x="${x}" y="${y}" width="${cellW}" height="${hh}" fill="${col}"/>`); };
+            if (t[refB]) seg(t[refB], COL[refB]);
+            for (const b of ['A', 'C', 'G', 'T']) if (b !== refB) seg(t[b], COL[b]);
+            seg(cs.del[i], '#555');
+        }
+        // windows whose reads were not all drawn
+        for (const w of bamState.downsampled || []) {
+            const a = Math.max(w.start, refStart), b = Math.min(w.end, refEnd);
+            if (b > a) parts.push(`<rect class="reads-downsampled" x="${(a - refStart) * cellW}" y="${_COV_H - 4}" width="${(b - a) * cellW}" height="3" fill="#222"><title>${w.dropped} reads starting in ${w.start + 1}-${w.end} not drawn (all are counted)</title></rect>`);
+        }
+        if (bamState.focusPos != null && bamState.focusPos >= refStart && bamState.focusPos < refEnd) {
+            parts.push(`<rect x="${(bamState.focusPos - refStart) * cellW}" y="0" width="${cellW}" height="${_COV_H}" fill="none" stroke="#e0a800" stroke-width="2"/>`);
+        }
+        svg.innerHTML = parts.join('');
+        const posOf = e => refStart + Math.floor((e.clientX - svg.getBoundingClientRect().left) / cellW);
+        svg.addEventListener('mousemove', e => {
+            const p = posOf(e);
+            if (p < refStart || p >= refEnd) return;
+            const at = { getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX + 1, top: e.clientY, bottom: e.clientY + 1, width: 1, height: 1 }) };   // at the mouse
+            showTooltipAt(_readsCountsHtml(p), at, { html: true, className: 'reads-tooltip' });
+        });
+        svg.addEventListener('mouseleave', () => hideTooltip());
+        svg.addEventListener('click', e => { const p = posOf(e); if (p >= refStart && p < refEnd) readsGoTo(p, { sort: true, scroll: false }); });
+        svg.style.cursor = 'pointer';
+    }
+    row.appendChild(svg);
+    return row;
+}
+
+// Sort the reads at reference position p (0-based) as igv.js does: the most frequent non-reference base first,
+// then the other bases, deletions, the reference base, and rows without a read there last. Only the order of
+// the packed tracks changes (each track holds non-overlapping reads, so at most one covers p).
+function _readBaseAt(read, p) {
+    let q = read.pos, rp = 0;
+    for (const { op, len } of read.cigar) {
+        if (op === 'M' || op === '=' || op === 'X') { if (p >= q && p < q + len) return (read.seq[rp + p - q] || 'N').toUpperCase(); q += len; rp += len; }
+        else if (op === 'D') { if (p >= q && p < q + len) return '-'; q += len; }
+        else if (op === 'N') { if (p >= q && p < q + len) return null; q += len; }
+        else if (op === 'I' || op === 'S') rp += len;
+        if (q > p) break;
+    }
+    return null;
+}
+function _sortReadTracksAt(p) {
+    const n = bamState.nTracks || 0;
+    if (!n) return;
+    const refB = (bamState.refSeq[p] || 'N').toUpperCase();
+    const calls = _readsCalls(), c = calls && SampleCall.countsAt(calls.counts, p);
+    const freq = b => (c && c[b] ? c[b][0] + c[b][1] : 0);
+    const key = new Array(n).fill(1e9);
+    for (const r of bamState.reads) {
+        if (r.track == null || r.track < 0 || r.track >= n) continue;
+        const b = _readBaseAt(r, p);
+        if (b == null) continue;
+        key[r.track] = b === '-' ? 1e6 : b === refB ? 2e6 : -freq(b);
+    }
+    const order = [...Array(n).keys()].sort((a, b) => key[a] - key[b] || a - b);
+    const newIdx = new Array(n);
+    order.forEach((t, i) => { newIdx[t] = i; });
+    for (const r of bamState.reads) if (r.track != null && r.track >= 0 && r.track < n) r.track = newIdx[r.track];
+}
+
+// Show position p (0-based on the reference row) in the Reads view: the column marked, the reads sorted by their
+// base there (opts.sort), scrolled to the middle (opts.scroll, default on)
+function readsGoTo(p, opts = {}) {
+    if (!bamState.reads || !bamState.reads.length) return;
+    bamState.focusPos = p;
+    if (opts.sort !== false) _sortReadTracksAt(p);
+    const readsRadio = document.getElementById('modeReads');
+    if (readsRadio && !readsRadio.checked) { readsRadio.checked = true; syncQuickModeSwitch(); }
+    const keepLeft = alignmentContainer.scrollLeft;
+    renderAlignment();
+    if (opts.scroll === false) { alignmentContainer.scrollLeft = keepLeft; return; }
+    const NAME_W = 160, cellW = 12;
+    alignmentContainer.scrollLeft = Math.max(0, NAME_W + (p - bamState.refStart) * cellW - alignmentContainer.clientWidth / 2);
 }
 
 /**
@@ -9855,6 +10155,11 @@ function renderAlignment(options = {}) {
         alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
         syncCodonModePanel();
         return;
+    }
+    // The Variants window follows the reads, the genes and the genetic code
+    const varWin = document.getElementById('variantsWindow');
+    if (varWin && varWin.style.display !== 'none') {
+        if ((bamState.allReads || bamState.reads || []).length) _fillVariantsTable(); else varWin.style.display = 'none';
     }
     // Reads mode: delegate to BAM renderer
     if (document.getElementById('modeReads')?.checked) {
@@ -12811,6 +13116,8 @@ function syncQuickModeSwitch() {
     if (readsToggle) readsToggle.style.display = isReadsMode ? 'flex' : 'none';
     const sampleBtn = ensureSampleRowButton();
     if (sampleBtn) sampleBtn.style.display = isReadsMode && bamState?.reads?.length ? '' : 'none';
+    const varBtn = document.getElementById('readsVariantsButton');
+    if (varBtn) varBtn.style.display = isReadsMode && bamState?.reads?.length ? '' : 'none';
     syncModeRow();
     syncSearchControlsAvailability();
 }

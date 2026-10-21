@@ -41,6 +41,7 @@ const SUITES = [
   { name: 'optional server security', args: ['tests/server/security.test.js'] },
   { name: 'unit: low-severity audit fixes', args: ['tests/unit/audit-low.test.js'] },
   { name: 'unit: sample row called from reads', args: ['tests/unit/sample-call.test.js'] },
+  { name: 'unit: variant effects on genes', args: ['tests/unit/variant-effect.test.js'] },
   { name: 'release version consistency', args: ['tests/meta/version.test.js'] },
   { name: 'correctness (consensus, parsers, exports, rendering)', args: ['tests/correctness/run.js'], browser: true },
   { name: 'input compatibility (examples/)', args: ['tests/compat/run.js'], browser: true },

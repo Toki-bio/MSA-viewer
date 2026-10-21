@@ -62,5 +62,25 @@ const insReads = (nIns, nRef) => [...Array(nIns)].map(() => rd(0, '4M2I4M', 'ACG
 const i55 = SC.call(insReads(11, 9), toyRef);
 check('an insertion in 55% of reads is heterozygous and adds no columns', i55.variants.some(v => v.type === 'ins' && v.zyg === 'het') && i55.insAfter.size === 0, JSON.stringify(i55.variants));
 
+// Strands: each variant says how many alt (and ref) reads are on each strand; countsAt gives one position's counts
+{
+  const RD = path.join(__dirname, '..', 'fixtures', 'reads', 'region');
+  const rref = fs.readFileSync(path.join(RD, 'region.fa'), 'utf8').replace(/\r/g, '').split('\n').slice(1).join('');
+  const rtruth = JSON.parse(fs.readFileSync(path.join(RD, 'truth.json'), 'utf8'));
+  const rreads = fs.readFileSync(path.join(RD, 'reads_40x.sam'), 'utf8').replace(/\r/g, '').split('\n').filter(l => l && l[0] !== '@').map(l => {
+    const f = l.split('\t');
+    return { name: f[0], flag: +f[1], pos: +f[3] - 1, cigar: (f[5].match(/\d+[MIDNSHP=X]/g) || []).map(t => ({ op: t.slice(-1), len: parseInt(t) })), seq: f[9], qual: f[10] };
+  });
+  const rr = SC.call(rreads, rref);
+  const mis = rtruth.muts.find(x => x.name === 'A_missense_hom_exon2');
+  const v = rr.variants.find(x => x.pos === mis.pos + 1);
+  const c = SC.countsAt(rr.counts, mis.pos);
+  check('a homozygous change is on both strands, no reference reads', v && v.altFwd > 3 && v.altRev > 3 && v.refFwd + v.refRev === 0, JSON.stringify(v));
+  check('countsAt agrees with the variant: alt reads on each strand and the depth', c && c[mis.alt][0] === v.altFwd && c[mis.alt][1] === v.altRev && c.depth >= v.depth, JSON.stringify(c));
+  // reads on the reverse strand only (flag 16) carrying a change: the counts say so
+  const rv = SC.call([...Array(4)].map(() => rd(0, '4M', 'ACTT', 16)).concat([...Array(4)].map(() => rd(0, '4M', 'ACGT'))), toyRef).variants.find(x => x.pos === 3);
+  check('a change only on reverse reads: altFwd 0, altRev 4', rv && rv.altFwd === 0 && rv.altRev === 4 && rv.refFwd === 4, JSON.stringify(rv));
+}
+
 console.log(fails ? `\n${fails} failed` : '\nall passed');
 process.exit(fails ? 1 : 0);

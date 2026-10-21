@@ -946,6 +946,43 @@ check('Reads files: >1000 reads load (display downsampled, calls from all), gene
   return { pass: ok, detail: JSON.stringify({ want, out }) };
 });
 
+// Reads -> evidence -> gene effect, the functional analysis of a gene: the changes were only listed in a message,
+// with no depth, strand, codon or amino-acid change, and no way back to their reads; the Reads view had no
+// coverage, no allele counts and one colour for both strands
+check('Reads: Variants window lists each change with depth, strands and gene effect; a row opens its reads, sorted', async (page) => {
+  const path = require('path');
+  const DIR = path.join(__dirname, '..', 'fixtures', 'reads', 'region');
+  await page.evaluate(() => { if (typeof clearAnnotation === 'function') clearAnnotation(); });
+  await page.setInputFiles('#fileInput', path.join(DIR, 'region.gb'));
+  await page.waitForTimeout(1500);
+  await page.setInputFiles('#bamFileInput', path.join(DIR, 'reads_40x.sam'));
+  await page.waitForTimeout(2500);
+  await page.click('#readsVariantsButton');
+  await page.waitForTimeout(800);
+  const r = await page.evaluate(() => ({
+    rows: [...document.querySelectorAll('#variantsTable tbody tr[data-pos]')].map(tr => [...tr.children].map(td => td.textContent)),
+    tsvLines: _variantsTsv().trim().split('\n').length,
+    coverageBars: document.querySelectorAll('#readsCoverageSvg rect').length,
+    strandColours: new Set([...document.querySelectorAll('#readsPileSvg rect[data-stroke]')].map(b => b.getAttribute('fill'))).size
+  }));
+  const pOf = r.rows.map(c => c[10]).join(',');
+  const effects = r.rows.map(c => c[8]).join(',');
+  // click the R140Q row: Reads view at 919, reads sorted so the first track's read has the alt base there
+  const rowIdx = r.rows.findIndex(c => c[10] === 'p.R140Q');
+  await page.click(`#variantsTable tbody tr[data-pos]:nth-child(${rowIdx + 1})`);
+  await page.waitForTimeout(1500);
+  const g = await page.evaluate(() => {
+    const p = bamState.focusPos;
+    const first = bamState.reads.filter(x => x.track === 0).map(x => _readBaseAt(x, p)).find(b => b != null);
+    const last = bamState.reads.filter(x => x.track === bamState.nTracks - 1).map(x => _readBaseAt(x, p)).find(b => b != null);
+    return { focus: p, mode: document.getElementById('modeReads').checked, first, last, band: !!document.querySelector('.reads-focus-band'), tip: _readsCountsHtml(p) };
+  });
+  const ok = pOf === 'p.R30=,,p.R140Q,p.S170fs,p.G120E,p.S51*' && effects === 'synonymous,intron,missense,frameshift,missense,stop gained'
+    && r.tsvLines === 7 && r.coverageBars > 2000 && r.strandColours === 2
+    && g.focus === 918 && g.mode && g.first === 'A' && g.band && /A: \d+ \(100%, \d+\+, \d+&minus;\)/.test(g.tip);
+  return { pass: ok, detail: JSON.stringify({ pOf, effects, tsv: r.tsvLines, cov: r.coverageBars, colours: r.strandColours, g: { ...g, tip: g.tip.slice(0, 160) } }) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };
