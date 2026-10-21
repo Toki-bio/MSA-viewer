@@ -467,6 +467,54 @@ function checkRefMatch(bamRefNames, bamRefLengths, loadedSeqs, readsPerRef) {
     return { matchedRef, warnings };
 }
 
+/**
+ * Which loaded sequence the reads go on, when the names are not identical. Only an exact name matched
+ * (checkRefMatch), so 'chr7' vs '7', 'NC_000007.14' vs 'NC_000007', or a gene cut out with samtools faidx
+ * ('7:1001-2000', reads still in chromosome coordinates) all failed with "Load a reference FASTA first".
+ * Tried in this order, BAM references with the most reads first:
+ *   exact name; faidx region 'name:start-end' (offset = start - 1, the reads are shifted onto it); the same
+ *   name apart from case, a 'chr' prefix, a '.version' suffix or M/MT; a single loaded sequence whose length
+ *   is the BAM reference's length (the names differ: said in the note).
+ * Returns { refID, loadedIndex, offset, how, note } or null.
+ */
+function matchReference(bamRefNames, bamRefLengths, loadedSeqs, readsPerRef) {
+    const order = bamRefNames.map((n, i) => i).sort((a, b) => ((readsPerRef && readsPerRef[b]) || 0) - ((readsPerRef && readsPerRef[a]) || 0));
+    const norm = n => { let s = String(n).toLowerCase().replace(/^chr/, '').replace(/\.\d+$/, ''); return s === 'mt' ? 'm' : s; };
+    const region = /^(.+):(\d[\d,]*)-(\d[\d,]*)$/;
+    const hasReads = i => !readsPerRef || (readsPerRef[i] || 0) > 0;
+    for (const i of order) {
+        const j = loadedSeqs.findIndex(s => s.name === bamRefNames[i]);
+        if (j >= 0) return { refID: i, loadedIndex: j, offset: 0, how: 'name', note: '' };
+    }
+    for (const i of order) {
+        if (!hasReads(i)) continue;
+        for (let j = 0; j < loadedSeqs.length; j++) {
+            const m = region.exec(loadedSeqs[j].name);
+            if (!m || (m[1] !== bamRefNames[i] && norm(m[1]) !== norm(bamRefNames[i]))) continue;
+            const a = parseInt(m[2].replace(/,/g, ''), 10), b = parseInt(m[3].replace(/,/g, ''), 10);
+            if (!(a >= 1 && b >= a)) continue;
+            const len = loadedSeqs[j].seq.length;
+            return { refID: i, loadedIndex: j, offset: a - 1, how: 'region',
+                note: `reads on ${bamRefNames[i]} placed on ${loadedSeqs[j].name} (positions shifted by ${(a - 1).toLocaleString()})`
+                    + (len !== b - a + 1 ? `; the region is ${(b - a + 1).toLocaleString()} bp but the sequence is ${len.toLocaleString()} bp` : '') };
+        }
+    }
+    for (const i of order) {
+        if (!hasReads(i)) continue;
+        const j = loadedSeqs.findIndex(s => norm(s.name) === norm(bamRefNames[i]));
+        if (j >= 0) return { refID: i, loadedIndex: j, offset: 0, how: 'alias', note: `reads on ${bamRefNames[i]} placed on ${loadedSeqs[j].name}` };
+    }
+    if (loadedSeqs.length === 1) {
+        for (const i of order) {
+            if (hasReads(i) && bamRefLengths[i] === loadedSeqs[0].seq.length) {
+                return { refID: i, loadedIndex: 0, offset: 0, how: 'length',
+                    note: `the names differ (reads on ${bamRefNames[i]}, sequence ${loadedSeqs[0].name}); used because the lengths are equal (${bamRefLengths[i].toLocaleString()} bp)` };
+            }
+        }
+    }
+    return null;
+}
+
 // ── Export for use in script.js (global scope) ───────────────────────────────
 
 window.BamParser = {
@@ -478,5 +526,6 @@ window.BamParser = {
     expandCigar,
     cigarToString,
     checkRefMatch,
+    matchReference,
     MAX_READS,
 };

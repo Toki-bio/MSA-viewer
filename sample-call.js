@@ -93,7 +93,7 @@
             for (let i = 0; i < len; i++) d = Math.min(d, depth[p + i]);
             const frac = n / d;
             if (n < o.minAlt || frac < o.hetFrac) continue;
-            const hom = frac > 0.5;
+            const hom = frac >= 1 - o.hetFrac;   // as for bases: homozygous when the rest is below the het fraction
             if (hom) for (let i = 0; i < len; i++) deleted[p + i] = 1;
             variants.push({ pos: p + 1, type: 'del', ref: refSeq.substr(p, len).toUpperCase(), alt: '-', zyg: hom ? 'hom' : 'het', depth: d, frac });
         }
@@ -102,7 +102,7 @@
             const i = k.indexOf(':'), p = +k.slice(0, i), seq = k.slice(i + 1);
             const d = span[p], frac = d ? n / d : 0;
             if (n < o.minAlt || frac < o.hetFrac) continue;
-            const hom = frac > 0.5;
+            const hom = frac >= 1 - o.hetFrac;   // as for bases: homozygous when the rest is below the het fraction
             if (hom && (!insAfter.has(p) || insAfter.get(p).n < n)) insAfter.set(p, { seq, n });
             variants.push({ pos: p + 1, type: 'ins', ref: '-', alt: seq, zyg: hom ? 'hom' : 'het', depth: d, frac });
         }

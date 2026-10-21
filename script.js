@@ -8454,6 +8454,7 @@ async function _cramIsTruncated(file) {
 async function cramToSamText(file) {
     const { CramFile } = await _loadCramLib();
     const loaded = new Map();
+    let refFor = new Map();      // filled once the file's reference names are known
     for (const s of state.seqs || []) {
         const name = String(s.fullHeader || s.header || '').trim().split(/\s+/)[0];
         if (name && !loaded.has(name)) loaded.set(name, s.seq.replace(/[-.]/g, '').toUpperCase());
@@ -8469,10 +8470,18 @@ async function cramToSamText(file) {
         checkSequenceMD5: false,
         useSliceWorkerPool: false,
         // 0-based half-open; an empty answer tells the reader the reference is unknown
-        fetchReferenceSequence: async (id, start, end, refName) => (loaded.get(refName) || '').substring(start, end)
+        fetchReferenceSequence: async (id, start, end, refName) => {
+            const r = refFor.get(refName);
+            return r ? r.seq.substring(Math.max(0, start - r.offset), Math.max(0, end - r.offset)) : '';
+        }
     });
     const refInfo = await cram.getReferenceInfo();
     const refs = refInfo.map(r => r.name);
+    // The reference the reads decode against, matched as for BAM (BamParser.matchReference: chr/version
+    // aliases, a faidx region with its offset, one sequence of the same length); only exact names worked
+    refFor = new Map();
+    const m = BamParser.matchReference(refs, refInfo.map(r => r.length), [...loaded].map(([name, seq]) => ({ name, seq })), null);
+    if (m) refFor.set(refs[m.refID], { seq: [...loaded.values()][m.loadedIndex], offset: m.offset });
     let header = ((await cram.getHeaderText()) || '').split('\n').filter(l => l.startsWith('@'));
     if (!header.some(l => l.startsWith('@SQ'))) header = refInfo.map(r => `@SQ\tSN:${r.name}\tLN:${r.length}`);
     const out = header.slice();
@@ -8494,7 +8503,7 @@ async function cramToSamText(file) {
             } catch (_) { truncated = true; break; }
             for (const r of sliceRecords) {
                 const rname = refs[r.sequenceId];
-                if (!loaded.has(rname) || r.isSegmentUnmapped()) continue;
+                if (!refFor.has(rname) || r.isSegmentUnmapped()) continue;
                 const mate = r.nextSequenceId < 0 ? '*' : (r.nextSequenceId === r.sequenceId ? '=' : (refs[r.nextSequenceId] || '*'));
                 out.push([r.readName || '*', r.flags, rname, r.start + 1, r.mappingQuality || 0,
                     r.getCigarString() || '*', mate, r.nextStart >= 0 ? r.nextStart + 1 : 0,
@@ -8560,10 +8569,16 @@ async function handleBamFile(event) {
         }));
         const readsPerRef = [];
         for (const r of records) readsPerRef[r.refID] = (readsPerRef[r.refID] || 0) + 1;
-        const { matchedRef, warnings } = BamParser.checkRefMatch(
-            header.refNames, header.refLengths, loadedSeqs, readsPerRef
-        );
-
+        // Exact name, a samtools faidx region of it (reads shifted), the same name apart from chr / version /
+        // case, or the only loaded sequence at the reference's length (BamParser.matchReference)
+        const match = BamParser.matchReference(header.refNames, header.refLengths, loadedSeqs, readsPerRef);
+        const matchedRef = match ? header.refNames[match.refID] : null;
+        const warnings = [];
+        if (match && match.how === 'name' && header.refLengths[match.refID] !== loadedSeqs[match.loadedIndex].seq.length) {
+            warnings.push(`Reference length mismatch for "${matchedRef}": the file says ${header.refLengths[match.refID].toLocaleString()} bp, `
+                + `the loaded sequence is ${loadedSeqs[match.loadedIndex].seq.length.toLocaleString()} bp.`);
+        }
+        if (match && match.note) warnings.push(match.note.charAt(0).toUpperCase() + match.note.slice(1) + '.');
         if (warnings.length) {
             warnings.forEach(w => console.warn('BAM:', w));
             // shown, not only logged: a reference length that differs means the reads may not line up
@@ -8572,8 +8587,13 @@ async function handleBamFile(event) {
 
         if (!matchedRef) {
             statusMessage.style.display = 'none';
-            showMessage(`${ext.toUpperCase()} reference does not match loaded sequences. ` +
-                'Load a reference FASTA first.', 5000);
+            // say which names were compared: "Load a reference FASTA first" was shown with one loaded
+            const list = (a, n) => a.slice(0, n).join(', ') + (a.length > n ? `, ... (${a.length})` : '');
+            const withReads = header.refNames.filter((nm, i) => readsPerRef[i] > 0);
+            showMessage(loadedSeqs.length
+                ? `No loaded sequence matches the ${ext.toUpperCase()} references. Reads are on: ${list(withReads.length ? withReads : header.refNames, 5)}; `
+                  + `loaded: ${list(loadedSeqs.map(x => x.name), 5)}. Load that reference (FASTA or GenBank), or a region of it named like samtools faidx (name:start-end).`
+                : `${ext.toUpperCase()} reference does not match loaded sequences. Load a reference FASTA first.`, 9000);
             return;
         }
 
@@ -8587,9 +8607,14 @@ async function handleBamFile(event) {
             return;
         }
 
-        // Filter reads to matched reference
-        const refIdx = header.refNames.indexOf(matchedRef);
+        // Filter reads to matched reference; on a faidx region they are shifted onto it, and reads outside it go
+        const refIdx = match.refID, offset = match.offset;
+        const regionLen = loadedSeqs[match.loadedIndex].seq.length;
         let matchedReads = records.filter(r => r.refID === refIdx);
+        if (offset) {
+            matchedReads = matchedReads.filter(r => r.pos + computeReadSpan(r.cigar) > offset && r.pos < offset + regionLen);
+            for (const r of matchedReads) r.pos -= offset;
+        }
 
         if (matchedReads.length === 0) {
             statusMessage.style.display = 'none';
@@ -8603,7 +8628,7 @@ async function handleBamFile(event) {
         matchedReads.sort((a, b) => a.pos - b.pos || a.name.localeCompare(b.name));
 
         // Get reference sequence
-        const refSeqObj = loadedSeqs.find(s => s.name === matchedRef);
+        const refSeqObj = loadedSeqs[match.loadedIndex];
         const refSeq = refSeqObj ? refSeqObj.seq.toUpperCase() : '';
 
         // Determine view window: leftmost read pos to rightmost read end
@@ -8634,7 +8659,9 @@ async function handleBamFile(event) {
         // Store BAM state
         bamState = {
             reads: matchedReads,
-            refName: matchedRef,
+            refName: refSeqObj.name,          // the loaded row's name (the row is found by it)
+            bamRefName: matchedRef,           // the name in the reads file
+            offset,                           // reads file position - offset = position on the loaded row (faidx region)
             refSeq,
             refStart: minPos,
             refEnd: maxPos,
@@ -8663,7 +8690,7 @@ async function handleBamFile(event) {
         if (truncated) {
             showMessage(`${ext.toUpperCase()} file is truncated (it stops before its end-of-file marker): loaded the ${matchedReads.length} complete reads on ${matchedRef} (${minPos + 1}-${maxPos}); later reads are missing.`, 0);
         } else {
-            showMessage(`Loaded ${matchedReads.length} reads on ${matchedRef} (${minPos + 1}-${maxPos})`, 2500);
+            showMessage(`Loaded ${matchedReads.length} reads on ${refSeqObj.name} (${minPos + 1}-${maxPos})` + (match.note ? `; ${match.note}` : ''), match.note ? 7000 : 2500);
         }
 
     } catch (err) {

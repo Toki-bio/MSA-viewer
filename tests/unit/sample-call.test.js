@@ -52,5 +52,15 @@ const withQ = q => SC.call([0, 1, 2].map(() => Object.assign(rd(0, '4M', 'ACGT')
 check('SAM quality string (Phred+33) is read: I = 40 passes, # = 2 fails', withQ('IIII') === 'ACGT' && withQ('####') === 'NNNN', withQ('IIII') + ' ' + withQ('####'));
 check('BAM quality numbers are read: 40 passes, 2 fails, 255 = none passes', withQ([40, 40, 40, 40]) === 'ACGT' && withQ([2, 2, 2, 2]) === 'NNNN' && withQ([255, 255, 255, 255]) === 'ACGT', '');
 
+// Indels: homozygous only when at least 80% of the reads carry them, as for bases (a second allele >= 20% is
+// heterozygous). At "more than half" a 50/50 deletion became homozygous by chance and a false frameshift
+const delReads = (nDel, nRef) => [...Array(nDel)].map(() => rd(0, '3M1D4M', 'ACGACGT')).concat([...Array(nRef)].map(() => rd(0, '8M', 'ACGTACGT')));
+const d55 = SC.call(delReads(11, 9), toyRef), d85 = SC.call(delReads(17, 3), toyRef);
+check('a deletion in 55% of reads is heterozygous and stays out of the row', d55.variants.some(v => v.type === 'del' && v.zyg === 'het') && d55.bases[3] !== '-', JSON.stringify(d55.variants) + ' ' + d55.bases.join(''));
+check('a deletion in 85% of reads is homozygous and is a gap in the row', d85.variants.some(v => v.type === 'del' && v.zyg === 'hom') && d85.bases[3] === '-', JSON.stringify(d85.variants));
+const insReads = (nIns, nRef) => [...Array(nIns)].map(() => rd(0, '4M2I4M', 'ACGTGGACGT')).concat([...Array(nRef)].map(() => rd(0, '8M', 'ACGTACGT')));
+const i55 = SC.call(insReads(11, 9), toyRef);
+check('an insertion in 55% of reads is heterozygous and adds no columns', i55.variants.some(v => v.type === 'ins' && v.zyg === 'het') && i55.insAfter.size === 0, JSON.stringify(i55.variants));
+
 console.log(fails ? `\n${fails} failed` : '\nall passed');
 process.exit(fails ? 1 : 0);

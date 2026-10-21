@@ -794,6 +794,39 @@ check('Canvas: no grey line under the ruler', async (page) => {
   return { pass: r.mode && r.greyPx === 0, detail: JSON.stringify(r) };
 });
 
+// Reads only loaded onto a reference row of exactly the BAM's name: 'chr7' vs '7', a version suffix, or a gene cut
+// out with samtools faidx ('7:1001-2000', reads in chromosome coordinates) all gave "Load a reference FASTA first"
+// although one was loaded
+check('Reads onto a reference named differently: chr prefix, version, faidx region (shifted), same length; else names listed', async (page) => {
+  const path = require('path'), fs = require('fs');
+  const DIR = path.join(__dirname, '..', 'fixtures', 'reads');
+  const ref = fs.readFileSync(path.join(DIR, 'gene_ref.fa'), 'utf8').replace(/\r/g, '').split('\n').slice(1).join('');
+  const sam = fs.readFileSync(path.join(DIR, 'gene_reads.sam'), 'utf8');      // reads on 'gene', LN 963
+  const truth = JSON.parse(fs.readFileSync(path.join(DIR, 'truth.json'), 'utf8'));
+  const stopPos = truth.muts.find(m => m.name === 'stop_hom').pos;             // 0-based on 'gene'
+  const out = {};
+  for (const [key, name, seq] of [['chr', 'chrgene', ref], ['version', 'gene.2 desc', ref], ['faidx', 'gene:301-700', ref.slice(300, 700)],
+                                  ['length', 'my_gene', ref], ['none', 'other', ref.slice(0, 500)]]) {
+    await page.setInputFiles('#fileInput', { name: 'ref.fa', mimeType: 'text/plain', buffer: Buffer.from(`>${name}\n${seq}\n`) });
+    await page.waitForTimeout(1200);
+    await page.setInputFiles('#bamFileInput', { name: 'reads.sam', mimeType: 'text/plain', buffer: Buffer.from(sam) });
+    await page.waitForTimeout(2500);
+    out[key] = await page.evaluate((stopPos) => {
+      const msg = document.getElementById('statusMessage').innerText.replace(/\s+/g, ' ');
+      const n = (typeof bamState !== 'undefined' && bamState.reads) ? bamState.reads.length : 0;
+      // the planted stop's base must be under the right reference column: count reads with the alt base there
+      let alt = 0;
+      if (n) for (const r of bamState.reads) { let p = r.pos, q = 0; for (const op of r.cigar) { if ('M=X'.includes(op.op)) { if (stopPos - (bamState.offset || 0) >= p && stopPos - (bamState.offset || 0) < p + op.len) alt += r.seq[q + stopPos - (bamState.offset || 0) - p] === state.seqs[0].seq[stopPos - (bamState.offset || 0)] ? 0 : 1; p += op.len; q += op.len; } else if (op.op === 'D' || op.op === 'N') p += op.len; else if (op.op === 'I' || op.op === 'S') q += op.len; } }
+      return { n, alt, msg: msg.slice(0, 160) };
+    }, stopPos);
+    await page.evaluate(() => { if (typeof clearReadsData === 'function' && bamState.reads.length) clearReadsData(); });
+  }
+  const ok = out.chr.n > 0 && out.version.n > 0 && out.length.n > 0 && /name/i.test(out.length.msg)
+    && out.faidx.n > 0 && out.faidx.n < out.chr.n && out.faidx.alt > 5
+    && out.none.n === 0 && /gene/.test(out.none.msg) && /other/.test(out.none.msg);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };
