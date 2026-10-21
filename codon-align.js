@@ -38,13 +38,19 @@
     root.CodonAlign = api;
 }(typeof self !== 'undefined' ? self : this, function () {
 
-    // ---- genetic code (standard) and BLOSUM62 ---------------------------------------------------------------
-    const CODE = {};
-    (function () {
-        const b = 'TCAG', aa = 'FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG';
+    // ---- genetic code and BLOSUM62 ---------------------------------------------------------------------------
+    // opts.codeTable: 64 amino acids in TCAG order (NCBI style); the standard code when not given. The table was
+    // fixed to the standard code, so in a mitochondrial gene TGA (Trp) counted as an internal stop.
+    const STANDARD = 'FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG';
+    let CODE = {};
+    function useCode(table) {
+        const aa = typeof table === 'string' && /^[A-Z*]{64}$/.test(table) ? table : STANDARD;
+        const b = 'TCAG', code = {};
         let i = 0;
-        for (const x of b) for (const y of b) for (const z of b) CODE[x + y + z] = aa[i++];
-    })();
+        for (const x of b) for (const y of b) for (const z of b) code[x + y + z] = aa[i++];
+        CODE = code;
+    }
+    useCode(STANDARD);
     const AA_ORDER = 'ARNDCQEGHILKMFPSTWYVX*';   // index 20 = X (unknown), 21 = stop
     const B62 = [
         [4, -1, -2, -2, 0, -1, -1, 0, -2, -1, -1, -1, -1, -2, -1, 1, 0, -3, -2, 0],
@@ -80,7 +86,7 @@
 
     const DEFAULTS = {
         ref: 0, gapOpen: -10, gapExtend: -1, frameshift: -40, terminalFrameshift: -10, stop: -50, ntBonus: 0.5,
-        band: null, bandMin: 60, bandFrac: 0.06, fullLimit: 1500000, maxCells: 100000000, frameRestored: false, lockRefFrame: true
+        codeTable: null, band: null, bandMin: 60, bandFrac: 0.06, fullLimit: 1500000, maxCells: 100000000, frameRestored: false, lockRefFrame: true
     };
 
     // Moves: [ka, kb] = nucleotides consumed from a and b. 0 = gap, 3 = codon, 1/2 = frameshifted codon.
@@ -243,6 +249,7 @@
 
     function alignPairwise(a, b, opts) {
         const o = Object.assign({}, DEFAULTS, opts || {});
+        useCode(o.codeTable);
         a = scoringForm(a); b = scoringForm(b);
         const n = a.length, m = b.length, mx = Math.max(n, m, 1);
         let w = o.band;
@@ -309,6 +316,7 @@
     // ---- centre-star multiple alignment ------------------------------------------------------------------------
     function alignMultiple(records, opts) {
         const o = Object.assign({}, DEFAULTS, opts || {});
+        useCode(o.codeTable);
         const recs = records.map(r => {
             const orig = String(r.seq).replace(/[-.!\s]/g, '');
             return { name: r.name, orig, seq: scoringForm(orig) };

@@ -666,6 +666,35 @@ check('Codon analysis: a heterozygous (IUPAC) base is classed by its alleles; a 
   return { pass: r.m.join() === 'nonsyn,syn,syn,nonsyn' && r.stop && r.refStop === 0, detail: JSON.stringify(r) };
 });
 
+// The codon aligners were never given the genetic code chosen in the Code menu: MACSE and the fast engine always
+// used the standard code, so in a mitochondrial gene TGA (Trp) counted as an internal stop and was penalised
+check('Codon alignment uses the chosen genetic code (vertebrate mito: TGA is Trp, not a stop), MACSE and fast', async (page) => {
+  // 13 codons with two TGA (Trp in code 2); the second row lacks codon 5
+  const cds = 'ATGGCTTGAAAACTGGAATGAGTTCGTAAAGCTGGTCTG';
+  const fa = `>a\n${cds}\n>b\n${cds.slice(0, 12) + cds.slice(15)}\n>c\n${cds}\n`;
+  const r = {};
+  for (const engine of ['macse', 'fast']) {
+    await page.evaluate(f => { document.getElementById('fastaInput').value = f; parseAndRender(false); }, fa);
+    await page.waitForTimeout(400);
+    await page.evaluate((engine) => {
+      const code = document.getElementById('codonCode'); code.value = '2'; code.dispatchEvent(new Event('change', { bubbles: true }));
+      openMacsePreset(false);
+      const eng = document.getElementById('codonEngine'); eng.value = engine; eng.dispatchEvent(new Event('change', { bubbles: true }));
+      window._lastCodonAlignStats = null;
+    }, engine);
+    await page.evaluate(() => realignAll());
+    await page.waitForFunction(() => !!window._lastCodonAlignStats, null, { timeout: 60000 }).catch(() => {});
+    // with the standard code MACSE dodged the two TGA by putting two frameshifts in every row (--ATG...)
+    r[engine] = await page.evaluate(() => {
+      const st = window._lastCodonAlignStats, sum = l => (l || []).reduce((a, x) => a + x.n, 0);
+      return st ? { stops: sum(st.internalStops), frameshifts: sum(st.frameshifts), row1: state.seqs[0].seq.slice(0, 5) } : 'no stats';
+    });
+  }
+  await page.evaluate(() => { const code = document.getElementById('codonCode'); code.value = '1'; code.dispatchEvent(new Event('change', { bubbles: true })); });
+  const clean = x => x && x.stops === 0 && x.frameshifts === 0 && x.row1 === 'ATGGC';
+  return { pass: clean(r.macse) && clean(r.fast), detail: JSON.stringify(r) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };

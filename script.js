@@ -20905,10 +20905,15 @@ function _alignIdName(id) { const r = _alignIdRow(id); return r ? (r.fullHeader 
 
 function _codonAlignOpts(fasta) {
     const num = (id, dflt) => { const v = parseFloat(el(id)?.value); return isNaN(v) ? dflt : v; };
+    // The genetic code of the Code menu (Display > Codon). Both aligners used the standard code whatever was chosen:
+    // in a mitochondrial gene MACSE put two frameshifts in every row to dodge TGA (Trp), the fast engine counted it as a stop.
+    const gc = parseInt(el('codonCode')?.value, 10) || 1;
     if (_codonEngine() === 'macse') {
-        // MACSE's own cost parameters (-fs, -stop), MACSE defaults 30 and 50
-        return { engine: 'macse', fs: Math.abs(num('macseFs', 30)), stop: Math.abs(num('macseStop', 50)), frameRestored: true };
+        // MACSE's own cost parameters (-fs, -stop), MACSE defaults 30 and 50; -gc as the NCBI table number
+        return { engine: 'macse', gc, fs: Math.abs(num('macseFs', 30)), stop: Math.abs(num('macseStop', 50)), frameRestored: true };
     }
+    const active = _getActiveCode();
+    const codeTable = [...'TCAG'].flatMap(a => [...'TCAG'].flatMap(b => [...'TCAG'].map(c => active[a + b + c] || 'X'))).join('');   // an unassigned codon is unknown, not a stop
     const typed = (el('codonRef')?.value || '').trim();
     let ref = typed;
     const names = new Set(parseMafftOutput(fasta).map(r => r.name));
@@ -20926,6 +20931,7 @@ function _codonAlignOpts(fasta) {
     }
     return {
         engine: 'fast',
+        codeTable,
         frameshift: -Math.abs(num('codonFs', 40)),
         stop: -Math.abs(num('codonStop', 50)),
         ref,
