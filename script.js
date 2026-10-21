@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v269';
+const BUILD_TAG = 'v270';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -6367,9 +6367,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
             if (hdCols) { ctx.globalAlpha = 1; if (rulerBold) ctx.font = fontStr; }
             if (stickyNames) ctx.restore();
-            ctx.fillStyle = '#ddd';
-            // the rule under the ruler starts at the data, not under sticky names (the consensus rule does the same)
-            ctx.fillRect(stickyNames ? NAME_W : Math.max(0, NAME_W - ox), scaleY + SCALE_H - HAIR, w, HAIR);
+            // (No rule under the ruler: Full and Block have none, and in Canvas it doubled the consensus row's rule.)
         }
 
         // Edits reshade changed columns into state.conservationDataCache; use it when current

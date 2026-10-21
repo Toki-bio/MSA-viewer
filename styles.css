@@ -2178,6 +2178,9 @@ body.row-reorder-active .seq-name.drag-source:hover {
     flex: 1 1 0;
     min-width: 0;
     max-width: min(44vw, 780px);
+    /* room the capped panel cannot take goes to its left: it stayed on the right, so with a short menu line
+       (Canvas on a wide screen) the file line sat 74px from the edge */
+    margin-left: auto;
     overflow: hidden;
     display: flex;
     flex-direction: column;

@@ -761,6 +761,39 @@ check('Canvas sits on whole device pixels at its own bitmap size (sharp), at 1x,
   return { pass: Object.values(out).every(v => v === 'ok ok'), detail: JSON.stringify(out) };
 });
 
+// The file/status panel at the right of the top bar is capped at 780px; when the bar had more room than that
+// (Canvas on a 1894px screen: fewer controls before it) the rest stayed on its right and it sat 74px from the edge
+check('Top bar: the file/status panel reaches the right edge in Canvas and Full on a wide screen', async (page) => {
+  const out = {};
+  for (const view of ['canvas', 'full']) {
+    const p = await page.context().browser().newPage({ viewport: { width: 1894, height: 500 } });
+    await p.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await p.setInputFiles('#fileInput', { name: 'a_rather_long_file_name_for_the_panel.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGT\n>b\nACGTACGA\n') });
+    await p.waitForTimeout(1500);
+    out[view] = await p.evaluate(() => {
+      const row = document.getElementById('menuRow').getBoundingClientRect(), pan = document.getElementById('headerInfoPanel').getBoundingClientRect();
+      return Math.round(row.right - pan.right);
+    });
+    await p.close();
+  }
+  return { pass: out.canvas <= 1 && out.full <= 1, detail: JSON.stringify(out) + ' px between the panel and the bar\'s right edge' };
+});
+
+// Canvas drew a grey line under the ruler (between the ruler and the Consensus row); Full and Block have none
+check('Canvas: no grey line under the ruler', async (page) => {
+  await page.goto(page.url().replace(/view=\w+/, 'view=canvas').replace(/(index\.html)(?!\?)/, '$1?view=canvas'), { waitUntil: 'networkidle' });
+  await page.setInputFiles('#fileInput', { name: 'r.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTACGTACGTACGT\n>b\nACGTACGTACGTACGTACGA\n') });
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => {
+    const c = _canvasState.canvas, m = _canvasState.metrics, dpr = window.devicePixelRatio || 1;
+    const y = Math.round((m.trackH || 0) * dpr + m.charH * dpr) - 1;            // last device row of the ruler
+    const d = c.getContext('2d').getImageData(Math.round(m.nameW * dpr), y, Math.round(10 * m.charW * dpr), 1).data;
+    let grey = 0; for (let i = 0; i < d.length; i += 4) if (d[i] === 221 && d[i + 1] === 221 && d[i + 2] === 221) grey++;
+    return { mode: document.getElementById('modeCanvas').checked, greyPx: grey };
+  });
+  return { pass: r.mode && r.greyPx === 0, detail: JSON.stringify(r) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };
