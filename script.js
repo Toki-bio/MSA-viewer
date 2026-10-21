@@ -8456,8 +8456,10 @@ function getDeferredConsensus(len) {
 
 // BAM state
 let bamState = {
-    reads: [],          // parsed BAM records
-    refName: null,      // which reference these reads map to
+    reads: [],          // the reads drawn (downsampled: _downsampleReads)
+    allReads: [],       // every read that passed the flag filter: coverage and the sample row use these
+    downsampled: [],    // [{ start, end, dropped }] 100-bp windows that lost drawn reads
+    refName: null,      // the loaded row the reads are on
     refSeq: null,       // reference sequence string
     refStart: 0,        // leftmost visible ref coordinate
     columns: [],        // expanded CIGAR columns per read: columns[row][col]
@@ -8652,19 +8654,21 @@ async function handleBamFile(event) {
         }
 
         // Parse header (SAM pseudo-buffer or real BAM)
-        let header, records, exceededLimit, totalReads;
+        let header, records, exceededLimit, totalReads, skipped;
         if (buf._isSAM) {
             header = { refNames: buf._refNames, refLengths: buf._refLengths, headerEndOffset: 0 };
             const MAX = BamParser.MAX_READS;
-            totalReads = buf._records.length;
-            exceededLimit = totalReads > MAX;
+            totalReads = buf._totalReads != null ? buf._totalReads : buf._records.length;
+            exceededLimit = buf._records.length > MAX;
             records = exceededLimit ? buf._records.slice(0, MAX) : buf._records;
+            skipped = buf._skipped || {};
         } else {
             header = BamParser.parseBAMHeader(buf);
             const parsed = BamParser.parseBAMRecords(buf, header.headerEndOffset);
             records = parsed.records;
             exceededLimit = parsed.exceededLimit;
             totalReads = parsed.totalReads;
+            skipped = parsed.skipped || {};
         }
 
         // Check reference match. Sequence records carry header/fullHeader, never `name`,
@@ -8707,15 +8711,8 @@ async function handleBamFile(event) {
             return;
         }
 
-        if (exceededLimit) {
-            statusMessage.style.display = 'none';
-            showMessage(
-                `${(ext || 'bam').toUpperCase()} has >${BamParser.MAX_READS} reads (found ${totalReads}). ` +
-                'Please subset with samtools view -s or filter by region.',
-                5000
-            );
-            return;
-        }
+        // (No refusal above a read count: the drawn reads are downsampled below, every read counts for the
+        // coverage and the sample row. Only past BamParser.MAX_READS kept reads is the file cut, and said so.)
 
         // Filter reads to matched reference; on a faidx region they are shifted onto it, and reads outside it go
         const refIdx = match.refID, offset = match.offset;
@@ -8753,30 +8750,26 @@ async function handleBamFile(event) {
         minPos = Math.max(0, minPos - 10);
         maxPos = Math.min(refSeq.length, maxPos + 10);
 
-        // Expand CIGAR for each read
-        const columns = [];
-        const readOrder = [];
-        for (let i = 0; i < matchedReads.length; i++) {
-            const r = matchedReads[i];
-            const cols = BamParser.expandCigar(r, (refPos) => {
-                if (refPos < 0 || refPos >= refSeq.length) return 'N';
-                return refSeq[refPos];
-            });
-            columns.push(cols);
-            readOrder.push(i);
-        }
+        // Drawn reads: at most READS_PER_WINDOW starting in each 100-bp window (reservoir sampling with a fixed seed, so
+        // the same file always shows the same reads), as igv.js does; every read still counts for the coverage and
+        // the sample row (bamState.allReads)
+        const { shown, dropped } = _downsampleReads(matchedReads);
 
         // Store BAM state
         bamState = {
-            reads: matchedReads,
+            reads: shown,                     // drawn
+            allReads: matchedReads,           // every read that passed the filters: coverage, sample row
+            downsampled: dropped,             // [{ start, end, dropped }] windows that lost reads
+            skipped,                          // { reason: count } reads not used (flags)
+            totalInFile: totalReads,
             refName: refSeqObj.name,          // the loaded row's name (the row is found by it)
             bamRefName: matchedRef,           // the name in the reads file
             offset,                           // reads file position - offset = position on the loaded row (faidx region)
             refSeq,
             refStart: minPos,
             refEnd: maxPos,
-            columns,
-            readOrder,
+            columns: [],
+            readOrder: [],
         };
 
         // Phase 1: compute genomic start/end span and assign packed tracks.
@@ -8800,7 +8793,13 @@ async function handleBamFile(event) {
         if (truncated) {
             showMessage(`${ext.toUpperCase()} file is truncated (it stops before its end-of-file marker): loaded the ${matchedReads.length} complete reads on ${matchedRef} (${minPos + 1}-${maxPos}); later reads are missing.`, 0);
         } else {
-            showMessage(`Loaded ${matchedReads.length} reads on ${refSeqObj.name} (${minPos + 1}-${maxPos})` + (match.note ? `; ${match.note}` : ''), match.note ? 7000 : 2500);
+            const notes = [];
+            if (shown.length < matchedReads.length) notes.push(`showing ${shown.length.toLocaleString()} (downsampled to ${_READS_PER_WINDOW} per 100 bp; all ${matchedReads.length.toLocaleString()} count for coverage and the sample row)`);
+            const sk = Object.entries(skipped || {}).filter(([, n]) => n > 0);
+            if (sk.length) notes.push('not used: ' + sk.map(([why, n]) => `${n.toLocaleString()} ${why}`).join(', '));
+            if (exceededLimit) notes.push(`the file has more reads than the browser keeps (${BamParser.MAX_READS.toLocaleString()}): later reads are left out; cut the region with samtools view`);
+            if (match.note) notes.push(match.note);
+            showMessage(`Loaded ${matchedReads.length.toLocaleString()} reads on ${refSeqObj.name} (${minPos + 1}-${maxPos})` + (notes.length ? '; ' + notes.join('; ') : ''), notes.length ? 9000 : 2500);
         }
 
     } catch (err) {
@@ -8817,6 +8816,31 @@ async function handleBamFile(event) {
  * Compute the total span of a read across the reference from its CIGAR.
  * Sum M, D, N operations (but not I or S).
  */
+// At most _READS_PER_WINDOW reads starting in each 100-bp window are drawn (igv.js: sampling windows with a reservoir);
+// the rest stay in bamState.allReads. Deterministic (fixed seed). reads must be sorted by pos.
+const _READS_PER_WINDOW = 50;
+function _downsampleReads(reads, perWindow = _READS_PER_WINDOW, windowBp = 100) {
+    if (reads.length <= perWindow) return { shown: reads, dropped: [] };
+    let seed = 12345;
+    const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+    const shown = [], dropped = [];
+    for (let i = 0; i < reads.length;) {
+        const w = Math.floor(reads[i].pos / windowBp);
+        let j = i;
+        while (j < reads.length && Math.floor(reads[j].pos / windowBp) === w) j++;
+        if (j - i <= perWindow) { for (let k = i; k < j; k++) shown.push(reads[k]); }
+        else {
+            const res = reads.slice(i, i + perWindow);
+            for (let k = i + perWindow; k < j; k++) { const r = Math.floor(rnd() * (k - i + 1)); if (r < perWindow) res[r] = reads[k]; }
+            res.sort((a, b) => a.pos - b.pos || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+            shown.push(...res);
+            dropped.push({ start: w * windowBp, end: (w + 1) * windowBp, dropped: j - i - perWindow });
+        }
+        i = j;
+    }
+    return { shown, dropped };
+}
+
 function computeReadSpan(cigar) {
     let span = 0;
     for (const op of cigar) {
@@ -8855,14 +8879,31 @@ function parseSAMToBuffer(text) {
         }
     }
 
-    // Parse alignment records
+    // No @SQ lines (samtools view without -h): the references are the reads' RNAME values, each as long as its
+    // reads reach (nothing matched before, so a headerless SAM never loaded)
+    if (!refNames.length) {
+        const end = new Map();
+        for (const line of readLines) {
+            const f = line.split('\t');
+            if (f.length < 11 || f[2] === '*') continue;
+            const e = (parseInt(f[3]) || 1) - 1 + _cigarRefSpan(f[5] || '');
+            end.set(f[2], Math.max(end.get(f[2]) || 0, e));
+        }
+        for (const [n, e] of end) { refNames.push(n); refLengths.push(e); }
+    }
+
+    // Parse alignment records; reads that are not evidence (unmapped, secondary, QC-failed, duplicate,
+    // supplementary: BamParser.skipReason) are counted and dropped, as for BAM (duplicates were kept)
     const records = [];
+    const skipped = {};
+    let totalReads = 0;
     for (const line of readLines) {
         const f = line.split('\t');
         if (f.length < 11) continue;
+        totalReads++;
         const flag = parseInt(f[1]) || 0;
-        if (flag & 0x904) continue; // unmapped or secondary/supplementary
-        if (!f[5] || f[5] === '*' || !f[9] || f[9] === '*') continue;
+        const why = BamParser.skipReason(flag) || (!f[5] || f[5] === '*' || !f[9] || f[9] === '*' ? 'no CIGAR or sequence' : null);
+        if (why) { skipped[why] = (skipped[why] || 0) + 1; continue; }
 
         const rname = f[2];
         const refID = refNames.indexOf(rname);
@@ -8910,7 +8951,7 @@ function parseSAMToBuffer(text) {
     }
 
     // Return a pseudo-buffer object compatible with the BAM pipeline
-    return { _isSAM: true, _refNames: refNames, _refLengths: refLengths, _records: records };
+    return { _isSAM: true, _refNames: refNames, _refLengths: refLengths, _records: records, _skipped: skipped, _totalReads: totalReads };
 }
 
 /**
@@ -9035,7 +9076,7 @@ function addSampleRowFromReads() {
     if (!bamState.reads.length || !bamState.refSeq || typeof SampleCall === 'undefined') return;
     const ri = state.seqs.findIndex(s => String(s.fullHeader || s.header || '').trim().split(/\s+/)[0] === bamState.refName);
     if (ri < 0) { showMessage(`The reference ${bamState.refName} is no longer in the alignment.`, 4000); return; }
-    const res = SampleCall.call(bamState.reads, bamState.refSeq);
+    const res = SampleCall.call(bamState.allReads || bamState.reads, bamState.refSeq);   // every read, not only the drawn ones
     const refRow = state.seqs[ri].seq;
     // sample row over the alignment's columns; outside the reads it is missing ('-', as a leading or trailing gap)
     const row = [];
@@ -9059,7 +9100,7 @@ function addSampleRowFromReads() {
     }
     const seq = row.join('');
     const name = `${bamState.refName}_sample`;
-    const used = bamState.reads.length;
+    const used = (bamState.allReads || bamState.reads).length;
     state.seqs.splice(ri + 1, 0, {
         header: name,
         fullHeader: `${name} called from ${used.toLocaleString()} reads (depth >= ${SampleCall.DEFAULTS.minDepth}, second allele >= ${Math.round(SampleCall.DEFAULTS.hetFrac * 100)}% = IUPAC)`,
@@ -9550,6 +9591,8 @@ function ensureClearReadsButton() {
 function clearReadsData() {
     bamState = {
         reads: [],
+        allReads: [],
+        downsampled: [],
         refName: null,
         refSeq: null,
         refStart: 0,
@@ -12493,6 +12536,8 @@ async function parseAndRender(isFromDrop = false) {
         // Clear any loaded reads - they belong to the previous reference
         bamState = {
             reads: [],
+            allReads: [],
+            downsampled: [],
             refName: null,
             refSeq: null,
             refStart: 0,

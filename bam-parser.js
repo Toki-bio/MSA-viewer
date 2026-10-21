@@ -15,7 +15,16 @@
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const BAM_MAGIC = 0x014D4142; // "BAM\1" as read by getUint32(0, /*littleEndian=*/true)
-const MAX_READS = 1000;
+// Records kept in memory at most (about 0.5 KB each); a file with more is cut there and the message says so.
+// There used to be a 1000-read limit that refused the whole file, taken before the gene's reference was chosen.
+const MAX_READS = 2000000;
+// Reads that are not evidence of the sample (as the sample row's caller and IGV's defaults): unmapped,
+// secondary, QC-failed, duplicate, supplementary. Dropped while parsing, counted for the message.
+const SKIP_FLAGS = [[0x4, 'unmapped'], [0x100, 'secondary'], [0x200, 'QC-failed'], [0x400, 'duplicate'], [0x800, 'supplementary']];
+function skipReason(flag) {
+    for (const [bit, why] of SKIP_FLAGS) if (flag & bit) return why;
+    return null;
+}
 const SEQ_DECODE = '=ACMGRSVTWYHKDBN'; // 4-bit → IUPAC base (0==, 1=A, 2=C, 4=G, 8=T...)
 const CIGAR_OPS = 'MIDNSHP=X';
 
@@ -296,32 +305,30 @@ function parseBAMRecord(buf, offset) {
 }
 
 /**
- * Parse all alignment records from a decompressed BAM buffer.
- * Stops at MAX_READS + 1 to enforce the read limit.
+ * Parse all alignment records from a decompressed BAM buffer. Reads that are not evidence (skipReason) are
+ * dropped and counted; at most MAX_READS are kept.
  *
- * Returns { records[], exceededLimit: bool, totalReads: number }
+ * Returns { records[], exceededLimit: bool, totalReads: number (all records), skipped: { reason: count } }
  */
 function parseBAMRecords(buf, headerEndOffset) {
     const records = [];
     let offset = headerEndOffset;
     let totalReads = 0;
     let exceededLimit = false;
+    const skipped = {};
 
     while (offset < buf.length) {
-        totalReads++;
-        if (totalReads > MAX_READS) {
-            exceededLimit = true;
-            break;
-        }
-
         const result = parseBAMRecord(buf, offset);
         if (!result) break;
-
-        records.push(result.record);
         offset = result.nextOffset;
+        totalReads++;
+        const why = skipReason(result.record.flag);
+        if (why || !result.record.cigar.length) { skipped[why || 'no CIGAR'] = (skipped[why || 'no CIGAR'] || 0) + 1; continue; }
+        if (records.length >= MAX_READS) { exceededLimit = true; continue; }
+        records.push(result.record);
     }
 
-    return { records, exceededLimit, totalReads };
+    return { records, exceededLimit, totalReads, skipped };
 }
 
 /**
@@ -528,4 +535,5 @@ window.BamParser = {
     checkRefMatch,
     matchReference,
     MAX_READS,
+    skipReason,
 };

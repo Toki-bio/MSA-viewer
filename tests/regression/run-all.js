@@ -888,6 +888,64 @@ check('Annotation track: a spliced gene\'s intron is a thin line, in Full and Ca
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// Reads files the way they come: more than 1000 reads (refused before: "Please subset with samtools"), the gene's
+// reads after other references' reads in a BAM (the 1000-read cap was taken before the reference was chosen, so
+// they were lost), duplicate / QC-failed / secondary reads (BAM kept them all and counted them), and a SAM
+// without @SQ lines (what samtools view writes without -h: nothing matched)
+check('Reads files: >1000 reads load (display downsampled, calls from all), gene after other refs, flags filtered, SAM without header', async (page) => {
+  const path = require('path'), fs = require('fs'), os = require('os'), { execFileSync } = require('child_process');
+  const FX = path.join(__dirname, '..', 'fixtures', 'reads');
+  const { samToBam } = require(path.join(FX, 'sam2bam.js'));
+  const DIR = path.join(FX, 'region');
+  const truth = JSON.parse(fs.readFileSync(path.join(DIR, 'truth.json'), 'utf8'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'va-reads-'));
+  execFileSync(process.execPath, [path.join(FX, 'make_region_reads.js'), tmp, '120']);
+  const sam120 = fs.readFileSync(path.join(tmp, 'reads_120x.sam'), 'utf8');
+  const sam40 = fs.readFileSync(path.join(DIR, 'reads_40x.sam'), 'utf8').replace(/\r/g, '');
+  const body40 = sam40.split('\n').filter(l => l && l[0] !== '@');
+  // a fake variant at reference position 100 carried only by duplicate, QC-failed and secondary copies of reads
+  const fakes = [];
+  for (const [flag, tag] of [[1024, 'dup'], [512, 'qc'], [256, 'sec']]) for (let k = 0; k < 15; k++) {
+    const f = body40.find(l => { const x = l.split('\t'); return +x[3] <= 60 && +x[3] + 140 > 100 && x[5] === '150M'; }).split('\t');
+    const off = 100 - (+f[3]);
+    const alt = f[9][off - 1] === 'A' ? 'C' : 'A';
+    f[0] = `${tag}${k}`; f[1] = String(flag); f[9] = f[9].slice(0, off - 1) + alt + f[9].slice(off);
+    fakes.push(f.join('\t'));
+  }
+  const samFlags = sam40.split('\n').filter(l => l[0] === '@').join('\n') + '\n' + body40.concat(fakes).join('\n') + '\n';
+  const other = ['@HD\tVN:1.6', '@SQ\tSN:other\tLN:5000', '@SQ\tSN:region1\tLN:3000']
+    .concat([...Array(1500)].map((_, i) => `o${i}\t0\tother\t${1 + (i % 4800)}\t60\t50M\t*\t0\t0\t${'ACGT'.repeat(13).slice(0, 50)}\t${'F'.repeat(50)}`))
+    .concat(body40).join('\n') + '\n';
+  const files = {
+    sam120: { name: 'r120.sam', buf: Buffer.from(sam120) }, bam120: { name: 'r120.bam', buf: samToBam(sam120) },
+    multiref: { name: 'multi.bam', buf: samToBam(other) },
+    flagsSam: { name: 'flags.sam', buf: Buffer.from(samFlags) }, flagsBam: { name: 'flags.bam', buf: samToBam(samFlags) },
+    noHeader: { name: 'nohead.sam', buf: Buffer.from(body40.join('\n') + '\n') },
+  };
+  const want = truth.muts.map(m => `${m.pos + 1}${m.hom ? 'hom' : 'het'}`).sort().join(',');
+  const out = {};
+  for (const [key, f] of Object.entries(files)) {
+    await page.setInputFiles('#fileInput', path.join(DIR, 'region.fa'));
+    await page.waitForTimeout(1200);
+    await page.setInputFiles('#bamFileInput', { name: f.name, mimeType: 'application/octet-stream', buffer: f.buf });
+    await page.waitForTimeout(3500);
+    out[key] = await page.evaluate(() => {
+      const msg = document.getElementById('statusMessage').innerText.replace(/\s+/g, ' ');
+      const all = (bamState.allReads || bamState.reads || []);
+      const calls = all.length ? SampleCall.call(all, bamState.refSeq).variants.map(v => `${v.pos}${v.zyg}`).sort().join(',') : '';
+      return { shown: (bamState.reads || []).length, all: all.length, calls, msg: msg.slice(0, 220),
+               fake100: all.filter(r => /^(dup|qc|sec)/.test(r.name)).length };
+    });
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
+  const ok = out.sam120.all === 2399 && out.bam120.all === 2399 && out.sam120.shown < 2399 && /downsampl/i.test(out.sam120.msg)
+    && out.sam120.calls === want && out.bam120.calls === want
+    && out.multiref.all === 799 && out.multiref.calls === want
+    && out.flagsSam.fake100 === 0 && out.flagsBam.fake100 === 0 && out.flagsBam.all === 799 && /duplicate/i.test(out.flagsBam.msg) && out.flagsBam.calls === want
+    && out.noHeader.all === 799;
+  return { pass: ok, detail: JSON.stringify({ want, out }) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };
