@@ -9966,9 +9966,11 @@ function assignReadTracks(reads) {
 function updateBamButtonVisibility() {
     const bamBtn = document.getElementById('openBamToolbarButton');
     if (!bamBtn) return;
-    // any loaded alignment: the reads go on the row whose name matches (BamParser.matchReference). With exactly
-    // one row only, the button went away once a sample row was added, so a second sample could not be loaded
-    const eligible = !!(state.seqs && state.seqs.length >= 1);
+    // one row (a reference), or reads already loaded, or a sample row from reads: with exactly one row only, the
+    // button went away once a sample row was added, so a second sample could not be loaded. Not on every
+    // alignment: one more toolbar button made the bar wrap when the Selections menu appears on a selection, and
+    // the rows jumped under the mouse between two clicks (1200 px wide)
+    const eligible = !!(state.seqs && (state.seqs.length === 1 || (bamState.reads && bamState.reads.length) || state.seqs.some(s => s._fromReads != null)));
     bamBtn.style.display = eligible ? '' : 'none';
 
     // Also update the "Clear reads" button visibility
