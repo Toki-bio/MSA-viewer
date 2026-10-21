@@ -88,5 +88,8 @@ fs.writeFileSync(path.join(OUT, 'region.fa'), '>region1\n' + refS.match(/.{1,60}
 fs.writeFileSync(path.join(OUT, 'region_bed6.bed'), 'region1\t200\t1100\tgeneA\t0\t+\nregion1\t1600\t2200\tgeneB\t0\t-\n');
 fs.writeFileSync(path.join(OUT, 'region_bed12.bed'), 'region1\t200\t1100\tgeneA\t0\t+\t200\t1100\t0\t2\t300,300,\t0,600,\nregion1\t1600\t2200\tgeneB\t0\t-\t1600\t2200\t0\t1\t600,\t0,\n');
 fs.writeFileSync(path.join(OUT, `reads_${DEPTH}x.sam`), `@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:region1\tLN:${L}\n` + reads.map(r => r.line).join('\n') + '\n');
+// Indels in truth.json are left-normalised (the standard form, as the caller reports them): a deletion in a repeat
+// is the same event at any offset of it. The reads are written as planted.
+for (const m of muts) if (m.del) { while (m.pos > 0 && refS[m.pos - 1] === refS[m.pos + m.del - 1]) m.pos--; }
 fs.writeFileSync(path.join(OUT, 'truth.json'), JSON.stringify({ muts, cds1, cds2 }, null, 1));
 console.log(reads.length, 'reads'); muts.forEach(m => console.log(m.name, '@' + (m.pos + 1), m.change || (m.del ? 'del' : m.ref + '>' + m.alt)));

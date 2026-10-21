@@ -79,7 +79,11 @@
                 } else if (op === 'D') {
                     if (p >= lo && p + len <= hi) {
                         for (let i = 0; i < len; i++) { depth[p + i - lo]++; del[p + i - lo]++; }
-                        const k = p + ':' + len;
+                        // left-normalised: the same deletion in a repeat can be written at any offset of it (reads
+                        // aligned differently); keyed as written, the copies split and none reached the threshold
+                        let pn = p;
+                        while (pn > lo && (refSeq[pn - 1] || '').toUpperCase() === (refSeq[pn + len - 1] || '').toUpperCase()) pn--;
+                        const k = pn + ':' + len;
                         const e = delEv.get(k) || [0, 0]; e[strandRev ? 1 : 0]++; delEv.set(k, e);
                         last = p + len - 1;
                     }
@@ -87,7 +91,11 @@
                 } else if (op === 'I') {
                     // only between two aligned reference positions of this read (not at a read end)
                     if (first >= 0 && p > lo && p < hi) {
-                        const k = p + ':' + r.seq.substr(rp, len).toUpperCase();
+                        // left-normalised as deletions: shift left while the base before equals the inserted
+                        // sequence's last base (the inserted sequence rotates)
+                        let pn = p, sq = r.seq.substr(rp, len).toUpperCase();
+                        while (pn > lo + 1 && (refSeq[pn - 1] || '').toUpperCase() === sq[sq.length - 1]) { sq = sq[sq.length - 1] + sq.slice(0, -1); pn--; }
+                        const k = pn + ':' + sq;
                         const e = insEv.get(k) || [0, 0]; e[strandRev ? 1 : 0]++; insEv.set(k, e);
                         ins[p - lo]++;
                     }

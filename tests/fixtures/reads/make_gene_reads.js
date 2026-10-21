@@ -69,5 +69,13 @@ for (let start = 0; start < ref.length; start += 8) for (const hi of [0, 1]) {
 }
 fs.writeFileSync(path.join(OUT, 'gene_ref.fa'), '>gene\n' + ref.match(/.{1,60}/g).join('\n') + '\n');
 fs.writeFileSync(path.join(OUT, 'gene_reads.sam'), `@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:gene\tLN:${ref.length}\n` + reads.join('\n') + '\n');
+// Indels in truth.json are left-normalised (the standard form, as the caller reports them): a deletion or insertion
+// in a repeat is the same event at any offset of it. The reads are written as planted.
+function leftNormalise(m, refStr) {
+    if (m.del) { while (m.pos > 0 && refStr[m.pos - 1] === refStr[m.pos + m.del - 1]) m.pos--; }
+    else if (m.ins) { while (m.pos > 1 && refStr[m.pos - 1] === m.ins[m.ins.length - 1]) { m.ins = m.ins[m.ins.length - 1] + m.ins.slice(0, -1); m.pos--; } }
+    return m;
+}
+for (const m of muts) leftNormalise(m, ref);
 fs.writeFileSync(path.join(OUT, 'truth.json'), JSON.stringify({ cdsStart: 30, cdsLength: cds.length, reads: reads.length, muts }, null, 1) + '\n');
 console.log(`${reads.length} reads; ` + muts.map(m => `${m.name} @${m.pos + 1}${m.change ? ' ' + m.change : ''}`).join('; '));

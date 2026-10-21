@@ -1051,6 +1051,101 @@ check('Codon realignment warns before aligning rows with stops in every frame; N
   return { pass: ok, detail: JSON.stringify({ prompt, unchanged: after === before }) };
 });
 
+// GLM reads/codon audit 2026-10-22, confirmed findings (each check fails on the code before the fix):
+// #16 Sample -> row clicked twice added a duplicate row and the insertion columns again; a second reads file
+//     could only overwrite the name; #25 an insertion's position was the base after it; #22 inserted bases were
+//     shown nowhere; #11 a BAM saved as .sam failed; #10 CRAM reads lost their qualities (every base counted);
+//     #12 an edit of the reference row left the reads' calls on the old bases
+check('Reads (audit): Sample -> row twice and a second sample, insertion position, inserted bases, BAM named .sam, CRAM qualities, edited reference', async (page) => {
+  const path = require('path'), fs = require('fs');
+  const FX = path.join(__dirname, '..', 'fixtures', 'reads');
+  const { samToBam } = require(path.join(FX, 'sam2bam.js'));
+  const sam = fs.readFileSync(path.join(FX, 'gene_reads.sam'), 'utf8');
+  const out = {};
+  await page.setInputFiles('#fileInput', path.join(FX, 'gene_ref.fa'));
+  await page.waitForTimeout(1200);
+  await page.setInputFiles('#bamFileInput', { name: 'patient1.sam', mimeType: 'text/plain', buffer: Buffer.from(sam) });
+  await page.waitForTimeout(2500);
+  await page.click('#readsSampleRowButton'); await page.waitForTimeout(1200);
+  const len1 = await page.evaluate(() => state.seqs[0].seq.length);
+  await page.evaluate(() => { const r = document.getElementById('modeReads'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(800);
+  await page.click('#readsSampleRowButton'); await page.waitForTimeout(1200);
+  out.twice = await page.evaluate(() => state.seqs.map(s => s.header).join(','));
+  // a second sample, as a BAM saved under a .sam name: its own row; its insertion uses the columns already there
+  await page.setInputFiles('#bamFileInput', { name: 'patient2.sam', mimeType: 'application/octet-stream', buffer: samToBam(sam) });
+  await page.waitForTimeout(2500);
+  out.bamAsSam = await page.evaluate(() => (bamState.allReads || []).length);
+  await page.click('#readsSampleRowButton'); await page.waitForTimeout(1200);
+  out.second = await page.evaluate(() => ({ rows: state.seqs.map(s => s.header).join(','), len: state.seqs[0].seq.length }));
+  out.len1 = len1;
+  out.insPos = await page.evaluate(() => { const r = _readsVariantRows().find(x => x.v.type === 'ins'); return r ? _variantCells(r)[0] : null; });
+  out.insTip = await page.evaluate(() => { const r = bamState.reads.find(x => x.cigar.some(c => c.op === 'I')); return r ? _getReadCigarFeatures(r, bamState.refSeq).insertions.map(x => x.bases).join(',') : null; });
+  // an edit of the reference row: a base no read carries becomes a change in every read
+  out.edit = await page.evaluate(() => {
+    const before = _readsCalls().variants.length;
+    const s = state.seqs[0], i = s.seq.indexOf('A', 400);
+    s.seq = s.seq.slice(0, i) + 'C' + s.seq.slice(i + 1);
+    const after = _readsCalls().variants.length;
+    return { before, after };
+  });
+  // CRAM: the qualities come through
+  await page.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples', 'real', 'htslib_ce_CHROMOSOME_II.fa'));
+  await page.waitForTimeout(1500);
+  await page.setInputFiles('#bamFileInput', path.join(__dirname, '..', '..', 'examples', 'real', 'htslib_range.cram'));
+  await page.waitForTimeout(4000);
+  out.cramQual = await page.evaluate(() => { const r = (bamState.allReads || [])[0]; return r ? String(r.qual).slice(0, 6) : null; });
+  const ok = out.twice === 'gene,gene_sample' && out.bamAsSam === 218
+    && out.second.rows === 'gene,gene_patient2,gene_sample' && out.second.len === out.len1
+    && out.insPos === '866^867' && /^[ACGT]{3}$/.test(out.insTip || '')
+    && out.edit.after === out.edit.before + 1
+    && out.cramQual && out.cramQual !== '*';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// #6 two CDS with the same (or no, '.') name were one translation with one strand; #19 the Auto message said
+// "frame 0" where the buttons say Pos 1; #18 Copy AA counted rows x frames, not the records copied
+check('Codon (audit): same-named genes stay apart in the AA export, Auto names the Pos button, Copy AA counts records', async (page) => {
+  const cds = 'ATGGCTAAAGGTCTGCAAGAATTCGGTACCTGGAAACCGTAA';                        // 42 nt, + strand
+  const rc = s => s.split('').reverse().map(b => ({ A: 'T', C: 'G', G: 'C', T: 'A' }[b])).join('');
+  const seq = cds + 'TTTTTTTTTT' + rc(cds);                                          // second gene on - strand
+  await page.setInputFiles('#fileInput', { name: 'two.fa', mimeType: 'text/plain', buffer: Buffer.from(`>chr\n${seq}\n>b\n${seq}\n`) });
+  await page.waitForTimeout(900);
+  const r = await page.evaluate(async () => {
+    let msgs = []; const om = showMessage; showMessage = (m, t) => { msgs.push(m); return om(m, t); };
+    state._lastAnnouncedCodonFrame = null;
+    const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+    await new Promise(res => setTimeout(res, 700));
+    const autoMsg = msgs.find(m => /auto-selected/.test(m)) || '';
+    setAnnotation('chr\t0\t42\t.\t0\t+\nchr\t52\t94\t.\t0\t-\n', 'two.bed');
+    await new Promise(res => setTimeout(res, 700));
+    const fasta = buildAATranslationFasta() || '';
+    msgs = [];
+    const orig = navigator.clipboard.writeText; navigator.clipboard.writeText = () => Promise.resolve();
+    copyAATranslation();
+    await new Promise(res => setTimeout(res, 300));
+    navigator.clipboard.writeText = orig; showMessage = om;
+    clearAnnotation();
+    return { autoMsg, records: (fasta.match(/^>/gm) || []).length, aa: fasta.split('\n').filter(l => l && l[0] !== '>'), copyMsg: msgs.find(m => /Copied/.test(m)) || '' };
+  });
+  const ok = /Pos 1/.test(r.autoMsg) && r.records === 4 && r.aa.every(a => a === 'MAKGLQEFGTWKP*') && /Copied 4 /.test(r.copyMsg);
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// #9 MACSE's padding of a sequence that starts or ends inside a codon (reads, fragments) was counted as frameshifts:
+// 12 reads with one real deletion each gave "22 frameshifted codons"
+check('MACSE summary counts only frameshifts inside the sequences, not the padding of fragments', async (page) => {
+  const cds = 'ATGGCTAAAGGTCTGCAAGAATTCGGTACCTGGAAACCGATGCTTGCAGGTAAAGAACTGTTCCCGGGATCCTAA';
+  const fa = `>ref\n${cds}\n>f1\n${cds.slice(4, 50)}\n>f2\n${cds.slice(10, 64)}\n>f3\n${cds.slice(20, 71)}\n`;
+  await page.evaluate(f => { document.getElementById('fastaInput').value = f; parseAndRender(false); }, fa);
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { openMacsePreset(false); const e = document.getElementById('codonEngine'); e.value = 'macse'; e.dispatchEvent(new Event('change', { bubbles: true })); window._lastCodonAlignStats = null; realignAll(); });
+  await page.waitForFunction(() => !!window._lastCodonAlignStats, null, { timeout: 60000 }).catch(() => {});
+  const r = await page.evaluate(() => { const st = window._lastCodonAlignStats; return st ? { inner: st.frameshifts.reduce((a, x) => a + x.n, 0), terminal: st.frameshifts.reduce((a, x) => a + (x.terminal || 0), 0) } : null; });
+  await page.evaluate(() => { const sel = document.getElementById('mafftSeqType'); sel.value = sel.options[0].value; sel.dispatchEvent(new Event('change', { bubbles: true })); });
+  return { pass: !!r && r.inner === 0, detail: JSON.stringify(r) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };

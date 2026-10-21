@@ -47,9 +47,17 @@ function checkNucleotide(recs) {
 function codonStats(nt, aa) {
     const frameshifts = [], internalStops = [];
     for (const r of nt) {
-        let n = 0;
-        for (let i = 0; i + 3 <= r.seq.length; i += 3) if (r.seq.slice(i, i + 3).includes('!')) n++;
-        if (n) frameshifts.push({ name: r.name, n });
+        // only frameshifts inside the sequence: a '!' codon at its first or last codon is MACSE padding a sequence
+        // that starts or ends inside a codon (reads, fragments), and was counted as a frameshift
+        const codons = [];
+        for (let i = 0; i + 3 <= r.seq.length; i += 3) codons.push(r.seq.slice(i, i + 3));
+        const hasBase = c => /[A-Za-z]/.test(c);
+        const first = codons.findIndex(hasBase);
+        let last = -1;
+        for (let k = codons.length - 1; k >= 0; k--) if (hasBase(codons[k])) { last = k; break; }
+        let n = 0, term = 0;
+        codons.forEach((c, k) => { if (c.includes('!')) { if (k > first && k < last) n++; else term++; } });
+        if (n || term) frameshifts.push({ name: r.name, n, terminal: term });
     }
     for (const r of aa) {
         const s = r.seq.replace(/[-!]+$/, '');                  // a final stop followed only by gaps is not internal

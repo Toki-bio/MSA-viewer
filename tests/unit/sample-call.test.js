@@ -62,6 +62,20 @@ const insReads = (nIns, nRef) => [...Array(nIns)].map(() => rd(0, '4M2I4M', 'ACG
 const i55 = SC.call(insReads(11, 9), toyRef);
 check('an insertion in 55% of reads is heterozygous and adds no columns', i55.variants.some(v => v.type === 'ins' && v.zyg === 'het') && i55.insAfter.size === 0, JSON.stringify(i55.variants));
 
+// The same deletion written at two offsets of a repeat (aligners place it either end) is one event: split by
+// offset, neither half reached 20% of the reads... here each half is 50%, the whole 100% (homozygous)
+{
+  const rep = 'ACGTTTTTACGT';                        // TTTTT at 3..7 (0-based)
+  const left = () => rd(0, '3M1D8M', 'ACGTTTTACGT'), right = () => rd(0, '7M1D4M', 'ACGTTTTACGT');
+  const r = SC.call([...Array(5)].map(left).concat([...Array(5)].map(right)), rep);
+  const dels = r.variants.filter(v => v.type === 'del');
+  check('a deletion in a homopolymer written at two offsets is one homozygous call, left-aligned', dels.length === 1 && dels[0].zyg === 'hom' && dels[0].pos === 4, JSON.stringify(dels));
+  const insL = () => rd(0, '3M1I8M', 'ACGTTTTTTACGT'), insR = () => rd(0, '8M1I4M', 'ACGTTTTTTACGT');
+  const ri = SC.call([...Array(5)].map(insL).concat([...Array(5)].map(insR)), rep);
+  const inss = ri.variants.filter(v => v.type === 'ins');
+  check('an insertion in a homopolymer written at two offsets is one homozygous call', inss.length === 1 && inss[0].zyg === 'hom', JSON.stringify(inss));
+}
+
 // Strands: each variant says how many alt (and ref) reads are on each strand; countsAt gives one position's counts
 {
   const RD = path.join(__dirname, '..', 'fixtures', 'reads', 'region');

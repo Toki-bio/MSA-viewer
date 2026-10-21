@@ -5135,7 +5135,7 @@ function _computeAnnotatedCodonAnalysis(seqs, len) {
                 }
                 e.cols.forEach(c => { claimed[lane][i][c] = 1; });
                 if (lane === 0) e.src.forEach(j => { phase[i][g(j)] = r.phase[i][j]; });
-                aaSeq[i].push({ cols: e.cols, codon: e.codon, aa: e.aa, n: e.n, gene: d.f.name, strand: d.f.strand || '+', lane, partial: !!e.partial });
+                aaSeq[i].push({ cols: e.cols, codon: e.codon, aa: e.aa, n: e.n, gene: d.f.name, gid: d.id, strand: d.f.strand || '+', lane, partial: !!e.partial });
                 if (e.aa === '*') e.cols.forEach(c => stops[i].push(c));
                 if (lane === 0) for (const j of e.src) { const v = r.synNonSyn[i][j]; if (v) synNonSyn[i][g(j)] = v; }
             }
@@ -5152,6 +5152,7 @@ function _computeAnnotatedCodonAnalysis(seqs, len) {
         aaSeq[i].sort((a, b) => a.cols[0] - b.cols[0]);
         for (const e of aaSeq[i]) for (const c of e.cols) if (colLanes[c] <= e.lane) colLanes[c] = e.lane + 1;
     }
+    if (!genes) return null;   // CDS features none of which translates: fall back to the frames (codon mode stayed blank)
     return { phase, stops, frameShifts, synNonSyn, aaSeq, refIdx: 0, frameOffset: 0, byGene: true, genes, lanes, colLanes, hidden: [...hidden] };
 }
 
@@ -5160,8 +5161,10 @@ function _computeAnnotatedCodonAnalysis(seqs, len) {
 function _aaByGene(frameData, seqIdx) {
     const groups = new Map();
     for (const e of frameData?.aaSeq?.[seqIdx] || []) {
-        const key = e.gene || '';
-        if (!groups.has(key)) groups.set(key, { gene: key, strand: e.strand || '+', entries: [] });
+        // one group per feature (gid), not per name: two genes with one name (isoforms, unnamed '.') were merged
+        // into one translation with the first one's strand
+        const key = e.gid != null ? 'g' + e.gid : (e.gene || '');
+        if (!groups.has(key)) groups.set(key, { gene: e.gene || '', strand: e.strand || '+', entries: [] });
         groups.get(key).entries.push(e);
     }
     return [...groups.values()].map(gr => {
@@ -7769,7 +7772,8 @@ function parseBedText(text) {
         const cst = /\bcodon_start=([123])\b/.exec(desc);
         features.push({
             chrom: f[0].trim(), start, end,
-            name: (f[3] || '').trim() || `${f[0].trim()}:${start + 1}-${end}`,
+            // '.' is BED's empty name: such features got one shared name, and their translations were merged
+            name: ((f[3] || '').trim() !== '.' && (f[3] || '').trim()) || `${f[0].trim()}:${start + 1}-${end}`,
             score: Number.isFinite(score) ? score : null,
             strand, color,
             desc,
@@ -8492,18 +8496,19 @@ function handleOpenBamClick() {
  * BAM and CRAM are also recognised by content, so a renamed file still routes.
  */
 async function _sniffReadsKind(file) {
+    // The content decides, then the name: a BAM or CRAM saved as .sam went to the SAM text parser and failed
     const name = file && file.name || '';
-    if (/\.bam$/i.test(name)) return 'bam';
-    if (/\.cram$/i.test(name)) return 'cram';
-    if (/\.sam$/i.test(name)) return 'sam';
-    let head;
+    let head = null;
     try {
         head = new Uint8Array(await file.slice(0, 65536).arrayBuffer());
     } catch (e) {
-        return null;
+        head = null;
     }
-    if (head[0] === 0x43 && head[1] === 0x52 && head[2] === 0x41 && head[3] === 0x4d) return 'cram'; // "CRAM"
-    if (typeof BamParser !== 'undefined' && await BamParser.sniffBam(head)) return 'bam';
+    if (head && head[0] === 0x43 && head[1] === 0x52 && head[2] === 0x41 && head[3] === 0x4d) return 'cram'; // "CRAM"
+    if (head && typeof BamParser !== 'undefined' && await BamParser.sniffBam(head)) return 'bam';
+    if (/\.bam$/i.test(name)) return 'bam';
+    if (/\.cram$/i.test(name)) return 'cram';
+    if (/\.sam$/i.test(name)) return 'sam';
     return null;
 }
 
@@ -8568,6 +8573,16 @@ async function _cramIsTruncated(file) {
     return CRAM3_EOF.some((b, i) => tail[i] !== b);
 }
 
+// A CRAM record's base qualities as SAM text (Phred+33); '*' when it has none. They were always written as '*',
+// so the sample row counted every CRAM base whatever its quality (the base-quality filter needs them)
+function _cramQualString(r) {
+    const q = r && r.qualityScores;
+    if (!q || !q.length || q[0] === 255) return '*';
+    let s = '';
+    for (let i = 0; i < q.length; i++) s += String.fromCharCode(Math.min(93, Math.max(0, q[i])) + 33);
+    return s;
+}
+
 async function cramToSamText(file) {
     const { CramFile } = await _loadCramLib();
     const loaded = new Map();
@@ -8624,7 +8639,7 @@ async function cramToSamText(file) {
                 const mate = r.nextSequenceId < 0 ? '*' : (r.nextSequenceId === r.sequenceId ? '=' : (refs[r.nextSequenceId] || '*'));
                 out.push([r.readName || '*', r.flags, rname, r.start + 1, r.mappingQuality || 0,
                     r.getCigarString() || '*', mate, r.nextStart >= 0 ? r.nextStart + 1 : 0,
-                    r.templateSize || 0, r.getReadBases() || '*', '*'].join('\t'));
+                    r.templateSize || 0, r.getReadBases() || '*', _cramQualString(r)].join('\t'));
             }
         }
     }
@@ -8639,7 +8654,8 @@ async function handleBamFile(event) {
     showMessage('Loading BAM...', 0);
 
     try {
-        const ext = event.readsKind || file.name.split('.').pop().toLowerCase();
+        // the SAM/BAM button comes here directly: sniff the content too, not only the name
+        const ext = event.readsKind || await _sniffReadsKind(file) || file.name.split('.').pop().toLowerCase();
         let buf;
 
         let truncated = false;
@@ -8763,6 +8779,7 @@ async function handleBamFile(event) {
         // Store BAM state
         bamState = {
             reads: shown,                     // drawn
+            sampleName: String(file.name || 'sample').replace(/.(bam|sam|cram)$/i, ''),   // the sample row's name
             allReads: matchedReads,           // every read that passed the filters: coverage, sample row
             downsampled: dropped,             // [{ start, end, dropped }] windows that lost reads
             skipped,                          // { reason: count } reads not used (flags)
@@ -9003,7 +9020,7 @@ function _getReadCigarFeatures(read, refSeq) {
                 refPos += len;
                 break;
             case 'I':
-                features.insertions.push({ refPos: refPos - 1, length: len });
+                features.insertions.push({ refPos: refPos - 1, length: len, bases: (read.seq.substr(readPos, len) || '').toUpperCase() });
                 readPos += len;
                 break;
             case 'S':
@@ -9102,23 +9119,47 @@ function addSampleRowFromReads() {
         row.push(res.bases[p] || '-');
         p++;
     }
+    // <reference>_sample; a second click selects the row it added (it added a duplicate row and the insertion
+    // columns again); the reads of another file get their own row, <reference>_<file name>
+    let name = `${bamState.refName}_sample`;
+    const fromFile = bamState.sampleName || '';
+    const taken = state.seqs.find(s => s.header === name);
+    if (taken && taken._fromReads !== fromFile) name = `${bamState.refName}_${fromFile}`.replace(/s+/g, '_');
+    const existing = state.seqs.findIndex(s => s.header === name && s._fromReads === fromFile);
+    if (existing >= 0) {
+        state.selectedRows = new Set([existing]);
+        state.lastSelectedIndex = existing;
+        const full0 = document.getElementById('modeSingle');
+        if (full0 && document.getElementById('modeReads')?.checked) full0.checked = true;
+        renderAlignment();
+        showMessage(`${name} is already row ${existing + 1} (selected). Another sample: open its reads file, then Sample → row.`, 5000);
+        openVariantsPanel();
+        return;
+    }
     pushUndo('sample-row');
-    // insertions most reads carry: new columns, gaps in every other row; right to left so columns stay valid
+    // insertions most reads carry: columns before the reference base; gap columns already there (another
+    // sample's insertion) are used first, new ones (gaps in every other row) only for the rest. Right to left.
     const ins = [...res.insAfter].filter(([q]) => colOfPos[q] !== undefined).sort((a, b) => b[0] - a[0]);
     for (const [q, bases] of ins) {
         const c = colOfPos[q];
-        const pad = '-'.repeat(bases.length);
-        for (const s of state.seqs) { s.seq = s.seq.slice(0, c) + pad + s.seq.slice(c); s.gaplessPositions = calculateGaplessPositions(s.seq); }
-        row.splice(c, 0, ...bases.split(''));
+        let g = 0;
+        while (c - g - 1 >= 0 && (refRow[c - g - 1] === '-' || refRow[c - g - 1] === '.') && (q === 0 || colOfPos[q - 1] < c - g - 1)) g++;
+        const add = Math.max(0, bases.length - g);
+        if (add) {
+            const pad = '-'.repeat(add);
+            for (const s of state.seqs) { s.seq = s.seq.slice(0, c) + pad + s.seq.slice(c); s.gaplessPositions = calculateGaplessPositions(s.seq); }
+            row.splice(c, 0, ...pad.split(''));
+        }
+        for (let k = 0; k < bases.length; k++) row[c - g + k] = bases[k];
     }
     const seq = row.join('');
-    const name = `${bamState.refName}_sample`;
     const used = (bamState.allReads || bamState.reads).length;
     state.seqs.splice(ri + 1, 0, {
         header: name,
         fullHeader: `${name} called from ${used.toLocaleString()} reads (depth >= ${SampleCall.DEFAULTS.minDepth}, second allele >= ${Math.round(SampleCall.DEFAULTS.hetFrac * 100)}% = IUPAC)`,
         seq,
-        gaplessPositions: calculateGaplessPositions(seq)
+        gaplessPositions: calculateGaplessPositions(seq),
+        _fromReads: fromFile
     });
     // to Full view: the rows are what codon analysis and MACSE work on (the reads stay loaded for the Reads view)
     const full = document.getElementById('modeSingle');
@@ -9140,6 +9181,7 @@ function addSampleRowFromReads() {
  * Shows reference track at top, reads below in pileup order.
  */
 function renderReadsAlignment() {
+    _readsSyncRef();
     ensureReadsDisplayToggle();
     if (!bamState.reads.length || !bamState.refSeq) {
         const msg = bamState.reads.length
@@ -9358,11 +9400,13 @@ function renderReadsAlignment() {
 
             // Tooltip text (built once per read)
             const cigarStr = read.cigar.map(c => c.len + c.op).join('');
+            // inserted bases were only a tick in the picture, their sequence nowhere
+            const insText = features.insertions.length ? '<br>Inserted: ' + features.insertions.slice(0, 4).map(x => `${_escapeHtml(x.bases)} after ${x.refPos + 1}`).join(', ') + (features.insertions.length > 4 ? ', ...' : '') : '';
             const tooltipHtml = `<b>${_escapeHtml(read.name)}</b><br>`
                 + `Pos: ${read.pos + 1}${bamState.offset ? ` (${_escapeHtml(bamState.bamRefName)}:${(read.pos + 1 + bamState.offset).toLocaleString()})` : ''}<br>`
                 + `Strand: ${rev ? 'reverse (-)' : 'forward (+)'}<br>`
                 + `CIGAR: ${cigarStr}<br>`
-                + `MAPQ: ${read.mapq}${read.flag & 1 ? '<br>Paired' + (read.flag & 0x40 ? ', first' : read.flag & 0x80 ? ', second' : '') + ' in pair' : ''}`;
+                + `MAPQ: ${read.mapq}${read.flag & 1 ? '<br>Paired' + (read.flag & 0x40 ? ', first' : read.flag & 0x80 ? ', second' : '') + ' in pair' : ''}${insText}`;
 
             // Hover tooltip
             bar.addEventListener('mouseover', () => {
@@ -9548,7 +9592,9 @@ function _variantCells(r) {
     if (_variantStrandNote(v)) notes.push('alt reads on one strand only');
     if (v.depth < 10) notes.push('low depth');
     if (v.type !== 'snv' && v.zyg === 'het') notes.push('heterozygous indel: not in the sample row');
-    return [String(v.pos) + (bamState.offset ? ` (${bamState.bamRefName}:${v.pos + bamState.offset})` : ''), change, v.zyg, String(v.depth),
+    // an insertion sits between two bases: 'a^b' (as HGVS), not the number of the base after it
+    const posTxt = v.type === 'ins' ? `${v.pos - 1}^${v.pos}` : String(v.pos);
+    return [posTxt + (bamState.offset ? ` (${bamState.bamRefName}:${v.pos + bamState.offset})` : ''), change, v.zyg, String(v.depth),
         String(Math.round(100 * v.frac)), `${v.altFwd || 0}/${v.altRev || 0}`, v.type === 'snv' ? `${v.refFwd || 0}/${v.refRev || 0}` : '',
         e.gene || '', e.effect, e.c || '', e.p || '', e.codon || '', notes.join('; ')];
 }
@@ -9640,7 +9686,25 @@ function variantToAlignment(p) {
 
 // The sample called from every read (cached until other reads are loaded): the coverage row, the variants
 // panel and Sample -> row all read the same counts and calls
+// The reference row may have been edited since the reads were loaded: their mismatches and the sample row were
+// computed against the old bases. A base edit (same length) is taken over and the calls redone; a change of length
+// can shift every position, so it is said (reload the reads)
+function _readsSyncRef() {
+    if (!bamState.refSeq || !bamState.refName) return;
+    const ri = state.seqs.findIndex(s => String(s.fullHeader || s.header || '').trim().split(/s+/)[0] === bamState.refName);
+    if (ri < 0) return;
+    const cur = state.seqs[ri].seq.replace(/[-.]/g, '').toUpperCase();
+    if (cur === bamState.refSeq) return;
+    if (cur.length !== bamState.refSeq.length && !bamState._lenWarned) {
+        bamState._lenWarned = true;
+        showMessage(`${bamState.refName} changed length since its reads were loaded (${bamState.refSeq.length} -> ${cur.length} bp): read positions may be shifted. Open the reads file again.`, 8000);
+    }
+    bamState.refSeq = cur;
+    bamState.calls = null;
+}
+
 function _readsCalls() {
+    _readsSyncRef();
     if (!bamState.refSeq || !(bamState.allReads || bamState.reads || []).length || typeof SampleCall === 'undefined') return null;
     if (!bamState.calls) bamState.calls = SampleCall.call(bamState.allReads || bamState.reads, bamState.refSeq);
     return bamState.calls;
@@ -9903,6 +9967,7 @@ function clearReadsData() {
         refName: null,
         refSeq: null,
         refStart: 0,
+        refEnd: 0,
         columns: [],
         readOrder: [],
     };
@@ -9973,7 +10038,7 @@ function _updateCodonAnalysisState(len) {
                     const bf = state._codonFrames.bestFrame;
                     if (state._lastAnnouncedCodonFrame !== bf) {
                         state._lastAnnouncedCodonFrame = bf;
-                        showMessage(`Codon analysis: auto-selected frame ${bf} (ATG start)`, 2500);
+                        showMessage(`Codon analysis: auto-selected frame Pos ${bf + 1} (ATG start)`, 2500);   // as the Pos 1/2/3 buttons (said 'frame 0')
                     }
                 }
             } else {
@@ -12853,6 +12918,7 @@ async function parseAndRender(isFromDrop = false) {
             refName: null,
             refSeq: null,
             refStart: 0,
+            refEnd: 0,
             columns: [],
             readOrder: [],
         };
@@ -14541,7 +14607,7 @@ function copyAATranslation() {
         showMessage('No amino acid translation available. Enable Codon analysis first.', 3000);
         return;
     }
-    const seqCount = frameSelCount();
+    const seqCount = (fasta.match(/^>/gm) || []).length;   // the records copied (rows x frames over-counted rows without a gene)
     navigator.clipboard.writeText(fasta).then(() => {
         showMessage(`Copied ${seqCount} amino acid sequence(s) to clipboard!`, 2000);
     }).catch(err => {
