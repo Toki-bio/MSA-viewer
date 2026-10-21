@@ -42,6 +42,7 @@ const SUITES = [
   { name: 'unit: low-severity audit fixes', args: ['tests/unit/audit-low.test.js'] },
   { name: 'unit: sample row called from reads', args: ['tests/unit/sample-call.test.js'] },
   { name: 'unit: variant effects on genes', args: ['tests/unit/variant-effect.test.js'] },
+  { name: 'unit: indexed BAM reading against samtools', args: ['tests/unit/bam-index.test.js'] },
   { name: 'release version consistency', args: ['tests/meta/version.test.js'] },
   { name: 'correctness (consensus, parsers, exports, rendering)', args: ['tests/correctness/run.js'], browser: true },
   { name: 'input compatibility (examples/)', args: ['tests/compat/run.js'], browser: true },

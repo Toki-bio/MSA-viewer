@@ -8520,12 +8520,12 @@ async function _sniffReadsKind(file) {
  * on its own still goes through the text parser, which builds a pileup
  * reference from the reads.
  */
-async function _routeReadsFile(file) {
+async function _routeReadsFile(file, indexFile = null) {
     const kind = await _sniffReadsKind(file);
     if (!kind) return false;
     const hasAlignment = !!(state.seqs && state.seqs.length > 0);
     if (hasAlignment) {
-        handleBamFile({ target: { files: [file], value: '' }, readsKind: kind });
+        handleBamFile({ target: { files: [file], value: '' }, readsKind: kind, indexFile });
         return true;
     }
     if (kind === 'bam' || kind === 'cram') {
@@ -8647,9 +8647,20 @@ async function cramToSamText(file) {
     return truncated ? Object.assign(new String(text), { truncated: true }) : text;
 }
 
+// A BAM's index (.bai) can come with it (picked or dropped together): then only the loaded reference's region is
+// read from the BAM. Without it the whole file is decompressed, which a whole-genome BAM cannot be in a browser.
+const _isReadsIndexName = n => /\.(bai|csi|crai)$/i.test(n || '');
+const _BAM_NO_INDEX_MAX = 512 * 1024 * 1024;
+
 async function handleBamFile(event) {
-    const file = event.target.files[0];
-    if (!file) return;
+    const all = Array.from((event.target && event.target.files) || []);
+    const file = all.find(f => !_isReadsIndexName(f.name));
+    const indexFile = event.indexFile || all.find(f => /\.bai$/i.test(f.name)) || null;
+    if (!file) {
+        if (all.length) showMessage('That is an index: select the BAM together with its .bai (both files at once), after loading the reference.', 6000);
+        return;
+    }
+    if (!indexFile && all.some(f => /\.(csi|crai)$/i.test(f.name))) showMessage('Only .bai indexes are read (not .csi or .crai): the whole file is read instead.', 5000);
 
     showMessage('Loading BAM...', 0);
 
@@ -8668,15 +8679,37 @@ async function handleBamFile(event) {
             const samText = await cramToSamText(file);
             truncated = !!samText.truncated;
             buf = parseSAMToBuffer(String(samText));
+        } else if (indexFile) {
+            buf = { _indexed: true };
         } else {
+            if (file.size > _BAM_NO_INDEX_MAX) {
+                statusMessage.style.display = 'none';
+                showMessage(`This BAM is ${(file.size / 1048576).toFixed(0)} MB: too big to read whole in a browser. Select it together with its index (.bai, made by samtools index) - both files at once - after loading the reference (or the gene region, named as samtools faidx writes it, e.g. chr7:117480025-117668665); only that region's reads are then read.`, 0);
+                return;
+            }
             // BAM binary - decompress with browser's DecompressionStream
             buf = await BamParser.decompressBAM(file);
             truncated = !!buf.truncated;
         }
 
         // Parse header (SAM pseudo-buffer or real BAM)
-        let header, records, exceededLimit, totalReads, skipped;
-        if (buf._isSAM) {
+        let header, records, exceededLimit, totalReads, skipped, indexedNote = '';
+        if (buf._indexed) {
+            showMessage('Reading the BAM index...', 0);
+            header = await BamParser.readBamHeaderFromFile(file);
+            const index = BamParser.parseBAI(new Uint8Array(await indexFile.arrayBuffer()));
+            if (index.refs.length !== header.refNames.length) throw new Error(`the index (${indexFile.name}) is not this BAM's: ${index.refs.length} references in the index, ${header.refNames.length} in the BAM`);
+            const loaded0 = state.seqs.map(s => ({ name: String(s.fullHeader || s.header || '').trim().split(/\s+/)[0], seq: s.seq.replace(/[-.]/g, '') }));
+            const m0 = BamParser.matchReference(header.refNames, header.refLengths, loaded0, null);
+            records = []; totalReads = 0; skipped = {}; exceededLimit = false;
+            if (m0) {
+                const beg = m0.offset, end = m0.offset + loaded0[m0.loadedIndex].seq.length;
+                const got = await BamParser.readBamRegion(file, index, m0.refID, beg, end);
+                records = got.records; totalReads = got.totalReads; skipped = got.skipped;
+                exceededLimit = got.records.length >= BamParser.MAX_READS;
+                indexedNote = `read through the index: ${header.refNames[m0.refID]}:${(beg + 1).toLocaleString()}-${end.toLocaleString()}, ${(got.fileBytesRead / 1048576).toFixed(2)} MB read of a ${(file.size / 1048576).toFixed(1)} MB file`;
+            }
+        } else if (buf._isSAM) {
             header = { refNames: buf._refNames, refLengths: buf._refLengths, headerEndOffset: 0 };
             const MAX = BamParser.MAX_READS;
             totalReads = buf._totalReads != null ? buf._totalReads : buf._records.length;
@@ -8821,6 +8854,7 @@ async function handleBamFile(event) {
             if (sk.length) notes.push('not used: ' + sk.map(([why, n]) => `${n.toLocaleString()} ${why}`).join(', '));
             if (exceededLimit) notes.push(`the file has more reads than the browser keeps (${BamParser.MAX_READS.toLocaleString()}): later reads are left out; cut the region with samtools view`);
             if (match.note) notes.push(match.note);
+            if (indexedNote) notes.push(indexedNote);
             showMessage(`Loaded ${matchedReads.length.toLocaleString()} reads on ${refSeqObj.name} (${minPos + 1}-${maxPos})` + (notes.length ? '; ' + notes.join('; ') : ''), notes.length ? 9000 : 2500);
         }
 
@@ -23724,7 +23758,10 @@ function initializeAppUI() {
         dropZone.addEventListener('drop', async (e) => {
             e.preventDefault();
             dropZone.style.borderColor = 'var(--dropzone-border)';
-            const file = e.dataTransfer.files[0];
+            // a BAM dropped with its .bai: the index goes with it (only the loaded region is then read)
+            const dropped = Array.from(e.dataTransfer.files || []);
+            const file = dropped.find(f => !/.(bai|csi|crai)$/i.test(f.name)) || dropped[0];
+            const droppedIndex = dropped.find(f => /.bai$/i.test(f.name)) || null;
             if (!file) return;
             // Chromium-only: capture a reusable handle (must call this
             // synchronously off the drop event, before any await, but awaiting
@@ -23732,7 +23769,7 @@ function initializeAppUI() {
             const item = e.dataTransfer.items && e.dataTransfer.items[0];
             const handlePromise = item && typeof item.getAsFileSystemHandle === 'function'
                 ? item.getAsFileSystemHandle().catch(() => null) : null;
-            if (await _routeReadsFile(file)) return;
+            if (await _routeReadsFile(file, droppedIndex)) return;
             state.currentFilename = file.name;
             state.currentFilePath = '';
 

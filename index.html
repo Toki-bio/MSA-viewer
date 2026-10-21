@@ -69,7 +69,7 @@
             <button id="copyAlignToolbarButton" class="edit-toggle-button" title="Copy entire alignment to clipboard (FASTA)" onclick="copyAlignment()" style="font-size:10px;padding:0 5px;margin-left:6px;font-weight:normal;">Copy</button>
             <button id="saveAlignToolbarButton" class="edit-toggle-button" title="Download alignment as FASTA file" onclick="downloadAlignment()" style="font-size:10px;padding:0 5px;margin-left:2px;font-weight:normal;margin-right:6px;">Save</button>
             <button id="openBamToolbarButton" class="edit-toggle-button" title="Load a SAM/BAM file as a read pileup against the loaded reference" onclick="handleOpenBamClick()" style="font-size:10px;padding:0 5px;margin-right:6px;font-weight:normal;">SAM/BAM</button>
-            <input type="file" id="bamFileInput" accept=".bam,.sam" style="display:none;" onchange="handleBamFile(event)">
+            <input type="file" id="bamFileInput" accept=".bam,.sam,.cram,.bai" multiple style="display:none;" onchange="handleBamFile(event)">
 
             <div class="undo-redo-bar">
                 <button id="undoButton" class="history-btn" title="Undo (Ctrl+Z)" aria-label="Undo">
@@ -1376,13 +1376,13 @@ B: -</pre>
     <script src="cluster.js?v=174"></script>
     <script src="kmer-tree.js?v=4"></script>
     <script src="peel.js?v=6"></script>
-    <script src="bam-parser.js?v=169"></script>
+    <script src="bam-parser.js?v=170"></script>
     <script src="sample-call.js?v=4"></script>
     <script src="variant-effect.js?v=1"></script>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=6"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=322"></script>
+    <script src="script.js?v=323"></script>
     <script src="a11y.js?v=2"></script>
     <script src="tree-draw.js?v=168"></script>
     <script src="block-mask.js?v=2"></script>

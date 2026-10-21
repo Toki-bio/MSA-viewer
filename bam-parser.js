@@ -474,6 +474,167 @@ function checkRefMatch(bamRefNames, bamRefLengths, loadedSeqs, readsPerRef) {
     return { matchedRef, warnings };
 }
 
+// ── Indexed reading (.bai): only the compressed blocks a region needs ──────────
+// A whole-genome BAM is gigabytes: decompressing it all in the browser is not possible. With its .bai index
+// (samtools index) only the BGZF blocks holding reads of the loaded region are read, as IGV does.
+// SAMv1 spec section 5: bins, chunks of virtual offsets (compressed offset << 16 | offset in the block), and a
+// 16 kb linear index of the smallest virtual offset per window.
+
+function _vo(dv, o) {
+    const lo = dv.getUint32(o, true), hi = dv.getUint32(o + 4, true);
+    return { c: hi * 65536 + (lo >>> 16), u: lo & 0xffff };
+}
+const _voCmp = (a, b) => (a.c - b.c) || (a.u - b.u);
+
+/** Parse a .bai file: { refs: [{ bins: Map(bin -> [{ beg, end }]), lin: [vo] }] }. */
+function parseBAI(bytes) {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (bytes.length < 8 || bytes[0] !== 0x42 || bytes[1] !== 0x41 || bytes[2] !== 0x49 || bytes[3] !== 0x01) {
+        throw new Error('not a BAM index (.bai): the file does not start with BAI\\1');
+    }
+    const nRef = dv.getInt32(4, true);
+    let o = 8;
+    const refs = [];
+    for (let r = 0; r < nRef; r++) {
+        const bins = new Map();
+        const nBin = dv.getInt32(o, true); o += 4;
+        for (let b = 0; b < nBin; b++) {
+            const bin = dv.getUint32(o, true), nChunk = dv.getInt32(o + 4, true); o += 8;
+            const chunks = [];
+            for (let k = 0; k < nChunk; k++) { chunks.push({ beg: _vo(dv, o), end: _vo(dv, o + 8) }); o += 16; }
+            if (bin !== 37450) bins.set(bin, chunks);        // 37450: the metadata pseudo-bin
+        }
+        const nIntv = dv.getInt32(o, true); o += 4;
+        const lin = [];
+        for (let k = 0; k < nIntv; k++) { lin.push(_vo(dv, o)); o += 8; }
+        refs.push({ bins, lin });
+    }
+    return { refs };
+}
+
+/** The bins that can hold alignments overlapping [beg, end) (0-based, end exclusive): SAMv1 5.3 reg2bins. */
+function reg2bins(beg, end) {
+    const list = [0];
+    end = Math.max(beg + 1, end) - 1;
+    for (let k = 1 + (beg >> 26); k <= 1 + (end >> 26); k++) list.push(k);
+    for (let k = 9 + (beg >> 23); k <= 9 + (end >> 23); k++) list.push(k);
+    for (let k = 73 + (beg >> 20); k <= 73 + (end >> 20); k++) list.push(k);
+    for (let k = 585 + (beg >> 17); k <= 585 + (end >> 17); k++) list.push(k);
+    for (let k = 4681 + (beg >> 14); k <= 4681 + (end >> 14); k++) list.push(k);
+    return list;
+}
+
+/** The chunks to read for [beg, end) on reference refId, merged, after the linear-index cut. */
+function baiChunks(index, refId, beg, end) {
+    const ref = index.refs[refId];
+    if (!ref) return [];
+    let minOff = { c: 0, u: 0 };
+    if (ref.lin.length) {
+        let w = Math.min(beg >> 14, ref.lin.length - 1);
+        while (w > 0 && ref.lin[w].c === 0 && ref.lin[w].u === 0) w--;     // empty windows hold 0
+        minOff = ref.lin[w];
+    }
+    // and the first read starting past the region (htslib's max_off): nothing after it can overlap
+    let maxOff = null;
+    for (let w = ((Math.max(beg + 1, end) - 1) >> 14) + 1; w < ref.lin.length; w++) if (ref.lin[w].c || ref.lin[w].u) { maxOff = ref.lin[w]; break; }
+    const chunks = [];
+    // as htslib's query: chunks cut to [minOff, maxOff]. samtools merges the bins of a small file into one parent
+    // bin, whose single chunk then spans the whole reference
+    for (const bin of reg2bins(beg, end)) for (const ch of ref.bins.get(bin) || []) {
+        if (_voCmp(ch.end, minOff) <= 0 || (maxOff && _voCmp(ch.beg, maxOff) >= 0)) continue;
+        chunks.push({ beg: _voCmp(ch.beg, minOff) < 0 ? minOff : ch.beg, end: maxOff && _voCmp(ch.end, maxOff) > 0 ? maxOff : ch.end });
+    }
+    chunks.sort((a, b) => _voCmp(a.beg, b.beg));
+    const merged = [];
+    for (const ch of chunks) {
+        const last = merged[merged.length - 1];
+        if (last && _voCmp(ch.beg, last.end) <= 0) { if (_voCmp(ch.end, last.end) > 0) last.end = ch.end; }
+        else merged.push({ beg: { ...ch.beg }, end: { ...ch.end } });
+    }
+    return merged;
+}
+
+/** Uncompressed bytes from virtual offset beg to end: reads only the compressed blocks between them. */
+async function readVirtualRange(file, beg, end) {
+    // the block holding `end` starts at end.c: read up to there plus one whole block (at most 64 KiB)
+    const bytes = new Uint8Array(await file.slice(beg.c, Math.min(file.size, end.c + 65536 + 1024)).arrayBuffer());
+    const parts = [];
+    let off = 0, total = 0;
+    while (off < bytes.length) {
+        const bsize = bgzfBlockSize(bytes, off);
+        if (bsize <= 0 || off + bsize > bytes.length) break;
+        const atEnd = beg.c + off === end.c;
+        let data = await gunzipBytes(bytes.subarray(off, off + bsize));
+        if (atEnd) data = data.subarray(0, end.u);
+        parts.push(data); total += data.length;
+        off += bsize;
+        if (atEnd || beg.c + off > end.c) break;
+    }
+    const out = new Uint8Array(total);
+    let p = 0;
+    for (const d of parts) { out.set(d, p); p += d.length; }
+    const res = out.subarray(Math.min(beg.u, out.length));
+    res.compressedBytes = off;          // bytes of the file read for this range
+    return res;
+}
+
+/** The BAM header read from the start of the file, block by block until it is complete. */
+async function readBamHeaderFromFile(file) {
+    let have = new Uint8Array(0), off = 0, step = 1 << 20;
+    const parts = [];
+    for (;;) {
+        const bytes = new Uint8Array(await file.slice(off, Math.min(file.size, off + step)).arrayBuffer());
+        let p = 0;
+        while (p < bytes.length) {
+            const bsize = bgzfBlockSize(bytes, p);
+            if (bsize <= 0 || p + bsize > bytes.length) break;
+            parts.push(await gunzipBytes(bytes.subarray(p, p + bsize)));
+            p += bsize;
+        }
+        if (p === 0) throw new Error('not a BGZF-compressed BAM');
+        off += p;
+        let total = 0; for (const d of parts) total += d.length;
+        have = new Uint8Array(total);
+        let q = 0; for (const d of parts) { have.set(d, q); q += d.length; }
+        try { return parseBAMHeader(have); }
+        catch (e) {
+            if (!(e instanceof RangeError) || off >= file.size) throw e;
+            step = Math.min(step * 2, 64 << 20);            // a long header (many contigs): read on
+        }
+    }
+}
+
+/**
+ * The reads of one reference overlapping [beg, end) from an indexed BAM, flags filtered as parseBAMRecords does:
+ * { records, totalReads (in the chunks read), skipped, chunks, bytesRead }.
+ */
+async function readBamRegion(file, index, refId, beg, end) {
+    const records = [], skipped = {};
+    let totalReads = 0, bytesRead = 0, fileBytesRead = 0;
+    const chunks = baiChunks(index, refId, beg, end);
+    for (const ch of chunks) {
+        const buf = await readVirtualRange(file, ch.beg, ch.end);
+        bytesRead += buf.length;
+        fileBytesRead += buf.compressedBytes || 0;
+        let off = 0;
+        while (off + 4 <= buf.length) {
+            const res = parseBAMRecord(buf, off);
+            if (!res) break;
+            off = res.nextOffset;
+            const r = res.record;
+            if (r.refID !== refId) continue;
+            let span = 0;
+            for (const c of r.cigar) if ('MDN=X'.includes(c.op)) span += c.len;
+            if (r.pos >= end || r.pos + Math.max(1, span) <= beg) continue;
+            totalReads++;
+            const why = skipReason(r.flag);
+            if (why || !r.cigar.length) { skipped[why || 'no CIGAR'] = (skipped[why || 'no CIGAR'] || 0) + 1; continue; }
+            if (records.length < MAX_READS) records.push(r);
+        }
+    }
+    return { records, totalReads, skipped, chunks: chunks.length, bytesRead, fileBytesRead };
+}
+
 /**
  * Which loaded sequence the reads go on, when the names are not identical. Only an exact name matched
  * (checkRefMatch), so 'chr7' vs '7', 'NC_000007.14' vs 'NC_000007', or a gene cut out with samtools faidx
@@ -524,7 +685,8 @@ function matchReference(bamRefNames, bamRefLengths, loadedSeqs, readsPerRef) {
 
 // ── Export for use in script.js (global scope) ───────────────────────────────
 
-window.BamParser = {
+// window.BamParser in the page; module.exports in Node (tests/unit/bam-index.test.js)
+const _bamParserApi = {
     decompressBAM,
     sniffBam,
     parseBAMHeader,
@@ -534,6 +696,13 @@ window.BamParser = {
     cigarToString,
     checkRefMatch,
     matchReference,
+    parseBAI,
+    reg2bins,
+    baiChunks,
+    readBamHeaderFromFile,
+    readBamRegion,
     MAX_READS,
     skipReason,
 };
+if (typeof window !== 'undefined') window.BamParser = _bamParserApi;
+if (typeof module !== 'undefined' && module.exports) module.exports = _bamParserApi;

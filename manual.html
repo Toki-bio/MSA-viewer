@@ -588,6 +588,15 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     it instead.
   </p>
   <p>
+    <strong>A whole-genome BAM:</strong> select the BAM <em>together with its index</em> (<code>.bai</code>, from
+    <code>samtools index</code>) &mdash; both files at once in the SAM/BAM dialog, or dropped together. Only the
+    compressed blocks holding reads of the loaded sequence are then read (as IGV does), so load the gene first,
+    cut out as <code>samtools faidx genome.fa chr7:117480025-117668665</code> writes it: the reads of that region
+    are read and shifted onto it, and the message says how much of the file was read. Without an index the
+    whole BAM is decompressed, which a browser cannot do above about 500 MB (the message says what to do).
+    Only <code>.bai</code> indexes are read (not <code>.csi</code>, nor CRAM's <code>.crai</code>).
+  </p>
+  <p>
     <strong>Which reads count:</strong> unmapped, secondary, supplementary, QC-failed and duplicate reads are
     left out (the message says how many). Every other read is kept (up to 2,000,000) and counts for the
     coverage, the allele counts and the sample row; the view draws at most 50 reads starting in each 100 bp

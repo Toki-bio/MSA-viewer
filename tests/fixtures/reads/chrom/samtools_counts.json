@@ -1,0 +1,5 @@
+{
+ "made_by": "samtools 'view -c' on KIT (/usr/local/bin/samtools), 2026-10-22; .bai files from 'samtools index'",
+ "chrom_reads.bam": { "chrT:100001-103000": 799, "chrT:50001-60000": 66, "chrT:100001-100500": 134, "chrT:199000-200000": 4, "chrU:1-1000": 1, "chrU": 300, "total": 2573 },
+ "htslib_range.bam": { "CHROMOSOME_II:1000-2000": 19, "CHROMOSOME_III": 41, "CHROMOSOME_I:1-100000": 18 }
+}

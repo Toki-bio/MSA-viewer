@@ -1146,6 +1146,34 @@ check('MACSE summary counts only frameshifts inside the sequences, not the paddi
   return { pass: !!r && r.inner === 0, detail: JSON.stringify(r) };
 });
 
+// A whole-genome BAM is gigabytes and was decompressed whole (impossible in a browser). With its .bai picked
+// together with it, only the loaded region's blocks are read: a gene cut out with samtools faidx (chrT:100001-103000)
+// gets the reads samtools view -c counts there (tests/fixtures/reads/chrom: index and counts from samtools)
+check('Reads: BAM + .bai picked together read only the loaded region (faidx name), same reads as samtools; index alone or wrong index said', async (page) => {
+  const path = require('path'), fs = require('fs');
+  const C = path.join(__dirname, '..', 'fixtures', 'reads', 'chrom');
+  const truth = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'reads', 'region', 'truth.json'), 'utf8'));
+  const want = truth.muts.map(m => `${m.pos + 1}${m.hom ? 'hom' : 'het'}`).sort().join(',');
+  await page.setInputFiles('#fileInput', path.join(C, 'chrT_region.fa'));
+  await page.waitForTimeout(1200);
+  await page.setInputFiles('#bamFileInput', [path.join(C, 'chrom_reads.bam'), path.join(C, 'chrom_reads.bam.bai')]);
+  await page.waitForTimeout(4000);
+  const r = await page.evaluate(() => ({
+    reads: (bamState.allReads || []).length, msg: document.getElementById('statusMessage').innerText.replace(/\s+/g, ' ').slice(0, 300),
+    calls: _readsCalls() ? _readsCalls().variants.map(v => `${v.pos}${v.zyg}`).sort().join(',') : ''
+  }));
+  await page.evaluate(() => clearReadsData());
+  await page.setInputFiles('#bamFileInput', path.join(C, 'chrom_reads.bam.bai'));
+  await page.waitForTimeout(1500);
+  r.indexAlone = await page.evaluate(() => document.getElementById('statusMessage').innerText.slice(0, 120));
+  await page.setInputFiles('#bamFileInput', [path.join(C, 'chrom_reads.bam'), path.join(__dirname, '..', '..', 'examples', 'real', 'htslib_range.bam.bai')]);
+  await page.waitForTimeout(3000);
+  r.wrongIndex = await page.evaluate(() => document.getElementById('statusMessage').innerText.slice(0, 160));
+  const ok = r.reads === 799 && /read through the index: chrT:100,001-103,000/.test(r.msg) && r.calls === want
+    && /select the BAM together with its \.bai/.test(r.indexAlone) && /not this BAM's/.test(r.wrongIndex);
+  return { pass: ok, detail: JSON.stringify({ want, ...r }) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };
