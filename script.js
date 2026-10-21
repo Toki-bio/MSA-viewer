@@ -1946,6 +1946,18 @@ function _moveDraggedSequences(draggedIndex, targetIndex, insertAbove) {
     return true;
 }
 
+// A press on a name that did not become a drag: select that row alone, or unselect it when it is the only one
+// selected (the manual's "Click sequence name: Select row"). Since the drag-to-reorder (March) such a press was
+// dropped and a plain click selected nothing. The second click of a double-click (rename) changes nothing.
+function _plainNameClick(index, e) {
+    if (!Number.isInteger(index) || index < 0 || (e && e.detail > 1)) return;
+    if (state.selectedRows.size === 1 && state.selectedRows.has(index)) state.selectedRows.clear();
+    else { state.selectedRows.clear(); state.selectedRows.add(index); }
+    state.lastSelectedIndex = index;
+    if (state.pendingNucStart) { state.pendingNucStart = null; scheduleNucSelectionRefresh(); }
+    updateRowSelections();
+}
+
 function _startRowReorderDrag(e, index) {
     _rowReorderDrag = {
         startX: e.clientX,
@@ -1999,6 +2011,7 @@ function _finishRowReorderDrag(e) {
         _clearDragInsertPreview();
         _clearDragSources();
         _draggedSeqIndex = -1;
+        _plainNameClick(drag.draggedIndex, e);
         return;
     }
     const nearest = _findNearestSequenceLine(e.clientY);
@@ -5908,13 +5921,22 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const hCss = Math.max(100, window.innerHeight - top0 - 28);
         if (parseInt(alignmentContainer.style.height) !== hCss) alignmentContainer.style.height = hCss + 'px';
         const rect = alignmentContainer.getBoundingClientRect();
-        const key = rect.width + 'x' + rect.height + '@' + rect.top;
+        const key = rect.width + 'x' + rect.height + '@' + rect.left + ',' + rect.top;
         if (!force && key === _lastRect) return false;
         _lastRect = key;
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
-        canvas.style.width = rect.width + 'px';
-        canvas.style.height = rect.height + 'px';
+        // Whole device pixels, or the browser resamples the whole canvas and every letter, name and line is blurred
+        // (at 125% or 150% screen scale it sat at x = 11.25 device px, 1687 px of bitmap stretched over 1687.5):
+        // the bitmap's own size on screen, and a shift of under one device pixel to a whole-pixel corner
+        const bw = Math.floor(rect.width * dpr), bh = Math.floor(rect.height * dpr);
+        canvas.width = bw;
+        canvas.height = bh;
+        canvas.style.width = (bw / dpr) + 'px';
+        canvas.style.height = (bh / dpr) + 'px';
+        const cr = canvas.getBoundingClientRect();
+        const snap = (v, cur) => { const base = v - cur; const d = Math.ceil(base * dpr - 1e-3) / dpr - base; return d < 1e-3 ? 0 : d; };
+        const sl = snap(cr.left, parseFloat(canvas.style.left) || 0), st = snap(cr.top, parseFloat(canvas.style.top) || 0);
+        canvas.style.left = overlay.style.left = sl + 'px';
+        canvas.style.top = overlay.style.top = st + 'px';
         _canvasState.invalidateInsets?.();
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         back.width = canvas.width;
@@ -5991,6 +6013,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const t = e ? _canvasRowDropTarget(e.clientY) : null;
                 // _moveDraggedSequences re-renders; when it declines (drop onto itself) clear the indicator
                 if (!t || !_moveDraggedSequences(rd.from, t.row, t.above)) scheduleOverlay();
+            } else if (e) {
+                _plainNameClick(rd.from, e);
+                scheduleOverlay();
             }
             return;
         }
@@ -6632,10 +6657,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
         }
 
-        // Name column separator (fixed on-screen when sticky, scrolls with
-        // content otherwise, matching the name column's own behaviour above)
-        ctx.fillStyle = '#ddd';
-        ctx.fillRect((stickyNames ? NAME_W : NAME_W - ox) - 2, 0, 1, totalContentH - oy);
+        // (No line between the names and the sequences: Full and Block have none, and the owner did not want it.)
     }
     resize(true);
     draw();

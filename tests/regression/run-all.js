@@ -695,6 +695,72 @@ check('Codon alignment uses the chosen genetic code (vertebrate mito: TGA is Trp
   return { pass: clean(r.macse) && clean(r.fast), detail: JSON.stringify(r) };
 });
 
+// A plain click on a name selected nothing (since the March drag-to-reorder: a press without movement was simply
+// dropped), in every view, though the manual says "Click sequence name: Select row". Click selects that row
+// alone; a click on the only selected row unselects it.
+check('A plain click on a name selects that row (Full, Block, Canvas); a second click unselects it', async (page) => {
+  const out = {};
+  for (const view of ['full', 'block', 'canvas']) {
+    const p = await page.context().browser().newPage({ viewport: { width: 1200, height: 700 } });
+    await p.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await p.setInputFiles('#fileInput', { name: 'c.fa', mimeType: 'text/plain', buffer: Buffer.from('>one\nACGTACGT\n>two\nACGTACGA\n>three\nACGAACGT\n>four\nACGTTCGT\n') });
+    await p.waitForTimeout(1500);
+    const pt = await p.evaluate(() => {
+      if (document.getElementById('modeCanvas').checked) {
+        const r = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics;
+        return { x: r.left + 10, y: r.top + m.headerH + 2.5 * _canvasState.rowPitch };   // row 2 ("three")
+      }
+      const e = document.querySelector('.seq-line[data-seq-index="2"] .seq-name').getBoundingClientRect();
+      return { x: e.left + 14, y: e.top + e.height / 2 };
+    });
+    await p.evaluate(() => { state.selectedRows = new Set([0]); updateRowSelections(); });
+    await p.mouse.click(pt.x, pt.y); await p.waitForTimeout(300);
+    const first = await p.evaluate(() => [...state.selectedRows].join(','));
+    await p.mouse.click(pt.x, pt.y); await p.waitForTimeout(300);
+    const second = await p.evaluate(() => [...state.selectedRows].join(','));
+    out[view] = first + '|' + (second || 'none');
+    await p.close();
+  }
+  return { pass: Object.values(out).every(v => v === '2|none'), detail: JSON.stringify(out) };
+});
+
+// Canvas drew a light grey vertical line between the names and the sequences; Full and Block have none
+check('Canvas: no grey line between the names and the sequences', async (page) => {
+  await page.goto(page.url().replace(/view=\w+/, 'view=canvas').replace(/(index\.html)(?!\?)/, '$1?view=canvas'), { waitUntil: 'networkidle' });
+  await page.setInputFiles('#fileInput', { name: 'l.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTACGT\n>b\nACGTACGTACGA\n') });
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => {
+    const c = _canvasState.canvas, m = _canvasState.metrics, dpr = window.devicePixelRatio || 1;
+    const x = Math.floor((m.nameW - 2) * dpr), y = Math.floor((m.headerH + 0.5 * _canvasState.rowPitch) * dpr);
+    const d = c.getContext('2d').getImageData(x, y, 1, 1).data;
+    return { mode: document.getElementById('modeCanvas').checked, px: [d[0], d[1], d[2]].join(',') };
+  });
+  return { pass: r.mode && r.px === '255,255,255', detail: JSON.stringify(r) };
+});
+
+// Canvas was blurred next to Full (letters, names, ruler): at 125% and 150% screen scale the canvas sat on half
+// device pixels (x = 11.25, top = 97.5) and its 1687-px bitmap was stretched over 1687.5 px, so the browser
+// resampled the whole picture. It must sit on whole device pixels, its bitmap shown at its own size.
+check('Canvas sits on whole device pixels at its own bitmap size (sharp), at 1x, 1.25x and 1.5x', async (page) => {
+  const out = {};
+  for (const dpr of [1, 1.25, 1.5]) {
+    const p = await page.context().browser().newPage({ viewport: { width: 1366, height: 600 }, deviceScaleFactor: dpr });
+    await p.goto(page.url().replace(/view=\w+/, 'view=canvas').replace(/(index\.html)(?!\?)/, '$1?view=canvas'), { waitUntil: 'networkidle' });
+    await p.setInputFiles('#fileInput', { name: 'g.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGT\n>b\nACGTACGA\n') });
+    await p.waitForTimeout(1500);
+    out['x' + dpr] = await p.evaluate(() => {
+      const dpr = window.devicePixelRatio || 1, whole = v => Math.abs(v - Math.round(v)) < 0.01;
+      return [_canvasState.canvas, _canvasState.overlay].map(c => {
+        const r = c.getBoundingClientRect();
+        return whole(r.left * dpr) && whole(r.top * dpr) && Math.abs(r.width * dpr - c.width) < 0.01 && Math.abs(r.height * dpr - c.height) < 0.01
+          ? 'ok' : `${(r.left * dpr).toFixed(2)},${(r.top * dpr).toFixed(2)} ${(r.width * dpr).toFixed(2)}/${c.width}`;
+      }).join(' ');
+    });
+    await p.close();
+  }
+  return { pass: Object.values(out).every(v => v === 'ok ok'), detail: JSON.stringify(out) };
+});
+
 check('BAM opened with nothing loaded explains that the reference comes first', async (page) => {
   const r = await openSynthetic(page, 'synth_reads.bam');
   if (!/reference first/.test(r.msg)) return { pass: false, detail: r.msg };
