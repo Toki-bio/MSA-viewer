@@ -17623,6 +17623,9 @@ function undoTrimming() {
         return;
     }
 
+    // Itself undoable: it puts back the pre-trim copy, dropping any edit made since the trim
+    // (it used to do that silently, with no way back to those edits)
+    pushUndo('undo-trim');
     state.seqs = state.trimBackup.map(seq => ({...seq}));
     state.trimBackup = null;
     if (state.trimBackupColState) { _restoreColumnState(state.trimBackupColState); state.trimBackupColState = null; }
@@ -23092,7 +23095,7 @@ function seqEditApply() {
 // action type; typing and drag edits also carry their own label.
 const UNDO_TYPE_LABELS = {
     'tsd-unmark-lowercase': 'Undo TSD lower case',
-    'trim': 'Hard trim',
+    'trim': 'Hard trim', 'undo-trim': 'Undo trim',
     'order': 'Reorder rows', 'reorder': 'Reorder rows', 'rename': 'Rename', 'delete': 'Delete sequences',
     'duplicate': 'Duplicate sequences', 'revcomp': 'Reverse complement', 'sample-row': 'Add sample row from reads',
     'sort-name': 'Sort by name', 'sort-length': 'Sort by length', 'sort-similarity': 'Sort by similarity',

@@ -6366,6 +6366,30 @@ check('Audit: selected rows stay on their sequences through Sort and Add at top'
   return { pass: afterSort === 'zeta' && domSel === zetaRow && afterAdd === 'zeta', detail: JSON.stringify({ afterSort, domSel, zetaRow, afterAdd }) };
 });
 
+check('Audit: hard trim is undoable with Ctrl+Z, and Undo Trim is itself undoable', async (page) => {
+  // Used to: Execute (hard trim) pushed no undo entry, and the separate Undo Trim button
+  // restored the pre-trim copy silently, throwing away every edit made after the trim.
+  page.on('dialog', d => d.accept());
+  const orig = ['a:----ACGTACGTAC----', 'b:---TACGTTCGTAC--T-', 'c:-----AGTACGTAC----'];
+  await loadFasta(page, orig.map(x => '>' + x.replace(':', '\n')).join('\n') + '\n');
+  await page.evaluate(() => el('previewTrimButton').click());
+  await page.evaluate(() => el('executeTrimButton').click()); await page.waitForTimeout(500);
+  const trimmed = await auditSeqs(page);
+  await auditBlur(page);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  const undone = await auditSeqs(page);
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(400);
+  const redone = await auditSeqs(page);
+  await auditCtrlClickName(page, 2); await auditBlur(page);
+  await page.keyboard.press('Control+Delete'); await page.waitForTimeout(300);
+  await page.evaluate(() => el('undoTrimButton').click()); await page.waitForTimeout(400);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  const backToEdited = await auditSeqs(page);
+  const pass = JSON.stringify(undone) === JSON.stringify(orig) && JSON.stringify(redone) === JSON.stringify(trimmed)
+    && trimmed[0] !== orig[0] && backToEdited.length === 2 && backToEdited[0] === trimmed[0];
+  return { pass, detail: JSON.stringify({ trimmed, undone, redone, backToEdited }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
