@@ -65,6 +65,11 @@ const SCAN = () => {
     await scan('alignment');
     await setMode('modeCanvas'); await page.waitForTimeout(800);
     await scan('Canvas');
+    // the view switch stays on the menu line from 1280 px up (Arial headers at a 10 px gap pushed it onto a line of its own)
+    if (w >= 1280) {
+      const split = await page.evaluate(() => { const m = document.querySelector('#menuRow .standard-menu-group').getBoundingClientRect(), v = document.getElementById('modeRow').getBoundingClientRect(); return Math.abs((m.top + m.bottom) / 2 - (v.top + v.bottom) / 2) > 6; });
+      if (split) problems.push(`${w}x${h} Canvas: the view switch is on a second line`);
+    }
     await setMode('modeBlocks'); await page.waitForTimeout(500);
     await page.evaluate(() => document.getElementById('codonAnalysis').click()); await page.waitForTimeout(800);
     const codonShown = await page.evaluate(() => !!document.getElementById('codonModePanel').getClientRects().length);
@@ -77,6 +82,18 @@ const SCAN = () => {
     if (!readsShown) problems.push(`${w}x${h}: Clear reads not shown in reads mode`);
     await scan('reads');
     if (errors.length) problems.push(`${w}x${h}: page errors: ${errors.join('; ')}`);
+    await page.close();
+  }
+  // A page opened straight in Canvas (the default view), as a user opens it: everything stays on the menu
+  // line at 1280 px, and at 1366 px also with a row selected (the selection adds toolbar items): the toolbar is
+  // one line. Arial headers with the serif's spacing made it two lines in both.
+  for (const [w, h, sel] of [[1280, 720, false], [1366, 700, true]]) {
+    const page = await browser.newPage({ viewport: { width: w, height: h } });
+    await page.goto(baseUrl + '/index.html?view=canvas', { waitUntil: 'networkidle' });
+    await page.setInputFiles('#fileInput', path.join(ROOT, 'examples/synthetic/synth_msa.fa')); await page.waitForTimeout(1500);
+    if (sel) { await page.evaluate(() => { state.selectedRows = new Set([1]); updateRowSelections(); }); await page.waitForTimeout(400); }
+    const ht = await page.evaluate(() => Math.round(document.getElementById('controls').getBoundingClientRect().height));
+    if (ht > 40) problems.push(`${w}x${h} opened in Canvas${sel ? ', row selected' : ''}: the toolbar takes two lines (${ht}px)`);
     await page.close();
   }
   await browser.close(); server.close();

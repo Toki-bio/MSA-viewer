@@ -698,6 +698,55 @@ check('Codon alignment uses the chosen genetic code (vertebrate mito: TGA is Trp
 // A plain click on a name selected nothing (since the March drag-to-reorder: a press without movement was simply
 // dropped), in every view, though the manual says "Click sequence name: Select row". Click selects that row
 // alone; a click on the only selected row unselects it.
+// Owner's request: the name column's width is set by dragging the (invisible) boundary between names and sequences,
+// not only with the Name length slider. The drag must not start a row reorder or select anything.
+check('Name column width: dragging the boundary between names and sequences sets the name length (Full, Block, Canvas)', async (page) => {
+  const out = {};
+  for (const view of ['full', 'block', 'canvas']) {
+    const p = await page.context().browser().newPage({ viewport: { width: 1200, height: 700 } });
+    await p.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await p.setInputFiles('#fileInput', { name: 'n.fa', mimeType: 'text/plain', buffer: Buffer.from('>a_rather_long_sequence_name_one\nACGTACGTACGT\n>second_long_sequence_name_two\nACGTACGAACGT\n>third\nACGAACGTACGT\n') });
+    await p.waitForTimeout(1500);
+    await p.evaluate(() => setNameLengthUI(10, true));
+    await p.waitForTimeout(800);
+    const geo = await p.evaluate(() => {
+      if (document.getElementById('modeCanvas').checked) {
+        const r = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics;
+        return { edge: r.left + m.nameW, y: r.top + m.headerH + 1.5 * _canvasState.rowPitch, ch: m.charW };
+      }
+      const n = document.querySelector('.seq-line[data-seq-index="1"] > .seq-name').getBoundingClientRect();
+      const probe = document.createElement('span'); probe.textContent = '0'.repeat(10);
+      probe.style.cssText = 'position:absolute;visibility:hidden;font:' + getComputedStyle(document.querySelector('.seq-name')).font;
+      document.body.appendChild(probe); const ch = probe.getBoundingClientRect().width / 10; probe.remove();
+      return { edge: n.right, y: n.top + n.height / 2, ch };
+    });
+    await p.mouse.move(geo.edge - 1, geo.y);
+    await p.waitForTimeout(150);
+    const cursor = await p.evaluate(([x, y]) => getComputedStyle(document.elementFromPoint(x, y)).cursor, [geo.edge - 1, geo.y]);
+    const before = await p.evaluate(() => ({ order: state.seqs.map(s => s.header).join(','), sel: state.selectedRows.size }));
+    await p.mouse.down();
+    await p.mouse.move(geo.edge - 1 + 6 * geo.ch, geo.y, { steps: 6 });
+    await p.mouse.up();
+    await p.waitForTimeout(900);
+    const wider = await p.evaluate(() => +document.getElementById('nameLengthSlider').value);
+    // and back narrower
+    const geo2 = await p.evaluate(() => {
+      if (document.getElementById('modeCanvas').checked) { const r = _canvasState.canvas.getBoundingClientRect(); return r.left + _canvasState.metrics.nameW; }
+      return document.querySelector('.seq-line[data-seq-index="1"] > .seq-name').getBoundingClientRect().right;
+    });
+    await p.mouse.move(geo2 - 1, geo.y); await p.mouse.down();
+    await p.mouse.move(geo2 - 1 - 3 * geo.ch, geo.y, { steps: 4 }); await p.mouse.up();
+    await p.waitForTimeout(900);
+    const after = await p.evaluate(() => ({ len: +document.getElementById('nameLengthSlider').value, order: state.seqs.map(s => s.header).join(','), sel: state.selectedRows.size,
+      label: document.getElementById('modeCanvas').checked ? null : document.querySelector('.seq-line[data-seq-index="1"] > .seq-name').textContent.trim() }));
+    out[view] = { cursor, wider, ...after, orderKept: after.order === before.order, sel0: before.sel };
+    await p.close();
+  }
+  const ok = Object.values(out).every(r => r.cursor === 'col-resize' && r.wider === 16 && r.len === 13 && r.orderKept && r.sel === 0)
+    && out.full.label.length === 13 && out.block.label.length === 13;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 check('A plain click on a name selects that row (Full, Block, Canvas); a second click unselects it', async (page) => {
   const out = {};
   for (const view of ['full', 'block', 'canvas']) {
@@ -722,6 +771,65 @@ check('A plain click on a name selects that row (Full, Block, Canvas); a second 
     await p.close();
   }
   return { pass: Object.values(out).every(v => v === '2|none'), detail: JSON.stringify(out) };
+});
+
+// Owner's report: a selected residue, scrolled to the left out of the data area, was drawn over the (fixed) names
+check('Canvas: a selected residue scrolled past the left edge is not drawn over the names', async (page) => {
+  await page.goto(page.url().replace(/view=\w+/, 'view=canvas').replace(/(index\.html)(?!\?)/, '$1?view=canvas'), { waitUntil: 'networkidle' });
+  const s = 'ACGT'.repeat(150);
+  await page.setInputFiles('#fileInput', { name: 's.fa', mimeType: 'text/plain', buffer: Buffer.from(`>a_long_name_for_the_first\n${s}\n>b_long_name_for_the_second\n${s}\n`) });
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => setNameLengthUI(30, true));
+  await page.waitForTimeout(600);
+  // select residue 40 of row 1, then scroll right so that it would sit at the middle of the name column
+  const r = await page.evaluate(async () => {
+    state.selectedNucs.clear(); state.selectedNucs.set(1, new Set([40]));
+    const m = _canvasState.metrics;
+    _canvasState.offsetX = Math.round(40 * m.charW + m.nameW / 2);
+    _canvasState.scheduleDraw(); _canvasState.scheduleOverlay && _canvasState.scheduleOverlay();
+    await new Promise(res => setTimeout(res, 400));
+    const o = _canvasState.overlay, dpr = o.width / parseFloat(o.style.width || o.width);
+    const y = Math.floor((m.headerH + 1.5 * _canvasState.rowPitch) * dpr);
+    const d = o.getContext('2d').getImageData(0, y, Math.floor(m.nameW * dpr) - 1, 1).data;
+    let painted = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) painted++;
+    return { mode: document.getElementById('modeCanvas').checked, sticky: document.getElementById('stickyNames')?.checked, painted };
+  });
+  return { pass: r.mode && r.painted === 0, detail: JSON.stringify(r) };
+});
+
+// Owner's report: thin white lines around each shaded (black/grey) cell; neighbouring shaded cells must join
+// without a seam. Measured on the cells' edge pixels (letters are drawn inside the cell, away from its edges).
+check('Canvas: neighbouring shaded cells join with no white seam, at 0.9x to 2x', async (page) => {
+  const out = {};
+  for (const dpr of [0.9, 1, 1.1, 1.25, 1.33, 1.5, 1.75, 2]) {
+    const p = await page.context().browser().newPage({ viewport: { width: 1366, height: 600 }, deviceScaleFactor: dpr });
+    await p.goto(page.url().replace(/view=\w+/, 'view=canvas').replace(/(index\.html)(?!\?)/, '$1?view=canvas'), { waitUntil: 'networkidle' });
+    const s = 'ACGT'.repeat(10);
+    await p.setInputFiles('#fileInput', { name: 'k.fa', mimeType: 'text/plain', buffer: Buffer.from(`>a\n${s}\n>b\n${s}\n>c\n${s}\n>d\n${s}\n`) });
+    await p.waitForTimeout(1500);
+    out['x' + dpr] = await p.evaluate(() => {
+      const c = _canvasState.canvas, m = _canvasState.metrics, d = c.width / parseFloat(c.style.width), P = _canvasState.rowPitch;
+      const g = c.getContext('2d'), light = (x, y) => { const v = g.getImageData(x, y, 1, 1).data; return v[0] + v[1] + v[2] > 60; };
+      const seams = [];
+      // vertical: the device columns either side of the boundaries between cells 3..8 of rows 1 and 2
+      for (const row of [1, 2]) for (let col = 3; col <= 8; col++) {
+        const bx = (m.nameW + col * m.charW) * d;
+        const top = Math.round((m.headerH + row * P) * d), bottom = Math.round((m.headerH + (row + 1) * P) * d) - 1;
+        for (const y of [top, bottom]) {   // the cell's first and last device rows: above and below the letter ink
+          for (const x of [Math.floor(bx) - 1, Math.floor(bx), Math.ceil(bx)]) if (light(x, y)) seams.push(`v r${row} c${col} ${x},${y}`); }
+      }
+      // horizontal: the device rows either side of the boundaries between rows 1|2 and 2|3, at the left and right tenth of cells 3..8
+      for (const row of [2, 3]) for (let col = 3; col <= 8; col++) {
+        const by = (m.headerH + row * P) * d;
+        for (const fx of [0.1, 0.9]) { const x = Math.floor((m.nameW + (col + fx) * m.charW) * d);
+          for (const y of [Math.floor(by) - 1, Math.floor(by), Math.ceil(by)]) if (light(x, y)) seams.push(`h r${row} c${col} ${x},${y}`); }
+      }
+      const mid = g.getImageData(Math.floor((m.nameW + 4.1 * m.charW) * d), Math.floor((m.headerH + 1.1 * P) * d), 1, 1).data;
+      return { dark: mid[0] + mid[1] + mid[2] < 300, n: seams.length, first: seams.slice(0, 4) };
+    });
+    await p.close();
+  }
+  return { pass: Object.values(out).every(v => v.dark && v.n === 0), detail: JSON.stringify(out) };
 });
 
 // Canvas drew a light grey vertical line between the names and the sequences; Full and Block have none
@@ -7481,6 +7589,19 @@ check('Shortcuts window fits a 1280 x 720 screen without a scrollbar', async (pa
       .map(e => [e.id || e.className, e.scrollHeight, e.clientHeight]);
   });
   return { pass: over.length === 0, detail: JSON.stringify(over) };
+});
+
+// Owner's decision (2026-10-14, confirmed 2026-10-22): #controls set no font-family, so on Windows the menu headers
+// (Input, Shade, Display...) fell back to bold Times New Roman next to Arial buttons
+check('toolbar: menu headers use the same font as the toolbar buttons, not the browser serif', async (page) => {
+  const r = await page.evaluate(() => {
+    const head = document.querySelector('#input-section .section-header span');
+    const btn = document.querySelector('#controls button');
+    const fam = el => getComputedStyle(el).fontFamily.split(',')[0].replace(/["']/g, '').trim();
+    const label = [...document.querySelectorAll('#controls label')].map(fam);
+    return { head: fam(head), btn: fam(btn), serifLabels: label.filter(f => /times|serif/i.test(f) && !/sans/i.test(f)).length };
+  });
+  return { pass: r.head === 'Arial' && r.btn === 'Arial' && r.serifLabels === 0, detail: JSON.stringify(r) };
 });
 
 async function main() {
