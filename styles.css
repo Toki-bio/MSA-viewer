@@ -2995,7 +2995,9 @@ span.column-highlighted::after {
     padding: 10px 20px;
     border-radius: 4px;
     font-size: 14px;
-    z-index: 1000;
+    /* Above every window (10000+) and detached panel (100000): under them, a toast such as
+       "Newick copied." in the Tree window was invisible */
+    z-index: 100001;
     display: none;
     /* Purely a passive toast (no click handler anywhere), but centered and
        sized to its text - it was intercepting wheel/click events meant for
@@ -4337,3 +4339,13 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 #variantsTable tr.var-silent td:nth-child(9) { color: #2e7d32; }
 #variantsTable tr.var-other td:nth-child(9) { color: #666; }
 .var-help { color: #777; font-size: 11px; padding: 4px 10px 0; flex: 0 0 auto; }
+
+/* Printing: the fixed menu bar printed over the first block, and the browser dropped the
+   conservation-shading backgrounds, leaving white residues on white paper */
+@media print {
+    #controls { display: none !important; }
+    body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+}
