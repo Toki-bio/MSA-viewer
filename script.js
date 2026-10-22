@@ -14930,8 +14930,9 @@ function moveSelectedDown() {
 }
 function moveSelectedToTop() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indices.every((r, k) => r === k)) return;   // already at the top: no undo step (it pushed one and cleared Redo)
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
@@ -14948,8 +14949,9 @@ function moveSelectedToTop() {
 }
 function moveSelectedToBottom() {
     if (state.selectedRows.size === 0) return;
-    pushUndo('order');
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (indices.every((r, k) => r === state.seqs.length - indices.length + k)) return;   // already at the bottom
+    pushUndo('order');
     const newSeqs = [...state.seqs];
     const group = indices.map(i => newSeqs[i]);
     for (let j = indices.length - 1; j >= 0; j--) {
