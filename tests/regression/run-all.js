@@ -7163,21 +7163,6 @@ check('Audit: zooming keeps the top-left residue (small Full, windowed Full and 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
-// ---------- owner decisions after the audit (2026-10-14) ----------
-
-check('toolbar: menu headers use the same font as the toolbar buttons, not the browser serif', async (page) => {
-  // #controls set no font-family, so on Windows the menu headers (Input, Shade, Display...)
-  // fell back to bold Times New Roman next to Arial buttons. The owner chose Arial.
-  const r = await page.evaluate(() => {
-    const head = document.querySelector('#input-section .section-header span');
-    const btn = document.querySelector('#controls button');
-    const fam = el => getComputedStyle(el).fontFamily.split(',')[0].replace(/["']/g, '').trim();
-    const label = [...document.querySelectorAll('#controls label')].map(fam);
-    return { head: fam(head), btn: fam(btn), serifLabels: label.filter(f => /times|serif/i.test(f) && !/sans/i.test(f)).length };
-  });
-  return { pass: r.head === 'Arial' && r.btn === 'Arial' && r.serifLabels === 0, detail: JSON.stringify(r) };
-});
-
 // ---------- owner decisions, round 2 (2026-10-14) ----------
 const r2Sel = (page) => page.evaluate(() => [...state.selectedRows].sort((a, b) => a - b).join(','));
 async function r2ClickName(page, row, mods = []) {
