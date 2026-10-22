@@ -7046,6 +7046,27 @@ check('Audit: PageDown scrolls a small (page-scrolled) alignment and Canvas', as
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// Reads mode: the reference's name cell took .seq-name's -12px margin and the ruler's label was
+// 8px wider (content-box padding) than the reads' 160px name column, so reads started one base
+// right of the reference and the ruler numbers ~1.7 bases right.
+check('Audit: Reads mode lines up reads, reference and ruler', async (page) => {
+  await openSynthetic(page, 'synth_ref.fa');
+  await openSynthetic(page, 'synth_reads.bam');
+  await page.evaluate(() => { el('modeReads').checked = true; onModeChange(); }); await page.waitForTimeout(1200);
+  const r = await page.evaluate(() => {
+    const c = el('alignmentContainer');
+    const ref0 = c.querySelector('.ref-track-line .seq-data span[data-pos]').getBoundingClientRect().left;
+    const scale0 = c.querySelector('.scale-line').lastChild.children[0].getBoundingClientRect().left;
+    const svg = el('readsPileSvg'), sr = svg.getBoundingClientRect();
+    const read = bamState.reads.find(rd => rd.start === bamState.refStart);
+    // (ported: read bars are now coloured by strand, forward #b0606a and reverse #5a6fb0, not #4a7fa8)
+    const bars = [...svg.querySelectorAll('rect[stroke="#b0606a"], rect[stroke="#5a6fb0"]')].map(b => +b.getAttribute('x') + sr.left);
+    return { ref0, scale0, firstBar: Math.min(...bars), hasReadAtStart: !!read };
+  });
+  const ok = r.hasReadAtStart && Math.abs(r.firstBar - r.ref0) < 1 && Math.abs(r.scale0 - r.ref0) < 1;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
