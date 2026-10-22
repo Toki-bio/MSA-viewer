@@ -3229,6 +3229,7 @@ function _runUnifiedBlockJobs() {
         if (done && _unifiedBlockJobs.get(b) === step) _unifiedBlockJobs.delete(b);
     }
     if (_unifiedBlockJobs.size) _unifiedBlockJobRaf = requestAnimationFrame(_runUnifiedBlockJobs);
+    _scheduleBlockMaskOverlay();   // rows were added or dropped
 }
 
 // Brings a block's rendered row range to targetS..targetE: rows beyond the
@@ -4153,6 +4154,7 @@ function _refreshUnifiedWindowOnScroll(container) {
     // note above _unifiedWindowBudget); only touch spacers and selection
     // classes when something was actually rebuilt.
     if (!changed) return;
+    _scheduleBlockMaskOverlay();
     const topH = G.top(blockStart) + 'px';
     const bottomH = Math.max(0, G.top(numBlocks) - G.top(blockEnd + 1)) + 'px';
     if (topSpacer.style.height !== topH) topSpacer.style.height = topH;
@@ -10872,12 +10874,25 @@ function _blockMaskGroupContiguity(rows) {
     return best / s.length;
 }
 
+// The windowed views (above ALIGN_WINDOWED_DOM_THRESHOLD) build only the rows and columns near the
+// screen and rebuild them as it moves: the overlay is drawn over what is built and redrawn after
+// each change of the window (one frame later, _scheduleBlockMaskOverlay). The rectangles sit in
+// their block's own coordinates, so scrolling alone moves them with the residues. Which rows form
+// a run, and the dashed outline of a scattered group or a lone row, are decided on all of the
+// mask's rows, not on the built ones, so a rectangle does not change style at the window's edge.
+// (Show 2D used to draw nothing at all on a windowed view.)
+let _blockMaskOverlayRaf = 0;
+function _scheduleBlockMaskOverlay() {
+    if (!state.blockMask || _blockMaskOverlayRaf) return;
+    _blockMaskOverlayRaf = requestAnimationFrame(() => { _blockMaskOverlayRaf = 0; renderBlockMaskOverlay(); });
+}
+
 function renderBlockMaskOverlay() {
     document.querySelectorAll('.block-mask-layer').forEach(el => el.remove());
     if (document.getElementById('modeCanvas')?.checked) { _canvasState.scheduleOverlay?.(); return; }   // Canvas: the overlay layer draws (or clears) it
     const mask = state.blockMask;
     if (!mask || !Array.isArray(mask.blocks) || !Array.isArray(mask.row_headers)) return;
-    if (state._needsWindowedDom) return;                          // windowed DOM: unsupported yet
+    const windowed = !!state._needsWindowedDom;
     const container = document.getElementById('alignmentContainer');
     if (!container) return;
     const blockEls = container.querySelectorAll('.block-block');
@@ -10996,9 +11011,27 @@ function renderBlockMaskOverlay() {
                 const si = rowVis[k];
                 if (si >= 0 && rowElByIdx.has(si)) vis.push(si);
             }
+            const localOnly = !!mb.localOnly;
+            if (windowed) {
+                // Runs of consecutive rows over the whole mask, each clipped to the built rows
+                const all = [];
+                for (const k of mb.rows) if (rowVis[k] >= 0) all.push(rowVis[k]);
+                if (!all.length || !vis.length) return;
+                all.sort((a, b) => a - b);
+                const builtLo = _minOf(vis, v => v), builtHi = _maxOf(vis, v => v);
+                const dashedAll = !localOnly && _blockMaskGroupContiguity(all) < 0.6;
+                let a = 0;
+                for (let i = 1; i <= all.length; i++) {
+                    if (i < all.length && all[i] === all[i - 1] + 1) continue;
+                    const lo = Math.max(all[a], builtLo), hi = Math.min(all[i - 1], builtHi);
+                    const ya = lo <= hi ? rowTop(lo) : null, yz = lo <= hi ? rowTop(hi) : null;
+                    if (ya != null && yz != null) addRect(ya, (yz - ya) + rowH, _blockMaskOpacity, dashedAll || (!localOnly && i - a === 1), localOnly);
+                    a = i;
+                }
+                return;
+            }
             if (!vis.length) return;
             vis.sort((a, b) => rowElByIdx.get(a).getBoundingClientRect().top - rowElByIdx.get(b).getBoundingClientRect().top);
-            const localOnly = !!mb.localOnly;
             const groupDashed = !localOnly && _blockMaskGroupContiguity(vis) < 0.6;
             let runStart = vis[0], prev = vis[0], runLen = 1;
             const flush = (a, z, len) => {

@@ -7298,6 +7298,77 @@ check('Owner: Alt+J copies the selected consensus and Alt+C copies the selection
   return { pass: ok, detail: JSON.stringify(out).slice(0, 300) };
 });
 
+// ---------- pre-publication audit round 2: performance (2026-10-14) ----------
+
+// Page time from a user action to the frame after it (two animation frames: the work queued by the
+// action has run and the result has been laid out and painted).
+const r2Settle = (page) => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))));
+// Longest main-thread task while fn runs (PerformanceObserver 'longtask', > 50 ms each)
+async function r2LongTasks(page, fn) {
+  await page.evaluate(() => { window.__r2lt = []; window.__r2obs?.disconnect(); window.__r2obs = new PerformanceObserver(l => { for (const e of l.getEntries()) window.__r2lt.push(e.duration); }); window.__r2obs.observe({ type: 'longtask' }); });
+  await fn();
+  await page.waitForTimeout(600);
+  return page.evaluate(() => { window.__r2obs.disconnect(); return { max: Math.round(Math.max(0, ...window.__r2lt)), sum: Math.round(window.__r2lt.reduce((a, b) => a + b, 0)), n: window.__r2lt.length }; });
+}
+const r2Windowed = () => ({ windowed: !!state._needsWindowedDom, spacers: el('alignmentContainer').querySelectorAll(':scope > .unified-mode-spacer').length, spans: el('alignmentContainer').querySelectorAll('.seq-line[data-seq-index] span[data-pos]').length });
+
+// Show 2D drew nothing on a windowed alignment (renderBlockMaskOverlay returned early), so lowering
+// the windowed threshold would have taken it away from alignments of 100k-500k residues. The
+// overlay is now drawn over the rows and columns the windowed view has built, and redrawn as the
+// window moves. Each rectangle must start at its column's residue and cover its rows.
+const R2_MASK_ALIGNED = () => {
+  const mask = state.blockMask, c = el('alignmentContainer'), cr = c.getBoundingClientRect();
+  if (!mask) return { why: 'no mask' };
+  const headerToIdx = new Map(state.seqs.map((s, i) => [s.header, i]));
+  const rects = [...c.querySelectorAll('.block-mask-layer rect')];
+  let checked = 0, bad = 0;
+  for (const mb of mask.blocks) {
+    const rows = mb.rows === 'all' ? null : new Set(mb.rows.map(k => headerToIdx.get(mask.row_headers[k])));
+    for (const sp of c.querySelectorAll(`.seq-line[data-seq-index] > .seq-data > span[data-pos="${mb.col_start}"]`)) {
+      const si = +sp.closest('.seq-line').dataset.seqIndex;
+      if (si < 0 || (rows && !rows.has(si))) continue;
+      const s = sp.getBoundingClientRect();
+      if (s.right < cr.left + 150 || s.left > cr.right - 20 || s.bottom < cr.top || s.top > cr.bottom) continue;   // off screen / under the names
+      checked++;
+      const blk = sp.closest('.block-block');
+      const hit = rects.some(r => { const q = r.getBoundingClientRect(); return r.closest('.block-block') === blk && Math.abs(q.left - s.left) < 1.5 && q.top <= s.top + 1 && q.bottom >= s.bottom - 1; });
+      if (!hit) bad++;
+      if (checked >= 12) break;
+    }
+    if (checked >= 12) break;
+  }
+  return { rects: rects.length, checked, bad, sl: c.scrollLeft, st: c.scrollTop, menu: document.querySelector('.menu-open .section-header')?.dataset.section || null };
+};
+check('Round 2: Show 2D draws its rectangles on a windowed alignment (Full and Block, after scrolling)', async (page) => {
+  const fs = require('fs'), path = require('path');
+  const fa = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'blockmask', 'oma_SINE16b.aln.fa'), 'utf8');
+  // (ported: main keeps the windowed threshold at 500,000 residues, so ten copies, 500 x 1,049 =
+  // 524,500 residues, instead of the branch's two at 104,900 under its 100,000 threshold)
+  let many = fa;
+  for (let k = 1; k < 10; k++) many += fa.replace(/^>(\S+)/gm, '>$1_copy' + k);
+  await loadFasta(page, many);
+  await auditClickMode(page, 'full');
+  const out = { w: await page.evaluate(r2Windowed) };
+  await auditOpenSection(page, 'clustering');
+  await page.click('#biclusterComputeButton'); await page.waitForTimeout(1500);
+  // close the menu (it also opens on hover) so the wheel below reaches the alignment
+  for (let i = 0; i < 3 && await page.evaluate(() => !!document.querySelector('.section-header[data-section="clustering"]').closest('.menu-open')); i++) {
+    await page.click('.section-header[data-section="clustering"]');
+    await page.mouse.move(5, 600); await page.waitForTimeout(400);
+  }
+  out.full = await page.evaluate(R2_MASK_ALIGNED);
+  await auditWheel(page, 300, 0, 8);   // to column ~300: rows and columns the first window did not build
+  out.fullScrolled = await page.evaluate(R2_MASK_ALIGNED);
+  await auditClickMode(page, 'block');
+  out.block = await page.evaluate(R2_MASK_ALIGNED);
+  await auditWheel(page, 0, 400, 6);
+  out.blockScrolled = await page.evaluate(R2_MASK_ALIGNED);
+  const good = r => r && r.rects > 0 && r.checked > 0 && r.bad === 0;
+  // (the first screen of Full and of Block holds no rectangle's first column: there only that none is misplaced)
+  const ok = out.w.windowed && out.full.rects > 0 && out.full.bad === 0 && good(out.fullScrolled) && out.block.bad === 0 && good(out.blockScrolled);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
