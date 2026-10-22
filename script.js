@@ -23021,6 +23021,16 @@ function seqEditLowercase() {
     _seqEditTransform(seq => seq.toLowerCase());
 }
 
+// "Pad/trim to alignment length": pad a short sequence, and trim only trailing gaps from a
+// long one. It used to cut a long one to the width, dropping its last residues; one that is
+// still longer now widens the alignment (the caller pads the other rows).
+function _seqEditFitWidth(seq, alignLen) {
+    if (seq.length < alignLen) return seq.padEnd(alignLen, '-');
+    let end = seq.length;
+    while (end > alignLen && (seq[end - 1] === '-' || seq[end - 1] === '.')) end--;
+    return seq.slice(0, end);
+}
+
 function seqEditApply() {
     const indexStr = document.getElementById('seqEditIndex')?.textContent;
 
@@ -23044,10 +23054,7 @@ function seqEditApply() {
             const idx = indices[i];
             if (idx < 0 || idx >= state.seqs.length) continue;
             let seq = entries[i].seq;
-            if (padCheckbox && padCheckbox.checked && alignLen > 0) {
-                if (seq.length < alignLen) seq = seq.padEnd(alignLen, '-');
-                else if (seq.length > alignLen) seq = seq.substring(0, alignLen);
-            }
+            if (padCheckbox && padCheckbox.checked && alignLen > 0) seq = _seqEditFitWidth(seq, alignLen);
             const fullH = entries[i].header;
             state.seqs[idx].header = fullH.split(/\s+/)[0];
             state.seqs[idx].fullHeader = fullH;
@@ -23059,10 +23066,7 @@ function seqEditApply() {
         const updatedAlignLen = state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0;
         for (let i = updateCount; i < entries.length; i++) {
             let seq = entries[i].seq;
-            if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) {
-                if (seq.length < updatedAlignLen) seq = seq.padEnd(updatedAlignLen, '-');
-                else if (seq.length > updatedAlignLen) seq = seq.substring(0, updatedAlignLen);
-            }
+            if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) seq = _seqEditFitWidth(seq, updatedAlignLen);
             const fullH = entries[i].header;
             state.seqs.push({
                 header: fullH.split(/\s+/)[0],
@@ -23071,6 +23075,7 @@ function seqEditApply() {
                 gaplessPositions: calculateGaplessPositions(seq)
             });
         }
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
         closeSeqEditor();
         renderAlignment();
         showMessage(`${updateCount} sequence${updateCount > 1 ? 's' : ''} updated!`, 2000);
@@ -23109,13 +23114,7 @@ function seqEditApply() {
     const padCheckbox = document.getElementById('seqEditPadGaps');
     if (padCheckbox && padCheckbox.checked && state.seqs.length > 0) {
         const alignLen = _maxOf(state.seqs, s => s.seq.length);
-        if (alignLen > 0) {
-            if (seq.length < alignLen) {
-                seq = seq.padEnd(alignLen, '-');
-            } else if (seq.length > alignLen) {
-                seq = seq.substring(0, alignLen);
-            }
-        }
+        if (alignLen > 0) seq = _seqEditFitWidth(seq, alignLen);
     }
 
     if (isFreeform) {
@@ -23127,6 +23126,7 @@ function seqEditApply() {
             gaplessPositions: calculateGaplessPositions(seq)
         };
         state.seqs.push(newSeq);
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
         closeSeqEditor();
         renderAlignment();
         showMessage("New sequence added!", 2000);
@@ -23136,6 +23136,7 @@ function seqEditApply() {
         state.seqs[index].fullHeader = newFullHeader;
         state.seqs[index].seq = seq;
         state.seqs[index].gaplessPositions = calculateGaplessPositions(seq);
+        if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
         closeSeqEditor();
         renderAlignment();
         showMessage("Sequence updated!", 2000);

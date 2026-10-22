@@ -6713,6 +6713,27 @@ check('Audit: windowed Block mode repaints a typed residue on undo/redo after sc
   return { pass: st === 'N' && !afterUndo.length && !afterRedo.length, detail: JSON.stringify({ st, afterUndo, afterRedo }) };
 });
 
+check('Audit: SeqEdit Apply with "Pad/trim" never cuts residues', async (page) => {
+  // Used to: with the default "Pad/trim to alignment length", inserting residues in SeqEdit
+  // cut the sequence back to the alignment width, dropping its last residues (GT lost).
+  await loadFasta(page, '>a\nACGTACGT\n>b\nTTTTGG--\n');
+  await auditCtrlClickName(page, 0);
+  await page.evaluate(() => el('seqEditButton').click()); await page.waitForTimeout(200);
+  await page.evaluate(() => { const t = el('seqEditTextarea'); const p = t.value.indexOf('\n') + 1; t.focus(); t.setSelectionRange(p, p); });
+  await page.keyboard.type('TT');
+  await page.click('#seqEditApplyBtn'); await page.waitForTimeout(300);
+  const r = await page.evaluate(() => state.seqs.map(s => s.seq));
+  // a shorter edit is still padded, and only trailing gaps are trimmed
+  await auditCtrlClickName(page, 0); await auditCtrlClickName(page, 1);
+  await page.evaluate(() => el('seqEditButton').click()); await page.waitForTimeout(200);
+  await page.evaluate(() => { const t = el('seqEditTextarea'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); });
+  await page.keyboard.type('----');
+  await page.click('#seqEditApplyBtn'); await page.waitForTimeout(300);
+  const r2 = await page.evaluate(() => state.seqs.map(s => s.seq));
+  const pass = r[0] === 'TTACGTACGT' && r[1] === 'TTTTGG----' && r2[1] === 'TTTTGG----';
+  return { pass, detail: JSON.stringify({ r, r2 }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
