@@ -14305,19 +14305,21 @@ function handleKeyDown(e) {
         e.preventDefault();
     }
 
-    // Page navigation for large alignments
-    if (e.key === 'PageUp' || e.key === 'PageDown') {
+    // Page navigation. Canvas pans its own offset; a windowed view scrolls the container; a small
+    // alignment scrolls the page, so the key is left to the browser (it used to scroll the
+    // container, which does not scroll there, and was cancelled: PageDown did nothing).
+    if ((e.key === 'PageUp' || e.key === 'PageDown') && !e.ctrlKey && !e.metaKey && !e.altKey && !_isTextEntry(document.activeElement)) {
         const container = alignmentContainer;
         const direction = e.key === 'PageUp' ? -1 : 1;
         if (isCanvasMode() && _canvasState.canvas) {
             _canvasState.offsetY += direction * (parseInt(_canvasState.canvas.style.height) || container.clientHeight) * 0.8;
             (_canvasState.scheduleDrawMoved || _canvasState.scheduleDraw)?.();
             _canvasState.onOffsetChange?.();
-        } else {
-            const scrollAmount = container.clientHeight * 0.8;
-            container.scrollTop += direction * scrollAmount;
+            e.preventDefault();
+        } else if (container.scrollHeight > container.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(container).overflowY)) {
+            container.scrollTop += direction * container.clientHeight * 0.8;
+            e.preventDefault();
         }
-        e.preventDefault();
     }
 }
 function handleKeyUp(e) {
