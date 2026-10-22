@@ -14883,6 +14883,14 @@ function deleteSelectedColumns(skipConfirm) {
         showMessage("No columns selected for deletion.", 3000);
         return;
     }
+    // Deleting every column left zero-length sequences
+    const width = state.seqs.reduce((m, q) => Math.max(m, q.seq.length), 0);
+    let kept = 0;
+    for (let c = 0; c < width && !kept; c++) if (!state.selectedColumns.has(c)) kept++;
+    if (!kept) {
+        showMessage("Cannot delete every column.", 3000);
+        return;
+    }
     if (skipConfirm || confirm(`Delete ${state.selectedColumns.size} column(s)?`)) {
         pushUndo('deleteColumns');
         const colsToDelete = Array.from(state.selectedColumns).sort((a,b) => b - a);
@@ -22413,6 +22421,11 @@ async function addSequencesJustAdd() {
             state.seqs.push(...newSeqs);
         }
     }
+
+    // A new sequence longer than the alignment widens it: pad every row (only shorter new
+    // sequences were padded, so a longer one left the alignment ragged)
+    const widthBefore = state.seqs.reduce((m, q) => Math.min(m, q.seq.length), Infinity);
+    if (normalizeAlignmentLengths() !== widthBefore) refreshAllGaplessPositions();
 
     closeAddSequencesModal();
     renderAlignment();
