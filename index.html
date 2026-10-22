@@ -51,14 +51,15 @@
                     </div>
                     <div id="snapshotLoadRow" style="margin-top: 6px; border-top: 1px solid #ddd; padding-top: 6px;">
                         <div style="font-size: 10px; color: #666; margin-bottom: 3px;">Snapshots</div>
-                        <div style="display: flex; gap: 4px; align-items: center;">
+                        <!-- the two snapshot-folder rows show once the optional server or snapshots/index.json lists files (script.js refreshSnapshotList) -->
+                        <div id="snapshotFolderListRow" style="display: none; gap: 4px; align-items: center;">
                             <select id="snapshotListSelect" style="flex: 1; font-size: 11px; height: 22px;" title="Select a saved snapshot JSON from snapshots folder">
                                 <option value="">-- snapshots/*.json --</option>
                             </select>
                             <button id="snapshotRefreshButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Refresh snapshot list">Refresh</button>
                             <button id="snapshotOpenButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Open selected snapshot">Open</button>
                         </div>
-                        <div style="display: flex; gap: 4px; align-items: center; margin-top: 4px;">
+                        <div id="snapshotFolderPathRow" style="display: none; gap: 4px; align-items: center; margin-top: 4px;">
                             <input type="text" id="snapshotPathInput" placeholder="snapshots/my_snapshot.json" style="flex: 1; font-size: 11px; padding: 2px 4px; font-family: 'Courier New', monospace; border: 1px solid #ccc; border-radius: 3px;" title="Manual snapshot path for ?snapshotFile mode">
                             <button id="snapshotPathOpenButton" style="height: 22px; font-size: 10px; white-space: nowrap;" title="Open snapshot by path">Open Path</button>
                         </div>
