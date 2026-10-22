@@ -14338,7 +14338,7 @@ function handleKeyDown(e) {
                 }
                 break;
             case 'j':
-                if (e.shiftKey) {
+                if (e.shiftKey) {   // alias of Alt+J (browsers keep Ctrl+Shift+J for DevTools)
                     copySelectedConsensus();
                     e.preventDefault();
                 }
@@ -14388,6 +14388,14 @@ function handleKeyDown(e) {
     // Alt+T: open selected in a new tab (e.code, since Alt+T types a symbol on macOS)
     if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'KeyT') {
         openSelectedInNewTab();
+        e.preventDefault();
+    }
+    // Alt+J: copy the consensus of the selected rows; Alt+C: copy the selection (as Copy Sel).
+    // Chrome, Edge and Firefox keep Ctrl+Shift+J / Ctrl+Shift+C for their developer tools, so
+    // those never reached the page; they still work as aliases where a browser passes them.
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.code === 'KeyJ' || e.code === 'KeyC')) {
+        if (e.code === 'KeyJ') copySelectedConsensus();
+        else copySelected();
         e.preventDefault();
     }
 
