@@ -7428,6 +7428,20 @@ check('Round 2: mode switches keep the place on an alignment under the windowed 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// The Shortcuts window (Info) gained an Alt+C row and no longer fit a 1280 x 720 screen: it got
+// a scrollbar (735px of content in 720px). Ctrl+C and Alt+C now share one row.
+check('Shortcuts window fits a 1280 x 720 screen without a scrollbar', async (page) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.evaluate(() => openInfoModal());
+  await page.waitForTimeout(400);
+  const over = await page.evaluate(() => {
+    const m = document.getElementById('infoModal');
+    return [m, ...m.querySelectorAll('*')].filter(e => /auto|scroll/.test(getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight + 1)
+      .map(e => [e.id || e.className, e.scrollHeight, e.clientHeight]);
+  });
+  return { pass: over.length === 0, detail: JSON.stringify(over) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
