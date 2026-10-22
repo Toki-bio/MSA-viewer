@@ -6982,6 +6982,26 @@ check('Audit: the Canvas fits the alignment area exactly', async (page) => {
   return { pass: r.w === r.cw && r.h === r.ch && r.sx === 0 && r.sy === 0, detail: JSON.stringify(r) };
 });
 
+// With codon analysis the translation row's name cell (sticky, white) is empty in single-frame
+// mode and the row aligned its items to the top, so the cell was 0px tall: scrolled sideways,
+// the amino acids showed through the name column.
+check('Audit: translation rows stay under the sticky name column when scrolled sideways', async (page) => {
+  await loadFasta(page, makeFasta(20, 600, 'ATGGCAACG'));
+  await auditClickMode(page, 'full');
+  await auditOpenSection(page, 'display');
+  await page.click('#codonAnalysis'); await page.waitForTimeout(1200);
+  await page.click('.section-header[data-section="display"]');
+  await auditWheel(page, 600, 0, 3);
+  const r = await page.evaluate(() => {
+    const a = document.querySelector('.aa-row'), n = a.querySelector('.aa-name'), ar = a.getBoundingClientRect();
+    const e = document.elementFromPoint(n.getBoundingClientRect().left + 40, ar.top + ar.height / 2);
+    // the codon boxes fill the row's content box (its padding is the row's own white)
+    const boxH = Math.max(...[...a.querySelectorAll('.aa-data > span')].slice(0, 20).map(sp => sp.getBoundingClientRect().height));
+    return { sl: el('alignmentContainer').scrollLeft, nameH: n.getBoundingClientRect().height, boxH, hit: e && e.className };
+  });
+  return { pass: r.sl > 1000 && r.nameH >= r.boxH - 0.5 && !/aa-c/.test(r.hit || ''), detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
