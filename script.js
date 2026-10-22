@@ -3180,18 +3180,22 @@ function _computeBlockColumnWindow(start, end, scrollLeft, visibleDataWidth, cha
 //
 // Sizes come from a budget of residue spans, so a tall alignment gets a
 // shorter column buffer and a wide one a shorter row buffer.
+//
+// The budget is about 2.5 screens, not 6. Every change of the window (a re-centre of the columns,
+// rows added at an end) costs style, layout and paint of ALL built rows, not just of the changed
+// part: on 1500 x 4,000 (1400 x 900 window) the old window was ~130 rows x 510 columns (63k
+// spans), and each horizontal re-centre took 0.9-1.9 s (up to 4.5 s with real wheel events),
+// each vertical step ~330 ms. Measured with a window of half a screen of rows and a third of a
+// screen of columns on each side (~30k spans): a re-centre ~0.2-0.4 s, vertical steps ~170 ms.
+// The guard is a quarter of the buffer, so a re-centre still comes only every ~3/4 buffer.
 function _unifiedWindowBudget(visibleRows, visibleCols, nSeq, blockLen) {
     const vc = Math.max(1, Math.min(visibleCols, blockLen));
-    let bufferRows = Math.max(20, 2 * visibleRows);
-    const colsFor = (renderedRows) => Math.min(3 * vc, Math.max(vc, Math.floor(20000 / Math.max(1, renderedRows))));
-    let renderedRows = Math.min(nSeq, visibleRows + 2 * bufferRows);
-    let bufferCols = colsFor(renderedRows);
-    if (renderedRows * Math.min(blockLen, vc + 2 * bufferCols) > 70000) {
-        bufferRows = Math.max(10, Math.floor(bufferRows / 2));
-        renderedRows = Math.min(nSeq, visibleRows + 2 * bufferRows);
-        bufferCols = colsFor(renderedRows);
-    }
-    return { bufferRows, bufferCols, guardRows: Math.ceil(bufferRows / 2), guardCols: Math.ceil(bufferCols / 2) };
+    const bufferRows = Math.max(8, Math.ceil(visibleRows / 2));
+    const renderedRows = Math.max(1, Math.min(nSeq, visibleRows + 2 * bufferRows));
+    // A third of a screen of columns each side; more when few rows are built (up to 25,000 spans
+    // in all), never more than two screens
+    const bufferCols = Math.min(2 * vc, Math.max(20, Math.ceil(vc * 0.35), Math.floor((25000 / renderedRows - vc) / 2)));
+    return { bufferRows, bufferCols, guardRows: Math.ceil(bufferRows / 4), guardCols: Math.ceil(bufferCols / 4) };
 }
 
 // Rows per animation frame when a block's row window grows (a block entering
@@ -3310,15 +3314,13 @@ function _rangeWithinGuard(rendS, rendE, visS, visE, guard, minS, maxE) {
     return (rendS <= minS || rendS <= visS - guard) && (rendE >= maxE || rendE >= visE + guard);
 }
 
+// One node at a time: Range.deleteContents spent ~1.3 ms a row (2 s of a 30-step horizontal scroll
+// on 1500 x 4,000 in a profile), about 40% more than removing the spans directly.
 function _removeLeadingChildren(el, n) {
-    const r = document.createRange();
-    r.setStart(el, 0); r.setEnd(el, n);
-    r.deleteContents();
+    for (let i = 0; i < n && el.firstChild; i++) el.removeChild(el.firstChild);
 }
 function _removeTrailingChildren(el, n) {
-    const r = document.createRange();
-    r.setStart(el, el.childNodes.length - n); r.setEnd(el, el.childNodes.length);
-    r.deleteContents();
+    for (let i = 0; i < n && el.lastChild; i++) el.removeChild(el.lastChild);
 }
 
 // Moves one data row's rendered column window from oldS..oldE to newS..newE
