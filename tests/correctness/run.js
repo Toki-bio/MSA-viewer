@@ -767,6 +767,23 @@ check('snapshot colours are checked: a crafted colour cannot inject CSS', async 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('motif search (not regex): IUPAC codes in a DNA motif are wildcards, not in protein', async (page) => {
+  // A plain search compared letters exactly, so GANTC found nothing in GAATC/GATTC
+  // (the restriction tool handled IUPAC; the Find box did not).
+  await loadFasta(page, '>a\nGAATCGATTC\n>b\nGAGTCGACTC\n');
+  const dna = await page.evaluate(() => {
+    document.getElementById('searchRegex').checked = false;
+    const r = searchMotif({ motif: 'GANTC', useRegex: false, suppressMessage: true });
+    return r ? r.results.reduce((n, x) => n + (x.rawMatchCount || 0), 0) : null;
+  });
+  await loadFasta(page, '>p\nMKNLVWDHN\n>q\nMKALVWDHN\n');
+  const prot = await page.evaluate(() => {
+    const r = searchMotif({ motif: 'KN', useRegex: false, suppressMessage: true });
+    return r ? r.results.reduce((n, x) => n + (x.rawMatchCount || 0), 0) : null;
+  });
+  return { pass: dna === 4 && prot === 1, detail: JSON.stringify({ dna, prot }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const filter = process.env.CHECK_FILTER ? process.env.CHECK_FILTER.toLowerCase() : null;

@@ -309,7 +309,7 @@ function _searchMatchesInDegapped(displayString, entry) {
         }
         return matches;
     }
-    return findFuzzyMatches(displayString, motif, maxMismatches)
+    return findFuzzyMatches(displayString, motif, maxMismatches, !!entry.iupac)
         .map(m => ({ idx: m.idx, len: m.len, matchingPositions: m.matchingPositions }));
 }
 
@@ -16296,15 +16296,17 @@ function findFuzzyPositions(degapped, motif, maxMismatches) {
     return findFuzzyMatches(degapped, motif, maxMismatches).map(m => m.idx);
 }
 
-function findFuzzyMatches(degapped, motif, maxMismatches) {
+function findFuzzyMatches(degapped, motif, maxMismatches, iupac = false) {
     const matches = [];
     const motifLen = motif.length;
     if (!motifLen || degapped.length < motifLen) return matches;
+    // With iupac, a motif code matches any base it stands for (N: A, C, G or T)
+    const allowed = iupac ? Array.from(motif, c => new Set(iupacToBases(c).concat(c))) : null;
     for (let i = 0; i <= degapped.length - motifLen; i++) {
         let mismatches = 0;
         const matchingPositions = [];
         for (let j = 0; j < motifLen; j++) {
-            if (degapped[i + j] === motif[j]) {
+            if (degapped[i + j] === motif[j] || (allowed && allowed[j].has(degapped[i + j]))) {
                 matchingPositions.push(i + j);
             } else {
                 mismatches++;
@@ -16735,7 +16737,10 @@ function searchMotif(options = {}) {
             id: className, motif: motifKey, className, color: searchColorValue, label, strand,
             searchValue: searchMotifValue, useRegex: !!useRegex,
             maxMismatches: useRegex ? 0 : maxMismatches, enabled: true,
-            ...(options.overlapping ? { overlapping: true } : {})
+            ...(options.overlapping ? { overlapping: true } : {}),
+            // In a nucleotide motif R, Y, N ... stand for several bases (in protein they are residues).
+            // A plain search compared letters exactly, so GANTC found nothing in GAATC/GATTC.
+            ...(!useRegex && !protein && /[RYSWKMBDHVN]/.test(searchMotifValue) ? { iupac: true } : {})
         };
 
         // Re-running an identical search replaces it rather than stacking a copy
