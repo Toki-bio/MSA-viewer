@@ -698,6 +698,55 @@ check('Codon alignment uses the chosen genetic code (vertebrate mito: TGA is Trp
 // A plain click on a name selected nothing (since the March drag-to-reorder: a press without movement was simply
 // dropped), in every view, though the manual says "Click sequence name: Select row". Click selects that row
 // alone; a click on the only selected row unselects it.
+// Owner's request: the name column's width is set by dragging the (invisible) boundary between names and sequences,
+// not only with the Name length slider. The drag must not start a row reorder or select anything.
+check('Name column width: dragging the boundary between names and sequences sets the name length (Full, Block, Canvas)', async (page) => {
+  const out = {};
+  for (const view of ['full', 'block', 'canvas']) {
+    const p = await page.context().browser().newPage({ viewport: { width: 1200, height: 700 } });
+    await p.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await p.setInputFiles('#fileInput', { name: 'n.fa', mimeType: 'text/plain', buffer: Buffer.from('>a_rather_long_sequence_name_one\nACGTACGTACGT\n>second_long_sequence_name_two\nACGTACGAACGT\n>third\nACGAACGTACGT\n') });
+    await p.waitForTimeout(1500);
+    await p.evaluate(() => setNameLengthUI(10, true));
+    await p.waitForTimeout(800);
+    const geo = await p.evaluate(() => {
+      if (document.getElementById('modeCanvas').checked) {
+        const r = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics;
+        return { edge: r.left + m.nameW, y: r.top + m.headerH + 1.5 * _canvasState.rowPitch, ch: m.charW };
+      }
+      const n = document.querySelector('.seq-line[data-seq-index="1"] > .seq-name').getBoundingClientRect();
+      const probe = document.createElement('span'); probe.textContent = '0'.repeat(10);
+      probe.style.cssText = 'position:absolute;visibility:hidden;font:' + getComputedStyle(document.querySelector('.seq-name')).font;
+      document.body.appendChild(probe); const ch = probe.getBoundingClientRect().width / 10; probe.remove();
+      return { edge: n.right, y: n.top + n.height / 2, ch };
+    });
+    await p.mouse.move(geo.edge - 1, geo.y);
+    await p.waitForTimeout(150);
+    const cursor = await p.evaluate(([x, y]) => getComputedStyle(document.elementFromPoint(x, y)).cursor, [geo.edge - 1, geo.y]);
+    const before = await p.evaluate(() => ({ order: state.seqs.map(s => s.header).join(','), sel: state.selectedRows.size }));
+    await p.mouse.down();
+    await p.mouse.move(geo.edge - 1 + 6 * geo.ch, geo.y, { steps: 6 });
+    await p.mouse.up();
+    await p.waitForTimeout(900);
+    const wider = await p.evaluate(() => +document.getElementById('nameLengthSlider').value);
+    // and back narrower
+    const geo2 = await p.evaluate(() => {
+      if (document.getElementById('modeCanvas').checked) { const r = _canvasState.canvas.getBoundingClientRect(); return r.left + _canvasState.metrics.nameW; }
+      return document.querySelector('.seq-line[data-seq-index="1"] > .seq-name').getBoundingClientRect().right;
+    });
+    await p.mouse.move(geo2 - 1, geo.y); await p.mouse.down();
+    await p.mouse.move(geo2 - 1 - 3 * geo.ch, geo.y, { steps: 4 }); await p.mouse.up();
+    await p.waitForTimeout(900);
+    const after = await p.evaluate(() => ({ len: +document.getElementById('nameLengthSlider').value, order: state.seqs.map(s => s.header).join(','), sel: state.selectedRows.size,
+      label: document.getElementById('modeCanvas').checked ? null : document.querySelector('.seq-line[data-seq-index="1"] > .seq-name').textContent.trim() }));
+    out[view] = { cursor, wider, ...after, orderKept: after.order === before.order, sel0: before.sel };
+    await p.close();
+  }
+  const ok = Object.values(out).every(r => r.cursor === 'col-resize' && r.wider === 16 && r.len === 13 && r.orderKept && r.sel === 0)
+    && out.full.label.length === 13 && out.block.label.length === 13;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 check('A plain click on a name selects that row (Full, Block, Canvas); a second click unselects it', async (page) => {
   const out = {};
   for (const view of ['full', 'block', 'canvas']) {

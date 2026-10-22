@@ -26683,6 +26683,76 @@ function handleAlignmentPanContextMenu(e) {
     }, true);
 })();
 
+// The name column's width by dragging the (invisible) boundary between the names and the sequences, in Full,
+// Block and Canvas (owner's request; before, only the Name length slider set it). Near the names' right edge the
+// pointer turns into a column-resize cursor; a press there drags the width in whole characters, through the same
+// path as the slider (setNameLengthUI), and does not start a row reorder or a selection. A double-click on the
+// edge fits the longest name.
+window.addEventListener('load', () => {
+    if (!alignmentContainer) return;
+    const ZONE = 4;
+    let measure = null;
+    const charWidth = nm => {
+        const font = getComputedStyle(nm).font;
+        if (!measure) measure = document.createElement('canvas').getContext('2d');
+        measure.font = font;
+        return measure.measureText('0').width || 8;
+    };
+    // { edge, ch } when (x, y) is within ZONE px of the names' right edge, else null
+    const edgeAt = (x, y, target) => {
+        if (document.getElementById('modeReads')?.checked) return null;
+        if (isCanvasMode()) {
+            const c = _canvasState.canvas, m = _canvasState.metrics;
+            if (!c || !m || !m.nameW) return null;
+            const r = c.getBoundingClientRect();
+            if (y < r.top + (m.headerH || 0) || y > r.bottom) return null;
+            const edge = r.left + (el('stickyNames')?.checked === false ? -_canvasState.offsetX : 0) + m.nameW;
+            return Math.abs(x - edge) <= ZONE ? { edge, ch: m.charW } : null;
+        }
+        const line = target && target.closest && target.closest('.seq-line[data-seq-index]');
+        const nm = line && line.querySelector(':scope > .seq-name');
+        if (!nm) return null;
+        const r = nm.getBoundingClientRect();
+        return Math.abs(x - r.right) <= ZONE ? { edge: r.right, ch: charWidth(nm) } : null;
+    };
+    let drag = null;
+    alignmentContainer.addEventListener('mousemove', (e) => {
+        if (drag) return;
+        alignmentContainer.classList.toggle('name-resize-hover', !!edgeAt(e.clientX, e.clientY, e.target));
+    });
+    alignmentContainer.addEventListener('mouseleave', () => { if (!drag) alignmentContainer.classList.remove('name-resize-hover'); });
+    alignmentContainer.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        const hit = edgeAt(e.clientX, e.clientY, e.target);
+        if (!hit) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();               // no row reorder, rename or selection
+        if (el('nameLengthNoLimit')?.checked) _applyNameLenNoLimit(false);
+        drag = { x0: e.clientX, len0: effectiveNameLength(), ch: hit.ch, len: effectiveNameLength() };
+        document.body.classList.add('name-resizing');
+    }, true);
+    document.addEventListener('mousemove', (e) => {
+        if (!drag) return;
+        const len = clampNameLength(drag.len0 + Math.round((e.clientX - drag.x0) / drag.ch));
+        if (len === drag.len) return;
+        drag.len = len;
+        setNameLengthUI(len, isCanvasMode());     // DOM widths change at once; Canvas redraws
+    });
+    document.addEventListener('mouseup', () => {
+        if (!drag) return;
+        const len = drag.len;
+        drag = null;
+        document.body.classList.remove('name-resizing');
+        setNameLengthUI(len, true);
+    });
+    alignmentContainer.addEventListener('dblclick', (e) => {
+        if (!edgeAt(e.clientX, e.clientY, e.target)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();               // not a rename
+        setNameLengthUI(_maxOf(state.seqs, s => (s.header || '').length), true);
+    }, true);
+});
+
 // Right-click horizontal scroll
 window.addEventListener('load', () => {
     if (!alignmentContainer) return;

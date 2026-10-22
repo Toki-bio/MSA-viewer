@@ -4331,3 +4331,8 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 #variantsTable tr.var-silent td:nth-child(9) { color: #2e7d32; }
 #variantsTable tr.var-other td:nth-child(9) { color: #666; }
 .var-help { color: #777; font-size: 11px; padding: 4px 10px 0; flex: 0 0 auto; }
+
+/* The boundary between names and sequences: drag it to set the name column's width */
+#alignmentContainer.name-resize-hover, #alignmentContainer.name-resize-hover *,
+body.name-resizing, body.name-resizing * { cursor: col-resize !important; }
+body.name-resizing { user-select: none; }
