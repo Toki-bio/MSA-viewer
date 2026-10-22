@@ -5765,7 +5765,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const m = _initCanvasMetrics(ctx, fontSizePx);
     const CHAR_W = m.charW;
     const CHAR_H = m.charH;
-    const NAME_W = nameLen * CHAR_W + 8;
+    // The 8 px pad after the names in whole device pixels: at 0.9x, 1.1x or 1.33x it was a fraction, every cell
+    // then sat between device pixels and neighbouring shaded cells were parted by a pale seam (owner's report)
+    const NAME_W = nameLen * CHAR_W + Math.round(8 * dpr) / dpr;
     // Store nameW in metrics so _canvasHitTest can use it without re-deriving
     m.nameW = NAME_W;
     // Store canvas reference for hit-testing
@@ -6212,6 +6214,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             }
         }
 
+        // Marks on residues stay in the data area: with fixed names, a cell scrolled left of the name column's
+        // edge is hidden under the names, not drawn over them (owner's report)
+        const clipData = () => { octx.save(); if (stickyNames) { octx.beginPath(); octx.rect(NAME_W, 0, Math.max(0, w - NAME_W), h); octx.clip(); } };
+        clipData();
         // Show 2D: the block mask rectangles (DOM: .block-mask-layer SVG), kept for hit-testing
         _canvasState.maskRects = state.blockMask ? _canvasBlockMaskRects(CHAR_W, rowPitch, nSeqs, posSlot) : null;
         if (_canvasState.maskRects && _canvasState.maskRects.length) {
@@ -6245,6 +6251,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             });
         }
 
+        octx.restore();
         // Highlight selected rows (semi-transparent horizontal strips; same tint as the DOM)
         if (state.selectedRows.size > 0) {
             octx.fillStyle = 'rgba(40, 167, 69, 0.30)';
@@ -6255,6 +6262,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             });
         }
 
+        clipData();
         // Highlight selected nucleotides (mirrors DOM .nuc-selected in Full/Block mode)
         if (state.selectedNucs.size > 0) {
             octx.fillStyle = 'rgba(25, 118, 210, 0.25)';
@@ -6303,7 +6311,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 }
             }
         }
-
+        octx.restore();
     }
 
     // Draws the cells, ruler, names and overlays that intersect the CSS-pixel rectangle
