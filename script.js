@@ -10313,7 +10313,11 @@ function renderAlignment(options = {}) {
     syncCodonModePanel();
     syncSearchControlsAvailability();
     if (!state.seqs || state.seqs.length === 0) {
-        alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic;">No sequences loaded. Paste FASTA/MSF and click Load.</div>';
+        // Wraps (on a phone the one line ran off under its own scrollbar) and offers the
+        // example alignment through the ?url= loader
+        alignmentContainer.innerHTML = '<div style="padding:20px; color:#666; font-style:italic; white-space:normal; overflow-wrap:anywhere;">'
+            + 'No sequences loaded. Paste FASTA/MSF in the Input menu and click Load, or drop a file on the page. '
+            + '<a href="?url=examples/svk_k4.fa&amp;title=SVK%20SINE%20(K1%E2%80%93K4)" style="font-style:normal;">Try an example alignment</a> (40 SINE copies, 4 subfamilies).</div>';
         syncCodonModePanel();
         return;
     }
