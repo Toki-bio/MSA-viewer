@@ -5992,14 +5992,25 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const top0 = alignmentContainer.getBoundingClientRect().top;
         const hCss = Math.max(100, window.innerHeight - top0 - 28);
         if (parseInt(alignmentContainer.style.height) !== hCss) alignmentContainer.style.height = hCss + 'px';
-        const rect = alignmentContainer.getBoundingClientRect();
-        const key = rect.width + 'x' + rect.height + '@' + rect.left + ',' + rect.top;
+        // The container's client area, not its border box (2px wider, 1px taller): the canvas
+        // overflowed it, its edge was cut, and a scrollTop/scrollLeft write nudged the alignment.
+        const br = alignmentContainer.getBoundingClientRect();
+        const rect = { width: alignmentContainer.clientWidth, height: alignmentContainer.clientHeight };
+        const key = rect.width + 'x' + rect.height + '@' + br.left + ',' + br.top;
         if (!force && key === _lastRect) return false;
         _lastRect = key;
         // Whole device pixels, or the browser resamples the whole canvas and every letter, name and line is blurred
         // (at 125% or 150% screen scale it sat at x = 11.25 device px, 1687 px of bitmap stretched over 1687.5):
         // the bitmap's own size on screen, and a shift of under one device pixel to a whole-pixel corner
-        const bw = Math.floor(rect.width * dpr), bh = Math.floor(rect.height * dpr);
+        // Within the client area, the CSS size (bitmap / dpr) must also be one layout can hold exactly
+        // (whole 1/64 px): at 125% a 543px area gives 678 device px = 542.4 CSS px, laid out as
+        // 542.390625, and the bitmap was resampled again. Step down to the nearest size that is.
+        const fitDev = (css) => {
+            const max = Math.floor(css * dpr + 1e-6);
+            for (let b = max; b > 0 && b > max - 64; b--) { const u = b / dpr * 64; if (Math.abs(u - Math.round(u)) < 1e-6) return b; }
+            return max;
+        };
+        const bw = fitDev(rect.width), bh = fitDev(rect.height);
         canvas.width = bw;
         canvas.height = bh;
         canvas.style.width = (bw / dpr) + 'px';
