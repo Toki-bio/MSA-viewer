@@ -84,6 +84,18 @@ const SCAN = () => {
     if (errors.length) problems.push(`${w}x${h}: page errors: ${errors.join('; ')}`);
     await page.close();
   }
+  // A page opened straight in Canvas (the default view), as a user opens it: everything stays on the menu
+  // line at 1280 px, and at 1366 px also with a row selected (the selection adds toolbar items): the toolbar is
+  // one line. Arial headers with the serif's spacing made it two lines in both.
+  for (const [w, h, sel] of [[1280, 720, false], [1366, 700, true]]) {
+    const page = await browser.newPage({ viewport: { width: w, height: h } });
+    await page.goto(baseUrl + '/index.html?view=canvas', { waitUntil: 'networkidle' });
+    await page.setInputFiles('#fileInput', path.join(ROOT, 'examples/synthetic/synth_msa.fa')); await page.waitForTimeout(1500);
+    if (sel) { await page.evaluate(() => { state.selectedRows = new Set([1]); updateRowSelections(); }); await page.waitForTimeout(400); }
+    const ht = await page.evaluate(() => Math.round(document.getElementById('controls').getBoundingClientRect().height));
+    if (ht > 40) problems.push(`${w}x${h} opened in Canvas${sel ? ', row selected' : ''}: the toolbar takes two lines (${ht}px)`);
+    await page.close();
+  }
   await browser.close(); server.close();
   if (problems.length) { console.log(problems.map(p => 'FAIL ' + p).join('\n')); console.log(`\n${problems.length} problem(s)`); process.exit(1); }
   console.log('PASS toolbar: no overlaps, nothing off-screen or wrapped, in 5 states at 4 window sizes');

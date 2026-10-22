@@ -151,7 +151,7 @@ html {
     flex: 1 0 auto;               /* never narrower than its menus: they would be drawn over each other */
     display: flex;
     justify-content: flex-start;
-    gap: 7px;                     /* 10 px with Arial headers pushed the view switch to a second line at 1280 px */
+    gap: 4px;                     /* with Arial headers (wider than the serif) 10 px pushed the view switch to a second line at 1280-1366 px */
     align-items: center;
     min-width: 220px;
 }
@@ -200,6 +200,7 @@ html {
 .menu-section .section-header {
     display: inline-flex;
     width: auto;
+    padding: 1px 3px;             /* Arial headers: the toolbar keeps the width it had with the serif */
 }
 
 /* Make sure control-group absolute positioning lines up under its header only */
