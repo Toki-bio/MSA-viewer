@@ -6677,6 +6677,22 @@ check('Audit: edits that change nothing add no undo entry and keep the redo list
   return { pass: h0 === '0/1' && h1 === h0 && h2 === h0 && h3 === '0/1' && h4 === h3, detail: JSON.stringify({ h0, h1, h2, h3, h4 }) };
 });
 
+check('Audit: switching from Canvas to Full and deleting rows raises no error from the Canvas shading job', async (page) => {
+  // Used to: the Canvas deferred shading job kept a reference to state.seqs and was only
+  // cancelled by the next Canvas render; after a switch to Full, a row delete spliced the
+  // array under it and it threw "Cannot read properties of undefined (reading 'seq')".
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('dialog', d => d.accept());
+  await loadSyntheticFasta(page, 1500, 4000);   // opens in Canvas (above CANVAS_AUTO_THRESHOLD)
+  await setMode(page, 'full');
+  await auditCtrlClickName(page, 2); await auditCtrlClickName(page, 3); await auditBlur(page);
+  await page.keyboard.press('Control+Delete');
+  await page.waitForTimeout(3000);
+  const n = await page.evaluate(() => state.seqs.length);
+  return { pass: errors.length === 0 && n === 1498, detail: JSON.stringify({ n, errors }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
