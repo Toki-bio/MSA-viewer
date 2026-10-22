@@ -14424,7 +14424,7 @@ window.addEventListener('blur', () => {
 // ACTION FUNCTIONS
 function reverseComplementSelected() {
     if (state.selectedRows.size === 0) {
-        showMessage("Select sequences (Ctrl+click) to RevComp.", 3000);
+        showMessage("Select sequences (click a name; Ctrl+click adds) to RevComp.", 3000);
         return;
     }
     reverseComplementSequences(Array.from(state.selectedRows));

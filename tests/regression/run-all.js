@@ -7178,6 +7178,102 @@ check('toolbar: menu headers use the same font as the toolbar buttons, not the b
   return { pass: r.head === 'Arial' && r.btn === 'Arial' && r.serifLabels === 0, detail: JSON.stringify(r) };
 });
 
+// ---------- owner decisions, round 2 (2026-10-14) ----------
+const r2Sel = (page) => page.evaluate(() => [...state.selectedRows].sort((a, b) => a - b).join(','));
+async function r2ClickName(page, row, mods = []) {
+  const p = await auditName(page, row);
+  for (const m of mods) await page.keyboard.down(m);
+  await page.mouse.click(p.x, p.y);
+  for (const m of mods.slice().reverse()) await page.keyboard.up(m);
+  await page.waitForTimeout(250);
+}
+// The click / Ctrl / Shift sequence on names, in one view; returns what went wrong
+async function r2NameClicks(page, label) {
+  const bad = [];
+  const expect = async (want, what) => {
+    const got = await r2Sel(page);
+    if (got !== want) bad.push(`${label} ${what}: ${got} (want ${want})`);
+  };
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+  await r2ClickName(page, 2); await expect('2', 'click');
+  // (ported: the owner's rule on main is that a second single click on the only selected name
+  // unselects it; the branch kept it selected. Then select row 2 again for the next steps.)
+  await r2ClickName(page, 2); await expect('', 'click again');
+  await r2ClickName(page, 2); await expect('2', 'click once more');
+  await r2ClickName(page, 4); await expect('4', 'click another');
+  await r2ClickName(page, 1, ['Control']); await expect('1,4', 'ctrl+click');
+  await r2ClickName(page, 1, ['Control']); await expect('4', 'ctrl+click again');
+  await r2ClickName(page, 1, ['Control']);
+  await r2ClickName(page, 6, ['Shift']); await expect('1,2,3,4,5,6', 'shift+click');
+  await r2ClickName(page, 3); await expect('3', 'click after range');
+  if (!(await page.evaluate(() => el('modeCanvas').checked))) {
+    const dom = await page.evaluate(() => [...document.querySelectorAll('.seq-line.selected[data-seq-index]')].map(l => l.dataset.seqIndex).filter((v, i, a) => a.indexOf(v) === i).join(','));
+    if (dom !== '3') bad.push(`${label} highlighted rows: ${dom}`);
+  }
+  return bad;
+}
+
+// The owner wants a plain click on a sequence name to select that row (the manual's Mouse table
+// says "Click sequence name | Select row"). It used to do nothing: only Ctrl+click selected, and
+// in Canvas a plain click on a name only started a pan.
+check('Owner: a plain click on a sequence name selects that row (Full, Block, windowed, Canvas)', async (page) => {
+  const bad = [];
+  await loadFasta(page, makeFasta(12, 120));
+  for (const mode of ['full', 'block', 'canvas']) {
+    await auditClickMode(page, mode);
+    bad.push(...await r2NameClicks(page, mode));
+  }
+  await loadSyntheticFasta(page, 1500, 4000);
+  for (const mode of ['block', 'full', 'canvas']) {
+    await auditClickMode(page, mode);
+    bad.push(...await r2NameClicks(page, 'windowed ' + mode));
+  }
+  return { pass: bad.length === 0, detail: bad.join('; ') || 'ok' };
+});
+
+// Selecting on a plain click must not break the other name gestures: a drag still reorders (and
+// moves the whole selection when the dragged row is in it, so the click must not first reduce
+// the selection to one row), a double-click still opens the rename box and leaves just that row
+// selected, and the right-click menu still opens.
+check('Owner: drag, double-click and right-click on names still reorder, rename and open the menu', async (page) => {
+  const bad = [];
+  for (const big of [false, true]) {
+    if (big) { await loadSyntheticFasta(page, 1500, 4000); await auditClickMode(page, 'block'); }
+    else { await loadFasta(page, makeFasta(12, 120)); await auditClickMode(page, 'full'); }
+    const L = big ? 'windowed' : 'full';
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    const names0 = await page.evaluate(() => state.seqs.slice(0, 8).map(s => s.header));
+    await r2ClickName(page, 1, ['Control']); await r2ClickName(page, 2, ['Control']);
+    const a = await auditName(page, 1), b = await auditName(page, 5);
+    await page.mouse.move(a.x, a.y); await page.mouse.down();
+    await page.mouse.move(a.x, a.y + 10, { steps: 3 }); await page.mouse.move(b.x, b.y + 4, { steps: 6 });
+    await page.mouse.up(); await page.waitForTimeout(big ? 1500 : 600);
+    const after = await page.evaluate(() => state.seqs.slice(0, 8).map(s => s.header));
+    const sel = await r2Sel(page);
+    const movedRows = sel.split(',').map(Number).map(i => after[i]);
+    if (after.join() === names0.join()) bad.push(`${L} drag did not reorder`);
+    if (movedRows.join() !== [names0[1], names0[2]].join()) bad.push(`${L} drag selection ${sel} = ${movedRows} (want ${names0[1]},${names0[2]})`);
+    // double-click renames
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    const n = await auditName(page, 3);
+    await page.mouse.dblclick(n.x, n.y); await page.waitForTimeout(300);
+    const box = await page.$('.seq-name-edit');
+    if (!box) bad.push(`${L} double-click: no rename box`);
+    else {
+      await page.keyboard.press('Control+A'); await page.keyboard.type('renamed_r2'); await page.keyboard.press('Enter');
+      await page.waitForTimeout(400);
+      const r = await page.evaluate(() => ({ h: state.seqs[3].header, sel: [...state.selectedRows].join(','), box: !!document.querySelector('.seq-name-edit') }));
+      if (r.h !== 'renamed_r2' || r.sel !== '3' || r.box) bad.push(`${L} double-click rename: ${JSON.stringify(r)}`);
+    }
+    // right-click menu
+    const m = await auditName(page, 4);
+    await page.mouse.click(m.x, m.y, { button: 'right' }); await page.waitForTimeout(300);
+    if (!(await page.$('.context-menu'))) bad.push(`${L} right-click: no menu`);
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+  }
+  return { pass: bad.length === 0, detail: bad.join('; ') || 'ok' };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
