@@ -6100,6 +6100,19 @@ check('Undo/redo buttons sit on whole device pixels (their corners repaint ident
   return { pass: out.x1 === 'whole,whole,whole,whole' && out.x2 === 'whole,whole,whole,whole', detail: JSON.stringify(out) };
 });
 
+// Owner's decision (2026-10-14, confirmed 2026-10-22): #controls set no font-family, so on Windows the menu headers
+// (Input, Shade, Display...) fell back to bold Times New Roman next to Arial buttons
+check('toolbar: menu headers use the same font as the toolbar buttons, not the browser serif', async (page) => {
+  const r = await page.evaluate(() => {
+    const head = document.querySelector('#input-section .section-header span');
+    const btn = document.querySelector('#controls button');
+    const fam = el => getComputedStyle(el).fontFamily.split(',')[0].replace(/["']/g, '').trim();
+    const label = [...document.querySelectorAll('#controls label')].map(fam);
+    return { head: fam(head), btn: fam(btn), serifLabels: label.filter(f => /times|serif/i.test(f) && !/sans/i.test(f)).length };
+  });
+  return { pass: r.head === 'Arial' && r.btn === 'Arial' && r.serifLabels === 0, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

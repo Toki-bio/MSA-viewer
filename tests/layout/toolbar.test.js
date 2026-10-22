@@ -65,6 +65,11 @@ const SCAN = () => {
     await scan('alignment');
     await setMode('modeCanvas'); await page.waitForTimeout(800);
     await scan('Canvas');
+    // the view switch stays on the menu line from 1280 px up (Arial headers at a 10 px gap pushed it onto a line of its own)
+    if (w >= 1280) {
+      const split = await page.evaluate(() => { const m = document.querySelector('#menuRow .standard-menu-group').getBoundingClientRect(), v = document.getElementById('modeRow').getBoundingClientRect(); return Math.abs((m.top + m.bottom) / 2 - (v.top + v.bottom) / 2) > 6; });
+      if (split) problems.push(`${w}x${h} Canvas: the view switch is on a second line`);
+    }
     await setMode('modeBlocks'); await page.waitForTimeout(500);
     await page.evaluate(() => document.getElementById('codonAnalysis').click()); await page.waitForTimeout(800);
     const codonShown = await page.evaluate(() => !!document.getElementById('codonModePanel').getClientRects().length);
