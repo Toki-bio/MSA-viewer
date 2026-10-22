@@ -7002,6 +7002,15 @@ check('Audit: translation rows stay under the sticky name column when scrolled s
   return { pass: r.sl > 1000 && r.nameH >= r.boxH - 0.5 && !/aa-c/.test(r.hit || ''), detail: JSON.stringify(r) };
 });
 
+// Math.max(...lengths) over one entry per sequence throws "Maximum call stack size exceeded"
+// past ~125,000 arguments: an alignment of 130,000 short sequences failed to load.
+check('Audit: 130,000 sequences load and render', async (page) => {
+  await loadSyntheticFasta(page, 130000, 20);
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => ({ n: state.seqs.length, rows: document.querySelectorAll('.seq-line[data-seq-index]').length + (el('alignmentCanvas') ? 1 : 0), msg: el('statusMessage')?.innerText.slice(0, 120) }));
+  return { pass: r.n === 130000 && r.rows > 0, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
