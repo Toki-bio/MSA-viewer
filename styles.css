@@ -3185,7 +3185,13 @@ span.column-highlighted::after {
     overflow: visible !important;
     display: inline-block;
     line-height: 1.0;
+    /* The ruler is one run of text, the rows are one inline-block per residue, whose width the
+       browser rounds up (13px: 7.8013px glyph, 7.8125px cell). Without this the numbers drifted
+       left of their columns, ~5 columns by column 3700. --res-w: _syncResidueWidthVar. */
+    letter-spacing: calc(var(--res-w, 1ch) - 1ch);
 }
+/* With Highlight diffs the ruler is one span per column, already a cell wide */
+.scale-ruler-line .seq-data > span { letter-spacing: normal; }
 
 /* Hide horizontal scrollbar cross-browser */
 #alignmentContainer::-webkit-scrollbar:horizontal {
@@ -3959,7 +3965,7 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
    (sticky; paint containment would clip them). Consensus keeps its own padding. */
 .block-block.cv-block .seq-line:not(.scale-ruler-line):not(.consensus-line) > .seq-data {
     content-visibility: auto;
-    contain-intrinsic-size: auto calc(var(--cols, 60) * 1ch) auto 1em;
+    contain-intrinsic-size: auto calc(var(--cols, 60) * var(--res-w, 1ch)) auto 1em;
 }
 /* Rename box: laid over the name cell so the row keeps its size and nothing shifts */
 .seq-name.renaming { z-index: 70; }   /* above the neighbouring sticky names, so the outline shows */
