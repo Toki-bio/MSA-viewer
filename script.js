@@ -13250,6 +13250,16 @@ async function parseAndRender(isFromDrop = false) {
         // doing this only after render left the on-screen content overflowing
         // even though the size slider showed a "corrected" value.
         fitBlockSizeBeforeInitialRender();
+        // A new file opens at its first row and column. The windowed views keep scrollTop and
+        // scrollLeft through a redraw (renderAlignment) and Canvas keeps its pan offset, so a file
+        // opened over a scrolled view used to open at the old file's place.
+        if (alignmentContainer.scrollTop || alignmentContainer.scrollLeft) {
+            _unifiedScrollController.suppressNextEvent();
+            alignmentContainer.scrollTop = 0;
+            alignmentContainer.scrollLeft = 0;
+        }
+        _canvasState.offsetX = 0;
+        _canvasState.offsetY = 0;
         renderAlignment();
         updateBamButtonVisibility();
         // Auto-fit block size to screen width on every load
