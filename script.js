@@ -14386,12 +14386,49 @@ function pushUndo(type) {
         // colour under the new name after Undo
         colours: colourState?.mappings ? new Map(colourState.mappings) : null,
         groupOrder: state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null,   // moving a group reorders these
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        seqs: _undoSnapshotSeqs(),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
     });
     // Clear redo stack whenever a new action is performed
     state.redoHistory = [];
+    _trimUndoHistory();
+}
+
+// An undo entry keeps each sequence's own fields but not gaplessPositions, which is derived
+// and was most of the cost: JSON-cloning it took ~380 ms and ~57 MB per edit at 1500 x
+// 4000. Strings are immutable, so a snapshot shares them with the live rows.
+function _undoSnapshotSeqs() {
+    return state.seqs.map(s => {
+        const { gaplessPositions, ...rest } = s;
+        return rest;
+    });
+}
+
+function _undoRestoreSeqs(seqs) {
+    return seqs.map(s => ({ ...s, gaplessPositions: calculateGaplessPositions(s.seq) }));
+}
+
+// Oldest entries go first once the history holds more than UNDO_HISTORY_MAX steps or more
+// residues than UNDO_HISTORY_RESIDUES (counted as if no row were shared, so an upper bound).
+// The newest entry is always kept.
+const UNDO_HISTORY_MAX = 200;
+const UNDO_HISTORY_RESIDUES = 150e6;
+function _trimUndoHistory() {
+    const h = state.deletedHistory;
+    let total = 0;
+    for (let i = h.length - 1; i >= 0; i--) {
+        const e = h[i];
+        if (e._size === undefined) {
+            e._size = e.seqs ? e.seqs.reduce((n, q) => n + q.seq.length, 0)
+                : (e.beforeSeq?.length || 0) + (e.afterSeq?.length || 0);
+        }
+        total += e._size;
+        if (i < h.length - 1 && (total > UNDO_HISTORY_RESIDUES || h.length - i > UNDO_HISTORY_MAX)) {
+            h.splice(0, i + 1);
+            return;
+        }
+    }
 }
 
 // beforeWidth/afterWidth: an edit that runs past the end of the alignment widens every
@@ -14413,6 +14450,7 @@ function pushUndoRowPatch(type, rowIndex, beforeSeq, afterSeq, beforeWidth, afte
         selectedColumns: new Set(state.selectedColumns)
     });
     state.redoHistory = [];
+    _trimUndoHistory();
 }
 
 // Restore the alignment to a known column count. Only all-gap trailing columns are
@@ -14513,7 +14551,7 @@ function undoDelete(quiet) {
     const redoEntry = {
         type: last.type,
         label: last.label,
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        seqs: _undoSnapshotSeqs(),
         colours: colourState?.mappings ? new Map(colourState.mappings) : null,
         groupOrder: state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null,
         selectedRows: new Set(state.selectedRows),
@@ -14521,7 +14559,7 @@ function undoDelete(quiet) {
     };
     if (last.colStateBefore) redoEntry.colStateAfter = _snapshotColumnState();
     state.redoHistory.push(redoEntry);
-    state.seqs = last.seqs;
+    state.seqs = _undoRestoreSeqs(last.seqs);
     if (last.colours && colourState?.mappings) { colourState.mappings.clear(); last.colours.forEach((v, k) => colourState.mappings.set(k, v)); }
     _restoreGroupOrder(last.groupOrder);
     if (last.colStateBefore) _restoreColumnState(last.colStateBefore);
@@ -14555,7 +14593,7 @@ function redoAction(quiet) {
     const undoEntry = {
         type: next.type,
         label: next.label,
-        seqs: JSON.parse(JSON.stringify(state.seqs)),
+        seqs: _undoSnapshotSeqs(),
         selectedRows: new Set(state.selectedRows),
         selectedColumns: new Set(state.selectedColumns)
     };
@@ -14563,7 +14601,7 @@ function redoAction(quiet) {
     undoEntry.colours = colourState?.mappings ? new Map(colourState.mappings) : null;
     undoEntry.groupOrder = state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null;
     state.deletedHistory.push(undoEntry);
-    state.seqs = next.seqs;
+    state.seqs = _undoRestoreSeqs(next.seqs);
     if (next.colours && colourState?.mappings) { colourState.mappings.clear(); next.colours.forEach((v, k) => colourState.mappings.set(k, v)); }
     _restoreGroupOrder(next.groupOrder);
     if (next.colStateAfter) _restoreColumnState(next.colStateAfter);
