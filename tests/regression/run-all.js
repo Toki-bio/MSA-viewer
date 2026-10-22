@@ -6295,6 +6295,42 @@ check('Audit: undo snapshots of a large alignment are small and fast, restore ex
   return { pass, detail: JSON.stringify({ ...r, ms, growMB: Math.round(growMB), restored, capped }) };
 });
 
+check('Audit: Realign Block keeps every row\'s own residues when names share a first word', async (page) => {
+  // Used to: realign-region keyed rows by the first word of the name, so ">s1 sampleA" got
+  // the realigned region of ">s1 sampleB" - its residues silently replaced.
+  await loadFasta(page, '>s1 sampleA\nACGTAC--GTAAACCCGGGTTT\n>s1 sampleB\nTTTTGGGGCCCCAAAATTTT--\n>s2\nACGTACGTAAACCCGGGTTA--\n');
+  const ug = () => page.evaluate(() => state.seqs.map(s => s.fullHeader + ':' + s.seq.replace(/[-.]/g, '')));
+  const before = await ug();
+  await auditCtrlAltDrag(page, 0, 2, 11);
+  await page.keyboard.press('Control+Shift+R');
+  await page.waitForFunction(() => state.deletedHistory.some(e => e.type === 'realign-block'), null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const after = await ug();
+  const ran = await page.evaluate(() => state.deletedHistory.some(e => e.type === 'realign-block'));
+  return { pass: ran && JSON.stringify(after) === JSON.stringify(before), detail: JSON.stringify({ ran, before, after }) };
+});
+
+check('Audit: Realign All and Duplicate keep rows with identical names apart', async (page) => {
+  // Used to: Realign All matched MAFFT's output back by name, so the second of two rows
+  // called ">a" became a copy of the first (TTTTGGGG... lost). Duplicate (Ctrl+U) kept the
+  // original fullHeader, so exports had two identical names.
+  await loadFasta(page, '>a\nACGTACGTAAACCCGGGTTT\n>a\nTTTTGGGGCCCCAAAATTTT\n>b\nACGTACGTAAACCCGGGTTA\n');
+  const ug = () => page.evaluate(() => state.seqs.map(s => s.fullHeader + ':' + s.seq.replace(/[-.]/g, '')));
+  const before = await ug();
+  await page.evaluate(() => el('realignAllButton').click());   // the button's own handler
+  await page.waitForFunction(() => state.deletedHistory.some(e => e.type === 'realign-all'), null, { timeout: 30000 }).catch(() => {});
+  await page.waitForFunction(() => !document.getElementById('busyOverlay') || document.getElementById('busyOverlay').hidden, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const after = await ug();
+  await loadFasta(page, '>x first\nACGT\n>y\nTTTT\n');
+  await auditCtrlClickName(page, 0);
+  await auditBlur(page);
+  await page.keyboard.press('Control+u'); await page.waitForTimeout(300);
+  const dup = await page.evaluate(() => state.seqs.map(s => s.header + '|' + s.fullHeader));
+  const pass = JSON.stringify(after) === JSON.stringify(before) && dup[2] === 'x_copy|x_copy first';
+  return { pass, detail: JSON.stringify({ before, after, dup }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
