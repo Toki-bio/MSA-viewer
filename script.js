@@ -197,10 +197,27 @@ function safeLocalGet(key, fallback = {}) {
         const raw = localStorage.getItem(key);
         return raw ? JSON.parse(raw) : fallback;
     } catch (e) {
-        console.warn(`localStorage key "${key}" corrupted, resetting.`, e);
-        localStorage.removeItem(key);
+        // Blocked storage throws here too: never let that stop the page loading
+        console.warn(`localStorage key "${key}" unreadable, resetting.`, e);
+        try { localStorage.removeItem(key); } catch (_) {}
         return fallback;
     }
+}
+
+// Writes a localStorage value; storage can be full or blocked by the browser.
+// With a label, tells the user what could not be saved.
+function safeLocalSet(key, value, label) {
+    try {
+        localStorage.setItem(key, value);
+        return true;
+    } catch (e) {
+        if (label) showMessage(`Could not save ${label}: browser storage is full or blocked.`, 4000);
+        return false;
+    }
+}
+
+function safeLocalGetRaw(key) {
+    try { return localStorage.getItem(key); } catch (_) { return null; }
 }
 
 function _checkedRadioValue(name, fallback) {
@@ -287,6 +304,8 @@ function _searchMatchesInDegapped(displayString, entry) {
             // An empty match (q*, ^) covers no residue: neither a hit nor a count
             if (m[0].length === 0) { re.lastIndex++; continue; }
             matches.push({ idx: m.index, len: m[0].length, matchingPositions: null });
+            // Restriction sites overlap (GCGC twice in GCGCGC): resume one past the start
+            if (entry.overlapping) re.lastIndex = m.index + 1;
         }
         return matches;
     }
@@ -1864,10 +1883,12 @@ async function fetchFileFromServer(filePath, serverKey) {
             }
         }, 500);
         _titleFlash = { timer: flashInterval, orig: origTitle };
-        if (Notification.permission === 'default') {
+        // iOS Safari has no Notification API at all
+        const canNotify = typeof Notification !== 'undefined';
+        if (canNotify && Notification.permission === 'default') {
             Notification.requestPermission();
         }
-        if (document.hidden && Notification.permission === 'granted') {
+        if (canNotify && document.hidden && Notification.permission === 'granted') {
             new Notification('ViewAlign', { body: `Loaded ${fname}` });
         }
     } catch (err) {
@@ -4146,23 +4167,16 @@ function _setupUnifiedScrollListener(container) {
 }
 
 function reverseComplement(seq) {
-    const complement = { 'A':'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.','~':'~', 'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H' };
+    // RNA stays RNA (A pairs with U when the sequence has U and no T); gap,
+    // stop and missing-data symbols (~ * ? X) are kept as they are.
+    const isRna = /[Uu]/.test(seq) && !/[Tt]/.test(seq);
+    const complement = { 'A': isRna ? 'U' : 'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.','~':'~', 'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H',
+                         '*':'*','?':'?','X':'X' };
     return seq.split('').reverse().map(b => {
         const rc = complement[b.toUpperCase()];
         if (!rc) return /[a-z]/.test(b) ? 'n' : 'N';
         return /[a-z]/.test(b) ? rc.toLowerCase() : rc;
     }).join('');
-}
-
-function hexToRgb(hex) {
-    const clean = hex.replace('#', '');
-    if (clean.length !== 6) return null;
-    const num = parseInt(clean, 16);
-    return {
-        r: (num >> 16) & 255,
-        g: (num >> 8) & 255,
-        b: num & 255
-    };
 }
 
 function rgbToHsl(r, g, b) {
@@ -4339,7 +4353,8 @@ function _computeConsensusCharForColumn(seqArray, pos, opts) {
         if (fallbackMode === 'n') return 'X';
         return '-';
     }
-    const std = present.filter(b => 'ACGT'.includes(b));
+    // Union of what every code in the column stands for (A + R = A/G = R)
+    const std = [...new Set(present.flatMap(b => iupacToBases(b)).filter(b => 'ACGT'.includes(b)))];
     if (fallbackMode === 'iupac' && std.length >= 2) return iupacFromBases(std);
     if (fallbackMode === 'n') return 'N';
     return '-';
@@ -7560,6 +7575,8 @@ function _looksLikeA3m(seqs) {
     if (seqs.length < 2) return false;
     if (!seqs.some(s => /[a-z]/.test(s.seq))) return false;
     if (seqs.every(s => s.seq.length === seqs[0].seq.length)) return false;
+    // A3M match columns are capitals: an all-lowercase alignment is just ragged
+    if (!seqs.some(s => /[A-Z]/.test(s.seq))) return false;
     const matchCols = s => s.seq.replace(/[a-z.]/g, '').length;
     const m = matchCols(seqs[0]);
     return m > 0 && seqs.every(s => matchCols(s) === m);
@@ -12851,6 +12868,19 @@ function _looksLikeLocalPath(text) {
     return /^[A-Za-z]:[\\/]/.test(text) || /^\//.test(text) || /^~[\\/]/.test(text) || /^\.\.?[\\/]/.test(text);
 }
 
+// A load that failed leaves no alignment behind: the view shows the error, so
+// Save, Copy and the analyses must not keep working on the previous file's rows.
+function _clearFailedLoad() {
+    state.seqs = [];
+    state.selectedRows?.clear();
+    state.selectedColumns?.clear();
+    state.selectedNucs?.clear();
+    state.currentFilename = '';
+    state.currentFilePath = '';
+    const src = el('sourceInfo');
+    if (src) src.innerHTML = 'No file loaded';
+}
+
 async function parseAndRender(isFromDrop = false) {
     showMessage("Scanning alignment...", 0);
     _proteinSchemeRemapWarned = false;
@@ -12859,7 +12889,34 @@ async function parseAndRender(isFromDrop = false) {
     if (!inputText) {
         alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
         statusMessage.style.display = 'none';
+        if (isFromDrop) {
+            _clearFailedLoad();
+            showMessage('The file is empty.', 4000);
+        }
         return;
+    }
+    // NUL bytes or mostly control characters: an image, archive or other binary file
+    const _ctrl = (inputText.slice(0, 4096).match(/[\x00-\x08\x0E-\x1F]/g) || []).length;
+    if (inputText.includes('\x00') || _ctrl > 0.1 * Math.min(4096, inputText.length)) {
+        _clearFailedLoad();
+        alignmentContainer.innerHTML = '<div class="error-message">This is a binary file, not an alignment. Open FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, SAM/BAM or AB1.</div>';
+        showMessage('Error: not an alignment (binary file).', 5000);
+        return;
+    }
+    if (/^@[^\n]*\n[^\n]*\n\+/.test(inputText)) {
+        _clearFailedLoad();
+        alignmentContainer.innerHTML = '<div class="error-message">This is a FASTQ file of reads, not an alignment. Convert it to FASTA, or map the reads (SAM/BAM) onto an open reference.</div>';
+        showMessage('Error: FASTQ reads are not an alignment.', 5000);
+        return;
+    }
+    // A snapshot .json downloaded by Snapshot > Create
+    if (inputText[0] === '{') {
+        let payload = null;
+        try { payload = JSON.parse(inputText); } catch (_) {}
+        if (payload && typeof payload === 'object' && typeof payload.fasta === 'string' && 'schema' in payload) {
+            _loadSnapshotPayload(payload);
+            return;
+        }
     }
 
     if (_looksLikeUrl(inputText)) {
@@ -13183,12 +13240,9 @@ async function parseAndRender(isFromDrop = false) {
         }, 100);
     } catch (e) {
         console.error("Error in parseAndRender:", e);
-    alignmentContainer.innerHTML = `<div class="error-message">Error: ${e.message}</div>`;
+    alignmentContainer.innerHTML = `<div class="error-message">Error: ${_escapeHtml(e.message)}</div>`;
         showMessage(`Error: ${e.message}`, 5000);
-    // Reset filename on error to avoid poisoning future loads
-        state.currentFilename = '';
-        state.currentFilePath = '';
-        el('sourceInfo').innerHTML = 'No file loaded';
+        _clearFailedLoad();
     }
 }
 // Mirrors the canonical mode radios' checked state onto the always-visible
@@ -14295,7 +14349,7 @@ function sortBySimilarity() {
     const scored = state.seqs.map((s, i) => {
         let match = 0, total = 0;
         for (let p = 0; p < ref.length; p++) {
-            const a = ref[p], b = s.seq[p] || '-';
+            const a = ref[p].toUpperCase(), b = (s.seq[p] || '-').toUpperCase();   // soft-masked (lowercase) copies count as identical
             if (a !== '-' && a !== '.' && b !== '-' && b !== '.') { total++; if (a === b) match++; }
         }
         return { idx: i, score: total > 0 ? match / total : 0 };
@@ -15161,11 +15215,10 @@ function savePreset() {
         stickyNames: el('stickyNames').checked,
         nameLenNoLimit: !!el('nameLengthNoLimit')?.checked
     };
-    localStorage.setItem('msaviewer_preset_v44', JSON.stringify(preset));
-    showMessage("Preset saved!", 2000);
+    if (safeLocalSet('msaviewer_preset_v44', JSON.stringify(preset), 'the preset')) showMessage("Preset saved!", 2000);
 }
 function loadPreset() {
-    const saved = localStorage.getItem('msaviewer_preset_v44');
+    const saved = safeLocalGetRaw('msaviewer_preset_v44');
     if (!saved) {
         showMessage("No saved preset found.", 3000);
         return;
@@ -15176,7 +15229,7 @@ function loadPreset() {
     } catch (e) {
         console.error('Preset JSON corrupted:', e);
         showMessage('Saved preset is corrupted and was reset.', 4000);
-        localStorage.removeItem('msaviewer_preset_v44');
+        try { localStorage.removeItem('msaviewer_preset_v44'); } catch (_) {}
         return;
     }
     ['black','dark','light','zoom','blockSize','nameLen','consensusThreshold', 'groupConsensusThreshold', 'consensusMinCoverage'].forEach(k => {
@@ -15492,13 +15545,23 @@ function _loadSnapshotPayload(payload) {
     });
 }
 
+// Colours read from a snapshot (a shared link or file) end up in CSS rules:
+// accept only a plain colour, never text that could close the rule.
+function _safeCssColor(c) {
+    const v = String(c == null ? '' : c).trim();
+    if (/^#[0-9a-f]{3,8}$/i.test(v) || /^[a-z]{3,30}$/i.test(v)
+        || /^(rgb|hsl)a?\([\d\s.,%/+-]+\)$/i.test(v)) return v;
+    return null;
+}
+
 function _applySnapshotColourState(cs) {
     if (!cs || !Array.isArray(cs.mappings)) return;
     // Replace, not merge - like selectedRows/selectedColumns above, loading a snapshot
     // should give back exactly what was saved, not saved-plus-whatever-was-already-there.
     colourState.mappings.clear();
     cs.mappings.forEach(([name, color]) => {
-        colourState.mappings.set(name, color);
+        const safe = _safeCssColor(color);
+        if (safe) colourState.mappings.set(name, safe);
     });
     if (typeof applyColourToSeqNames === 'function') {
         applyColourToSeqNames(colourState.mappings);
@@ -15526,7 +15589,7 @@ function _applySnapshotSearchHistory(sh, legacyMismatches) {
         state.searchHistory.push({
             id: className,
             motif: motifKey,
-            color: entry.color || '#ffcc00',
+            color: _safeCssColor(entry.color) || '#ffcc00',
             className,
             label: entry.label || rawMotif,
             strand,
@@ -15621,10 +15684,14 @@ async function createSnapshot() {
         const githubRelativePath = `snapshots/${fileBaseName}.json`;
         const githubSnapshotUrl = `${window.location.origin}${window.location.pathname}?snapshotFile=${encodeURIComponent(githubRelativePath)}`;
 
+        // The clipboard can refuse (page not focused, permission denied): the
+        // downloads must still happen
         let copied = false;
         if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(snapshotUrl);
-            copied = true;
+            try {
+                await navigator.clipboard.writeText(snapshotUrl);
+                copied = true;
+            } catch (_) { copied = false; }
         }
 
         downloadSnapshotJson(payload, fileBaseName);
@@ -15815,6 +15882,7 @@ function degapSelectedBlock(direction = 'left') {
 
 function _escapeXmlText(value) {
     return String(value)
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '') // not allowed in XML 1.0
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
@@ -16419,6 +16487,7 @@ function searchResEnzyme() {
             strand: 'restriction',
             key: `restriction:${name}:${site}:fwd`,
             countMode: 'alignmentSites',
+            overlapping: true,
             suppressMessage: true
         });
         if (forwardResult) currentResults.push(...forwardResult.results);
@@ -16434,6 +16503,7 @@ function searchResEnzyme() {
                     strand: 'restriction rev comp',
                     key: `restriction:${name}:${site}:rev`,
                     countMode: 'alignmentSites',
+                    overlapping: true,
                     suppressMessage: true
                 });
                 if (reverseResult) currentResults.push(...reverseResult.results);
@@ -16664,7 +16734,8 @@ function searchMotif(options = {}) {
         const entry = {
             id: className, motif: motifKey, className, color: searchColorValue, label, strand,
             searchValue: searchMotifValue, useRegex: !!useRegex,
-            maxMismatches: useRegex ? 0 : maxMismatches, enabled: true
+            maxMismatches: useRegex ? 0 : maxMismatches, enabled: true,
+            ...(options.overlapping ? { overlapping: true } : {})
         };
 
         // Re-running an identical search replaces it rather than stacking a copy
@@ -17390,7 +17461,7 @@ function closeInfoModal() {
 function updateClusteringStatus(msg) {
     const statusEl = el('clusteringStatus');
     if (statusEl) statusEl.textContent = msg;
-    console.log('[Clustering] ' + msg);
+    debugLog('[Clustering] ' + msg);
 }
 
 function getTrimParameters() {
@@ -18483,6 +18554,7 @@ function highlightDiagnosticMutations() {
 /**
  * Helper to convert hex color to RGB
  */
+// (Was declared twice; this later one always won. Invalid input gives black.)
 function hexToRgb(hex) {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return result ? {
@@ -18536,14 +18608,14 @@ function saveClusteringPreset() {
     // Store in localStorage
     let presets = safeLocalGet('clusteringPresets');
     presets[presetName] = preset;
-    localStorage.setItem('clusteringPresets', JSON.stringify(presets));
+    safeLocalSet('clusteringPresets', JSON.stringify(presets), 'the clustering preset');
 
     // Update preset list
     updateClusteringPresetList();
 
     el('presetNameInput').value = '';
     showMessage(`Preset "${presetName}" saved!`, 2000);
-    console.log('[Clustering] Saved preset:', presetName, preset);
+    debugLog('[Clustering] Saved preset:', presetName, preset);
 }
 
 function createOptimalPreset(silent = false) {
@@ -18579,7 +18651,7 @@ function createOptimalPreset(silent = false) {
     // Store in localStorage
     let presets = safeLocalGet('clusteringPresets');
     presets['optimal'] = optimalPreset;
-    localStorage.setItem('clusteringPresets', JSON.stringify(presets));
+    safeLocalSet('clusteringPresets', JSON.stringify(presets), silent === true ? null : 'the clustering preset');
 
     // Update preset list and select it
     updateClusteringPresetList();
@@ -18593,7 +18665,7 @@ function createOptimalPreset(silent = false) {
     if (silent !== true) {   // the Defaults button passes its click event here
         showMessage('Standard starting parameters restored - these are defaults, not tuned to your data.', 3000);
     }
-    console.log('[Clustering] Created optimal preset:', optimalPreset);
+    debugLog('[Clustering] Created optimal preset:', optimalPreset);
 }
 
 function loadClusteringPreset(silent = false) {
@@ -18644,7 +18716,7 @@ function loadClusteringPreset(silent = false) {
     if (!shouldSilent) {
         showMessage(`Preset "${presetName}" loaded!`, 2000);
     }
-    console.log('[Clustering] Loaded preset:', presetName, preset);
+    debugLog('[Clustering] Loaded preset:', presetName, preset);
 }
 
 function updateClusteringPresetList() {
@@ -18664,7 +18736,7 @@ function updateClusteringPresetList() {
         presetSelect.appendChild(option);
     });
 
-    console.log('[Clustering] Preset list updated:', presetNames.length, 'presets');
+    debugLog('[Clustering] Preset list updated:', presetNames.length, 'presets');
 }
 
 function deleteClusteringPreset() {
@@ -18682,7 +18754,7 @@ function deleteClusteringPreset() {
 
     let presets = safeLocalGet('clusteringPresets');
     delete presets[presetName];
-    localStorage.setItem('clusteringPresets', JSON.stringify(presets));
+    safeLocalSet('clusteringPresets', JSON.stringify(presets), 'the clustering presets');
 
     updateClusteringPresetList();
     showMessage(`Preset "${presetName}" deleted`, 2000);
@@ -19650,7 +19722,7 @@ function _initMafftAskPrefs() {
         adj.checked = _mafftPrefBool(MAFFT_ASK_ADJUST, false);
         adj.addEventListener('change', () => {
             _mafftPrefSet(MAFFT_ASK_ADJUST, adj.checked);
-            if (adj.checked && localStorage.getItem(MAFFT_DEF_ADJUST) === null) {
+            if (adj.checked && safeLocalGetRaw(MAFFT_DEF_ADJUST) === null) {
                 _mafftPrefSet(MAFFT_DEF_ADJUST, true);
             }
         });
@@ -19659,7 +19731,7 @@ function _initMafftAskPrefs() {
         reo.checked = _mafftPrefBool(MAFFT_ASK_REORDER, false);
         reo.addEventListener('change', () => {
             _mafftPrefSet(MAFFT_ASK_REORDER, reo.checked);
-            if (reo.checked && localStorage.getItem(MAFFT_DEF_REORDER) === null) {
+            if (reo.checked && safeLocalGetRaw(MAFFT_DEF_REORDER) === null) {
                 _mafftPrefSet(MAFFT_DEF_REORDER, false);
             }
         });
@@ -19803,7 +19875,7 @@ function _adjustDirection(fasta) {
 
     // Build k-mer set from first sequence (reference)
     const K = 6;
-    const refSeq = seqs[0].seq.toUpperCase().replace(/[^ACGT]/g, '');
+    const refSeq = seqs[0].seq.toUpperCase().replace(/U/g, 'T').replace(/[^ACGT]/g, '');   // RNA: U reads as T
     const refKmers = new Set();
     for (let i = 0; i <= refSeq.length - K; i++) {
         refKmers.add(refSeq.substring(i, i + K));
@@ -19814,7 +19886,7 @@ function _adjustDirection(fasta) {
 
     for (let i = 1; i < seqs.length; i++) {
         const s = seqs[i];
-        const clean = s.seq.toUpperCase().replace(/[^ACGT]/g, '');
+        const clean = s.seq.toUpperCase().replace(/U/g, 'T').replace(/[^ACGT]/g, '');
         const rc = _reverseComplement(clean);
 
         let fwdScore = 0, rcScore = 0;
@@ -21664,11 +21736,22 @@ function _cancelActiveMafftWorker() {
     }
 }
 
+// A worker script that fails to load raises an ErrorEvent with no message
+function _workerStartError(err, what) {
+    if (err && err.message) return new Error(err.message);
+    const why = location.protocol === 'file:'
+        ? 'open the viewer over http(s), not as a file'
+        : 'the script could not be downloaded; check the connection and reload';
+    return new Error(`Could not start ${what} (${why})`);
+}
+
 function _runMafftInWorker(fasta, extraArgs) {
     return new Promise((resolve, reject) => {
         _cancelActiveMafftWorker();
         const id = Date.now();
-        const worker = new Worker(`mafft-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`);
+        let worker;
+        try { worker = new Worker(`mafft-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`); }
+        catch (_) { reject(_workerStartError(null, 'MAFFT')); return; }
         _activeMafftWorker = worker;
         _activeMafftReject = reject;
         worker.onmessage = (ev) => {
@@ -21683,7 +21766,7 @@ function _runMafftInWorker(fasta, extraArgs) {
             _activeMafftWorker = null;
             _activeMafftReject = null;
             worker.terminate();
-            reject(err);
+            reject(_workerStartError(err, 'MAFFT'));
         };
         worker.postMessage({ id, type: 'align', fasta, extraArgs, wasmPath: '' });
     });
@@ -21768,7 +21851,9 @@ function _runCodonAlignInWorker(fasta, opts, onProgress) {
         const id = Date.now();
         // MACSE port: macse-worker.js (CeCILL 2.1, may start nested workers); fast engine: codon-align-worker.js (MIT)
         const macse = !!(opts && opts.engine === 'macse');
-        const worker = macse ? _takeMacseWorker() : new Worker(`codon-align-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`);
+        let worker;
+        try { worker = macse ? _takeMacseWorker() : new Worker(`codon-align-worker.js?v=${BUILD_TAG.replace(/^v/, '')}`); }
+        catch (_) { reject(_workerStartError(null, 'codon alignment')); return; }
         _activeMafftWorker = worker;
         _activeMafftReject = reject;
         worker.onmessage = (ev) => {
@@ -21787,7 +21872,7 @@ function _runCodonAlignInWorker(fasta, opts, onProgress) {
             _activeMafftReject = null;
             worker.terminate();
             if (worker === _macseWorker) _macseWorker = null;
-            reject(err);
+            reject(_workerStartError(err, 'codon alignment'));
         };
         worker.postMessage({ id, type: 'align', fasta, opts });
     });
@@ -27287,7 +27372,7 @@ function saveColourPreset() {
 
     colourState.presets[presetName] = Array.from(colourState.mappings.entries());
     colourState.selectedPresetName = presetName;
-    localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets));
+    safeLocalSet('seqColourPresets', JSON.stringify(colourState.presets), 'the colour preset');
 
     el('colourPresetName').value = '';
     updateColourPresetList();
@@ -27360,7 +27445,7 @@ function updateColourPresetList() {
             if (colourState.selectedPresetName === name) {
                 colourState.selectedPresetName = null;
             }
-            localStorage.setItem('seqColourPresets', JSON.stringify(colourState.presets));
+            safeLocalSet('seqColourPresets', JSON.stringify(colourState.presets), 'the colour presets');
             updateColourPresetList();
         });
 
@@ -28495,17 +28580,18 @@ function buildBlastHitElement(hit, hitIndex, dbIndex, queryLen) {
         `Gaps = ${hsp.gaps}/${hsp.alignLen}<br>` +
         `Strand = <span class="${strandClass}">${strandLabel}</span>&nbsp;&nbsp; ` +
         `Query: ${hsp.queryStart}..${hsp.queryEnd} of ${queryLen} nt &rarr; ` +
-        `Subject: ${hsp.hitStart}..${hsp.hitEnd} of ${hit.length} nt`;
+        `Subject: ${hsp.strand === '-' ? `${hsp.hitEnd}..${hsp.hitStart}` : `${hsp.hitStart}..${hsp.hitEnd}`} of ${hit.length} nt`;
     div.appendChild(stats);
 
     // Alignment blocks
     const pre = document.createElement('pre');
     pre.className = 'blast-alignment-block';
     let alnText = '';
-    // Plus/Minus: the query letters shown are its reverse complement, so their positions count down
-    const qDown = hsp.strand === '-';
-    let qPos = qDown ? hsp.queryEnd : hsp.queryStart;
-    let sPos = hsp.hitStart;
+    // Plus/Minus (as in BLAST): the query reads along its plus strand and the subject is shown
+    // reverse-complemented beside it, so the subject's positions count down
+    const sStep = hsp.strand === '-' ? -1 : 1;
+    let qPos = hsp.queryStart;
+    let sPos = sStep < 0 ? hsp.hitEnd : hsp.hitStart;
     const numW = Math.max(String(hsp.queryEnd).length, String(hsp.hitEnd).length, 1);
     for (let i = 0; i < hsp.querySeq.length; i += W) {
         const qBlock = hsp.querySeq.substring(i, i + W);
@@ -28513,14 +28599,14 @@ function buildBlastHitElement(hit, hitIndex, dbIndex, queryLen) {
         const sBlock = hsp.hitSeq.substring(i, i + W);
         const qAdv = qBlock.replace(/-/g, '').length;
         const sAdv = sBlock.replace(/-/g, '').length;
-        const qEnd = qDown ? qPos - qAdv + 1 : qPos + qAdv - 1;
-        const sEnd = sPos + sAdv - 1;
+        const qEnd = qPos + qAdv - 1;
+        const sEnd = sPos + sStep * (sAdv - 1);
         const pad = ' '.repeat(7 + numW + 2);
         alnText += `Query  ${String(qPos).padStart(numW)}  ${qBlock}  ${qEnd}\n`;
         alnText += `${pad}${mBlock}\n`;
         alnText += `Sbjct  ${String(sPos).padStart(numW)}  ${sBlock}  ${sEnd}\n\n`;
-        qPos = qDown ? qEnd - 1 : qEnd + 1;
-        sPos = sEnd + 1;
+        qPos = qEnd + 1;
+        sPos = sEnd + sStep;
     }
     pre.textContent = alnText;
     div.appendChild(pre);
@@ -28846,7 +28932,7 @@ function displayBlastResults(queryName, queryLen, results) {
                     <td>${hsp.percent}%</td>
                     <td>${hsp.alignLen}</td>
                     <td>${hsp.queryStart}..${hsp.queryEnd}</td>
-                    <td>${hsp.hitStart}..${hsp.hitEnd}</td>
+                    <td>${hsp.strand === '-' ? `${hsp.hitEnd}..${hsp.hitStart}` : `${hsp.hitStart}..${hsp.hitEnd}`}</td>
                     <td>${hit.length}</td>
                     <td class="${strandCls}">${strandTxt}</td>
                     <td class="desc">${_escapeHtml((hit.def || hit.id).substring(0, 80))}</td>`;
@@ -29040,8 +29126,8 @@ function _dotRunWorker(file, message) {
         cancel(new Error('cancelled'));
     }
     return new Promise((res, rej) => {
-        const w = file === 'word' ? (_dotWordWorker ||= new Worker('doter-word-worker.js?v=' + BUILD_TAG))
-                                  : (_dotPlotWorker ||= new Worker('doter-worker.js?v=' + BUILD_TAG));
+        const w = file === 'word' ? (_dotWordWorker ||= new Worker('doter-word-worker.js?v=' + BUILD_TAG.replace(/^v/, '')))
+                                  : (_dotPlotWorker ||= new Worker('doter-worker.js?v=' + BUILD_TAG.replace(/^v/, '')));
         const done = () => { w.removeEventListener('message', ok); w.removeEventListener('error', no);
             if (_dotWorkerJobs[file] === no) delete _dotWorkerJobs[file]; };
         const ok = (e) => { done(); if (e.data.error) { rej(new Error(e.data.error)); return; } res(e.data); };

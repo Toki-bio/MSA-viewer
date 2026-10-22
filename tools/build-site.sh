@@ -26,4 +26,8 @@ for f in "${APP_FILES[@]}"; do cp "$f" "$OUT/"; done
 for d in img examples vendor; do cp -r "$d" "$OUT/"; done
 mkdir -p "$OUT/snapshots"
 cp snapshots/README.md snapshots/index.json "$OUT/snapshots/"
+# version.json names the commit this site was built from (the version badge links to it)
+if COMMIT=$(git rev-parse HEAD 2>/dev/null); then
+  printf '{"commit":"%s","date":"%s"}\n' "$COMMIT" "$(git log -1 --format=%cI HEAD)" > "$OUT/version.json"
+fi
 echo "site assembled in $OUT ($(find "$OUT" -type f | wc -l) files)"

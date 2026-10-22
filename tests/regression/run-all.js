@@ -6772,6 +6772,67 @@ check('Audit: deleting every sequence or every column is refused', async (page) 
   return { pass: n === 3 && w === 4, detail: JSON.stringify({ n, w }) };
 });
 
+// ---------- pre-publication audit (2026-10-14) ----------
+
+check('XSS: a sequence name with HTML is shown as text in the BLAST Search dialog', async (page) => {
+  // The dialog built its label with innerHTML from the name, so a shared FASTA or
+  // ?data= link with a name like <img onerror=...> ran script on the public site.
+  const dialogs = [];
+  page.on('dialog', d => { dialogs.push(d.message()); d.dismiss().catch(() => {}); });
+  await page.evaluate(() => { window.__xss = 0; });
+  await loadFasta(page, '>Gene<details/open/ontoggle=window.__xss=1;alert(1)>\nACGTACGTAC\n>b\nACGTTCGTAC\n');
+  await page.click('.seq-line[data-seq-index="0"] > .seq-name', { button: 'right' });
+  const item = page.locator('div', { hasText: /^BLAST Search$/ }).last();
+  await item.click();
+  await page.waitForTimeout(500);
+  const r = await page.evaluate(() => ({
+    xss: window.__xss,
+    label: [...document.querySelectorAll('.blast-dialog-content > div')].map(d => d.textContent).find(t => /^Sequence:/.test(t)) || null,
+  }));
+  const ok = r.xss === 0 && !dialogs.length && /<details/.test(r.label || '');
+  return { pass: ok, detail: JSON.stringify({ ...r, dialogs }) };
+});
+
+check('localStorage blocked by the browser: the alignment still renders', async (page) => {
+  // safeLocalGet called localStorage.removeItem inside its catch, which threw again
+  // and stopped script.js at startup: every render then failed (colourState TDZ).
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('blocked', 'SecurityError'); } });
+  });
+  await page.goto(page.url(), { waitUntil: 'networkidle' });
+  await loadFasta(page, makeFasta(5, 60));
+  const cells = await page.evaluate(() => document.querySelectorAll('#alignmentContainer .seq-line[data-seq-index]').length);
+  return { pass: cells >= 5 && !errors.length, detail: JSON.stringify({ cells, errors: errors.slice(0, 3) }) };
+});
+
+check('localStorage full: no uncaught error on load and saving a preset says why it failed', async (page) => {
+  // setItem threw QuotaExceededError uncaught on every load (createOptimalPreset)
+  // and Save preset failed silently.
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.addInitScript(() => {
+    Storage.prototype.setItem = function () { throw new DOMException('full', 'QuotaExceededError'); };
+  });
+  await page.goto(page.url(), { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+  await loadFasta(page, makeFasta(5, 60));
+  // Save Preset is in a menu panel: dispatch the button's own click handler
+  await page.evaluate(() => document.getElementById('savePresetButton').click());
+  await page.waitForTimeout(200);
+  const msg = await page.evaluate(() => document.getElementById('statusMessage')?.textContent || '');
+  return { pass: !errors.length && /storage/i.test(msg), detail: JSON.stringify({ errors: errors.slice(0, 3), msg }) };
+});
+
+check('MAFFT worker that cannot load: the error says why, not "undefined"', async (page) => {
+  // worker.onerror rejected with the ErrorEvent itself, which has no .message
+  // when the script fails to load: the status bar read "MAFFT alignment error: undefined".
+  await page.route('**/mafft-worker.js*', r => r.fulfill({ status: 404, body: 'nope' }));
+  const msg = await page.evaluate(() => _runMafftInWorker('>a\nACGT\n>b\nACGT\n', []).then(() => 'resolved', e => String(e && e.message)));
+  return { pass: /could not start/i.test(msg), detail: msg };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

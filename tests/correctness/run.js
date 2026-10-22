@@ -590,6 +590,183 @@ check('layout: an alignment that fits shows no horizontal scrollbar; a wide one 
   return { pass: ok, detail: JSON.stringify({ fits, wide, canvas }) };
 });
 
+// ---------- pre-publication audit (2026-10-14) ----------
+// Each check below failed before its fix; the comment says what went wrong.
+
+check('Newick: names with ":" (bedtools chr1:100-200) are quoted, and the tree parses back', async (page) => {
+  // ":" is Newick's branch-length separator. _newickName left such names bare,
+  // so chr1:100-200 parsed back as leaf "chr1" with length 100 and leaves were lost.
+  await loadFasta(page, fa(['ACGTACGTAC', 'ACGTACGTTT', 'ACGAACGTAC', 'TCGTACGAAC'])
+    .replace('>s1', '>chr1:100-200').replace('>s2', '>chr1:300-400'));
+  const r = await page.evaluate(() => {
+    const t = buildUPGMATreeFromAlignment(state.seqs, 'raw');
+    const nw = typeof t === 'string' ? t : (t.newick || '');
+    const names = [];
+    (function walk(n) { if (!n.children || !n.children.length) names.push(n.name); else n.children.forEach(walk); })(_treeDraw.parseNewick(nw));
+    const rq = _treeDraw.toNewick({ name: '', children: [{ name: 'a[1]', len: 0.1, children: [] }, { name: 'b', len: 0.2, children: [] }] });
+    return { nw, names: names.sort(), rq };
+  });
+  const ok = r.names.join(',') === 'chr1:100-200,chr1:300-400,s3,s4' && r.rq.includes("'a[1]'");
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+check('restriction sites: overlapping sites are all found (HhaI in GCGCGC)', async (page) => {
+  // The regex loop resumed after each match, so GCGC at 3 and 5 in AAGCGCGCAA counted once.
+  await loadFasta(page, '>a\nAAGCGCGCAA\n>b\nAA-GCGC-GCAA\n');
+  const r = await page.evaluate(() => {
+    renderRestrictionEnzymeList();
+    const cb = Array.from(document.querySelectorAll('.re-cb')).find(c => c.dataset.name === 'HhaI');
+    cb.checked = true;
+    searchResEnzyme();
+    return document.getElementById('statusMessage')?.textContent || '';
+  });
+  return { pass: /\(4 row matches\)/.test(r), detail: r };
+});
+
+check('reverse complement keeps RNA as RNA and passes ~ * ? X through', async (page) => {
+  // reverseComplement turned AUGC into GCAT (DNA) and ~ * ? X into N;
+  // _reverseComplement (Adjust direction) left U uncomplemented.
+  await loadFasta(page, '>a\nACGT\n');
+  const r = await page.evaluate(() => ({
+    rna: reverseComplement('AUGCaugc'), sym: reverseComplement('A~*?X-'), dna: reverseComplement('ACGTNacgtn'),
+    adj: _reverseComplement('AUGCaugc'),
+  }));
+  const ok = r.rna === 'gcauGCAU' && r.sym === '-X?*~T' && r.dna === 'nacgtNACGT' && r.adj === 'gcauGCAU';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+check('Adjust direction flips a reverse-complemented RNA sequence', async (page) => {
+  // The k-mer vote stripped every U, so RNA sequences were never flipped.
+  await loadFasta(page, '>a\nACGT\n');
+  const r = await page.evaluate(() => {
+    const ref = 'AUGGCUAGCUUAGGCAUCGAUCGGAUCCGAUAGCUAGGCUUAACGGAUCGAUGCUAGC';
+    const rc = reverseComplement(ref);
+    return [..._adjustDirection(`>r\n${ref}\n>q\n${rc}\n`).flipped];
+  });
+  return { pass: r.join(',') === 'q', detail: JSON.stringify(r) };
+});
+
+check('Sort by similarity ignores case (a soft-masked identical copy sorts first)', async (page) => {
+  // Residues were compared case-sensitively, so acgt... scored 0% against ACGT...
+  await loadFasta(page, '>ref\nACGTACGTAC\n>upper_2mm\nACGTACGTTT\n>lower_identical\nacgtacgtac\n');
+  await page.evaluate(() => sortBySimilarity());
+  await page.waitForTimeout(500);
+  const order = await page.evaluate(() => state.seqs.map(s => s.header).join(','));
+  return { pass: order === 'ref,lower_identical,upper_2mm', detail: order };
+});
+
+check('Codon analysis: the auto-frame message uses the 1-based Pos label', async (page) => {
+  // The message said "frame 2" for the frame the selector calls "Pos 3",
+  // and always claimed an ATG start.
+  await loadFasta(page, '>a\nCCATGAAACCCGGGTTTTAA\n>b\nCCATGAAACCCGGGTTCTAA\n');
+  const msgs = [];
+  await page.exposeFunction('__msg', m => msgs.push(m));
+  await page.evaluate(() => { const o = showMessage; window.showMessage = function (m, ...a) { window.__msg(String(m)); return o.call(this, m, ...a); }; });
+  const r = await page.evaluate(async () => {
+    document.getElementById('codonFrame').value = 'auto';
+    const cb = document.getElementById('codonAnalysis');
+    cb.checked = true;
+    cb.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 800));
+    return state._codonFrames ? state._codonFrames.bestFrame : null;
+  });
+  const m = msgs.find(x => /auto-selected/.test(x)) || '';
+  return { pass: r === 2 && /Pos 3/.test(m), detail: JSON.stringify({ bestFrame: r, m, msgs }) };
+});
+
+check('ruler: the last column gets its label when the length is a multiple of 10', async (page) => {
+  // generateScale stopped one short (absPos < end), so a 50-column ruler had no "50".
+  await loadFasta(page, '>a\nACGT\n');
+  const r = await page.evaluate(() => ({ s50: generateScale(50, 10, 0), s30: generateScale(30, 10, 0) }));
+  const ok = r.s50.endsWith('50') && r.s30.endsWith('30') && r.s50.length === 50;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+check('consensus: IUPAC fallback includes ambiguity codes already in the column', async (page) => {
+  // A column of A and R fell back to "-": only A/C/G/T were unioned.
+  const got = await consensusFor(page, fa(['A', 'R', 'A', 'R', '-', '-']), { threshold: 50, fallback: 'iupac' });
+  return { pass: got === 'R', detail: got };
+});
+
+check('a failed or empty file load does not leave the previous alignment behind for Save', async (page) => {
+  // The error path reset the file name but kept state.seqs, so Save wrote the
+  // previous file's sequences under the new name; an empty file gave no message.
+  await openText(page, 'first.fa', '>a\nACGT\n>b\nACGA\n');
+  const fastq = await openText(page, 'reads.fastq', '@r1\nACGT\n+\nIIII\n');
+  const afterBad = await page.evaluate(() => state.seqs.length);
+  await openText(page, 'first.fa', '>a\nACGT\n>b\nACGA\n');
+  await page.setInputFiles('#fileInput', { name: 'empty.fa', mimeType: 'text/plain', buffer: Buffer.from('') });
+  await page.waitForTimeout(500);
+  const empty = await page.evaluate(() => ({ n: state.seqs.length, msg: document.getElementById('statusMessage')?.textContent || '' }));
+  const ok = afterBad === 0 && /FASTQ/i.test(fastq.message) && empty.n === 0 && /empty/i.test(empty.msg);
+  return { pass: ok, detail: JSON.stringify({ afterBad, fastqMsg: fastq.message, empty }) };
+});
+
+check('a binary file is refused, not "loaded successfully"', async (page) => {
+  // Bytes 00 01 02 03 FF FE \n > a loaded as one empty sequence named "a".
+  const r = await openBytes(page, 'bin.dat', Buffer.from([0, 1, 2, 3, 0xff, 0xfe, 0x0a, 0x3e, 0x61]));
+  return { pass: r.names.length === 0 && !/success/i.test(r.message), detail: JSON.stringify(r) };
+});
+
+check('a snapshot .json saved by the app reopens through the file picker', async (page) => {
+  // The only JSON loaders fetched a server path, so a downloaded snapshot could
+  // not be reopened on the static site ("No valid sequences found").
+  await loadFasta(page, '>a desc\nACGTAC\n>b\nACGTTC\n');
+  const json = await page.evaluate(() => JSON.stringify(_buildSnapshotPayload()));
+  await loadFasta(page, '>x\nAAAA\n');
+  await page.setInputFiles('#fileInput', { name: 'snap.json', mimeType: 'application/json', buffer: Buffer.from(json) });
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => state.seqs.map(s => s.header + ':' + s.seq).join(','));
+  return { pass: r === 'a:ACGTAC,b:ACGTTC', detail: r };
+});
+
+check('Snapshot > Create still downloads when the clipboard refuses the link', async (page) => {
+  // clipboard.writeText shared a try with the downloads: "Document is not
+  // focused" or a denied permission cancelled the whole snapshot.
+  await loadFasta(page, '>a\nACGT\n>b\nACGA\n');
+  const r = await page.evaluate(async () => {
+    navigator.clipboard.writeText = () => Promise.reject(new Error('Document is not focused.'));
+    let downloads = 0;
+    const orig = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () { if (this.download) downloads++; else orig.call(this); };
+    await createSnapshot();
+    HTMLAnchorElement.prototype.click = orig;
+    return { downloads, msg: document.getElementById('statusMessage')?.textContent || '' };
+  });
+  return { pass: r.downloads >= 2 && !/failed/i.test(r.msg), detail: JSON.stringify(r) };
+});
+
+check('a lowercase alignment with ragged ends is not taken for A3M', async (page) => {
+  // _looksLikeA3m counted gaps as match columns when there were no capitals,
+  // so acgt-acgt / acg-tacgtaa was re-gapped as A3M insertions.
+  const r = await openText(page, 'low.fa', '>a\nacgt-acgt\n>b\nacg-tacgtaa\n');
+  return { pass: r.seqs.join(',') === 'acgt-acgt--,acg-tacgtaa', detail: JSON.stringify(r) };
+});
+
+check('SVG export is valid XML when a name holds a control character', async (page) => {
+  // _escapeXmlText kept C0 control characters, which XML forbids.
+  await loadFasta(page, '>bad\u0001name\nACGT\n>b\nACGA\n');
+  const r = await page.evaluate(() => {
+    const t = _escapeXmlText('a\u0001b\u0008c\td');
+    return t;
+  });
+  return { pass: r === 'abc\td', detail: JSON.stringify(r) };
+});
+
+check('snapshot colours are checked: a crafted colour cannot inject CSS', async (page) => {
+  // Search and name colours from a ?snapshot= link went straight into a <style>
+  // rule, so "red} body{background:url(//x)}" restyled the page.
+  await loadFasta(page, '>a\nACGTACGT\n>b\nACGTACGA\n');
+  const r = await page.evaluate(() => {
+    _applySnapshotSearchHistory([{ motif: 'ACG:fwd', searchValue: 'ACG', strand: 'fwd', color: 'red} body{background:url(//x.invalid/a.png)} .z{' }]);
+    _applySnapshotColourState({ mappings: [['a', '#123456'], ['b', 'red;}</style><b>x']] });
+    const css = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n');
+    return { injected: /x\.invalid/.test(css), searchColor: state.searchHistory[0].color, a: colourState.mappings.get('a'), b: colourState.mappings.has('b') };
+  });
+  const ok = !r.injected && r.searchColor === '#ffcc00' && r.a === '#123456' && !r.b;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const filter = process.env.CHECK_FILTER ? process.env.CHECK_FILTER.toLowerCase() : null;

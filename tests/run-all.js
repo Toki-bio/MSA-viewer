@@ -39,6 +39,7 @@ const SUITES = [
   { name: 'clustering: multiple data sets', args: ['tests/clustering/multi_dataset.test.js'] },
   { name: 'bicluster oracle', args: ['tests/bicluster/oracle.js'] },
   { name: 'optional server security', args: ['tests/server/security.test.js'] },
+  { name: 'sequence search: Plus/Minus hits in query coordinates', args: ['tests/search/minus-strand.test.js'] },
   { name: 'unit: low-severity audit fixes', args: ['tests/unit/audit-low.test.js'] },
   { name: 'unit: sample row called from reads', args: ['tests/unit/sample-call.test.js'] },
   { name: 'unit: variant effects on genes', args: ['tests/unit/variant-effect.test.js'] },
