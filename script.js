@@ -13545,7 +13545,9 @@ function _computeLargeAlignmentBlockChars() {
     // the slider's displayed number) but became a real under-utilization
     // bug ("screen fit is too narrow") once fitBlockSizeBeforeInitialRender
     // started using this estimate for the real initial render.
-    const charPx = 7.8 * zoom;
+    // The residue cell measured for the current font (--res-w, _syncResidueWidthVar), else 7.8px x zoom
+    const resW = parseFloat(alignmentContainer?.style.getPropertyValue('--res-w'));
+    const charPx = resW > 0 ? resW : 7.8 * zoom;
     const namePx = ((effectiveNameLength() + 1) * charPx) + 16;   // .seq-name: nameLen ch + 1ch gap + 16px
     // Use window.innerWidth instead of container.clientWidth to avoid forcing
     // a synchronous reflow over the (potentially already-rendered) DOM —
@@ -13607,9 +13609,14 @@ function setBlockSizeToScreen() {
         const chars = _computeLargeAlignmentBlockChars();
         const slider = el('blockSizeSlider');
         const input = el('blockSizeInput');
+        const prev = parseInt(slider?.value || '200', 10);
         if (slider) slider.value = chars;
         if (input) input.value = chars;
-        return; // Skip re-render for large alignments
+        // Redraw with it when it changed (no measuring needed: the estimate is from the zoom).
+        // This used to stop at the number for every alignment over 80,000 residues, so after a
+        // zoom the Screen button changed the slider while the blocks kept overflowing.
+        if (el('modeBlocks')?.checked && chars !== prev) renderAlignment();
+        return;
     }
 
     // Try to measure an existing nucleotide span

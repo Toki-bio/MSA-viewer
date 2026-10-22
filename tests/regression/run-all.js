@@ -7011,6 +7011,21 @@ check('Audit: 130,000 sequences load and render', async (page) => {
   return { pass: r.n === 130000 && r.rows > 0, detail: JSON.stringify(r) };
 });
 
+// Display > Screen ("fit block size to the window") only updated the number above 80,000 residues
+// (the redraw was skipped for large alignments), so after zooming in the blocks kept overflowing.
+check('Audit: Screen refits the blocks of a large alignment', async (page) => {
+  await loadSyntheticFasta(page, 100, 1000);
+  await auditClickMode(page, 'block');
+  await page.mouse.click(5, 895);
+  for (let i = 0; i < 3; i++) { await page.keyboard.press('Control+Equal'); await page.waitForTimeout(600); }
+  const before = await page.evaluate(() => { const c = el('alignmentContainer'); return c.scrollWidth - c.clientWidth; });
+  await auditOpenSection(page, 'display');
+  await page.click('#blockSizeScreenBtn'); await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => { const c = el('alignmentContainer'); return { slider: +el('blockSizeSlider').value, rendered: +document.querySelector('.scale-ruler-line .seq-data').dataset.scale.split(':')[0], overflow: c.scrollWidth - c.clientWidth }; });
+  r.before = before;
+  return { pass: before > 0 && r.rendered === r.slider && r.overflow <= 0, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
