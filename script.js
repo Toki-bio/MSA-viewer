@@ -5613,6 +5613,7 @@ function _startSeqNameEditCanvas(index) {
     const m = _canvasState.metrics, canvas = _canvasState.canvas;
     if (!m || !canvas || !state.seqs[index]) return;
     if (alignmentContainer.querySelector('.seq-name-edit')) return;
+    const obj = state.seqs[index];   // the sequence, not its row number: rows can move while the box is open
     hideTooltip();
     const sticky = !!el('stickyNames')?.checked;
     const pitch = _canvasState.rowPitch || m.charH;
@@ -5639,7 +5640,8 @@ function _startSeqNameEditCanvas(index) {
         document.removeEventListener('mousedown', onOutside, true);
         const newName = input.value.trim();
         input.remove();
-        if (commit && _commitSeqRename(index, newName)) _canvasState.scheduleDraw?.();
+        const row = state.seqs.indexOf(obj);
+        if (commit && row >= 0 && _commitSeqRename(row, newName)) _canvasState.scheduleDraw?.();
     };
     input.addEventListener('keydown', (e) => {
         e.stopPropagation();
@@ -11911,12 +11913,14 @@ function _commitSeqRename(index, newName) {
 }
 
 function _startSeqNameEdit(nameSpan, index) {
-    if (!state.seqs[index] || nameSpan.querySelector('.seq-name-edit')) return;
+    // The sequence, not its row number: rows can move while the box is open
+    const obj = state.seqs[index];
+    if (!obj || nameSpan.querySelector('.seq-name-edit')) return;
     hideTooltip();
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'seq-name-edit';
-    input.value = state.seqs[index].header;
+    input.value = obj.header;
     input.spellcheck = false;
     input.setAttribute('aria-label', 'Sequence name');
     const label = nameSpan.querySelector('.seq-name-text');
@@ -11934,7 +11938,8 @@ function _startSeqNameEdit(nameSpan, index) {
         input.remove();
         nameSpan.classList.remove('renaming');
         if (label) label.style.visibility = '';
-        if (commit) _commitSeqRename(index, newName);
+        const row = state.seqs.indexOf(obj);
+        if (commit && row >= 0) _commitSeqRename(row, newName);
     };
     // Keys typed here are for the name only: none may reach the viewer's shortcuts
     input.addEventListener('keydown', (e) => {
@@ -14002,6 +14007,17 @@ function handleKeyDown(e) {
             }
             return; // let browser handle all keys in textarea (Input window etc.)
         }
+        // A single-line text field (search box, rename box, SeqEdit name...) gets native
+        // editing only. Ctrl+Z/Y/Home/End/arrows used to reach the viewer from here:
+        // Ctrl+Z undid the alignment instead of the typing, and a rename box then saved onto
+        // another row. Ctrl+F in the search box still searches.
+        if (_isTextEntry(activeEl)) {
+            if (activeEl.id === 'searchInput' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+                searchMotif();
+                e.preventDefault();
+            }
+            return;
+        }
         if ((e.ctrlKey || e.metaKey) && !e.altKey) {
             const key = e.key.toLowerCase();
             if ((key === 'v' || key === 'c' || key === 'x' || key === 'a') && !e.shiftKey) {
@@ -14060,7 +14076,9 @@ function handleKeyDown(e) {
                 e.preventDefault();
                 break;
             case 'z':
-                undoDelete();
+                // Ctrl+Shift+Z / Cmd+Shift+Z is redo (it used to undo once more)
+                if (e.shiftKey) redoAction();
+                else undoDelete();
                 e.preventDefault();
                 break;
             case 'y':
@@ -22697,6 +22715,11 @@ function _seqEditResetUndo(initialValue) {
 }
 
 
+// The sequences the open editor was opened on, by object: rows can move behind the dialog
+// (Ctrl+Up with focus on a button), and Apply used to write to whatever row then had the
+// remembered index, overwriting another sequence.
+let _seqEditTargetObjs = [];
+
 function openSeqEditor(index) {
     if (index === undefined || index === null) {
         // Use selected rows, or open freeform if none selected
@@ -22726,11 +22749,13 @@ function openSeqEditor(index) {
         // Freeform mode: blank editor for new or arbitrary text
         if (nameInput) nameInput.value = 'new_sequence';
         if (indexEl) indexEl.textContent = '-1';
+        _seqEditTargetObjs = [];
         textarea.value = '>new_sequence\n';
     } else {
         const s = state.seqs[index];
         if (nameInput) nameInput.value = s.fullHeader || s.header;
         if (indexEl) indexEl.textContent = String(index);
+        _seqEditTargetObjs = [s];
         textarea.value = `>${s.fullHeader || s.header}\n${s.seq}`;
     }
     _updateSeqEditLength();
@@ -22755,6 +22780,7 @@ function openSeqEditorMulti() {
     // Store multi indices
     const indices = Array.from(state.selectedRows).sort((a, b) => a - b);
     if (indexEl) indexEl.textContent = 'multi:' + indices.join(',');
+    _seqEditTargetObjs = indices.map(i => state.seqs[i]);
 
     // Build multi-FASTA
     let text = '';
@@ -22904,7 +22930,8 @@ function seqEditApply() {
 
     // Multi-sequence mode
     if (indexStr && indexStr.startsWith('multi:')) {
-        const indices = indexStr.substring(6).split(',').map(Number);
+        const indices = indexStr.substring(6).split(',').map(Number)
+            .map((i, k) => (_seqEditTargetObjs[k] ? state.seqs.indexOf(_seqEditTargetObjs[k]) : i));
         const entries = _getSeqEditMultiFasta();
         if (entries.length === 0) {
             showMessage("No sequences found.", 2000);
@@ -22954,8 +22981,9 @@ function seqEditApply() {
         return;
     }
 
-    const index = parseInt(indexStr);
+    let index = parseInt(indexStr);
     const isFreeform = (index === -1);
+    if (!isFreeform && _seqEditTargetObjs[0]) index = state.seqs.indexOf(_seqEditTargetObjs[0]);
 
     if (!isFreeform && (isNaN(index) || index < 0 || index >= state.seqs.length)) {
         showMessage("Invalid sequence index.", 3000);
