@@ -21621,16 +21621,33 @@ function _runCodonAlignInWorker(fasta, opts, onProgress) {
     });
 }
 
-// Rows that are not coding from end to end (internal stops in every frame, e.g. a gene with its flanks or introns):
-// the codon aligners explain each stop with frameshifts. On a 3 kb region with two genes MACSE put 21 frameshifts
-// in each row. [{ name, stops: [frame 1, 2, 3] }] for rows with at least 2 internal stops in every frame.
+// Rows that are not coding from end to end (a gene with its flanks or introns): the codon aligners explain each
+// stop with frameshifts. On a 3 kb region with two genes MACSE put 21 frameshifts in each row. Measured as the
+// fewest frame changes that read the row without an internal stop (greedy, furthest reach): a coding sequence
+// needs 0 or 1 even with a frameshift (the 0.4-3.6 kb genes of tests/codon-align/fixtures: 0-1), the region 21.
+// "Stops in every frame" was not a test of it: a real gene with a frameshift has stops in all three frames.
+function _stopFreeSwitches(s, code) {
+    const L = s.length;
+    let cur = 0, n = 0;
+    while (cur + 3 <= L) {
+        let best = cur;
+        for (let f = 0; f < 3; f++) {
+            let q = cur + ((f - (cur % 3)) + 3) % 3;
+            while (q + 3 <= L && code[s.substr(q, 3)] !== '*') q += 3;
+            if (q > best) best = q;
+        }
+        if (best + 6 > L) break;            // the last codon may be the stop
+        n++; cur = best + 1;
+    }
+    return n;
+}
 function _nonCodingRows(fasta) {
     const code = _getActiveCode(), out = [];
     for (const r of parseMafftOutput(fasta)) {
         const s = String(r.seq || '').replace(/[-.\s]/g, '').toUpperCase().replace(/U/g, 'T');
         if (s.length < 60) continue;
-        const stops = [0, 1, 2].map(f => { let n = 0; for (let i = f; i + 6 <= s.length; i += 3) if (code[s.substr(i, 3)] === '*') n++; return n; });
-        if (Math.min(...stops) >= 2) out.push({ name: _alignIdName(r.name), stops });
+        const switches = _stopFreeSwitches(s, code);
+        if (switches > Math.max(5, s.length / 600)) out.push({ name: _alignIdName(r.name), switches });
     }
     return out;
 }
@@ -21638,9 +21655,9 @@ function _nonCodingRows(fasta) {
 async function _codonAlignWithUi(fasta, label) {
     const nonCoding = _nonCodingRows(fasta);
     if (nonCoding.length) {
-        const list = nonCoding.slice(0, 3).map(x => `${String(x.name).split(/\s+/)[0]} (${x.stops.join(', ')})`).join(', ') + (nonCoding.length > 3 ? ` and ${nonCoding.length - 3} more` : '');
+        const list = nonCoding.slice(0, 3).map(x => `${String(x.name).split(/\s+/)[0]} (${x.switches})`).join(', ') + (nonCoding.length > 3 ? ` and ${nonCoding.length - 3} more` : '');
         const go = await _mafftAskYesNo({
-            message: `${nonCoding.length} sequence${nonCoding.length === 1 ? ' has' : 's have'} stop codons in every reading frame: ${list} (stops in frames 1, 2, 3).\n\n`
+            message: `${nonCoding.length} sequence${nonCoding.length === 1 ? ' has' : 's have'} stop codons in every reading frame along most of their length: ${list} (frame changes needed to read it without a stop; a coding sequence needs 0 or 1).\n\n`
                 + 'They are not coding sequences from end to end (flanks, introns, or the wrong genetic code: Display > Code). '
                 + 'A codon aligner will explain each stop with frameshifts.\n\n'
                 + 'To align a gene: click it on the annotation track (selects its columns) and use Realign selected region.\n\nAlign anyway?',

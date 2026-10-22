@@ -38,7 +38,8 @@ check('Reads mode: SAM loads 3 mapped reads with correct track packing', async (
         const reads = bamState.reads;
         const svg = document.querySelector('#readsPileSvg');
         // Main read bars use fill #c8d8e8 (set in renderReadsAlignment)
-        const readBars = svg ? svg.querySelectorAll('rect[fill="#c8d8e8"]').length : 0;
+        // (bars are coloured by strand since v271; each main bar carries data-stroke)
+        const readBars = svg ? svg.querySelectorAll('rect[data-stroke]').length : 0;
         return {
             readCount: reads ? reads.length : 0,
             refName: bamState.refName,

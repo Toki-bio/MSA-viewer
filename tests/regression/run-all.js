@@ -1047,7 +1047,12 @@ check('Codon realignment warns before aligning rows with stops in every frame; N
   const after = await page.evaluate(() => state.seqs.map(s => s.seq).join('|'));
   const ran = await page.evaluate(() => !!window._lastCodonAlignStats);
   await page.evaluate(() => { const sel = document.getElementById('mafftSeqType'); sel.value = sel.options[0].value; sel.dispatchEvent(new Event('change', { bubbles: true })); });
-  const ok = !!prompt && /every reading frame/.test(prompt) && after === before && !ran;
+  // a real coding gene with a frameshift (3.6 kb, stops in all three frames) is not taken for non-coding: the first
+  // version of this warning asked about it, and the MACSE functional tests waited on the prompt
+  const fs2 = require('fs');
+  const gene = fs2.readFileSync(path.join(__dirname, '..', 'codon-align', 'fixtures', '14911at40674.in.fna'), 'utf8');
+  const realGene = await page.evaluate(f => _nonCodingRows(f).length, gene);
+  const ok = !!prompt && /every reading frame/.test(prompt) && after === before && !ran && realGene === 0;
   return { pass: ok, detail: JSON.stringify({ prompt, unchanged: after === before }) };
 });
 
