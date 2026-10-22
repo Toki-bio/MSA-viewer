@@ -12600,7 +12600,8 @@ function _predictRedrawMs() {
     const n = _approxResidueCount();
     const key = _redrawKey();
     if (_lastRedraw && _lastRedraw.key === key && _lastRedraw.residues > 0) return _lastRedraw.ms * n / _lastRedraw.residues;
-    return (isSpanRenderMode() && !state._needsWindowedDom && n > 200000) ? 1500 : 0;
+    // 60k: full-DOM files now stop at ALIGN_WINDOWED_DOM_THRESHOLD (100k), so the notice must start below it
+    return (isSpanRenderMode() && !state._needsWindowedDom && n > 60000) ? 1500 : 0;
 }
 async function renderWithNotice(label) {
     if (!state.seqs || !state.seqs.length) { renderAlignment(); return; }
@@ -12641,10 +12642,10 @@ const ALIGN_CRAZY_VOLUME = 5_000_000;
 // Canvas auto-switch (both still gated by ALIGN_CRAZY_VOLUME).
 // Measured 2026-10 at 300 x 1,000: the full build blocks the page 2.3 s on a
 // switch to Full (1.3 s Block, 1.2 s on load); windowed it is 0.4 s with
-// similar scrolling. Lowering this to ~100,000 would remove those freezes but
-// also the Show 2D block-mask overlay, which the windowed display does not
-// support yet (renderBlockMaskOverlay), so it stays at 500,000 for now.
-const ALIGN_WINDOWED_DOM_THRESHOLD = 500_000;
+// similar scrolling. Show 2D now draws on windowed views too, so the threshold is 100,000 (owner,
+// 2026-10-22, after measuring 96k-495k: Full switch 4.2-7.1 s -> 1.1-1.2 s, longest freeze 2.7-3.7 s
+// -> 0.4-0.6 s, residue click 0.17-0.53 s -> 0.05-0.13 s; the full regression suite passes).
+const ALIGN_WINDOWED_DOM_THRESHOLD = 100_000;
 // At or above this many residues a freshly loaded alignment opens in Canvas mode (the user
 // can still pick Full/Block). Measured 2026-10-16 at 600 x 600 (360k residues, Radeon 780M):
 // the full-DOM view scrolls at 110-160 ms a frame because every row entering the viewport is

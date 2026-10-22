@@ -11,7 +11,7 @@ No installation, no build step, no framework dependencies.
   GenBank flatfile, ABI (AB1) chromatograms, SAM, and BAM/CRAM (read in the browser onto an open reference);
   GenBank/RefSeq records can also be fetched by accession
 - **Four view modes**: Full, Block, Canvas (viewport-culled; Full and Block window
-  the alignment above about 500,000 residues, and Canvas auto-activates above
+  the alignment above about 100,000 residues, and Canvas auto-activates above
   5 million), and Reads (IGV-style tracks for mapped SAM/BAM data). Opening an
   alignment with more than 500 sequences *and* more than 3,000 columns, or more than
   5 million residues, first asks before loading
