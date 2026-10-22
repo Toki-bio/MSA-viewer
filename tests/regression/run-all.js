@@ -7067,6 +7067,29 @@ check('Audit: Reads mode lines up reads, reference and ruler', async (page) => {
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+// The windowed views and Canvas set their fixed height once, at render: after the window was made
+// smaller the bottom of the alignment (and of the vertical scrollbar) hung below the window, and
+// after it was made taller a band of the window stayed empty.
+check('Audit: windowed Full and Canvas follow a window resize', async (page) => {
+  const out = {};
+  await loadSyntheticFasta(page, 1500, 4000);
+  const fit = () => { const r = el('alignmentContainer').getBoundingClientRect(); return { bottom: Math.round(r.bottom), inner: innerHeight }; };
+  for (const mode of ['full', 'canvas']) {
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await auditClickMode(page, mode);
+    await page.setViewportSize({ width: 1400, height: 600 }); await page.waitForTimeout(800);
+    out[mode + '600'] = await page.evaluate(fit);
+    await page.setViewportSize({ width: 1400, height: 1100 }); await page.waitForTimeout(800);
+    out[mode + '1100'] = await page.evaluate(fit);
+    if (mode === 'canvas') out.canvasH = await page.evaluate(() => [parseFloat(el('alignmentCanvas').style.height), el('alignmentContainer').clientHeight]);
+    else out.fullRows = await page.evaluate(() => { const c = el('alignmentContainer'), cr = c.getBoundingClientRect(); return [...c.querySelectorAll('.seq-line[data-seq-index]')].filter(l => { const q = l.getBoundingClientRect(); return q.top >= cr.top && q.bottom <= cr.bottom; }).length; });
+  }
+  const within = s => s.bottom <= s.inner && s.bottom >= s.inner - 60;
+  const ok = within(out.full600) && within(out.full1100) && within(out.canvas600) && within(out.canvas1100)
+    && out.fullRows > 60 && Math.abs(out.canvasH[0] - out.canvasH[1]) <= 1;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
