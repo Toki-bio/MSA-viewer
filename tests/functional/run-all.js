@@ -5,7 +5,8 @@ const { start } = require('../lib/static-server');
 const { launch, makeFasta, loadFasta, loadSyntheticFasta, setMode } = require('../lib/browser');
 
 const CHECKS = [];
-function check(name, fn) { CHECKS.push({ name, fn }); }
+function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
+const { withTimeout, checkTimeoutMs } = require('../lib/check-timeout');   // a time limit per check (2026-10-23)
 
 check('Reads mode: SAM loads 3 mapped reads with correct track packing', async (page) => {
     // 1. Load a 32bp reference sequence
@@ -1130,7 +1131,7 @@ async function main() {
     const filter = process.env.CHECK_FILTER ? process.env.CHECK_FILTER.toLowerCase() : null;
     const activeChecks = filter ? CHECKS.filter(c => c.name.toLowerCase().includes(filter)) : CHECKS;
     try {
-        for (const { name, fn } of activeChecks) {
+        for (const { name, fn, opts } of activeChecks) {
             const browser = await launch();
             const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
             page.setDefaultTimeout(30000);
@@ -1138,14 +1139,14 @@ async function main() {
             const t0 = Date.now();
             try {
                 await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
-                outcome = await fn(page);
+                outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
             } catch (e) {
                 outcome = { pass: false, detail: `threw: ${e.message}` };
             }
             const ms = Date.now() - t0;
             console.log(`[${outcome.pass ? 'PASS' : 'FAIL'}] (${ms}ms) ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
             results.push({ name, ...outcome });
-            await browser.close();
+            await withTimeout(browser.close(), 20000).catch(() => {});   // a timed-out check may still hold the page
         }
     } finally {
         server.close();

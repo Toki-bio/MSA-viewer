@@ -11,7 +11,8 @@ const ROOT = path.join(__dirname, '..', '..');
 const { launch, loadFasta, loadSyntheticFasta, setMode } = require('../lib/browser');
 
 const CHECKS = [];
-function check(name, fn) { CHECKS.push({ name, fn }); }
+function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
+const { withTimeout, checkTimeoutMs } = require('../lib/check-timeout');   // a time limit per check (2026-10-23)
 
 // Load text through the file picker (format auto-detection, as a user would)
 async function openText(page, name, text) {
@@ -791,7 +792,7 @@ async function main() {
   const browser = await launch();
   let failed = 0;
   try {
-    for (const { name, fn } of active) {
+    for (const { name, fn, opts } of active) {
       const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
       const page = await ctx.newPage();
       page.setDefaultTimeout(30000);
@@ -800,14 +801,14 @@ async function main() {
       let outcome;
       try {
         await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
-        outcome = await fn(page);
+        outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
         if (outcome.pass && errors.length) outcome = { pass: false, detail: 'page errors: ' + errors.join(' | ') };
       } catch (e) {
         outcome = { pass: false, detail: 'threw: ' + e.message };
       }
       if (!outcome.pass) failed++;
       console.log(`[${outcome.pass ? 'PASS' : 'FAIL'}] ${name}${outcome.detail && !outcome.pass ? ' - ' + outcome.detail : ''}`);
-      await ctx.close();
+      await withTimeout(ctx.close(), 20000).catch(() => {});
     }
   } finally {
     await browser.close();

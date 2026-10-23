@@ -8,7 +8,8 @@ const { start } = require('../lib/static-server');
 const { launch, makeFasta, loadFasta, loadSyntheticFasta, setMode } = require('../lib/browser');
 
 const CHECKS = [];
-function check(name, fn) { CHECKS.push({ name, fn }); }
+function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
+const { withTimeout, checkTimeoutMs } = require('../lib/check-timeout');   // a time limit per check (2026-10-23)
 // Canvas eases a mouse-wheel notch over 150 ms (v276): wait until the view has arrived (no-op in Full/Block)
 async function settleWheel(pg) { await pg.waitForFunction(() => typeof _canvasState === 'undefined' || !_canvasState.wheelAnimating, null, { timeout: 2000 }).catch(() => {}); await pg.waitForTimeout(40); }
 
@@ -8061,7 +8062,7 @@ async function main() {
   const filter = process.env.CHECK_FILTER ? process.env.CHECK_FILTER.toLowerCase() : null;
   const activeChecks = filter ? CHECKS.filter(c => c.name.toLowerCase().includes(filter)) : CHECKS;
   try {
-    for (const { name, fn } of activeChecks) {
+    for (const { name, fn, opts } of activeChecks) {
       // A fresh browser process per check, not just a fresh page: multiple
       // multi-million-residue alignments loaded into the SAME browser
       // process across successive checks was observed to accumulate memory
@@ -8076,14 +8077,14 @@ async function main() {
       const t0 = Date.now();
       try {
         await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
-        outcome = await fn(page);
+        outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
       } catch (e) {
         outcome = { pass: false, detail: `threw: ${e.message}` };
       }
       const ms = Date.now() - t0;
       console.log(`[${outcome.pass ? 'PASS' : 'FAIL'}] (${ms}ms) ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
       results.push({ name, ...outcome });
-      await browser.close();
+      await withTimeout(browser.close(), 20000).catch(() => {});   // a timed-out check may still hold the page
     }
   } finally {
     server.close();

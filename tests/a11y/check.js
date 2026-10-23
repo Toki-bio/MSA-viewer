@@ -9,7 +9,8 @@ const { launch, loadFasta } = require('../lib/browser');
 
 const AXE = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 const CHECKS = [];
-function check(name, fn) { CHECKS.push({ name, fn }); }
+function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
+const { withTimeout, checkTimeoutMs } = require('../lib/check-timeout');   // a time limit per check (2026-10-23)
 const active = page => page.evaluate(() => {
   const a = document.activeElement;
   return { id: a.id, label: a.getAttribute('aria-label') || '', tag: a.tagName, inMenu: a.closest('.menu-section')?.querySelector('.section-header span')?.textContent || '' };
@@ -124,7 +125,7 @@ async function main() {
   const browser = await launch();
   let failed = 0;
   try {
-    for (const { name, fn } of CHECKS) {
+    for (const { name, fn, opts } of CHECKS) {
       const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
       const page = await ctx.newPage();
       const errors = [];
@@ -132,12 +133,12 @@ async function main() {
       let outcome;
       try {
         await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
-        outcome = await fn(page, baseUrl);
+        outcome = await withTimeout(fn(page, baseUrl), checkTimeoutMs(opts));
         if (outcome.pass && errors.length) outcome = { pass: false, detail: 'page errors: ' + errors.join(' | ') };
       } catch (e) { outcome = { pass: false, detail: 'threw: ' + e.message }; }
       if (!outcome.pass) failed++;
       console.log(`[${outcome.pass ? 'PASS' : 'FAIL'}] ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
-      await ctx.close();
+      await withTimeout(ctx.close(), 20000).catch(() => {});
     }
   } finally {
     await browser.close();
