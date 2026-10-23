@@ -467,6 +467,11 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li><strong>Statistics window</strong> rebuilt: esl-alistat / esl-alipid summary with documented tooltips, one switchable distance/identity matrix with heat-map colouring, pair filter and list, CSV / TSV / Excel export, movable, resizable and dockable (§9.4).</li>
     <li><strong>Smooth scrolling</strong> of large alignments in Full and Block (buffered windows, in-place column patching); translation rows in the windowed renderer.</li>
     <li><strong>Parsers</strong> - A3M and PIR read as FASTA variants; EMBL refused rather than loaded as garbage; UTF-16 and legacy encodings; truncated BAM/CRAM reported (§1.3).</li>
+    <li><strong>Tree labels</strong> - in the unrooted drawing every leaf label gets its own clear spot (moved along the arc or outward, with a thin leader line) and the drawing grows to hold them; <em>group overlapping labels</em> is off by default and, when on, lists the omitted names under the group label (&sect;9.4).</li>
+    <li><strong>Name column width by dragging</strong> - drag the invisible boundary between the names and the sequences; double-click it to fit the longest name (&sect;10.3).</li>
+    <li><strong>Rows and letters</strong> - rows are two pixels taller and the letters centred in them, so a white letter on a shaded cell is always separated from a white cell above or below it at any browser zoom; Canvas eases each mouse-wheel notch instead of jumping.</li>
+    <li><strong>Windowed Full and Block from 100,000 residues</strong> - above that size the two views build only the rows and columns near the window (switching to Full in about a second instead of four to seven); Show 2D draws there too (&sect;5.1).</li>
+    <li><strong>Edit mode</strong> - <kbd>Ctrl+Shift+Z</kbd> redoes; a plain click on a name selects that row and a second click unselects it; <kbd>Alt+J</kbd> / <kbd>Alt+C</kbd> copy the selected consensus / sequences (&sect;10).</li>
     <li><strong>AB1 chromatograms</strong> - an AB1 file loads as one sequence and right-click → View Chromatogram... shows the trace (§1.3).</li>
     <li><strong>Accessibility</strong> - a colour-blind-safe nucleotide scheme (§5.3); menus and windows can be operated from the keyboard (Tab to a menu, Enter to open, Esc to close).</li>
     <li><strong>Protein consensus</strong> - the consensus returns the true majority residue in protein and N-rich columns, with X/B/Z/J fallbacks (§6.2); protein residues are shaded correctly in Monochrome.</li>
@@ -2167,7 +2172,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><td><kbd>Ctrl++ / Ctrl+-</kbd></td><td>Zoom in / out</td></tr>
     <tr><td><kbd>Ctrl+0</kbd></td><td>Reset zoom</td></tr>
     <tr><td><kbd>PgUp / PgDn</kbd></td><td>Scroll the alignment one page</td></tr>
-    <tr><td><kbd>Esc</kbd></td><td>Close popups and menus</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Close popups and menus; with nothing open, clear the selection (rows, columns, residues; Undo in the Selections panel brings it back). While typing in a cell, leave the cell</td></tr>
   </table>
 
   <h3 id="sc-editing">10.2 Editing</h3>
@@ -2177,7 +2182,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><td><kbd>Ctrl+C</kbd></td><td>Copy the selected bases, or the selected sequences as ungapped FASTA</td></tr>
     <tr><td><kbd>Ctrl+Del</kbd></td><td>Delete selected sequences</td></tr>
     <tr><td><kbd>Ctrl+Z</kbd></td><td>Undo</td></tr>
-    <tr><td><kbd>Ctrl+Y</kbd></td><td>Redo</td></tr>
+    <tr><td><kbd>Ctrl+Y</kbd> or <kbd>Ctrl+Shift+Z</kbd></td><td>Redo</td></tr>
     <tr><td><kbd>Ctrl+R</kbd></td><td>Reverse complement selected</td></tr>
     <tr><td><kbd>Ctrl+U</kbd></td><td>Duplicate selected</td></tr>
     <tr><td><kbd>Ctrl+↑</kbd></td><td>Move selected rows up</td></tr>
@@ -2187,6 +2192,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><td><kbd>Ctrl+B</kbd></td><td>Insert consensus of the selection below it</td></tr>
     <tr><td><kbd>Ctrl+Shift+K</kbd></td><td>Copy consensus</td></tr>
     <tr><td><kbd>Alt+J</kbd></td><td>Copy consensus of the selected sequences (Ctrl+Shift+J also works where the browser lets it through; Chrome, Edge and Firefox keep it for their developer tools)</td></tr>
+    <tr><td><kbd>Alt+C</kbd></td><td>Copy the selected sequences as ungapped FASTA (the Copy Sel button)</td></tr>
     <tr><td><kbd>Ctrl+Shift+V</kbd></td><td>Copy selected columns</td></tr>
     <tr><td><kbd>Ctrl+Shift+D</kbd></td><td>Delete selected columns (asks first)</td></tr>
     <tr><td><kbd>Ctrl+D</kbd></td><td>Delete selected columns without asking (undoable). With residues selected instead (a plain drag), deletes the columns they span, asking first when they are not in every sequence</td></tr>
@@ -2201,6 +2207,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><td>Click / Ctrl+Click residue</td><td>Select residues (bases) in that row; a second click in the same row extends to a range, or drag. In Edit mode, Ctrl is required (a plain click is for the edit tools)</td></tr>
     <tr><td>Ctrl+Alt+Click residue</td><td>Select column; Ctrl+Alt+drag selects a column range (§8.2)</td></tr>
     <tr><td>Drag sequence name</td><td>Reorder rows</td></tr>
+    <tr><td>Drag the boundary between the names and the sequences</td><td>Set the width of the name column (the cursor becomes &#8596; over it); double-click the boundary to fit the longest name</td></tr>
     <tr><td>Right-click alignment</td><td>Context menu with 15+ options: Copy as FASTA (gapped/ungapped), Copy as plain text (gapped/ungapped), Copy by colour (gapped/ungapped), Edit Sequence, View Chromatogram (AB1 rows), Reverse complement, Rename, Replace with consensus, Add consensus below, Delete, Clear selection, Move to Top/Bottom, Insert/Remove gap, BLAST Search, Re-align against consensus, Dot-plot (self) or Dot-plot (A vs B) with two rows selected, Find repeats, Find TSD (SINE)</td></tr>
     <tr><td>Right-button drag on empty space</td><td>Pan viewport (the context menu is suppressed after a drag)</td></tr>
     <tr><td>Scroll wheel</td><td>Vertical scroll</td></tr>
