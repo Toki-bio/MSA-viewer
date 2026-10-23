@@ -7792,6 +7792,69 @@ check('Unrooted tree: no two leaf labels overlap and every name is inside the dr
   return { pass: good(out.z100) && good(out.z400), detail: JSON.stringify(out) };
 });
 
+
+// Owner (2026-10-23): "Ins Gap Other turns into simple nucleotide selection (Type button activates) after a few
+// quick clicks". Two quick clicks are a double-click, and the document's dblclick handler switched the tool to
+// Type whatever tool was active. With edit mode on and a gap tool active, a double-click is now just two clicks
+// of that tool; with the Type tool it still moves the typing cell, and with edit mode off it still enters Type.
+check('Edit mode: a double-click with a gap tool applies the tool twice and does not switch to Type (Full)', async (page) => {
+  await page.goto(page.url().replace(/view=\w+/, 'view=full').replace(/(index\.html)(?!\?)/, '$1?view=full'), { waitUntil: 'networkidle' });
+  await page.setInputFiles('#fileInput', { name: 'g.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTAC\n>b\nACGTACGTAC\n>c\nACGTACGTAC\n') });
+  await page.waitForTimeout(1200);
+  await page.click('#editToggleButton'); await page.waitForTimeout(400);
+  await page.click('[data-edit-tool="insertGapOther"]'); await page.waitForTimeout(300);
+  const cell = (r, c) => page.evaluate(([r, c]) => { const b = document.querySelector(`.seq-line[data-seq-index="${r}"] .seq-data > span[data-pos="${c}"]`).getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; }, [r, c]);
+  const c03 = await cell(0, 3);
+  await page.mouse.dblclick(c03.x, c03.y);               // two quick clicks
+  await page.waitForTimeout(500);
+  const gap = await page.evaluate(() => ({ tool: state.editTool, typeOn: document.querySelector('[data-edit-tool="residue"]').classList.contains('active'), b: state.seqs[1].seq, a: state.seqs[0].seq, editCell: state.editCell }));
+  // the Type tool: a double-click moves the typing cell
+  await page.click('[data-edit-tool="residue"]'); await page.waitForTimeout(300);
+  const c12 = await cell(1, 2);
+  await page.mouse.dblclick(c12.x, c12.y); await page.waitForTimeout(300);
+  const typed = await page.evaluate(() => ({ tool: state.editTool, cell: state.editCell }));
+  // edit mode off: a double-click still enters Type at that cell
+  await page.click('#editToggleButton'); await page.waitForTimeout(400);
+  const c22 = await cell(2, 2);
+  await page.mouse.dblclick(c22.x, c22.y); await page.waitForTimeout(400);
+  const entered = await page.evaluate(() => ({ on: state.editModeActive, tool: state.editTool, cell: state.editCell }));
+  await page.evaluate(() => { if (state.editModeActive) document.getElementById('editToggleButton').click(); });
+  const ok = gap.tool === 'insertGapOther' && !gap.typeOn && gap.b.slice(3, 5) === '--' && gap.b.length === 12
+    && typed.tool === 'residue' && typed.cell && typed.cell.row === 1 && typed.cell.pos === 2
+    && entered.on && entered.tool === 'residue' && entered.cell && entered.cell.row === 2 && entered.cell.pos === 2;
+  return { pass: ok, detail: JSON.stringify({ gap, typed, entered }) };
+});
+
+
+// Owner (2026-10-23): "when moving a sequence in edit mode, tooltip over nucleotides should not appear". The residue
+// tooltip (name: position) followed the pointer across the cells crossed by a Move/Slide drag. No residue tooltip
+// while a Move/Slide, residue-selection or row drag is in progress, in Full and in Canvas.
+check('Edit mode: no residue tooltip while a Move/Slide drag is in progress (Full, Canvas)', async (page) => {
+  const out = {};
+  for (const view of ['full', 'canvas']) {
+    await page.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await page.setInputFiles('#fileInput', { name: 'm.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTACGTACGT\n>b\nACGTACGTACGTACGT\n>c\nACGTACGTACGTACGT\n') });
+    await page.waitForTimeout(1200);
+    await page.click('#editToggleButton'); await page.waitForTimeout(400);
+    await page.click('[data-edit-tool="moveNoGaps"]'); await page.waitForTimeout(300);
+    const cell = (r, c) => page.evaluate(([r, c]) => {
+      if (document.getElementById('modeCanvas').checked) { const cv = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics; return { x: cv.left + m.nameW + (c + 0.5) * m.charW - _canvasState.offsetX, y: cv.top + m.headerH + (r + 0.5) * _canvasState.rowPitch - _canvasState.offsetY }; }
+      const b = document.querySelector(`.seq-line[data-seq-index="${r}"] .seq-data > span[data-pos="${c}"]`).getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; }, [r, c]);
+    const shown = () => page.evaluate(() => { const t = document.getElementById('tooltip') || document.querySelector('.tooltip'); return !!t && t.style.display !== 'none' && t.getClientRects().length > 0 ? t.textContent.trim().slice(0, 40) : ''; });
+    const a = await cell(1, 2), b = await cell(1, 9);
+    await page.mouse.move(a.x, a.y); await page.waitForTimeout(150);
+    await page.mouse.down();
+    const seen = [];
+    for (let i = 1; i <= 6; i++) { await page.mouse.move(a.x + (b.x - a.x) * i / 6, a.y + (i % 2), { steps: 2 }); await page.waitForTimeout(90); seen.push(await shown()); }
+    const dragging = await page.evaluate(() => !!state.editDrag);
+    await page.mouse.up(); await page.waitForTimeout(400);
+    await page.evaluate(() => { if (state.editModeActive) document.getElementById('editToggleButton').click(); });
+    out[view] = { dragging, tooltipsDuringDrag: seen.filter(Boolean) };
+  }
+  const ok = Object.values(out).every(r => r.dragging && r.tooltipsDuringDrag.length === 0);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

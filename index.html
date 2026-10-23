@@ -941,25 +941,25 @@
             </div>
         </div>
         <div id="editToolPanel" class="edit-tool-panel" hidden>
-            <button id="editMoveNoGapsButton" class="edit-tool-button" data-edit-tool="moveNoGaps" title="GeneDoc Arrange / MoveText: drag residues without keeping intervening gaps">Move NoGaps</button>
-            <button id="editSlideKeepGapsButton" class="edit-tool-button" data-edit-tool="slideKeepGaps" title="GeneDoc Move / SlideText: drag a segment while keeping its gaps">Slide KeepGaps</button>
-            <label class="edit-live-conservation" title="Update conservation shading during Move/Slide dragging">
+            <button id="editMoveNoGapsButton" class="edit-tool-button" data-edit-tool="moveNoGaps" title="Drag a residue left or right: residues move, the gaps they pass are not kept">Move NoGaps</button>
+            <button id="editSlideKeepGapsButton" class="edit-tool-button" data-edit-tool="slideKeepGaps" title="Drag a stretch left or right: its gaps slide along with it">Slide KeepGaps</button>
+            <label class="edit-live-conservation" title="Update the conservation shading while a Move or Slide drag is going on (every edit updates it when it ends)">
                 <input id="editLiveConservationToggle" type="checkbox">
-                Live conservation
+                Shade while dragging
             </label>
-            <button id="editRecalcConsButton" class="edit-command-button" title="Recalculate conservation now (in case Live conservation is off)" style="font-size:10px;" onclick="_recalcConservation()">R Cons</button>
+            <button id="editRecalcConsButton" class="edit-command-button" title="Recalculate the conservation shading now" style="font-size:10px;" onclick="_recalcConservation()">R Cons</button>
             <span class="edit-tool-separator"></span>
-            <button id="editInsertGapButton" class="edit-tool-button" data-edit-tool="insertGapSeq" title="GeneDoc Insert Dash: click a sequence position">Ins Gap Seq</button>
-            <button id="editDeleteGapButton" class="edit-tool-button" data-edit-tool="deleteGapSeq" title="GeneDoc Delete Dash: click a gap in one sequence">Del Gap Seq</button>
-            <button id="editInsertGapOtherButton" class="edit-tool-button" data-edit-tool="insertGapOther" title="GeneDoc Insert Other: insert a gap in every other sequence">Ins Gap Other</button>
-            <button id="editDeleteGapOtherButton" class="edit-tool-button" data-edit-tool="deleteGapOther" title="GeneDoc Delete Other: delete a gap from every other sequence">Del Gap Other</button>
-            <button id="editInsertGapAllButton" class="edit-tool-button" data-edit-tool="insertGapAll" title="GeneDoc Insert One: insert a gap in all sequences">Ins Gap All</button>
-            <button id="editDeleteGapAllButton" class="edit-tool-button" data-edit-tool="deleteGapAll" title="GeneDoc Delete One: delete a gap from all sequences">Del Gap All</button>
+            <button id="editInsertGapButton" class="edit-tool-button" data-edit-tool="insertGapSeq" title="Click a position: insert a gap there in that sequence">Ins Gap Seq</button>
+            <button id="editDeleteGapButton" class="edit-tool-button" data-edit-tool="deleteGapSeq" title="Click a gap: delete it from that sequence">Del Gap Seq</button>
+            <button id="editInsertGapOtherButton" class="edit-tool-button" data-edit-tool="insertGapOther" title="Click a position: insert a gap there in every other sequence">Ins Gap Other</button>
+            <button id="editDeleteGapOtherButton" class="edit-tool-button" data-edit-tool="deleteGapOther" title="Click a gap: delete it from every other sequence (each of them must have a gap there)">Del Gap Other</button>
+            <button id="editInsertGapAllButton" class="edit-tool-button" data-edit-tool="insertGapAll" title="Click a position: insert a gap column there">Ins Gap All</button>
+            <button id="editDeleteGapAllButton" class="edit-tool-button" data-edit-tool="deleteGapAll" title="Click a gap column: delete that one column (Clear Gap Cols removes all gap-only columns)">Del Gap All</button>
             <span class="edit-tool-separator"></span>
-            <button id="editResidueButton" class="edit-tool-button" data-edit-tool="residue" title="GeneDoc Edit Mode: click a cell, then type a residue or gap">Type</button>
-            <button id="editSelectColumnButton" class="edit-tool-button" data-edit-tool="selectColumn" title="GeneDoc Select Column: click or drag columns">Select Col</button>
-            <button id="editDeleteColumnsButton" class="edit-command-button" title="GeneDoc Delete Columns: remove selected columns">Delete Cols</button>
-            <button id="editClearGapColumnsButton" class="edit-command-button" title="GeneDoc Clear Gap Columns: remove gap-only columns">Clear Gap Cols</button>
+            <button id="editResidueButton" class="edit-tool-button" data-edit-tool="residue" title="Click a cell, then type residues, or - for a gap; Backspace, Delete and the arrow keys work">Type</button>
+            <button id="editSelectColumnButton" class="edit-tool-button" data-edit-tool="selectColumn" title="Click or drag to select columns">Select Col</button>
+            <button id="editDeleteColumnsButton" class="edit-command-button" title="Delete the selected columns">Delete Cols</button>
+            <button id="editClearGapColumnsButton" class="edit-command-button" title="Remove every column that holds only gaps">Clear Gap Cols</button>
             <button id="editSeqEditorButton" class="edit-command-button" title="Open the sequence text editor">SeqEdit</button>
         </div>
         <div class="status-row header-info-row">

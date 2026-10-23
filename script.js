@@ -2710,6 +2710,15 @@ function hideTooltip() {
     tooltip.style.display = 'none';
     tooltip.className = 'tooltip';
 }
+// A pointer drag in the alignment: a GeneDoc Move/Slide drag, a residue or column selection drag, a row
+// reorder drag that has passed its movement threshold (Full/Block or Canvas), or a Canvas pan. No residue
+// tooltip appears while one is in progress (owner, 2026-10-23: "when moving a sequence in edit mode, tooltip
+// over nucleotides should not appear").
+function _pointerDragInProgress() {
+    return !!(state.editDrag || state.isDragging || (_rowReorderDrag && _rowReorderDrag.started)
+        || (_canvasState.rowDrag && _canvasState.rowDrag.started)
+        || (_canvasState.canvas && _canvasState.canvas.style.cursor === 'grabbing'));
+}
 
 // Menu stability: JS owns open state; short delay only when leaving a menu entirely
 const menuCloseDelays = new Map();
@@ -6926,6 +6935,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             if (GENEDOC_MOVE_TOOLS.has(tool)) {
                 const hit = _canvasHitTest(e.clientX, e.clientY);
                 if (hit && isGeneDocResidueChar(state.seqs[hit.row]?.seq[hit.col])) {
+                    hideTooltip();
                     startGeneDocMoveDrag(e, hit.row, hit.col, tool, null);
                     e.preventDefault();
                     return;
@@ -7098,8 +7108,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     canvas.addEventListener('mousemove', (e) => {
         _canvasHoverCell = _canvasHitTest(e.clientX, e.clientY, { aaRows: true });
 
-        // Suppress tooltip during pan-drag, selection drag, or column-select mode
-        if (canvas.style.cursor === 'grabbing' || state.isDragging) {
+        // Suppress tooltip during pan-drag, selection drag, a Move/Slide or row drag, or column-select mode
+        if (_pointerDragInProgress()) {
             if (_lastTooltipCell) { _lastTooltipCell = null; hideTooltip(); }
             return;
         }
@@ -24188,6 +24198,7 @@ function detachNucPendingHandlers(span) {
 function attachNucSelectedHandlers(span) {
     if (span.dataset.nucSelectedBound === '1') return;
     const mouseover = () => {
+        if (_pointerDragInProgress()) return;
         showTooltipAt('Copy', span);
     };
     const mouseout = () => {
@@ -24208,6 +24219,7 @@ function attachNucSelectedHandlers(span) {
 function attachNucPendingHandlers(span) {
     if (span.dataset.nucPendingBound === '1') return;
     const mouseover = () => {
+        if (_pointerDragInProgress()) return;
         showTooltipAt('Selection start - Ctrl+click another nucleotide to complete range', span);
     };
     const mouseout = () => {
@@ -25434,6 +25446,9 @@ function attachUIListeners() {
             const rowIndex = parseInt(seqLine.dataset.seqIndex, 10);
             const pos = parseInt(span.dataset.pos, 10);
             if (!Number.isInteger(rowIndex) || !Number.isInteger(pos) || !state.seqs[rowIndex]) return;
+            // With a gap tool active, two quick clicks are two clicks of that tool (both already applied by
+            // mousedown), not a switch to Type: "Ins Gap Other turned into Type after a few quick clicks" (owner)
+            if (state.editModeActive && GENEDOC_GAP_TOOLS.has(state.editTool)) { e.preventDefault(); return; }
             e.preventDefault();
             state.selectedNucs.clear();
             state.pendingNucStart = null;
@@ -25449,7 +25464,7 @@ function attachUIListeners() {
         alignmentContainer.addEventListener('mouseover', (e) => {
             const span = e.target.closest('.seq-data > span[data-pos]');
             if (span) {
-                if (state.isDragging && state.dragMode === 'col') return;
+                if (_pointerDragInProgress()) return;
                 if (isCtrlModifier(e) && isAltModifier(e)) return;
                 const pos = parseInt(span.dataset.pos);
                 const seqLine = span.closest('.seq-line');
