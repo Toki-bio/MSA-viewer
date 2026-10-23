@@ -8286,6 +8286,45 @@ check('Search presets: save the active searches under a name, load them on anoth
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+
+// Owner (2026-10-23): "a function to open alignment in new tab EXACTLY as it is in this tab, including all search
+// etc". Actions > Clone Tab hands the full snapshot payload to a new tab over the existing ?handoff channel
+// (postMessage, no storage quota): sequences, view (mode, zoom, case, shading, name length, diff / variable-sites /
+// codon toggles), Canvas position, searches, selections and marks, name colours, trim, annotation.
+check('Clone Tab: the new tab shows the alignment as this one (Canvas position, case, zoom, diffs, trim, searches, selections, name colours)', async (page) => {
+  let sd = 5; const rnd = () => (sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
+  const rs = n => Array.from({ length: n }, () => 'ACGT'[rnd() * 4 | 0]).join('');
+  const base = rs(400);
+  const fa = Array.from({ length: 80 }, (_, i) => '>seq' + i + '\n' + base.split('').map(c => rnd() < 0.05 ? 'ACGT'[rnd() * 4 | 0] : c).join('')).join('\n') + '\n';
+  await loadFasta(page, fa);
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    setResidueCase('upper');
+    const z = document.getElementById('zoomSlider'); z.value = Math.round(+z.max * 0.7); z.dispatchEvent(new Event('input', { bubbles: true })); z.dispatchEvent(new Event('change', { bubbles: true }));
+    document.getElementById('highlightDiffs').checked = true; document.getElementById('highlightDiffs').dispatchEvent(new Event('change', { bubbles: true }));
+    searchMotif({ motif: 'ACGTAC', useRegex: false, maxMismatches: 1, bothStrands: false, color: '#ff8800', suppressMessage: true });
+    state.selectedRows = new Set([3, 7]); updateRowSelections();
+    colourState.mappings.set('seq3', '#00aa00'); applyColourToSeqNames(colourState.mappings);
+    _setTrimBounds(5, 300, true);
+    _canvasState.offsetX = 200; _canvasState.offsetY = 150; _canvasState.scheduleDraw(); _canvasState.onOffsetChange && _canvasState.onOffsetChange();
+  });
+  await page.waitForTimeout(400);
+  const snap = () => ({ n: state.seqs.length, first: state.seqs[0].header, mode: document.getElementById('modeCanvas').checked ? 'canvas' : 'other', ox: _canvasState.offsetX, oy: _canvasState.offsetY,
+    caseMode: state.residueCase, zoom: document.getElementById('zoomSlider').value, diffs: document.getElementById('highlightDiffs').checked,
+    searches: state.searchHistory.map(h => h.label + '|' + h.color + '|' + h.maxMismatches + '|' + h.matchCount).join(';'), rows: [...state.selectedRows].sort().join(','),
+    colour: colourState.mappings.get('seq3'), trim: JSON.stringify(state.trimBoundaries), name: state.currentFilename });
+  const here = await page.evaluate(snap);
+  await page.click('.section-header[data-section="actions"]'); await page.waitForTimeout(200);   // the button is in the Actions menu
+  const [popup] = await Promise.all([page.waitForEvent('popup', { timeout: 15000 }), page.click('#openViewInNewTabButton')]);
+  await popup.waitForFunction(() => typeof state !== 'undefined' && state.seqs.length > 0 && typeof _canvasState !== 'undefined' && _canvasState.canvas && state.searchHistory.length > 0 && state.trimBoundaries, null, { timeout: 20000 });
+  await popup.waitForTimeout(800);
+  const there = await popup.evaluate(snap);
+  await popup.close();
+  const same = Object.keys(here).filter(k => k !== 'ox' && k !== 'oy').every(k => here[k] === there[k]) && Math.abs(here.ox - there.ox) <= 2 && Math.abs(here.oy - there.oy) <= 2;
+  return { pass: same, detail: JSON.stringify({ here, there }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

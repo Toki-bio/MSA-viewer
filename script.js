@@ -15533,8 +15533,27 @@ window.addEventListener('message', (e) => {
     const h = _newTabHandoffs.get(m.id);
     if (!h || !e.source) return;
     _newTabHandoffs.delete(m.id);
-    e.source.postMessage({ type: 'viewalign-handoff', id: m.id, fasta: h.fasta, name: h.name }, location.origin);
+    e.source.postMessage({ type: 'viewalign-handoff', id: m.id, fasta: h.fasta, name: h.name, payload: h.payload || null }, location.origin);
 });
+// Opens this whole view in a new tab, exactly as it is here (owner, 2026-10-23): the full snapshot payload
+// (sequences, view, Canvas position, searches, selections and marks, name colours, trim, annotation) goes over
+// the same postMessage hand-off as openSelectedInNewTab, so there is no storage quota or URL length to hit.
+function openViewInNewTab() {
+    if (!state.seqs.length) { showMessage('Load an alignment first.', 2500); return; }
+    const payload = _buildSnapshotPayload();
+    const name = state.currentFilename || payload.sourceTitle || 'alignment';
+    payload.sourceTitle = name;
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    _newTabHandoffs.set(id, { fasta: payload.fasta, name, payload });
+    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    const w = window.open(location.pathname + '?handoff=' + id + (view ? '&view=' + view : ''), '_blank');
+    if (!w) {
+        _newTabHandoffs.delete(id);
+        showMessage("The browser blocked the new tab: allow pop-ups for this site.", 5000);
+        return;
+    }
+    showMessage('This view opened in a new tab', 2000);
+}
 function openSelectedInNewTab() {
     if (state.selectedRows.size === 0) {
         showMessage("No sequences selected.", 3000);
@@ -15759,8 +15778,21 @@ function _buildSnapshotPayload() {
             selectedColumns: Array.from(state.selectedColumns).sort((a, b) => a - b),
             scrollLeft: alignmentContainer?.scrollLeft || 0,
             scrollTop: alignmentContainer?.scrollTop || 0,
-            maxMismatches: el('maxMismatches')?.value
+            maxMismatches: el('maxMismatches')?.value,
+            // the Display toggles and the Canvas position (Clone Tab: the new tab shows exactly this view)
+            highlightDiffs: !!el('highlightDiffs')?.checked,
+            varSitesOnly: !!el('varSitesOnly')?.checked,
+            varSitesThreshold: el('varSitesThreshold')?.value,
+            varThresholdMode: el('varThresholdMode')?.value,
+            varSitesBreakpoints: !!el('varSitesBreakpoints')?.checked,
+            codonAnalysis: !!el('codonAnalysis')?.checked,
+            aaOnly: !!el('aaOnly')?.checked,
+            codonFrame: el('codonFrame')?.value,
+            codonCode: el('codonCode')?.value,
+            canvasOffsetX: _canvasState.offsetX || 0,
+            canvasOffsetY: _canvasState.offsetY || 0
         },
+        trim: state.trimBoundaries ? { ...state.trimBoundaries } : null,
         colourState: colourMappings.length > 0 ? { mappings: colourMappings } : null,
         searchHistory: state.searchHistory.length > 0 ? state.searchHistory.map(h => ({
             motif: h.motif, color: h.color, label: h.label, strand: h.strand,
@@ -15885,14 +15917,37 @@ function _applySnapshotView(view) {
     if (view.lightColor) { const el = document.getElementById('lightColorPicker'); if (el) el.value = view.lightColor; }
     if (view.maxMismatches) { const el = document.getElementById('maxMismatches'); if (el) el.value = view.maxMismatches; }
 
+    // Display toggles, through their own change handlers (which keep Highlight diffs and Variable sites
+    // only exclusive, start the codon analysis, and so on); a snapshot without them leaves the defaults
+    const setBox = (id, on) => { const b = el(id); if (b && typeof on === 'boolean' && b.checked !== on) { b.checked = on; b.dispatchEvent(new Event('change', { bubbles: true })); } };
+    const setVal = (id, v, ev) => { const e = el(id); if (e && v !== undefined && v !== null && String(e.value) !== String(v)) { e.value = v; e.dispatchEvent(new Event(ev || 'change', { bubbles: true })); } };
+    setVal('varThresholdMode', view.varThresholdMode);
+    setVal('varSitesThreshold', view.varSitesThreshold, 'input');
+    setBox('varSitesBreakpoints', view.varSitesBreakpoints);
+    setBox('varSitesOnly', view.varSitesOnly);
+    setBox('highlightDiffs', view.highlightDiffs);
+    setVal('codonFrame', view.codonFrame);
+    setVal('codonCode', view.codonCode);
+    setBox('codonAnalysis', view.codonAnalysis);
+    setBox('aaOnly', view.aaOnly);
+
     renderAlignment();
 
     const scrollLeft = Number(view.scrollLeft || 0);
     const scrollTop = Number(view.scrollTop || 0);
+    const ox = Number(view.canvasOffsetX || 0), oy = Number(view.canvasOffsetY || 0);
     if (alignmentContainer) {
         requestAnimationFrame(() => {
             alignmentContainer.scrollLeft = scrollLeft;
             alignmentContainer.scrollTop = scrollTop;
+            // the Canvas pans instead of scrolling: its position comes back after its first draw
+            if ((ox || oy) && typeof isCanvasMode === 'function' && isCanvasMode()) {
+                requestAnimationFrame(() => {
+                    if (!_canvasState.canvas) return;
+                    _canvasState.offsetX = Math.max(0, ox); _canvasState.offsetY = Math.max(0, oy);
+                    _canvasState.scheduleDraw?.(); _canvasState.onOffsetChange?.();
+                });
+            }
         });
     }
 }
@@ -15922,6 +15977,10 @@ function _loadSnapshotPayload(payload) {
         }
         // Older snapshots have no selections: still clear what the previous session showed
         _applySnapshotSelections(payload.selections || {});
+        // A trim (saved by Clone Tab and newer snapshots); an older snapshot without one keeps none
+        if (payload.trim && Number.isInteger(payload.trim.leftTrimEnd) && Number.isInteger(payload.trim.rightTrimStart)) {
+            _setTrimBounds(payload.trim.leftTrimEnd, payload.trim.rightTrimStart, true);
+        }
         // The dot-plot collection of the snapshot joins the user's own (by id)
         if (Array.isArray(payload.dotBookmarks)) {
             const have = new Set((state.dotBookmarks || []).map(b => b.id));
@@ -24651,6 +24710,7 @@ function initializeAppUI() {
         'insertGroupConsensusButton': insertGroupConsensus,
         'duplicateButton': duplicateSelected,
         'openInNewTabButton': openSelectedInNewTab,
+        'openViewInNewTabButton': openViewInNewTab,
         'buildTreeButton': openTreeBuilder,
         'statsButton': openStats,
         'repeatFinderMenuButton': openRepeatFinder,
@@ -24987,12 +25047,18 @@ function initializeAppUI() {
     } else if (autoHandoff) {
         showMessage('Loading the selected sequences...', 0);
         _receiveNewTabHandoff(autoHandoff)
-            .then(({ fasta, name }) => {
+            .then(({ fasta, name, payload }) => {
+                // a reload of this tab would ask an opener that no longer has it
+                try { history.replaceState(null, '', location.pathname); } catch (err) { /* file:// */ }
+                if (payload && typeof payload === 'object' && typeof payload.fasta === 'string') {
+                    // Clone Tab: the whole view of the other tab
+                    _loadSnapshotPayload(payload);
+                    showMessage(`Opened ${name} as in the other tab`, 2500);
+                    return;
+                }
                 const fastaInputEl = el('fastaInput');
                 if (fastaInputEl) fastaInputEl.value = fasta;
                 state.currentFilename = name;
-                // a reload of this tab would ask an opener that no longer has it
-                try { history.replaceState(null, '', location.pathname); } catch (err) { /* file:// */ }
                 return Promise.resolve(parseAndRender(true)).then(() => showMessage(`Opened ${name}`, 2000));
             })
             .catch(err => showMessage(`Could not open the selected sequences: ${err.message}`, 6000));
