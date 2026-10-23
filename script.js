@@ -434,11 +434,12 @@ function _overlayRowCtx(row) {
         hits: state.searchHistory?.length ? _getSearchHitsForRow(row) : _EMPTY_HITS,
         tsd: state.tsdMarks.size ? state.tsdMarks.get(row) : null,
         tsdPrev: state.tsdPreview?.size ? state.tsdPreview.get(row) : null,
+        dotReg: state.dotRegionMarks?.size ? state.dotRegionMarks.get(row) : null,   // a dot-plot stretch shown here
         rep: state.repeatHighlights?.size ? _repeatColsForRow(row) : _EMPTY_HITS,
         snp: !!state._clusterCharMap,
         trim: state.trimBoundaries || null
     };
-    ctx.any = !!(ctx.hits.size || ctx.tsd?.size || ctx.tsdPrev?.size || ctx.rep.size || ctx.snp);
+    ctx.any = !!(ctx.hits.size || ctx.tsd?.size || ctx.tsdPrev?.size || ctx.dotReg?.size || ctx.rep.size || ctx.snp);
     return ctx;
 }
 
@@ -452,11 +453,12 @@ function residueOverlay(ctx, pos, base) {
     const hit = ctx.hits.get(pos);
     const tsd = !!ctx.tsd?.has(pos);
     const tsdPrev = !tsd && !!ctx.tsdPrev?.has(pos);   // found by the last TSD run, not marked yet
+    const dotReg = !!ctx.dotReg?.has(pos);
     const rep = ctx.rep.get(pos);
     const snp = ctx.snp ? _clusterCharDiag(ctx.header, pos, base) : null;
-    if (!hit && !tsd && !tsdPrev && !rep && !snp) return null;
+    if (!hit && !tsd && !tsdPrev && !dotReg && !rep && !snp) return null;
     const o = { bg: null, fg: null, bold: false, sans: false, italic: false, deco: [], decoColor: null,
-        titles: [], hit: hit || null, tsd, tsdPrev, rep: rep || null, snp, covered: [] };
+        titles: [], hit: hit || null, tsd, tsdPrev, dotReg, rep: rep || null, snp, covered: [] };
     if (hit) {
         o.bg = hit.color || '#ffcc00';
         o.fg = '#000';
@@ -483,6 +485,11 @@ function residueOverlay(ctx, pos, base) {
         if (!o.bg) { o.bg = rep + '66'; o.fg = '#111'; }
         else { o.deco.push('overline'); o.decoColor = rep; o.covered.push('repeat'); }
     }
+    if (dotReg) {
+        o.titles.push('dot-plot stretch');
+        if (!o.bg) { o.bg = DOT_REGION_TINT + '55'; o.fg = '#111'; }
+        else { o.deco.push('overline'); o.decoColor = DOT_REGION_TINT; o.covered.push('dot'); }
+    }
     if (snp) {
         o.titles.push(snp.title);
         if (!o.bg) { o.bg = snp.bg; o.fg = snp.fg; if (snp.bold) o.bold = true; }
@@ -490,7 +497,7 @@ function residueOverlay(ctx, pos, base) {
     }
     if (o.deco.length && ctx.trim && (pos <= ctx.trim.leftTrimEnd || pos >= ctx.trim.rightTrimStart)) o.deco.push('line-through');
     // Same marks -> same look: the class list is computed once per combination
-    o.key = (hit ? hit.className : '') + '|' + (tsd ? state.tsdMarkStyle + _tsdColour() : '') + (tsdPrev ? 'P' + _tsdColour() : '') + '|' + (rep || '')
+    o.key = (hit ? hit.className : '') + '|' + (tsd ? state.tsdMarkStyle + _tsdColour() : '') + (tsdPrev ? 'P' + _tsdColour() : '') + (dotReg ? 'D' : '') + '|' + (rep || '')
         + '|' + (snp ? snp.bg + snp.fg + snp.color : '') + '|' + o.deco.join(',');
     return o;
 }
@@ -1370,6 +1377,7 @@ const state = {
     tsdMarkColor: '#ffd54f',
     tsdMarkUndo: null,
     tsdPreview: null,   // ResidueMarks: TSDs found by the last run and not yet marked, shown faintly (owner, 2026-10-23)
+    dotRegionMarks: null,   // ResidueMarks: a dot-plot stretch shown in the alignment (owner, 2026-10-23)
     nameLength: DEFAULTS.nameLength,
     uiListenersAttached: false,
     panning: {
@@ -6081,7 +6089,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // What can change the look of a cell (selections live on the overlay and are not here)
     const contentSig = () => [state.residueCase || 'asis', state.seqs, state.seqs.length, state.deletedHistory.length, state.redoHistory.length,
         state.conservationDataCache?.data, state.consensusCache?.values, state.trimBoundaries, state.softTrimBoundaries,
-        state._diffColumns, state.tsdMarks, state.tsdPreview, state.searchHistory?.length, getEffectiveColorScheme()];
+        state._diffColumns, state.tsdMarks, state.tsdPreview, state.dotRegionMarks, state.searchHistory?.length, getEffectiveColorScheme()];
 
     // Length badge after each row's last column, as in Full/Block (.seq-length): the gapless length
     // in a grey box. Its width is measured once for the longest number.
@@ -13400,6 +13408,7 @@ async function parseAndRender(isFromDrop = false) {
         // Keyed by row index: meaningless for a different file
         state.tsdMarks = new Map();
         state.tsdMarkUndo = null;
+        state.dotRegionMarks = null;
         if (state.repeatHighlights) state.repeatHighlights.clear();
         // Name colours belong to the previous file (this used to reset state.colourState,
         // which nothing reads, so colours carried over). Saved presets are kept.
@@ -30297,19 +30306,67 @@ function _dotRenderRegionList() {
         return;
     }
     const spin = S.spinMode && !!S.matchMap;
+    const canShow = Number.isInteger(S.meta?.rowIndexA) && !!state.seqs[S.meta.rowIndexA];
     itemsEl.innerHTML = S.regions.map((r, i) => {
         const pct = Math.round(r.avgScore * 100);
         const len = r.aEnd - r.aStart;
         const tip = spin ? `${len} bp stretch; ${r.matched} matching word positions` : `${len} bp stretch; mean window identity ${pct}%`;
-        return `<div style="padding:3px 6px;cursor:pointer;border-bottom:1px solid #eee;"
-            onmouseenter="this.style.background='#d0e4ff'"
+        const active = S._shownRegion === i;
+        return `<div class="dot-region${active ? ' dot-region-active' : ''}" style="padding:3px 6px;cursor:pointer;border-bottom:1px solid #eee;"
+            onmouseenter="if (!this.classList.contains('dot-region-active')) this.style.background='#d0e4ff'"
             onmouseleave="this.style.background=''"
             onclick="_dotGoToRegion(${i})"
-            title="${tip}. Runs broken by mismatches or small indels are counted as one stretch.">
+            title="${tip}. Runs broken by mismatches or small indels are counted as one stretch. Click: centre it in the plot.">
+            ${canShow ? `<button type="button" class="dot-goto" title="Show this stretch in the alignment and go there: both copies are tinted, the alignment scrolls to the first; the dot plot window stays open and the alignment behind it can be used" onclick="event.stopPropagation(); _dotShowRegionInAlignment(${i})">&#8674;</button>` : ''}
             <b>#${i + 1}</b> ${len}bp${spin ? '' : ' ' + pct + '%'}
             <span style="color:#888;font-size:10px;">A${r.aStart + 1}-${r.aEnd} / B${r.bStart + 1}-${r.bEnd}</span>
           </div>`;
     }).join('');
+}
+
+// A region shown in the alignment (owner, 2026-10-23: highlight a specific repeat in the alignment and go to it).
+// Both copies are tinted (residue-anchored marks: the plotted sequences are the rows without gaps, so a
+// region's aStart..aEnd are residue numbers of row A), the alignment scrolls to the first copy, the list entry
+// is highlighted, and the window's backdrop lets the pointer through to the alignment. The marks live with the
+// window: a recalculation (new regions), Clear marks, closing the window or a new file remove them.
+const DOT_REGION_TINT = '#4a9eff';
+function _dotShowRegionInAlignment(idx) {
+    const S = _dotPlotState, r = S.regions?.[idx], meta = S.meta;
+    if (!r) return;
+    const rowA = meta?.rowIndexA, rowB = meta?.rowIndexB;
+    if (!Number.isInteger(rowA) || !state.seqs[rowA]) { showMessage('This dot plot was not opened from alignment rows, so there is nothing to show.', 3000); return; }
+    const marks = new ResidueMarks();
+    const add = (row, from, to) => {
+        const obj = state.seqs[row]; if (!obj) return;
+        const set = marks.bySeq.get(obj) || new Set();
+        for (let n = from; n < to; n++) set.add(n);
+        if (set.size) marks.bySeq.set(obj, set);
+    };
+    add(rowA, r.aStart, r.aEnd);
+    if (Number.isInteger(rowB) && state.seqs[rowB]) {
+        // with RevComp B the plotted B runs backwards: residue n of the plot is residue len-1-n of the row
+        if (/\(RevComp\)$/.test(S.nameB || '')) add(rowB, S.seqB.length - r.bEnd, S.seqB.length - r.bStart);
+        else add(rowB, r.bStart, r.bEnd);
+    }
+    state.dotRegionMarks = marks;
+    S._shownRegion = idx;
+    syncResidueOverlays();
+    const colA = S.alignMapA ? S.alignMapA[r.aStart] : null;   // 1-based column of the first residue
+    _dotPeek(true);
+    _showRowInAlignment(rowA, Number.isInteger(colA) ? colA - 1 : undefined);
+    const btn = document.getElementById('dotPlotClearMarksBtn');
+    if (btn) btn.hidden = false;
+    _dotRenderRegionList();
+}
+function _dotPeek(on) { document.getElementById('dotPlotModal')?.classList.toggle('dot-peek', !!on); }
+function _dotClearRegionMarks(keepPeek) {
+    const S = _dotPlotState;
+    if (state.dotRegionMarks) { state.dotRegionMarks = null; syncResidueOverlays(); }
+    S._shownRegion = -1;
+    const btn = document.getElementById('dotPlotClearMarksBtn');
+    if (btn) btn.hidden = true;
+    if (!keepPeek) _dotPeek(false);
+    document.querySelectorAll('#dotPlotRegionItems .dot-region-active').forEach(el => el.classList.remove('dot-region-active'));
 }
 
 function _dotGoToRegion(idx) {
@@ -30455,6 +30512,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S._frozenRow = S._frozenCol = -1;
     S._copyRegion = null;
     S.regions = [];
+    _dotClearRegionMarks(true);
 
     const revComp = document.getElementById('dotPlotRevComp')?.checked;
     if (revComp) {
@@ -30930,8 +30988,10 @@ function _initDotPlotEvents() {
             const modal = document.getElementById('dotPlotModal');
             if (modal) modal.style.display = 'none';
             clearTimeout(_dotLiveTimer);
+            _dotClearRegionMarks();
         });
     }
+    document.getElementById('dotPlotClearMarksBtn')?.addEventListener('click', () => _dotClearRegionMarks());
 
     // Local help inside the dot plot modal
     const helpBtn = document.getElementById('dotPlotHelpBtn');
@@ -32030,6 +32090,16 @@ function _renderTsdResultsHTML(el, results, tsdMode, params) {
 // Scroll the alignment to a row (if it is drawn) and a column, and flash the row name
 function _showRowInAlignment(row, col) {
     const container = document.getElementById('alignmentContainer');
+    if (document.getElementById('modeCanvas')?.checked && _canvasState.canvas) {
+        // Canvas: the row a third of the way down (as _geScrollToSeq), then the column
+        const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
+        const viewH = container?.clientHeight || 240;
+        _canvasState.offsetY = Math.max(0, row * rowPitch - Math.min(viewH / 3, rowPitch * 4));
+        _canvasState.scheduleDraw?.();
+        _canvasState.onOffsetChange?.();
+        if (Number.isInteger(col)) _scrollToColumn(col);
+        return;
+    }
     // Block mode draws a row once per block: go to the block that holds the column
     const cell = Number.isInteger(col) ? container?.querySelector(`.seq-line[data-seq-index="${row}"] .seq-data > span[data-pos="${col}"]`) : null;
     if (cell) {

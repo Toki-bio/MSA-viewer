@@ -1458,7 +1458,8 @@ check('Display menu: Sticky on the Name Len row, labelled Case/Colours/Frame/Cod
   });
   await page.evaluate(() => { const s = document.getElementById('residueCase'); s.value = 'lower'; s.dispatchEvent(new Event('change', { bubbles: true })); });
   await page.waitForTimeout(600);
-  const lowered = await page.evaluate(() => { const t = document.getElementById('alignmentContainer').innerText; return /[acgt]{5}/.test(t) && !/[ACGT]{5}/.test(t.replace(/^.*Consensus.*$/gm, '')); });
+  // the consensus row keeps its own case (upper = above the threshold), so it is left out by its element
+  const lowered = await page.evaluate(() => { const t = [...document.querySelectorAll('#alignmentContainer .seq-line:not(.consensus-line)')].map(l => l.innerText).join('|'); return /[acgt]{5}/.test(t) && !/[ACGT]{5}/.test(t); });
   const ok = layout.stickyRow && layout.caseLabel === 'Case' && layout.colourLabel === 'Colours' && layout.frameLabel === 'Frame' && layout.codeLabel === 'Code' && layout.caseFirst === 'As in file' && lowered;
   return { pass: ok, detail: JSON.stringify({ ...layout, lowered }) };
 });
@@ -2863,7 +2864,7 @@ check('Gap tools: in-place update matches a full redraw, and takes the fast path
 check('Selections panel: lists every kind, on/off, remove + undo, Esc, snapshot round trip', async (page) => {
   await loadFasta(page, variedFasta(25, 200, 5));
   const panel = () => page.evaluate(() => ({
-    shown: getComputedStyle(el('selections-menu-section')).display !== 'none',
+    shown: getComputedStyle(el('selections-menu-section')).display !== 'none' && getComputedStyle(el('selections-menu-section')).visibility !== 'hidden',   // keeps its place while empty (v278), but is not seen
     keys: [...document.querySelectorAll('#selectionsList .sel-item')].map(r => (r.classList.contains('is-off') ? '-' : '+') + r.dataset.key.replace(/^search:.*/, 'search'))
   }));
   const settle = () => page.waitForTimeout(80);
@@ -8099,6 +8100,92 @@ check('Dot plot: hovering never resizes the plot (scrollbars shown); one wide wo
       && ctl.label === 'Window' && ctl.threshVal === '55%' && ctl.winVal === '6' && Object.values(ctl.level).every(d => d <= 2);
     return { pass: ok, detail: JSON.stringify({ steady, idle, onPlot, onAxis, hoverTextWide, ctl }) };
   } finally { await browser.close(); }
+});
+
+
+// Owner (2026-10-23): "an option to highlight a specific repeat in the alignment and navigate the alignment to it".
+// Each entry of the dot plot's region list has a "show in alignment" button: both copies of the stretch are tinted
+// in the alignment (state.dotRegionMarks, residue-anchored like the TSD marks), the alignment scrolls to the first
+// copy, and the dot plot window stays open with its backdrop made click-through so the alignment can be used.
+check('Dot plot regions: "show in alignment" tints both copies, goes there (Full and Canvas, row 100), keeps the window usable; close clears', async (page) => {
+  let sd = 11; const rnd = () => (sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
+  const rs = n => Array.from({ length: n }, () => 'ACGT'[rnd() * 4 | 0]).join('');
+  const unit = rs(60);
+  const lines = [];
+  for (let i = 0; i < 120; i++) {
+    let s = i === 100 ? rs(40) + unit + rs(80) + unit + rs(40) : rs(280);
+    s = s.slice(0, 50) + '----' + s.slice(50, 150) + '--' + s.slice(150);   // gaps: residue numbers differ from columns
+    lines.push('>s' + i + '\n' + s);
+  }
+  await loadFasta(page, lines.join('\n') + '\n');
+  await setMode(page, 'full');
+  // the context menu's "Dot-plot (self)" item calls exactly this
+  await page.evaluate(() => { const s = state.seqs[100]; openDotPlot(s.seq.replace(/[-. ]/g, ''), s.seq.replace(/[-. ]/g, ''), s.header, s.header, { rowIndexA: 100, rowIndexB: 100, alignedSeqA: s.seq, alignedSeqB: s.seq }); });
+  await page.waitForSelector('#dotPlotRegionItems .dot-goto', { timeout: 10000 });
+  const r = {};
+  r.region = await page.evaluate(() => { const g = _dotPlotState.regions[0]; return { aStart: g.aStart, aEnd: g.aEnd, bStart: g.bStart, bEnd: g.bEnd }; });
+  await page.click('#dotPlotRegionItems .dot-goto'); await page.waitForTimeout(700);
+  r.full = await page.evaluate((g) => {
+    const seq = state.seqs[100].seq, cols = [], want = new Set();
+    for (let n = g.aStart; n < g.aEnd; n++) want.add(n);
+    for (let n = g.bStart; n < g.bEnd; n++) want.add(n);
+    let n = 0; for (let c = 0; c < seq.length; c++) { if (seq[c] === '-' ) continue; if (want.has(n)) cols.push(c); n++; }
+    const got = state.dotRegionMarks && state.dotRegionMarks.get(100);
+    const marksOk = !!got && got.size === cols.length && cols.every(c => got.has(c));
+    const cell = document.querySelector('.seq-line[data-seq-index="100"] .seq-data > span[data-pos="' + cols[0] + '"]');
+    const cont = document.getElementById('alignmentContainer').getBoundingClientRect(), cr = cell ? cell.getBoundingClientRect() : null;
+    const inView = !!cr && cr.top >= Math.max(0, cont.top) && cr.bottom <= Math.min(innerHeight, cont.bottom) && cr.left >= cont.left && cr.right <= cont.right;   // Full scrolls the page, not the container
+    const bg = cell ? getComputedStyle(cell).backgroundColor : '';
+    const modal = document.getElementById('dotPlotModal');
+    const dlg = document.getElementById('dotPlotDialog').getBoundingClientRect();
+    const px = dlg.left > cont.left + 60 ? cont.left + 30 : cont.right - 30;   // a point of the alignment beside the window
+    const under = document.elementFromPoint(px, Math.min(innerHeight, cont.bottom) - 60)   // inside the visible part of the container, below the sticky toolbar;
+    return { marksOk, inView, bg, peek: getComputedStyle(modal).pointerEvents, underIsAlignment: !!(under && under.closest('#alignmentContainer')), active: document.querySelectorAll('#dotPlotRegionItems .dot-region-active').length, clearShown: !document.getElementById('dotPlotClearMarksBtn').hidden };
+  }, r.region);
+  // the same marks in Canvas: the tint is painted and the row is scrolled to
+  await setMode(page, 'canvas'); await page.waitForTimeout(600);
+  await page.evaluate(() => _dotShowRegionInAlignment(0)); await page.waitForTimeout(500);
+  r.canvas = await page.evaluate((g) => {
+    const seq = state.seqs[100].seq; let n = 0, col = -1; for (let c = 0; c < seq.length; c++) { if (seq[c] === '-') continue; if (n === g.aStart) { col = c; break; } n++; }
+    const m = _canvasState.metrics, cv = _canvasState.canvas, dpr = cv.width / parseFloat(cv.style.width || cv.width);
+    const x = m.nameW + _canvasColToSlot(col) * m.charW - _canvasState.offsetX + 2, y = m.headerH + 100 * _canvasState.rowPitch - _canvasState.offsetY + 2;
+    const inView = y > m.headerH && y < cv.clientHeight && x > m.nameW && x < cv.clientWidth;
+    const px = cv.getContext('2d').getImageData(Math.round(x * dpr), Math.round(y * dpr), 1, 1).data;
+    return { offsetY: _canvasState.offsetY, inView, px: [px[0], px[1], px[2]] };
+  }, r.region);
+  await page.click('#dotPlotCloseBtn'); await page.waitForTimeout(300);
+  r.afterClose = await page.evaluate(() => ({ marks: !!state.dotRegionMarks, peek: document.getElementById('dotPlotModal').classList.contains('dot-peek') }));
+  const blue = p => p[2] > p[0] + 30 && p[2] > p[1];
+  const ok = r.region.aEnd - r.region.aStart >= 50 && r.full.marksOk && r.full.inView && /rgba\(74, 158, 255/.test(r.full.bg)
+    && r.full.peek === 'none' && r.full.underIsAlignment && r.full.active === 1 && r.full.clearShown
+    && r.canvas.offsetY > 0 && r.canvas.inView && blue(r.canvas.px) && !r.afterClose.marks && !r.afterClose.peek;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+
+// The toolbar's height must not change when a selection appears or goes: the Selections tab used to be
+// display:none while empty, so at widths where the menu line is nearly full its appearance wrapped the
+// toolbar and the alignment jumped down a line (the case switch of v278 used up the slack: a click on a
+// name then shifted the rows under the pointer, and in Canvas the resize forced a full redraw).
+check('Toolbar: the height does not change when a row selection appears or goes (1100, 1200, 1400 px)', async (page) => {
+  const out = {};
+  for (const w of [1100, 1200, 1400]) {
+    const p = await page.context().browser().newPage({ viewport: { width: w, height: 700 } });
+    await p.goto(page.url().replace(/view=\w+/, 'view=full').replace(/(index\.html)(?!\?)/, '$1?view=full'), { waitUntil: 'networkidle' });
+    await p.setInputFiles('#fileInput', { name: 'a_long_file_name_for_the_toolbar_test_2026.fa', mimeType: 'text/plain', buffer: Buffer.from('>seq1\nACGTACGT\n>seq2\nACGTACGA\n>seq3\nACGAACGT\n') });
+    await p.waitForTimeout(1200);
+    const h = () => p.evaluate(() => Math.round(document.getElementById('controls').getBoundingClientRect().height));
+    const top = () => p.evaluate(() => Math.round(document.querySelector('.seq-line[data-seq-index="1"]').getBoundingClientRect().top));
+    const none = { h: await h(), top: await top() };
+    await p.evaluate(() => { state.selectedRows = new Set([0]); updateRowSelections(); }); await p.waitForTimeout(250);
+    const sel = { h: await h(), top: await top() };
+    await p.evaluate(() => { state.selectedRows = new Set(); updateRowSelections(); }); await p.waitForTimeout(250);
+    const cleared = { h: await h(), top: await top() };
+    out[w] = { none, sel, cleared };
+    await p.close();
+  }
+  const ok = Object.values(out).every(o => o.none.h === o.sel.h && o.sel.h === o.cleared.h && o.none.top === o.sel.top && o.sel.top === o.cleared.top);
+  return { pass: ok, detail: JSON.stringify(out) };
 });
 
 async function main() {

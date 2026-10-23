@@ -4137,6 +4137,13 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
    text used to add a scrollbar, shrink the plot viewport and re-zoom the fitted plot: the plot jerked
    whenever the pointer crossed between the plot and its axis strip (owner, 2026-10-23). */
 #dotPlotAlignPanel { height: calc(3 * 1.4 * 12px + 16px + 2px + var(--dot-sb, 17px)); box-sizing: border-box; overflow-y: hidden; }
+/* A region shown in the alignment (owner, 2026-10-23): the list entry's button, the entry's highlight, and the
+   window's backdrop made click-through so the alignment behind it can be used while the window stays */
+.dot-goto { float: right; font-size: 11px; line-height: 15px; padding: 0 5px; margin-left: 4px; cursor: pointer; }
+.dot-region-active { background: #e3f0ff; }
+.dot-mini-btn { font-size: 10px; font-weight: normal; padding: 1px 5px; }
+#dotPlotModal.dot-peek { background: transparent !important; pointer-events: none; }
+#dotPlotModal.dot-peek #dotPlotDialog { pointer-events: auto; }
 /* The dot plot's control rows (owner, 2026-10-23: tidy, boxes level with their text, one wide slider) */
 .dot-ctl-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-bottom: 6px; font-size: 12px; }
 .dot-ctl-row label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
@@ -4154,9 +4161,12 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 .dot-lower-ctl[hidden] { display: none; }
 
 /* ---- Selections panel (top menu) ---- */
-/* Hidden while there is nothing to list, like the Groups tab */
+/* Invisible while there is nothing to list, but keeping its place: when it was display:none its
+   appearance wrapped the menu line at widths where the line is nearly full, the toolbar grew a line
+   and the alignment jumped down under the pointer (and Canvas redrew everything) on every selection. */
 #selections-menu-section.sel-menu-off {
-    display: none !important;
+    visibility: hidden;
+    pointer-events: none;
 }
 .sel-badge {
     display: inline-block;
@@ -4172,7 +4182,7 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
     text-align: center;
 }
 .sel-badge:empty {
-    display: none;
+    visibility: hidden;   /* keeps its box: the tab (and the menu line) stays the same width with and without a count */
 }
 #selections-controls {
     min-width: 300px;
