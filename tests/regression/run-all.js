@@ -8027,6 +8027,32 @@ check('TSD finder: found TSDs show faintly at once and the Mark button invites t
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+
+// Owner (2026-10-23): slimmer scrollbars, no empty band above the horizontal one, and the plain arrow instead of
+// the white hand over them. Bars 8 px (was 14) with the grip filling them, invisible track, cursor default.
+check('Scrollbars: 8 px bars with a grip that fills them, no track band, the plain arrow cursor (Canvas, Full)', async (page) => {
+  const out = {};
+  for (const view of ['canvas', 'full']) {
+    await page.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await loadSyntheticFasta(page, 60, 300);
+    await page.waitForTimeout(800);
+    out[view] = await page.evaluate(() => {
+      const r = {};
+      for (const [k, sel] of [['h', '.horizontal-scrollbar'], ['v', '.vertical-scrollbar']]) {
+        const bar = document.querySelector(sel); if (!bar || !bar.getClientRects().length) { r[k] = null; continue; }
+        const b = bar.getBoundingClientRect(), cs = getComputedStyle(bar), grip = bar.querySelector('.scrollbar-grip'), track = bar.querySelector('.scrollbar-track');
+        const g = grip.getBoundingClientRect(), gs = getComputedStyle(grip), ts = getComputedStyle(track);
+        const thick = k === 'h' ? b.height : b.width, gripThick = k === 'h' ? g.height - parseFloat(gs.borderTopWidth) - parseFloat(gs.borderBottomWidth) : g.width - parseFloat(gs.borderLeftWidth) - parseFloat(gs.borderRightWidth);
+        r[k] = { thick, gripThick, cursor: cs.cursor, gripCursor: gs.cursor, trackBg: ts.backgroundColor, trackShadow: ts.boxShadow };
+      }
+      return r;
+    });
+  }
+  const good = x => !x || (x.thick <= 8.5 && x.gripThick >= 5 && x.cursor === 'default' && x.gripCursor === 'default' && /rgba\(0, 0, 0, 0\)|transparent/.test(x.trackBg) && x.trackShadow === 'none');
+  const ok = out.canvas.h && out.canvas.v && out.full.h && good(out.canvas.h) && good(out.canvas.v) && good(out.full.h) && good(out.full.v);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

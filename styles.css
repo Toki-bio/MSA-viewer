@@ -1879,7 +1879,7 @@ span.ge-col-flash {
 /* Persistent tiny scrollbar area below the alignment */
 .horizontal-scrollbar {
     width: 100%;
-    height: 14px; /* Tiny persistent scrollbar */
+    height: 8px; /* slim persistent scrollbar (owner, 2026-10-23: slimmer, no empty band above it) */
     background: transparent; /* Remove yellow coloring to avoid visual glitch */
     border-top: 0;
     overflow-x: auto;
@@ -1888,13 +1888,13 @@ span.ge-col-flash {
     bottom: 0;
     z-index: 50;
     box-sizing: content-box;
-    cursor: grab;
+    cursor: default;   /* the plain arrow: the grab hand was a white hand with a barely visible border (owner) */
     user-select: none;
     touch-action: pan-x;
 }
 
 .horizontal-scrollbar-thumb { height: 1px; }
-.horizontal-scrollbar.grabbing { cursor: grabbing; }
+.horizontal-scrollbar.grabbing { cursor: default; }
 
 /* Invisible larger hit area around the tiny bar */
 .horizontal-scrollbar::before {
@@ -1915,19 +1915,19 @@ span.ge-col-flash {
     position: absolute;
     top: 0;
     right: 0;
-    width: 14px;
+    width: 8px;
     background: transparent;
     overflow-y: auto;
     overflow-x: hidden;
     z-index: 50;
     box-sizing: content-box;
-    cursor: grab;
+    cursor: default;
     user-select: none;
     touch-action: pan-y;
     display: none; /* JS shows this only while the active mode can scroll */
 }
 .vertical-scrollbar-thumb { width: 1px; flex: none; }
-.vertical-scrollbar.grabbing { cursor: grabbing; }
+.vertical-scrollbar.grabbing { cursor: default; }
 .vertical-scrollbar::before {
     content: '';
     position: absolute;
@@ -1949,26 +1949,25 @@ span.ge-col-flash {
     left: 0;
     top: 0;
     flex: none;
-    background: #f1f1f1;
-    box-shadow: inset 0 0 0 1px #e4e4e4;
+    background: transparent;   /* the grip alone: a light track read as an empty band above the alignment's end */
 }
-.horizontal-scrollbar > .scrollbar-track { width: 100%; height: 14px; }
-.vertical-scrollbar > .scrollbar-track { width: 14px; height: 100%; }
+.horizontal-scrollbar > .scrollbar-track { width: 100%; height: 8px; }
+.vertical-scrollbar > .scrollbar-track { width: 8px; height: 100%; }
 .scrollbar-grip {
     position: absolute;
     left: 0;
     top: 0;
-    background: #c1c1c1;
-    border-radius: 7px;
-    border: 3px solid transparent;
+    background: #c4c4c4;
+    border-radius: 4px;
+    border: 1px solid transparent;
     background-clip: padding-box;
     box-sizing: border-box;
     will-change: transform;
 }
-.horizontal-scrollbar > .scrollbar-track > .scrollbar-grip { height: 14px; }
-.vertical-scrollbar > .scrollbar-track > .scrollbar-grip { width: 14px; }
-.horizontal-scrollbar:hover .scrollbar-grip, .vertical-scrollbar:hover .scrollbar-grip { background-color: #a8a8a8; border-width: 2px; }
-.horizontal-scrollbar.grabbing .scrollbar-grip, .vertical-scrollbar.grabbing .scrollbar-grip { background-color: #787878; border-width: 2px; }
+.horizontal-scrollbar > .scrollbar-track > .scrollbar-grip { height: 8px; }
+.vertical-scrollbar > .scrollbar-track > .scrollbar-grip { width: 8px; }
+.horizontal-scrollbar:hover .scrollbar-grip, .vertical-scrollbar:hover .scrollbar-grip { background-color: #a8a8a8; }
+.horizontal-scrollbar.grabbing .scrollbar-grip, .vertical-scrollbar.grabbing .scrollbar-grip { background-color: #787878; }
 
 /* Utility to temporarily disable text selection during drag */
 .no-select { user-select: none !important; }

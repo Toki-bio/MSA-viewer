@@ -3238,7 +3238,7 @@ function _createWindowedScrollController(refreshFn, isActiveFn) {
 // extra sibling elements, since each row needs its own independent offset).
 // Width of the persistent scrollbars (.vertical-scrollbar, .horizontal-scrollbar in styles.css).
 // The vertical one lies over the alignment's right edge.
-const PERSISTENT_SCROLLBAR_PX = 14;
+const PERSISTENT_SCROLLBAR_PX = 8;
 
 // A column-windowed row is exactly its columns wide, and its layout is contained, so nothing in it
 // widens the alignment. Scrolled all the way right, the last column then ended at the container's
