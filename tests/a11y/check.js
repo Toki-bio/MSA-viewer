@@ -24,7 +24,8 @@ check('every menu header is reachable with Tab and announced as a button', async
     if (/ menu$/.test(a.label)) seen.add(a.label);
   }
   const headers = await page.evaluate(() => [...document.querySelectorAll('.menu-section > .section-header')]
-    .filter(h => h.getClientRects().length).map(h => ({ label: h.getAttribute('aria-label'), role: h.getAttribute('role') })));
+    .filter(h => h.getClientRects().length && getComputedStyle(h).visibility !== 'hidden')   // the empty Selections tab keeps its place but is hidden (v278)
+    .map(h => ({ label: h.getAttribute('aria-label'), role: h.getAttribute('role') })));
   const missing = headers.filter(h => !seen.has(h.label));
   const ok = headers.length >= 10 && missing.length === 0 && headers.every(h => h.role === 'button');
   return { pass: ok, detail: JSON.stringify({ visible: headers.length, missing }) };

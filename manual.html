@@ -477,6 +477,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li><strong>Windows</strong> - the Repeat/TSD finder resizes from its edges and corners and maximises like the other windows; every movable window turns semi-transparent while it is being moved.</li>
     <li><strong>TSD results</strong> - the pairs found are shown faintly in the alignment at once and <em>Mark in alignment</em> is highlighted (&sect;9.9).</li>
     <li><strong>Scrollbars</strong> - the bars under and beside the alignment are 8 pixels, without the light track that looked like an empty band, and the pointer over them is the plain arrow.</li>
+    <li><strong>Dot plot</strong> - hovering over the plot no longer makes it jump (a wide hover context used to add a scrollbar under the plot and re-fit it); one wide slider for the word length (SPIN) or window (Dotter) and the identity slider in Dotter mode only; the controls tidied; each Top Regions entry has a &#8674; button that tints both copies of the stretch in the alignment and goes there (&sect;9.7).</li>
+    <li><strong>Toolbar</strong> - the Selections tab keeps its place while empty, so selecting a row no longer wraps the toolbar and moves the alignment down a line at widths where the menu line is nearly full.</li>
     <li><strong>AB1 chromatograms</strong> - an AB1 file loads as one sequence and right-click → View Chromatogram... shows the trace (§1.3).</li>
     <li><strong>Accessibility</strong> - a colour-blind-safe nucleotide scheme (§5.3); menus and windows can be operated from the keyboard (Tab to a menu, Enter to open, Esc to close).</li>
     <li><strong>Protein consensus</strong> - the consensus returns the true majority residue in protein and N-rich columns, with X/B/Z/J fallbacks (§6.2); protein residues are shaded correctly in Monochrome.</li>
@@ -1975,7 +1977,10 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   the same alignment across mismatches and small indels are counted as one stretch, stretches
   that repeat another one are left out, and a sequence plotted against itself lists only the
   upper half (the lower half is its mirror image). Positions are in sequence coordinates;
-  click an entry to centre it. Hovering shows the two aligned stretches and,
+  click an entry to centre it in the plot. The &#8674; button of an entry shows the stretch in the
+  alignment: both copies are tinted blue, the alignment scrolls to the first copy, and the dot plot
+  window stays open with the alignment behind it usable (move or shrink the window as needed);
+  <strong>Clear marks</strong>, a recalculation or closing the window removes the tint. Hovering shows the two aligned stretches and,
   when the plot was opened from the alignment, the matching alignment columns. Click to pin a
   position, double-click to freeze the preview, and <strong>Copy region</strong> (in the toolbar) copies it as FASTA. The window can be moved by its title bar, resized from any edge or corner, and maximized with
   the button next to Close or a double-click on the title bar; the plot follows the new size.
