@@ -1378,6 +1378,7 @@ const state = {
     tsdMarkUndo: null,
     tsdPreview: null,   // ResidueMarks: TSDs found by the last run and not yet marked, shown faintly (owner, 2026-10-23)
     dotRegionMarks: null,   // ResidueMarks: a dot-plot stretch shown in the alignment (owner, 2026-10-23)
+    dotBookmarks: [],       // the collection of starred dot-plot stretches (localStorage, snapshots; owner, 2026-10-23)
     nameLength: DEFAULTS.nameLength,
     uiListenersAttached: false,
     panning: {
@@ -15767,7 +15768,8 @@ function _buildSnapshotPayload() {
             enabled: h.enabled !== false, matchCount: h.matchCount || 0, sequencesWithMatches: h.sequencesWithMatches || 0
         })) : null,
         selections: _snapshotSelections(),
-        annotation: state.annot ? { text: state.annot.text, sourceName: state.annot.sourceName, shown: el('showAnnotation')?.checked !== false } : null
+        annotation: state.annot ? { text: state.annot.text, sourceName: state.annot.sourceName, shown: el('showAnnotation')?.checked !== false } : null,
+        dotBookmarks: state.dotBookmarks?.length ? state.dotBookmarks : null   // the dot-plot collection
     };
 }
 
@@ -15920,6 +15922,12 @@ function _loadSnapshotPayload(payload) {
         }
         // Older snapshots have no selections: still clear what the previous session showed
         _applySnapshotSelections(payload.selections || {});
+        // The dot-plot collection of the snapshot joins the user's own (by id)
+        if (Array.isArray(payload.dotBookmarks)) {
+            const have = new Set((state.dotBookmarks || []).map(b => b.id));
+            _dotSanitizeBookmarks(payload.dotBookmarks).forEach(b => { if (!have.has(b.id)) { state.dotBookmarks.push(b); have.add(b.id); } });
+            _dotSaveBookmarks(); _dotRenderBookmarks();
+        }
         // The annotation track is part of what was saved (none saved: none shown)
         if (payload.annotation && typeof payload.annotation.text === 'string') {
             const cb = el('showAnnotation');
@@ -30301,6 +30309,7 @@ function _dotRenderRegionList() {
     const itemsEl = document.getElementById('dotPlotRegionItems');
     if (!listEl || !itemsEl) return;
     listEl.style.display = 'block';
+    _dotRenderBookmarks();
     if (!S.regions || S.regions.length === 0) {
         itemsEl.innerHTML = '<div style="padding:4px 6px;color:#888;">No similar stretches above the current settings.</div>';
         return;
@@ -30317,6 +30326,7 @@ function _dotRenderRegionList() {
             onmouseleave="this.style.background=''"
             onclick="_dotGoToRegion(${i})"
             title="${tip}. Runs broken by mismatches or small indels are counted as one stretch. Click: centre it in the plot.">
+            <button type="button" class="dot-star" title="${_dotRegionBookmarked(r) ? 'In the collection' : 'Add this stretch to the collection (the list below)'}" onclick="event.stopPropagation(); _dotBookmarkRegion(${i})">${_dotRegionBookmarked(r) ? '&#9733;' : '&#9734;'}</button>
             ${canShow ? `<button type="button" class="dot-goto" title="Show this stretch in the alignment and go there: both copies are tinted, the alignment scrolls to the first; the dot plot window stays open and the alignment behind it can be used" onclick="event.stopPropagation(); _dotShowRegionInAlignment(${i})">&#8674;</button>` : ''}
             <b>#${i + 1}</b> ${len}bp${spin ? '' : ' ' + pct + '%'}
             <span style="color:#888;font-size:10px;">A${r.aStart + 1}-${r.aEnd} / B${r.bStart + 1}-${r.bEnd}</span>
@@ -30335,6 +30345,13 @@ function _dotShowRegionInAlignment(idx) {
     if (!r) return;
     const rowA = meta?.rowIndexA, rowB = meta?.rowIndexB;
     if (!Number.isInteger(rowA) || !state.seqs[rowA]) { showMessage('This dot plot was not opened from alignment rows, so there is nothing to show.', 3000); return; }
+    S._shownRegion = idx;
+    _dotShowStretch(rowA, Number.isInteger(rowB) && state.seqs[rowB] ? rowB : -1, r.aStart, r.aEnd, r.bStart, r.bEnd, /\(RevComp\)$/.test(S.nameB || ''));
+}
+// Tints residues aStart..aEnd of row A and bStart..bEnd of row B (plot coordinates: residue numbers of the
+// gapless rows; with RevComp B the plotted B runs backwards, residue n of the plot being residue len-1-n of
+// the row), scrolls to the first copy, and lets the pointer through the window's backdrop.
+function _dotShowStretch(rowA, rowB, aStart, aEnd, bStart, bEnd, revB) {
     const marks = new ResidueMarks();
     const add = (row, from, to) => {
         const obj = state.seqs[row]; if (!obj) return;
@@ -30342,21 +30359,152 @@ function _dotShowRegionInAlignment(idx) {
         for (let n = from; n < to; n++) set.add(n);
         if (set.size) marks.bySeq.set(obj, set);
     };
-    add(rowA, r.aStart, r.aEnd);
-    if (Number.isInteger(rowB) && state.seqs[rowB]) {
-        // with RevComp B the plotted B runs backwards: residue n of the plot is residue len-1-n of the row
-        if (/\(RevComp\)$/.test(S.nameB || '')) add(rowB, S.seqB.length - r.bEnd, S.seqB.length - r.bStart);
-        else add(rowB, r.bStart, r.bEnd);
+    add(rowA, aStart, aEnd);
+    if (rowB >= 0 && state.seqs[rowB]) {
+        const lenB = state.seqs[rowB].seq.replace(/[-. ]/g, '').length;
+        if (revB) add(rowB, lenB - bEnd, lenB - bStart); else add(rowB, bStart, bEnd);
     }
     state.dotRegionMarks = marks;
-    S._shownRegion = idx;
     syncResidueOverlays();
-    const colA = S.alignMapA ? S.alignMapA[r.aStart] : null;   // 1-based column of the first residue
+    const map = _buildUngappedToAlignMap(state.seqs[rowA].seq);
+    const colA = map ? map[aStart] : null;   // 1-based column of the first residue
     _dotPeek(true);
     _showRowInAlignment(rowA, Number.isInteger(colA) ? colA - 1 : undefined);
     const btn = document.getElementById('dotPlotClearMarksBtn');
     if (btn) btn.hidden = false;
     _dotRenderRegionList();
+}
+
+// ---- The collection (owner, 2026-10-23): stretches starred in Top Regions, kept across files and reloads
+// (localStorage) and in snapshots. An entry centres in the plot, shows in the alignment, goes to the Search box
+// under its name (so the stretch can be found again in another alignment), copies as FASTA, renames, removes.
+const DOT_BOOKMARKS_KEY = 'msaviewer_dotBookmarks';
+function _dotLoadBookmarks() {
+    try { const raw = localStorage.getItem(DOT_BOOKMARKS_KEY); state.dotBookmarks = _dotSanitizeBookmarks(raw ? JSON.parse(raw) : []); }
+    catch (e) { state.dotBookmarks = []; }
+}
+function _dotSaveBookmarks() {
+    try { localStorage.setItem(DOT_BOOKMARKS_KEY, JSON.stringify(state.dotBookmarks)); }
+    catch (e) { /* storage full or blocked: the list still lives in the session and in snapshots */ }
+}
+function _dotSanitizeBookmarks(arr) {
+    if (!Array.isArray(arr)) return [];
+    const str = (v, n = 200) => String(v == null ? '' : v).slice(0, n);
+    const int = v => Number.isInteger(v) ? v : (Number.isInteger(+v) ? +v : 0);
+    const seq = v => str(v, 100000).replace(/[^A-Za-z*.-]/g, '');
+    return arr.filter(b => b && typeof b === 'object').slice(0, 500).map(b => ({
+        id: str(b.id, 40) || ('bm' + Math.random().toString(36).slice(2, 10)),
+        name: str(b.name, 120), nameA: str(b.nameA), nameB: str(b.nameB),
+        aStart: int(b.aStart), aEnd: int(b.aEnd), bStart: int(b.bStart), bEnd: int(b.bEnd),
+        revB: !!b.revB, mode: b.mode === 'doter' ? 'doter' : 'spin', window: int(b.window), threshold: +b.threshold || 0,
+        seqA: seq(b.seqA), seqB: seq(b.seqB), identity: +b.identity || 0
+    })).filter(b => b.aEnd > b.aStart && b.bEnd > b.bStart);
+}
+function _dotPlotNameB() { return (_dotPlotState.nameB || '').replace(/ \(RevComp\)$/, ''); }
+function _dotPlotRevB() { return /\(RevComp\)$/.test(_dotPlotState.nameB || ''); }
+function _dotRegionBookmarked(r) {
+    const S = _dotPlotState, nameB = _dotPlotNameB(), revB = _dotPlotRevB();
+    return (state.dotBookmarks || []).some(b => b.nameA === S.nameA && b.nameB === nameB && b.revB === revB && b.aStart === r.aStart && b.aEnd === r.aEnd && b.bStart === r.bStart && b.bEnd === r.bEnd);
+}
+function _dotBookmarkRegion(idx) {
+    const S = _dotPlotState, r = S.regions?.[idx];
+    if (!r) return;
+    if (_dotRegionBookmarked(r)) { showMessage('This stretch is already in the collection.', 2500); return; }
+    const H = _dotHalf(r.row, r.col);
+    const b = { id: 'bm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        name: `${S.nameA} ${r.aStart + 1}-${r.aEnd}`, nameA: S.nameA, nameB: _dotPlotNameB(), revB: _dotPlotRevB(),
+        aStart: r.aStart, aEnd: r.aEnd, bStart: r.bStart, bEnd: r.bEnd,
+        mode: H.spinMode ? 'spin' : 'doter', window: H.windowSize || S.windowSize || 0, threshold: H.spinMode ? 0 : (H.threshold || S.threshold || 0),
+        seqA: S.seqA.slice(r.aStart, r.aEnd), seqB: S.seqB.slice(r.bStart, r.bEnd), identity: r.avgScore || 0 };
+    state.dotBookmarks.push(b);
+    _dotSaveBookmarks(); _dotRenderRegionList();
+    showMessage(`Added to the collection: ${b.name}`, 2000);
+}
+function _dotBookmarkById(id) { return (state.dotBookmarks || []).find(b => b.id === id) || null; }
+function _dotRenderBookmarks() {
+    const itemsEl = document.getElementById('dotPlotBookmarkItems');
+    if (!itemsEl) return;
+    const S = _dotPlotState, bms = state.dotBookmarks || [];
+    document.getElementById('dotPlotBookmarkTsvBtn')?.toggleAttribute('disabled', !bms.length);
+    document.getElementById('dotPlotBookmarkClearBtn')?.toggleAttribute('disabled', !bms.length);
+    if (!bms.length) { itemsEl.innerHTML = '<div style="padding:4px 6px;color:#888;">Star a stretch in the list above to keep it here.</div>'; return; }
+    const esc = _escapeHtml, nameB = _dotPlotNameB();
+    itemsEl.innerHTML = bms.map(b => {
+        const here = b.nameA === S.nameA && b.nameB === nameB;
+        const pair = b.nameA === b.nameB ? esc(b.nameA) : esc(b.nameA) + ' vs ' + esc(b.nameB) + (b.revB ? ' (rc)' : '');
+        return `<div class="dot-bm${here ? '' : ' dot-bm-other'}" data-id="${esc(b.id)}" title="${here ? 'Click: centre it in the plot.' : 'Another pair: a click opens its dot plot when both sequences are loaded.'} Double-click the name to rename it" onclick="_dotGoToBookmark('${esc(b.id)}')">
+            <span class="dot-bm-tools">
+              <button type="button" title="Show the stretch in the alignment (both copies tinted) and go there" onclick="event.stopPropagation(); _dotShowBookmarkInAlignment('${esc(b.id)}')">&#8674;</button>
+              <button type="button" title="Hand it to the Search box: find copy A of this stretch in the loaded alignment, listed under the entry's name" onclick="event.stopPropagation(); _dotBookmarkToSearch('${esc(b.id)}')">&#128269;</button>
+              <button type="button" title="Copy both copies as FASTA" onclick="event.stopPropagation(); _dotCopyBookmark('${esc(b.id)}')">&#10697;</button>
+              <button type="button" title="Remove from the collection" onclick="event.stopPropagation(); _dotRemoveBookmark('${esc(b.id)}')">&times;</button>
+            </span>
+            <span class="dot-bm-name" ondblclick="event.stopPropagation(); _dotRenameBookmark('${esc(b.id)}', this)">${esc(b.name)}</span><br>
+            <span style="color:#888;font-size:10px;">${b.aEnd - b.aStart} bp &middot; A${b.aStart + 1}-${b.aEnd} / B${b.bStart + 1}-${b.bEnd} &middot; ${pair}</span>
+          </div>`;
+    }).join('');
+}
+function _dotRenameBookmark(id, nameEl) {
+    const b = _dotBookmarkById(id); if (!b || !nameEl) return;
+    const inp = document.createElement('input'); inp.type = 'text'; inp.value = b.name; inp.className = 'dot-bm-rename'; inp.maxLength = 120;
+    let finished = false;
+    const done = (commit) => { if (finished) return; finished = true; if (commit && inp.value.trim()) { b.name = inp.value.trim().slice(0, 120); _dotSaveBookmarks(); } _dotRenderBookmarks(); };
+    inp.addEventListener('click', e => e.stopPropagation()); inp.addEventListener('dblclick', e => e.stopPropagation());
+    inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); done(true); } else if (e.key === 'Escape') { e.preventDefault(); done(false); } });
+    inp.addEventListener('blur', () => done(true));
+    nameEl.replaceWith(inp); inp.focus(); inp.select();
+}
+function _dotRemoveBookmark(id) { state.dotBookmarks = (state.dotBookmarks || []).filter(b => b.id !== id); _dotSaveBookmarks(); _dotRenderRegionList(); }
+function _dotClearBookmarks() { if (!state.dotBookmarks?.length) return; state.dotBookmarks = []; _dotSaveBookmarks(); _dotRenderRegionList(); showMessage('Collection cleared.', 1500); }
+// the rows of a bookmark's sequences in the loaded alignment (by name), or null
+function _dotBookmarkRows(b) {
+    const rowA = state.seqs.findIndex(s => s.header === b.nameA), rowB = state.seqs.findIndex(s => s.header === b.nameB);
+    return rowA >= 0 && rowB >= 0 ? { rowA, rowB } : null;
+}
+async function _dotGoToBookmark(id) {
+    const b = _dotBookmarkById(id); if (!b) return;
+    const S = _dotPlotState;
+    const here = b.nameA === S.nameA && b.nameB === _dotPlotNameB() && b.revB === _dotPlotRevB() && S.rows > 0;
+    if (!here) {
+        const rows = _dotBookmarkRows(b);
+        if (!rows) { showMessage(`${b.nameA}${b.nameA === b.nameB ? '' : ' / ' + b.nameB} is not in this alignment: use the search button to look for the stretch.`, 3500); return; }
+        const sA = state.seqs[rows.rowA], sB = state.seqs[rows.rowB];
+        const rc = document.getElementById('dotPlotRevComp'); if (rc) rc.checked = b.revB;
+        await openDotPlot(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header, { rowIndexA: rows.rowA, rowIndexB: rows.rowB, alignedSeqA: sA.seq, alignedSeqB: sB.seq });
+        if (!S.rows) return;
+    }
+    // centre the stretch in the plot and show its first cell
+    const { vp, vw, vh } = _dotViewport(); if (!vp) return;
+    vp.scrollLeft = Math.max(0, (b.bStart + (b.bEnd - b.bStart) / 2) * S.zoom - (vw - DOT_AXIS_PAD) / 2);
+    vp.scrollTop = Math.max(0, (b.aStart + (b.aEnd - b.aStart) / 2) * S.zoom - (vh - DOT_AXIS_PAD) / 2);
+    _dotRender();
+    const row = Math.min(S.rows - 1, b.aStart), col = Math.min(S.cols - 1, b.bStart);
+    S.lastRow = row; S.lastCol = col;
+    _dotDrawOverlay(row, col); _dotUpdateHoverInfo(row, col);
+}
+function _dotShowBookmarkInAlignment(id) {
+    const b = _dotBookmarkById(id); if (!b) return;
+    const rows = _dotBookmarkRows(b);
+    if (!rows) { showMessage(`${b.nameA}${b.nameA === b.nameB ? '' : ' / ' + b.nameB} is not in this alignment: use the search button to look for the stretch.`, 3500); return; }
+    _dotPlotState._shownRegion = -1;
+    _dotShowStretch(rows.rowA, rows.rowB, b.aStart, b.aEnd, b.bStart, b.bEnd, b.revB);
+}
+function _dotBookmarkToSearch(id) {
+    const b = _dotBookmarkById(id); if (!b) return;
+    if (!state.seqs.length) { showMessage('Load an alignment first.', 2000); return; }
+    const inp = el('searchInput'); if (inp) inp.value = b.seqA;
+    searchMotif({ motif: b.seqA, label: b.name, useRegex: false });
+}
+function _dotCopyBookmark(id) {
+    const b = _dotBookmarkById(id); if (!b) return;
+    const fasta = `>${b.nameA}_${b.aStart + 1}-${b.aEnd}\n${b.seqA}\n>${b.nameB}${b.revB ? '_rc' : ''}_${b.bStart + 1}-${b.bEnd}\n${b.seqB}`;
+    navigator.clipboard.writeText(fasta).then(() => showMessage('Both copies copied as FASTA.', 2000)).catch(() => showMessage('Could not copy.', 2000));
+}
+function _dotBookmarksTsv() {
+    const head = ['name', 'A', 'A_start', 'A_end', 'B', 'B_start', 'B_end', 'B_revcomp', 'length', 'mode', 'window', 'threshold', 'identity', 'seqA', 'seqB'];
+    const clean = v => String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ');
+    const rows = (state.dotBookmarks || []).map(b => [b.name, b.nameA, b.aStart + 1, b.aEnd, b.nameB, b.bStart + 1, b.bEnd, b.revB ? 'yes' : 'no', b.aEnd - b.aStart, b.mode, b.window, b.threshold, b.identity ? Math.round(b.identity * 100) + '%' : '', b.seqA, b.seqB].map(clean).join('\t'));
+    return [head.join('\t'), ...rows].join('\n');
 }
 function _dotPeek(on) { document.getElementById('dotPlotModal')?.classList.toggle('dot-peek', !!on); }
 function _dotClearRegionMarks(keepPeek) {
@@ -30992,6 +31140,12 @@ function _initDotPlotEvents() {
         });
     }
     document.getElementById('dotPlotClearMarksBtn')?.addEventListener('click', () => _dotClearRegionMarks());
+    _dotLoadBookmarks(); _dotRenderBookmarks();
+    document.getElementById('dotPlotBookmarkClearBtn')?.addEventListener('click', _dotClearBookmarks);
+    document.getElementById('dotPlotBookmarkTsvBtn')?.addEventListener('click', () => {
+        if (!state.dotBookmarks?.length) return;
+        navigator.clipboard.writeText(_dotBookmarksTsv()).then(() => showMessage(`Collection copied (${state.dotBookmarks.length} entries, tab-separated).`, 2500)).catch(() => showMessage('Could not copy.', 2000));
+    });
 
     // Local help inside the dot plot modal
     const helpBtn = document.getElementById('dotPlotHelpBtn');

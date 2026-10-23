@@ -4137,6 +4137,18 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
    text used to add a scrollbar, shrink the plot viewport and re-zoom the fitted plot: the plot jerked
    whenever the pointer crossed between the plot and its axis strip (owner, 2026-10-23). */
 #dotPlotAlignPanel { height: calc(3 * 1.4 * 12px + 16px + 2px + var(--dot-sb, 17px)); box-sizing: border-box; overflow-y: hidden; }
+/* The side column of the dot plot: the Top Regions list and the collection of starred stretches */
+.dot-side { display: flex; flex-direction: column; gap: 6px; width: 220px; min-width: 180px; }
+.dot-side-list { border: 1px solid #ccc; overflow-y: auto; font-size: 11px; background: #fafafa; }
+.dot-side-head { padding: 6px; font-weight: bold; border-bottom: 1px solid #ddd; background: #eee; position: sticky; top: 0; display: flex; align-items: center; gap: 4px; }
+.dot-star { float: right; font-size: 12px; line-height: 15px; padding: 0 4px; margin-left: 2px; cursor: pointer; }
+.dot-bm { padding: 3px 6px; border-bottom: 1px solid #eee; cursor: pointer; }
+.dot-bm:hover { background: #d0e4ff; }
+.dot-bm-other { color: #666; }
+.dot-bm-name { font-weight: bold; }
+.dot-bm-tools { float: right; display: inline-flex; gap: 1px; margin-left: 4px; }
+.dot-bm-tools button { font-size: 11px; line-height: 15px; padding: 0 4px; cursor: pointer; }
+.dot-bm-rename { font-size: 11px; width: 120px; }
 /* A region shown in the alignment (owner, 2026-10-23): the list entry's button, the entry's highlight, and the
    window's backdrop made click-through so the alignment behind it can be used while the window stays */
 .dot-goto { float: right; font-size: 11px; line-height: 15px; padding: 0 5px; margin-left: 4px; cursor: pointer; }

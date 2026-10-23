@@ -1202,9 +1202,16 @@
                     </div>
                     <div id="dotPlotSpacer"></div>
                 </div>
-                <div id="dotPlotRegionList" style="width:220px;min-width:180px;border:1px solid #ccc;overflow-y:auto;font-size:11px;background:#fafafa;">
-                    <div style="padding:6px;font-weight:bold;border-bottom:1px solid #ddd;background:#eee;position:sticky;top:0;display:flex;align-items:center;gap:6px;">Top Regions<span style="flex:1;"></span><button type="button" id="dotPlotClearMarksBtn" class="dot-mini-btn" title="Remove the stretch marks from the alignment" hidden>Clear marks</button></div>
-                    <div id="dotPlotRegionItems" style="padding:4px;"></div>
+                <div id="dotPlotSide" class="dot-side">
+                    <div id="dotPlotRegionList" class="dot-side-list" style="flex:1 1 55%;">
+                        <div class="dot-side-head">Top Regions<span style="flex:1;"></span><button type="button" id="dotPlotClearMarksBtn" class="dot-mini-btn" title="Remove the stretch marks from the alignment" hidden>Clear marks</button></div>
+                        <div id="dotPlotRegionItems" style="padding:4px;"></div>
+                    </div>
+                    <!-- The collection: starred stretches, kept across files and reloads and in snapshots (owner, 2026-10-23) -->
+                    <div id="dotPlotBookmarks" class="dot-side-list" style="flex:0 1 45%;min-height:90px;">
+                        <div class="dot-side-head" title="Stretches you starred in Top Regions. Kept across files and reloads, and saved in snapshots. An entry can be centred in the plot, shown in the alignment, handed to the Search box, copied as FASTA, renamed (double-click) or removed.">Collection<span style="flex:1;"></span><button type="button" id="dotPlotBookmarkTsvBtn" class="dot-mini-btn" title="Copy the collection as a tab-separated table (name, positions, pair, method, sequences)">TSV</button><button type="button" id="dotPlotBookmarkClearBtn" class="dot-mini-btn" title="Remove every entry">Clear</button></div>
+                        <div id="dotPlotBookmarkItems" style="padding:4px;"></div>
+                    </div>
                 </div>
             </div>
             <div id="dotPlotStatus" style="font-size:11px;color:#666;margin-top:4px;"></div>

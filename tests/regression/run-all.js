@@ -7622,7 +7622,7 @@ check('White letters on shaded cells: 2+ rows of box colour above and below at b
   // column 1: T,A,T,T  ->  the A's cell is white, the T under it dark grey with a white letter
   const fa = '>r0\nTCCCAT\n>r1\nACCGAG\n>r2\nTCCCAT\n>r3\nTCCCAT\n';
   for (const dpr of [0.9, 1, 1.1, 1.25]) for (const view of ['full', 'block', 'canvas']) {
-    const p = await page.context().browser().newPage({ viewport: { width: 500, height: 200 }, deviceScaleFactor: dpr });
+    const p = await page.context().browser().newPage({ viewport: { width: 500, height: 320 } /* tall enough for row 2 under the toolbar, which takes more lines at 500 px since v278 keeps the Selections tab's place */, deviceScaleFactor: dpr });
     await p.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
     await p.setInputFiles('#fileInput', { name: 'w.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
     await p.waitForTimeout(1200);
@@ -8186,6 +8186,65 @@ check('Toolbar: the height does not change when a row selection appears or goes 
   }
   const ok = Object.values(out).every(o => o.none.h === o.sel.h && o.sel.h === o.cleared.h && o.none.top === o.sel.top && o.sel.top === o.cleared.top);
   return { pass: ok, detail: JSON.stringify(out) };
+});
+
+
+// Owner (2026-10-23): a "collection" of interesting dot-plot regions in a list, with an option to hand an entry to
+// the search. Star an entry of Top Regions: it joins the Collection list under it (kept in localStorage across files
+// and reloads, and in snapshots); an entry centres in the plot, shows in the alignment, goes to the Search box under
+// its name, copies as FASTA, renames by double-click, and the list copies as TSV.
+check('Dot plot collection: star, rename, hand to the search, show in alignment, FASTA, TSV, remove, kept across a reload and in snapshots', async (page) => {
+  let sd = 11; const rnd = () => (sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
+  const rs = n => Array.from({ length: n }, () => 'ACGT'[rnd() * 4 | 0]).join('');
+  const unit = rs(60);
+  const lines = [];
+  for (let i = 0; i < 12; i++) { let s = i === 5 ? rs(40) + unit + rs(80) + unit + rs(40) : rs(280); s = s.slice(0, 50) + '----' + s.slice(50); lines.push('>s' + i + '\n' + s); }
+  const fa = lines.join('\n') + '\n';
+  await page.evaluate(() => { try { localStorage.removeItem('msaviewer_dotBookmarks'); } catch (e) {} });
+  await loadFasta(page, fa);
+  await setMode(page, 'full');
+  await page.evaluate(() => { window._copied = null; navigator.clipboard.writeText = t => { window._copied = t; return Promise.resolve(); }; });
+  await page.evaluate(() => { const s = state.seqs[5]; openDotPlot(s.seq.replace(/[-. ]/g, ''), s.seq.replace(/[-. ]/g, ''), s.header, s.header, { rowIndexA: 5, rowIndexB: 5, alignedSeqA: s.seq, alignedSeqB: s.seq }); });
+  await page.waitForSelector('#dotPlotRegionItems .dot-star', { timeout: 10000 });
+  const r = {};
+  r.empty = await page.evaluate(() => ({ n: state.dotBookmarks.length, text: document.getElementById('dotPlotBookmarkItems').textContent.trim().slice(0, 20) }));
+  await page.click('#dotPlotRegionItems .dot-star'); await page.waitForTimeout(300);
+  r.starred = await page.evaluate(() => { const b = state.dotBookmarks[0], g = _dotPlotState.regions[0]; return { n: state.dotBookmarks.length, ok: !!b && b.nameA === 's5' && b.aStart === g.aStart && b.aEnd === g.aEnd && b.bStart === g.bStart && b.seqA === _dotPlotState.seqA.slice(g.aStart, g.aEnd) && b.seqA.length === g.aEnd - g.aStart, items: document.querySelectorAll('#dotPlotBookmarkItems .dot-bm').length, stored: (localStorage.getItem('msaviewer_dotBookmarks') || '').includes('"nameA":"s5"'), starFilled: document.querySelector('#dotPlotRegionItems .dot-star').textContent === '\u2605' }; });
+  // a second star of the same stretch is refused
+  await page.click('#dotPlotRegionItems .dot-star'); await page.waitForTimeout(200);
+  r.dup = await page.evaluate(() => state.dotBookmarks.length);
+  // rename by double-click
+  await page.dblclick('#dotPlotBookmarkItems .dot-bm-name'); await page.waitForTimeout(150);
+  await page.keyboard.type('promoter box'); await page.keyboard.press('Enter'); await page.waitForTimeout(200);
+  r.renamed = await page.evaluate(() => ({ name: state.dotBookmarks[0].name, shown: document.querySelector('#dotPlotBookmarkItems .dot-bm-name').textContent }));
+  // hand to the search: an entry under the bookmark's name, hits on both copies
+  await page.click('#dotPlotBookmarkItems .dot-bm button[title^="Hand it to the Search"]'); await page.waitForTimeout(800);
+  r.search = await page.evaluate(() => { const h = state.searchHistory[state.searchHistory.length - 1]; return { n: state.searchHistory.length, label: h && h.label, value: h && h.searchValue === state.dotBookmarks[0].seqA, hits: h && h.matchCount, box: document.getElementById('searchInput').value === state.dotBookmarks[0].seqA }; });
+  // show in the alignment
+  await page.click('#dotPlotBookmarkItems .dot-bm button[title^="Show the stretch"]'); await page.waitForTimeout(500);
+  r.shown = await page.evaluate(() => { const b = state.dotBookmarks[0], m = state.dotRegionMarks && state.dotRegionMarks.get(5); return { cols: m ? m.size : 0, want: (b.aEnd - b.aStart) + (b.bEnd - b.bStart), peek: document.getElementById('dotPlotModal').classList.contains('dot-peek') }; });
+  // FASTA and TSV copies
+  await page.click('#dotPlotBookmarkItems .dot-bm button[title^="Copy both copies"]'); await page.waitForTimeout(200);
+  r.fasta = await page.evaluate(() => (window._copied || '').split('\n').filter(Boolean).length);
+  await page.click('#dotPlotBookmarkTsvBtn'); await page.waitForTimeout(200);
+  r.tsv = await page.evaluate(() => { const t = window._copied || ''; const rows = t.split('\n').filter(Boolean); return { rows: rows.length, head: rows[0].split('\t').slice(0, 3).join(','), name: rows[1] && rows[1].split('\t')[0] }; });
+  // snapshot payload carries the collection; a reload restores it from localStorage
+  r.snapshot = await page.evaluate(() => { const p = _buildSnapshotPayload(); return Array.isArray(p.dotBookmarks) && p.dotBookmarks.length === 1 && p.dotBookmarks[0].name === 'promoter box'; });
+  await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(500);
+  r.afterReload = await page.evaluate(() => ({ n: state.dotBookmarks.length, name: state.dotBookmarks[0] && state.dotBookmarks[0].name, listed: document.querySelectorAll('#dotPlotBookmarkItems .dot-bm').length }));
+  // remove
+  await loadFasta(page, fa);
+  await page.evaluate(() => { const s = state.seqs[5]; openDotPlot(s.seq.replace(/[-. ]/g, ''), s.seq.replace(/[-. ]/g, ''), s.header, s.header, { rowIndexA: 5, rowIndexB: 5, alignedSeqA: s.seq, alignedSeqB: s.seq }); });
+  await page.waitForSelector('#dotPlotBookmarkItems .dot-bm', { timeout: 10000 });
+  await page.click('#dotPlotBookmarkItems .dot-bm button[title^="Remove"]'); await page.waitForTimeout(200);
+  r.removed = await page.evaluate(() => ({ n: state.dotBookmarks.length, stored: localStorage.getItem('msaviewer_dotBookmarks') }));
+  await page.evaluate(() => { try { localStorage.removeItem('msaviewer_dotBookmarks'); } catch (e) {} });
+  const ok = r.empty.n === 0 && r.starred.n === 1 && r.starred.ok && r.starred.items === 1 && r.starred.stored && r.starred.starFilled && r.dup === 1
+    && r.renamed.name === 'promoter box' && r.renamed.shown === 'promoter box'
+    && r.search.n >= 1 && r.search.label === 'promoter box' && r.search.value && r.search.hits >= 2 && r.search.box
+    && r.shown.cols === r.shown.want && r.shown.peek && r.fasta === 4 && r.tsv.rows === 2 && r.tsv.head === 'name,A,A_start' && r.tsv.name === 'promoter box'
+    && r.snapshot && r.afterReload.n === 1 && r.afterReload.name === 'promoter box' && r.afterReload.listed === 1 && r.removed.n === 0 && r.removed.stored === '[]';
+  return { pass: ok, detail: JSON.stringify(r) };
 });
 
 async function main() {
