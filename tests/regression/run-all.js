@@ -8247,6 +8247,45 @@ check('Dot plot collection: star, rename, hand to the search, show in alignment,
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+
+// Owner (2026-10-23): "for complex search tasks, when I regularly search for something with multiple queries with
+// certain thresholds, named search presets should be saved/loaded (example: promoter boxes)". A preset is the set
+// of queries behind the active searches (motif, regex flag, mismatches, both strands, colour, name), saved under a
+// name in browser storage (like the colour and clustering presets); Load runs them again on any alignment.
+check('Search presets: save the active searches under a name, load them on another alignment (added, no duplicates), delete; kept across a reload', async (page) => {
+  const fa = '>a\nGGGTATAAAGGCCCAATTGGCCTTTATAGGGACGT\n>b\nTTTTATAAAGGCCCAATTGGCCTTTATACCCAAAA\n>c\nACGTACGTACGTACGTACGTACGTACGTACGTAC\n';
+  await page.evaluate(() => { try { localStorage.removeItem('searchPresets'); } catch (e) {} });
+  await loadFasta(page, fa);
+  const r = {};
+  // the controls live in the Search menu: open it before using them, as a user would
+  const openSearch = async () => { const open = await page.evaluate(() => document.querySelector('.section-header[data-section="search"]').closest('.menu-section').classList.contains('menu-open')); if (!open) await page.click('.section-header[data-section="search"]'); await page.waitForTimeout(200); };
+  r.ui = await page.evaluate(() => ({ select: !!document.getElementById('searchPresetSelect'), name: !!document.getElementById('searchPresetName'), save: !!document.getElementById('searchPresetSaveBtn'), load: !!document.getElementById('searchPresetLoadBtn'), del: !!document.getElementById('searchPresetDeleteBtn') }));
+  if (!r.ui.select) return { pass: false, detail: JSON.stringify(r) };
+  // two searches: a TATA box on both strands with 1 mismatch in orange, and a regex in blue
+  await page.evaluate(() => { searchMotif({ motif: 'TATAAA', useRegex: false, maxMismatches: 1, bothStrands: true, color: '#ff8800', suppressMessage: true }); searchMotif({ motif: 'GGCCC?A', useRegex: true, maxMismatches: 0, bothStrands: false, color: '#3366ff', suppressMessage: true }); });
+  await page.waitForTimeout(300);
+  r.before = await page.evaluate(() => state.searchHistory.map(h => h.label + '|' + h.strand + '|' + h.color + '|' + h.matchCount).join(';'));
+  await openSearch(); await page.fill('#searchPresetName', 'promoter boxes'); await page.click('#searchPresetSaveBtn'); await page.waitForTimeout(200);
+  r.saved = await page.evaluate(() => { const p = JSON.parse(localStorage.getItem('searchPresets') || '{}')['promoter boxes']; return p ? { n: p.queries.length, q: p.queries.map(q => [q.motif, q.useRegex, q.maxMismatches, q.bothStrands, q.color].join(',')).join(';'), listed: [...document.getElementById('searchPresetSelect').options].map(o => o.value).join(','), nameCleared: document.getElementById('searchPresetName').value === '' } : null; });
+  // on another alignment: clear, load the preset, load it again
+  await loadFasta(page, '>x\nCCCTATAAACCCGGCCATTT\n>y\nAAATTTATAGGGTTTT\n');
+  r.cleared = await page.evaluate(() => state.searchHistory.length);
+  await openSearch(); await page.selectOption('#searchPresetSelect', 'promoter boxes'); await page.click('#searchPresetLoadBtn'); await page.waitForTimeout(400);
+  r.loaded = await page.evaluate(() => state.searchHistory.map(h => h.label + '|' + h.strand + '|' + h.color + '|' + h.maxMismatches + '|' + h.matchCount).join(';'));
+  await page.click('#searchPresetLoadBtn'); await page.waitForTimeout(400);
+  r.loadedTwice = await page.evaluate(() => state.searchHistory.length);
+  // kept across a reload, then deleted
+  await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(400);
+  r.afterReload = await page.evaluate(() => [...document.getElementById('searchPresetSelect').options].map(o => o.value).join(','));
+  await openSearch(); await page.selectOption('#searchPresetSelect', 'promoter boxes'); await page.click('#searchPresetDeleteBtn'); await page.waitForTimeout(200);
+  r.deleted = await page.evaluate(() => ({ stored: localStorage.getItem('searchPresets'), options: document.getElementById('searchPresetSelect').options.length }));
+  await page.evaluate(() => { try { localStorage.removeItem('searchPresets'); } catch (e) {} });
+  const ok = r.before.split(';').length === 3 && !!r.saved && r.saved.n === 2 && r.saved.q === 'TATAAA,false,1,true,#ff8800;GGCCC?A,true,0,false,#3366ff' && r.saved.listed === 'promoter boxes' && r.saved.nameCleared
+    && r.cleared === 0 && r.loaded.split(';').length === 3 && /TATAAA \(fwd\)\|fwd\|#ff8800\|1\|[1-9]/.test(r.loaded) && /rev comp/.test(r.loaded) && /GGCCC\?A\|fwd\|#3366ff\|0\|[1-9]/.test(r.loaded)
+    && r.loadedTwice === 3 && r.afterReload === 'promoter boxes' && r.deleted.stored === '{}' && r.deleted.options === 0;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

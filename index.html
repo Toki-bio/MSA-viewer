@@ -622,6 +622,15 @@
                                 <span style="font-size:10px; color:#666;">Uses IUPAC codes; enable "Search both strands" above for reverse-complement sites.</span>
                             </div>
                         </div>
+                        <!-- Named search presets (owner, 2026-10-23): the active searches saved under a name, run again on any alignment -->
+                        <div class="search-presets" title="Named sets of searches: save the active searches under a name (e.g. promoter boxes) and run them again on any alignment">
+                            <span style="font-size: 11px;">Presets:</span>
+                            <select id="searchPresetSelect" title="Saved search sets"></select>
+                            <button id="searchPresetLoadBtn" title="Run every search of the chosen set on this alignment (added to the active searches; a search already active is run again, not doubled)">Load</button>
+                            <button id="searchPresetDeleteBtn" title="Remove the chosen set">Delete</button>
+                            <input type="text" id="searchPresetName" placeholder="name, e.g. promoter boxes" maxlength="60" title="Name for the active searches (motifs, regex, mismatches, strands, colours); an existing name is replaced">
+                            <button id="searchPresetSaveBtn" title="Save the active searches under the name">Save active</button>
+                        </div>
                         <div id="activeSearches" class="active-searches" style="display: none; margin-top: 4px; padding: 4px; background: #f8f8f8; border-radius: 3px; font-size: 11px;">
                             <strong>Active searches:</strong>
                             <div id="searchList" style="margin-top: 2px;"></div>

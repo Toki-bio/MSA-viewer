@@ -17284,6 +17284,80 @@ function clearLastSearch() {
     removeSearch(state.searchHistory[state.searchHistory.length - 1]);
     showMessage("Last search cleared!", 2000);
 }
+// ---- Named search presets (owner, 2026-10-23): "for complex search tasks ... named search presets should be
+// saved/loaded (example: promoter boxes)". A preset is the set of queries behind the active searches: motif text,
+// regex flag, mismatches, both strands, colour and a label; loading runs each through searchMotif again (which
+// derives IUPAC handling and the strand entries, replaces an entry with the same motif instead of doubling it,
+// and refreshes the panels), so a preset works on any alignment. Stored like the colour and clustering presets.
+const SEARCH_PRESETS_KEY = 'searchPresets';
+function _searchPresets() { const p = safeLocalGet(SEARCH_PRESETS_KEY, {}); return p && typeof p === 'object' && !Array.isArray(p) ? p : {}; }
+// The queries behind the active searches: a reverse-complement entry joins its forward one as "both strands"
+function _searchQueriesFromActive() {
+    const queries = [], byBase = new Map();
+    const base = h => String(h.motif || '').replace(/:(fwd|rev comp)$/, '').replace(/:rev$/, '');
+    (state.searchHistory || []).forEach(h => {
+        const key = base(h);
+        if (h.strand === 'rev comp') { const q = byBase.get(key); if (q) { q.bothStrands = true; return; } }
+        const useRegex = !!h.useRegex;
+        const motif = useRegex ? String(h.searchValue || '') : String(h.searchValue || '').toUpperCase();
+        if (!motif) return;
+        const shownLabel = String(h.label || '').replace(/ \((fwd|rev comp)\)$/, '');
+        const q = { motif, useRegex, maxMismatches: useRegex ? 0 : (parseInt(h.maxMismatches, 10) || 0), bothStrands: false,
+            color: _safeCssColor(h.color) || '#ffcc00', label: shownLabel && shownLabel !== motif ? shownLabel : '' };
+        queries.push(q);
+        if (h.strand !== 'rev comp') byBase.set(key, q);
+    });
+    return queries;
+}
+function updateSearchPresetList(selectName) {
+    const sel = el('searchPresetSelect'); if (!sel) return;
+    const names = Object.keys(_searchPresets()).sort((a, b) => a.localeCompare(b));
+    const keep = selectName || sel.value;
+    sel.innerHTML = names.map(n => `<option value="${_escapeHtml(n)}">${_escapeHtml(n)}</option>`).join('');
+    if (keep && names.includes(keep)) sel.value = keep;
+    const none = !names.length;
+    el('searchPresetLoadBtn')?.toggleAttribute('disabled', none);
+    el('searchPresetDeleteBtn')?.toggleAttribute('disabled', none);
+}
+function saveSearchPreset() {
+    const inp = el('searchPresetName');
+    const name = (inp?.value || '').trim().slice(0, 60);
+    if (!name) { showMessage('Type a name for the preset first.', 2500); return; }
+    const queries = _searchQueriesFromActive();
+    if (!queries.length) { showMessage('No active searches to save: run the searches first, then save them under a name.', 3500); return; }
+    const presets = _searchPresets();
+    const replaced = !!presets[name];
+    presets[name] = { savedAt: new Date().toISOString(), queries };
+    if (!safeLocalSet(SEARCH_PRESETS_KEY, JSON.stringify(presets), 'the search preset')) return;
+    if (inp) inp.value = '';
+    updateSearchPresetList(name);
+    showMessage(`Search preset "${name}" ${replaced ? 'replaced' : 'saved'} (${queries.length} ${queries.length === 1 ? 'query' : 'queries'}).`, 2500);
+}
+function loadSearchPreset() {
+    const name = el('searchPresetSelect')?.value;
+    const p = name ? _searchPresets()[name] : null;
+    if (!p || !Array.isArray(p.queries)) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!state.seqs.length) { showMessage('Load an alignment first.', 2500); return; }
+    let ran = 0;
+    p.queries.forEach(q => {
+        if (!q || typeof q.motif !== 'string' || !q.motif) return;
+        const r = searchMotif({ motif: q.motif, useRegex: !!q.useRegex, maxMismatches: Math.max(0, parseInt(q.maxMismatches, 10) || 0),
+            bothStrands: !!q.bothStrands, color: _safeCssColor(q.color) || '#ffcc00', label: q.label || undefined, suppressMessage: true });
+        if (r !== null) ran++;
+    });
+    const hits = (state.searchHistory || []).reduce((n, h) => n + (h.matchCount || 0), 0);
+    showMessage(`Preset "${name}": ${ran} ${ran === 1 ? 'search' : 'searches'} run; ${hits} ${hits === 1 ? 'hit' : 'hits'} in all active searches.`, 3000);
+}
+function deleteSearchPreset() {
+    const name = el('searchPresetSelect')?.value;
+    const presets = _searchPresets();
+    if (!name || !presets[name]) { showMessage('Choose a saved preset first.', 2500); return; }
+    delete presets[name];
+    if (!safeLocalSet(SEARCH_PRESETS_KEY, JSON.stringify(presets), 'the search presets')) return;
+    updateSearchPresetList();
+    showMessage(`Search preset "${name}" removed.`, 2000);
+}
+
 function clearAllSearches(quiet) {
     const old = state.searchHistory;
     state.searchHistory = [];
@@ -24630,6 +24704,9 @@ function initializeAppUI() {
         'zoomInButton': () => adjustZoom(10),
         'zoomOutButton': () => adjustZoom(-10),
         'searchButton': searchMotif,
+        'searchPresetSaveBtn': saveSearchPreset,
+        'searchPresetLoadBtn': loadSearchPreset,
+        'searchPresetDeleteBtn': deleteSearchPreset,
         'clearLastSearchButton': clearLastSearch,
         'clearAllSearchesButton': clearAllSearches,
         'copyConsensusButton': copyConsensus,
@@ -24828,6 +24905,7 @@ function initializeAppUI() {
 
     // Initialize Dot Plot & Repeat Finder modals
     _initDotPlotEvents();    _initRepeatFinderEvents();
+    updateSearchPresetList();
 
     // -- URL parameter auto-loading --
     // ...

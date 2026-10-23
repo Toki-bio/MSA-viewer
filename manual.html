@@ -478,6 +478,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li><strong>TSD results</strong> - the pairs found are shown faintly in the alignment at once and <em>Mark in alignment</em> is highlighted (&sect;9.9).</li>
     <li><strong>Scrollbars</strong> - the bars under and beside the alignment are 8 pixels, without the light track that looked like an empty band, and the pointer over them is the plain arrow.</li>
     <li><strong>Dot plot</strong> - hovering over the plot no longer makes it jump (a wide hover context used to add a scrollbar under the plot and re-fit it); one wide slider for the word length (SPIN) or window (Dotter) and the identity slider in Dotter mode only; the controls tidied; each Top Regions entry has a &#8674; button that tints both copies of the stretch in the alignment and goes there, and a &#9734; button that keeps it in a collection (kept across files and reloads, saved in snapshots) whose entries can be centred, shown in the alignment, handed to the Search box, copied as FASTA or TSV, renamed and removed (&sect;9.7).</li>
+    <li><strong>Search presets</strong> - the active searches saved under a name (e.g. promoter boxes) and run again on any alignment with one click (&sect;7.4).</li>
     <li><strong>Toolbar</strong> - the Selections tab keeps its place while empty, so selecting a row no longer wraps the toolbar and moves the alignment down a line at widths where the menu line is nearly full.</li>
     <li><strong>AB1 chromatograms</strong> - an AB1 file loads as one sequence and right-click → View Chromatogram... shows the trace (§1.3).</li>
     <li><strong>Accessibility</strong> - a colour-blind-safe nucleotide scheme (§5.3); menus and windows can be operated from the keyboard (Tab to a menu, Enter to open, Esc to close).</li>
@@ -1604,6 +1605,16 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     Slide drags, typed residues and undo. A match that an edit breaks loses its
     highlight, and a match an edit creates gains one. Match counts cover every
     sequence, including rows scrolled out of view in large alignments.
+  </p>
+  <p>
+    <strong>Presets</strong> keep a set of searches under a name, for example the promoter
+    boxes you look for in every new alignment. Run the searches (motifs, regular expressions,
+    mismatches, both strands, colours), type a name in the Presets row and press
+    <strong>Save active</strong>; choose the name and press <strong>Load</strong> on any
+    alignment to run them all again (they join the active searches; a search already active is
+    run again, not doubled), or <strong>Delete</strong> to remove the set. Presets are kept in
+    the browser, like the colour and clustering presets. A dot-plot collection entry handed to
+    the Search box (&sect;9.7) can be saved in a preset like any other search.
   </p>
 
   <h3 id="se-restriction">7.5 Restriction Sites</h3>

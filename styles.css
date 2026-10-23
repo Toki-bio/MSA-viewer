@@ -4137,6 +4137,11 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
    text used to add a scrollbar, shrink the plot viewport and re-zoom the fitted plot: the plot jerked
    whenever the pointer crossed between the plot and its axis strip (owner, 2026-10-23). */
 #dotPlotAlignPanel { height: calc(3 * 1.4 * 12px + 16px + 2px + var(--dot-sb, 17px)); box-sizing: border-box; overflow-y: hidden; }
+/* Named search presets (Search menu) */
+.search-presets { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+.search-presets select { height: 22px; font-size: 11px; max-width: 150px; }
+.search-presets input[type="text"] { height: 22px; font-size: 11px; width: 150px; padding: 2px; box-sizing: border-box; }
+.search-presets button { height: 22px; font-size: 11px; padding: 0 6px; }
 /* The side column of the dot plot: the Top Regions list and the collection of starred stretches */
 .dot-side { display: flex; flex-direction: column; gap: 6px; width: 220px; min-width: 180px; }
 .dot-side-list { border: 1px solid #ccc; overflow-y: auto; font-size: 11px; background: #fafafa; }
