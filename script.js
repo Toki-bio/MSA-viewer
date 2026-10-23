@@ -5835,6 +5835,7 @@ function _canvasColFromClientX(clientX) {
 // Module-level hover tracking: updated by mousemove, read by future phases
 // (tooltip, redraw-on-hover). No visual feedback yet — Phase 0 only.
 let _canvasHoverCell = null;
+let _gapCursorOn = false, _gapHoverKey = '';   // the gap tools' cursor and outlined cell in Canvas
 
 // Phase 4: reusable 1×1 px element positioned at a canvas cell, used as the
 // positioning anchor for showTooltipAt (which calls getBoundingClientRect on
@@ -6495,6 +6496,19 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 }
             }
         }
+        // Gap tools: the cell under the pointer (DOM: the :hover outline)
+        const gh = _canvasState.gapHover;
+        if (gh && state.editModeActive && GENEDOC_GAP_TOOLS.has(state.editTool) && gh.row >= 0 && gh.row < nSeqs) {
+            const sc = posSlot(gh.col);
+            if (sc >= 0) {
+                const y = HEADER_H + gh.row * rowPitch - oy, x = NAME_W + sc * CHAR_W - ox;
+                if (x + CHAR_W >= 0 && x <= w && y + CHAR_H >= 0 && y <= h) {
+                    octx.strokeStyle = '#ff8c00';
+                    octx.lineWidth = 2;
+                    octx.strokeRect(x + 1, y + 1, CHAR_W - 2, CHAR_H - 2);
+                }
+            }
+        }
         octx.restore();
     }
 
@@ -7099,6 +7113,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const nameHit = _canvasHitTestName(e.clientX, e.clientY);
         if (nameHit) { e.preventDefault(); _startSeqNameEditCanvas(nameHit.row); }
     });
+    canvas.addEventListener('mouseleave', () => { if (_gapHoverKey) { _gapHoverKey = ''; _canvasState.gapHover = null; _canvasState.scheduleOverlay && _canvasState.scheduleOverlay(); } if (_gapCursorOn) { _gapCursorOn = false; canvas.style.cursor = 'default'; } });
     window.addEventListener('mousemove', _canvasState.mousemoveHandler);
     window.addEventListener('mouseup', _canvasState.mouseupHandler);
 
@@ -7147,6 +7162,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         }
         if (_lastTooltipCell && _lastTooltipCell.mask) { _lastTooltipCell = null; hideTooltip(); }
         if (canvas.style.cursor === 'pointer') canvas.style.cursor = 'default';
+        // gap tools: the haloed crosshair over the cells, and the cell under the pointer outlined (overlay)
+        const gapTool = state.editModeActive && GENEDOC_GAP_TOOLS.has(state.editTool);
+        const gapCell = gapTool && _canvasHoverCell && _canvasHoverCell.row >= 0 && !_canvasHoverCell.aaLane && !_canvasHoverCell.brk ? _canvasHoverCell : null;
+        if (!!gapCell !== _gapCursorOn) { _gapCursorOn = !!gapCell; canvas.style.cursor = gapCell ? GAP_TOOL_CURSOR : 'default'; }
+        const gapKey = gapCell ? gapCell.row + ':' + gapCell.col : '';
+        if (gapKey !== _gapHoverKey) { _gapHoverKey = gapKey; _canvasState.gapHover = gapCell ? { row: gapCell.row, col: gapCell.col } : null; _canvasState.scheduleOverlay && _canvasState.scheduleOverlay(); }
 
         if (_canvasHoverCell) {
             const { row, col } = _canvasHoverCell;
@@ -25637,6 +25658,8 @@ const GENEDOC_GAP_TOOLS = new Set([
     'insertGapOther', 'deleteGapOther',
     'insertGapAll', 'deleteGapAll'
 ]);
+// The gap tools' pointer in Canvas: a crosshair with a white halo, as styles.css gives the DOM views
+const GAP_TOOL_CURSOR = 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'25\' height=\'25\' viewBox=\'0 0 25 25\'><g stroke=\'%23fff\' stroke-width=\'4.5\' stroke-linecap=\'round\'><path d=\'M12.5 2v21M2 12.5h21\'/></g><g stroke=\'%23000\' stroke-width=\'1.5\' stroke-linecap=\'round\'><path d=\'M12.5 2v21M2 12.5h21\'/></g></svg>") 12 12, crosshair';
 
 function initializeGeneDocEditToolbar() {
     const panel = el('editToolPanel');

@@ -7896,6 +7896,40 @@ check('Letter case: the aa | Aa | AA switch sets the case in Full, Block and Can
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+
+// Owner (2026-10-23, chose B+A): the gap tools' thin black crosshair was invisible on black and grey cells. Now a
+// crosshair with a white halo, and the cell under the pointer outlined in orange, in Full/Block and in Canvas.
+check('Edit mode: gap tools show a haloed crosshair and outline the cell under the pointer (Full, Canvas)', async (page) => {
+  const out = {};
+  for (const view of ['full', 'canvas']) {
+    await page.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await page.setInputFiles('#fileInput', { name: 'k.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTACGT\n>b\nACGTACGTACGT\n>c\nACGTACGTACGT\n') });
+    await page.waitForTimeout(1200);
+    await page.click('#editToggleButton'); await page.waitForTimeout(300);
+    await page.click('[data-edit-tool="insertGapOther"]'); await page.waitForTimeout(200);
+    const cell = await page.evaluate(() => {
+      if (document.getElementById('modeCanvas').checked) { const cv = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics; return { x: cv.left + m.nameW + 4 * m.charW - _canvasState.offsetX, y: cv.top + m.headerH + 1 * _canvasState.rowPitch - _canvasState.offsetY, w: m.charW, h: m.charH, cvLeft: cv.left, cvTop: cv.top }; }
+      const b = document.querySelector('.seq-line[data-seq-index="1"] .seq-data > span[data-pos="4"]').getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; });
+    await page.mouse.move(cell.x + cell.w / 2, cell.y + cell.h / 2); await page.waitForTimeout(250);
+    out[view] = await page.evaluate((cell) => {
+      if (document.getElementById('modeCanvas').checked) {
+        const o = _canvasState.overlay, dpr = o.width / parseFloat(o.style.width || o.width);
+        // the outline's top-left corner: the most orange pixel in a 4 x 4 window there (the stroke straddles device pixels)
+        const d = o.getContext('2d').getImageData(Math.round((cell.x - cell.cvLeft) * dpr), Math.round((cell.y - cell.cvTop) * dpr), 4, 4).data;
+        let best = [0, 0, 0, 0]; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > best[3]) best = [d[i], d[i + 1], d[i + 2], d[i + 3]];
+        return { cursor: _canvasState.canvas.style.cursor.slice(0, 30), outlinePx: best };
+      }
+      const sp = document.querySelector('.seq-line[data-seq-index="1"] .seq-data > span[data-pos="4"]'), cs = getComputedStyle(sp);
+      return { cursor: cs.cursor.slice(0, 30), outline: cs.outlineStyle + ' ' + cs.outlineColor + ' ' + cs.outlineWidth };
+    }, cell);
+    await page.evaluate(() => { if (state.editModeActive) document.getElementById('editToggleButton').click(); });
+  }
+  const orange = p => p[0] > 200 && p[1] > 100 && p[1] < 180 && p[2] < 80 && p[3] > 100;
+  const ok = out.full.cursor.startsWith('url(') && out.full.outline === 'solid rgb(255, 140, 0) 2px'
+    && out.canvas.cursor.startsWith('url(') && orange(out.canvas.outlinePx);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

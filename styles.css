@@ -2383,7 +2383,18 @@ body.edit-mode-active[data-edit-tool="deleteGapOther"] .seq-data,
 body.edit-mode-active[data-edit-tool="insertGapAll"] .seq-data,
 body.edit-mode-active[data-edit-tool="deleteGapAll"] .seq-data,
 body.edit-mode-active[data-edit-tool="selectColumn"] .seq-data {
-    cursor: crosshair;
+    /* a crosshair with a white halo: the plain one was invisible on black and grey cells (owner, 2026-10-23) */
+    cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='25' height='25' viewBox='0 0 25 25'><g stroke='%23fff' stroke-width='4.5' stroke-linecap='round'><path d='M12.5 2v21M2 12.5h21'/></g><g stroke='%23000' stroke-width='1.5' stroke-linecap='round'><path d='M12.5 2v21M2 12.5h21'/></g></svg>") 12 12, crosshair;
+}
+/* the cell a gap tool would act on, outlined under the pointer */
+body.edit-mode-active[data-edit-tool="insertGapSeq"] .seq-data > span[data-pos]:hover,
+body.edit-mode-active[data-edit-tool="deleteGapSeq"] .seq-data > span[data-pos]:hover,
+body.edit-mode-active[data-edit-tool="insertGapOther"] .seq-data > span[data-pos]:hover,
+body.edit-mode-active[data-edit-tool="deleteGapOther"] .seq-data > span[data-pos]:hover,
+body.edit-mode-active[data-edit-tool="insertGapAll"] .seq-data > span[data-pos]:hover,
+body.edit-mode-active[data-edit-tool="deleteGapAll"] .seq-data > span[data-pos]:hover {
+    outline: 2px solid #ff8c00;
+    outline-offset: -2px;
 }
 
 body.edit-mode-active[data-edit-tool="residue"] .seq-data {
