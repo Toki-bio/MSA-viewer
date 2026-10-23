@@ -7750,6 +7750,48 @@ check('Canvas: a mouse-wheel notch scrolls in several frames and lands on its ta
   return { pass: ok, detail: JSON.stringify({ notch, pad, yielded }) };
 });
 
+
+// Owner (2026-10-23, his 116-sequence CLsat panel, UPGMA, unrooted, 400 % zoom): leaf labels overlapped and were
+// unreadable, and the merged "name +N" labels of the old grouping collided with their neighbours. Each label now
+// gets its own clear spot (shifted along the arc or outward, with a leader line), the drawing grows to hold the
+// moved labels, and with grouping on the omitted names are listed after the "+N".
+check('Unrooted tree: no two leaf labels overlap and every name is inside the drawing (owner\'s 116-leaf panel, 100 % and 400 %)', async (page) => {
+  const path = require('path');
+  await page.setInputFiles('#fileInput', path.join(__dirname, '..', 'fixtures', 'clsat_panel_116.fa'));
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 116, null, { timeout: 30000 });
+  await page.waitForTimeout(500);
+  const pick = (name, v) => page.evaluate(([name, v]) => { const r = document.querySelector(`input[name="${name}"][value="${v}"]`); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); }, [name, v]);
+  await pick('treeMethod', 'upgma');
+  await page.evaluate(() => { state.selectedRows = new Set(state.seqs.map((_, i) => i)); openTreeBuilder(); });
+  await page.waitForFunction(() => document.getElementById('treeBuilderModal').style.display !== 'none', null, { timeout: 60000 });
+  await page.waitForTimeout(1200);
+  await pick('treeLayout', 'unrooted'); await page.waitForTimeout(400);
+  await page.evaluate(() => { const cb = document.getElementById('treeGroupOverlap'); if (cb && cb.checked) { cb.checked = false; cb.dispatchEvent(new Event('change', { bubbles: true })); } });
+  const measure = () => page.evaluate(() => {
+    const svg = document.querySelector('#treeBuilderModal svg');
+    const sr = svg.getBoundingClientRect(), inside = (x, y) => x >= sr.left - 1 && y >= sr.top - 1 && x <= sr.right + 1 && y <= sr.bottom + 1;
+    const texts = [...svg.querySelectorAll('text.tree-leaf-label')];
+    // each label as a rotated rectangle on screen (its bbox through its screen transform); overlap by the
+    // separating-axis test, with half a pixel of tolerance
+    const polys = texts.map(t => { const b = t.getBBox(), M = t.getScreenCTM();
+      return [[b.x, b.y], [b.x + b.width, b.y], [b.x + b.width, b.y + b.height], [b.x, b.y + b.height]].map(([x, y]) => [M.a * x + M.c * y + M.e, M.b * x + M.d * y + M.f]); });
+    const sep = (P, Q) => { for (const R of [P, Q]) for (let i = 0; i < 4; i++) { const ax = R[(i + 1) % 4][1] - R[i][1], ay = R[i][0] - R[(i + 1) % 4][0], n = Math.hypot(ax, ay) || 1;
+      const pr = p => p.map(([x, y]) => (ax * x + ay * y) / n); const a = pr(P), b = pr(Q); if (Math.max(...a) <= Math.min(...b) + 0.5 || Math.max(...b) <= Math.min(...a) + 0.5) return true; } return false; };
+    let overlaps = 0; const pairs = [];
+    for (let i = 0; i < polys.length; i++) for (let j = i + 1; j < polys.length; j++) if (!sep(polys[i], polys[j])) { overlaps++; if (pairs.length < 3) pairs.push(texts[i].dataset.leaf + ' x ' + texts[j].dataset.leaf); }
+    const outside = polys.filter(P => P.some(([x, y]) => !inside(x, y))).length;
+    const names = new Set(texts.map(t => t.dataset.leaf));
+    return { labels: texts.length, names: names.size, overlaps, pairs, outside, zoom: document.getElementById('treeZoomLabel').textContent };
+  });
+  const out = { z100: await measure() };
+  for (let i = 0; i < 10; i++) { await page.click('#treeBuilderModal [data-act="zoom-in"]'); await page.waitForTimeout(60); const z = await page.evaluate(() => parseInt(document.getElementById('treeZoomLabel').textContent)); if (z >= 400) break; }
+  await page.waitForTimeout(500);
+  out.z400 = await measure();
+  await page.click('#treeBuilderCloseBtn');
+  const good = r => r.labels === 116 && r.names === 116 && r.overlaps === 0 && r.outside === 0;
+  return { pass: good(out.z100) && good(out.z400), detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

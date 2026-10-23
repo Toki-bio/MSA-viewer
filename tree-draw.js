@@ -284,26 +284,23 @@
       return { anchor: flip ? 'end' : 'start', offset: flip ? -5 : 5, textDeg: textDeg };
     }
 
-    // Overlap grouping (opts.groupOverlap, default true, angled orientation only): when
-    // several adjacent leaves' branches point in nearly the same direction, their labels
-    // collide regardless of rotation or the Label spacing multiplier — an inherent limit of
-    // scale-based spacing (see the densityFloorScale comment above; a genuinely clumped
-    // topology can pack leaves closer than average no matter how far the WHOLE tree is
-    // scaled). Rather than let those specific labels overlap illegibly, merge them into one
-    // combined label ("first_name +N") with the full member list in a native <title> tooltip
-    // on hover. Grouping only affects LABEL TEXT — branch lines and node click-targets are
-    // still drawn individually for every leaf, so the tree topology itself is unaffected.
-    // Heuristic, not exact: compares the arc length between adjacent leaves (angular gap *
-    // radius) against the font height; a real per-label bounding-box collision check would be
-    // needed for a hard guarantee, same caveat as densityFloorScale.
-    var groupOverlap = opts.groupOverlap !== false && orientation === 'angled';
-    // Cap how many leaves one group can absorb. Without this, an extreme setting (e.g. a very
-    // large font size relative to how many leaves/how much radius is available) can correctly
-    // -- but uselessly -- merge nearly the WHOLE tree into one label listing every name, since
-    // the neighbor-to-neighbor comparison below has no reason to stop chaining if every
-    // adjacent gap in a dense run is individually below threshold. Capping bounds the worst
-    // case to a short, actually-readable "+N" label; the excess leaves beyond the cap fall
-    // back to individual (possibly still-crowded) labels rather than vanishing into one blob.
+    // Label placement (angled orientation). Leaves whose branches point in nearly the same direction
+    // have colliding labels whatever the rotation or the Label spacing multiplier (a clumped topology
+    // packs leaves closer than the average no matter how far the whole tree is scaled). Each label is
+    // therefore given its own clear spot: it keeps its leaf's direction and radius when that is free,
+    // else it is moved a little along the arc, and when the arc is full it is moved outward, where
+    // the arc is longer; a thin leader line joins a moved label to its leaf. Two radial labels collide
+    // when their radial bands overlap and the arc between them at the inner band edge is shorter
+    // than a line height. Greedy in angle order: the first label takes its place, every later one the
+    // cheapest free place (small arc shifts before radial shifts). This replaces the earlier
+    // "name +N" merging as the default; the owner's 116-leaf CLsat panel at 400 % zoom had merged
+    // labels still overlapping their neighbours and one fan of a dozen names unreadable (2026-10-23).
+    // Overlap grouping (opts.groupOverlap, now default false, angled orientation only): adjacent
+    // leaves whose labels would collide are merged into one label "first_name +N", followed by the
+    // names it stands for in grey, so what was omitted is read right at the cluster; the full list
+    // is also the <title> tooltip. Grouping affects LABEL TEXT only; branch lines and node
+    // click-targets are drawn for every leaf, so the topology is unaffected.
+    var groupOverlap = opts.groupOverlap === true && orientation === 'angled';
     var MAX_GROUP_SIZE = 6;
     var displayGroups = leaves.map(function (l) { return { members: [l] }; });
     if (groupOverlap && leaves.length > 1) {
@@ -320,24 +317,80 @@
       displayGroups = groups;
     }
 
-    displayGroups.forEach(function (g) {
-      var members = g.members;
-      var l = members[Math.floor(members.length / 2)]; // anchor the combined label at the middle member's position
-      var t = labelTransform(l);
-      var px = PX(l), py = PY(l);
-      var isGroup = members.length > 1;
-      var label = isGroup
-        ? esc(members[0].name || '?') + ' +' + (members.length - 1)
-        : esc(l.name || '?');
-      var titleEl = isGroup
-        ? '<title>' + esc(members.map(function (m) { return m.name || '?'; }).join(', ')) + '</title>'
-        : '';
-      out.push('<text x="' + (px + t.offset).toFixed(1) + '" y="' + (py + fontSize / 3).toFixed(1) +
-        '" font-size="' + fontSize.toFixed(1) + '" fill="' + (isGroup ? '#a05a00' : '#1f1f1f') + '"' +
-        (isGroup ? ' font-weight="600" style="cursor:help;"' : ' pointer-events="none"') +
+    // the origin (root) in px; every label is placed in polar coordinates around it
+    var ox0 = PX(root), oy0 = PY(root);
+    var lineH = fontSize * 1.35;   // a text box is ~1.3 em tall (ascent + descent), not the 1.15 em of a line
+    var labels = displayGroups.map(function (g) {
+      var members = g.members, isGroup = members.length > 1;
+      var l = members[Math.floor(members.length / 2)];
+      var text = isGroup ? (members[0].name || '?') + ' +' + (members.length - 1) : (l.name || '?');
+      var rest = isGroup ? members.slice(1).map(function (m) { return m.name || '?'; }) : [];
+      var tx = PX(l) - ox0, ty = PY(l) - oy0;
+      var r0 = Math.hypot(tx, ty), th0 = Math.atan2(ty, tx);
+      var w = measure(text) * (fontSize / 12) + 5;
+      rest.forEach(function (n) { w = Math.max(w, measure(n) * (fontSize * 0.85 / 12) + 5); });
+      // the box is as tall as its lines: one, or one plus the omitted names stacked under it
+      var h = lineH * (1 + 0.85 * rest.length);
+      return { leaf: l, members: members, isGroup: isGroup, text: text, rest: rest, r0: r0, th0: th0, w: w, h: h, r: r0, th: th0 };
+    });
+    if (orientation === 'angled' && labels.length > 1) {
+      var placed = [];
+      var collides = function (a, b) {
+        var ia = a.r, oa = a.r + a.w, ib = b.r, ob = b.r + b.w;
+        if (oa <= ib || ob <= ia) return false;                    // different radial bands: no collision
+        var inner = Math.max(ia, ib, 1);
+        var d = Math.abs(a.th - b.th); d = Math.min(d, 2 * Math.PI - d);
+        return d * inner < (a.h + b.h) / 2;
+      };
+      var free = function (c) { for (var k = 0; k < placed.length; k++) if (collides(c, placed[k])) return false; return true; };
+      labels.sort(function (a, b) { return a.th0 - b.th0; });
+      // candidate places, cheapest first: the leaf's own spot, then arc shifts (a line height at this
+      // radius per step) up to an eighth of a turn, then outward steps of a line height with the arc
+      // shifts again
+      labels.forEach(function (c) {
+        var best = null;
+        for (var rs = 0; rs < 200 && !best; rs++) {
+          var rr = c.r0 + rs * lineH;
+          var dth = lineH / Math.max(rr, 1);
+          for (var k = 0; k <= 60 && !best; k++) {
+            var signs = k === 0 ? [0] : [1, -1];
+            for (var si = 0; si < signs.length && !best; si++) {
+              var th = c.th0 + signs[si] * k * dth;
+              if (Math.abs(th - c.th0) > Math.PI / 4) continue;
+              var cand = { r: rr, th: th, w: c.w, h: c.h };
+              if (free(cand)) best = cand;
+            }
+          }
+        }
+        if (best) { c.r = best.r; c.th = best.th; }
+        placed.push(c);
+      });
+    }
+
+    var labelBounds = [];
+    labels.forEach(function (c) {
+      var px = ox0 + c.r * Math.cos(c.th), py = oy0 + c.r * Math.sin(c.th);
+      var lx = PX(c.leaf), ly = PY(c.leaf);
+      var moved = Math.hypot(px - lx, py - ly) > 1.5;
+      var t = orientation === 'angled' ? labelTransform({ udir: c.th }) : labelTransform(c.leaf);
+      if (moved) {
+        // a thin leader from the leaf to the label's near end
+        var gx = px + Math.cos(c.th) * (t.offset < 0 ? -2 : 2), gy = py + Math.sin(c.th) * (t.offset < 0 ? -2 : 2);
+        out.push('<line x1="' + lx.toFixed(1) + '" y1="' + ly.toFixed(1) + '" x2="' + gx.toFixed(1) + '" y2="' + gy.toFixed(1) +
+          '" stroke="#b5b5b5" stroke-width="0.8" pointer-events="none"/>');
+      }
+      labelBounds.push([px, py], [px + Math.cos(c.th) * c.w, py + Math.sin(c.th) * c.w]);   // the text runs outward from the anchor
+      var titleEl = c.isGroup ? '<title>' + esc(c.members.map(function (m) { return m.name || '?'; }).join(', ')) + '</title>' : '';
+      // the omitted names on their own lines under the group label (tspans stack along the label's own axis)
+      var restEl = c.rest.map(function (n) {
+        return '<tspan x="' + (px + t.offset).toFixed(1) + '" dy="' + (lineH * 0.85).toFixed(1) + '" fill="#777" font-weight="400" font-size="' + (fontSize * 0.85).toFixed(1) + '">' + esc(n) + '</tspan>';
+      }).join('');
+      out.push('<text class="tree-leaf-label" data-leaf="' + esc(c.leaf.name || '') + '" x="' + (px + t.offset).toFixed(1) + '" y="' + (py + fontSize / 3).toFixed(1) +
+        '" font-size="' + fontSize.toFixed(1) + '" fill="' + (c.isGroup ? '#a05a00' : '#1f1f1f') + '"' +
+        (c.isGroup ? ' font-weight="600" style="cursor:help;"' : ' pointer-events="none"') +
         (t.anchor ? ' text-anchor="' + t.anchor + '"' : '') +
         (t.textDeg !== undefined ? ' transform="rotate(' + t.textDeg.toFixed(1) + ' ' + px.toFixed(1) + ' ' + py.toFixed(1) + ')"' : '') +
-        '>' + titleEl + label + '</text>');
+        '>' + titleEl + esc(c.text) + restEl + '</text>');
     });
 
     if (anyLen) {
@@ -346,6 +399,15 @@
         '" stroke="#999" stroke-width="1.5"/>');
       out.push('<text x="' + (12 + sbpx / 2).toFixed(1) + '" y="' + (sy - 4).toFixed(1) +
         '" font-size="10" fill="#777" text-anchor="middle">' + sbv + '</text>');
+    }
+    // Labels moved outward can end beyond the box sized before placement: the drawing grows to hold them
+    var bx0 = 0, by0 = 0, bx1 = totalW, by1 = totalH;
+    labelBounds.forEach(function (q) {
+      bx0 = Math.min(bx0, q[0] - lineH); by0 = Math.min(by0, q[1] - lineH); bx1 = Math.max(bx1, q[0] + lineH); by1 = Math.max(by1, q[1] + lineH);
+    });
+    if (bx0 < 0 || by0 < 0 || bx1 > totalW || by1 > totalH) {
+      out[0] = '<svg xmlns="http://www.w3.org/2000/svg" width="' + (bx1 - bx0).toFixed(0) + '" height="' + (by1 - by0).toFixed(0) +
+        '" viewBox="' + bx0.toFixed(0) + ' ' + by0.toFixed(0) + ' ' + (bx1 - bx0).toFixed(0) + ' ' + (by1 - by0).toFixed(0) + '" font-family="' + esc(fontFamily) + '">';
     }
     out.push('</svg>');
     return out.join('');
@@ -439,7 +501,7 @@
   var st = {
     root: null, original: null, sourceNewick: '', zoom: 1, mode: 'swap', layout: 'rect', full: false,
     labelSpacing: 1, fontSize: 12, fontFamily: 'system-ui,-apple-system,Segoe UI,sans-serif',
-    labelOrientation: 'angled', groupOverlap: true
+    labelOrientation: 'angled', groupOverlap: false
   };
   var TREE_FONT_FAMILIES = [
     { label: 'System UI', value: 'system-ui,-apple-system,Segoe UI,sans-serif' },
@@ -723,7 +785,7 @@
           '<label class="tree-mode"><input type="radio" name="treeOrientation" value="angled" checked> angled labels</label>' +
           '<label class="tree-mode"><input type="radio" name="treeOrientation" value="horizontal"> horizontal labels</label>' +
           '<span style="width:1px;height:14px;background:#c5d2df;margin:0 2px;"></span>' +
-          '<label class="tree-mode" title="Merge overlapping labels into one, hover to see the full list"><input type="checkbox" id="treeGroupOverlap" checked> group overlapping labels</label>' +
+          '<label class="tree-mode" title="Merge labels that would collide into one, with the omitted names listed after it in grey"><input type="checkbox" id="treeGroupOverlap"> group overlapping labels</label>' +
         '</span>' +
         '<span id="treeRootNote" style="display:none;color:#8a9bab;" title="UPGMA assumes equal rates (a molecular clock) and places the root itself; NJ trees have no root of their own">' +
           'UPGMA trees are rooted by construction; this drawing hides the root</span>' +
