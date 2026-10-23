@@ -27823,6 +27823,9 @@ function applyColourToSeqNames(mappings) {
     scheduleSelectionsPanelRefresh();
     // Colour Names and group colours share the name cell: one painter decides both
     paintNameCells();
+    // Canvas draws its names from the same look: ask for a full draw (owner, 2026-10-23: the
+    // colours showed only after the next re-render)
+    if (typeof isCanvasMode === 'function' && isCanvasMode()) _canvasState.scheduleDraw?.();
 }
 
 // Helper: Record color in history

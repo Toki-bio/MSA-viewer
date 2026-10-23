@@ -8325,6 +8325,38 @@ check('Clone Tab: the new tab shows the alignment as this one (Canvas position, 
   return { pass: same, detail: JSON.stringify({ here, there }) };
 });
 
+
+// Owner (2026-10-23): "colour names result doesn't apply immediately, only after rerender". In Canvas the name
+// painter only touched DOM name cells; the Canvas draws names from the same mappings but was never asked to redraw.
+check('Colour Names: a pattern colour shows at once in Canvas (and Full), without a re-render', async (page) => {
+  const out = {};
+  for (const view of ['canvas', 'full']) {
+    const p = await page.context().browser().newPage({ viewport: { width: 1200, height: 600 } });
+    await p.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await p.setInputFiles('#fileInput', { name: 'c.fa', mimeType: 'text/plain', buffer: Buffer.from('>Hsap_1\nACGTACGTAC\n>Mmus_2\nACGTACGTAC\n>Hsap_3\nACGTACGTAC\n') });
+    await p.waitForTimeout(1000);
+    const red = () => p.evaluate(() => {
+      if (document.getElementById('modeCanvas').checked) {
+        const cv = _canvasState.canvas, m = _canvasState.metrics, dpr = cv.width / cv.clientWidth;
+        const y = Math.round((m.headerH + 0.5 * _canvasState.rowPitch) * dpr), d = cv.getContext('2d').getImageData(0, y, Math.round(m.nameW * dpr), 1).data;
+        let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 180 && d[i + 1] < 120 && d[i + 2] < 120) n++;
+        return n;
+      }
+      const n = document.querySelector('.seq-line[data-seq-index="0"] .seq-name');
+      return /rgb\(255, 0, 0\)/.test(getComputedStyle(n).backgroundColor) ? 1 : 0;
+    });
+    await p.click('.section-header[data-section="colourseqs"]'); await p.waitForTimeout(200);
+    await p.fill('#colourPatternInput', 'Hsap'); await p.evaluate(() => { document.getElementById('colourPatternColor').value = '#ff0000'; });
+    const before = await red();
+    await p.click('#colourPatternButton'); await p.waitForTimeout(400);
+    const after = await red();
+    out[view] = { before, after };
+    await p.close();
+  }
+  const ok = out.canvas.before === 0 && out.canvas.after >= 10 && out.full.before === 0 && out.full.after === 1;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
