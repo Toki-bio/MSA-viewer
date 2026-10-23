@@ -4132,8 +4132,25 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 .win-maxbtn { font-size: 15px; }
 .win-maxbtn:hover { background: #e4e7eb; color: #222; }
 #dotPlotRecalc.dot-dirty { background: #fff3cd; border-color: #e0b100; font-weight: 600; }
-.dot-split-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: -2px 0 8px; font-size: 12px; }
-.dot-lower-ctl { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 2px 8px; border-left: 3px solid #90b4dd; background: #f4f8fd; border-radius: 3px; }
+/* The alignment panel under the plot keeps one height: three lines plus the room a horizontal scrollbar
+   takes (--dot-sb, measured once by _initDotPlotEvents; 0 where scrollbars are overlays). A wide hover
+   text used to add a scrollbar, shrink the plot viewport and re-zoom the fitted plot: the plot jerked
+   whenever the pointer crossed between the plot and its axis strip (owner, 2026-10-23). */
+#dotPlotAlignPanel { height: calc(3 * 1.4 * 12px + 16px + 2px + var(--dot-sb, 17px)); box-sizing: border-box; overflow-y: hidden; }
+/* The dot plot's control rows (owner, 2026-10-23: tidy, boxes level with their text, one wide slider) */
+.dot-ctl-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-bottom: 6px; font-size: 12px; }
+.dot-ctl-row label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.dot-ctl-row label[hidden] { display: none; }
+.dot-ctl-row input[type="checkbox"], .dot-ctl-row input[type="radio"] { margin: 0; }
+.dot-ctl-row input[type="number"] { font-size: 12px; padding: 1px 2px; }
+.dot-ctl-row button { font-size: 11px; padding: 2px 8px; }
+.dot-ctl-row .dot-sep { border-left: 1px solid #ccc; height: 16px; }
+.dot-ctl-row .dot-grow { flex: 1 1 0; }
+.dot-slider { flex: 1 1 220px; min-width: 200px; gap: 6px; }
+.dot-slider input[type="range"] { flex: 1 1 120px; min-width: 120px; margin: 0; }
+.dot-slider output { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+.dot-split-row { margin: -2px 0 8px; }
+.dot-lower-ctl { display: inline-flex; flex: 1 1 auto; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 2px 8px; border-left: 3px solid #90b4dd; background: #f4f8fd; border-radius: 3px; }
 .dot-lower-ctl[hidden] { display: none; }
 
 /* ---- Selections panel (top menu) ---- */

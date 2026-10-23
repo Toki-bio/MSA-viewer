@@ -25,13 +25,16 @@ function findChrome() {
   throw new Error('No local Chrome/Chromium/Edge found - set BROWSER_PATH=<executable> (see tests/lib/browser.js CHROME_CANDIDATES)');
 }
 
-async function launch() {
+// opts.scrollbars: show real scrollbars (headless Chrome hides them by default, so a layout that
+// jumps when a scrollbar appears cannot be seen without this)
+async function launch(opts = {}) {
   // BROWSER=firefox uses Playwright's Firefox (one-time: npx playwright-core install firefox)
   // BROWSER=webkit uses Playwright's WebKit, the nearest to Safari on Windows
   if (process.env.BROWSER === 'firefox' || process.env.BROWSER === 'webkit') {
     return require('playwright-core')[process.env.BROWSER].launch({ headless: true });
   }
-  return chromium.launch({ executablePath: findChrome(), headless: true });
+  const extra = opts.scrollbars ? { ignoreDefaultArgs: ['--hide-scrollbars'] } : {};
+  return chromium.launch({ executablePath: findChrome(), headless: true, ...extra });
 }
 
 // Generates a synthetic FASTA alignment of nSeq sequences x nCol columns.

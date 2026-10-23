@@ -2504,11 +2504,12 @@ check('Dot plot: maximize/edge resize, Full view, live recalculation, split halv
   await page.click('#dotPlotFullView'); await page.waitForTimeout(300);
   out.fullView = await page.evaluate((z) => _dotPlotState.zoom < z && _dotPlotState._autoFit === true, zoomed);
   // live: a new word size recalculates without pressing Recalculate
-  await page.fill('#dotPlotWindow', '8'); await page.waitForTimeout(1200);
+  const setRange = (sel, v) => page.evaluate(([s, v]) => { const el = document.querySelector(s); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }, [sel, v]);
+  await setRange('#dotPlotWindow', '8'); await page.waitForTimeout(1200);
   out.liveRecalc = await page.evaluate(() => _dotPlotState.windowSize === 8);
   // not live: the plot stays, Recalculate is flagged
   await page.click('#dotPlotLive');
-  await page.fill('#dotPlotWindow', '10'); await page.waitForTimeout(900);
+  await setRange('#dotPlotWindow', '10'); await page.waitForTimeout(900);
   out.notLive = await page.evaluate(() => _dotPlotState.windowSize === 8 && document.getElementById('dotPlotRecalc').classList.contains('dot-dirty'));
   await page.click('#dotPlotRecalc'); await page.waitForTimeout(1000);
   out.recalcApplies = await page.evaluate(() => _dotPlotState.windowSize === 10);
@@ -8052,6 +8053,52 @@ check('Scrollbars: 8 px bars with a grip that fills them, no track band, the pla
   const good = x => !x || (x.thick <= 8.5 && x.gripThick >= 5 && x.cursor === 'default' && x.gripCursor === 'default' && /rgba\(0, 0, 0, 0\)|transparent/.test(x.trackBg) && x.trackShadow === 'none');
   const ok = out.canvas.h && out.canvas.v && out.full.h && good(out.canvas.h) && good(out.canvas.v) && good(out.full.h) && good(out.full.v);
   return { pass: ok, detail: JSON.stringify(out) };
+});
+
+
+// Owner (2026-10-23): hovering over the plot made the plot area jerk; the threshold / word / window settings
+// should be one wide slider that follows the mode; RevComp B and the other boxes level with their text.
+// The jerk: with a wide hover context the alignment panel under the plot grew a horizontal scrollbar, the
+// plot viewport lost those pixels and the fitted plot was re-zoomed, every time the pointer crossed between
+// the plot and the axis strip (headless Chrome hides scrollbars, so this check launches a browser with them).
+check('Dot plot: hovering never resizes the plot (scrollbars shown); one wide word/window slider, the identity slider only for Dotter; checkboxes level with their text', async (_page) => {
+  const browser = await launch({ scrollbars: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+    page.setDefaultTimeout(30000);
+    await page.goto(_page.url(), { waitUntil: 'networkidle' });
+    let sd = 7; const rnd = () => (sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
+    const unit = Array.from({ length: 120 }, () => 'ACGT'[rnd() * 4 | 0]).join('');
+    const seq = unit + Array.from({ length: 200 }, () => 'ACGT'[rnd() * 4 | 0]).join('') + unit + Array.from({ length: 150 }, () => 'ACGT'[rnd() * 4 | 0]).join('');
+    await loadFasta(page, '>self\n' + seq + '\n');
+    await page.evaluate(() => openDotPlot(state.seqs[0].seq, state.seqs[0].seq, 'self', 'self'));
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => { document.getElementById('dotPlotContextRadius').value = 100; });
+    const lay = () => page.evaluate(() => ({ vpH: document.getElementById('dotPlotViewport').getBoundingClientRect().height, zoom: _dotPlotState.zoom, panelH: document.getElementById('dotPlotAlignPanel').getBoundingClientRect().height }));
+    const vp = await page.evaluate(() => { const r = document.getElementById('dotPlotViewport').getBoundingClientRect(); return { x: r.left, y: r.top }; });
+    const idle = await lay();
+    await page.mouse.move(vp.x + 200, vp.y + 200, { steps: 4 }); await page.waitForTimeout(400);
+    const onPlot = await lay();
+    const hoverTextWide = await page.evaluate(() => { const p = document.getElementById('dotPlotAlignPanel'); return p.scrollWidth > p.clientWidth; });
+    await page.mouse.move(vp.x + 10, vp.y + 200, { steps: 4 }); await page.waitForTimeout(400);   // the axis strip: no cell under the pointer
+    const onAxis = await lay();
+    const steady = idle.vpH === onPlot.vpH && onPlot.vpH === onAxis.vpH && idle.zoom === onPlot.zoom && onPlot.zoom === onAxis.zoom;
+    const ctl = await page.evaluate(() => {
+      const w = document.getElementById('dotPlotWindow'), t = document.getElementById('dotPlotThreshold');
+      const vis = el => !!(el && el.getClientRects().length);
+      // the vertical distance between the centre of a box and the centre of its label text
+      const level = id => { const inp = document.getElementById(id), lab = inp.closest('label'), ir = inp.getBoundingClientRect(); const rng = document.createRange(); rng.selectNodeContents(lab); const tr = [...rng.getClientRects()].filter(r => r.width > 0 && !(Math.abs(r.left - ir.left) < 0.5 && Math.abs(r.width - ir.width) < 0.5)); const text = tr[tr.length - 1]; return text ? Math.round(Math.abs((ir.top + ir.bottom) / 2 - (text.top + text.bottom) / 2) * 10) / 10 : 99; };
+      const out = { type: w.type, winW: Math.round(w.getBoundingClientRect().width), threshSpin: vis(t), winVal: (document.getElementById('dotPlotWindowVal') || {}).textContent };
+      document.querySelector('input[name="dotPlotMode"][value="doter"]').click();
+      out.threshDotter = vis(t); out.threshW = Math.round(t.getBoundingClientRect().width);
+      out.label = (document.getElementById('dotPlotWindowLabel') || {}).textContent; out.threshVal = document.getElementById('dotPlotThreshVal').textContent;
+      out.level = { revcomp: level('dotPlotRevComp'), live: level('dotPlotLive'), split: level('dotPlotSplit') };
+      return out;
+    });
+    const ok = steady && hoverTextWide && ctl.type === 'range' && ctl.winW >= 150 && !ctl.threshSpin && ctl.threshDotter && ctl.threshW >= 150
+      && ctl.label === 'Window' && ctl.threshVal === '55%' && ctl.winVal === '6' && Object.values(ctl.level).every(d => d <= 2);
+    return { pass: ok, detail: JSON.stringify({ steady, idle, onPlot, onAxis, hoverTextWide, ctl }) };
+  } finally { await browser.close(); }
 });
 
 async function main() {

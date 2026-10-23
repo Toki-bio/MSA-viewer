@@ -1962,12 +1962,12 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   diverged copies).</p>
   <table>
     <tr><th>Parameter</th><th>Description</th></tr>
-    <tr><td>Word / window size</td><td>Word length in SPIN mode (2-20, default 6); sliding window length in Dotter mode (1-61). The value is kept when you switch modes, so a plot switched from SPIN to Dotter keeps window 6 unless you change it; a value outside the new range is reset (6 for SPIN, 11 for Dotter). Shorter words find more matches, including chance ones</td></tr>
-    <tr><td>Threshold</td><td>Dotter only: minimum identity of a window, as a percent of the window length, for a dot (0-100%). A window cut short at a sequence end counts its missing positions as mismatches</td></tr>
+    <tr><td>Word length / Window</td><td>One wide slider whose meaning follows the mode: word length in SPIN mode (2-20, default 6); sliding window length in Dotter mode (1-61). The value is kept when you switch modes, so a plot switched from SPIN to Dotter keeps window 6 unless you change it; a value outside the new range is reset (6 for SPIN, 11 for Dotter). Shorter words find more matches, including chance ones</td></tr>
+    <tr><td>Identity &ge;</td><td>A second slider, shown in Dotter mode only: minimum identity of a window, as a percent of the window length, for a dot (0-100%). A window cut short at a sequence end counts its missing positions as mismatches</td></tr>
     <tr><td>Context radius</td><td>Nucleotide context shown on hover (5-100 bp)</td></tr>
     <tr><td>RevComp B</td><td>Reverse-complement axis B to find inverted repeats</td></tr>
     <tr><td>Live update</td><td>On by default: the plot is recalculated as soon as a setting changes. Turn it off to change several settings on a long pair, then press <strong>Recalculate</strong> (highlighted while the plot is out of date)</td></tr>
-    <tr><td>Different settings below the diagonal</td><td>Self-plots only (a sequence against itself, without RevComp B), whose two halves are mirror images: the controls in the first row then apply above the diagonal and a second row below it, each with its own mode, word/window and threshold, e.g. Dotter above and SPIN below, or Dotter with two windows</td></tr>
+    <tr><td>Different settings below the diagonal</td><td>Self-plots only (a sequence against itself, without RevComp B), whose two halves are mirror images: the controls in the first row then apply above the diagonal and a second row below it, each with its own mode and sliders, e.g. Dotter above and SPIN below, or Dotter with two windows</td></tr>
   </table>
   <p>Unknown residues (N in DNA, X in protein) never count as matches, so a run of Ns
   does not draw a solid block; U and T are treated as the same base. <strong>Top Regions</strong>

@@ -29602,20 +29602,28 @@ function _dotOnModeChange() {
     const S = _dotPlotState;
     const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
     S.spinMode = spinRadio ? spinRadio.checked : true;
-    const slider = document.getElementById('dotPlotThreshold');
-    const val = document.getElementById('dotPlotThreshVal');
-    const win = document.getElementById('dotPlotWindow');
-    const [lo, hi] = S.spinMode ? DOT_WORD_RANGE : DOT_WINDOW_RANGE;
+    _dotSyncSliderRow(S.spinMode, 'dotPlotWindow', 'dotPlotWindowLabel', 'dotPlotWindowVal', 'dotPlotThreshWrap', 'dotPlotThreshold', 'dotPlotThreshVal');
+}
+// One wide slider for the word (SPIN) or window (Dotter) length: its range, label and title follow the mode;
+// the identity-threshold slider is shown in Dotter mode only (it used to sit greyed out as "N/A").
+// (owner, 2026-10-23)
+function _dotSyncSliderRow(spin, winId, labelId, valId, threshWrapId, threshId, threshValId) {
+    const win = document.getElementById(winId), label = document.getElementById(labelId), val = document.getElementById(valId);
+    const [lo, hi] = spin ? DOT_WORD_RANGE : DOT_WINDOW_RANGE;
     if (win) {
         win.min = lo; win.max = hi; win.step = 1;
         const v = parseInt(win.value, 10);
-        if (!(v >= lo && v <= hi)) win.value = S.spinMode ? 6 : 11;
-        win.title = S.spinMode
+        if (!(v >= lo && v <= hi)) win.value = spin ? 6 : 11;
+        win.title = spin
             ? `Word length for SPIN exact matches (${lo}-${hi}). Shorter words find more, and noisier, matches`
             : `Sliding window length for Dotter (${lo}-${hi}). Longer windows smooth over single mismatches`;
+        if (val) val.textContent = win.value;
     }
-    if (slider) slider.disabled = S.spinMode;
-    if (val) val.textContent = S.spinMode ? 'N/A' : (slider ? slider.value + '%' : '');
+    if (label) label.textContent = spin ? 'Word length' : 'Window';
+    const wrap = document.getElementById(threshWrapId);
+    if (wrap) wrap.hidden = spin;
+    const th = document.getElementById(threshId), tv = document.getElementById(threshValId);
+    if (th && tv) tv.textContent = th.value + '%';
 }
 
 let _dotLiveTimer = 0;
@@ -30550,17 +30558,7 @@ function _dotReadLowerSettings() {
 }
 function _dotOnLowerModeChange() {
     const spin = document.querySelector('input[name="dotPlotModeLower"]:checked')?.value === 'spin';
-    const win = document.getElementById('dotPlotWindowLower');
-    const slider = document.getElementById('dotPlotThresholdLower');
-    const val = document.getElementById('dotPlotThreshValLower');
-    const [lo, hi] = spin ? DOT_WORD_RANGE : DOT_WINDOW_RANGE;
-    if (win) {
-        win.min = lo; win.max = hi;
-        const v = parseInt(win.value, 10);
-        if (!(v >= lo && v <= hi)) win.value = spin ? 6 : 11;
-    }
-    if (slider) slider.disabled = spin;
-    if (val) val.textContent = spin ? 'N/A' : (slider ? slider.value + '%' : '');
+    _dotSyncSliderRow(spin, 'dotPlotWindowLower', 'dotPlotWindowLowerLabel', 'dotPlotWindowValLower', 'dotPlotThreshLowerWrap', 'dotPlotThresholdLower', 'dotPlotThreshValLower');
 }
 
 async function _dotUnfreeze() {
@@ -30671,7 +30669,20 @@ function _dotExportSvg() {
     showMessage(`Dot plot exported as SVG (${runs.toLocaleString()} diagonal runs).`, 2500);
 }
 
+// The height a horizontal scrollbar takes in this browser (0 for overlay scrollbars), measured once
+let _dotSbPx = -1;
+function _dotScrollbarPx() {
+    if (_dotSbPx >= 0) return _dotSbPx;
+    const d = document.createElement('div');
+    d.style.cssText = 'position:absolute;top:-200px;left:0;width:100px;height:100px;overflow:scroll;visibility:hidden;';
+    document.body.appendChild(d);
+    _dotSbPx = Math.max(0, d.offsetHeight - d.clientHeight);
+    d.remove();
+    return _dotSbPx;
+}
+
 function _initDotPlotEvents() {
+    document.documentElement.style.setProperty('--dot-sb', _dotScrollbarPx() + 'px');   // #dotPlotAlignPanel keeps one height
     const overlay = document.getElementById('dotPlotOverlay');
     const threshSlider = document.getElementById('dotPlotThreshold');
     const threshVal = document.getElementById('dotPlotThreshVal');
@@ -30826,6 +30837,9 @@ function _initDotPlotEvents() {
         clearTimeout(_dotLiveTimer);
         _dotLiveTimer = setTimeout(_dotRecalculate, 350);
     };
+    const readout = (inId, outId) => () => { const o = document.getElementById(outId), i = document.getElementById(inId); if (o && i) o.textContent = i.value; };
+    document.getElementById('dotPlotWindow')?.addEventListener('input', readout('dotPlotWindow', 'dotPlotWindowVal'));
+    document.getElementById('dotPlotWindowLower')?.addEventListener('input', readout('dotPlotWindowLower', 'dotPlotWindowValLower'));
     document.getElementById('dotPlotWindow')?.addEventListener('input', onSettingChange);
     // Split halves: the controls above apply above the diagonal, the lower row below it
     const splitBox = document.getElementById('dotPlotSplit');
