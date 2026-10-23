@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v274';
+const BUILD_TAG = 'v275';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -498,7 +498,8 @@ function overlayCss(o) {
     if (o.bold) s += 'font-weight:700 !important;';
     if (o.italic) s += 'font-style:italic !important;';
     // A second font has other glyph widths: lock the box to the grid's residue width
-    if (o.sans) s += `font-family:${_OVERLAY_SANS} !important;width:var(--res-w) !important;text-align:center;`;
+    if (o.sans) s += `font-family:${_OVERLAY_SANS} !important;width:var(--res-w) !important;text-align:center;`
+        + 'padding-top:calc(2 * var(--text-dy-sans, var(--text-dy, 0px))) !important;line-height:calc(var(--row-h, 15px) - 2 * var(--text-dy-sans, var(--text-dy, 0px))) !important;';   // its own baseline correction (see _syncResidueWidthVar)
     if (o.deco.length) s += `text-decoration-line:${o.deco.join(' ')} !important;` + (o.decoColor ? `text-decoration-color:${o.decoColor} !important;` : '');
     return s;
 }
@@ -603,13 +604,110 @@ function syncResidueOverlays() {
 // Measured with a probe outside the alignment once per font size, before the alignment is laid
 // out at that size: measuring a residue would force a layout of the whole alignment, and
 // resetting the variable restyles every residue.
+// --row-h: the height of a row = the font size + 2 px, as a whole number of device pixels. With rows of
+// exactly the font size (line-height 1.0) a white letter's crossbar lay flush against a white cell above
+// it at browser zoom 90 % (owner, 2026-10-23); the 2 px keep box colour above and below the ink, and the
+// snapping keeps every row edge on a device pixel (no blended seams at 90 %, 110 %, 125 %...).
 let _resWidthFor = null;
+function _rowHeightPx(fontPx) {
+    const dpr = window.devicePixelRatio || 1;
+    return Math.round((fontPx + 2) * dpr) / dpr;
+}
+// The font's metrics at a size: ascent and descent of the font box (CSS px), and the height of a capital
+// as drawn (DEVICE px): the hinted glyph is taller than the font's design value at small sizes (13 px
+// at browser zoom 90 %: 9 device rows, not 6.7), so it is read from a drawn H.
+let _fontMetricsCache = null;
+function _fontMetrics(fontPx) {
+    const dpr = window.devicePixelRatio || 1;
+    if (_fontMetricsCache && _fontMetricsCache.fontPx === fontPx && _fontMetricsCache.dpr === dpr) return _fontMetricsCache;
+    const cv = document.createElement('canvas');
+    const side = Math.ceil(fontPx * 2.5 * dpr);
+    cv.width = side; cv.height = side;
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.font = fontPx + 'px "Courier New", monospace';
+    const x = c.measureText('X');
+    const baseDev = Math.round(fontPx * 1.6 * dpr);           // an integer device row, as the rows use
+    c.fillStyle = '#000'; c.textBaseline = 'alphabetic'; c.fillText('H', 2, baseDev / dpr);
+    const d = c.getImageData(0, 0, side, side).data;
+    let top = -1;
+    for (let y = 0; y < side && top < 0; y++) for (let i = y * side * 4 + 3; i < (y + 1) * side * 4; i += 4) if (d[i] > 127) { top = y; break; }
+    // the ascent the DOM lays text out with: the font's ascent at the device size, as a whole device pixel
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.font = (fontPx * dpr) + 'px "Courier New", monospace';
+    const xd = c.measureText('X');
+    _fontMetricsCache = { fontPx, dpr,
+        ascent: x.fontBoundingBoxAscent != null ? x.fontBoundingBoxAscent : Math.ceil(fontPx * 0.8),
+        descent: x.fontBoundingBoxDescent != null ? x.fontBoundingBoxDescent : Math.ceil(fontPx * 0.15),
+        ascentDev: Math.round(xd.fontBoundingBoxAscent != null ? xd.fontBoundingBoxAscent : fontPx * dpr * 0.8),
+        capDev: top >= 0 ? baseDev - top : Math.round(fontPx * 0.57 * dpr) };
+    return _fontMetricsCache;
+}
+// The device row (from the row's top) the letters' baseline goes on in a row of rowH CSS px: the capitals
+// centred in the row. The browser's own placement centres the font box, which has more room under the
+// baseline (descenders) than over the capitals, so the letters sat high: at browser zoom 90 % no device
+// row of box colour was left over a white letter's top (owner, 2026-10-23). The same row serves the DOM
+// (--text-dy) and Canvas (_canvasTextBaseline), so a view switch does not move the letters in their cells.
+function _textBaselineDev(fontPx, rowH) {
+    const dpr = window.devicePixelRatio || 1, m = _fontMetrics(fontPx);
+    const rowDev = Math.round(rowH * dpr);
+    // rows of box colour above the capitals = B - capDev, below = rowDev - 1 - B: equal, or one more below
+    // (measured 2026-10-23, 13 px letters: 2/2 at 90 %, 3/4 at 100 %, 4/4 at 110 %, 4/5 at 125 %, 5/5 at 150 %)
+    return Math.round((rowDev - 1 + m.capDev) / 2);
+}
+function _textBaselinePx(fontPx, rowH) {      // Canvas: on the device row (crisp); a hair past it, as 14/1.25*1.25 = 13.99...
+    return (_textBaselineDev(fontPx, rowH) + 0.02) / (window.devicePixelRatio || 1);
+}
+// The second font's ascent as the DOM lays it out (a whole device pixel), from a probe canvas at the device size
+function _sansAscentDev(fontPx) {
+    const dpr = window.devicePixelRatio || 1;
+    const c = document.createElement('canvas').getContext('2d');
+    c.font = (fontPx * dpr) + 'px ' + _OVERLAY_SANS;
+    const m = c.measureText('X');
+    return Math.round(m.fontBoundingBoxAscent != null ? m.fontBoundingBoxAscent : fontPx * dpr * 0.8);
+}
 function _syncResidueWidthVar(fontSize) {
     if (!alignmentContainer) return;
     const inline = fontSize || alignmentContainer.style.fontSize;
-    if (_resWidthFor !== null && _resWidthFor === (inline || 'default')) return;
-    _resWidthFor = inline || 'default';
+    const key = (inline || 'default') + '@' + (window.devicePixelRatio || 1);
+    if (_resWidthFor !== null && _resWidthFor === key) return;
+    _resWidthFor = key;
     const size = inline || getComputedStyle(alignmentContainer).fontSize;
+    const fontPx = parseFloat(size) || 13, rowH = _rowHeightPx(fontPx), fm = _fontMetrics(fontPx);
+    alignmentContainer.style.setProperty('--row-h', rowH + 'px');
+    const dprNow = window.devicePixelRatio || 1;
+    alignmentContainer.style.setProperty('--row-overlap', (Math.abs(dprNow - Math.round(dprNow)) < 1e-6 ? 0 : (1 / dprNow).toFixed(4)) + 'px');
+    // --text-dy moves the DOM's baseline down onto the device row _textBaselineDev. The browser puts the
+    // text's content area at a half-leading it rounds to whole CSS px, then the glyphs at the floor of
+    // (row top + content top + rounded ascent) in device px, and at a fractional browser zoom the row
+    // top itself is fractional. So the candidate paddings are tried on a residue span laid out off
+    // screen, its content top read from a Range, and the one whose baseline comes nearest to a quarter
+    // of a device pixel past the wanted row is kept (measured 2026-10-23: the same rows as Canvas at
+    // 100 %, 110 %, 200 %, one row off at some other zooms, where a DOM row top is itself fractional).
+    // The second font (TSD marks, _OVERLAY_SANS: Arial with Courier's vertical metrics) rounds its own way,
+    // so it gets its own value, --text-dy-sans, measured with the same probe.
+    const dpr = window.devicePixelRatio || 1, B = _textBaselineDev(fontPx, rowH);
+    const findDy = (family, ascentDev) => {
+        const row = document.createElement('div');
+        row.style.cssText = `position:absolute;left:-9999px;top:0;visibility:hidden;font:${fontPx}px ${family};line-height:${rowH}px;height:${rowH}px;white-space:pre;margin:0;padding:0;border:0`;
+        const sp = document.createElement('span');
+        sp.textContent = 'T';
+        sp.style.cssText = 'display:inline-block;vertical-align:top;margin:0;border:0;padding:0';
+        row.appendChild(sp); document.body.appendChild(row);
+        let dy = 0, bestErr = Infinity;
+        for (let cand = 0; cand <= 4; cand += 0.25) {
+            sp.style.paddingTop = (2 * cand) + 'px';
+            sp.style.lineHeight = (rowH - 2 * cand) + 'px';
+            const rg = document.createRange(); rg.selectNodeContents(sp);
+            const contentTop = rg.getBoundingClientRect().top - sp.getBoundingClientRect().top;
+            const err = Math.abs(contentTop * dpr + ascentDev - (B + 0.25));
+            if (err < bestErr - 1e-6) { bestErr = err; dy = cand; }
+        }
+        row.remove();
+        return dy;
+    };
+    alignmentContainer.style.setProperty('--text-dy', findDy('"Courier New", monospace', fm.ascentDev) + 'px');
+    alignmentContainer.style.setProperty('--text-dy-sans', findDy(_OVERLAY_SANS, _sansAscentDev(fontPx)) + 'px');
     const probe = document.createElement('span');
     probe.textContent = 'M';
     probe.style.cssText = `position:absolute;left:-9999px;top:0;visibility:hidden;display:inline-block;white-space:pre;`
@@ -1985,7 +2083,7 @@ function _plainNameClick(index, e) {
     if (state.selectedRows.size === 1 && state.selectedRows.has(index)) state.selectedRows.clear();
     else { state.selectedRows.clear(); state.selectedRows.add(index); }
     state.lastSelectedIndex = index;
-    if (state.pendingNucStart) { state.pendingNucStart = null; scheduleNucSelectionRefresh(); }
+    if (state.pendingNucStart) { state.pendingNucStart = null; state.selectedNucs.clear(); scheduleNucSelectionRefresh(); }
     updateRowSelections();
 }
 
@@ -5464,7 +5562,7 @@ function _canvasAaPalette() {
 function _canvasTextBaseline(rowH) {
     const m = _canvasState.metrics;
     if (!m || !(m.ascent > 0)) return rowH - 3;
-    return m.ascent - (m.ascent + (m.descent || 0) - rowH) / 2;
+    return _textBaselinePx(m.fontSizePx, rowH);   // as the DOM rows (--text-dy): the capitals centred in the row
 }
 
 function _initCanvasMetrics(ctx, fontSizePx) {
@@ -5480,13 +5578,12 @@ function _initCanvasMetrics(ctx, fontSizePx) {
     const descent = (m.fontBoundingBoxDescent != null)
         ? m.fontBoundingBoxDescent
         : Math.ceil(fontSizePx * 0.15);
-    // Cells are a whole number of DEVICE pixels (rounded up), expressed in CSS px: at 125 % or
-    // 150 % scaling a 15 CSS px row would be 18.75 or 22.5 device px, every row edge would be
-    // antialiased, and the scroll frame copy (which ends on a row edge) would not be exact.
-    // Row height = the font size, as in Full/Block (line-height 1.0): the font box (ascent + descent,
-    // ~15 px at 13 px) left 2 px of empty space under every row and ~15 % fewer rows on screen.
-    // Letters keep the same place in the cell (measured: ink rows 2-9 in both views).
-    const charH = Math.ceil(fontSizePx * dpr) / dpr;
+    // Cells are a whole number of DEVICE pixels, expressed in CSS px: at 125 % or 150 % scaling a
+    // 15 CSS px row would be 18.75 or 22.5 device px, every row edge would be antialiased, and the
+    // scroll frame copy (which ends on a row edge) would not be exact.
+    // Row height = the font size + 2 px, as in Full/Block (--row-h, _rowHeightPx): the letters sit as
+    // the DOM's half-leading puts them, with box colour above and below the ink at every zoom.
+    const charH = _rowHeightPx(fontSizePx);
     _canvasState.metrics = {
         charW: Math.ceil(Math.ceil(m.width) * dpr) / dpr,
         charH,
@@ -5915,12 +6012,13 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             const sans = variant.includes('s');
             c2.font = (variant.includes('i') ? 'italic ' : '') + (variant.includes('b') ? 'bold ' : '')
                 + (sans ? fontSizePx + 'px ' + _OVERLAY_SANS : fontStr);
-            c2.textBaseline = 'top';
+            c2.textBaseline = 'alphabetic';
             c2.fillStyle = '#fff'; c2.fillRect(0, 0, CHAR_W, CHAR_H);          // the row is white under every cell
             if (bg) { c2.fillStyle = bg; c2.fillRect(0, 0, CHAR_W, CHAR_H); }   // a translucent tint composes over it as in the DOM
             c2.fillStyle = fg;
-            if (sans) { c2.textAlign = 'center'; c2.fillText(ch, CHAR_W / 2, 0); }
-            else c2.fillText(ch, 0, 0);
+            const base = _canvasTextBaseline(CHAR_H);                            // the font box centred in the row, as the DOM's half-leading does
+            if (sans) { c2.textAlign = 'center'; c2.fillText(ch, CHAR_W / 2, base); }
+            else c2.fillText(ch, 0, base);
             _glyphCache.set(k, g);
         }
         return g;
@@ -6448,6 +6546,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 ctx.beginPath(); ctx.rect(NAME_W, scaleY, w, SCALE_H); ctx.clip();
             }
             ctx.fillStyle = '#666';
+            ctx.textBaseline = 'alphabetic';
+            const rulerBase = scaleY + _canvasTextBaseline(CHAR_H);   // digits sit in the row as the DOM ruler's do
             let rulerBold = false;
             for (let sI = firstCol; sI <= lastCol; sI++) {
                 const pc = slotPos(sI);
@@ -6461,8 +6561,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     ctx.globalAlpha = variable ? 1 : 0.4;
                     if (variable !== rulerBold) { rulerBold = variable; ctx.font = variable ? 'bold ' + fontStr : fontStr; }
                 }
-                ctx.fillText(ch, x, scaleY);
+                ctx.fillText(ch, x, rulerBase);
             }
+            ctx.textBaseline = 'top';
             if (hdCols) { ctx.globalAlpha = 1; if (rulerBold) ctx.font = fontStr; }
             if (stickyNames) ctx.restore();
             // (No rule under the ruler: Full and Block have none, and in Canvas it doubled the consensus row's rule.)
@@ -6924,7 +7025,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         }
         // Plain press on a name: drag to reorder rows (the DOM view's _startRowReorderDrag;
         // the drop calls the same _moveDraggedSequences, so multi-row selections move too)
-        if (!isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
+        if (e.button === 0 && !isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
             const nameHit = _canvasHitTestName(e.clientX, e.clientY);
             if (nameHit) {
                 hideTooltip();
@@ -10867,6 +10968,7 @@ function _canvasBlockMaskHit(clientX, clientY) {
     const rects = _canvasState.maskRects;
     if (!rects || !rects.length || !_canvasState.canvas) return null;
     const m = _canvasState.metrics, rect = _canvasState.canvas.getBoundingClientRect();
+    if (el('stickyNames')?.checked !== false && clientX - rect.left < m.nameW) return null;   // under the fixed names: not drawn there
     const x = clientX - rect.left - m.nameW + _canvasState.offsetX;
     const y = clientY - rect.top - (m.headerH || m.charH) + _canvasState.offsetY;
     for (let i = rects.length - 1; i >= 0; i--) { const r = rects[i]; if (r.typeRows && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return r; }
@@ -13374,6 +13476,7 @@ function placeModeRow() {
     if (wrapped) row.classList.add('own-line');
 }
 window.addEventListener('resize', () => placeModeRow());
+window.addEventListener('resize', () => _syncResidueWidthVar());   // a browser zoom or screen change: rows follow the device pixel ratio
 // The undo/redo buttons come after text labels of fractional width (Copy is 35.36px), so they sat at
 // x = 153.33 and Chrome anti-aliased their rounded corners a shade differently after each repaint (two
 // pixels changed with nothing else on screen). A translate (layout untouched; the narrow-screen rule sets
@@ -27191,7 +27294,12 @@ window.addEventListener('load', () => {
         if (!hit) return;
         e.preventDefault();
         e.stopImmediatePropagation();               // no row reorder, rename or selection
-        if (el('nameLengthNoLimit')?.checked) _applyNameLenNoLimit(false);
+        if (el('nameLengthNoLimit')?.checked) {       // the drag starts from the width on screen (the longest name), not the stale slider value
+            const cur = effectiveNameLength();
+            _applyNameLenNoLimit(false);
+            updateNameLengthSliderRange();
+            setNameLengthUI(cur, false);
+        }
         drag = { x0: e.clientX, len0: effectiveNameLength(), ch: hit.ch, len: effectiveNameLength() };
         document.body.classList.add('name-resizing');
     }, true);

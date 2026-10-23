@@ -4910,7 +4910,7 @@ check('Canvas vs Full: every cell has the same letter, background colour and let
     const px = (x, y) => { const i = (y * I.w + x) * 4; return [I.d[i], I.d[i + 1], I.d[i + 2]]; };
     const cnt = new Map(); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const k = px(x0 + x, y0 + y).join(); cnt.set(k, (cnt.get(k) || 0) + 1); }
     let bg, n = -1; for (const [k, v] of cnt) if (v > n) { n = v; bg = k.split(',').map(Number); }
-    // from the second pixel row: Full rows are 13.5 px boxes 13 px apart, so their top pixel row holds a seam
+    // from the second pixel row: at a fractional zoom a row's top pixel row can hold a blended seam
     // (visible when Highlight diffs makes cells translucent) that is not part of the letter
     let t = 99, b = -1; for (let y = 1; y < H; y++) for (let x = 0; x < W; x++) if (dist(px(x0 + x, y0 + y), bg) > 40) { t = Math.min(t, y); b = Math.max(b, y); }
     return { bg, t, b };
@@ -4921,7 +4921,8 @@ check('Canvas vs Full: every cell has the same letter, background colour and let
     await setMode(page, 'full'); await page.waitForTimeout(800);
     const dom = await page.evaluate(() => { const o = []; for (let r = 0; r < 24; r++) { const line = document.querySelector(`#alignmentContainer .seq-line[data-seq-index="${r}"]`); for (let c = 0; c < 100; c++) { const sp = line && line.querySelector(`.seq-data span[data-pos="${c}"]`); if (sp) { const b = sp.getBoundingClientRect(); o.push([r, c, b.left, b.top, sp.textContent]); } } } return o; });
     const dx0 = Math.floor(dom[0][2]), dy0 = Math.floor(dom[0][3]);
-    const A = await grab({ x: dx0, y: dy0, width: 820, height: 24 * 13 + 4 });
+    const domPitch = dom[100][3] - dom[0][3];   // row 1's top - row 0's top (rows are the font size + 2 px, --row-h)
+    const A = await grab({ x: dx0, y: dy0, width: 820, height: Math.ceil(24 * domPitch) + 4 });
     await setMode(page, 'canvas'); await page.waitForTimeout(800);
     const cv = await page.evaluate(async () => { _canvasState.offsetX = 0; _canvasState.offsetY = 0; _canvasState.scheduleDraw(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); const m = _canvasState.metrics, cr = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { L: cr.left + m.nameW, T: cr.top + m.headerH, w: m.charW, h: m.charH, p: _canvasState.rowPitch, seqs: state.seqs.map(s => s.seq) }; });
     const B = await grab({ x: Math.floor(cv.L), y: Math.floor(cv.T), width: Math.ceil(100 * cv.w) + 2, height: Math.ceil(24 * cv.p) + 2 });
@@ -7228,8 +7229,9 @@ check('Audit: mode switches keep the place (Full/Block/Canvas, small and windowe
   await loadSyntheticFasta(page, 300, 1000);
   await auditClickMode(page, 'block');
   await page.evaluate(() => window.scrollTo(0, 0));
-  // (stay clear of the last ~160 columns: there Canvas and Full cannot scroll a column to the left edge)
-  await auditWheel(page, 0, 900, 6);
+  // (stay clear of the last ~160 columns: there Canvas and Full cannot scroll a column to the left edge;
+  // 8 steps: well into the second block of 300 rows with 15 px rows, as 6 were with 13.5 px rows)
+  await auditWheel(page, 0, 900, 8);
   out.smallBlock = await auditTopLeft(page);
   await auditClickMode(page, 'canvas'); out.smallCanvas = await auditTopLeft(page);
   await auditClickMode(page, 'full'); out.smallFull = await auditTopLeft(page);
@@ -7602,6 +7604,118 @@ check('toolbar: menu headers use the same font as the toolbar buttons, not the b
     return { head: fam(head), btn: fam(btn), serifLabels: label.filter(f => /times|serif/i.test(f) && !/sans/i.test(f)).length };
   });
   return { pass: r.head === 'Arial' && r.btn === 'Arial' && r.serifLabels === 0, detail: JSON.stringify(r) };
+});
+
+
+// Owner's report (2026-10-23, browser zoom 90 %): a white T on a dark-grey cell under a white cell had its
+// crossbar flush against the white, so the letter seemed to hang from the cell above. Rows were 13.5 CSS px
+// for 13 px letters (line-height 1.0): 2 px of box colour above the ink at 100 %, none left at 90 %. Rows are
+// now the font size + 2 px, snapped to whole device pixels, in Full, Block and Canvas: at least 2 device rows
+// of box colour above and below every white letter at every browser zoom.
+check('White letters on shaded cells: 2+ rows of box colour above and below at browser zoom 90 %, 100 %, 110 %, 125 % (Full, Block, Canvas)', async (page) => {
+  const out = {};
+  // column 1: T,A,T,T  ->  the A's cell is white, the T under it dark grey with a white letter
+  const fa = '>r0\nTCCCAT\n>r1\nACCGAG\n>r2\nTCCCAT\n>r3\nTCCCAT\n';
+  for (const dpr of [0.9, 1, 1.1, 1.25]) for (const view of ['full', 'block', 'canvas']) {
+    const p = await page.context().browser().newPage({ viewport: { width: 500, height: 200 }, deviceScaleFactor: dpr });
+    await p.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await p.setInputFiles('#fileInput', { name: 'w.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+    await p.waitForTimeout(1200);
+    const cell = await p.evaluate(() => {
+      if (document.getElementById('modeCanvas').checked) {
+        const cv = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics;
+        return { x: cv.left + m.nameW - _canvasState.offsetX, y: cv.top + m.headerH + 2 * _canvasState.rowPitch - _canvasState.offsetY, w: m.charW, h: m.charH };
+      }
+      const s = document.querySelector('.seq-line[data-seq-index="2"] .seq-data > span[data-pos="0"]').getBoundingClientRect();
+      return { x: s.left, y: s.top, w: s.width, h: s.height };
+    });
+    const clip = { x: Math.floor(cell.x) - 2, y: Math.floor(cell.y) - 2, width: Math.ceil(cell.w) + 4, height: Math.ceil(cell.h) + 4 };
+    const shot = await p.screenshot({ clip });
+    await p.close();
+    // decode the PNG through a canvas in the test page (no PNG library needed)
+    const r = await page.evaluate(async ([b64, cell, clip, dpr]) => {
+      const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+      const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      const x0 = Math.round((cell.x - clip.x) * dpr) + 1, x1 = Math.round((cell.x + cell.w - clip.x) * dpr) - 2;
+      const top = Math.ceil((cell.y - clip.y) * dpr), bot = Math.floor((cell.y + cell.h - clip.y) * dpr) - 1;
+      const mx = y => { let m = 0; for (let x = x0; x <= x1; x++) { const i = (y * c.width + x) * 4; m = Math.max(m, d[i] + d[i + 1] + d[i + 2]); } return m; };
+      // a row edge between device pixels gives one blended row at the top or bottom of the cell (the DOM
+      // cannot put every edge on a device pixel): one light row there is skipped before counting
+      let above = 0, y = top; if (mx(y) > 450) y++; while (y <= bot && mx(y) <= 450) { above++; y++; }
+      let below = 0; y = bot; if (mx(y) > 450) y--; while (y >= top && mx(y) <= 450) { below++; y--; }
+      return { above, below, rows: bot - top + 1 };
+    }, [shot.toString('base64'), cell, clip, dpr]);
+    out[`${view}@${dpr}`] = r;
+  }
+  const ok = Object.values(out).every(r => r.above >= 2 && r.below >= 2 && r.rows < r.above + r.below + 12);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Full/Block rows at a fractional browser zoom: v274 drew a grey line (173 of 255) between two black rows at every
+// row boundary at 90 % (--row-h asks for whole device pixels, but layout keeps 1/64 px units, so row edges fall
+// between device pixels; the spans' 0.5 px overlap below did not cover the blended row). A cell now paints one
+// device pixel under the cell below it at a fractional zoom. Measured at each row boundary, in the last device
+// column of a C cell (the C's terminals are rows away from the edge): no row brighter than a third of white
+// (110 % and 125 % keep faint rows of up to a quarter, as v274 had; a whole fix needs whole-pixel rows and cells).
+check('Full/Block: no seam between shaded rows brighter than a third at browser zoom 90 %, 110 % and 125 %', async (page) => {
+  const out = {};
+  const s = 'ACGT'.repeat(8);
+  for (const dpr of [0.9, 1.1, 1.25]) for (const view of ['full', 'block']) {
+    const p = await page.context().browser().newPage({ viewport: { width: 700, height: 300 }, deviceScaleFactor: dpr });
+    await p.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await p.setInputFiles('#fileInput', { name: 'k.fa', mimeType: 'text/plain', buffer: Buffer.from(`>a\n${s}\n>b\n${s}\n>c\n${s}\n>d\n${s}\n>e\n${s}\n`) });
+    await p.waitForTimeout(1200);
+    const geo = await p.evaluate(() => {
+      const c = i => document.querySelector(`.seq-line[data-seq-index="${i}"] .seq-data > span[data-pos="1"]`).getBoundingClientRect();
+      const a = c(0);
+      return { x: a.left, y: a.top, w: a.width, h: c(4).bottom - a.top, tops: [1, 2, 3, 4].map(i => c(i).top - a.top) };
+    });
+    const clip = { x: Math.floor(geo.x), y: Math.floor(geo.y), width: Math.ceil(geo.w), height: Math.ceil(geo.h) };
+    const shot = await p.screenshot({ clip });
+    await p.close();
+    out[`${view}@${dpr}`] = await page.evaluate(async ([b64, dpr, geo, clip]) => {
+      const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+      const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      const x = Math.floor((geo.x + geo.w - clip.x) * dpr) - 1;          // the cell's last device column
+      const light = [];
+      let max = 0;
+      for (const t of geo.tops) { const yb = Math.floor((geo.y + t - clip.y) * dpr); for (let y = yb - 1; y <= yb + 1; y++) { const i = (y * c.width + x) * 4; const v = d[i] + d[i + 1] + d[i + 2]; if (v > max) { max = v; light.length = 0; light.push(y + ':' + v); } } }
+      return { boundaries: geo.tops.length, brightest: max, at: light[0] };
+    }, [shot.toString('base64'), dpr, geo, clip]);
+  }
+  return { pass: Object.values(out).every(o => o.brightest <= 255), detail: JSON.stringify(out) };
+});
+
+
+// The Canvas ruler digits were drawn at the ruler row's top edge with an alphabetic baseline (the computed
+// rulerBase was never used): their ink sat above the row. The digits sit on the same pixel rows as Full's.
+check('Canvas ruler digits sit on the same rows as the Full ruler digits', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'r.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\n' + 'ACGT'.repeat(10) + '\n>b\n' + 'ACGT'.repeat(10) + '\n') });
+  await page.waitForTimeout(1000);
+  const inkRows = async (clip) => {
+    const shot = await page.screenshot({ clip });
+    return page.evaluate(async ([b64]) => {
+      const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+      const g = c.getContext('2d'); g.drawImage(img, 0, 0); const d = g.getImageData(0, 0, c.width, c.height).data;
+      let t = -1, b = -1;
+      for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) { const i = (y * c.width + x) * 4; if (d[i] + d[i + 1] + d[i + 2] < 600) { if (t < 0) t = y; b = y; break; } }
+      return [t, b];
+    }, [shot.toString('base64')]);
+  };
+  await setMode(page, 'full'); await page.waitForTimeout(500);
+  const dom = await page.evaluate(() => { const r = document.querySelector('.scale-ruler-line .seq-data').getBoundingClientRect(), s = document.querySelector('.seq-line[data-seq-index="0"] .seq-data > span[data-pos="9"]').getBoundingClientRect(); return { x: s.left, top: r.top, h: r.height, w: s.width * 2.2 }; });
+  // column 10's label "10": the ruler row only (the consensus row below it has letters of its own)
+  const full = await inkRows({ x: Math.floor(dom.x) - 2, y: Math.floor(dom.top), width: Math.ceil(dom.w), height: Math.floor(dom.h) });
+  await setMode(page, 'canvas'); await page.waitForTimeout(600);
+  const cv = await page.evaluate(() => { const c = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics; const trackH = m.headerH - m.charH - (_canvasState.consensus && _canvasState.consensus.position !== 'bottom' ? m.charH + 5 : 0); return { x: c.left + m.nameW + 9 * m.charW, top: c.top + trackH, h: m.charH, w: m.charW * 2.2 }; });
+  const canvas = await inkRows({ x: Math.floor(cv.x) - 2, y: Math.floor(cv.top), width: Math.ceil(cv.w), height: Math.floor(cv.h) });
+  const ok = full[0] >= 0 && canvas[0] >= 0 && Math.abs(full[0] - canvas[0]) <= 1 && Math.abs(full[1] - canvas[1]) <= 1;
+  return { pass: ok, detail: JSON.stringify({ full, canvas }) };
 });
 
 async function main() {

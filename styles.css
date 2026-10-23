@@ -1826,7 +1826,19 @@ span.ge-col-flash {
     /* Performance: GPU compositing hint for large alignments */
     will-change: scroll-position, top;
     transition: top 0.12s ease-out;
-    line-height: 1.0;
+    /* --row-h: the height of a row = font size + 2 px, snapped to whole device pixels (set by
+       _syncResidueWidthVar; the fallback is the 13 px default). 1.0 (13 px for 13 px letters) left a white
+       letter's top flush with a white cell above it at browser zoom 90 % (owner, 2026-10-23). */
+    --row-h: 15px;
+    /* --text-dy: how far the letters move down from where the browser puts them, so that the capitals
+       are centred in the row as in Canvas (set with --row-h; 0 when the browser's place is right) */
+    --text-dy: 0px;
+    /* --row-overlap: one device pixel at a fractional browser zoom (90 %, 110 %, 125 %...), 0 at a whole one:
+       each cell paints that much under the cell below it, because --row-h asks for whole device pixels but
+       layout keeps 1/64 px units, so row edges fall between device pixels and a blended, lighter row showed
+       between two shaded rows (at 90 % a grey line between two black rows, v274). */
+    --row-overlap: 0px;
+    line-height: var(--row-h);
     white-space: pre;
     border: 1px solid #ddd;
     border-top: 0;
@@ -1856,7 +1868,7 @@ span.ge-col-flash {
 .seq-line {
     display: flex;
     font-family: 'Courier New', monospace;
-    line-height: 1.0;
+    line-height: var(--row-h, 15px);
     margin: 0;
     padding: 0;
     white-space: nowrap;
@@ -1867,7 +1879,7 @@ span.ge-col-flash {
     align-items: flex-start;
     position: relative;
     min-width: max-content;
-    height: 1em;
+    height: var(--row-h, 15px);
 }
 
 /* Persistent tiny scrollbar area below the alignment */
@@ -2021,8 +2033,8 @@ span.ge-col-flash {
     -webkit-user-select: none;
     -ms-user-select: none;
     contain: style;
-    line-height: 1em;
-    height: 1em;
+    line-height: var(--row-h, 15px);
+    height: var(--row-h, 15px);
     box-sizing: border-box;
     padding-bottom: 0;
 }
@@ -2031,10 +2043,11 @@ span.ge-col-flash {
    .seq-name itself: that breaks position:sticky. */
 /* 0.9em in a 1em row: a visible gap between a name's underscores and the
    capitals of the row below (at 1em the rows touched). top: .09em keeps the
-   smaller glyphs on the same baseline as the sequence letters. */
+   smaller glyphs on the same baseline as the sequence letters. The row's extra height over 1em
+   (--row-h - 1em) is split above and below the sequence letters, so half of it goes here too. */
 .seq-name-text {
     position: relative;
-    top: 0.09em;
+    top: calc((var(--row-h, 15px) - 1em) / 2 + 0.09em + var(--text-dy, 0px));
     display: inline-block;
     max-width: 100%;
     white-space: nowrap;
@@ -2075,7 +2088,7 @@ body.row-reorder-active .seq-name.drag-source:hover {
     white-space: nowrap;
     margin: 0;
     padding: 0;
-    line-height: 1.0;
+    line-height: var(--row-h, 15px);
     /* Performance: isolate layout within each row */
     contain: layout style;
     cursor: default;
@@ -2103,7 +2116,9 @@ body.row-reorder-active .seq-name.drag-source:hover {
     color: #666;
     font-weight: bold;
     vertical-align: baseline;
-    line-height: 1.0;
+    line-height: var(--row-h, 15px);
+    position: relative;
+    top: var(--text-dy, 0px);     /* with the letters, which sit --text-dy under the line's baseline */
 }
 
 .active-searches {
@@ -2340,9 +2355,9 @@ body.suppress-menu-hover #controls .menu-section.menu-open .control-group {
     display: inline-block;
     vertical-align: top;
     margin: 0;
-    padding: 0 0 0.5px 0;   /* 0.5px of overlap below: at fractional browser zoom (90%, 110%, 125%...) the row pitch is not a whole
-                               number of device pixels and a 1px light seam showed every few rows between two shaded rows */
-    line-height: 1.0;
+    padding: calc(2 * var(--text-dy, 0px)) 0 var(--row-overlap, 0px) 0;   /* top, twice --text-dy: moves the baseline down by
+                               --text-dy (the shorter line box takes half of it back as leading); bottom: the overlap */
+    line-height: calc(var(--row-h, 15px) - 2 * var(--text-dy, 0px));
     /* No position/z-index here: it made each of the (up to ~500k) residue spans its own
        paint layer, and every click hit-tested all of them (~0.3 s per click at 316k spans,
        ~1.1 s per column click). Screenshots are pixel-identical without it. */
@@ -3175,7 +3190,7 @@ span.column-highlighted::after {
 /* Scale ruler styling */
 .scale-ruler-line {
     margin-bottom: 2px;
-    height: 1em;
+    height: var(--row-h, 15px);
 }
 
 .scale-ruler-line .seq-name {
@@ -3192,7 +3207,8 @@ span.column-highlighted::after {
     white-space: pre;
     overflow: visible !important;
     display: inline-block;
-    line-height: 1.0;
+    padding-top: calc(2 * var(--text-dy, 0px));
+    line-height: calc(var(--row-h, 15px) - 2 * var(--text-dy, 0px));   /* the digits where the rows' letters are */
     /* The ruler is one run of text, the rows are one inline-block per residue, whose width the
        browser rounds up (13px: 7.8013px glyph, 7.8125px cell). Without this the numbers drifted
        left of their columns, ~5 columns by column 3700. --res-w: _syncResidueWidthVar. */
