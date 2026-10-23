@@ -6474,18 +6474,25 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 if (rowIdx < 0 || !posSet || posSet.size === 0) return;
                 const y = HEADER_H +rowIdx * rowPitch - oy;
                 if (y + CHAR_H < 0 || y > h) return;
-                posSet.forEach(pos => {
-                    const sc = posSlot(pos);
-                    if (sc < 0) return;
-                    const x = NAME_W + sc * CHAR_W - ox;
-                    if (x + CHAR_W < 0 || x > w) return;
-                    octx.fillRect(x, y, CHAR_W, CHAR_H);
-                    octx.strokeRect(x + 0.5, y + 0.5, CHAR_W - 1, CHAR_H - 1);
-                });
+                // one tint and one frame per run of shown cells (a box per cell drew borders between them)
+                const slots = [];
+                posSet.forEach(pos => { const sc = posSlot(pos); if (sc >= 0) slots.push(sc); });
+                slots.sort((a, b) => a - b);
+                for (let i = 0; i < slots.length;) {
+                    let j = i;
+                    while (j + 1 < slots.length && slots[j + 1] === slots[j] + 1) j++;
+                    const x = NAME_W + slots[i] * CHAR_W - ox, runW = (slots[j] - slots[i] + 1) * CHAR_W;
+                    if (x + runW >= 0 && x <= w) {
+                        octx.fillRect(x, y, runW, CHAR_H);
+                        octx.strokeRect(x + 0.5, y + 0.5, runW - 1, CHAR_H - 1);
+                    }
+                    i = j + 1;
+                }
             });
         }
         // Draw pending nucleotide start indicator (dashed border, two-click system)
-        if (state.pendingNucStart) {
+        // (not when that cell is already selected: the DOM skips it too, and a dashed box inside a run read as a border)
+        if (state.pendingNucStart && !state.selectedNucs.get(state.pendingNucStart.row)?.has(state.pendingNucStart.pos)) {
             const pr = state.pendingNucStart.row, pp = state.pendingNucStart.pos;
             if (pr >= 0) {
                 const y = HEADER_H +pr * rowPitch - oy;
@@ -24441,7 +24448,7 @@ function refreshNucleotideSelectionsImmediate() {
         const desiredSet = desiredSelections.get(row);
         if (!desiredSet || desiredSet.size === 0) {
             for (const [pos, span] of Array.from(posMap.entries())) {
-                span.classList.remove('nuc-selected');
+                span.classList.remove('nuc-selected', 'nuc-sel-start', 'nuc-sel-end');
                 detachNucSelectedHandlers(span);
                 posMap.delete(pos);
             }
@@ -24450,7 +24457,7 @@ function refreshNucleotideSelectionsImmediate() {
         }
         for (const [pos, span] of Array.from(posMap.entries())) {
             if (!desiredSet.has(pos)) {
-                span.classList.remove('nuc-selected');
+                span.classList.remove('nuc-selected', 'nuc-sel-start', 'nuc-sel-end');
                 detachNucSelectedHandlers(span);
                 posMap.delete(pos);
             }
@@ -24475,6 +24482,15 @@ function refreshNucleotideSelectionsImmediate() {
                     rowMap.set(pos, span);
                 });
             }
+        });
+    });
+    // The first and last cell of each run of selected cells carry the frame's sides (styles.css)
+    state.domSelectedNucs.forEach((posMap, row) => {
+        const set = desiredSelections.get(row);
+        if (!set) return;
+        posMap.forEach((span, pos) => {
+            span.classList.toggle('nuc-sel-start', !set.has(pos - 1));
+            span.classList.toggle('nuc-sel-end', !set.has(pos + 1));
         });
     });
 

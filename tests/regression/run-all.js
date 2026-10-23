@@ -8357,6 +8357,45 @@ check('Colour Names: a pattern colour shows at once in Canvas (and Full), withou
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+
+// Owner (2026-10-23): "normal mouse click selection over sequence looks jerky, leaves borders between nucleotide
+// boxes - must be more responsive, intuitive and elegant". A selected run of residues was a row of boxed cells
+// (a frame per cell, in both views). Now one tint and one frame per run: the DOM marks the run's first and last
+// cell, the Canvas fills and strokes one rectangle per run.
+check('Residue selection: one tint and one frame per run, no box per cell (Full, Canvas)', async (page) => {
+  const out = {};
+  const fa = '>a\nACGTACGTACGTACGTACGT\n>b\nACGTACGTACGTACGTACGT\n>c\nACGTACGTACGTACGTACGT\n';
+  for (const view of ['full', 'canvas']) {
+    const p = await page.context().browser().newPage({ viewport: { width: 900, height: 400 } });
+    await p.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await p.setInputFiles('#fileInput', { name: 's.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+    await p.waitForTimeout(1000);
+    const c = await p.evaluate(() => {
+      if (document.getElementById('modeCanvas').checked) { const r = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics; return { x: r.left + m.nameW + 4.5 * m.charW, y: r.top + m.headerH + 1.5 * _canvasState.rowPitch, w: m.charW }; }
+      const a = document.querySelector('.seq-line[data-seq-index="1"] .seq-data > span[data-pos="4"]').getBoundingClientRect(); return { x: a.left + a.width / 2, y: a.top + a.height / 2, w: a.width }; });
+    await p.mouse.move(c.x, c.y); await p.mouse.down(); await p.mouse.move(c.x + 5 * c.w, c.y, { steps: 5 }); await p.mouse.up(); await p.waitForTimeout(300);
+    out[view] = await p.evaluate(() => {
+      const sel = state.selectedNucs.get(1); if (!sel || sel.size !== 6) return { sel: sel ? sel.size : 0 };
+      if (document.getElementById('modeCanvas').checked) {
+        const o = _canvasState.overlay, m = _canvasState.metrics, dpr = o.width / parseFloat(o.style.width || o.width), g = o.getContext('2d');
+        const y = Math.round((m.headerH + 1.5 * _canvasState.rowPitch - _canvasState.offsetY) * dpr);
+        // the frame's stroke lands on fractional columns: the strongest alpha within 2 CSS px of an edge
+        const px = x => { let a = 0; for (let d = -2; d <= 2; d++) a = Math.max(a, g.getImageData(Math.round((x + d) * dpr), y, 1, 1).data[3]); return a; };
+        const left = m.nameW + 4 * m.charW - _canvasState.offsetX;
+        return { sel: 6, outerLeft: px(left), inner: px(left + m.charW), inner2: px(left + 3 * m.charW), outerRight: px(left + 6 * m.charW) };
+      }
+      const sp = i => document.querySelector('.seq-line[data-seq-index="1"] .seq-data > span[data-pos="' + i + '"]');
+      const shadows = s => getComputedStyle(s).boxShadow.split(/,\s*(?=rgba?\()/).length;   // one entry per shadow
+      return { sel: 6, start: shadows(sp(4)), mid: shadows(sp(6)), end: shadows(sp(9)), startCls: sp(4).classList.contains('nuc-sel-start'), endCls: sp(9).classList.contains('nuc-sel-end'), midCls: sp(6).classList.contains('nuc-sel-start') || sp(6).classList.contains('nuc-sel-end') };
+    });
+    await p.close();
+  }
+  const f = out.full, cv = out.canvas;
+  const ok = f.sel === 6 && f.mid === 2 && f.start === 3 && f.end === 3 && f.startCls && f.endCls && !f.midCls
+    && cv.sel === 6 && cv.outerLeft > 200 && cv.outerRight > 200 && cv.inner < 120 && cv.inner2 < 120;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

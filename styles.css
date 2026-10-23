@@ -3121,11 +3121,22 @@ span.column-highlighted::after {
 .context-menu div:hover {
     background: #f0f0f0;
 }
-/* Residue selection: yellow tint plus a thin frame, over whatever the residue shows */
+/* Residue selection: yellow tint plus one thin frame around each run of selected cells, over whatever
+   the residue shows. A frame per cell drew borders between the boxes (owner, 2026-10-23): a cell gets the
+   top and bottom lines, the run's first and last cell (classes from the selection refresh) the sides. */
 .seq-line.selected .seq-data span.nuc-selected,
 .seq-data span.nuc-selected {
     --t-nuc: linear-gradient(rgba(255, 213, 0, 0.55), rgba(255, 213, 0, 0.55));
-    box-shadow: inset 0 0 0 1px rgba(140, 100, 0, 0.9) !important;
+    box-shadow: inset 0 1px 0 0 rgba(140, 100, 0, 0.9), inset 0 -1px 0 0 rgba(140, 100, 0, 0.9) !important;
+}
+.seq-data span.nuc-selected.nuc-sel-start {
+    box-shadow: inset 1px 0 0 0 rgba(140, 100, 0, 0.9), inset 0 1px 0 0 rgba(140, 100, 0, 0.9), inset 0 -1px 0 0 rgba(140, 100, 0, 0.9) !important;
+}
+.seq-data span.nuc-selected.nuc-sel-end {
+    box-shadow: inset -1px 0 0 0 rgba(140, 100, 0, 0.9), inset 0 1px 0 0 rgba(140, 100, 0, 0.9), inset 0 -1px 0 0 rgba(140, 100, 0, 0.9) !important;
+}
+.seq-data span.nuc-selected.nuc-sel-start.nuc-sel-end {
+    box-shadow: inset 1px 0 0 0 rgba(140, 100, 0, 0.9), inset -1px 0 0 0 rgba(140, 100, 0, 0.9), inset 0 1px 0 0 rgba(140, 100, 0, 0.9), inset 0 -1px 0 0 rgba(140, 100, 0, 0.9) !important;
 }
 
 /* Annotation track (BED): one line above the ruler of every block; each lane is 1em.
