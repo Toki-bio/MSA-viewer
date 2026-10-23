@@ -8396,6 +8396,61 @@ check('Residue selection: one tint and one frame per run, no box per cell (Full,
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+
+// Owner (2026-10-23): "consider adding an option to select rectangle area in the alignment (similar to columns)
+// and also to re-align such block". A residue drag (or the two clicks) across rows now selects the rectangle of
+// rows x columns; Realign Block on such a rectangle realigns only those rows within those columns and keeps the
+// alignment rectangular (the other rows get gaps after the span when the block widens; the block rows get gaps
+// after the realigned piece when it narrows).
+check('Rectangle selection by drag and by two clicks (Full, Canvas); Realign Block realigns the rows x columns block and keeps the other rows', async (page) => {
+  const out = {};
+  const rows = ['ACGTACGTACGTACGTACGT', 'ACGTTCGTACGAACGTACGT', 'ACGTACCTACGTACGTAGGT', 'ACGTACGGACGTTCGTACGT', 'ACGTACGTACGTACGTACGT', 'ACGTACGTACGTACGTACGT'];
+  const fa = rows.map((s, i) => '>r' + i + '\n' + s).join('\n') + '\n';
+  for (const view of ['full', 'canvas']) {
+    const p = await page.context().browser().newPage({ viewport: { width: 900, height: 400 } });
+    await p.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await p.setInputFiles('#fileInput', { name: 'r.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+    await p.waitForTimeout(1000);
+    const cell = (r, c) => p.evaluate(([r, c]) => {
+      if (document.getElementById('modeCanvas').checked) { const b = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics; return { x: b.left + m.nameW + (c + 0.5) * m.charW, y: b.top + m.headerH + (r + 0.5) * _canvasState.rowPitch }; }
+      const a = document.querySelector('.seq-line[data-seq-index="' + r + '"] .seq-data > span[data-pos="' + c + '"]').getBoundingClientRect(); return { x: a.left + a.width / 2, y: a.top + a.height / 2 }; }, [r, c]);
+    const sel = () => p.evaluate(() => [...state.selectedNucs].sort((a, b) => a[0] - b[0]).map(([r, s]) => r + ':' + [...s].sort((a, b) => a - b).join(',')).join(' | '));
+    // drag from row 1 col 4 to row 3 col 9
+    let a = await cell(1, 4), b = await cell(3, 9);
+    await p.mouse.move(a.x, a.y); await p.mouse.down(); await p.mouse.move(b.x, b.y, { steps: 6 }); await p.mouse.up(); await p.waitForTimeout(250);
+    const drag = await sel();
+    // two clicks: row 4 col 2, then row 5 col 6
+    a = await cell(4, 2); b = await cell(5, 6);
+    await p.mouse.click(a.x, a.y); await p.waitForTimeout(150); await p.mouse.click(b.x, b.y); await p.waitForTimeout(250);
+    const clicks = await sel();
+    // back to the first rectangle, then Realign Block with a stand-in MAFFT that returns each piece two columns wider
+    a = await cell(1, 4); b = await cell(3, 9);
+    await p.mouse.move(a.x, a.y); await p.mouse.down(); await p.mouse.move(b.x, b.y, { steps: 6 }); await p.mouse.up(); await p.waitForTimeout(250);
+    const re = await p.evaluate(async (rows) => {
+      const orig = window._mafftAlignWithUi;
+      window._mafftAlignWithUi = async (fasta) => {
+        const recs = fasta.split('>').filter(Boolean).map(b => { const l = b.split(/\r?\n/); return { name: l[0], seq: l.slice(1).join('') }; });
+        const L = Math.max(...recs.map(r => r.seq.length)) + 2;
+        return recs.map(r => '>' + r.name + '\n' + r.seq + '-'.repeat(L - r.seq.length) + '\n').join('');
+      };
+      try { await realignSelectedBlock({ skipPrompt: true }); } finally { window._mafftAlignWithUi = orig; }
+      const got = state.seqs.map(s => s.seq);
+      const same = got.every(s => s.length === rows[0].length + 2);
+      const others = [0, 4, 5].every(i => got[i] === rows[i].slice(0, 10) + '--' + rows[i].slice(10));
+      const block = [1, 2, 3].every(i => got[i].slice(0, 4) === rows[i].slice(0, 4) && got[i].slice(4, 12) === rows[i].slice(4, 10) + '--' && got[i].slice(12) === rows[i].slice(10));
+      const selAfter = [...state.selectedNucs].sort((a, b) => a[0] - b[0]).map(([r, s]) => r + ':' + Math.min(...s) + '-' + Math.max(...s)).join(' ');
+      undoDelete();
+      const undone = state.seqs.every((s, i) => s.seq === rows[i]);
+      return { same, others, block, selAfter, undone };
+    }, rows);
+    out[view] = { drag, clicks, re };
+    await p.close();
+  }
+  const want = '1:4,5,6,7,8,9 | 2:4,5,6,7,8,9 | 3:4,5,6,7,8,9', want2 = '4:2,3,4,5,6 | 5:2,3,4,5,6';
+  const ok = ['full', 'canvas'].every(v => out[v].drag === want && out[v].clicks === want2 && out[v].re.same && out[v].re.others && out[v].re.block && out[v].re.selAfter === '1:4-11 2:4-11 3:4-11' && out[v].re.undone);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

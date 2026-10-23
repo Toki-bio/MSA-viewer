@@ -478,6 +478,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li><strong>TSD results</strong> - the pairs found are shown faintly in the alignment at once and <em>Mark in alignment</em> is highlighted (&sect;9.9).</li>
     <li><strong>Scrollbars</strong> - the bars under and beside the alignment are 8 pixels, without the light track that looked like an empty band, and the pointer over them is the plain arrow.</li>
     <li><strong>Dot plot</strong> - hovering over the plot no longer makes it jump (a wide hover context used to add a scrollbar under the plot and re-fit it); one wide slider for the word length (SPIN) or window (Dotter) and the identity slider in Dotter mode only; the controls tidied; each Top Regions entry has a &#8674; button that tints both copies of the stretch in the alignment and goes there, and a &#9734; button that keeps it in a collection (kept across files and reloads, saved in snapshots) whose entries can be centred, shown in the alignment, handed to the Search box, copied as FASTA or TSV, renamed and removed (&sect;9.7).</li>
+    <li><strong>Residue selection</strong> - a selected run is one tint with one frame (it was a box per cell); a drag across rows, or a second click in another row, selects a rectangle of rows &times; columns, and <strong>Realign Block</strong> realigns such a block alone (&sect;3.2.1, &sect;10.3).</li>
     <li><strong>Clone Tab</strong> (Actions) - the whole alignment in a new tab exactly as it is in this one: view, zoom, case, shading, diff / variable-sites / codon settings, Canvas position, searches, selections and marks, name colours, trim, annotation (&sect;9.1). Snapshots now keep the trim and those settings too.</li>
     <li><strong>Search presets</strong> - the active searches saved under a name (e.g. promoter boxes) and run again on any alignment with one click (&sect;7.4).</li>
     <li><strong>Toolbar</strong> - the Selections tab keeps its place while empty, so selecting a row no longer wraps the toolbar and moves the alignment down a line at widths where the menu line is nearly full.</li>
@@ -750,7 +751,12 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="al-realign-block">3.2.1 Realign Block</h3>
   <p>
     <strong>Realign Block</strong> (<kbd>Ctrl+Shift+R</kbd>) realigns only the selected
-    columns and splices the result back, leaving unselected columns unchanged. Each
+    columns and splices the result back, leaving unselected columns unchanged. With a
+    rectangle of residues selected instead (drag across rows, &sect;10.3) it realigns only those
+    rows within those columns: the other rows are untouched, and the alignment stays rectangular
+    (when the realigned piece is wider than the span the other rows get gaps right after it;
+    when it is narrower the block rows get gaps after the piece). Undo puts everything back.
+    With column spans, each
     contiguous run of two or more selected columns is extracted, degapped, sent to MAFFT
     independently, and written back in one rebuild, so selecting several disjoint blocks
     does not pull the intervening columns into the alignment and later blocks are not
@@ -2242,7 +2248,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><th>Action</th><th>Result</th></tr>
     <tr><td>Click sequence name</td><td>Select that row only (replaces the row selection; clicking the only selected row again unselects it). Double-click renames</td></tr>
     <tr><td>Ctrl+Click name</td><td>Toggle row selection (Shift+Click selects the range from the last selected row)</td></tr>
-    <tr><td>Click / Ctrl+Click residue</td><td>Select residues (bases) in that row; a second click in the same row extends to a range, or drag. In Edit mode, Ctrl is required (a plain click is for the edit tools)</td></tr>
+    <tr><td>Click / Ctrl+Click residue</td><td>Select residues (bases) in that row; a second click in the same row extends to a range, or drag. A drag across rows, or a second click in another row, selects the rectangle of rows &times; columns between the two cells (Realign Block then realigns that block, &sect;3.2.1). In Edit mode, Ctrl is required (a plain click is for the edit tools)</td></tr>
     <tr><td>Ctrl+Alt+Click residue</td><td>Select column; Ctrl+Alt+drag selects a column range (§8.2)</td></tr>
     <tr><td>Drag sequence name</td><td>Reorder rows</td></tr>
     <tr><td>Drag the boundary between the names and the sequences</td><td>Set the width of the name column (the cursor becomes &#8596; over it); double-click the boundary to fit the longest name</td></tr>

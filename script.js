@@ -7098,6 +7098,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             } else if (state.pendingNucStart.row === idx) {
                 state.selectedNucs.set(idx, buildNucSelectionSet(idx, state.pendingNucStart.pos, pos));
                 state.pendingNucStart = null;
+            } else if (state.pendingNucStart.row >= 0 && idx >= 0) {
+                // the second click on another row: the rectangle between the two cells (a drag from here replaces it)
+                _setNucRectangle(state.pendingNucStart.row, state.pendingNucStart.pos, idx, pos);
+                state.pendingNucStart = null;
+                state.isDragging = true;
+                state.dragStartRow = idx;
+                state.dragStartCol = pos;
+                state.dragMode = 'nuc';
             } else {
                 state.selectedNucs.clear();
                 state.pendingNucStart = { row: idx, pos };
@@ -11821,6 +11829,34 @@ function getNucCharAt(rowIndex, pos) {
 }
 
 /** All alignment columns in the clicked/dragged range (gaps included for highlight). */
+// A rectangle of rows x columns (owner, 2026-10-23: "select rectangle area in the alignment"): every row
+// between the two corners gets the same column range. Rows below 0 (the consensus) are left out.
+function _setNucRectangle(row0, pos0, row1, pos1) {
+    state.selectedNucs.clear();
+    const r0 = Math.min(row0, row1), r1 = Math.max(row0, row1);
+    for (let r = Math.max(0, r0); r <= r1; r++) {
+        if (!state.seqs[r]) continue;
+        state.selectedNucs.set(r, buildNucSelectionSet(r, pos0, pos1));
+    }
+}
+// The selected residues as one rectangle: { rows, rowSet, c0, c1 } when every selected row holds the same
+// unbroken column range and there are two or more rows and columns, else null
+function _nucSelectionRectangle() {
+    const rows = [...state.selectedNucs.keys()].filter(r => r >= 0 && state.seqs[r]).sort((a, b) => a - b);
+    if (rows.length < 2) return null;
+    let c0 = -1, c1 = -1;
+    for (const r of rows) {
+        const set = state.selectedNucs.get(r);
+        if (!set || !set.size) return null;
+        let lo = Infinity, hi = -Infinity;
+        set.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; });
+        if (set.size !== hi - lo + 1) return null;
+        if (c0 < 0) { c0 = lo; c1 = hi; } else if (lo !== c0 || hi !== c1) return null;
+    }
+    if (c1 - c0 + 1 < 2) return null;
+    return { rows, rowSet: new Set(rows), c0, c1 };
+}
+
 function buildNucSelectionSet(rowIndex, startPos, endPos) {
     const lo = Math.min(startPos, endPos);
     const hi = Math.max(startPos, endPos);
@@ -14243,6 +14279,15 @@ function handleNucleotideSelectMouseDown(e) {
         state.selectedNucs.set(index, rowSet);
         state.pendingNucStart = null;
         scheduleNucSelectionRefresh();
+    } else if (state.pendingNucStart.row >= 0 && index >= 0) {
+        // the second click on another row: the rectangle between the two cells (a drag from here replaces it)
+        _setNucRectangle(state.pendingNucStart.row, state.pendingNucStart.pos, index, pos);
+        state.pendingNucStart = null;
+        state.isDragging = true;
+        state.dragStartRow = index;
+        state.dragStartCol = pos;
+        state.dragMode = 'nuc';
+        scheduleNucSelectionRefresh();
     } else {
         state.selectedNucs.clear();
         state.pendingNucStart = { row: index, pos };
@@ -14374,6 +14419,10 @@ function handleMouseMove(e) {
                 state.selectedNucs.clear();
                 state.selectedNucs.set(hit.row, rowSet);
                 (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
+            } else if (hit && hit.row >= 0 && state.dragStartRow >= 0) {
+                // across rows: the rectangle between the press and the pointer
+                _setNucRectangle(state.dragStartRow, state.dragStartCol, hit.row, hit.col);
+                (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
             }
         } else {
             const span = closestFromEvent(e, '.seq-data span[data-pos]');
@@ -14383,11 +14432,14 @@ function handleMouseMove(e) {
                 const rowEl = span.closest('.seq-line');
                 const currentIndex = resolveNucRowIndex(rowEl);
                 if (!Number.isInteger(currentIndex)) return;
-                // Only allow drag within the same row
+                // within the row: a run; across rows: the rectangle between the press and the pointer
                 if (currentIndex === state.dragStartRow) {
                     const rowSet = buildNucSelectionSet(currentIndex, state.dragStartCol, pos);
                     state.selectedNucs.clear();
                     state.selectedNucs.set(currentIndex, rowSet);
+                    scheduleNucSelectionRefresh();
+                } else if (currentIndex >= 0 && state.dragStartRow >= 0) {
+                    _setNucRectangle(state.dragStartRow, state.dragStartCol, currentIndex, pos);
                     scheduleNucSelectionRefresh();
                 }
             }
@@ -14398,9 +14450,13 @@ function handleMouseMove(e) {
 function handleMouseUp() {
     _endTrimDrag();
     if (state.dragMode === 'nuc') {
-        // If we have a pending start, this was either a simple click or a drag
-        // The drag selection is already handled in mousemove
-        // For simple clicks, keep the pending start for the two-click system
+        // A simple click keeps its pending start for the two-click system; a drag that selected more than
+        // one cell is complete (a stale start used to make the next click elsewhere finish a selection)
+        if (state.pendingNucStart) {
+            let cells = 0;
+            state.selectedNucs.forEach(set => { cells += set.size; });
+            if (cells > 1) { state.pendingNucStart = null; scheduleNucSelectionRefresh(); if (typeof isCanvasMode === 'function' && isCanvasMode()) (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.(); }
+        }
     }
     state.isDragging = false;
     state.dragStartRow = null;
@@ -22560,9 +22616,12 @@ async function realignSelectedBlock(opts) {
         showMessage("Region realign module not loaded.", 3000);
         return;
     }
+    // a block of rows x columns (a residue selection shaped as a rectangle): only those rows, within those columns
+    const rect = !state.selectedColumns.size ? _nucSelectionRectangle() : null;
+    if (rect) return _realignRectangle(rect, opts);
     const runs = RealignRegion.columnRuns(state.selectedColumns);
     if (!runs.length) {
-        showMessage("Select at least one span of 2+ columns to realign.", 3000);
+        showMessage("Select at least one span of 2+ columns (or drag a block of rows x columns) to realign.", 3000);
         return;
     }
 
@@ -22648,6 +22707,72 @@ async function realignSelectedBlock(opts) {
         if (result.orderApplied && result.aligned) bits.push('rows reordered');
         if (result.flipped && result.flipped.length) bits.push("RC'd: " + result.flipped.join(', '));
         showMessage((bits.join('; ') || result.message || 'Done') + '.', 3500);
+    } catch (err) {
+        showMessage("Realign block error: " + err.message, 4000);
+        console.error("Realign block error:", err);
+    }
+}
+
+// Realigns the rows of a rectangle selection within its columns (owner, 2026-10-23: "re-align such block").
+// The other rows are untouched; the alignment stays rectangular: when the realigned piece is wider than the
+// span, the other rows get that many gaps right after the span; when it is narrower, the block rows get gaps
+// right after the piece. The selection then covers the new block.
+async function _realignRectangle(rect, opts) {
+    opts = opts || {};
+    const extra = getMafftExtraArgs();
+    if (extra.seqType === 'codon' && !extra.reorderOnly) {
+        showMessage("Codon-aware alignment works on whole coding sequences: switch Sequence type to Nucleotide to realign a block.", 6000);
+        return;
+    }
+    if (extra.reorderOnly) {
+        showMessage("Reorder only works on column spans of all rows; a block of rows x columns is realigned, not reordered.", 4000);
+        return;
+    }
+    const cols = new Set();
+    for (let c = rect.c0; c <= rect.c1; c++) cols.add(c);
+    const subset = rect.rows.map(i => state.seqs[i]);
+    const before = subset.map(s => s.seq);
+    try {
+        _alignRowIds = true;
+        const result = await RealignRegion.run(subset, cols, {
+            adjustDir: false, reorder: false, reorderOnly: false, applyAdjustFull: false, applyReorder: false,
+            extraArgs: extra.args.slice(),
+            mafftAlign: (fa, args) => _mafftAlignWithUi(fa, args, 'Realigning block with MAFFT...'),
+            parseFasta: parseMafftOutput,
+            adjustDirection: (fa) => _adjustDirection(fa),
+            reorderByGuideTree: (fa) => _reorderByGuideTree(fa),
+            reverseComplement: _reverseComplement
+        }).finally(() => { _alignRowIds = false; });
+        if (result.cancelled) { showMessage('Block realign cancelled.', 2500); return; }
+        if (!result.aligned) { showMessage(result.message || 'Nothing to do.', 2500); return; }
+        const spanLen = rect.c1 - rect.c0 + 1;
+        const newRows = result.seqs;
+        const delta = newRows[0].seq.length - before[0].length;   // the realigned piece is spanLen + delta wide
+        const alignedLen = spanLen + delta;
+        pushUndo('realign-block');
+        if (delta > 0) {
+            const pad = '-'.repeat(delta);
+            state.seqs.forEach((s, i) => {
+                if (rect.rowSet.has(i)) return;
+                s.seq = s.seq.slice(0, rect.c1 + 1) + pad + s.seq.slice(rect.c1 + 1);
+                s.gaplessPositions = calculateGaplessPositions(s.seq);
+            });
+        } else if (delta < 0) {
+            const pad = '-'.repeat(-delta), cut = rect.c0 + alignedLen;
+            newRows.forEach(r => { r.seq = r.seq.slice(0, cut) + pad + r.seq.slice(cut); });
+        }
+        rect.rows.forEach((i, k) => {
+            const r = newRows[k];
+            state.seqs[i] = { header: r.header, fullHeader: r.fullHeader || r.header, seq: r.seq, gaplessPositions: calculateGaplessPositions(r.seq) };
+        });
+        const width = Math.max(spanLen, alignedLen);
+        state.selectedNucs.clear();
+        rect.rows.forEach(i => state.selectedNucs.set(i, buildNucSelectionSet(i, rect.c0, rect.c0 + width - 1)));
+        state.pendingNucStart = null;
+        _dropColumnAnalysesAfterRealign();
+        renderAlignment();
+        scheduleNucSelectionRefresh();
+        showMessage(`Block realigned: ${rect.rows.length} rows, columns ${rect.c0 + 1}-${rect.c1 + 1}` + (delta ? ` (now ${width} columns wide)` : '') + '.', 3500);
     } catch (err) {
         showMessage("Realign block error: " + err.message, 4000);
         console.error("Realign block error:", err);
