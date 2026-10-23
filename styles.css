@@ -131,12 +131,6 @@ html {
     z-index: 200;
 }
 
-.standard-menu-group {
-    display: flex;
-    justify-content: flex-start;
-    gap: 3px;
-}
-
 .side-section {
     display: inline-block;
     vertical-align: middle;

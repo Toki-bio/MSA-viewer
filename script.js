@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v275';
+const BUILD_TAG = 'v276';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -6859,12 +6859,50 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     resize(true);
     draw();
 
-    // Scroll handling
+    // Scroll handling. A mouse-wheel notch (100-120 px) eases out to its target over 150 ms, as the browser's
+    // own scrollers do; applied as one jump per frame it looked jerky (owner, 2026-10-23). A notch during the
+    // animation extends the target and restarts the 150 ms from the current position. Small deltas (a touchpad,
+    // which sends them at frame rate with its own inertia) apply at once, as does everything under a
+    // reduced-motion preference. Each frame moves the pixels already drawn (the frame copy in draw()).
+    // _canvasState.wheelAnimating tells tests and other callers that the view is still on its way.
+    const WHEEL_EASE_MS = 150;
+    let _wheelAnim = null;
+    const _reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    function _wheelTo(dx, dy) {
+        scrollbarInsets();
+        const w = (parseInt(canvas.style.width) || 800) - _insetR, h = (parseInt(canvas.style.height) || 600) - _insetB;
+        const ox = _canvasState.offsetX, oy = _canvasState.offsetY;
+        // a running animation continues from its own position; a view moved by other code since starts afresh
+        const a = (_wheelAnim && _wheelAnim.lastX === ox && _wheelAnim.lastY === oy) ? _wheelAnim
+            : { x: ox, y: oy, tx: ox, ty: oy, lastX: ox, lastY: oy, raf: 0 };
+        a.x0 = a.x; a.y0 = a.y; a.t0 = performance.now();
+        a.tx = Math.max(0, Math.min(a.tx + dx, totalContentW - w));
+        a.ty = Math.max(0, Math.min(a.ty + dy, totalContentH - h));
+        if (!a.raf) a.raf = requestAnimationFrame(_wheelStep);
+        _wheelAnim = a; _canvasState.wheelAnimating = true;
+    }
+    function _wheelStep(now) {
+        const a = _wheelAnim;
+        if (!a) { _canvasState.wheelAnimating = false; return; }
+        a.raf = 0;
+        if (a.lastX !== _canvasState.offsetX || a.lastY !== _canvasState.offsetY) { _wheelAnim = null; _canvasState.wheelAnimating = false; return; }   // moved by other code: give way
+        const p = Math.min(1, Math.max(0, now - a.t0) / WHEEL_EASE_MS), e = 1 - Math.pow(1 - p, 3);   // ease-out (a frame's timestamp can precede the wheel event)
+        a.x = p >= 1 ? a.tx : a.x0 + (a.tx - a.x0) * e;
+        a.y = p >= 1 ? a.ty : a.y0 + (a.ty - a.y0) * e;
+        const q = v => Math.round(v * dpr) / dpr;
+        _canvasState.offsetX = a.lastX = q(a.x);
+        _canvasState.offsetY = a.lastY = q(a.y);
+        scheduleDraw();
+        if (p < 1) a.raf = requestAnimationFrame(_wheelStep); else { _wheelAnim = null; _canvasState.wheelAnimating = false; }
+    }
     canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
-        _canvasState.offsetX += e.deltaX;
-        _canvasState.offsetY += e.deltaY;
-        scheduleDraw();
+        if (_reducedMotion() || (Math.abs(e.deltaY) < 40 && Math.abs(e.deltaX) < 40)) {
+            _wheelAnim = null; _canvasState.wheelAnimating = false;
+            _canvasState.offsetX += e.deltaX;
+            _canvasState.offsetY += e.deltaY;
+            scheduleDraw();
+        } else _wheelTo(e.deltaX, e.deltaY);
     }, { passive: false });
 
     // Touch/drag pan

@@ -9,6 +9,8 @@ const { launch, makeFasta, loadFasta, loadSyntheticFasta, setMode } = require('.
 
 const CHECKS = [];
 function check(name, fn) { CHECKS.push({ name, fn }); }
+// Canvas eases a mouse-wheel notch over 150 ms (v276): wait until the view has arrived (no-op in Full/Block)
+async function settleWheel(pg) { await pg.waitForFunction(() => typeof _canvasState === 'undefined' || !_canvasState.wheelAnimating, null, { timeout: 2000 }).catch(() => {}); await pg.waitForTimeout(40); }
 
 check('loads without console errors', async (page) => {
   const errors = [];
@@ -3772,7 +3774,7 @@ check('Canvas mode: wheel scroll copies the frame and draws only the exposed str
     const res = {};
     for (const [label, dx, dy] of [['down', 0, 120], ['right', 120, 0], ['up', 0, -100], ['left', -100, 0], ['trackpad', 0, 37.5]]) {
       await page.evaluate(() => { _canvasState.stats.full = 0; _canvasState.stats.blit = 0; _canvasState.stats.blitMs = []; _canvasState.stats.fullMs = []; });
-      for (let i = 0; i < 6; i++) { await page.mouse.wheel(dx, dy); await page.waitForTimeout(40); }
+      for (let i = 0; i < 6; i++) { await page.mouse.wheel(dx, dy); await settleWheel(page); await page.waitForTimeout(40); }
       await page.waitForTimeout(150);
       const r = await page.evaluate(() => {
         const c = document.getElementById('alignmentCanvas');
@@ -3952,7 +3954,7 @@ check('Canvas frame copy stays pixel-identical at 125 % and 150 % scaling, after
     const res = {};
     for (const [label, dx, dy] of [['down', 0, 100], ['right', 100, 0], ['trackpad', 0, 33.3]]) {
       await p2.evaluate(() => { _canvasState.stats.full = 0; _canvasState.stats.blit = 0; });
-      for (let i = 0; i < 5; i++) { await p2.mouse.wheel(dx, dy); await p2.waitForTimeout(40); }
+      for (let i = 0; i < 5; i++) { await p2.mouse.wheel(dx, dy); await settleWheel(p2); await p2.waitForTimeout(40); }
       await p2.waitForTimeout(150);
       res[label] = await p2.evaluate(() => { const c = document.getElementById('alignmentCanvas'); const fast = c.toDataURL(); const st = { blit: _canvasState.stats.blit, full: _canvasState.stats.full, dpr: devicePixelRatio, w: c.width }; _canvasState.scheduleDraw(); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r({ ...st, same: c.toDataURL() === fast })))); });
     }
@@ -3965,7 +3967,7 @@ check('Canvas frame copy stays pixel-identical at 125 % and 150 % scaling, after
   await page.waitForTimeout(300);
   const box = await page.evaluate(() => { const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { x: r.left + r.width * 0.6, y: r.top + r.height * 0.6 }; });
   await page.mouse.move(box.x, box.y);
-  await page.mouse.wheel(0, 100); await page.waitForTimeout(100);
+  await page.mouse.wheel(0, 100); await settleWheel(page); await page.waitForTimeout(100);
   await page.click('#editToggleButton'); await page.waitForTimeout(300);
   await page.click('[data-edit-tool="residue"]'); await page.waitForTimeout(150);
   const cell = await page.evaluate(() => { const cv = document.getElementById('alignmentCanvas'), b = cv.getBoundingClientRect(), m = _canvasState.metrics; return { x: b.left + m.nameW + 5.5 * m.charW - _canvasState.offsetX, y: b.top + m.headerH + 8.5 * _canvasState.rowPitch - _canvasState.offsetY }; });
@@ -3973,7 +3975,7 @@ check('Canvas frame copy stays pixel-identical at 125 % and 150 % scaling, after
   const edited = {};
   for (const [label, act] of [['type', async () => { await page.keyboard.press('g'); }], ['undo', async () => { await page.keyboard.press('Control+z'); }], ['selectRow', async () => page.evaluate(() => { state.selectedRows.add(3); updateRowSelections(); })]]) {
     await act(); await page.waitForTimeout(150);
-    await page.mouse.move(box.x, box.y); await page.mouse.wheel(0, 60); await page.waitForTimeout(150);   // a copy-sized step right after the change
+    await page.mouse.move(box.x, box.y); await page.mouse.wheel(0, 60); await settleWheel(page); await page.waitForTimeout(150);   // a copy-sized step right after the change
     edited[label] = await page.evaluate(() => { const c = document.getElementById('alignmentCanvas'); const fast = c.toDataURL(); _canvasState.scheduleDraw(); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(c.toDataURL() === fast)))); });
   }
   await page.click('#editToggleButton'); await page.waitForTimeout(200);
@@ -4028,7 +4030,7 @@ check('Canvas mode: selections and typing do not redraw the cells, and look iden
   // 3. after typing, a scroll step still copies the frame and matches a full redraw
   await page.mouse.move(cell(20, 60).x, cell(20, 60).y);
   const b0 = await page.evaluate(() => _canvasState.stats.blit);
-  await page.mouse.wheel(0, 120); await page.waitForTimeout(150);
+  await page.mouse.wheel(0, 120); await settleWheel(page); await page.waitForTimeout(150);
   out.scrollAfterTyping = { copies: (await page.evaluate(() => _canvasState.stats.blit)) - b0, sameAsFull: await sameAsFull() };
   await page.click('#editToggleButton'); await page.waitForTimeout(200);
   const bad = [];
@@ -4100,7 +4102,7 @@ check('Canvas mode: Highlight diffs dims conserved columns and bolds variable on
   const box = await page.evaluate(() => { const r = document.getElementById('alignmentCanvas').getBoundingClientRect(); return { x: r.left + r.width * 0.6, y: r.top + r.height * 0.6 }; });
   await page.mouse.move(box.x, box.y);
   const b0 = await page.evaluate(() => _canvasState.stats.blit);
-  await page.mouse.wheel(0, 60); await page.waitForTimeout(150);
+  await page.mouse.wheel(0, 60); await settleWheel(page); await page.waitForTimeout(150);
   const scroll = await page.evaluate((b0) => { const c = document.getElementById('alignmentCanvas'); const fast = c.toDataURL(); const copies = _canvasState.stats.blit - b0; _canvasState.scheduleDraw(); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r({ copies, same: c.toDataURL() === fast })))); }, b0);
   await toggle(false); await settle();
   await page.setViewportSize({ width: 1400, height: 900 }); await page.waitForTimeout(300);
@@ -4219,7 +4221,7 @@ check('Canvas mode: Variable sites only hides columns, keeps markers, hit-tests 
   const scroll = {};
   for (const [label, dx, dy] of [['down', 0, 60], ['right', 60, 0], ['right2', 100, 0], ['up', 0, -45]]) {
     const b0 = await page.evaluate(() => ({ b: _canvasState.stats.blit, ox: _canvasState.offsetX, oy: _canvasState.offsetY }));
-    await page.mouse.wheel(dx, dy); await page.waitForTimeout(150);
+    await page.mouse.wheel(dx, dy); await settleWheel(page); await page.waitForTimeout(150);
     scroll[label] = await page.evaluate((b0) => { const c = document.getElementById('alignmentCanvas'); const fast = c.toDataURL(); const copies = _canvasState.stats.blit - b0.b, moved = [_canvasState.offsetX - b0.ox, _canvasState.offsetY - b0.oy]; _canvasState.scheduleDraw(); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r({ copies, moved, same: c.toDataURL() === fast })))); }, b0);
   }
   for (const [l, r] of Object.entries(scroll)) if (r.copies < 1 || !r.same || (r.moved[0] === 0 && r.moved[1] === 0)) bad.push(`scroll ${l}: ${JSON.stringify(r)}`);
@@ -4414,7 +4416,7 @@ check('Canvas mode: codon analysis draws stops, syn/nonsyn, the codon track, fra
   const scroll = {};
   for (const [label, dx, dy] of [['down', 0, 60], ['right', 60, 0], ['up', 0, -37]]) {
     const b0 = await page.evaluate(() => ({ b: _canvasState.stats.blit, ox: _canvasState.offsetX, oy: _canvasState.offsetY }));
-    await page.mouse.wheel(dx, dy); await page.waitForTimeout(150);
+    await page.mouse.wheel(dx, dy); await settleWheel(page); await page.waitForTimeout(150);
     scroll[label] = await page.evaluate((b0) => { const c = document.getElementById('alignmentCanvas'); const fast = c.toDataURL(); const copies = _canvasState.stats.blit - b0.b, moved = [_canvasState.offsetX - b0.ox, _canvasState.offsetY - b0.oy]; _canvasState.scheduleDraw(); return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r({ copies, moved, same: c.toDataURL() === fast })))); }, b0);
   }
   for (const [l, r] of Object.entries(scroll)) if (r.copies < 1 || !r.same || (r.moved[0] === 0 && r.moved[1] === 0)) bad.push(`scroll ${l}: ${JSON.stringify(r)}`);
@@ -6574,7 +6576,7 @@ check('audit UI: Clusterability window has a close button, fits the screen and s
   const last = rows[rows.length - 1];
   const box = await page.evaluate(() => { const r = el('clusteringModal').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
   await page.mouse.move(box.x, box.y);
-  for (let i = 0; i < 10; i++) { await page.mouse.wheel(0, 300); await page.waitForTimeout(50); }
+  for (let i = 0; i < 10; i++) { await page.mouse.wheel(0, 300); await settleWheel(page); await page.waitForTimeout(50); }
   const lastBottom = await last.evaluate(n => Math.round(n.getBoundingClientRect().bottom));
   let closed = false;
   if (geo.closeVisible) { await page.click('#clusteringModalClose'); closed = await page.evaluate(() => el('clusteringModal').style.display === 'none'); }
@@ -7000,7 +7002,7 @@ const auditNear = (a, b, tol = 2) => !!a && !!b && Math.abs(a[0] - b[0]) <= tol 
 async function auditWheel(page, dx, dy, n) {
   const b = await page.evaluate(() => { const r = el('alignmentContainer').getBoundingClientRect(); return [r.left + r.width / 2, Math.max(r.top, 0) + (Math.min(r.bottom, innerHeight) - Math.max(r.top, 0)) / 2]; });
   await page.mouse.move(b[0], b[1]);
-  for (let i = 0; i < n; i++) { await page.mouse.wheel(dx, dy); await page.waitForTimeout(40); }
+  for (let i = 0; i < n; i++) { await page.mouse.wheel(dx, dy); await settleWheel(page); await page.waitForTimeout(40); }
   await page.waitForTimeout(700);
 }
 
@@ -7516,7 +7518,7 @@ check('Round 2: windowed Full scrolls sideways and down without long freezes', a
   await page.waitForTimeout(1500);   // the row buffer fills in over the first frames
   const box = await page.evaluate(() => { const r = el('alignmentContainer').getBoundingClientRect(); return [r.left + r.width / 2, r.top + Math.min(r.height, innerHeight - r.top) / 2]; });
   await page.mouse.move(box[0], box[1]);
-  const steps = async (dx, dy, n) => { for (let i = 0; i < n; i++) { await page.mouse.wheel(dx, dy); await r2Settle(page); await page.waitForTimeout(30); } };
+  const steps = async (dx, dy, n) => { for (let i = 0; i < n; i++) { await page.mouse.wheel(dx, dy); await settleWheel(page); await r2Settle(page); await page.waitForTimeout(30); } };
   const h = await r2LongTasks(page, () => steps(300, 0, 24));
   const v = await r2LongTasks(page, () => steps(0, 300, 16));
   const dom = await page.evaluate(() => {
@@ -7716,6 +7718,36 @@ check('Canvas ruler digits sit on the same rows as the Full ruler digits', async
   const canvas = await inkRows({ x: Math.floor(cv.x) - 2, y: Math.floor(cv.top), width: Math.ceil(cv.w), height: Math.floor(cv.h) });
   const ok = full[0] >= 0 && canvas[0] >= 0 && Math.abs(full[0] - canvas[0]) <= 1 && Math.abs(full[1] - canvas[1]) <= 1;
   return { pass: ok, detail: JSON.stringify({ full, canvas }) };
+});
+
+
+// Owner (2026-10-23): "when scrolling even a small alignment the image is jerky". Canvas applied each mouse-wheel
+// notch (100-120 px) as one jump in a single frame; the browser's own scroller (Full view) animates a notch over
+// several frames. A notch now eases to its target over ~150 ms and lands exactly on it; a touchpad's small
+// deltas apply at once; a view moved by other code during the animation is left alone.
+check('Canvas: a mouse-wheel notch scrolls in several frames and lands on its target; small touchpad deltas apply at once', async (page) => {
+  await page.goto(page.url().replace(/view=\w+/, 'view=canvas').replace(/(index\.html)(?!\?)/, '$1?view=canvas'), { waitUntil: 'networkidle' });
+  await loadSyntheticFasta(page, 120, 600);
+  await page.waitForTimeout(800);
+  await page.evaluate(() => { window.__fr = []; const tick = () => { window.__fr.push(_canvasState.offsetY); requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
+  const box = await page.evaluate(() => { const r = _canvasState.canvas.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+  await page.mouse.move(box[0], box[1]);
+  await page.mouse.wheel(0, 120); await settleWheel(page);
+  await page.waitForTimeout(500);
+  const notch = await page.evaluate(() => { const f = window.__fr; const distinct = [...new Set(f)]; return { distinct: distinct.length, end: _canvasState.offsetY, frames: f.length }; });
+  // a touchpad-like delta: on screen by the next frame
+  await page.evaluate(() => { window.__fr = []; });
+  await page.mouse.wheel(0, 20); await settleWheel(page);
+  await page.waitForTimeout(80);
+  const pad = await page.evaluate(() => ({ first: window.__fr.find(v => v !== 120), end: _canvasState.offsetY }));
+  // other code moves the view while a notch is animating: the animation gives way
+  await page.mouse.wheel(0, 120); await settleWheel(page);
+  await page.waitForTimeout(30);
+  await page.evaluate(() => { _canvasState.offsetY = 0; _canvasState.scheduleDraw(); });
+  await page.waitForTimeout(500);
+  const yielded = await page.evaluate(() => _canvasState.offsetY);
+  const ok = notch.distinct >= 4 && notch.end === 120 && pad.first === 140 && pad.end === 140 && yielded === 0;
+  return { pass: ok, detail: JSON.stringify({ notch, pad, yielded }) };
 });
 
 async function main() {
