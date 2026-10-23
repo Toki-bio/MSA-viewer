@@ -7930,6 +7930,51 @@ check('Edit mode: gap tools show a haloed crosshair and outline the cell under t
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+
+// Owner (2026-10-23): the repeat-finder window should be expandable like the other windows, and every movable window
+// should turn semi-transparent while it is being moved. The repeat panel now uses the shared window frame (drag by the
+// title, eight resize handles, a maximise button / double-click on the title); a window being moved has class
+// win-dragging (opacity 0.6), in both frame helpers.
+check('Windows: the repeat finder resizes from its edges and maximises; a window being moved is semi-transparent (repeat finder, statistics)', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'w.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTACGTACGTACGTACGTACGT\n>b\nACGTACGTACGAACGTACGTACGT\n') });
+  await page.waitForTimeout(1000);
+  await page.evaluate(() => openRepeatFinder(0));
+  await page.waitForTimeout(500);
+  const r = {};
+  r.frame = await page.evaluate(() => { const w = document.getElementById('repeatFinderModalInner'); return { handles: w.querySelectorAll('.win-rz').length, maxBtn: !!w.querySelector('.win-maxbtn'), resizeCss: getComputedStyle(w).resize }; });
+  const bar = await page.evaluate(() => { const b = document.getElementById('repeatFinderDragHandle').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; });
+  const rect = () => page.evaluate(() => { const b = document.getElementById('repeatFinderModalInner').getBoundingClientRect(); return { l: Math.round(b.left), t: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; });
+  const before = await rect();
+  await page.mouse.move(bar.x, bar.y); await page.mouse.down(); await page.mouse.move(bar.x - 40, bar.y + 20, { steps: 4 }); await page.mouse.move(bar.x - 80, bar.y + 40, { steps: 4 });
+  r.midDrag = await page.evaluate(() => { const w = document.getElementById('repeatFinderModalInner'); return { opacity: +getComputedStyle(w).opacity, cls: w.classList.contains('win-dragging') }; });
+  await page.mouse.up(); await page.waitForTimeout(200);
+  const after = await rect();
+  r.moved = { dx: after.l - before.l, dy: after.t - before.t, opacity: await page.evaluate(() => +getComputedStyle(document.getElementById('repeatFinderModalInner')).opacity) };
+  const se = await page.evaluate(() => { const b = document.querySelector('#repeatFinderModalInner .win-rz[data-dir="se"]').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; });
+  await page.mouse.move(se.x, se.y); await page.mouse.down(); await page.mouse.move(se.x + 60, se.y + 40, { steps: 5 }); await page.mouse.up(); await page.waitForTimeout(200);
+  const grown = await rect();
+  r.resized = { dw: grown.w - after.w, dh: grown.h - after.h };
+  await page.click('#repeatFinderModalInner .win-maxbtn'); await page.waitForTimeout(200);
+  const max = await rect();
+  r.max = { fills: max.w >= await page.evaluate(() => innerWidth - 14) && max.h >= await page.evaluate(() => innerHeight - 14) };
+  await page.click('#repeatFinderModalInner .win-maxbtn'); await page.waitForTimeout(200);
+  const restored = await rect();
+  r.restored = Math.abs(restored.w - grown.w) <= 2 && Math.abs(restored.l - grown.l) <= 2;
+  await page.click('#repeatFinderCloseBtn'); await page.waitForTimeout(200);
+  // the statistics window (the other frame helper)
+  await page.evaluate(() => openStats()); await page.waitForTimeout(1200);
+  const sb = await page.evaluate(() => { const b = document.getElementById('statsHeader').getBoundingClientRect(); return { x: b.left + b.width * 0.3, y: b.top + b.height / 2 }; });
+  await page.mouse.move(sb.x, sb.y); await page.mouse.down(); await page.mouse.move(sb.x + 30, sb.y + 20, { steps: 4 }); await page.mouse.move(sb.x + 60, sb.y + 40, { steps: 4 });
+  r.statsMid = await page.evaluate(() => +getComputedStyle(document.getElementById('statsModal')).opacity);
+  await page.mouse.up(); await page.waitForTimeout(200);
+  r.statsAfter = await page.evaluate(() => +getComputedStyle(document.getElementById('statsModal')).opacity);
+  const ok = r.frame.handles === 8 && r.frame.maxBtn && r.frame.resizeCss === 'none'
+    && r.midDrag.cls && r.midDrag.opacity < 0.8 && Math.abs(r.moved.dx + 80) <= 3 && Math.abs(r.moved.dy - 40) <= 3 && r.moved.opacity === 1
+    && r.resized.dw >= 50 && r.resized.dh >= 30 && r.max.fills && r.restored
+    && r.statsMid < 0.8 && r.statsAfter === 1;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

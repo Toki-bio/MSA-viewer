@@ -1245,9 +1245,14 @@ B: -</pre>
     <!-- Repeat Finder: a floating panel that leaves the alignment visible and usable -->
     <div id="repeatFinderModal" class="rf-layer" style="display:none;">
         <div id="repeatFinderModalInner" class="rf-panel">
-            <div id="repeatFinderDragHandle" class="win-titlebar" style="--win-pad:14px;cursor:move;user-select:none;" title="Drag to move; drag the lower-right corner to resize">
+            <div class="win-rz" data-dir="n"></div><div class="win-rz" data-dir="s"></div><div class="win-rz" data-dir="e"></div><div class="win-rz" data-dir="w"></div>
+            <div class="win-rz" data-dir="ne"></div><div class="win-rz" data-dir="nw"></div><div class="win-rz" data-dir="se"></div><div class="win-rz" data-dir="sw"></div>
+            <div id="repeatFinderDragHandle" class="win-titlebar" style="--win-pad:14px;cursor:move;user-select:none;" title="Drag to move; drag an edge or corner to resize; double-click to maximize">
                 <h3 style="pointer-events:none;">Repeat Finder</h3>
-                <button type="button" id="repeatFinderCloseBtn" class="win-close" title="Close">×</button>
+                <span class="win-btns">
+                    <button type="button" id="repeatFinderMaxBtn" class="win-close win-maxbtn" title="Maximize (or double-click the title bar)">&#9633;</button>
+                    <button type="button" id="repeatFinderCloseBtn" class="win-close" title="Close">×</button>
+                </span>
             </div>
             <div class="rf-body">
                 <div class="rf-row">

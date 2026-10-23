@@ -2503,6 +2503,7 @@ function makeModalDraggableResizable(modalId, headerId, contentId) {
         const rect = modal.getBoundingClientRect();
         modalStartX = rect.left;
         modalStartY = rect.top;
+        modal.classList.add('win-dragging');   // semi-transparent while it moves
         e.preventDefault();
     };
     const onDragMousemove = (e) => {
@@ -2516,7 +2517,7 @@ function makeModalDraggableResizable(modalId, headerId, contentId) {
         modal.style.left = newLeft + 'px';
         modal.style.top = newTop + 'px';
     };
-    const onDragMouseup = () => { dragging = false; };
+    const onDragMouseup = () => { dragging = false; modal.classList.remove('win-dragging'); };
     header.addEventListener('mousedown', onHeaderMousedown);
     document.addEventListener('mousemove', onDragMousemove);
     document.addEventListener('mouseup', onDragMouseup);
@@ -29663,7 +29664,10 @@ function _initWindowFrame(win, bar, maxBtn, opts = {}) {
         e.preventDefault(); e.stopPropagation();
         drag = { dir, x: e.clientX, y: e.clientY, r: rect() };
         document.body.style.userSelect = 'none';
+        if (dir === 'move') win.classList.add('win-dragging');   // semi-transparent while it moves
     };
+    const end = () => { if (!drag) return; drag = null; document.body.style.userSelect = ''; win.classList.remove('win-dragging'); };
+    window.addEventListener('blur', end);
     bar.addEventListener('mousedown', (e) => { if (!e.target.closest('button')) start(e, 'move'); });
     win.querySelectorAll('.win-rz').forEach(h => h.addEventListener('mousedown', (e) => start(e, h.dataset.dir)));
     document.addEventListener('mousemove', (e) => {
@@ -29681,11 +29685,7 @@ function _initWindowFrame(win, bar, maxBtn, opts = {}) {
         }
         setRect({ left, top, width, height });
     });
-    document.addEventListener('mouseup', () => {
-        if (!drag) return;
-        drag = null;
-        document.body.style.userSelect = '';
-    });
+    document.addEventListener('mouseup', end);
 }
 
 function _dotViewport() {
@@ -31048,7 +31048,7 @@ function openRepeatFinder(seqIndex, preferredMode = null) {
     const modal = document.getElementById('repeatFinderModal');
     if (modal) {
         showExclusiveModal('repeatFinderModal');
-        _initRepeatFinderDrag();
+        _initWindowFrame(document.getElementById('repeatFinderModalInner'), document.getElementById('repeatFinderDragHandle'), document.getElementById('repeatFinderMaxBtn'), { minW: 420, minH: 260 });
     }
     const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
     document.getElementById('repeatResults').textContent = mode === 'tsd'
@@ -31061,30 +31061,7 @@ function openRepeatFinder(seqIndex, preferredMode = null) {
     }
 }
 
-function _initRepeatFinderDrag() {
-    const inner = document.getElementById('repeatFinderModalInner');
-    const handle = document.getElementById('repeatFinderDragHandle');
-    if (!inner || !handle) return;
-    let dragX = 0, dragY = 0, startX = 0, startY = 0;
-    handle.onmousedown = (e) => {
-        if (e.target.tagName === 'BUTTON') return;
-        e.preventDefault();
-        startX = e.clientX;
-        startY = e.clientY;
-        dragX = inner.offsetLeft;
-        dragY = inner.offsetTop;
-        document.onmousemove = (me) => {
-            me.preventDefault();
-            inner.style.left = (dragX + me.clientX - startX) + 'px';
-            inner.style.top = (dragY + me.clientY - startY) + 'px';
-            inner.style.right = 'auto';
-        };
-        document.onmouseup = () => {
-            document.onmousemove = null;
-            document.onmouseup = null;
-        };
-    };
-}
+// (the repeat finder's own drag code was replaced by _initWindowFrame, 2026-10-23)
 
 function openTsdFinder() {
     const autoMode = document.querySelector('input[name="tsdMode"][value="auto"]');

@@ -4033,8 +4033,11 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 .rf-layer { position: fixed; inset: 0; z-index: 10002; pointer-events: none; }
 .rf-panel { pointer-events: auto; position: absolute; top: 48px; right: 20px; width: 640px; min-width: 420px; max-width: calc(100vw - 24px);
     height: min(640px, calc(100vh - 70px)); min-height: 260px; max-height: calc(100vh - 16px); display: flex; flex-direction: column;
-    background: #fff; border: 1px solid #c9ced6; border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,0.22); resize: both; overflow: hidden;
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 12px; color: #1f2937; }
+    background: #fff; border: 1px solid #c9ced6; border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,0.22); overflow: hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 12px; color: #1f2937; }   /* resized by the shared window frame's handles (_initWindowFrame) */
+/* A window being moved shows what is under it (owner, 2026-10-23) */
+.win-dragging { opacity: 0.6; }
+.rf-panel.win-maximized { max-width: none; max-height: none; }   /* the frame's maximize sets the size itself */
 .rf-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 14px 12px; }
 .rf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .rf-label { flex: 0 0 64px; color: #6b7280; font-weight: 600; font-size: 11px; }
