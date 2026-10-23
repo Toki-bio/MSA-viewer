@@ -2098,6 +2098,10 @@ body.row-reorder-active .seq-name.drag-source:hover {
 .residue-case-upper .gap { text-transform: uppercase; }
 .residue-case-lower .seq-data,
 .residue-case-lower .gap { text-transform: lowercase; }
+.residue-case-upper .consensus-line .seq-data,
+.residue-case-lower .consensus-line .seq-data { text-transform: none; }   /* the consensus row's case says whether the column is above the threshold */
+.case-switch { margin-left: 4px; }
+.case-switch label { font-family: 'Courier New', monospace; font-size: 10px; padding: 0 3px; letter-spacing: -0.5px; }
 
 .seq-length {
     display: inline-block;

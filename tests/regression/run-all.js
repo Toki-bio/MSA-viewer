@@ -7855,6 +7855,47 @@ check('Edit mode: no residue tooltip while a Move/Slide drag is in progress (Ful
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+
+// Owner (2026-10-23): the Display-menu "Case" select did nothing in Canvas (the default view) and was buried; now a
+// visible aa | Aa | AA switch on the mode row, obeyed by Full, Block and Canvas, kept in sync with the select, saved
+// in snapshots. The consensus row keeps its own case (upper = above the threshold) in every view.
+check('Letter case: the aa | Aa | AA switch sets the case in Full, Block and Canvas; consensus row keeps its case; snapshots restore it', async (page) => {
+  const out = {};
+  for (const view of ['full', 'canvas']) {
+    await page.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await page.setInputFiles('#fileInput', { name: 'lc.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\naaagaaaaaaaaaaaa\n>b\naaaaaaaaaaaaaaaa\n>c\naaataaaaaaaacaaa\n') });
+    await page.waitForTimeout(1200);
+    const inkRows = async () => {   // the pixels of cell (1, 3), an unshaded column: a lowercase a and a capital A differ
+      const c = await page.evaluate(() => {
+        if (document.getElementById('modeCanvas').checked) { const cv = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics; return { x: cv.left + m.nameW + 3 * m.charW - _canvasState.offsetX, y: cv.top + m.headerH + 1 * _canvasState.rowPitch - _canvasState.offsetY, w: m.charW, h: m.charH }; }
+        const b = document.querySelector('.seq-line[data-seq-index="1"] .seq-data > span[data-pos="3"]').getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; });
+      const shot = await page.screenshot({ clip: { x: Math.floor(c.x), y: Math.floor(c.y), width: Math.ceil(c.w), height: Math.ceil(c.h) } });
+      return shot.toString('base64');
+    };
+    const r = { visible: await page.evaluate(() => { const e = document.getElementById('caseSwitch'); return !!e && e.getClientRects().length > 0; }) };
+    r.lowerRows = await inkRows();
+    await page.click('label[for="csUpper"]'); await page.waitForTimeout(500);
+    r.upperRows = await inkRows();
+    r.state = await page.evaluate(() => ({ st: state.residueCase, sel: document.getElementById('residueCase').value, radio: document.querySelector('input[name="caseQuick"]:checked').value,
+      domTransform: document.getElementById('modeCanvas').checked ? 'n/a' : getComputedStyle(document.querySelector('.seq-line[data-seq-index="1"] .seq-data')).textTransform,
+      consTransform: document.getElementById('modeCanvas').checked ? 'n/a' : getComputedStyle(document.querySelector('.consensus-line .seq-data')).textTransform }));
+    // the Display select drives the same state, and a snapshot carries it
+    await page.evaluate(() => { const s = document.getElementById('residueCase'); s.value = 'lower'; s.dispatchEvent(new Event('change', { bubbles: true })); });
+    await page.waitForTimeout(300);
+    r.afterSelect = await page.evaluate(() => ({ st: state.residueCase, radio: document.querySelector('input[name="caseQuick"]:checked').value, inPayload: _buildSnapshotPayload().view.residueCase }));
+    await page.evaluate(() => _applySnapshotView({ residueCase: 'upper' }));
+    await page.waitForTimeout(300);
+    r.afterSnapshot = await page.evaluate(() => ({ st: state.residueCase, radio: document.querySelector('input[name="caseQuick"]:checked').value, sel: document.getElementById('residueCase').value }));
+    await page.evaluate(() => setResidueCase('asis'));
+    out[view] = r;
+  }
+  const ok = Object.values(out).every(r => r.visible && r.upperRows !== r.lowerRows && r.state.st === 'upper' && r.state.sel === 'upper' && r.state.radio === 'upper'
+    && (r.state.domTransform === 'n/a' || (r.state.domTransform === 'uppercase' && r.state.consTransform === 'none'))
+    && r.afterSelect.st === 'lower' && r.afterSelect.radio === 'lower' && r.afterSelect.inPayload === 'lower'
+    && r.afterSnapshot.st === 'upper' && r.afterSnapshot.radio === 'upper' && r.afterSnapshot.sel === 'upper');
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

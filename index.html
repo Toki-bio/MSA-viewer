@@ -797,6 +797,11 @@
                     <input type="radio" name="quickMode" id="qmCanvas" data-target="modeCanvas" title="Canvas mode (large alignments; editing works)"><label for="qmCanvas">Canvas</label>
                     <input type="radio" name="quickMode" id="qmReads" data-target="modeReads" title="Reads mode (mapped SAM/BAM data)"><label for="qmReads" id="qmReadsLabel" style="display:none;">Reads</label>
                 </div>
+                <div class="quick-mode-switch case-switch" id="caseSwitch" title="Letter case of the residues on screen; the sequences themselves are not changed (the consensus row keeps its own case)">
+                    <input type="radio" name="caseQuick" id="csLower" value="lower"><label for="csLower" title="Show every residue in lower case">aa</label>
+                    <input type="radio" name="caseQuick" id="csAsIs" value="asis" checked><label for="csAsIs" title="Residues as they are in the file">Aa</label>
+                    <input type="radio" name="caseQuick" id="csUpper" value="upper"><label for="csUpper" title="Show every residue in UPPER CASE">AA</label>
+                </div>
 
 
                 <div class="codon-mode-panel" id="codonModePanel" hidden title="Reading frame: which alignment column starts the first codon (Pos 1 = column 1)">

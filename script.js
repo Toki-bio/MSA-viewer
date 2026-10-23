@@ -1355,7 +1355,7 @@ const state = {
     slideDragStartPos: null,
     slideSeqIndex: null,
     editModeActive: false,
-    editTool: 'moveNoGaps',
+    editTool: 'moveNoGaps', residueCase: 'asis',
     editLiveConservation: false,
     editDrag: null,
     editCell: null,
@@ -6070,7 +6070,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const scaleTextAll = generateScale(len, _canvasScaleInterval(CHAR_W), 0);
 
     // What can change the look of a cell (selections live on the overlay and are not here)
-    const contentSig = () => [state.seqs, state.seqs.length, state.deletedHistory.length, state.redoHistory.length,
+    const contentSig = () => [state.residueCase || 'asis', state.seqs, state.seqs.length, state.deletedHistory.length, state.redoHistory.length,
         state.conservationDataCache?.data, state.consensusCache?.values, state.trimBoundaries, state.softTrimBoundaries,
         state._diffColumns, state.tsdMarks, state.searchHistory?.length, getEffectiveColorScheme()];
 
@@ -6582,6 +6582,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const consPos = (state.conservationDataCache?.len === len && state.conservationDataCache?.shadeMode === shadeMode)
             ? state.conservationDataCache.data : conservationData;
         let dimmed = false;   // ctx.globalAlpha is 0.4 while this is true (Highlight diffs, conserved column)
+        const caseMode = state.residueCase || 'asis';
         for (let i = firstRow; i <= lastRow; i++) {
             const y = HEADER_H +i * rowPitch - oy;
             const seq = state.seqs[i].seq;
@@ -6600,10 +6601,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const x = NAME_W + sI * CHAR_W - ox;
                 const p = slotPos(sI);
                 if (p < 0) { drawMarker(x, y); continue; }
-                const base = seq[p] || '-';
+                const raw = seq[p] || '-';
+                const base = caseMode === 'upper' ? raw.toUpperCase() : caseMode === 'lower' ? raw.toLowerCase() : raw;   // the aa | Aa | AA switch
                 const pd = consPos[p];
                 // Same class list and stylesheet colours as a Full/Block cell
-                const cellStyle = canvasCellStyle(base, pd);
+                const cellStyle = canvasCellStyle(raw, pd);
                 let textFill = cellStyle.fg;
                 let bgFill = cellStyle.bg === '#ffffff' ? null : cellStyle.bg;
 
@@ -13503,6 +13505,21 @@ function ensureCanvasModeNotice() {
 
 // The mode row (codon frame, Canvas notice, reads) is shown only while one of its
 // controls is visible. Watches its children, so every place that shows or hides one is covered.
+// The letter case of the residues on screen: 'asis', 'upper' or 'lower' (state.residueCase), set from the
+// aa | Aa | AA switch on the mode row or the Display menu's Case select, both kept in sync; Full/Block use
+// the text-transform classes, Canvas draws the transformed letter. The consensus row keeps its own case.
+function setResidueCase(v) {
+    v = v === 'upper' || v === 'lower' ? v : 'asis';
+    state.residueCase = v;
+    if (alignmentContainer) {
+        alignmentContainer.classList.remove('residue-case-upper', 'residue-case-lower');
+        if (v !== 'asis') alignmentContainer.classList.add('residue-case-' + v);
+    }
+    const sel = el('residueCase');
+    if (sel && sel.value !== v) sel.value = v;
+    document.querySelectorAll('input[name="caseQuick"]').forEach(r => { r.checked = r.value === v; });
+    if (typeof isCanvasMode === 'function' && isCanvasMode() && _canvasState.scheduleDraw) _canvasState.scheduleDraw();
+}
 function syncModeRow() {
     const row = document.getElementById('modeRow');
     if (!row) return;
@@ -15680,6 +15697,7 @@ function _buildSnapshotPayload() {
             zoom: el('zoomSlider')?.value,
             zoomFormat: 'logSlider',
             mode: el('modeCanvas')?.checked ? 'canvas' : (el('modeBlocks')?.checked ? 'blocks' : 'single'),
+            residueCase: state.residueCase || 'asis',
             blockSize: el('blockSizeSlider')?.value,
             nameLen: el('nameLengthSlider')?.value,
             consensusThreshold: el('consensusThreshold')?.value,
@@ -15715,6 +15733,7 @@ function _buildSnapshotPayload() {
 
 function _applySnapshotView(view) {
     if (!view || typeof view !== 'object') return;
+    if (view.residueCase === 'upper' || view.residueCase === 'lower' || view.residueCase === 'asis') setResidueCase(view.residueCase);
 
     const applySliderPair = (key, sliderId, inputId, onSet = null) => {
         if (view[key] === undefined || view[key] === null) return;
@@ -24719,16 +24738,9 @@ function initializeAppUI() {
 
     // -- Residue case toggle (GeneDoc-style upper/lower/asis) --
     const caseSel = el('residueCase');
-    if (caseSel) {
-        const applyCase = () => {
-            const v = caseSel.value || 'asis';
-            alignmentContainer.classList.remove('residue-case-upper', 'residue-case-lower');
-            if (v === 'upper') alignmentContainer.classList.add('residue-case-upper');
-            else if (v === 'lower') alignmentContainer.classList.add('residue-case-lower');
-        };
-        caseSel.addEventListener('change', applyCase);
-        applyCase();
-    }
+    if (caseSel) caseSel.addEventListener('change', () => setResidueCase(caseSel.value || 'asis'));
+    document.querySelectorAll('input[name="caseQuick"]').forEach(r => r.addEventListener('change', () => { if (r.checked) setResidueCase(r.value); }));
+    setResidueCase(state.residueCase || 'asis');
 
     updateControlsOffset();
     const controls = el('controls');
