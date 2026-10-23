@@ -433,11 +433,12 @@ function _overlayRowCtx(row) {
         header: q?.header,
         hits: state.searchHistory?.length ? _getSearchHitsForRow(row) : _EMPTY_HITS,
         tsd: state.tsdMarks.size ? state.tsdMarks.get(row) : null,
+        tsdPrev: state.tsdPreview?.size ? state.tsdPreview.get(row) : null,
         rep: state.repeatHighlights?.size ? _repeatColsForRow(row) : _EMPTY_HITS,
         snp: !!state._clusterCharMap,
         trim: state.trimBoundaries || null
     };
-    ctx.any = !!(ctx.hits.size || ctx.tsd?.size || ctx.rep.size || ctx.snp);
+    ctx.any = !!(ctx.hits.size || ctx.tsd?.size || ctx.tsdPrev?.size || ctx.rep.size || ctx.snp);
     return ctx;
 }
 
@@ -450,11 +451,12 @@ function residueOverlay(ctx, pos, base) {
     if (!ctx.any) return null;
     const hit = ctx.hits.get(pos);
     const tsd = !!ctx.tsd?.has(pos);
+    const tsdPrev = !tsd && !!ctx.tsdPrev?.has(pos);   // found by the last TSD run, not marked yet
     const rep = ctx.rep.get(pos);
     const snp = ctx.snp ? _clusterCharDiag(ctx.header, pos, base) : null;
-    if (!hit && !tsd && !rep && !snp) return null;
+    if (!hit && !tsd && !tsdPrev && !rep && !snp) return null;
     const o = { bg: null, fg: null, bold: false, sans: false, italic: false, deco: [], decoColor: null,
-        titles: [], hit: hit || null, tsd, rep: rep || null, snp, covered: [] };
+        titles: [], hit: hit || null, tsd, tsdPrev, rep: rep || null, snp, covered: [] };
     if (hit) {
         o.bg = hit.color || '#ffcc00';
         o.fg = '#000';
@@ -471,6 +473,10 @@ function residueOverlay(ctx, pos, base) {
             o.deco.push('underline');
         }
     }
+    if (tsdPrev) {
+        o.titles.push('TSD found (not marked yet)');
+        if (!o.bg) { o.bg = _tsdColour() + '55'; o.fg = '#111'; }   // a third of the mark's strength
+    }
     if (rep) {
         o.titles.push('repeat region');
         // the tint is light: dark text, or white text from dark shading becomes unreadable
@@ -484,7 +490,7 @@ function residueOverlay(ctx, pos, base) {
     }
     if (o.deco.length && ctx.trim && (pos <= ctx.trim.leftTrimEnd || pos >= ctx.trim.rightTrimStart)) o.deco.push('line-through');
     // Same marks -> same look: the class list is computed once per combination
-    o.key = (hit ? hit.className : '') + '|' + (tsd ? state.tsdMarkStyle + _tsdColour() : '') + '|' + (rep || '')
+    o.key = (hit ? hit.className : '') + '|' + (tsd ? state.tsdMarkStyle + _tsdColour() : '') + (tsdPrev ? 'P' + _tsdColour() : '') + '|' + (rep || '')
         + '|' + (snp ? snp.bg + snp.fg + snp.color : '') + '|' + o.deco.join(',');
     return o;
 }
@@ -1363,6 +1369,7 @@ const state = {
     tsdMarkStyle: 'color',
     tsdMarkColor: '#ffd54f',
     tsdMarkUndo: null,
+    tsdPreview: null,   // ResidueMarks: TSDs found by the last run and not yet marked, shown faintly (owner, 2026-10-23)
     nameLength: DEFAULTS.nameLength,
     uiListenersAttached: false,
     panning: {
@@ -6074,7 +6081,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // What can change the look of a cell (selections live on the overlay and are not here)
     const contentSig = () => [state.residueCase || 'asis', state.seqs, state.seqs.length, state.deletedHistory.length, state.redoHistory.length,
         state.conservationDataCache?.data, state.consensusCache?.values, state.trimBoundaries, state.softTrimBoundaries,
-        state._diffColumns, state.tsdMarks, state.searchHistory?.length, getEffectiveColorScheme()];
+        state._diffColumns, state.tsdMarks, state.tsdPreview, state.searchHistory?.length, getEffectiveColorScheme()];
 
     // Length badge after each row's last column, as in Full/Block (.seq-length): the gapless length
     // in a grey box. Its width is measured once for the longest number.
@@ -13325,6 +13332,8 @@ async function parseAndRender(isFromDrop = false) {
         // Repeat/TSD results name rows and columns of the previous alignment
         _lastRepeatResults = [];
         _lastTsdResults = [];
+        state.tsdPreview = null;
+        document.getElementById('tsdMarkBtn')?.classList.remove('rf-btn-attention');
         // Undo/redo hold the previous file's rows: Ctrl+Z after a load put them back under the new file's name
         state.deletedHistory = [];
         state.redoHistory = [];
@@ -31006,6 +31015,7 @@ function _fillTsdRegionsFromSelection() {
 function _syncRepeatFinderModeUI() {
     const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
     const isTsd = mode === 'tsd';
+    if (!isTsd) _clearTsdPreview();   // the preview belongs to the TSD results shown
     const general = document.getElementById('repeatParamsGeneral');
     const tsdPanel = document.getElementById('repeatParamsTsd');
     const clearBtn = document.getElementById('repeatClearHighlightsBtn');
@@ -31090,6 +31100,20 @@ function rowsForTsdResults(results) {
     return marks;
 }
 
+// The TSDs of the last run, shown faintly until they are marked (or the run is superseded)
+function _setTsdPreview(results) {
+    const marks = results && results.length ? rowsForTsdResults(results) : null;
+    state.tsdPreview = marks && marks.size ? marks : null;
+    document.getElementById('tsdMarkBtn')?.classList.toggle('rf-btn-attention', !!state.tsdPreview);
+    syncResidueOverlays();
+}
+function _clearTsdPreview() {
+    if (!state.tsdPreview && !document.getElementById('tsdMarkBtn')?.classList.contains('rf-btn-attention')) return;
+    state.tsdPreview = null;
+    document.getElementById('tsdMarkBtn')?.classList.remove('rf-btn-attention');
+    syncResidueOverlays();
+}
+
 function applyTsdMarking() {
     const results = _lastTsdResults || [];
     if (!results.length) {
@@ -31140,6 +31164,8 @@ function applyTsdMarking() {
     }
 
     state.tsdMarkUndo = { style, previousMarks, previousStyle, previousColor, lowered };
+    state.tsdPreview = null;   // the marks replace the preview
+    document.getElementById('tsdMarkBtn')?.classList.remove('rf-btn-attention');
     renderAlignment({ deferConservation: true });
     showMessage(`Marked TSDs in ${rowMarks.bySeq.size} sequence(s).`, 1800);
 }
@@ -31885,6 +31911,7 @@ function runTsdAnalysis() {
             const results = _findTSD(state.seqs, tsdMode, params);
             _lastTsdResults = results;
             _renderTsdResultsHTML(resultsEl, results, tsdMode, params);
+            _setTsdPreview(results);
         } catch (e) {
             resultsEl.textContent = `Error: ${e.message}`;
         }
@@ -32173,6 +32200,7 @@ function _initRepeatFinderEvents() {
     const closeBtn = document.getElementById('repeatFinderCloseBtn');
     if (closeBtn) closeBtn.addEventListener('click', () => {
         _clearRepeatHighlights();
+        _clearTsdPreview();
         const modal = document.getElementById('repeatFinderModal');
         if (modal) modal.style.display = 'none';
     });

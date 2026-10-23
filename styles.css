@@ -4054,6 +4054,9 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 .rf-btn:hover { background: #f1f4f8; }
 .rf-btn-primary { background: #1976d2; border-color: #1976d2; color: #fff; font-weight: 600; padding: 4px 18px; }
 .rf-btn-primary:hover { background: #1565c0; }
+/* the Mark button after a TSD run: the found TSDs are shown faintly and this is the next step */
+.rf-btn-attention { background: #fff3c4; border-color: #e0a800; box-shadow: 0 0 0 3px rgba(240, 180, 41, 0.35); animation: rf-attention 1.1s ease-in-out 3; }
+@keyframes rf-attention { 50% { box-shadow: 0 0 0 6px rgba(240, 180, 41, 0.15); } }
 .rf-actions { padding-top: 2px; border-top: 1px solid #eef0f3; margin-top: 2px; }
 .rf-tools { background: #f7f8fa; border: 1px solid #eef0f3; border-radius: 6px; padding: 4px 8px; }
 .rf-tools[hidden] { display: none; }

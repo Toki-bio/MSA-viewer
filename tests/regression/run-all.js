@@ -7975,6 +7975,58 @@ check('Windows: the repeat finder resizes from its edges and maximises; a window
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+
+// Owner (2026-10-23): after a TSD search the found TSDs should show faintly on the alignment at once, and the
+// "Mark in alignment" button should invite the click. A preview layer (state.tsdPreview, the TSD colour at a third
+// of its strength) in every view, cleared by Mark, a mode change, the window's close button and a new file.
+check('TSD finder: found TSDs show faintly at once and the Mark button invites the click; Mark replaces the preview (Full, Canvas)', async (page) => {
+  let x = 7; const rnd = () => { x = (x * 16807) % 2147483647; return x; };
+  const rb = n => Array.from({ length: n }, () => 'ACGT'[rnd() % 4]).join('');
+  const body = rb(100);
+  let fa = '>consensus' + '\n' + '-'.repeat(31) + body + 'AAAAAAAAAA' + '-'.repeat(31) + '\n';
+  for (let i = 0; i < 12; i++) { const tsd = rb(6); fa += '>copy' + i + '\n' + rb(25) + tsd + body + 'AAAAAAAAAA' + tsd + rb(25) + '\n'; }
+  const out = {};
+  for (const view of ['full', 'canvas']) {
+    await page.goto(page.url().replace(/view=\w+/, 'view=' + view).replace(/(index\.html)(?!\?)/, '$1?view=' + view), { waitUntil: 'networkidle' });
+    await page.setInputFiles('#fileInput', { name: 'tsd.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => openRepeatFinder(0));
+    await page.click('label:has(input[name="repeatMode"][value="tsd"])');
+    // the brightness of a TSD residue's cell (row and column of the first result's first upstream residue)
+    const cellMean = async () => {
+      const c = await page.evaluate(() => {
+        const res = _lastTsdResults[0], row = res.seqIndex, col = res.upPositions[0];
+        if (document.getElementById('modeCanvas').checked) { const cv = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics; return { x: cv.left + m.nameW + col * m.charW - _canvasState.offsetX, y: cv.top + m.headerH + row * _canvasState.rowPitch - _canvasState.offsetY, w: m.charW, h: m.charH }; }
+        const b = document.querySelector(`.seq-line[data-seq-index="${row}"] .seq-data > span[data-pos="${col}"]`).getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; });
+      const shot = await page.screenshot({ clip: { x: Math.floor(c.x) + 1, y: Math.floor(c.y) + 1, width: Math.max(1, Math.floor(c.w) - 2), height: Math.max(1, Math.floor(c.h) - 2) } });
+      return page.evaluate(async (b64) => { const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode(); const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height; const g = cv.getContext('2d'); g.drawImage(img, 0, 0); const d = g.getImageData(0, 0, cv.width, cv.height).data; let s = 0, n = 0; for (let i = 0; i < d.length; i += 4) { s += d[i] + d[i + 1] + d[i + 2]; n++; } return Math.round(s / n / 3); }, shot.toString('base64'));
+    };
+    await page.click('#repeatRunBtn'); await page.waitForTimeout(1500);
+    const r = {};
+    r.found = await page.evaluate(() => _lastTsdResults.length);
+    r.preview = await page.evaluate(() => ({ rows: state.tsdPreview ? state.tsdPreview.size : 0, attention: document.getElementById('tsdMarkBtn').classList.contains('rf-btn-attention'), marks: state.tsdMarks.size }));
+    r.previewMean = await cellMean();
+    await page.click('#tsdMarkBtn'); await page.waitForTimeout(800);
+    r.marked = await page.evaluate(() => ({ preview: state.tsdPreview ? state.tsdPreview.size : 0, attention: document.getElementById('tsdMarkBtn').classList.contains('rf-btn-attention'), marks: state.tsdMarks.size }));
+    r.markedMean = await cellMean();
+    // a new run previews again; switching the mode away clears the preview; so does closing the window
+    await page.click('#repeatRunBtn'); await page.waitForTimeout(1500);
+    r.again = await page.evaluate(() => state.tsdPreview ? state.tsdPreview.size : 0);
+    await page.click('label:has(input[name="repeatMode"][value="tandem"])'); await page.waitForTimeout(300);
+    r.afterMode = await page.evaluate(() => state.tsdPreview ? state.tsdPreview.size : 0);
+    await page.click('label:has(input[name="repeatMode"][value="tsd"])'); await page.click('#repeatRunBtn'); await page.waitForTimeout(1500);
+    await page.click('#repeatFinderCloseBtn'); await page.waitForTimeout(300);
+    r.afterClose = await page.evaluate(() => state.tsdPreview ? state.tsdPreview.size : 0);
+    out[view] = r;
+  }
+  // the preview tint is lighter than the mark but darker than the white cell (the TSD colour is a light yellow,
+  // so the differences are small: the preview must sit strictly between)
+  const ok = Object.values(out).every(r => r.found >= 10 && r.preview.rows >= 10 && r.preview.attention && r.preview.marks === 0
+    && r.marked.preview === 0 && !r.marked.attention && r.marked.marks >= 10
+    && r.previewMean > r.markedMean && r.previewMean < 255 && r.again >= 10 && r.afterMode === 0 && r.afterClose === 0);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
