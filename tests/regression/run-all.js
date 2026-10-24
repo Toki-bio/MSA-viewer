@@ -1507,6 +1507,8 @@ check('Statistics matrices: named labels, windowed rows, switch, find, TSV copy'
     return { kind: table.dataset.kind, f: state._statsFocus, cell: cell?.textContent, want: state._statsData.identity[97][120], lower: table.querySelector('td.dg') ? state._statsData.combined[120][97] === state._statsData.distance[120][97] && state._statsData.combined[97][97] === '' : false,
       visible: !!cr && cr.top > sr.top && cr.bottom < sr.bottom && cr.left > sr.left && cr.right < sr.right };
   });
+  // close the Labels panel first: in Firefox/WebKit the toolbar wraps and the open panel covers Copy
+  if (!(await page.locator('#statsLabelsPanel').isHidden())) await page.click('#statsLabelsBtn');
   await page.click('#statsCopyBtn');
   await page.waitForTimeout(200);
   const tsv = await page.evaluate(() => {
