@@ -8451,6 +8451,57 @@ check('Rectangle selection by drag and by two clicks (Full, Canvas); Realign Blo
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+
+// GLM pre-release audit of v278 (2026-10-24), dot-plot collection and region marks: a stored entry id with an
+// apostrophe broke the onclick strings; another modal opened over the dot window left the marks and the
+// click-through backdrop behind; a live recalculation wiped the marks; a region-list re-render during a rename
+// destroyed the input; a bookmark of a duplicate header went to the first row with that name; an entry made with
+// RevComp B looked "here" after the box was unticked.
+check('Dot plot collection audit: hostile stored id, other modal clears marks+peek, recalculation keeps marks, rename survives a re-render, duplicate headers, RevComp here-marker', async (page) => {
+  const seqA = 'ACGTTGCAAGGCTTAACCGGTTAAGGCCTTAAGACGTTGCAAGGCTTAACCGGTTAAGGCCTTAAGTTTT';
+  const fa = '>dup\n' + seqA + '\n>dup\n' + 'TTGCACCGGAATTCCGGAATTCCAAGGTTGCACCGGAATTCCGGAATTCCAAGGTTCCCC' + '\n>other\n' + seqA.split('').reverse().join('') + '\n';
+  await page.evaluate(() => { localStorage.setItem('msaviewer_dotBookmarks', JSON.stringify([{ id: "x');window.__pwned=1;//", name: 'hostile', nameA: 'dup', nameB: 'dup', aStart: 0, aEnd: 10, bStart: 30, bEnd: 40, seqA: 'ACGTTGCAAG', seqB: 'ACGTTGCAAG' }])); });
+  await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(400);
+  await loadFasta(page, fa); await setMode(page, 'full');
+  const r = {};
+  r.idSafe = await page.evaluate(() => /^[A-Za-z0-9_-]+$/.test(state.dotBookmarks[0].id));
+  // the second "dup" row is the one the hostile entry describes? no: its sequence is the FIRST dup's; a bookmark for
+  // the second dup must pick the row whose sequence matches
+  await page.evaluate(() => { state.dotBookmarks.push({ id: 'bm2', name: 'second dup', nameA: 'dup', nameB: 'dup', aStart: 0, aEnd: 8, bStart: 8, bEnd: 16, revB: false, mode: 'spin', window: 6, threshold: 0, seqA: 'TTGCACCG', seqB: 'GAATTCCG', identity: 1 }); _dotSaveBookmarks(); });
+  await page.evaluate(() => openDotPlot(state.seqs[0].seq, state.seqs[0].seq, 'dup', 'dup', { rowIndexA: 0, rowIndexB: 0, alignedSeqA: state.seqs[0].seq, alignedSeqB: state.seqs[0].seq }));
+  await page.waitForSelector('#dotPlotBookmarkItems .dot-bm', { timeout: 10000 });
+  // 1. the hostile entry's buttons work and run nothing foreign
+  await page.click('#dotPlotBookmarkItems .dot-bm[data-id] button[title^="Show the stretch"]'); await page.waitForTimeout(300);
+  r.hostile = await page.evaluate(() => ({ pwned: !!window.__pwned, marks: !!state.dotRegionMarks, peek: document.getElementById('dotPlotModal').classList.contains('dot-peek') }));
+  // 2. duplicate headers: the second entry's show goes to row 1 (its sequence), not row 0
+  await page.evaluate(() => _dotShowBookmarkInAlignment('bm2')); await page.waitForTimeout(200);
+  r.dupRow = await page.evaluate(() => [...state.dotRegionMarks.keys()].sort().join(','));
+  // 3. a live recalculation (slider nudge) keeps the marks and the Clear marks button
+  await page.evaluate(() => { const w = document.getElementById('dotPlotWindow'); w.value = 7; w.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.waitForTimeout(1500);
+  r.afterRecalc = await page.evaluate(() => ({ marks: !!state.dotRegionMarks, btn: !document.getElementById('dotPlotClearMarksBtn').hidden, active: document.querySelectorAll('#dotPlotRegionItems .dot-region-active').length, peek: document.getElementById('dotPlotModal').classList.contains('dot-peek') }));
+  // 4. Clear marks keeps the window in peek mode; a rename survives a region re-render
+  await page.click('#dotPlotClearMarksBtn'); await page.waitForTimeout(200);
+  r.afterClear = await page.evaluate(() => ({ marks: !!state.dotRegionMarks, peek: document.getElementById('dotPlotModal').classList.contains('dot-peek') }));
+  await page.dblclick('#dotPlotBookmarkItems .dot-bm[data-id="bm2"] .dot-bm-name'); await page.waitForTimeout(150);
+  await page.keyboard.type('renamed');
+  await page.evaluate(() => _dotRenderRegionList());   // what a worker reply does mid-edit
+  await page.waitForTimeout(100);
+  r.renameInputAlive = await page.evaluate(() => document.activeElement && document.activeElement.classList.contains('dot-bm-rename'));
+  await page.keyboard.press('Enter'); await page.waitForTimeout(200);
+  r.renamed = await page.evaluate(() => state.dotBookmarks.find(b => b.id === 'bm2').name);
+  // 5. RevComp "here" marker
+  r.hereRc = await page.evaluate(() => { state.dotBookmarks.push({ id: 'bm3', name: 'rc', nameA: 'dup', nameB: 'dup', aStart: 0, aEnd: 8, bStart: 0, bEnd: 8, revB: true, mode: 'spin', window: 6, threshold: 0, seqA: 'ACGTTGCA', seqB: 'ACGTTGCA' }); _dotRenderBookmarks(); const e = document.querySelector('#dotPlotBookmarkItems .dot-bm[data-id="bm3"]'); return e ? e.classList.contains('dot-bm-other') : 'missing:' + document.getElementById('dotPlotBookmarkItems').textContent.slice(0, 60) + '|active=' + (document.activeElement && document.activeElement.className); });
+  // 6. another modal over the dot window: marks and peek go
+  await page.evaluate(() => _dotShowBookmarkInAlignment('bm2')); await page.waitForTimeout(200);
+  await page.evaluate(() => showExclusiveModal('infoModal')); await page.waitForTimeout(200);
+  r.otherModal = await page.evaluate(() => ({ marks: !!state.dotRegionMarks, peek: document.getElementById('dotPlotModal').classList.contains('dot-peek'), dotHidden: document.getElementById('dotPlotModal').style.display === 'none' }));
+  await page.evaluate(() => { document.getElementById('infoModal').style.display = 'none'; state.dotBookmarks = []; _dotSaveBookmarks(); localStorage.removeItem('msaviewer_dotBookmarks'); });
+  const ok = r.idSafe && !r.hostile.pwned && r.hostile.marks && r.hostile.peek && r.dupRow === '1' && r.afterRecalc.marks && r.afterRecalc.btn && r.afterRecalc.active === 0 && r.afterRecalc.peek
+    && !r.afterClear.marks && r.afterClear.peek && r.renameInputAlive && r.renamed === 'renamed' && r.hereRc && !r.otherModal.marks && !r.otherModal.peek && r.otherModal.dotHidden;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

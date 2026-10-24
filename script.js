@@ -2632,7 +2632,10 @@ function showExclusiveModal(id) {
     EXCLUSIVE_MODAL_IDS.forEach(modalId => {
         if (modalId === id) return;
         const modal = el(modalId);
-        if (modal) modal.style.display = 'none';
+        if (!modal) return;
+        // the dot plot's marks and click-through backdrop live with its window (GLM audit, v278)
+        if (modalId === 'dotPlotModal' && modal.style.display !== 'none' && typeof _dotClearRegionMarks === 'function') _dotClearRegionMarks();
+        modal.style.display = 'none';
     });
     const modal = el(id);
     if (modal) modal.style.display = 'block';
@@ -30683,7 +30686,7 @@ function _dotSanitizeBookmarks(arr) {
     const int = v => Number.isInteger(v) ? v : (Number.isInteger(+v) ? +v : 0);
     const seq = v => str(v, 100000).replace(/[^A-Za-z*.-]/g, '');
     return arr.filter(b => b && typeof b === 'object').slice(0, 500).map(b => ({
-        id: str(b.id, 40) || ('bm' + Math.random().toString(36).slice(2, 10)),
+        id: /^[A-Za-z0-9_-]{1,40}$/.test(String(b.id || '')) ? String(b.id) : ('bm' + Math.random().toString(36).slice(2, 10)),   // ids land in onclick strings
         name: str(b.name, 120), nameA: str(b.nameA), nameB: str(b.nameB),
         aStart: int(b.aStart), aEnd: int(b.aEnd), bStart: int(b.bStart), bEnd: int(b.bEnd),
         revB: !!b.revB, mode: b.mode === 'doter' ? 'doter' : 'spin', window: int(b.window), threshold: +b.threshold || 0,
@@ -30714,13 +30717,15 @@ function _dotBookmarkById(id) { return (state.dotBookmarks || []).find(b => b.id
 function _dotRenderBookmarks() {
     const itemsEl = document.getElementById('dotPlotBookmarkItems');
     if (!itemsEl) return;
+    // a rename in progress (a worker reply re-renders the region list meanwhile): leave the input alone
+    if (document.activeElement && document.activeElement.classList.contains('dot-bm-rename') && itemsEl.contains(document.activeElement)) return;
     const S = _dotPlotState, bms = state.dotBookmarks || [];
     document.getElementById('dotPlotBookmarkTsvBtn')?.toggleAttribute('disabled', !bms.length);
     document.getElementById('dotPlotBookmarkClearBtn')?.toggleAttribute('disabled', !bms.length);
     if (!bms.length) { itemsEl.innerHTML = '<div style="padding:4px 6px;color:#888;">Star a stretch in the list above to keep it here.</div>'; return; }
     const esc = _escapeHtml, nameB = _dotPlotNameB();
     itemsEl.innerHTML = bms.map(b => {
-        const here = b.nameA === S.nameA && b.nameB === nameB;
+        const here = b.nameA === S.nameA && b.nameB === nameB && b.revB === _dotPlotRevB() && S.rows > 0;
         const pair = b.nameA === b.nameB ? esc(b.nameA) : esc(b.nameA) + ' vs ' + esc(b.nameB) + (b.revB ? ' (rc)' : '');
         return `<div class="dot-bm${here ? '' : ' dot-bm-other'}" data-id="${esc(b.id)}" title="${here ? 'Click: centre it in the plot.' : 'Another pair: a click opens its dot plot when both sequences are loaded.'} Double-click the name to rename it" onclick="_dotGoToBookmark('${esc(b.id)}')">
             <span class="dot-bm-tools">
@@ -30738,7 +30743,7 @@ function _dotRenameBookmark(id, nameEl) {
     const b = _dotBookmarkById(id); if (!b || !nameEl) return;
     const inp = document.createElement('input'); inp.type = 'text'; inp.value = b.name; inp.className = 'dot-bm-rename'; inp.maxLength = 120;
     let finished = false;
-    const done = (commit) => { if (finished) return; finished = true; if (commit && inp.value.trim()) { b.name = inp.value.trim().slice(0, 120); _dotSaveBookmarks(); } _dotRenderBookmarks(); };
+    const done = (commit) => { if (finished) return; finished = true; if (commit && inp.value.trim()) { b.name = inp.value.trim().slice(0, 120); _dotSaveBookmarks(); } inp.blur(); _dotRenderBookmarks(); };   // blur first: the renderer leaves a focused rename input alone
     inp.addEventListener('click', e => e.stopPropagation()); inp.addEventListener('dblclick', e => e.stopPropagation());
     inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); done(true); } else if (e.key === 'Escape') { e.preventDefault(); done(false); } });
     inp.addEventListener('blur', () => done(true));
@@ -30748,7 +30753,14 @@ function _dotRemoveBookmark(id) { state.dotBookmarks = (state.dotBookmarks || []
 function _dotClearBookmarks() { if (!state.dotBookmarks?.length) return; state.dotBookmarks = []; _dotSaveBookmarks(); _dotRenderRegionList(); showMessage('Collection cleared.', 1500); }
 // the rows of a bookmark's sequences in the loaded alignment (by name), or null
 function _dotBookmarkRows(b) {
-    const rowA = state.seqs.findIndex(s => s.header === b.nameA), rowB = state.seqs.findIndex(s => s.header === b.nameB);
+    // duplicate headers: prefer the row whose gapless sequence holds the stretch where the entry says
+    const find = (name, seq, start, rev) => {
+        const rows = []; state.seqs.forEach((s, i) => { if (s.header === name) rows.push(i); });
+        if (rows.length <= 1 || !seq) return rows.length ? rows[0] : -1;
+        const hit = rows.find(i => { const u = state.seqs[i].seq.replace(/[-. ]/g, '').toUpperCase().replace(/U/g, 'T'); const at = rev ? u.length - start - seq.length : start; return at >= 0 && u.substr(at, seq.length) === (rev ? _reverseComplement(seq) : seq); });
+        return hit !== undefined ? hit : rows[0];
+    };
+    const rowA = find(b.nameA, b.seqA, b.aStart, false), rowB = find(b.nameB, b.seqB, b.bStart, !!b.revB);
     return rowA >= 0 && rowB >= 0 ? { rowA, rowB } : null;
 }
 async function _dotGoToBookmark(id) {
@@ -30950,7 +30962,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S._frozenRow = S._frozenCol = -1;
     S._copyRegion = null;
     S.regions = [];
-    _dotClearRegionMarks(true);
+    S._shownRegion = -1;   // the marks stay (residue-anchored); the new list has no shown entry
 
     const revComp = document.getElementById('dotPlotRevComp')?.checked;
     if (revComp) {
@@ -31431,7 +31443,7 @@ function _initDotPlotEvents() {
             _dotClearRegionMarks();
         });
     }
-    document.getElementById('dotPlotClearMarksBtn')?.addEventListener('click', () => _dotClearRegionMarks());
+    document.getElementById('dotPlotClearMarksBtn')?.addEventListener('click', () => _dotClearRegionMarks(true));
     _dotLoadBookmarks(); _dotRenderBookmarks();
     document.getElementById('dotPlotBookmarkClearBtn')?.addEventListener('click', _dotClearBookmarks);
     document.getElementById('dotPlotBookmarkTsvBtn')?.addEventListener('click', () => {
