@@ -3933,7 +3933,9 @@ table.stats-mx td.cs.dg { background: #d3dfef; }
 /* Pair filter */
 .stats-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; margin: 0 0 6px; font-size: 11px; flex-shrink: 0; }
 .stats-filter .lbl { color: #555; }
-.stats-filter #statsFilterMetric { font-weight: 600; color: #333; }
+.stats-filter #statsFilterKind { font-size: 11px; }
+.stats-legend { font-size: 11px; color: #333; white-space: nowrap; }
+.stats-legend b { color: #3d7cc9; font-weight: normal; }
 .stats-filter input[type="number"] { width: 70px; font-size: 11px; }
 .stats-filter select, .stats-filter button { font-size: 11px; }
 .stats-filter .count { color: #1a5aa0; font-weight: 600; min-width: 10ch; }

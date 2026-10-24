@@ -21130,9 +21130,8 @@ function _openStatsNow() {
             `</table></div>` +
             `<div class="stats-card" id="statsIdCard"></div></div>` +
             `<div class="stats-mx-toolbar">` +
-                `<span class="stats-seg" title="Which matrix to show">` +
-                    `<button type="button" data-kind="distance" class="${opts.kind === 'distance' ? 'on' : ''}" title="Distance = 1 − identity/100">Distance</button>` +
-                    `<button type="button" data-kind="identity" class="${opts.kind === 'identity' ? 'on' : ''}" title="Pairwise identity, %">Identity %</button>` +
+                `<span class="stats-legend" title="One matrix: pairwise identity (%) above the diagonal, distance = 1 − identity/100 below it">` +
+                    `<b>&#9698;</b> identity % &nbsp; <b>&#9699;</b> distance` +
                 `</span>` +
                 `<label class="lbl" title="Denominator of pairwise identity">over <select id="statsIdMode">` +
                     `<option value="esl"${opts.idMode === 'esl' ? ' selected' : ''}>shorter sequence (esl-alipid)</option>` +
@@ -21150,7 +21149,8 @@ function _openStatsNow() {
                 _statsHeatPanelHtml() +
             `</div>` +
             `<div class="stats-filter">` +
-                `<span class="lbl">Pairs with <span id="statsFilterMetric"></span></span>` +
+                `<span class="lbl">Pairs with</span>` +
+                `<select id="statsFilterKind" title="Which value the threshold applies to"><option value="identity">identity %</option><option value="distance">distance</option></select>` +
                 `<select id="statsFilterOp" title="Keep pairs at or above, or at or below, the value"><option value="ge">≥</option><option value="le">≤</option></select>` +
                 `<input type="number" id="statsFilterValue" step="any" placeholder="value" title="Threshold; matching cells are highlighted in the matrix">` +
                 `<span id="statsFilterCount" class="count"></span>` +
@@ -21173,10 +21173,12 @@ function _openStatsNow() {
                     `<button type="button" class="stats-save" data-fmt="csv">CSV, comma-separated</button>` +
                     `<button type="button" class="stats-save" data-fmt="tsv">TSV, tab-separated</button>` +
                     `<button type="button" class="stats-save" data-fmt="xlsx">Excel workbook (.xlsx)</button>` +
+                    `<button type="button" class="stats-save" data-fmt="tsv" data-kind="identity" title="The full, symmetric identity matrix">Identity matrix only (TSV)</button>` +
+                    `<button type="button" class="stats-save" data-fmt="tsv" data-kind="distance" title="The full, symmetric distance matrix">Distance matrix only (TSV)</button>` +
                 `</span></span>` +
             `</div>` +
             `<datalist id="statsNameList">${seqNames.map(n => `<option value="${_escStats(n)}">`).join('')}</datalist>` +
-            `<div class="stats-mx-body" data-kind="${opts.kind}"></div>`;
+            `<div class="stats-mx-body" data-kind="combined"></div>`;
         _statsRenderIdCard();
         _statsUpdateFilterUI();
         _statsUpdateHeatUI();
@@ -21193,7 +21195,11 @@ function _statsBuildStrings() {
     const d = state._statsData, n = d.n, pid = d.pid[d.mode];
     d.identity = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => pid[i * n + j].toFixed(1)));
     d.distance = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 0 : 1 - pid[i * n + j] / 100).toFixed(4)));
+    // the shown matrix (owner, 2026-10-24): identity % above the diagonal, distance below it, the diagonal empty
+    d.combined = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => j > i ? d.identity[i][j] : j < i ? d.distance[i][j] : ''));
 }
+// The heat map and the pair filter work on identity or distance; the shown matrix is both
+function _statsHeatKind() { const k = _statsCurrentKind(); return k === 'combined' ? 'identity' : k; }
 
 function _statsIdentitySummary(mode) {
     const d = state._statsData, n = d.n, pid = d.pid[mode];
@@ -21503,11 +21509,11 @@ function _statsMatrixGrid(kind, cols) {
 
 function _statsFileBase(kind) {
     const d = state._statsData;
-    return (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '') + (kind === 'distance' ? '_distance' : '_identity') + (d && d.mode === 'cols' ? '_sharedcols' : '');
+    return (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '') + (kind === 'distance' ? '_distance' : kind === 'identity' ? '_identity' : '_matrix') + (d && d.mode === 'cols' ? '_sharedcols' : '');
 }
 
 function _statsCurrentKind() {
-    return document.querySelector('#statsSummaryTab .stats-mx-body')?.dataset.kind || 'identity';
+    return document.querySelector('#statsSummaryTab .stats-mx-body')?.dataset.kind || 'combined';
 }
 
 function _statsSelectedCols() {
@@ -21524,7 +21530,7 @@ function copyStatsMatrix(kind) {
     const cols = _statsSelectedCols();
     const clean = v => String(v).replace(/[\t\r\n]+/g, ' ');
     const text = _statsMatrixGrid(kind, cols).map(r => r.map(clean).join('\t')).join('\n') + '\n';
-    const what = cols.length ? `${cols.length} column${cols.length > 1 ? 's' : ''}` : `${kind === 'distance' ? 'Distance' : 'Identity'} matrix`;
+    const what = cols.length ? `${cols.length} column${cols.length > 1 ? 's' : ''}` : (kind === 'distance' ? 'Distance matrix' : kind === 'identity' ? 'Identity matrix' : 'Matrix (identity above, distance below)');
     if (!navigator.clipboard?.writeText) {   // e.g. a page served over plain http
         showMessage('Copying needs a secure page (https or localhost); use Save matrix instead.', 3500);
         return;
@@ -21548,7 +21554,7 @@ function saveStatsMatrix(fmt, kind) {
     const grid = _statsMatrixGrid(kind);
     const base = _statsFileBase(kind);
     if (fmt === 'xlsx') {
-        _statsDownload(_xlsxBlob(grid, kind === 'distance' ? 'distance' : 'identity'), base + '.xlsx');
+        _statsDownload(_xlsxBlob(grid, kind === 'distance' ? 'distance' : kind === 'identity' ? 'identity' : 'matrix'), base + '.xlsx');
     } else {
         _statsDownload(new Blob([_statsDelimited(grid, fmt)], { type: fmt === 'csv' ? 'text/csv;charset=utf-8' : 'text/tab-separated-values;charset=utf-8' }), base + '.' + fmt);
     }
@@ -21648,8 +21654,9 @@ function _statsCellHit(i, j, rawId) {
     return f.op === 'ge' ? v >= f.value - 1e-12 : v <= f.value + 1e-12;
 }
 
+function _statsFilterKind() { return document.getElementById('statsFilterKind')?.value === 'distance' ? 'distance' : 'identity'; }
 function _statsReadFilter() {
-    const kind = _statsCurrentKind();
+    const kind = _statsFilterKind();
     const op = document.getElementById('statsFilterOp')?.value || 'ge';
     const raw = document.getElementById('statsFilterValue')?.value;
     const value = parseFloat(raw);
@@ -21658,9 +21665,7 @@ function _statsReadFilter() {
 
 function _statsUpdateFilterUI() {
     const d = state._statsData;
-    const kind = _statsCurrentKind();
-    const metric = document.getElementById('statsFilterMetric');
-    if (metric) metric.textContent = kind === 'distance' ? 'distance' : 'identity %';
+    const kind = _statsFilterKind();
     const valueEl = document.getElementById('statsFilterValue');
     if (valueEl) { valueEl.min = 0; valueEl.max = kind === 'distance' ? 1 : 100; valueEl.step = kind === 'distance' ? 0.01 : 0.5; }
     const count = document.getElementById('statsFilterCount');
@@ -21763,7 +21768,7 @@ function _statsMatrixCtx(kind) {
     const { style, chars } = _statsLabelOpts();
     const short = name => name.length > chars ? name.slice(0, chars - 1) + '…' : name;
     const labels = d.names.map(short);
-    return { d, m, n, style, chars, labels, windowed: n > STATS_MX_WINDOW_MIN, sel: state._statsSelCols || new Set(), pid: d.pid[d.mode], heat: _statsHeatCtx(kind), kind };
+    return { d, m, n, style, chars, labels, windowed: n > STATS_MX_WINDOW_MIN, sel: state._statsSelCols || new Set(), pid: d.pid[d.mode], heat: _statsHeatCtx(kind === 'combined' ? 'identity' : kind), kind };
 }
 
 function _statsMatrixRows(ctx, i0, i1) {
@@ -21778,7 +21783,7 @@ function _statsMatrixRows(ctx, i0, i1) {
             if (sel.has(j)) cls += ' cs';
             if (filtering && i !== j) cls += _statsCellHit(i, j, pid[i * n + j]) ? ' hit' : ' miss';
             let st = '';
-            if (ctx.heat && i !== j) { const c = _statsHeatColour(ctx.heat, _statsValue(ctx.kind, pid[i * n + j])); st = ` style="background:${c.bg};color:${c.fg}"`; }
+            if (ctx.heat && i !== j) { const c = _statsHeatColour(ctx.heat, _statsValue(ctx.heat.kind, pid[i * n + j])); st = ` style="background:${c.bg};color:${c.fg}"`; }
             row += cls ? `<td class="${cls.trim()}"${st}>${mi[j]}</td>` : `<td${st}>${mi[j]}</td>`;
         }
         html += row + (style === 'angled' ? '<td class="pad"></td>' : '') + '</tr>';
@@ -21795,7 +21800,7 @@ function _buildStatsMatrixTable(kind) {
     const ctx = _statsMatrixCtx(kind);
     const { d, n, style, chars, labels, sel } = ctx;
     const longest = Math.max(1, ...labels.map(l => l.length));
-    const cellW = kind === 'distance' ? 7 : 6;   // in ch, fits "0.1234" / "100.0"
+    const cellW = kind === 'identity' ? 6 : 7;   // in ch, fits "0.1234" / "100.0"
     const hcls = (j, extra) => `c${extra}${sel.has(j) ? ' cs' : ''}`;
     const htitle = j => `${_escStats(d.names[j])} (click to select this column; Ctrl-click adds, Shift-click selects a range)`;
     let head;
@@ -22020,7 +22025,7 @@ function _statsFmt(kind, v) {
 
 // Legend next to the Heatmap button, and the panel's controls
 function _statsUpdateHeatUI() {
-    const kind = _statsCurrentKind();
+    const kind = _statsHeatKind();
     const h = _statsHeatOpts();
     const hc = _statsHeatCtx(kind);
     const legend = document.getElementById('statsHeatLegend');
@@ -22079,7 +22084,7 @@ function _statsPlacePanel(panel) {
 }
 
 function _statsHeatReadRange() {
-    const kind = _statsCurrentKind();
+    const kind = _statsHeatKind();
     const lo = parseFloat(document.getElementById('statsHeatLo')?.value);
     const hi = parseFloat(document.getElementById('statsHeatHi')?.value);
     const h = _statsHeatOpts();
@@ -22179,9 +22184,9 @@ function initStatsTabs() {
         }
         [heatPanel, labelsPanel].forEach(q => { if (q && !q.hidden && !t.closest?.('.stats-heat-panel')) q.hidden = true; });
         if (t.closest?.('.stats-heat-pal')) { _statsSaveHeatOpts({ palette: t.closest('.stats-heat-pal').dataset.pal, on: true }); _statsHeatChanged(); return; }
-        if (t.id === 'statsHeatAuto') { const h = _statsHeatOpts(); h.range[_statsCurrentKind()] = null; _statsSaveHeatOpts({ range: h.range }); _statsHeatChanged(); return; }
+        if (t.id === 'statsHeatAuto') { const h = _statsHeatOpts(); h.range[_statsHeatKind()] = null; _statsSaveHeatOpts({ range: h.range }); _statsHeatChanged(); return; }
         if (toggle) { toggle.hidden = !toggle.hidden; return; }
-        if (t.closest?.('.stats-save')) { saveStatsMatrix(t.closest('.stats-save').dataset.fmt); return; }
+        if (t.closest?.('.stats-save')) { const b = t.closest('.stats-save'); saveStatsMatrix(b.dataset.fmt, b.dataset.kind); return; }
         if (t.closest?.('.stats-menu button[data-out]')) { _statsSavePairs(t.closest('button').dataset.out); return; }
         if (t.closest?.('.stats-view button')) { _statsSetView(t.closest('button').dataset.view); return; }
         if (t.closest?.('.stats-mx-toolbar .stats-seg button')) { _statsSetKind(t.closest('button').dataset.kind); return; }
@@ -22204,7 +22209,7 @@ function initStatsTabs() {
         if (id === 'statsIdMode') { _statsSetIdMode(event.target.value); return; }
         if (id === 'statsHeatOn') { _statsSaveHeatOpts({ on: event.target.checked }); _statsHeatChanged(); return; }
         if (id === 'statsHeatReverse') { _statsSaveHeatOpts({ reverse: event.target.checked }); _statsHeatChanged(); return; }
-        if (id === 'statsFilterOp') { _statsReadFilter(); _statsUpdateFilterUI(); _renderOpenStatsMatrices(); return; }
+        if (id === 'statsFilterOp' || id === 'statsFilterKind') { _statsReadFilter(); _statsUpdateFilterUI(); _renderOpenStatsMatrices(); return; }
         if (id !== 'statsLabelStyle' && id !== 'statsLabelChars') return;
         const style = document.getElementById('statsLabelStyle').value;
         const chars = Math.max(3, Math.min(80, parseInt(document.getElementById('statsLabelChars').value, 10) || 20));

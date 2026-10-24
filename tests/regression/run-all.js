@@ -1484,7 +1484,7 @@ check('Statistics matrices: named labels, windowed rows, switch, find, TSV copy'
     out[style] = await page.evaluate(async (style) => {
       const sc = document.querySelector('#statsSummaryTab .stats-mx-scroll'), table = sc.querySelector('table');
       const head = [...table.tHead.rows[0].cells].filter(c => c.classList.contains('c'));
-      const n = state._statsData.names.length, m = state._statsData.identity;
+      const n = state._statsData.names.length, m = state._statsData.combined;
       const headOk = head.length === n && head.every((c, j) => c.title.startsWith(state._statsData.names[j]) &&
         (style === 'numbers' ? c.textContent === String(j + 1) : state._statsData.names[j].startsWith(c.textContent.replace('…', ''))));
       sc.scrollTop = 0.6 * (sc.scrollHeight - sc.clientHeight);
@@ -1496,8 +1496,7 @@ check('Statistics matrices: named labels, windowed rows, switch, find, TSV copy'
       return { headOk, rowOk, i, domRows: table.tBodies[0].rows.length };
     }, style);
   }
-  // switch shows the distance matrix; find puts the named row/column under the labels
-  await page.click('.stats-seg button[data-kind="distance"]');
+  // one matrix: identity % above the diagonal, distance below (owner, 2026-10-24); find puts the named row/column under the labels
   await page.fill('#statsFindRow', 'name_97');
   await page.fill('#statsFindCol', 'name_120');
   await page.waitForTimeout(300);
@@ -1505,7 +1504,7 @@ check('Statistics matrices: named labels, windowed rows, switch, find, TSV copy'
     const sc = document.querySelector('#statsSummaryTab .stats-mx-scroll'), table = sc.querySelector('table');
     const cell = table.querySelector('td.focus');
     const cr = cell?.getBoundingClientRect(), sr = sc.getBoundingClientRect();
-    return { kind: table.dataset.kind, f: state._statsFocus, cell: cell?.textContent, want: state._statsData.distance[97][120],
+    return { kind: table.dataset.kind, f: state._statsFocus, cell: cell?.textContent, want: state._statsData.identity[97][120], lower: table.querySelector('td.dg') ? state._statsData.combined[120][97] === state._statsData.distance[120][97] && state._statsData.combined[97][97] === '' : false,
       visible: !!cr && cr.top > sr.top && cr.bottom < sr.bottom && cr.left > sr.left && cr.right < sr.right };
   });
   await page.click('#statsCopyBtn');
@@ -1514,9 +1513,9 @@ check('Statistics matrices: named labels, windowed rows, switch, find, TSV copy'
     const lines = (window._copied || '').trimEnd().split('\n');
     const head = lines[0].split('\t'), r7 = lines[8].split('\t');
     return { lines: lines.length, headOk: head[0] === '' && head[1] === state._statsData.names[0] && head.length === 151,
-      rowOk: r7[0] === state._statsData.names[7] && r7[8] === '0.0000' && r7[3] === state._statsData.distance[7][2] };
+      rowOk: r7[0] === state._statsData.names[7] && r7[8] === '' && r7[3] === state._statsData.distance[7][2] && r7[12] === state._statsData.identity[7][11] };
   });
-  const navOk = nav.kind === 'distance' && nav.f.i === 97 && nav.f.j === 120 && nav.cell === nav.want && nav.visible;
+  const navOk = nav.kind === 'combined' && nav.lower && nav.f.i === 97 && nav.f.j === 120 && nav.cell === nav.want && nav.visible;
   const ok = ['angled', 'vertical', 'numbers'].every(s => out[s].headOk && out[s].rowOk && out[s].domRows < 150) && navOk && tsv.lines === 151 && tsv.headOk && tsv.rowOk;
   return { pass: ok, detail: JSON.stringify({ ...out, nav, tsv }) };
 });
@@ -1595,7 +1594,7 @@ check('Statistics window: esl values, tooltips, maximize, 8-way resize, dock, co
   await page.click('table.stats-mx thead th[data-c="5"]', { modifiers: ['Control'] });
   await page.click('#statsCopyBtn'); await page.waitForTimeout(150);
   r.copy = await page.evaluate(() => { const rows = window._copied.trimEnd().split('\n').map(l => l.split('\t')); const d = state._statsData;
-    return rows.length === d.n + 1 && rows[0].length === 3 && rows[0][1] === d.names[2] && rows[0][2] === d.names[5] && rows[7][2] === d.identity[6][5]
+    return rows.length === d.n + 1 && rows[0].length === 3 && rows[0][1] === d.names[2] && rows[0][2] === d.names[5] && rows[7][2] === d.combined[6][5]
       && document.querySelectorAll('table.stats-mx thead th.cs').length === 2 && document.getElementById('statsCopyBtn').textContent === 'Copy 2 columns'; });
   await page.keyboard.press('Escape');
   // pair filter
