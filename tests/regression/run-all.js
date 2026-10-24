@@ -8643,6 +8643,24 @@ check('Variable sites only: a residue selection across hidden columns is framed 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+
+// GLM audit (confirmed twice): a residue selection drag whose mouseup never reaches the page (the window lost focus
+// mid-drag) left state.isDragging set, and the tooltip gate then refused every residue tooltip until the next click.
+// Losing the window's focus now ends a drag like a mouseup.
+check('A drag interrupted by the window losing focus ends; residue tooltips work again', async (page) => {
+  await loadFasta(page, '>a\nACGTACGTACGTACGT\n>b\nACGTACGTACGTACGT\n');
+  await setMode(page, 'full');
+  const c = await page.evaluate(() => { const a = document.querySelector('.seq-line[data-seq-index="1"] .seq-data > span[data-pos="3"]').getBoundingClientRect(); return { x: a.left + a.width / 2, y: a.top + a.height / 2, w: a.width }; });
+  await page.mouse.move(c.x, c.y); await page.mouse.down(); await page.mouse.move(c.x + 3 * c.w, c.y, { steps: 3 });
+  const during = await page.evaluate(() => ({ dragging: !!state.isDragging, gate: _pointerDragInProgress() }));
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));   // the user switched windows with the button down
+  const after = await page.evaluate(() => ({ dragging: !!state.isDragging, gate: _pointerDragInProgress(), sel: state.selectedNucs.get(1) ? state.selectedNucs.get(1).size : 0 }));
+  await page.mouse.up();
+  await page.mouse.move(c.x + 6 * c.w, c.y); await page.waitForTimeout(700);
+  const tip = await page.evaluate(() => { const t = document.getElementById('tooltip'); const cs = getComputedStyle(t); return cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0'; });
+  return { pass: during.dragging && during.gate && !after.dragging && !after.gate && after.sel === 4 && tip, detail: JSON.stringify({ during, after, tip }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
