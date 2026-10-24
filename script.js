@@ -6465,10 +6465,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         }
 
         clipData();
-        // Highlight selected nucleotides (mirrors DOM .nuc-selected in Full/Block mode)
+        // Highlight selected nucleotides: the same yellow tint and brown frame as the DOM's .nuc-selected
+        // (styles.css); Canvas used to draw them blue, so a selection changed colour with the view (GLM audit, v278)
         if (state.selectedNucs.size > 0) {
-            octx.fillStyle = 'rgba(25, 118, 210, 0.25)';
-            octx.strokeStyle = '#1976D2';
+            octx.fillStyle = 'rgba(255, 213, 0, 0.55)';
+            octx.strokeStyle = 'rgba(140, 100, 0, 0.9)';
             octx.lineWidth = 1;
             state.selectedNucs.forEach((posSet, rowIdx) => {
                 if (rowIdx < 0 || !posSet || posSet.size === 0) return;
@@ -6522,7 +6523,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         }
         // Gap tools: the cell under the pointer (DOM: the :hover outline)
         const gh = _canvasState.gapHover;
-        if (gh && state.editModeActive && GENEDOC_GAP_TOOLS.has(state.editTool) && gh.row >= 0 && gh.row < nSeqs) {
+        if (gh && state.editModeActive && GENEDOC_GAP_TOOLS.has(state.editTool) && gh.row >= 0 && gh.row < nSeqs
+            && gh.col >= 0 && gh.col < (state.seqs[gh.row]?.seq.length || 0)) {   // an edit can shorten the row under a still pointer
             const sc = posSlot(gh.col);
             if (sc >= 0) {
                 const y = HEADER_H + gh.row * rowPitch - oy, x = NAME_W + sc * CHAR_W - ox;

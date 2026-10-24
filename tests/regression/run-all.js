@@ -8392,7 +8392,7 @@ check('Residue selection: one tint and one frame per run, no box per cell (Full,
   }
   const f = out.full, cv = out.canvas;
   const ok = f.sel === 6 && f.mid === 2 && f.start === 3 && f.end === 3 && f.startCls && f.endCls && !f.midCls
-    && cv.sel === 6 && cv.outerLeft > 200 && cv.outerRight > 200 && cv.inner < 120 && cv.inner2 < 120;
+    && cv.sel === 6 && cv.outerLeft >= cv.inner + 60 && cv.outerRight >= cv.inner2 + 60 && cv.inner <= 160 && cv.inner2 <= 160;   // inside a run: the tint only (0.55 = 140); at its ends the frame adds
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
