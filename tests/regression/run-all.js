@@ -8607,6 +8607,42 @@ check('Test harness: a browser a check leaves open is closed by the runner (clos
   return { pass: before && closed === 1 && !stray.isConnected() && page.context().browser().isConnected(), detail: JSON.stringify({ before, closed, after: stray.isConnected() }) };
 });
 
+
+// GLM audit (Canvas/DOM parity): with Variable sites only, a selected run that spans hidden (conserved) columns
+// must be framed the same way in both views: a break where columns are hidden. The DOM judges run ends by the
+// cells on the page; Canvas groups runs by consecutive alignment positions, not only by consecutive slots.
+check('Variable sites only: a residue selection across hidden columns is framed alike in Full and Canvas', async (page) => {
+  // columns 3-7 and 10 are conserved (hidden with Variable sites only), the rest vary; selecting 2-10 shows the runs {2} and {8,9}
+  const base = 'ACGTAAAAGTCAGTCA';
+  const rows = [base, 'TCGTAAAACTCGGTAA', 'AGCTAAAAGACACTCC'];
+  const fa = rows.map((r, i) => '>s' + i + '\n' + r).join('\n') + '\n';
+  const out = {};
+  for (const view of ['full', 'canvas']) {
+    await loadFasta(page, fa); await setMode(page, view);
+    await page.evaluate(() => { const b = document.getElementById('varSitesOnly'); if (!b.checked) { b.checked = true; b.dispatchEvent(new Event('change', { bubbles: true })); } });
+    await page.waitForTimeout(500);
+    await page.evaluate(() => { _setNucRectangle(1, 2, 1, 10); scheduleNucSelectionRefresh(); if (document.getElementById('modeCanvas').checked) (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)(); });
+    await page.waitForTimeout(300);
+    out[view] = await page.evaluate(() => {
+      const hidden = [3, 4, 5, 6, 7, 10];
+      if (document.getElementById('modeCanvas').checked) {
+        const o = _canvasState.overlay, m = _canvasState.metrics, dpr = o.width / parseFloat(o.style.width || o.width), g = o.getContext('2d');
+        const y = Math.round((m.headerH + 1.5 * _canvasState.rowPitch - _canvasState.offsetY) * dpr);
+        const px = x => { let a = 0; for (let d = -2; d <= 2; d++) a = Math.max(a, g.getImageData(Math.round((x + d) * dpr), y, 1, 1).data[3]); return a; };
+        const edge = col => m.nameW + _canvasColToSlot(col) * m.charW - _canvasState.offsetX;   // left edge of a column's cell
+        return { hiddenSlots: hidden.map(c => _canvasColToSlot(c)), atBreak: px(edge(8)), inside: px(edge(9)), outerLeft: px(edge(2)), outerRight: px(edge(9) + m.charW), lone: px(edge(2) + m.charW) };
+      }
+      const sp = c => document.querySelector('.seq-line[data-seq-index="1"] .seq-data > span[data-pos="' + c + '"]');
+      return { hiddenPresent: hidden.map(c => !!sp(c) && sp(c).getClientRects().length > 0), lone: sp(2).classList.contains('nuc-sel-start') && sp(2).classList.contains('nuc-sel-end'), startAt8: sp(8).classList.contains('nuc-sel-start') && !sp(8).classList.contains('nuc-sel-end'), endAt9: sp(9).classList.contains('nuc-sel-end') && !sp(9).classList.contains('nuc-sel-start') };
+    });
+    await page.evaluate(() => { const b = document.getElementById('varSitesOnly'); if (b.checked) { b.checked = false; b.dispatchEvent(new Event('change', { bubbles: true })); } });
+  }
+  const f = out.full, c = out.canvas;
+  const ok = f.hiddenPresent.every(v => !v) && f.lone && f.startAt8 && f.endAt9
+    && c.hiddenSlots.every(s => s < 0) && c.atBreak >= c.inside + 60 && c.outerLeft >= c.inside + 60 && c.outerRight >= c.inside + 60 && c.lone >= c.inside + 60;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

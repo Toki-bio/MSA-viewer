@@ -6479,12 +6479,15 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const y = HEADER_H +rowIdx * rowPitch - oy;
                 if (y + CHAR_H < 0 || y > h) return;
                 // one tint and one frame per run of shown cells (a box per cell drew borders between them)
-                const slots = [];
-                posSet.forEach(pos => { const sc = posSlot(pos); if (sc >= 0) slots.push(sc); });
-                slots.sort((a, b) => a - b);
+                // a run = consecutive shown slots AND consecutive alignment positions: a hidden column (Variable
+                // sites only) breaks it, as it does in Full/Block where the hidden cell is not on the page
+                const cells = [];
+                posSet.forEach(pos => { const sc = posSlot(pos); if (sc >= 0) cells.push([sc, pos]); });
+                cells.sort((a, b) => a[0] - b[0]);
+                const slots = cells.map(c => c[0]);
                 for (let i = 0; i < slots.length;) {
                     let j = i;
-                    while (j + 1 < slots.length && slots[j + 1] === slots[j] + 1) j++;
+                    while (j + 1 < slots.length && slots[j + 1] === slots[j] + 1 && cells[j + 1][1] === cells[j][1] + 1) j++;
                     const x = NAME_W + slots[i] * CHAR_W - ox, runW = (slots[j] - slots[i] + 1) * CHAR_W;
                     if (x + runW >= 0 && x <= w) {
                         octx.fillRect(x, y, runW, CHAR_H);
@@ -24662,16 +24665,22 @@ function refreshNucleotideSelectionsImmediate() {
     // The first and last cell of each run of selected cells carry the frame's sides (styles.css), judged by
     // the cells that exist on the page (a hidden column is not a neighbour: Canvas frames by shown slots the
     // same way); only cells whose neighbours changed are touched, so a 30,000-cell rectangle drag stays cheap
+    // (a neighbour hidden by Variable sites only is on the page but not shown: it breaks the run; the layout
+    // reads of pass 1 are kept apart from the class writes of pass 2 so the browser lays out once)
+    const shownCache = new Map();
+    const shown = span => { let v = shownCache.get(span); if (v === undefined) { v = span.offsetParent !== null; shownCache.set(span, v); } return v; };
+    const writes = [];
     touched.forEach((set, row) => {
         const posMap = state.domSelectedNucs.get(row);
         if (!posMap) return;
         set.forEach(pos => {
             const span = posMap.get(pos);
             if (!span) return;
-            span.classList.toggle('nuc-sel-start', !posMap.has(pos - 1));
-            span.classList.toggle('nuc-sel-end', !posMap.has(pos + 1));
+            const left = posMap.get(pos - 1), right = posMap.get(pos + 1);
+            writes.push([span, !(left && shown(left)), !(right && shown(right))]);
         });
     });
+    writes.forEach(([span, start, end]) => { span.classList.toggle('nuc-sel-start', start); span.classList.toggle('nuc-sel-end', end); });
 
     // Update pending indicator
     if (state.domPendingNuc) {
