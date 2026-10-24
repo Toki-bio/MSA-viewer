@@ -8502,6 +8502,35 @@ check('Dot plot collection audit: hostile stored id, other modal clears marks+pe
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+
+// GLM pre-release audit of v278 (2026-10-24): the Canvas branch of _showRowInAlignment jumped past the content's
+// end for a row near the bottom (a blank canvas); the letter-case switch also transformed the annotation track's
+// feature names in Full/Block (Canvas draws them as written); a new file nulled the dot-plot region marks but left
+// the Clear marks button, the click-through backdrop and the list's shown entry behind.
+check('Audit fixes: Canvas row jump stays within the content; annotation labels keep their case; a new file resets the dot-plot mark UI', async (page) => {
+  await loadSyntheticFasta(page, 200, 300);
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await page.evaluate(() => _showRowInAlignment(199, 5)); await page.waitForTimeout(400);
+  const r = {};
+  r.jump = await page.evaluate(() => { const cv = _canvasState.canvas, h = parseInt(cv.style.height) || cv.clientHeight; const maxY = Math.max(0, _canvasState.totalContentH - h); const lastRowY = _canvasState.metrics.headerH + 199 * _canvasState.rowPitch - _canvasState.offsetY; return { oy: Math.round(_canvasState.offsetY), maxY: Math.round(maxY), lastRowVisible: lastRowY >= 0 && lastRowY + _canvasState.rowPitch <= h + 1 }; });
+  await setMode(page, 'full'); await page.waitForTimeout(300);
+  await page.evaluate(() => { setAnnotation('seq0\t10\t40\tmyGene', 'probe.bed'); setResidueCase('upper'); });
+  await page.waitForTimeout(400);
+  r.annot = await page.evaluate(() => { const d = document.querySelector('.annot-track-data'); return { present: !!d, tt: d ? getComputedStyle(d).textTransform : null, residueTT: getComputedStyle(document.querySelector('.seq-line[data-seq-index="0"] .seq-data')).textTransform }; });
+  await page.evaluate(() => { setResidueCase('asis'); clearAnnotation(); });
+  await page.evaluate(() => { const s = state.seqs[0]; return openDotPlot(s.seq, s.seq, s.header, s.header, { rowIndexA: 0, rowIndexB: 0, alignedSeqA: s.seq, alignedSeqB: s.seq }); });
+  await page.waitForTimeout(600);
+  await page.evaluate(() => { _dotPlotState.regions = [{ row: 0, col: 2, length: 4, aStart: 0, aEnd: 8, bStart: 2, bEnd: 10, matched: 4, avgScore: 1 }]; _dotRenderRegionList(); _dotShowRegionInAlignment(0); });
+  await page.waitForTimeout(200);
+  r.beforeLoad = await page.evaluate(() => ({ marks: !!state.dotRegionMarks, btn: !document.getElementById('dotPlotClearMarksBtn').hidden, peek: document.getElementById('dotPlotModal').classList.contains('dot-peek') }));
+  await loadFasta(page, '>n1\nACGTACGTAC\n>n2\nACGTACGTAC\n');
+  r.afterLoad = await page.evaluate(() => ({ marks: !!state.dotRegionMarks, btn: !document.getElementById('dotPlotClearMarksBtn').hidden, peek: document.getElementById('dotPlotModal').classList.contains('dot-peek'), shown: _dotPlotState._shownRegion }));
+  await page.evaluate(() => { const m = document.getElementById('dotPlotModal'); if (m.style.display !== 'none') document.getElementById('dotPlotCloseBtn').click(); });
+  const ok = r.jump.oy <= r.jump.maxY && r.jump.lastRowVisible && r.annot.present && r.annot.tt === 'none' && r.annot.residueTT === 'uppercase'
+    && r.beforeLoad.marks && r.beforeLoad.btn && r.beforeLoad.peek && !r.afterLoad.marks && !r.afterLoad.btn && !r.afterLoad.peek && r.afterLoad.shown === -1;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

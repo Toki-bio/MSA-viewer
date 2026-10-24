@@ -13457,7 +13457,7 @@ async function parseAndRender(isFromDrop = false) {
         // Keyed by row index: meaningless for a different file
         state.tsdMarks = new Map();
         state.tsdMarkUndo = null;
-        state.dotRegionMarks = null;
+        if (typeof _dotClearRegionMarks === 'function') _dotClearRegionMarks(); else state.dotRegionMarks = null;   // and the dot window's mark UI
         if (state.repeatHighlights) state.repeatHighlights.clear();
         // Name colours belong to the previous file (this used to reset state.colourState,
         // which nothing reads, so colours carried over). Saved presets are kept.
@@ -32551,8 +32551,10 @@ function _showRowInAlignment(row, col) {
     if (document.getElementById('modeCanvas')?.checked && _canvasState.canvas) {
         // Canvas: the row a third of the way down (as _geScrollToSeq), then the column
         const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
-        const viewH = container?.clientHeight || 240;
-        _canvasState.offsetY = Math.max(0, row * rowPitch - Math.min(viewH / 3, rowPitch * 4));
+        const cv = _canvasState.canvas;
+        const viewH = (parseInt(cv.style.height) || cv.clientHeight || container?.clientHeight || 240);
+        const maxY = Math.max(0, (_canvasState.totalContentH || 0) - viewH);   // not past the content's end (GLM audit)
+        _canvasState.offsetY = Math.min(maxY, Math.max(0, row * rowPitch - Math.min(viewH / 3, rowPitch * 4)));
         _canvasState.scheduleDraw?.();
         _canvasState.onOffsetChange?.();
         if (Number.isInteger(col)) _scrollToColumn(col);
