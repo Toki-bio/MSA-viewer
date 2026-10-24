@@ -3847,6 +3847,8 @@ table.stats-mx th.hl, table.stats-mx th.hl span { background: #fff3b0; color: #0
 .stats-foot { flex-shrink: 0; margin-top: 6px; font-size: 10px; color: #999; }
 /* The attribution of the statistics to Easel / HMMER (Sean R. Eddy): distinct, not a footnote (owner, 2026-10-24) */
 .stats-credit { font-size: 11px; color: #444; border-top: 1px solid #e3e6ea; padding-top: 5px; line-height: 1.4; }
+.stats-stale { flex-shrink: 0; margin-bottom: 6px; padding: 5px 8px; font-size: 12px; color: #6b4a00; background: #fff6d6; border: 1px solid #f0d78a; border-radius: 4px; }
+.stats-stale button { margin-left: 6px; font-size: 12px; padding: 1px 8px; }
 .stats-credit b { color: #222; }
 .stats-credit a { color: #2a6fb0; }
 .stats-win.stats-docked {

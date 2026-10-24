@@ -13461,6 +13461,7 @@ async function parseAndRender(isFromDrop = false) {
         state.tsdMarks = new Map();
         state.tsdMarkUndo = null;
         if (typeof _dotClearRegionMarks === 'function') _dotClearRegionMarks(); else state.dotRegionMarks = null;   // and the dot window's mark UI
+        if (typeof _statsInvalidate === 'function') _statsInvalidate(true);   // the statistics of the previous file
         if (state.repeatHighlights) state.repeatHighlights.clear();
         // Name colours belong to the previous file (this used to reset state.colourState,
         // which nothing reads, so colours carried over). Saved presets are kept.
@@ -14918,6 +14919,7 @@ function _dropNoOpUndo(redoBefore) {
 function pushUndo(type) {
     _noteRowSelectionForReorder();
     _scheduleSearchRecount();
+    if (typeof _statsInvalidate === 'function') _statsInvalidate(false);   // the open statistics window is now stale
     state.deletedHistory.push({
         type: type,
         // name colours are keyed by name: a step that renames (RevComp's rc_ prefix, Rename) left the
@@ -15107,6 +15109,7 @@ function undoDelete(quiet) {
     if (last.colStateBefore) redoEntry.colStateAfter = _snapshotColumnState();
     state.redoHistory.push(redoEntry);
     state.seqs = _undoRestoreSeqs(last.seqs);
+    if (typeof _statsInvalidate === 'function') _statsInvalidate(false);
     if (last.colours && colourState?.mappings) { colourState.mappings.clear(); last.colours.forEach((v, k) => colourState.mappings.set(k, v)); }
     _restoreGroupOrder(last.groupOrder);
     if (last.colStateBefore) _restoreColumnState(last.colStateBefore);
@@ -15149,6 +15152,7 @@ function redoAction(quiet) {
     undoEntry.groupOrder = state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null;
     state.deletedHistory.push(undoEntry);
     state.seqs = _undoRestoreSeqs(next.seqs);
+    if (typeof _statsInvalidate === 'function') _statsInvalidate(false);
     if (next.colours && colourState?.mappings) { colourState.mappings.clear(); next.colours.forEach((v, k) => colourState.mappings.set(k, v)); }
     _restoreGroupOrder(next.groupOrder);
     if (next.colStateAfter) _restoreColumnState(next.colStateAfter);
@@ -21038,15 +21042,32 @@ function downloadTreeNewick() {
 // Pairwise matrices are O(sequences^2 x columns), so this reaches seconds on a large
 // alignment. Show the indicator and yield before starting.
 async function openStats() {
-    return runWithProgress('Computing statistics...', () => _openStatsNow(),
-        'pairwise distance and identity matrices');
+    let stopped = false;
+    const r = await runWithProgress('Computing statistics...', (update) => _openStatsNow(update, () => stopped),
+        'pairwise identity, esl-alipid definition', () => { stopped = true; });
+    if (r === 'stopped') showMessage('Statistics cancelled.', 2000);
+    return r;
+}
+
+// The statistics belong to one alignment. A new file closes the window and drops them; an edit marks the open
+// window stale and offers Recompute (the pass takes seconds on a big alignment, so it is not automatic).
+function _statsInvalidate(newFile) {
+    const w = document.getElementById('statsModal');
+    const open = w && w.style.display !== 'none';
+    if (newFile) {
+        state._statsData = null; state._statsHits = []; state._statsFilter = null; state._statsSelCols = new Set();
+        if (open) closeStats();
+        return;
+    }
+    const bar = document.getElementById('statsStale');
+    if (bar && open && state._statsData) bar.hidden = false;
 }
 
 // ── Alignment Statistics ────────────────────────────────────────────────────────
 // Reimplements Easel esl-alistat (summary) and esl-alipid (pairwise identity). Both
 // identity definitions are computed in one pass; the matrix, the identity card and the
 // pair filter use the one chosen in the window (default: esl-alipid's).
-function _openStatsNow() {
+async function _openStatsNow(update, isStopped) {
     try {
         const seqs = getTreeInputSequences();
         if (seqs.length < 2) {
@@ -21061,13 +21082,22 @@ function _openStatsNow() {
         // nucleotide alignment U is the same code as T (Easel's DNA alphabet), so the pass compares T for U.
         const isGap = ch => ch === undefined || ch === '-' || ch === '.' || ch === '*' || ch === '~' || ch === '_' || ch === ' ';
         // Rows shorter than the alignment count as gap-padded to alen.
+        // One byte per cell (0 = not a residue, else the upper-case letter): the pair pass over strings took
+        // 20 s for 600 x 2,000 and nine minutes for 2,000 x 5,000, with the tab frozen.
         const rawLen = new Int32Array(nseq);
         let totalGaps = 0;
         const nucleotide = !isProteinAlignment(seqs);
-        const up = seqs.map(s => { const u = s.seq.toUpperCase(); return nucleotide ? u.replace(/U/g, 'T') : u; });
+        const enc = new Array(nseq);
         for (let i = 0; i < nseq; i++) {
+            const u = seqs[i].seq.toUpperCase(), a = new Uint8Array(alen);
             let r = 0;
-            for (let p = 0; p < alen; p++) if (!isGap(up[i][p])) r++;
+            for (let p = 0; p < u.length; p++) {
+                const ch = u[p];
+                if (isGap(ch)) continue;
+                a[p] = nucleotide && ch === 'U' ? 84 : u.charCodeAt(p);
+                r++;
+            }
+            enc[i] = a;
             rawLen[i] = r;
             totalGaps += alen - r;
         }
@@ -21080,22 +21110,30 @@ function _openStatsNow() {
         const pidEsl = new Float64Array(nseq * nseq).fill(100);
         const pidCols = new Float64Array(nseq * nseq).fill(100);
         let noSharedCols = 0, emptyPairs = 0;
+        const totalPairs = nseq * (nseq - 1) / 2;
+        let done = 0, lastYield = performance.now();
         for (let i = 0; i < nseq; i++) {
-            const a = up[i];
+            const a = enc[i];
             for (let j = i + 1; j < nseq; j++) {
-                const b = up[j];
+                const b = enc[j];
                 let nid = 0, shared = 0;
                 for (let p = 0; p < alen; p++) {
                     const x = a[p], y = b[p];
-                    if (isGap(x) || isGap(y)) continue;
-                    shared++;
-                    if (x === y) nid++;
+                    if (x && y) { shared++; if (x === y) nid++; }
                 }
                 const minLen = Math.min(rawLen[i], rawLen[j]);
                 if (!minLen) emptyPairs++;
                 if (!shared) noSharedCols++;
                 pidEsl[i * nseq + j] = pidEsl[j * nseq + i] = minLen ? nid / minLen * 100 : 0;
                 pidCols[i * nseq + j] = pidCols[j * nseq + i] = shared ? nid / shared * 100 : 0;
+            }
+            done += nseq - 1 - i;
+            // let the busy overlay repaint, report, and honour Stop
+            if (performance.now() - lastYield > 60) {
+                if (isStopped && isStopped()) return 'stopped';
+                if (update) update(`${done.toLocaleString()} of ${totalPairs.toLocaleString()} pairs`);
+                await yieldToPaint();
+                lastYield = performance.now();
             }
         }
 
@@ -21109,6 +21147,8 @@ function _openStatsNow() {
         state._statsSelCols = new Set();
         state._statsFilter = null;
         _statsBuildStrings();
+        const staleBar = document.getElementById('statsStale');
+        if (staleBar) staleBar.hidden = true;
 
         let small = Infinity, large = 0;
         for (const r of rawLen) { small = Math.min(small, r); large = Math.max(large, r); }
@@ -21317,7 +21357,8 @@ function _statsShow() {
     const w = document.getElementById('statsModal');
     if (!w) return;
     const prefs = _statsPrefs();
-    if (prefs.dockW) _statsDockW = Math.max(280, prefs.dockW);
+    const dockW = +prefs.dockW;   // a corrupt entry (a string, NaN) used to give the pane a NaN width
+    if (Number.isFinite(dockW) && dockW > 0) _statsDockW = Math.max(280, Math.min(dockW, 4000));
     w.style.display = 'flex';
     if (!w._init) {
         w._init = true;
@@ -21334,7 +21375,12 @@ function _statsShow() {
         });
         window.addEventListener('resize', () => {
             if (w.style.display === 'none') return;
-            if (w.classList.contains('stats-docked')) w.style.top = _statsDockTop() + 'px';
+            if (w.classList.contains('stats-docked')) {
+                w.style.top = _statsDockTop() + 'px';
+                // the pane keeps at least 300 px for the alignment when the browser window shrinks
+                const width = Math.min(_statsDockW, window.innerWidth - 300);
+                if (parseInt(w.style.width, 10) !== width) { w.style.width = width + 'px'; document.body.style.paddingRight = width + 'px'; _statsRelayout(); }
+            }
             else if (w.classList.contains('stats-max')) _statsApplyMaxRect();
         });
     }
@@ -24934,6 +24980,7 @@ function initializeAppUI() {
         'statsButton': openStats,
         'repeatFinderMenuButton': openRepeatFinder,
         'statsCloseBtn': closeStats,
+        'statsRecompute': () => openStats(),
         'treeBuilderCloseBtn': closeTreeBuilder,
         'treeCopyNewickBtn': copyTreeNewick,
         'treeDownloadNewickBtn': downloadTreeNewick,

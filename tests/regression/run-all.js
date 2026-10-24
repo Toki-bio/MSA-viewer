@@ -8717,6 +8717,58 @@ check('Statistics: a filter value typed right after a heat-range value is applie
   return { pass: r.filter === 90 && r.heatLo === 20 && r.litWhileOver === 2 && r.litAfter === 0, detail: JSON.stringify(r) };
 });
 
+
+// Statistics audit batch 3 (2026-10-24). Measured before: 600 x 2000 took 20 s, 2000 x 5000 nine minutes, the tab
+// frozen with a busy overlay that never repainted and no Stop. Now: typed arrays, progress, Stop.
+check('Statistics: the pairwise pass is fast, reports its progress and can be stopped', async (page) => {
+  await loadFasta(page, makeFasta(600, 2000));
+  const t0 = Date.now();
+  await page.evaluate(() => openStats());
+  await page.waitForFunction(() => state._statsData && state._statsData.n === 600 && document.querySelector('#statsSummaryTab table.stats-mx'), null, { timeout: 60000 });
+  const ms600 = Date.now() - t0;
+  await page.evaluate(() => document.getElementById('statsCloseBtn').click());
+  await loadFasta(page, makeFasta(1500, 4000));
+  await page.evaluate(() => { window._statsRun = openStats(); });
+  let progress = null;
+  for (let k = 0; k < 400 && !progress; k++) { await page.waitForTimeout(50); progress = await page.evaluate(() => { const d = document.getElementById('busyDetail'); return d && !d.hidden && /of [\d,]+ pairs/.test(d.textContent) ? d.textContent : null; }); }
+  if (progress) await page.click('#busyStop');
+  await page.evaluate(() => window._statsRun);
+  const after = await page.evaluate(() => ({ n: state._statsData ? state._statsData.n : null, busy: !document.getElementById('busyOverlay')?.hidden, msg: document.getElementById('statusMessage')?.textContent || '' }));
+  const r = { ms600, progress, ...after };
+  // after Stop there are no statistics: the new file dropped the previous alignment's (_statsInvalidate)
+  return { pass: ms600 < 8000 && !!progress && r.n === null && !r.busy && /cancel/i.test(r.msg), detail: JSON.stringify(r) };
+});
+
+check('Statistics: a new file closes the window, an edit marks it stale with Recompute, dock width validated and re-clamped', async (page) => {
+  const vis = () => page.evaluate(() => { const w = document.getElementById('statsModal'); return w.style.display !== 'none' && w.getClientRects().length > 0; });
+  const open = async () => { await page.evaluate(() => openStats()); await page.waitForFunction(() => state._statsData && document.querySelector('#statsSummaryTab table.stats-mx'), null, { timeout: 15000 }); };
+  await loadFasta(page, '>old1\nACGTACGT\n>old2\nACGTACGA\n>old3\nACGTACAA\n'); await open();
+  await loadFasta(page, '>new1\nACGTACGT\n>new2\nACGTACGA\n');
+  const newFile = { visible: await vis(), data: await page.evaluate(() => !!state._statsData) };
+  await loadFasta(page, '>r1\nACGTACGT\n>r2\nACGTACGA\n>r3\nACGTACAA\n>r4\nACGTAAAA\n'); await open();
+  await page.evaluate(() => { window.confirm = () => true; state.selectedRows = new Set([1]); deleteSelected(); });
+  await page.waitForTimeout(200);
+  const edit = { visible: await vis(), stale: await page.evaluate(() => { const b = document.getElementById('statsStale'); return !!b && !b.hidden && b.getClientRects().length > 0; }), rows: await page.evaluate(() => state.seqs.length), shownN: await page.evaluate(() => state._statsData.n) };
+  await page.click('#statsRecompute');
+  await page.waitForFunction(() => state._statsData && state._statsData.n === 3, null, { timeout: 15000 });
+  const recomputed = await page.evaluate(() => ({ n: state._statsData.n, names: state._statsData.names.join(','), stale: !document.getElementById('statsStale').hidden }));
+  await page.evaluate(() => { document.getElementById('statsCloseBtn').click(); localStorage.setItem('msaviewer_statsWin', JSON.stringify({ dockW: 'abc' })); });
+  await page.reload({ waitUntil: 'networkidle' });
+  await loadFasta(page, makeFasta(5, 30)); await open();
+  await page.evaluate(() => _statsDock());
+  await page.waitForTimeout(200);
+  const docked = await page.evaluate(() => ({ w: document.getElementById('statsModal').getBoundingClientRect().width, inner: window.innerWidth }));
+  await page.setViewportSize({ width: 700, height: 700 }); await page.waitForTimeout(400);
+  const shrunk = await page.evaluate(() => ({ w: document.getElementById('statsModal').getBoundingClientRect().width, inner: window.innerWidth, pad: document.body.style.paddingRight }));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.evaluate(() => { _statsUndock(); document.getElementById('statsCloseBtn').click(); localStorage.removeItem('msaviewer_statsWin'); });
+  const r = { newFile, edit, recomputed, docked, shrunk };
+  const ok = !newFile.visible && !newFile.data && edit.visible && edit.stale && edit.rows === 3 && edit.shownN === 4
+    && recomputed.n === 3 && recomputed.names === 'r1,r3,r4' && !recomputed.stale
+    && Number.isFinite(docked.w) && docked.w >= 280 && docked.w <= docked.inner - 300 && shrunk.w <= shrunk.inner - 300 && shrunk.pad === Math.round(shrunk.w) + 'px';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
