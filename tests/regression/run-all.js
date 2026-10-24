@@ -8672,6 +8672,25 @@ check('Statistics window credits Easel / HMMER (Sean R. Eddy) distinctly, with t
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+
+// Statistics audit (2026-10-24, oracle probe vs the Easel source): a residue is a letter; "*" (Easel: nonresidue)
+// and the gap/missing symbols are not, and in a nucleotide alignment U is the same code as T (Easel DNA alphabet).
+// a/b differ only by U; c has a * and two symbols the parser turns into gaps, and one real mismatch (col 7, C vs G).
+check('Statistics follow Easel: * is not a residue and U equals T in a nucleotide alignment', async (page) => {
+  await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGUACGUAC\n>c\nAC*TACC~A_\n');
+  await page.evaluate(() => openStats());
+  await page.waitForFunction(() => state._statsData && document.querySelector('#statsSummaryTab table.stats-mx'), null, { timeout: 15000 });
+  const r = await page.evaluate(() => {
+    const d = state._statsData, n = d.n, card = {};
+    document.querySelectorAll('#statsSummaryTab .stats-card tr').forEach(tr => { const k = tr.cells[0]?.textContent.trim(); if (k) card[k] = tr.cells[1].textContent.trim(); });
+    const f = (m, i, j) => +m[i * n + j].toFixed(1);
+    return { nres: card['Total # residues'], small: card['Smallest'], avglen: card['Average length'], avgid: card['Average identity'], gaps: card['Gaps'], mean: card['Mean'], ab: f(d.pid.esl, 0, 1), ac: f(d.pid.esl, 0, 2), bc: f(d.pid.esl, 1, 2), cab: f(d.pid.cols, 0, 1), cac: f(d.pid.cols, 0, 2), shown: d.combined[0][2], dist: d.combined[2][0] };
+  });
+  const ok = r.nres === '27' && r.small === '7' && r.avglen === '9.0' && r.avgid === '90.5%' && r.gaps === '3 (10.0%)' && /^90\.5%/.test(r.mean)
+    && r.ab === 100 && r.ac === 85.7 && r.bc === 85.7 && r.cab === 100 && r.cac === 85.7 && r.shown === '85.7' && r.dist === '0.1429';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

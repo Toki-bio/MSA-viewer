@@ -21056,11 +21056,15 @@ function _openStatsNow() {
         let alen = 0;   // a loop, not Math.max(...): spreading a very long list overflows the call stack
         for (const s of seqs) if (s.seq.length > alen) alen = s.seq.length;
         const nseq = seqs.length;
-        const isGap = ch => ch === undefined || ch === '-' || ch === '.';
+        // A residue is what Easel counts as one (esl_abc_dsqrlen, esl_dst_XPairId): a letter, canonical or
+        // degenerate. Gap symbols and "*" (Easel: nonresidue) are not residues and never identities. In a
+        // nucleotide alignment U is the same code as T (Easel's DNA alphabet), so the pass compares T for U.
+        const isGap = ch => ch === undefined || ch === '-' || ch === '.' || ch === '*' || ch === '~' || ch === '_' || ch === ' ';
         // Rows shorter than the alignment count as gap-padded to alen.
         const rawLen = new Int32Array(nseq);
         let totalGaps = 0;
-        const up = seqs.map(s => s.seq.toUpperCase());
+        const nucleotide = !isProteinAlignment(seqs);
+        const up = seqs.map(s => { const u = s.seq.toUpperCase(); return nucleotide ? u.replace(/U/g, 'T') : u; });
         for (let i = 0; i < nseq; i++) {
             let r = 0;
             for (let p = 0; p < alen; p++) if (!isGap(up[i][p])) r++;
@@ -21248,7 +21252,7 @@ const _STATS_TIPS = {
         src: 'esl-alistat man page', doc: 'esl-alistat summarizes the contents of the multiple sequence alignment(s) in msafile, such as the alignment name, format, alignment length (number of aligned columns), number of sequences, average pairwise % identity, and mean, smallest, and largest raw (unaligned) lengths of the sequences.' },
     alen: { sum: 'Number of alignment columns (the longest row; shorter rows count as gap-padded).',
         src: 'esl-alistat man page', doc: 'alignment length (number of aligned columns)' },
-    nres: { sum: 'All residues (non-gap characters) in the sequences, i.e. the sum of their unaligned lengths.',
+    nres: { sum: 'All residues in the sequences, i.e. the sum of their unaligned lengths. A residue is a letter (canonical or IUPAC code); gaps and "*" are not residues, as in Easel (esl_abc_dsqrlen).',
         src: 'esl-alistat.c', doc: 'For each sequence: rlen = esl_abc_dsqrlen(...) (its raw, unaligned length); nres += rlen. Printed as "Total # residues".' },
     small: { sum: 'Length of the shortest sequence without gaps.',
         src: 'esl-alistat man page', doc: '...mean, smallest, and largest raw (unaligned) lengths of the sequences.' },
@@ -21258,8 +21262,8 @@ const _STATS_TIPS = {
         src: 'esl-alistat.c', doc: 'printf("Average length: %.1f\\n", (double) nres / (double) nseq);' },
     avgid: { sum: 'Mean pairwise identity, esl-alipid definition (identical residues ÷ shorter unaligned length), over every pair. esl-alistat itself averages 1,000 random pairs when there are more than 1,000 pairs, and prints a whole percent, so its value can differ slightly.',
         src: 'esl_distance.c, esl_dst_XAverageId (esl-alistat sets max_comparisons = 1000)', doc: 'If an exhaustive calculation would require more than <max_comparisons> pairwise comparisons, then instead of looking at all pairs, calculate the average over a stochastic sample of <max_comparisons> random pairs. [...] Each fractional pairwise identity (range [0..pid..1]) is calculated using esl_dst_XPairId().' },
-    gaps: { sum: 'Not an esl-alistat value (ViewAlign addition): cells holding "-" or ".", including the implied padding of shorter rows; the percentage is of all cells (sequences × columns).', src: '', doc: '' },
-    defEsl: { sum: 'Identity = identical residues ÷ the shorter of the two unaligned sequence lengths, as esl-alipid. Identical IUPAC codes (e.g. N/N) count as identities, as in esl_dst_XPairId.',
+    gaps: { sum: 'Not an esl-alistat value (ViewAlign addition): cells without a residue ("-", "." or "*"), including the implied padding of shorter rows; the percentage is of all cells (sequences × columns).', src: '', doc: '' },
+    defEsl: { sum: 'Identity = identical residues ÷ the shorter of the two unaligned sequence lengths, as esl-alipid. Identical IUPAC codes (e.g. N/N) count as identities, as in esl_dst_XPairId; case is ignored; in a nucleotide alignment U equals T (the Easel DNA alphabet); "*" is not a residue.',
         src: 'esl-alipid man page', doc: '<%id> is the percent identity, <nid> is the number of identical aligned pairs, and <denomid> is the denominator used for the calculation: the shorter of the two (unaligned) sequence lengths. The %identity is defined as 100*nid/denomid. [...] alignments of a gap character in both sequences, --, aren\'t counted.' },
     defCols: { sum: 'Identity = identical residues ÷ columns where both sequences have a residue (not esl-alipid\'s definition; switch "over" to shorter sequence for it). Useful to compare the aligned parts only, but fragments that barely overlap can score very high.',
         src: 'esl-alipid man page, on this definition', doc: 'Several ways to calculate %identity, such as ignoring columns with gaps (100* n_identities / (n_identities + n_mismatches)) , or dividing by the total alignment length (100 * n_identities / ali_len), are not robust to having overlapping fragments or long indels, because you can get spuriously high or low %id\'s.' },
