@@ -3784,6 +3784,8 @@ table.stats-mx td { width: var(--cw); min-width: var(--cw); padding: 1px 3px; te
 table.stats-mx td.dg { background: #f3f3f3; color: #999; }
 table.stats-mx td:hover { background: #fff3b0; }
 table.stats-mx td.pad, table.stats-mx th.pad { border: none; padding: 0; }
+table.stats-mx td.csp { width: auto; min-width: 0; padding: 0; border: none; }   /* stands in for the columns outside the window */
+table.stats-mx td.csp:hover { background: none; }
 table.stats-mx thead th { position: sticky; top: 0; z-index: 2; background: #fff; font-weight: normal; border-bottom: 1px solid #bbb; }
 table.stats-mx th.rn { position: sticky; left: 0; z-index: 1; background: #fff; text-align: left; font-weight: normal; white-space: nowrap; padding: 1px 6px 1px 3px; border-right: 1px solid #bbb; border-bottom: 1px solid #f0f0f0; }
 table.stats-mx th.corner { left: 0; z-index: 3; border-right: 1px solid #bbb; }

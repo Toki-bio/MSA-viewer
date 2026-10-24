@@ -1492,7 +1492,10 @@ check('Statistics matrices: named labels, windowed rows, switch, find, TSV copy'
       const top = sc.getBoundingClientRect().top + table.tHead.getBoundingClientRect().height;
       const tr = [...table.tBodies[0].rows].find(t => t.cells[0].dataset.r && t.getBoundingClientRect().bottom > top + 2);
       const i = +tr.cells[0].dataset.r;
-      const rowOk = i > 50 && [...tr.cells].slice(1, n + 1).every((c, j) => c.textContent === m[i][j]);
+      // the live row holds the column window only (data-c0..c1 on the tbody); every cell in it must be right
+      const c0 = +table.tBodies[0].dataset.c0 || 0;
+      const live = [...tr.cells].filter(c => c.tagName === 'TD' && !c.classList.contains('csp') && !c.classList.contains('pad'));
+      const rowOk = i > 50 && live.length > 0 && live.every((c, k) => c.textContent === m[i][c0 + k]);
       return { headOk, rowOk, i, domRows: table.tBodies[0].rows.length };
     }, style);
   }
@@ -8768,6 +8771,44 @@ check('Statistics: a new file closes the window, an edit marks it stale with Rec
   const ok = !newFile.visible && !newFile.data && edit.visible && edit.stale && edit.rows === 3 && edit.shownN === 4
     && recomputed.n === 3 && recomputed.names === 'r1,r3,r4' && !recomputed.stale
     && Number.isFinite(docked.w) && docked.w >= 280 && docked.w <= docked.inner - 300 && shrunk.w <= shrunk.inner - 300 && shrunk.pad === Math.round(shrunk.w) + 'px';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+
+// Statistics audit batch 4 (2026-10-24). The windowed matrix held every column of each live row (n=2000: 150,000
+// cells rebuilt per shift, 2.8 s); a re-render while scrolled built the top window first and the right one a frame
+// later; the longest-name input kept a value the table did not use.
+check('Statistics windowed matrix: columns windowed too, the cell under the pointer is the right one after scrolling, re-render keeps the place, longest name clamped', async (page) => {
+  await loadFasta(page, makeFasta(400, 30));
+  await page.evaluate(() => { localStorage.removeItem('msaviewer_statsLabels'); openStats(); });
+  await page.waitForFunction(() => state._statsData && state._statsData.n === 400 && document.querySelector('#statsSummaryTab table.stats-mx'), null, { timeout: 60000 });
+  await page.waitForTimeout(300);
+  const probe = () => page.evaluate(() => {
+    const sc = document.querySelector('#statsSummaryTab .stats-mx-scroll'), t = sc.querySelector('table.stats-mx'), d = state._statsData;
+    const tds = t.tBodies[0].querySelectorAll('td:not(.sp):not(.csp):not(.pad)').length;
+    const r = sc.getBoundingClientRect(), x = r.left + r.width * 0.6, y = r.top + r.height * 0.6;
+    const el = document.elementFromPoint(x, y), td = el && el.closest('td');
+    const tr = td && td.parentElement, i = tr && tr.cells[0].dataset.r != null ? +tr.cells[0].dataset.r : -1;
+    const th = [...t.tHead.rows[0].cells].find(c => c.dataset.c != null && c.getBoundingClientRect().left <= x && c.getBoundingClientRect().right > x);
+    const j = th ? +th.dataset.c : -1;
+    return { tds, i, j, text: td ? td.textContent : null, want: i >= 0 && j >= 0 ? d.combined[i][j] : null, scrollTop: Math.round(sc.scrollTop), scrollLeft: Math.round(sc.scrollLeft), firstRow: +t.tBodies[0].querySelector('tr:not(.sp) th')?.dataset.r };
+  });
+  const top = await probe();
+  await page.evaluate(() => { const sc = document.querySelector('#statsSummaryTab .stats-mx-scroll'); sc.scrollTop = sc.scrollHeight * 0.5; sc.scrollLeft = sc.scrollWidth * 0.5; });
+  await page.waitForTimeout(400);
+  const mid = await probe();
+  // a re-render while scrolled: the first synchronous build is already around the scrolled rows
+  const rerender = await page.evaluate(() => { _renderOpenStatsMatrices(); const sc = document.querySelector('#statsSummaryTab .stats-mx-scroll'), t = sc.querySelector('table.stats-mx'); return { firstRow: +t.tBodies[0].querySelector('tr:not(.sp) th')?.dataset.r, scrollTop: Math.round(sc.scrollTop) }; });
+  await page.waitForTimeout(300);
+  const after = await probe();
+  // selection and focus in the scrolled window
+  const selFocus = await page.evaluate(() => { _statsClickColumn(300, {}); _statsJumpTo(200, 300); const t = document.querySelector('#statsSummaryTab table.stats-mx'); return { focus: !!t.querySelector('td.focus') && t.querySelector('td.focus').textContent === state._statsData.combined[200][300], cs: t.querySelectorAll('td.cs').length > 0, csOnly300: [...t.querySelectorAll('tr')].every(tr => { const n = tr.querySelectorAll('td.cs').length; return n <= 1; }) }; });
+  const ln = await page.evaluate(() => { const i = document.getElementById('statsLabelChars'); i.value = '200'; i.dispatchEvent(new Event('change', { bubbles: true })); return { shown: i.value, applied: _statsLabelOpts().chars }; });
+  const r = { top, mid, rerender, after, selFocus, ln };
+  const cellsOk = top.tds > 0 && top.tds < 20000 && mid.tds < 20000;   // every column of 75 live rows was 30,000
+  const ok = cellsOk && top.i >= 0 && top.text === top.want && mid.i > 50 && mid.j > 50 && mid.text === mid.want
+    && rerender.firstRow > 50 && after.text === after.want && selFocus.focus && selFocus.cs && selFocus.csOnly300
+    && ln.shown === '80' && ln.applied === 80;
   return { pass: ok, detail: JSON.stringify(r) };
 });
 

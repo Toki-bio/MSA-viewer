@@ -21810,6 +21810,7 @@ function _escStats(t) {
 // Above STATS_MX_WINDOW_MIN sequences only the rows on screen (plus a margin) are in the
 // DOM: a full 600 x 600 table is 360,000 cells and took 5-9 s to lay out.
 const STATS_MX_WINDOW_MIN = 120;
+const STATS_MX_COL_MARGIN = 20;   // columns kept on each side of the viewport (rows: STATS_MX_ROW_MARGIN)
 const STATS_MX_ROW_MARGIN = 25;
 
 function _statsMatrixCtx(kind) {
@@ -21821,14 +21822,21 @@ function _statsMatrixCtx(kind) {
     return { d, m, n, style, chars, labels, windowed: n > STATS_MX_WINDOW_MIN, sel: state._statsSelCols || new Set(), pid: d.pid[d.mode], heat: _statsHeatCtx(kind === 'combined' ? 'identity' : kind), kind };
 }
 
-function _statsMatrixRows(ctx, i0, i1) {
+// Rows i0..i1 holding the cells of columns c0..c1 only; spacer cells (csp) stand in for the columns outside
+// the window (the header row has every column, so the spacers take their widths from it).
+function _statsMatrixRows(ctx, i0, i1, c0 = 0, c1 = ctx.n) {
     const { d, m, n, style, labels, sel, pid } = ctx;
     const filtering = !!state._statsFilter;
+    // the spacers carry the width of the columns they stand for (ctx.cellW, the measured cell pitch), so the
+    // columns under the header do not move when the window shifts
+    const w = k => ctx.cellW ? ` style="width:${Math.round(k * ctx.cellW)}px;min-width:${Math.round(k * ctx.cellW)}px"` : '';
+    const left = c0 > 0 ? `<td class="csp" colspan="${c0}"${w(c0)}></td>` : '';
+    const right = c1 < n ? `<td class="csp" colspan="${n - c1}"${w(n - c1)}></td>` : '';
     let html = '';
     for (let i = i0; i < i1; i++) {
-        let row = `<tr><th class="rn" data-r="${i}" title="${_escStats(d.names[i])}"><span class="ix">${i + 1}</span> ${_escStats(labels[i])}</th>`;
+        let row = `<tr><th class="rn" data-r="${i}" title="${_escStats(d.names[i])}"><span class="ix">${i + 1}</span> ${_escStats(labels[i])}</th>` + left;
         const mi = m[i];
-        for (let j = 0; j < n; j++) {
+        for (let j = c0; j < c1; j++) {
             let cls = i === j ? 'dg' : '';
             if (sel.has(j)) cls += ' cs';
             if (filtering && i !== j) cls += _statsCellHit(i, j, pid[i * n + j]) ? ' hit' : ' miss';
@@ -21836,13 +21844,25 @@ function _statsMatrixRows(ctx, i0, i1) {
             if (ctx.heat && i !== j) { const c = _statsHeatColour(ctx.heat, _statsValue(ctx.heat.kind, pid[i * n + j])); st = ` style="background:${c.bg};color:${c.fg}"`; }
             row += cls ? `<td class="${cls.trim()}"${st}>${mi[j]}</td>` : `<td${st}>${mi[j]}</td>`;
         }
-        html += row + (style === 'angled' ? '<td class="pad"></td>' : '') + '</tr>';
+        html += row + right + (style === 'angled' ? '<td class="pad"></td>' : '') + '</tr>';
     }
     return html;
 }
+// The cell of column j in a live row (the row may start with a spacer cell)
+function _statsCellAt(tbody, tr, j) {
+    const c0 = +tbody.dataset.c0 || 0, c1 = tbody.dataset.c1 != null ? +tbody.dataset.c1 : Infinity;
+    if (j < c0 || j >= c1) return null;
+    return tr.cells[1 + (c0 > 0 ? 1 : 0) + (j - c0)] || null;
+}
+// The column of a cell in a live row, or -1 for a spacer / pad cell
+function _statsColOf(tbody, td) {
+    if (!td || td.classList.contains('csp') || td.classList.contains('pad')) return -1;
+    const c0 = +tbody.dataset.c0 || 0;
+    return c0 + td.cellIndex - 1 - (c0 > 0 ? 1 : 0);
+}
 
 function _statsSpacer(ctx, px) {
-    return `<tr class="sp"><td colspan="${ctx.n + 2}" style="height:${px}px;padding:0;border:0;"></td></tr>`;
+    return `<tr class="sp"><td colspan="${ctx.n + (ctx.style === 'angled' ? 2 : 1)}" style="height:${px}px;padding:0;border:0;"></td></tr>`;
 }
 
 function _buildStatsMatrixTable(kind) {
@@ -21865,9 +21885,10 @@ function _buildStatsMatrixTable(kind) {
     }
     const rowNameW = Math.min(longest, chars) + String(n).length + 2;
     const firstRows = ctx.windowed ? Math.min(n, 3 * STATS_MX_ROW_MARGIN) : n;
+    const firstCols = ctx.windowed ? Math.min(n, 3 * STATS_MX_COL_MARGIN) : n;   // place() corrects both once a cell is measured
     let html = `<div class="stats-mx-scroll"><table class="stats-mx${state._statsFilter ? ' filtering' : ''}${ctx.heat ? ' heat' : ''}" data-kind="${kind}" style="--cw:${cellW}ch;">` +
         `<thead><tr><th class="corner" style="min-width:${rowNameW}ch;"></th>${head}</tr></thead>` +
-        `<tbody data-r0="0" data-r1="${firstRows}"${ctx.windowed ? ' data-placed="1"' : ''}>${_statsMatrixRows(ctx, 0, firstRows)}</tbody></table></div>`;
+        `<tbody data-r0="0" data-r1="${firstRows}" data-c0="0" data-c1="${firstCols}">${_statsMatrixRows(ctx, 0, firstRows, 0, firstCols)}</tbody></table></div>`;
     if (style === 'numbers') {
         html += `<div class="stats-mx-key">` + d.names.map((name, i) => `<span><b>${i + 1}</b> ${_escStats(name)}</span>`).join('') + `</div>`;
     }
@@ -21880,11 +21901,12 @@ function _statsMarkFocus(table) {
     table.querySelectorAll('.fx, td.focus').forEach(e => e.classList.remove('fx', 'focus'));
     if (f.j >= 0) table.tHead.rows[0].cells[f.j + 1]?.classList.add('fx');
     if (f.i < 0) return;
-    for (const tr of table.tBodies[0].rows) {
+    const tbody = table.tBodies[0];
+    for (const tr of tbody.rows) {
         const rn = tr.cells[0];
         if (!rn?.dataset.r || +rn.dataset.r !== f.i) continue;
         rn.classList.add('fx');
-        if (f.j >= 0) tr.cells[f.j + 1]?.classList.add('focus');
+        if (f.j >= 0) _statsCellAt(tbody, tr, f.j)?.classList.add('focus');
     }
 }
 
@@ -21906,32 +21928,45 @@ function _statsJumpTo(i, j) {
         const th = hr.cells[j + 1];
         sc.scrollLeft = Math.max(0, th.offsetLeft - hr.cells[0].offsetWidth - 2 * th.offsetWidth);
     }
+    if (sc._statsPlace) sc._statsPlace();   // the window for the new position at once, not after the scroll event
 }
 
 // Windowed tables: once the first rows are laid out, measure a row and keep the tbody
 // holding only the rows near the viewport, with spacer rows standing in for the rest.
-function _attachStatsWindow(body) {
+function _attachStatsWindow(body, keep) {
     const sc = body.querySelector('.stats-mx-scroll');
     const table = sc?.querySelector('table.stats-mx');
     if (!table) return;
     _statsMarkFocus(table);
     const ctx = _statsMatrixCtx(table.dataset.kind);
-    if (!ctx.windowed) return;
+    if (!ctx.windowed) { if (keep) { sc.scrollTop = keep.top; sc.scrollLeft = keep.left; } return; }
     const tbody = table.tBodies[0];
     const rowH = sc._rowH = tbody.rows[0].getBoundingClientRect().height || 16;
+    const hr = table.tHead.rows[0];
+    const nameW = hr.cells[0].getBoundingClientRect().width;
+    const r0cells = tbody.rows[0].cells;   // the cell pitch, measured on live cells (a th can be narrower than a td)
+    const cellW = (r0cells[2] && !r0cells[2].classList.contains('csp') ? r0cells[2].getBoundingClientRect().left - r0cells[1].getBoundingClientRect().left : r0cells[1].getBoundingClientRect().width) || 40;
+    ctx.cellW = cellW;
     // The first rows came with the table; add the spacer for the rest now that a row is measured
-    if (tbody.dataset.placed && +tbody.dataset.r1 < ctx.n) tbody.insertAdjacentHTML('beforeend', _statsSpacer(ctx, (ctx.n - +tbody.dataset.r1) * rowH));
+    if (+tbody.dataset.r1 < ctx.n) tbody.insertAdjacentHTML('beforeend', _statsSpacer(ctx, (ctx.n - +tbody.dataset.r1) * rowH));
+    // a re-render keeps its scroll position: restore it now that the table has its full height, so the
+    // window is placed once, for it (restoring before the spacer existed clamped it to the first rows)
+    if (keep) { sc.scrollTop = keep.top; sc.scrollLeft = keep.left; }
     const place = () => {
         const headH = table.tHead.getBoundingClientRect().height;
         const first = Math.floor(Math.max(0, sc.scrollTop - headH) / rowH);
         const last = Math.ceil((sc.scrollTop + sc.clientHeight) / rowH);
-        const r0 = +tbody.dataset.r0, r1 = +tbody.dataset.r1;
-        if (first >= r0 && last <= r1 && tbody.rows.length > 0 && tbody.dataset.placed) return;
+        const cFirst = Math.floor(Math.max(0, sc.scrollLeft - nameW) / cellW);
+        const cLast = Math.ceil(Math.max(0, sc.scrollLeft + sc.clientWidth - nameW) / cellW);
+        const r0 = +tbody.dataset.r0, r1 = +tbody.dataset.r1, c0 = +tbody.dataset.c0, c1 = +tbody.dataset.c1;
+        if (first >= r0 && last <= r1 && cFirst >= c0 && cLast <= c1 && tbody.rows.length > 0 && tbody.dataset.placed) return;
         const n0 = Math.max(0, first - STATS_MX_ROW_MARGIN), n1 = Math.min(ctx.n, last + STATS_MX_ROW_MARGIN);
+        const k0 = Math.max(0, cFirst - STATS_MX_COL_MARGIN), k1 = Math.min(ctx.n, cLast + STATS_MX_COL_MARGIN);
         const live = _statsMatrixCtx(table.dataset.kind);   // selection / filter may have changed
-        tbody.innerHTML = (n0 > 0 ? _statsSpacer(ctx, n0 * rowH) : '') + _statsMatrixRows(live, n0, n1) +
+        live.cellW = cellW;
+        tbody.innerHTML = (n0 > 0 ? _statsSpacer(ctx, n0 * rowH) : '') + _statsMatrixRows(live, n0, n1, k0, k1) +
             (n1 < ctx.n ? _statsSpacer(ctx, (ctx.n - n1) * rowH) : '');
-        tbody.dataset.r0 = n0; tbody.dataset.r1 = n1; tbody.dataset.placed = '1';
+        tbody.dataset.r0 = n0; tbody.dataset.r1 = n1; tbody.dataset.c0 = k0; tbody.dataset.c1 = k1; tbody.dataset.placed = '1';
         _statsMarkFocus(table);
     };
     place();
@@ -21950,9 +21985,7 @@ function _fillStatsMatrices(bodies) {
         const keep = old && old.querySelector('table.stats-mx') ? { top: old.scrollTop, left: old.scrollLeft } : null;
         body.innerHTML = _buildStatsMatrixTable(body.dataset.kind);
         body.dataset.built = '1';
-        _attachStatsWindow(body);
-        const sc = body.querySelector('.stats-mx-scroll');
-        if (keep && sc) { sc.scrollTop = keep.top; sc.scrollLeft = keep.left; }
+        _attachStatsWindow(body, keep);
     });
 }
 
@@ -22181,9 +22214,10 @@ function _statsApplySelection() {
     const table = document.querySelector('#statsSummaryTab table.stats-mx');
     if (table) {
         [...table.tHead.rows[0].cells].forEach((th, k) => { if (k > 0 && th.dataset.c != null) th.classList.toggle('cs', sel.has(+th.dataset.c)); });
-        for (const tr of table.tBodies[0].rows) {
+        const tbody = table.tBodies[0];
+        for (const tr of tbody.rows) {
             if (!tr.cells[0]?.dataset.r) continue;
-            for (let k = 1; k < tr.cells.length; k++) tr.cells[k].classList.toggle('cs', sel.has(k - 1));
+            for (let k = 1; k < tr.cells.length; k++) { const j = _statsColOf(tbody, tr.cells[k]); if (j >= 0) tr.cells[k].classList.toggle('cs', sel.has(j)); }
         }
     }
     const chip = document.getElementById('statsSelChip');
@@ -22267,6 +22301,7 @@ function initStatsTabs() {
         if (id !== 'statsLabelStyle' && id !== 'statsLabelChars') return;
         const style = document.getElementById('statsLabelStyle').value;
         const chars = Math.max(3, Math.min(80, parseInt(document.getElementById('statsLabelChars').value, 10) || 20));
+        document.getElementById('statsLabelChars').value = chars;   // show the value the table uses
         _statsSaveLabelOpts({ style, chars });
         _renderOpenStatsMatrices();
     });
@@ -22303,11 +22338,12 @@ function initStatsTabs() {
         if (tip) _statsTipShow(tip);
         const td = event.target.closest?.('table.stats-mx td');
         lit.forEach(el => el.classList.remove('hl')); lit = [];
-        if (!td || td.classList.contains('pad')) return;
+        if (!td || td.classList.contains('pad') || td.classList.contains('csp')) return;
         const tr = td.parentElement, table = tr.closest('table');
         const rn = tr.cells[0];
         if (!rn?.dataset.r) return;
-        const j = td.cellIndex - 1, i = +rn.dataset.r;
+        const j = _statsColOf(table.tBodies[0], td), i = +rn.dataset.r;
+        if (j < 0) return;
         const ch = table.tHead.rows[0].cells[j + 1];
         lit = [rn, ch]; lit.forEach(el => el.classList.add('hl'));
         const names = state._statsData?.names;
