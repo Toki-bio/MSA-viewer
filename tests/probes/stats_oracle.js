@@ -80,7 +80,7 @@ const FIXTURES = [
     for (let i = 0; i < O.n; i++) for (let j = 0; j < O.n; j++) {
       if (Math.abs(V.esl[i][j] - O.pidEsl[i][j]) > 1e-9) { cellDiffs++; if (!first) first = `esl[${i}][${j}] viewer ${V.esl[i][j].toFixed(2)} vs Easel ${O.pidEsl[i][j].toFixed(2)}`; }
       if (Math.abs(V.cols[i][j] - O.pidCols[i][j]) > 1e-9) colsDiffs++;
-      const expect = j > i ? O.pidEsl[i][j].toFixed(1) : j < i ? (1 - O.pidEsl[i][j] / 100).toFixed(4) : '';
+      const expect = j > i ? O.pidEsl[i][j].toFixed(1) : j < i ? (1 - O.pidEsl[i][j] / 100).toFixed(2) : '';
       if (V.mode === 'esl' && V.combined[i][j] !== expect) comb++;
     }
     if (cellDiffs) diffs.push(`${cellDiffs} esl identity cells differ (first: ${first})`);

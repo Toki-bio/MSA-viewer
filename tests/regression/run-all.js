@@ -8692,7 +8692,7 @@ check('Statistics follow Easel: * is not a residue and U equals T in a nucleotid
     return { nres: card['Total # residues'], small: card['Smallest'], avglen: card['Average length'], avgid: card['Average identity'], gaps: card['Gaps'], mean: card['Mean'], ab: f(d.pid.esl, 0, 1), ac: f(d.pid.esl, 0, 2), bc: f(d.pid.esl, 1, 2), cab: f(d.pid.cols, 0, 1), cac: f(d.pid.cols, 0, 2), shown: d.combined[0][2], dist: d.combined[2][0] };
   });
   const ok = r.nres === '27' && r.small === '7' && r.avglen === '9.0' && r.avgid === '90.5%' && r.gaps === '3 (10.0%)' && /^90\.5%/.test(r.mean)
-    && r.ab === 100 && r.ac === 85.7 && r.bc === 85.7 && r.cab === 100 && r.cac === 85.7 && r.shown === '85.7' && r.dist === '0.1429';
+    && r.ab === 100 && r.ac === 85.7 && r.bc === 85.7 && r.cab === 100 && r.cac === 85.7 && r.shown === '85.7' && r.dist === '0.14';   // owner 2026-10-24: distances with two decimals
   return { pass: ok, detail: JSON.stringify(r) };
 });
 

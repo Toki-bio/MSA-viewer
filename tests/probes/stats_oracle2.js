@@ -56,7 +56,7 @@ function parseSheet(bytes) {
     // the strings
     for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
       if (D.identity[i][j] !== pid(i, j).toFixed(1)) diffs.push(`identity[${i}][${j}] ${D.identity[i][j]}`);
-      if (D.distance[i][j] !== (i === j ? 0 : 1 - pid(i, j) / 100).toFixed(4)) diffs.push(`distance[${i}][${j}] ${D.distance[i][j]}`);
+      if (D.distance[i][j] !== (i === j ? 0 : 1 - pid(i, j) / 100).toFixed(2)) diffs.push(`distance[${i}][${j}] ${D.distance[i][j]}`);
     }
     // every save entry: CSV/TSV parse back to the grid; XLSX cells match
     for (const [fmt, kind] of D.saves) {

@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v280';
+const BUILD_TAG = 'v281';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -21238,7 +21238,7 @@ async function _openStatsNow(update, isStopped) {
 function _statsBuildStrings() {
     const d = state._statsData, n = d.n, pid = d.pid[d.mode];
     d.identity = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => pid[i * n + j].toFixed(1)));
-    d.distance = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 0 : 1 - pid[i * n + j] / 100).toFixed(4)));
+    d.distance = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 0 : 1 - pid[i * n + j] / 100).toFixed(2)));   // two decimals (owner, 2026-10-24)
     // the shown matrix (owner, 2026-10-24): identity % above the diagonal, distance below it, the diagonal empty
     d.combined = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => j > i ? d.identity[i][j] : j < i ? d.distance[i][j] : ''));
 }
@@ -21747,7 +21747,7 @@ function _statsSavePairs(what) {
     const header = q => (q.fullHeader != null ? q.fullHeader : q.header);
     if (what === 'pairs') {
         const def = d.mode === 'esl' ? 'identity_pct_over_shorter_seq' : 'identity_pct_over_shared_columns';
-        const grid = [['sequence_1', 'sequence_2', def, 'distance']].concat(hits.map(([i, j, id]) => [d.names[i], d.names[j], id.toFixed(1), (1 - id / 100).toFixed(4)]));
+        const grid = [['sequence_1', 'sequence_2', def, 'distance']].concat(hits.map(([i, j, id]) => [d.names[i], d.names[j], id.toFixed(1), (1 - id / 100).toFixed(2)]));
         _statsDownload(new Blob([_statsDelimited(grid, 'tsv')], { type: 'text/tab-separated-values;charset=utf-8' }), base + '.tsv');
     } else if (what === 'names') {
         _statsDownload(new Blob([idx.map(i => d.names[i]).join('\n') + '\n'], { type: 'text/plain;charset=utf-8' }), base + '_names.txt');
@@ -21769,7 +21769,7 @@ function _statsRenderPairList(body) {
     const hc = _statsHeatCtx(f.kind);
     const paint = (kind, id) => { if (!hc || kind !== f.kind) return ''; const c = _statsHeatColour(hc, _statsValue(kind, id)); return ` style="background:${c.bg};color:${c.fg}"`; };
     hits.slice(0, CAP).forEach(([i, j, id], k) => {
-        html += `<tr data-i="${i}" data-j="${j}"><td>${k + 1}</td><td>${esc(d.names[i])}</td><td>${esc(d.names[j])}</td><td${paint('identity', id)}>${id.toFixed(1)}</td><td${paint('distance', id)}>${(1 - id / 100).toFixed(4)}</td></tr>`;
+        html += `<tr data-i="${i}" data-j="${j}"><td>${k + 1}</td><td>${esc(d.names[i])}</td><td>${esc(d.names[j])}</td><td${paint('identity', id)}>${id.toFixed(1)}</td><td${paint('distance', id)}>${(1 - id / 100).toFixed(2)}</td></tr>`;
     });
     html += '</tbody></table></div>';
     if (hits.length > CAP) html += `<div class="stats-note">Showing the first ${CAP.toLocaleString()} of ${hits.length.toLocaleString()} pairs; “Save pairs” writes them all.</div>`;
@@ -21870,7 +21870,7 @@ function _buildStatsMatrixTable(kind) {
     const ctx = _statsMatrixCtx(kind);
     const { d, n, style, chars, labels, sel } = ctx;
     const longest = Math.max(1, ...labels.map(l => l.length));
-    const cellW = kind === 'identity' ? 6 : 7;   // in ch, fits "0.1234" / "100.0"
+    const cellW = 6;   // in ch, fits "100.0" / "0.12"
     const hcls = (j, extra) => `c${extra}${sel.has(j) ? ' cs' : ''}`;
     const htitle = j => `${_escStats(d.names[j])} (click to select this column; Ctrl-click adds, Shift-click selects a range)`;
     let head;
@@ -22107,7 +22107,7 @@ function _statsHeatGradient(hc, palette, reverse) {
 }
 
 function _statsFmt(kind, v) {
-    return kind === 'distance' ? v.toFixed(3) : v.toFixed(1);
+    return kind === 'distance' ? v.toFixed(2) : v.toFixed(1);
 }
 
 // Legend next to the Heatmap button, and the panel's controls
