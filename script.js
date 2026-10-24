@@ -21979,13 +21979,17 @@ function _statsValue(kind, rawId) {
 // Off-diagonal min and max of the shown matrix (the Auto range)
 function _statsAutoRange(kind) {
     const d = state._statsData, n = d.n, pid = d.pid[d.mode];
+    const cacheKey = d.mode + ':' + kind;
+    if (d._autoRange && d._autoRange[cacheKey]) return d._autoRange[cacheKey];
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
         const v = _statsValue(kind, pid[i * n + j]);
         if (v < lo) lo = v;
         if (v > hi) hi = v;
     }
-    return lo <= hi ? { lo, hi } : { lo: 0, hi: kind === 'distance' ? 1 : 100 };
+    const r = lo <= hi ? { lo, hi } : { lo: 0, hi: kind === 'distance' ? 1 : 100 };
+    (d._autoRange || (d._autoRange = {}))[cacheKey] = r;
+    return r;
 }
 
 function _hexRgb(h) {
@@ -22171,7 +22175,7 @@ function initStatsTabs() {
         e.stopPropagation();
         if (document.getElementById('statsModal').classList.contains('stats-docked')) _statsUndock(); else _statsDock();
     });
-    let filterTimer = null;
+    let filterTimer = null, heatTimer = null;   // one timer per field: an edit in one must not cancel the other's
     summaryTab.addEventListener('click', (event) => {
         const t = event.target;
         const menus = [document.getElementById('statsFilterMenu'), document.getElementById('statsMatrixMenu')];
@@ -22225,8 +22229,8 @@ function initStatsTabs() {
         if (t.id === 'statsFindRow') _statsFind(t, 'row', false);
         if (t.id === 'statsFindCol') _statsFind(t, 'col', false);
         if (t.id === 'statsHeatLo' || t.id === 'statsHeatHi') {
-            clearTimeout(filterTimer);
-            filterTimer = setTimeout(() => { _statsHeatReadRange(); _statsHeatChanged(); }, 300);
+            clearTimeout(heatTimer);
+            heatTimer = setTimeout(() => { _statsHeatReadRange(); _statsHeatChanged(); }, 300);
         }
         if (t.id === 'statsFilterValue') {
             clearTimeout(filterTimer);
@@ -22266,6 +22270,8 @@ function initStatsTabs() {
     summaryTab.addEventListener('mouseout', (event) => {
         if (event.target.closest?.('.tip[data-tip]') && !event.relatedTarget?.closest?.('.tip[data-tip]')) _statsTipHide();
     });
+    // The pointer leaving the tab fires no mouseover inside it: clear the highlight here
+    summaryTab.addEventListener('mouseleave', () => { lit.forEach(el => el.classList.remove('hl')); lit = []; });
 }
 
 function initTreeBuilderControls() {

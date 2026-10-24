@@ -8691,6 +8691,32 @@ check('Statistics follow Easel: * is not a residue and U equals T in a nucleotid
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+
+// GLM statistics audit (2026-10-24): the heat-range and pair-filter inputs shared one debounce timer, so an edit in
+// one field followed within 300 ms by an edit in the other was dropped; and the row/column highlight of a hovered
+// cell stayed lit when the pointer left the window (nothing inside the tab fired mouseover any more).
+check('Statistics: a filter value typed right after a heat-range value is applied; hover highlight clears when the pointer leaves', async (page) => {
+  await loadFasta(page, makeFasta(8, 40));
+  await page.evaluate(() => { localStorage.removeItem('msaviewer_statsHeat'); openStats(); });
+  await page.waitForFunction(() => state._statsData && document.querySelector('#statsSummaryTab table.stats-mx'), null, { timeout: 15000 });
+  await page.evaluate(() => {
+    const fire = (id, v) => { const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+    fire('statsHeatLo', '20');
+    setTimeout(() => fire('statsFilterValue', '90'), 60);   // within the heat timer's 300 ms
+  });
+  await page.waitForTimeout(900);
+  const applied = await page.evaluate(() => ({ filter: state._statsFilter && state._statsFilter.value, heatLo: _statsHeatOpts().range.identity && _statsHeatOpts().range.identity.lo }));
+  // hover a cell, then leave the window for the alignment area
+  const cell = await page.evaluate(() => { const td = document.querySelector('#statsSummaryTab table.stats-mx tbody tr td:nth-child(3)'); const r = td.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.move(cell.x, cell.y); await page.waitForTimeout(100);
+  const litWhileOver = await page.evaluate(() => document.querySelectorAll('#statsSummaryTab table.stats-mx .hl').length);
+  const outside = await page.evaluate(() => { const r = document.getElementById('statsModal').getBoundingClientRect(); const a = document.querySelector('.alignment-container, #alignmentContainer, body'); return r.left > 60 ? { x: 20, y: r.top + 40 } : { x: window.innerWidth - 20, y: r.top + 40 }; });
+  await page.mouse.move(outside.x, outside.y); await page.waitForTimeout(150);
+  const litAfter = await page.evaluate(() => document.querySelectorAll('#statsSummaryTab table.stats-mx .hl').length);
+  const r = { ...applied, litWhileOver, litAfter };
+  return { pass: r.filter === 90 && r.heatLo === 20 && r.litWhileOver === 2 && r.litAfter === 0, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
