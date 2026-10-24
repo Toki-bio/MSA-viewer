@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v281';
+const BUILD_TAG = 'v282';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -1765,6 +1765,13 @@ function updateControlsOffset() {
     rootStyle.setProperty('--controls-offset', `${Math.max(0, height)}px`);
     // Canvas mode sizes its container from its position: follow the controls' new height
     if (typeof isCanvasMode === 'function' && isCanvasMode()) _canvasState.resizeHandler?.();
+    // a windowed Full/Block view is its own scrolling viewport of fixed height: refit it (the controls
+    // lose or gain a row on a mode switch: Canvas -> Full kept the Canvas height, 25 px short) and
+    // rebuild its row window for the new height
+    else if (state._needsWindowedDom && _unifiedWindowRenderParams && alignmentContainer.style.height && alignmentContainer.style.height !== 'auto') {
+        const before = alignmentContainer.style.height;
+        if (_fitAlignmentViewport() + 'px' !== before) _refreshUnifiedWindowOnScroll(alignmentContainer);
+    }
 }
 
 // ============ SSH FILE FETCH ============
@@ -5913,6 +5920,22 @@ function _canvasCellStyler(scheme, pal, config) {
     };
 }
 
+// Fits a fixed-height alignment viewport (Canvas, windowed Full/Block) to the window: the space
+// below the container's top less what must stay visible under it, the horizontal scrollbar (8 px
+// since 2026-10-23) and the body's bottom margin, both measured, then the border-box overrun
+// trimmed. A hard-coded 28 px reserve (sized for the old thick scrollbar) left 12-17 px white
+// under the slim one. Returns the height set (CSS px).
+function _fitAlignmentViewport() {
+    const top = alignmentContainer.getBoundingClientRect().top;
+    const sb = document.querySelector('#viewer-container .horizontal-scrollbar');
+    const need = (sb && sb.offsetHeight ? sb.offsetHeight : 8) + (parseFloat(getComputedStyle(document.body).marginBottom) || 0);
+    let h = Math.max(100, Math.floor(window.innerHeight - top - need));
+    alignmentContainer.style.height = h + 'px';
+    const over = Math.ceil(alignmentContainer.getBoundingClientRect().bottom + need - window.innerHeight);
+    if (over > 0) { h = Math.max(100, h - over); alignmentContainer.style.height = h + 'px'; }
+    return h;
+}
+
 function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
                                   enableBlack, enableDark, enableLight, nameLen, stickyNames, consInfo = null) {
     alignmentContainer.innerHTML = '';
@@ -5922,8 +5945,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // Coming from a small Full/Block view the page may be scrolled (the container's top above the
     // window): the height would then be measured from that negative top and overrun the window.
     if (window.scrollY) window.scrollTo(0, 0);
-    const top = alignmentContainer.getBoundingClientRect().top;
-    alignmentContainer.style.height = (window.innerHeight - top - 28) + 'px';
+    _fitAlignmentViewport();
 
     const canvas = document.createElement('canvas');
     canvas.id = 'alignmentCanvas';
@@ -6126,9 +6148,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             if (!_canvasState._dprRerender) { _canvasState._dprRerender = true; setTimeout(() => { _canvasState._dprRerender = false; if (document.getElementById('modeCanvas')?.checked) renderAlignment(); }, 0); }
             return false;
         }
-        const top0 = alignmentContainer.getBoundingClientRect().top;
-        const hCss = Math.max(100, window.innerHeight - top0 - 28);
-        if (parseInt(alignmentContainer.style.height) !== hCss) alignmentContainer.style.height = hCss + 'px';
+        const hCss = _fitAlignmentViewport();
         // The container's client area, not its border box (2px wider, 1px taller): the canvas
         // overflowed it, its edge was cut, and a scrollTop/scrollLeft write nudged the alignment.
         const br = alignmentContainer.getBoundingClientRect();
@@ -10639,12 +10659,9 @@ function renderAlignment(options = {}) {
         // own fixed-height viewport.
         // (from a page-scrolled small view: measure from the container's unscrolled top)
         if (window.scrollY) window.scrollTo(0, 0);
-        const top = alignmentContainer.getBoundingClientRect().top;
-        // Clamp to a minimum so the windowed renderer always has enough
-        // viewport to compute a non-empty row range. A negative or zero
-        // height (controls panel taller than the window) would make
-        // visBottom <= visTop in _buildUnifiedBlock, producing zero rows.
-        alignmentContainer.style.height = Math.max(100, window.innerHeight - top - 28) + 'px';
+        // (clamped to a minimum inside: a negative or zero height, the controls panel taller than
+        // the window, would make visBottom <= visTop in _buildUnifiedBlock, producing zero rows)
+        _fitAlignmentViewport();
         alignmentContainer.style.overflow = 'auto';
     } else {
         alignmentContainer.style.height = 'auto';

@@ -7215,6 +7215,31 @@ check('Audit: windowed Full and Canvas follow a window resize', async (page) => 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// The Canvas and windowed Full viewports reserved a hard-coded 28 px below the alignment for the
+// horizontal scrollbar; the scrollbar is 8 px (slimmed 2026-10-23) and the body margin 8 px, so a
+// white band (owner's screenshot: ~17 px) stayed unused under the scrollbar. The viewport must end
+// exactly one body margin above the window edge, and the page must not need to scroll.
+check('Audit: no white band below the horizontal scrollbar (Canvas, windowed Full)', async (page) => {
+  const out = {};
+  await loadSyntheticFasta(page, 1500, 4000);
+  const gaps = () => {
+    const sb = [...document.querySelectorAll('#viewer-container .horizontal-scrollbar')].find(e => e.offsetHeight > 0);
+    const mb = parseFloat(getComputedStyle(document.body).marginBottom) || 0;
+    const sbBottom = sb ? Math.round(sb.getBoundingClientRect().bottom) : null;
+    const ac = el('alignmentContainer'), vc = el('viewer-container');
+    return { gap: sb ? innerHeight - sbBottom : null, mb, pageScroll: document.documentElement.scrollHeight - innerHeight, acTop: Math.round(ac.getBoundingClientRect().top), acBottom: Math.round(ac.getBoundingClientRect().bottom), acH: ac.style.height, vcBottom: Math.round(vc.getBoundingClientRect().bottom), sbTop: sb && Math.round(sb.getBoundingClientRect().top), inner: innerHeight };
+  };
+  for (const mode of ['canvas', 'full']) {
+    for (const h of [900, 600]) {
+      await page.setViewportSize({ width: 1400, height: h });
+      await auditClickMode(page, mode); await page.waitForTimeout(600);
+      out[mode + h] = await page.evaluate(gaps);
+    }
+  }
+  const ok = Object.values(out).every(g => g.gap !== null && Math.abs(g.gap - g.mb) <= 1 && g.pageScroll <= 0);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 // Switching view mode lost or shifted the place in the alignment: the anchor was measured on the
 // consensus row (14px, the sequence rows 13px), so Full -> Canvas landed ~7% of the rows off (row
 // 613 -> 571); a Block view was converted as if it were one tall block (it landed at the bottom,
