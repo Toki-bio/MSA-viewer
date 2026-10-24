@@ -39,6 +39,13 @@ async function check(name, fn) {
     process.off('unhandledRejection', h);
     return unhandled === 0 || `unhandled=${unhandled}`;
   });
+  await check('the suite runner refuses --only without a suite name (it would run nothing, or everything)', async () => {
+    const { spawnSync } = require('child_process');
+    const cwd = path.join(__dirname, '..', '..');
+    const r1 = spawnSync(process.execPath, ['tests/run-all.js', '--only', '--quick'], { cwd, encoding: 'utf8' });
+    const r2 = spawnSync(process.execPath, ['tests/run-all.js', '--only'], { cwd, encoding: 'utf8' });
+    return r1.status === 2 && r2.status === 2 && /usage/.test(r1.stderr) || `status ${r1.status}/${r2.status}: ${r1.stderr.slice(0, 80)}`;
+  });
   console.log(fail ? `\n${fail} failed` : '\nall passed');
   process.exit(fail ? 1 : 0);
 })();

@@ -27,14 +27,35 @@ function findChrome() {
 
 // opts.scrollbars: show real scrollbars (headless Chrome hides them by default, so a layout that
 // jumps when a scrollbar appears cannot be seen without this)
+// Every browser launched here is remembered until it disconnects, so a runner can close what a
+// timed-out check left open (a check that launches its own browser never reaches its finally)
+const _launched = new Set();
 async function launch(opts = {}) {
   // BROWSER=firefox uses Playwright's Firefox (one-time: npx playwright-core install firefox)
   // BROWSER=webkit uses Playwright's WebKit, the nearest to Safari on Windows
+  let browser;
   if (process.env.BROWSER === 'firefox' || process.env.BROWSER === 'webkit') {
-    return require('playwright-core')[process.env.BROWSER].launch({ headless: true });
+    browser = await require('playwright-core')[process.env.BROWSER].launch({ headless: true });
+  } else {
+    const extra = opts.scrollbars ? { ignoreDefaultArgs: ['--hide-scrollbars'] } : {};
+    browser = await chromium.launch({ executablePath: findChrome(), headless: true, ...extra });
   }
-  const extra = opts.scrollbars ? { ignoreDefaultArgs: ['--hide-scrollbars'] } : {};
-  return chromium.launch({ executablePath: findChrome(), headless: true, ...extra });
+  _launched.add(browser);
+  browser.on('disconnected', () => _launched.delete(browser));
+  return browser;
+}
+// Closes every browser still open except those in `keep` (each under its own time limit); returns how many were closed
+async function closeLaunched(limitMs = 10000, keep = []) {
+  let n = 0;
+  const keepSet = new Set(keep);
+  for (const b of [..._launched]) {
+    if (keepSet.has(b)) continue;
+    if (!b.isConnected()) { _launched.delete(b); continue; }
+    n++;
+    await Promise.race([b.close().catch(() => {}), new Promise(r => setTimeout(r, limitMs))]);
+    _launched.delete(b);
+  }
+  return n;
 }
 
 // Generates a synthetic FASTA alignment of nSeq sequences x nCol columns.
@@ -134,4 +155,4 @@ async function setMode(page, mode) {
   await page.waitForTimeout(200);
 }
 
-module.exports = { launch, makeFasta, loadFasta, loadSyntheticFasta, setMode, findChrome };
+module.exports = { launch, closeLaunched, makeFasta, loadFasta, loadSyntheticFasta, setMode, findChrome };

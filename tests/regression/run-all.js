@@ -5,7 +5,7 @@
 // used both by a human (`node tests/regression/run-all.js`) and as a
 // target of tests/run-all.js.
 const { start } = require('../lib/static-server');
-const { launch, makeFasta, loadFasta, loadSyntheticFasta, setMode } = require('../lib/browser');
+const { launch, closeLaunched, makeFasta, loadFasta, loadSyntheticFasta, setMode } = require('../lib/browser');
 
 const CHECKS = [];
 function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
@@ -8597,6 +8597,16 @@ check('Audit batch 2: fast rectangle refresh, ragged Realign Block, preset names
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+
+// GLM audit (tests): a check that launches its own browser and times out leaves that browser open for the rest
+// of the run; the launch helper now remembers every browser and the runner closes what is left after each check.
+check('Test harness: a browser a check leaves open is closed by the runner (closeLaunched)', async (page) => {
+  const stray = await launch({ scrollbars: true });
+  const before = stray.isConnected();
+  const closed = await closeLaunched(10000, [page.context().browser()]);
+  return { pass: before && closed === 1 && !stray.isConnected() && page.context().browser().isConnected(), detail: JSON.stringify({ before, closed, after: stray.isConnected() }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
@@ -8627,7 +8637,10 @@ async function main() {
       const ms = Date.now() - t0;
       console.log(`[${outcome.pass ? 'PASS' : 'FAIL'}] (${ms}ms) ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
       results.push({ name, ...outcome });
-      await withTimeout(browser.close(), 20000).catch(() => {});   // a timed-out check may still hold the page
+      await withTimeout(browser.close(), 20000).catch(() => console.warn('[WARN] the browser of "' + name + '" did not close within 20 s'));   // a timed-out check may still hold the page
+      // a check that launched its own browser (launch({ scrollbars: true })) and timed out never closed it
+      const left = await closeLaunched(10000, [browser]);
+      if (left) console.warn('[WARN] ' + left + ' browser(s) left open by "' + name + '" closed by the runner');
     }
   } finally {
     server.close();

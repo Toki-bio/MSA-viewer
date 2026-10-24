@@ -19,6 +19,10 @@ const quick = process.argv.includes('--quick');
 const noBrowser = process.argv.includes('--no-browser');
 const onlyIdx = process.argv.indexOf('--only');
 const only = onlyIdx >= 0 ? (process.argv[onlyIdx + 1] || '').toLowerCase() : null;
+if (only !== null && (!only || only.startsWith('--'))) {   // "--only" with no text would run nothing, or everything
+  console.error('usage: node tests/run-all.js --only <text in a suite name>');
+  process.exit(2);
+}
 const SUITE_TIMEOUT_MS = +process.env.SUITE_TIMEOUT_MS > 0 ? +process.env.SUITE_TIMEOUT_MS : 3600000;
 
 // Runs one suite; past SUITE_TIMEOUT_MS it is killed with its process tree (taskkill /T on Windows,
@@ -28,12 +32,17 @@ function runSuite(args) {
   return new Promise(resolve => {
     const child = spawn(process.execPath, args, { cwd: ROOT, stdio: 'inherit' });
     let timedOut = false;
+    let escalate = null;
     const timer = setTimeout(() => {
+      if (child.exitCode !== null || child.signalCode !== null) return;   // it just finished: no kill of a dead (or reused) pid
       timedOut = true;
       if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-      else child.kill('SIGTERM');
+      else {
+        child.kill('SIGTERM');
+        escalate = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, 10000);   // a stalled loop ignores SIGTERM
+      }
     }, SUITE_TIMEOUT_MS);
-    child.on('exit', code => { clearTimeout(timer); resolve({ code, timedOut }); });
+    child.on('exit', code => { clearTimeout(timer); if (escalate) clearTimeout(escalate); resolve({ code, timedOut }); });
     child.on('error', () => { clearTimeout(timer); resolve({ code: 1, timedOut }); });
   });
 }
