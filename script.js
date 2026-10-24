@@ -31178,7 +31178,9 @@ function _dotScrollbarPx() {
 }
 
 function _initDotPlotEvents() {
-    document.documentElement.style.setProperty('--dot-sb', _dotScrollbarPx() + 'px');   // #dotPlotAlignPanel keeps one height
+    const setSb = () => document.documentElement.style.setProperty('--dot-sb', _dotScrollbarPx() + 'px');   // #dotPlotAlignPanel keeps one height
+    setSb();
+    window.addEventListener('resize', () => { _dotSbPx = -1; setSb(); });   // a browser zoom changes the scrollbar's CSS height (GLM audit)
     const overlay = document.getElementById('dotPlotOverlay');
     const threshSlider = document.getElementById('dotPlotThreshold');
     const threshVal = document.getElementById('dotPlotThreshVal');

@@ -1168,8 +1168,8 @@
                  Dotter mode, the identity slider (owner, 2026-10-23: one wide slider that follows the mode) -->
             <div class="dot-ctl-row">
                 <span style="font-weight:bold;" id="dotPlotUpperLabel">Mode:</span>
-                <label title="Exact word match - faster, sharper diagonals"><input type="radio" name="dotPlotMode" value="spin" checked onchange="_dotOnModeChange()"> SPIN (word)</label>
-                <label title="Sliding-window identity - tolerant of mismatches, better for diverged copies"><input type="radio" name="dotPlotMode" value="doter" onchange="_dotOnModeChange()"> Dotter (window)</label>
+                <label title="Exact word match - faster, sharper diagonals"><input type="radio" name="dotPlotMode" value="spin" checked> SPIN (word)</label>
+                <label title="Sliding-window identity - tolerant of mismatches, better for diverged copies"><input type="radio" name="dotPlotMode" value="doter"> Dotter (window)</label>
                 <span class="dot-sep"></span>
                 <label class="dot-slider" id="dotPlotWindowWrap"><span id="dotPlotWindowLabel">Word length</span><input type="range" id="dotPlotWindow" value="6" min="2" max="20" step="1" title="Word length for SPIN exact matches (2-20). Shorter words find more, and noisier, matches"><output id="dotPlotWindowVal" for="dotPlotWindow">6</output></label>
                 <label class="dot-slider" id="dotPlotThreshWrap" title="Minimum window identity for a dot to be plotted (0-100%)" hidden><span>Identity &ge;</span><input type="range" id="dotPlotThreshold" min="0" max="100" value="55"><output id="dotPlotThreshVal" for="dotPlotThreshold">55%</output></label>
