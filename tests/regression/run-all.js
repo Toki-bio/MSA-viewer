@@ -8531,6 +8531,72 @@ check('Audit fixes: Canvas row jump stays within the content; annotation labels 
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+
+// GLM pre-release audit of v278, batch 2: a large rectangle selection cost ~90 ms per refresh in Full/Block (a DOM
+// query per cell); Realign Block on a ragged alignment computed the width change from the first row and padded the
+// wrong rows; a search preset named __proto__ vanished and presets lost the restriction-site flags; a snapshot
+// restored the trim after the render and lost the paused-diffs flag; a TSD run finishing after the finder was
+// closed installed its preview; the collection grew without a size cap.
+check('Audit batch 2: fast rectangle refresh, ragged Realign Block, preset names and flags, snapshot trim/diffs flags, TSD preview after close', async (page) => {
+  const r = {};
+  await loadSyntheticFasta(page, 120, 400); await setMode(page, 'full');
+  r.refresh = await page.evaluate(() => { _setNucRectangle(0, 0, 95, 299); refreshNucleotideSelectionsImmediate(); _setNucRectangle(0, 0, 95, 300); const t0 = performance.now(); refreshNucleotideSelectionsImmediate(); const ms = performance.now() - t0; const sp = document.querySelector('.seq-line[data-seq-index="40"] .seq-data > span[data-pos="300"]'); return { ms: Math.round(ms * 10) / 10, cells: [...state.selectedNucs.values()].reduce((n, s) => n + s.size, 0), endCls: sp && sp.classList.contains('nuc-sel-end'), startCls: document.querySelector('.seq-line[data-seq-index="40"] .seq-data > span[data-pos="0"]').classList.contains('nuc-sel-start') }; });
+  // ragged alignment: rows 1 and 2 are shorter than the others
+  const rows = ['ACGTACGTACGTACGTACGT', 'ACGTTCGTACGA', 'ACGTACCTACGTACGT', 'ACGTACGGACGTTCGTACGT', 'ACGTACGTACGTACGTACGT'];
+  await loadFasta(page, rows.map((s, i) => '>r' + i + '\n' + s).join('\n') + '\n');
+  r.ragged = await page.evaluate(async (rows) => {
+    const orig = window._mafftAlignWithUi;
+    window._mafftAlignWithUi = async (fasta) => { const recs = fasta.split('>').filter(Boolean).map(b => { const l = b.split(/\r?\n/); return { name: l[0], seq: l.slice(1).join('') }; }); const L = Math.max(...recs.map(x => x.seq.length)) + 2; return recs.map(x => '>' + x.name + '\n' + x.seq + '-'.repeat(L - x.seq.length) + '\n').join(''); };
+    const loaded = state.seqs.map(s => s.seq);
+    _setNucRectangle(1, 2, 2, 7); scheduleNucSelectionRefresh();
+    try { await realignSelectedBlock({ skipPrompt: true }); } finally { window._mafftAlignWithUi = orig; }
+    const got = state.seqs.map(s => s.seq);
+    const L = got[0].length;
+    const residuesKept = got.every((s, i) => s.replace(/-/g, '') === rows[i].replace(/-/g, ''));
+    const others = [0, 3, 4].every(i => got[i].length === L && got[i].slice(0, 8) === rows[i].slice(0, 8) && got[i].slice(8, 10) === '--' && got[i].slice(10) === rows[i].slice(8).padEnd(L - 10, '-'));
+    undoDelete();
+    return { rect: got.every(s => s.length === L), L, residuesKept, others, undone: state.seqs.every((s, i) => s.seq === loaded[i]) };
+  }, rows);
+  // presets: a __proto__ name, restriction-site flags
+  r.presets = await page.evaluate(() => {
+    const out = {};
+    searchMotif({ motif: 'GAATTC', label: 'EcoRI', overlapping: true, countMode: 'alignmentSites', suppressMessage: true });
+    document.getElementById('searchPresetName').value = '__proto__'; saveSearchPreset();
+    out.listed = [...document.getElementById('searchPresetSelect').options].map(o => o.value).includes('__proto__');
+    out.stored = Object.keys(JSON.parse(localStorage.getItem('searchPresets') || '{}')).includes('__proto__');
+    out.protoIntact = Object.getPrototypeOf({}) === Object.prototype && !('queries' in {});
+    clearAllSearches(true);
+    document.getElementById('searchPresetSelect').value = '__proto__'; loadSearchPreset();
+    const h = state.searchHistory[0];
+    out.flags = h ? { overlapping: !!h.overlapping, countMode: h.countMode } : null;
+    localStorage.removeItem('searchPresets'); updateSearchPresetList();
+    return out;
+  });
+  // snapshot: trim before the render, manual flags and the paused-diffs flag round-trip, Canvas offsets clamped
+  r.snap = await page.evaluate(async () => {
+    _setTrimBounds(2, 15, 'left'); state._diffsPausedByVarSites = true;
+    const p = _buildSnapshotPayload();
+    p.view.canvasOffsetX = 999999; p.view.canvasOffsetY = 999999; p.view.mode = 'canvas';
+    state.trimBoundaries = null; state.trimManualLeft = false; state.trimManualRight = false; state._diffsPausedByVarSites = false;
+    let rendersWithTrim = 0; const o = window.renderAlignment; window.renderAlignment = function () { if (state.trimBoundaries) rendersWithTrim++; return o.apply(this, arguments); };
+    _loadSnapshotPayload(JSON.parse(JSON.stringify(p)));
+    await new Promise(r => setTimeout(r, 900));
+    window.renderAlignment = o;
+    const cv = _canvasState.canvas, h = parseInt(cv.style.height) || cv.clientHeight, w = parseInt(cv.style.width) || cv.clientWidth;
+    return { trim: JSON.stringify(state.trimBoundaries), manual: [state.trimManualLeft, state.trimManualRight], paused: state._diffsPausedByVarSites, rendersWithTrim, offsetsClamped: _canvasState.offsetX <= Math.max(0, (_canvasState.totalContentW || 0) - w) + 1 && _canvasState.offsetY <= Math.max(0, (_canvasState.totalContentH || 0) - h) + 1 };
+  });
+  // a TSD run finishing after the finder was closed must not install its preview
+  r.tsd = await page.evaluate(() => { document.getElementById('repeatFinderModal').style.display = 'none'; _setTsdPreview([{ obj: state.seqs[0], upRes: [1, 2], downRes: [5, 6] }]); return { preview: !!state.tsdPreview, attention: document.getElementById('tsdMarkBtn').classList.contains('rf-btn-attention') }; });
+  // the collection's sanitiser caps a stretch at 20,000 residues and the list at 200 entries
+  r.cap = await page.evaluate(() => { const big = _dotSanitizeBookmarks(Array.from({ length: 300 }, (_, i) => ({ id: 'b' + i, name: 'n', nameA: 'a', nameB: 'b', aStart: 0, aEnd: 5, bStart: 0, bEnd: 5, seqA: 'A'.repeat(50000), seqB: 'C' }))); return { n: big.length, seqLen: big[0].seqA.length }; });
+  const ok = r.refresh.ms <= 40 && r.refresh.cells === 96 * 301 && r.refresh.endCls && r.refresh.startCls
+    && r.ragged.rect && r.ragged.residuesKept && r.ragged.others && r.ragged.undone
+    && r.presets.listed && r.presets.stored && r.presets.protoIntact && r.presets.flags && r.presets.flags.overlapping && r.presets.flags.countMode === 'alignmentSites'
+    && r.snap.trim === JSON.stringify({ leftTrimEnd: 2, rightTrimStart: 15 }) && r.snap.manual[0] === true && r.snap.manual[1] === false && r.snap.paused === true && r.snap.rendersWithTrim >= 1 && r.snap.offsetsClamped
+    && !r.tsd.preview && !r.tsd.attention && r.cap.n === 200 && r.cap.seqLen === 20000;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

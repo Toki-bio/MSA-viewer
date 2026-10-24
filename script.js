@@ -15858,9 +15858,10 @@ function _buildSnapshotPayload() {
             codonFrame: el('codonFrame')?.value,
             codonCode: el('codonCode')?.value,
             canvasOffsetX: _canvasState.offsetX || 0,
-            canvasOffsetY: _canvasState.offsetY || 0
+            canvasOffsetY: _canvasState.offsetY || 0,
+            diffsPausedByVarSites: !!state._diffsPausedByVarSites
         },
-        trim: state.trimBoundaries ? { ...state.trimBoundaries } : null,
+        trim: state.trimBoundaries ? { ...state.trimBoundaries, manualLeft: !!state.trimManualLeft, manualRight: !!state.trimManualRight } : null,
         colourState: colourMappings.length > 0 ? { mappings: colourMappings } : null,
         searchHistory: state.searchHistory.length > 0 ? state.searchHistory.map(h => ({
             motif: h.motif, color: h.color, label: h.label, strand: h.strand,
@@ -15992,8 +15993,10 @@ function _applySnapshotView(view) {
     setVal('varThresholdMode', view.varThresholdMode);
     setVal('varSitesThreshold', view.varSitesThreshold, 'input');
     setBox('varSitesBreakpoints', view.varSitesBreakpoints);
-    setBox('varSitesOnly', view.varSitesOnly);
+    // diffs first, then variable sites (which pauses diffs): a snapshot with both ends as the origin did
     setBox('highlightDiffs', view.highlightDiffs);
+    setBox('varSitesOnly', view.varSitesOnly);
+    if (typeof view.diffsPausedByVarSites === 'boolean') state._diffsPausedByVarSites = view.diffsPausedByVarSites;
     setVal('codonFrame', view.codonFrame);
     setVal('codonCode', view.codonCode);
     setBox('codonAnalysis', view.codonAnalysis);
@@ -16011,8 +16014,11 @@ function _applySnapshotView(view) {
             // the Canvas pans instead of scrolling: its position comes back after its first draw
             if ((ox || oy) && typeof isCanvasMode === 'function' && isCanvasMode()) {
                 requestAnimationFrame(() => {
-                    if (!_canvasState.canvas) return;
-                    _canvasState.offsetX = Math.max(0, ox); _canvasState.offsetY = Math.max(0, oy);
+                    const cv = _canvasState.canvas;
+                    if (!cv) return;
+                    const w = parseInt(cv.style.width) || cv.clientWidth, h = parseInt(cv.style.height) || cv.clientHeight;
+                    _canvasState.offsetX = Math.max(0, Math.min(ox, (_canvasState.totalContentW || 0) - w));   // not past the content
+                    _canvasState.offsetY = Math.max(0, Math.min(oy, (_canvasState.totalContentH || 0) - h));
                     _canvasState.scheduleDraw?.(); _canvasState.onOffsetChange?.();
                 });
             }
@@ -16037,6 +16043,11 @@ function _loadSnapshotPayload(payload) {
     // Parse and render first, THEN apply view settings
 
     parseAndRender(true).then(() => {
+        // the trim first: _applySnapshotView renders, and the consensus, the ruler and the Canvas read the trim then
+        if (payload.trim && Number.isInteger(payload.trim.leftTrimEnd) && Number.isInteger(payload.trim.rightTrimStart)) {
+            _setTrimBounds(payload.trim.leftTrimEnd, payload.trim.rightTrimStart, false);
+            state.trimManualLeft = !!payload.trim.manualLeft; state.trimManualRight = !!payload.trim.manualRight;
+        }
         _applySnapshotView(payload.view || {});
         // A snapshot gives back exactly what was saved: no colours saved means none shown
         _applySnapshotColourState(payload.colourState || { mappings: [] });
@@ -16045,13 +16056,10 @@ function _loadSnapshotPayload(payload) {
         }
         // Older snapshots have no selections: still clear what the previous session showed
         _applySnapshotSelections(payload.selections || {});
-        // A trim (saved by Clone Tab and newer snapshots); an older snapshot without one keeps none
-        if (payload.trim && Number.isInteger(payload.trim.leftTrimEnd) && Number.isInteger(payload.trim.rightTrimStart)) {
-            _setTrimBounds(payload.trim.leftTrimEnd, payload.trim.rightTrimStart, true);
-        }
         // The dot-plot collection of the snapshot joins the user's own (by id)
         if (Array.isArray(payload.dotBookmarks)) {
-            const have = new Set((state.dotBookmarks || []).map(b => b.id));
+            if (!Array.isArray(state.dotBookmarks)) state.dotBookmarks = [];
+            const have = new Set(state.dotBookmarks.map(b => b.id));
             _dotSanitizeBookmarks(payload.dotBookmarks).forEach(b => { if (!have.has(b.id)) { state.dotBookmarks.push(b); have.add(b.id); } });
             _dotSaveBookmarks(); _dotRenderBookmarks();
         }
@@ -17417,7 +17425,13 @@ function clearLastSearch() {
 // derives IUPAC handling and the strand entries, replaces an entry with the same motif instead of doubling it,
 // and refreshes the panels), so a preset works on any alignment. Stored like the colour and clustering presets.
 const SEARCH_PRESETS_KEY = 'searchPresets';
-function _searchPresets() { const p = safeLocalGet(SEARCH_PRESETS_KEY, {}); return p && typeof p === 'object' && !Array.isArray(p) ? p : {}; }
+function _searchPresets() {
+    const p = safeLocalGet(SEARCH_PRESETS_KEY, {});
+    // a null-prototype store: a preset named __proto__ or constructor is a key like any other
+    const out = Object.create(null);
+    if (p && typeof p === 'object' && !Array.isArray(p)) Object.keys(p).forEach(k => { out[k] = p[k]; });
+    return out;
+}
 // The queries behind the active searches: a reverse-complement entry joins its forward one as "both strands"
 function _searchQueriesFromActive() {
     const queries = [], byBase = new Map();
@@ -17431,6 +17445,8 @@ function _searchQueriesFromActive() {
         const shownLabel = String(h.label || '').replace(/ \((fwd|rev comp)\)$/, '');
         const q = { motif, useRegex, maxMismatches: useRegex ? 0 : (parseInt(h.maxMismatches, 10) || 0), bothStrands: false,
             color: _safeCssColor(h.color) || '#ffcc00', label: shownLabel && shownLabel !== motif ? shownLabel : '' };
+        if (h.overlapping) q.overlapping = true;                 // restriction sites: every site, counted per column
+        if (h.countMode) q.countMode = String(h.countMode);
         queries.push(q);
         if (h.strand !== 'rev comp') byBase.set(key, q);
     });
@@ -17469,7 +17485,8 @@ function loadSearchPreset() {
     p.queries.forEach(q => {
         if (!q || typeof q.motif !== 'string' || !q.motif) return;
         const r = searchMotif({ motif: q.motif, useRegex: !!q.useRegex, maxMismatches: Math.max(0, parseInt(q.maxMismatches, 10) || 0),
-            bothStrands: !!q.bothStrands, color: _safeCssColor(q.color) || '#ffcc00', label: q.label || undefined, suppressMessage: true });
+            bothStrands: !!q.bothStrands, color: _safeCssColor(q.color) || '#ffcc00', label: q.label || undefined, suppressMessage: true,
+            ...(q.overlapping ? { overlapping: true } : {}), ...(q.countMode ? { countMode: String(q.countMode) } : {}) });
         if (r !== null) ran++;
     });
     const hits = (state.searchHistory || []).reduce((n, h) => n + (h.matchCount || 0), 0);
@@ -22733,9 +22750,14 @@ async function _realignRectangle(rect, opts) {
         showMessage("Reorder only works on column spans of all rows; a block of rows x columns is realigned, not reordered.", 4000);
         return;
     }
+    if (extra.adjustDir || extra.reorder) showMessage('Adjust direction and Reorder apply to column spans of all rows; the block is realigned without them.', 4000);
     const cols = new Set();
     for (let c = rect.c0; c <= rect.c1; c++) cols.add(c);
-    const subset = rect.rows.map(i => state.seqs[i]);
+    // a ragged alignment (rows of unequal length) is squared with gaps first, so the width change is measured
+    // against one length (the first block row's own length gave a wrong delta and padded the wrong rows)
+    const L = _maxOf(state.seqs, s => s.seq.length);
+    const padTo = (seq, n) => seq.length >= n ? seq : seq + '-'.repeat(n - seq.length);
+    const subset = rect.rows.map(i => ({ ...state.seqs[i], seq: padTo(state.seqs[i].seq, L) }));
     const before = subset.map(s => s.seq);
     try {
         _alignRowIds = true;
@@ -22755,6 +22777,7 @@ async function _realignRectangle(rect, opts) {
         const delta = newRows[0].seq.length - before[0].length;   // the realigned piece is spanLen + delta wide
         const alignedLen = spanLen + delta;
         pushUndo('realign-block');
+        state.seqs.forEach((s, i) => { if (!rect.rowSet.has(i) && s.seq.length < L) { s.seq = padTo(s.seq, L); s.gaplessPositions = calculateGaplessPositions(s.seq); } });
         if (delta > 0) {
             const pad = '-'.repeat(delta);
             state.seqs.forEach((s, i) => {
@@ -24557,7 +24580,7 @@ function attachNucPendingHandlers(span) {
     if (span.dataset.nucPendingBound === '1') return;
     const mouseover = () => {
         if (_pointerDragInProgress()) return;
-        showTooltipAt('Selection start - Ctrl+click another nucleotide to complete range', span);
+        showTooltipAt('Selection start - click another residue to complete the range (another row: a rectangle); in Edit mode Ctrl+click', span);
     };
     const mouseout = () => {
         hideTooltip();
@@ -24568,10 +24591,24 @@ function attachNucPendingHandlers(span) {
     span._nucPendingHandlers = { mouseover, mouseout };
 }
 
+// All residue spans of a row (every block line of it) by alignment position, in one query
+function _rowSpansByPos(row) {
+    const byPos = new Map();
+    if (!alignmentContainer) return byPos;
+    const sel = row === CONSENSUS_ROW_INDEX ? '.seq-line.consensus-line .seq-data > span[data-pos]' : `.seq-line[data-seq-index="${row}"] .seq-data > span[data-pos]`;
+    alignmentContainer.querySelectorAll(sel).forEach(span => {
+        const pos = parseInt(span.dataset.pos, 10);
+        const list = byPos.get(pos);
+        if (list) list.push(span); else byPos.set(pos, [span]);
+    });
+    return byPos;
+}
+let _nucRowsTouched = new Map();   // row -> positions whose run-end classes may change in the current refresh
 function refreshNucleotideSelectionsImmediate() {
     const container = alignmentContainer;
     if (!container) return;
     const desiredSelections = state.selectedNucs;
+    _nucRowsTouched = new Map();
 
     // Remove selections that are no longer desired
     for (const [row, posMap] of Array.from(state.domSelectedNucs.entries())) {
@@ -24585,11 +24622,14 @@ function refreshNucleotideSelectionsImmediate() {
             state.domSelectedNucs.delete(row);
             continue;
         }
+        let t = null;
         for (const [pos, span] of Array.from(posMap.entries())) {
             if (!desiredSet.has(pos)) {
                 span.classList.remove('nuc-selected', 'nuc-sel-start', 'nuc-sel-end');
                 detachNucSelectedHandlers(span);
                 posMap.delete(pos);
+                if (!t) { t = new Set(); _nucRowsTouched.set(row, t); }
+                t.add(pos - 1); t.add(pos + 1);
             }
         }
         if (posMap.size === 0) {
@@ -24597,30 +24637,39 @@ function refreshNucleotideSelectionsImmediate() {
         }
     }
 
-    // Add new selections
+    // Add new selections: one DOM query per row that gained cells (a query per cell made a 30,000-cell
+    // rectangle cost ~90 ms per drag frame; GLM audit, v278)
+    const touched = _nucRowsTouched;   // row -> Set of positions whose run-end classes may have changed
     desiredSelections.forEach((posSet, row) => {
-        posSet.forEach(pos => {
-            if (!state.domSelectedNucs.get(row)?.has(pos)) {
-                forEachRowSpanAtPosition(row, pos, (span) => {
-                    span.classList.add('nuc-selected');
-                    attachNucSelectedHandlers(span);
-                    let rowMap = state.domSelectedNucs.get(row);
-                    if (!rowMap) {
-                        rowMap = new Map();
-                        state.domSelectedNucs.set(row, rowMap);
-                    }
-                    rowMap.set(pos, span);
-                });
-            }
+        const have = state.domSelectedNucs.get(row);
+        let missing = null;
+        posSet.forEach(pos => { if (!have || !have.has(pos)) (missing || (missing = [])).push(pos); });
+        if (!missing) return;
+        let byPos = null;   // the row's spans, queried once only when the span cache has no entry
+        let rowMap = have;
+        if (!rowMap) { rowMap = new Map(); state.domSelectedNucs.set(row, rowMap); }
+        let t = touched.get(row); if (!t) { t = new Set(); touched.set(row, t); }
+        missing.forEach(pos => {
+            const cached = getCachedSpan(row, pos);
+            let spans;
+            if (cached) spans = [cached];
+            else { if (!byPos) byPos = _rowSpansByPos(row); spans = byPos.get(pos); }
+            if (!spans) return;
+            spans.forEach(span => { span.classList.add('nuc-selected'); attachNucSelectedHandlers(span); rowMap.set(pos, span); });
+            t.add(pos - 1); t.add(pos); t.add(pos + 1);
         });
     });
-    // The first and last cell of each run of selected cells carry the frame's sides (styles.css)
-    state.domSelectedNucs.forEach((posMap, row) => {
-        const set = desiredSelections.get(row);
-        if (!set) return;
-        posMap.forEach((span, pos) => {
-            span.classList.toggle('nuc-sel-start', !set.has(pos - 1));
-            span.classList.toggle('nuc-sel-end', !set.has(pos + 1));
+    // The first and last cell of each run of selected cells carry the frame's sides (styles.css), judged by
+    // the cells that exist on the page (a hidden column is not a neighbour: Canvas frames by shown slots the
+    // same way); only cells whose neighbours changed are touched, so a 30,000-cell rectangle drag stays cheap
+    touched.forEach((set, row) => {
+        const posMap = state.domSelectedNucs.get(row);
+        if (!posMap) return;
+        set.forEach(pos => {
+            const span = posMap.get(pos);
+            if (!span) return;
+            span.classList.toggle('nuc-sel-start', !posMap.has(pos - 1));
+            span.classList.toggle('nuc-sel-end', !posMap.has(pos + 1));
         });
     });
 
@@ -30684,8 +30733,8 @@ function _dotSanitizeBookmarks(arr) {
     if (!Array.isArray(arr)) return [];
     const str = (v, n = 200) => String(v == null ? '' : v).slice(0, n);
     const int = v => Number.isInteger(v) ? v : (Number.isInteger(+v) ? +v : 0);
-    const seq = v => str(v, 100000).replace(/[^A-Za-z*.-]/g, '');
-    return arr.filter(b => b && typeof b === 'object').slice(0, 500).map(b => ({
+    const seq = v => str(v, 20000).replace(/[^A-Za-z*.-]/g, '');   // a stretch, not a chromosome: 20 kb and 200 entries keep the store small
+    return arr.filter(b => b && typeof b === 'object').slice(0, 200).map(b => ({
         id: /^[A-Za-z0-9_-]{1,40}$/.test(String(b.id || '')) ? String(b.id) : ('bm' + Math.random().toString(36).slice(2, 10)),   // ids land in onclick strings
         name: str(b.name, 120), nameA: str(b.nameA), nameB: str(b.nameB),
         aStart: int(b.aStart), aEnd: int(b.aEnd), bStart: int(b.bStart), bEnd: int(b.bEnd),
@@ -31634,6 +31683,8 @@ function rowsForTsdResults(results) {
 
 // The TSDs of the last run, shown faintly until they are marked (or the run is superseded)
 function _setTsdPreview(results) {
+    const modal = document.getElementById('repeatFinderModal');
+    if (modal && modal.style.display === 'none') { _clearTsdPreview(); return; }   // the run outlived the window
     const marks = results && results.length ? rowsForTsdResults(results) : null;
     state.tsdPreview = marks && marks.size ? marks : null;
     document.getElementById('tsdMarkBtn')?.classList.toggle('rf-btn-attention', !!state.tsdPreview);
