@@ -8660,6 +8660,18 @@ check('A drag interrupted by the window losing focus ends; residue tooltips work
   return { pass: during.dragging && during.gate && !after.dragging && !after.gate && after.sel === 4 && tip, detail: JSON.stringify({ during, after, tip }) };
 });
 
+
+// Owner (2026-10-24): a clear, distinct acknowledgement in the interface that the statistics borrow S. Eddy's
+// HMMER/Easel definitions (esl-alistat, esl-alipid).
+check('Statistics window credits Easel / HMMER (Sean R. Eddy) distinctly, with the links', async (page) => {
+  await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACCTAC\n');
+  await page.evaluate(() => openStats());
+  await page.waitForFunction(() => document.querySelector('#statsSummaryTab table.stats-mx'), null, { timeout: 15000 });
+  const r = await page.evaluate(() => { const f = document.querySelector('#statsModal .stats-credit'); const cs = f && getComputedStyle(f); return { text: f ? f.textContent : '', links: f ? [...f.querySelectorAll('a')].map(a => a.href) : [], visible: !!f && f.getClientRects().length > 0 && parseFloat(cs.fontSize) >= 11 && cs.color !== 'rgb(153, 153, 153)', cards: [...document.querySelectorAll('#statsSummaryTab .stats-card')].map(c => c.textContent.slice(0, 40)) }; });
+  const ok = /Sean R\. Eddy/.test(r.text) && /HMMER/.test(r.text) && /esl-alistat/.test(r.text) && /esl-alipid/.test(r.text) && r.links.some(l => /hmmer\.org/.test(l)) && r.links.some(l => /EddyRivasLab\/easel/.test(l)) && r.visible && r.cards.some(c => /esl-alistat/.test(c)) && r.cards.some(c => /esl-alipid/.test(c));
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

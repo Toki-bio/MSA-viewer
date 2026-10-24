@@ -149,6 +149,10 @@ serves this machine:
 - All file transfers encrypted over SSH
 - Manual "Check Queue" button prevents continuous polling (safer for IDS-protected servers)
 
+## Acknowledgements
+
+The Statistics window reimplements the definitions of `esl-alistat` and `esl-alipid` from **Easel**, the sequence-analysis library of Sean R. Eddy's **HMMER** project (Eddy SR 2011, *PLoS Comput Biol* 7:e1002195; [hmmer.org](http://hmmer.org), [github.com/EddyRivasLab/easel](https://github.com/EddyRivasLab/easel)). No Easel code is included. Alignment is done with MAFFT (Katoh & Standley 2013) compiled to WebAssembly, codon alignment with a JavaScript port of MACSE v2.07 (Ranwez et al. 2018); the manual's Credits section lists every borrowed method.
+
 ## Licence
 
 ViewAlign is released under the MIT License (`LICENSE`), except the MACSE port (`macse-align.js`, `macse-worker.js`,

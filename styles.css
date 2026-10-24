@@ -3845,6 +3845,10 @@ table.stats-mx th.hl, table.stats-mx th.hl span { background: #fff3b0; color: #0
 .stats-content { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px 10px 6px; font-size: 12px; }
 #statsSummaryTab { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .stats-foot { flex-shrink: 0; margin-top: 6px; font-size: 10px; color: #999; }
+/* The attribution of the statistics to Easel / HMMER (Sean R. Eddy): distinct, not a footnote (owner, 2026-10-24) */
+.stats-credit { font-size: 11px; color: #444; border-top: 1px solid #e3e6ea; padding-top: 5px; line-height: 1.4; }
+.stats-credit b { color: #222; }
+.stats-credit a { color: #2a6fb0; }
 .stats-win.stats-docked {
     z-index: 90;          /* under the menu bar (100), so its menus open over the panel */
     border-radius: 0;
