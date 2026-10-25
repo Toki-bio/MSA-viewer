@@ -15144,6 +15144,7 @@ function _dropNoOpUndo(redoBefore) {
 }
 
 function pushUndo(type) {
+    _paneEditNote?.();
     _noteRowSelectionForReorder();
     _scheduleSearchRecount();
     if (typeof _statsInvalidate === 'function') _statsInvalidate(false);   // the open statistics window is now stale
@@ -15202,6 +15203,7 @@ function _trimUndoHistory() {
 // row via normalizeAlignmentLengths(), so a patch that records only the edited row cannot
 // undo it — the other rows keep their padding and the alignment never shrinks back.
 function pushUndoRowPatch(type, rowIndex, beforeSeq, afterSeq, beforeWidth, afterWidth, label) {
+    _paneEditNote?.();
     _scheduleSearchRecount();
     if (!state.seqs[rowIndex] || beforeSeq === afterSeq) return;
     state.deletedHistory.push({
@@ -16013,6 +16015,160 @@ function _linkInit() {
     document.querySelector('.section-header[data-section="actions"]')?.addEventListener('click', () => setTimeout(_linkRefreshUi, 0));
 }
 
+// ============ PANES IN ONE PAGE (split-view plan, step B2, 2026-10-25) ============
+// Actions > Linked views > Split right / Split below: this whole view opens again in an iframe pane docked at the
+// right or bottom of the page. A pane is a complete ViewAlign (same script, same origin) that receives the view
+// through the Clone Tab hand-off, so it starts as an exact copy; the link of step B1 ties its rows to this page
+// (columns stay free, so two areas of one alignment can be read at once). A pane is a read-only mirror: after an
+// edit here the panes are reloaded from this view (debounced), each keeping its own position. Panes carry no
+// toolbar (it is minimised) and a slim header with the file name, a refresh and a close button.
+const _paneMax = 2;                       // secondary panes; the limit is to be raised once memory per pane is measured
+const _panes = { dock: null, side: 'right', frac: 0.42, list: [], timer: 0 };
+const _paneIsChild = (() => { try { return window.parent !== window && new URLSearchParams(location.search).get('pane') === '1'; } catch (e) { return false; } })();
+function _paneSizePx() {
+    const right = _panes.side === 'right';
+    return Math.round((right ? window.innerWidth : window.innerHeight) * _panes.frac);
+}
+function _paneLayout() {
+    const d = _panes.dock;
+    const body = document.body;
+    if (!d || !_panes.list.length) {
+        body.style.marginRight = body.style.marginBottom = '';
+        document.documentElement.style.removeProperty('--pane-right');
+        if (d) d.style.display = 'none';
+        window.dispatchEvent(new Event('resize'));
+        return;
+    }
+    const right = _panes.side === 'right';
+    const px = _paneSizePx();
+    d.style.display = 'flex';
+    d.className = 'pane-dock pane-dock-' + _panes.side;
+    d.style.width = right ? px + 'px' : '';
+    d.style.height = right ? '' : px + 'px';
+    body.style.marginRight = right ? px + 'px' : '';
+    body.style.marginBottom = right ? '' : px + 'px';
+    if (right) document.documentElement.style.setProperty('--pane-right', px + 'px'); else document.documentElement.style.removeProperty('--pane-right');
+    window.dispatchEvent(new Event('resize'));
+}
+function _paneEnsureDock() {
+    if (_panes.dock) return _panes.dock;
+    const d = document.createElement('div');
+    d.id = 'paneDock';
+    const split = document.createElement('div');
+    split.className = 'pane-splitter';
+    split.title = 'Drag to resize the panes';
+    split.addEventListener('pointerdown', ev => {
+        ev.preventDefault();
+        split.setPointerCapture(ev.pointerId);
+        d.classList.add('pane-dragging');                     // iframes would swallow the pointer
+        const move = e2 => {
+            const right = _panes.side === 'right';
+            const total = right ? window.innerWidth : window.innerHeight;
+            const pos = right ? e2.clientX : e2.clientY;
+            _panes.frac = Math.max(0.15, Math.min(0.8, (total - pos) / total));
+            _paneLayout();
+        };
+        const up = () => { d.classList.remove('pane-dragging'); split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up); };
+        split.addEventListener('pointermove', move);
+        split.addEventListener('pointerup', up);
+    });
+    d.appendChild(split);
+    const holder = document.createElement('div');
+    holder.className = 'pane-holder';
+    d.appendChild(holder);
+    document.body.appendChild(d);
+    _panes.dock = d;
+    return d;
+}
+function _paneUrl() {
+    const payload = _buildSnapshotPayload();
+    const name = state.currentFilename || payload.sourceTitle || 'alignment';
+    payload.sourceTitle = name;
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    _newTabHandoffs.set(id, { fasta: payload.fasta, name, payload });
+    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    return { name, url: location.pathname + '?handoff=' + id + (view ? '&view=' + view : '') + '&pane=1&link=' + encodeURIComponent(['1', '0', _link.by, _link.anchor].join('|')) };
+}
+function paneOpen(side) {
+    if (_paneIsChild) return;
+    if (!state.seqs.length) { showMessage('Load an alignment first.', 2500); return; }
+    if (_panes.list.length >= _paneMax) { showMessage(`At most ${_paneMax} extra panes for now.`, 3000); return; }
+    if (_panes.list.length && _panes.side !== side) _panes.list.slice().forEach(paneClose);   // one direction at a time
+    _panes.side = side;
+    const dock = _paneEnsureDock();
+    const { name, url } = _paneUrl();
+    const wrap = document.createElement('div');
+    wrap.className = 'pane';
+    const head = document.createElement('div');
+    head.className = 'pane-head';
+    const title = document.createElement('span');
+    title.className = 'pane-title';
+    title.textContent = name + ' (read-only copy)';
+    const refresh = document.createElement('button');
+    refresh.textContent = '↻'; refresh.title = 'Reload this pane from the main view';
+    const close = document.createElement('button');
+    close.textContent = '×'; close.title = 'Close this pane';
+    head.append(title, refresh, close);
+    const frame = document.createElement('iframe');
+    frame.title = 'Pane: ' + name;
+    wrap.append(head, frame);
+    dock.querySelector('.pane-holder').appendChild(wrap);
+    const rec = { wrap, frame, title };
+    _panes.list.push(rec);
+    refresh.addEventListener('click', () => _paneRefreshOne(rec));
+    close.addEventListener('click', () => paneClose(rec));
+    if (!_link.on) { _link.rows = true; _link.cols = false; _linkSet(true); }
+    _paneLayout();
+    frame.src = url;
+}
+function paneClose(rec) {
+    const i = _panes.list.indexOf(rec);
+    if (i < 0) return;
+    _panes.list.splice(i, 1);
+    rec.wrap.remove();
+    _paneLayout();
+}
+function _paneRefreshOne(rec) {
+    try {
+        const payload = _buildSnapshotPayload();
+        payload.sourceTitle = state.currentFilename || payload.sourceTitle || 'alignment';
+        rec.frame.contentWindow.postMessage({ type: 'viewalign-pane-load', payload }, location.origin);
+        rec.title.textContent = payload.sourceTitle + ' (read-only copy)';
+    } catch (e) { /* pane still loading */ }
+}
+function _paneRefreshAll() { _panes.list.forEach(_paneRefreshOne); }
+// called after every edit step: the panes follow once the edits stop for a moment
+function _paneEditNote() {
+    if (!_panes.list.length) return;
+    clearTimeout(_panes.timer);
+    _panes.timer = setTimeout(_paneRefreshAll, 700);
+}
+// a pane's own side: no toolbar, and it reloads its content when the main view sends it again
+function _paneChildInit() {
+    document.documentElement.classList.add('is-pane');
+    window.addEventListener('message', e => {
+        const m = e.data;
+        if (e.origin !== location.origin || e.source !== window.parent || !m || m.type !== 'viewalign-pane-load' || !m.payload) return;
+        const a = _captureViewAnchor();
+        _loadSnapshotPayload(m.payload);
+        if (a) setTimeout(() => _applyViewAnchor(a), 50);   // keep this pane's own place
+    });
+    setTimeout(() => { if (!_menuMinimized) minimizeMenu(); }, 600);
+}
+function _paneInit() {
+    el('paneSplitRight')?.addEventListener('click', () => paneOpen('right'));
+    el('paneSplitBelow')?.addEventListener('click', () => paneOpen('below'));
+    el('paneRefresh')?.addEventListener('click', () => { _paneRefreshAll(); showMessage('Panes refreshed', 1500); });
+    window.addEventListener('resize', () => {
+        if (!_panes.list.length || !_panes.dock) return;
+        const right = _panes.side === 'right', px = _paneSizePx();
+        _panes.dock.style[right ? 'width' : 'height'] = px + 'px';
+        document.body.style[right ? 'marginRight' : 'marginBottom'] = px + 'px';
+        if (right) document.documentElement.style.setProperty('--pane-right', px + 'px');
+    });
+    if (_paneIsChild) _paneChildInit();
+}
+
 // Opens this whole view in a new tab, exactly as it is here (owner, 2026-10-23): the full snapshot payload
 // (sequences, view, Canvas position, searches, selections and marks, name colours, trim, annotation) goes over
 // the same postMessage hand-off as openSelectedInNewTab, so there is no storage quota or URL length to hit.
@@ -16058,7 +16214,7 @@ function openSelectedInNewTab() {
 // The new tab's side of openSelectedInNewTab: resolves { fasta, name } from the opener.
 function _receiveNewTabHandoff(id) {
     return new Promise((resolve, reject) => {
-        const opener = window.opener;
+        const opener = window.opener || (window.parent !== window ? window.parent : null);   // a pane's opener is its parent page
         if (!opener) { reject(new Error('the tab that opened this one is gone')); return; }
         const done = (fn, v) => { clearInterval(ask); clearTimeout(give); window.removeEventListener('message', on); fn(v); };
         const on = (e) => {
@@ -25639,6 +25795,7 @@ function initializeAppUI() {
     document.querySelectorAll('input[name="caseQuick"]').forEach(r => r.addEventListener('change', () => { if (r.checked) setResidueCase(r.value); }));
     setResidueCase(state.residueCase || 'asis');
     _linkInit();
+    _paneInit();
 
     updateControlsOffset();
     const controls = el('controls');

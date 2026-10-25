@@ -68,7 +68,7 @@ html {
     position: fixed;
     top: 0;
     left: 0;
-    right: 0;
+    right: var(--pane-right, 0px);   /* a docked pane (B2) takes the right edge */
     background: var(--control-bg);
     padding: 1px 4px;
     display: flex;
@@ -4475,3 +4475,19 @@ body.name-resizing { user-select: none; }
 .fold-gappy input { width: 3.2em; font-size: 11px; padding: 0 2px; }
 .fold-status { font-size: 10px; color: #8a6d00; align-self: center; }
 .fold-status:empty { display: none; }
+
+/* split-view panes (B2): dock of iframes at the right or bottom of the page */
+.pane-dock { position: fixed; z-index: 900; background: #ddd; display: flex; }
+.pane-dock-right { top: 0; right: 0; bottom: 0; flex-direction: row; }
+.pane-dock-below { left: 0; right: 0; bottom: 0; flex-direction: column; }
+.pane-splitter { flex: 0 0 6px; background: #9aa; cursor: col-resize; touch-action: none; }
+.pane-dock-below .pane-splitter { cursor: row-resize; }
+.pane-holder { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
+.pane-dock-right .pane-holder { flex-direction: column; }
+.pane-dock-below .pane-holder { flex-direction: row; }
+.pane { flex: 1 1 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid #889; }
+.pane-head { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; padding: 1px 4px; background: #eef; font: 11px sans-serif; }
+.pane-title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-head button { font-size: 12px; padding: 0 6px; cursor: pointer; }
+.pane iframe { flex: 1 1 auto; border: 0; width: 100%; min-height: 0; background: #fff; }
+.pane-dock.pane-dragging iframe { pointer-events: none; }

@@ -8471,6 +8471,43 @@ check('Linked views: a second tab follows rows and columns, by anchor sequence a
   return { pass: ok, detail: JSON.stringify(out) };
 }, { timeoutMs: 120000 });
 
+// Split-view plan B2: Actions > Split right opens this view again in an iframe pane docked inside the page. The
+// pane is a copy (same sequences) linked by rows only, reloads after an edit in the main view, the page makes room
+// for it (body margin), and closing the pane gives the room back.
+check('Panes: Split right opens a linked read-only copy in the page, follows edits, and closing gives the room back', async (page) => {
+  const out = {};
+  const n = 300, len = 800;
+  const fa = Array.from({ length: n }, (_, i) => `>seq${i}\n` + Array.from({ length: len }, (_, j) => 'ACGT'[(i * 5 + j) % 4]).join('')).join('\n') + '\n';
+  await loadFasta(page, fa);
+  await setMode(page, 'canvas');
+  await page.evaluate(() => el('paneSplitRight').click());
+  const child = async () => page.frames().find(f => f !== page.mainFrame());
+  await page.waitForFunction(() => document.querySelector('#paneDock iframe'), null, { timeout: 15000 });
+  let fr;
+  for (let i = 0; i < 60 && !(fr && await fr.evaluate(() => typeof state !== 'undefined' && state.seqs.length).catch(() => 0)); i++) { await page.waitForTimeout(500); fr = await child(); }
+  out.childSeqs = await fr.evaluate(() => state.seqs.length);
+  out.margin = await page.evaluate(() => parseInt(document.body.style.marginRight, 10) || 0);
+  out.linked = await page.evaluate(() => ({ on: _link.on, rows: _link.rows, cols: _link.cols }));
+  await page.waitForTimeout(1500);
+  out.childLink = await fr.evaluate(() => ({ on: _link.on, rows: _link.rows, cols: _link.cols, peers: _link.peers.size }));
+  const where = f => f.evaluate(() => { const a = _captureViewAnchor(); return a && { row: a.row, col: a.col }; });
+  await page.evaluate(() => _applyViewAnchor({ row: 200, col: 123 }));
+  await page.waitForTimeout(1500);
+  out.follow = await where(fr);
+  // edit in the main view: the pane reloads (one sequence fewer)
+  await page.evaluate(() => { pushUndo('test edit'); state.seqs.pop(); });
+  await page.waitForTimeout(2500);
+  out.afterEdit = await fr.evaluate(() => state.seqs.length).catch(e => 'err ' + e.message);
+  await page.evaluate(() => document.querySelector('#paneDock .pane-head button:last-child').click());
+  await page.waitForTimeout(300);
+  out.marginAfter = await page.evaluate(() => document.body.style.marginRight);
+  const ok = out.childSeqs === n && out.margin > 100 && out.linked.on && out.linked.rows && !out.linked.cols
+    && out.childLink.on && out.childLink.rows && !out.childLink.cols && out.childLink.peers === 1
+    && out.follow && Math.abs(out.follow.row - 200) <= 1 && out.follow.col !== 123
+    && out.afterEdit === n - 1 && out.marginAfter === '';
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
 // Owner (2026-10-23): "a function to open alignment in new tab EXACTLY as it is in this tab, including all search
 // etc". Actions > Clone Tab hands the full snapshot payload to a new tab over the existing ?handoff channel
 // (postMessage, no storage quota): sequences, view (mode, zoom, case, shading, name length, diff / variable-sites /
