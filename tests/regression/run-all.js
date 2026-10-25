@@ -8623,6 +8623,69 @@ check('Panes: Split right opens a linked read-only copy in the page, follows edi
   return { pass: ok, detail: JSON.stringify(out) };
 }, { timeoutMs: 120000 });
 
+// Split-view plan B2, the rest (owner: per pane "selectable, default read-only"): a pane starts as a mirror of the main
+// view; an edit made IN the pane turns it into its own copy (with a message) so the mirror refresh never overwrites
+// it; the pane's mode button switches back to mirror (a second click confirms that the pane's edits go); Swap (⇄)
+// exchanges the pane's alignment and place with the main view's; a saved snapshot records the pane layout (side,
+// size, each pane's mode, the content of own copies and file panes) and loading it opens the panes again.
+check('Panes: an edit in a pane makes it its own copy, mode button back to mirror, Swap, layout in snapshots', async (page) => {
+  const bad = [], out = {};
+  const n = 200, len = 500;
+  const fa = Array.from({ length: n }, (_, i) => `>m${i}\n` + Array.from({ length: len }, (_, j) => 'ACGT'[(i * 5 + j) % 4]).join('')).join('\n') + '\n';
+  const nB = 120;
+  const faB = Array.from({ length: nB }, (_, i) => `>b${i}\n` + Array.from({ length: 300 }, (_, j) => 'ACGT'[(i * 3 + j) % 4]).join('')).join('\n') + '\n';
+  await loadFasta(page, fa);
+  await setMode(page, 'canvas');
+  const frameN = async (k) => { let fr; for (let i = 0; i < 60; i++) { fr = page.frames().filter(f => f !== page.mainFrame())[k]; if (fr && await fr.evaluate(() => typeof state !== 'undefined' && state.seqs.length).catch(() => 0)) return fr; await page.waitForTimeout(500); } return fr; };
+  await page.evaluate(() => el('paneSplitRight').click());
+  const fr = await frameN(0);
+  await page.waitForTimeout(800);
+  out.mode0 = await page.evaluate(() => ({ mode: _panes.list[0].mode, btn: _panes.list[0].wrap.querySelector('.pane-mode')?.textContent || null }));
+  if (out.mode0.mode !== 'mirror' || !/mirror/i.test(out.mode0.btn || '')) bad.push('a new pane is not a mirror: ' + JSON.stringify(out.mode0));
+  // an edit in the pane: it becomes its own copy and a later edit in the main view does not overwrite it
+  await fr.evaluate(() => { pushUndo('pane edit'); state.seqs.pop(); _paneEditNote(); });
+  await page.waitForTimeout(500);
+  out.own = await page.evaluate(() => ({ mode: _panes.list[0].mode, title: _panes.list[0].title.textContent, msg: /own copy/i.test(document.body.innerText) }));
+  if (out.own.mode !== 'own' || !/own copy/.test(out.own.title)) bad.push('pane edit did not make an own copy: ' + JSON.stringify(out.own));
+  await page.evaluate(() => { pushUndo('main edit'); state.seqs.pop(); state.seqs.pop(); renderAlignment(); });
+  await page.waitForTimeout(2500);
+  out.paneAfterMainEdit = await fr.evaluate(() => state.seqs.length);
+  if (out.paneAfterMainEdit !== n - 1) bad.push(`own copy was overwritten: ${out.paneAfterMainEdit} rows, ${n - 1} expected`);
+  // the mode button: one click arms, the second goes back to mirror (and reloads from the main view)
+  await page.evaluate(() => _panes.list[0].wrap.querySelector('.pane-mode').click());
+  out.armed = await page.evaluate(() => ({ mode: _panes.list[0].mode, btn: _panes.list[0].wrap.querySelector('.pane-mode').textContent }));
+  await page.evaluate(() => _panes.list[0].wrap.querySelector('.pane-mode').click());
+  await page.waitForTimeout(2000);
+  out.mirrorAgain = await page.evaluate(() => _panes.list[0].mode);
+  out.paneRows = await fr.evaluate(() => state.seqs.length);
+  if (out.armed.mode !== 'own' || !/discard/i.test(out.armed.btn) || out.mirrorAgain !== 'mirror' || out.paneRows !== n - 2) bad.push('back to mirror: ' + JSON.stringify({ armed: out.armed, mode: out.mirrorAgain, rows: out.paneRows }));
+
+  // Swap with a file pane: the main view gets B, the pane gets the main alignment
+  await page.evaluate(([faB]) => paneOpen('right', { name: 'B.fa', text: faB }), [faB]);
+  const fr2 = await frameN(1);
+  await page.waitForTimeout(800);
+  await page.evaluate(() => _panes.list[1].wrap.querySelector('.pane-swap').click());
+  await page.waitForTimeout(2500);
+  out.swap = { main: await page.evaluate(() => ({ n: state.seqs.length, first: state.seqs[0].header })), pane: await fr2.evaluate(() => ({ n: state.seqs.length, first: state.seqs[0].header })), mode: await page.evaluate(() => _panes.list[1].mode) };
+  if (out.swap.main.n !== nB || out.swap.main.first !== 'b0' || out.swap.pane.n !== n - 2 || out.swap.pane.first !== 'm0' || out.swap.mode !== 'own') bad.push('swap: ' + JSON.stringify(out.swap));
+
+  // a saved snapshot records the layout; loading it opens the panes again with their content
+  out.saved = await page.evaluate(() => { const p = _buildSnapshotPayload({ panes: true }); window.__snap = JSON.parse(JSON.stringify(p)); return p.panes && { side: p.panes.side, modes: p.panes.list.map(x => x.mode), ownRows: p.panes.list[1]?.payload ? (p.panes.list[1].payload.fasta.match(/>/g) || []).length : null }; });
+  if (!out.saved || out.saved.side !== 'right' || out.saved.modes.join() !== 'mirror,own' || out.saved.ownRows !== n - 2) bad.push('snapshot layout: ' + JSON.stringify(out.saved));
+  out.cloneHasPanes = await page.evaluate(() => !!_buildSnapshotPayload().panes);
+  if (out.cloneHasPanes) bad.push('a plain payload (Clone Tab, panes) carries the pane layout');
+  await page.evaluate(() => { _panes.list.slice().forEach(paneClose); });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => _loadSnapshotPayload(window.__snap));
+  await page.waitForTimeout(800);
+  const f1 = await frameN(1);
+  await page.waitForTimeout(1000);
+  out.restored = { panes: await page.evaluate(() => _panes.list.map(r => r.mode).join()), ownRows: f1 ? await f1.evaluate(() => state.seqs.length) : null };
+  if (out.restored.panes !== 'mirror,own' || out.restored.ownRows !== n - 2) bad.push('restored layout: ' + JSON.stringify(out.restored));
+  await page.evaluate(() => { _panes.list.slice().forEach(paneClose); });
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 180000 });
+
 // Split-view plan B2: Open file in pane loads another alignment of the same sequences (five extra gap columns) into a
 // pane, linked by rows and by anchor sequence; the pane is not a mirror, so an edit in the main view leaves it alone.
 check('Panes: Open file in pane links by anchor sequence and is not refreshed by edits', async (page) => {

@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v289';
+const BUILD_TAG = 'v290';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -16138,6 +16138,11 @@ function _paneEnsureDock() {
     return d;
 }
 function _paneUrl(file) {
+    if (file && file.payload) {   // an own copy from a saved snapshot: its alignment and its view
+        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        _newTabHandoffs.set(id, { fasta: file.payload.fasta, name: file.name, payload: file.payload });
+        return { name: file.name, url: location.pathname + '?handoff=' + id + '&pane=1&link=' + encodeURIComponent(['1', '0', _link.by, _link.anchor].join('|')) };
+    }
     if (file) {   // another alignment: only its text goes over, the pane parses it; columns link by anchor sequence
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         _newTabHandoffs.set(id, { fasta: file.text, name: file.name });
@@ -16165,24 +16170,35 @@ function paneOpen(side, file) {
     head.className = 'pane-head';
     const title = document.createElement('span');
     title.className = 'pane-title';
-    title.textContent = file ? name : name + ' (read-only copy)';
+    const modeBtn = document.createElement('button');
+    modeBtn.className = 'pane-mode';
+    const swap = document.createElement('button');
+    swap.className = 'pane-swap';
+    swap.textContent = '\u21c4'; swap.title = 'Swap: this pane\'s alignment and place go to the main view, and the main view\'s come here';
     const refresh = document.createElement('button');
+    refresh.className = 'pane-refresh';
     refresh.textContent = '↻'; refresh.title = 'Reload this pane from the main view';
     const close = document.createElement('button');
     close.textContent = '×'; close.title = 'Close this pane';
-    head.append(title, refresh, close);
+    head.append(title, modeBtn, swap, refresh, close);
     const frame = document.createElement('iframe');
     frame.title = 'Pane: ' + name;
     wrap.append(head, frame);
     dock.querySelector('.pane-holder').appendChild(wrap);
-    const rec = { wrap, frame, title, file: !!file };
+    // mode: 'mirror' (follows the main view's edits, the default), 'own' (an own copy: edited here, or swapped),
+    // 'file' (another alignment)
+    const rec = { wrap, frame, title, modeBtn, name, file: !!file, mode: file ? (file.mode || 'file') : 'mirror', armed: 0 };
     _panes.list.push(rec);
+    _paneShowMode(rec);
+    modeBtn.addEventListener('click', () => _paneToggleMode(rec));
+    swap.addEventListener('click', () => paneSwap(rec));
     refresh.addEventListener('click', () => _paneRefreshOne(rec));
     close.addEventListener('click', () => paneClose(rec));
     if (!_link.on) { _link.rows = true; _link.cols = !!file; if (file) _link.by = 'anchor'; _linkSet(true); }
     else if (file) { _link.cols = true; _link.by = 'anchor'; _linkPost({ type: 'settings', by: _link.by, anchor: _link.anchor }); _linkRefreshUi(); }
     _paneLayout();
     frame.src = url;
+    return rec;
 }
 function paneClose(rec) {
     const i = _panes.list.indexOf(rec);
@@ -16192,17 +16208,109 @@ function paneClose(rec) {
     _paneLayout();
 }
 function _paneRefreshOne(rec) {
-    if (rec.file) return;   // a pane that holds its own file is not a mirror
+    if (rec.mode !== 'mirror') return;   // an own copy or another file is not reloaded from the main view
     try {
         const payload = _buildSnapshotPayload();
         payload.sourceTitle = state.currentFilename || payload.sourceTitle || 'alignment';
         rec.frame.contentWindow.postMessage({ type: 'viewalign-pane-load', payload }, location.origin);
-        rec.title.textContent = payload.sourceTitle + ' (read-only copy)';
+        rec.name = payload.sourceTitle;
+        _paneShowMode(rec);
     } catch (e) { /* pane still loading */ }
+}
+function _paneShowMode(rec) {
+    rec.title.textContent = rec.name + (rec.mode === 'mirror' ? ' (read-only copy)' : rec.mode === 'own' ? ' (own copy)' : '');
+    rec.modeBtn.hidden = rec.mode === 'file';
+    rec.modeBtn.textContent = rec.armed ? 'discard edits?' : rec.mode === 'mirror' ? 'mirror' : 'own copy';
+    rec.modeBtn.title = rec.mode === 'mirror'
+        ? 'This pane follows the main view and is reloaded after every edit there. Click to keep it as its own copy (an edit in the pane does that too)'
+        : 'This pane is its own copy: edits in the main view do not reach it. Click (twice) to make it a mirror of the main view again; its own edits are discarded';
+    rec.wrap.querySelector('.pane-refresh').hidden = rec.mode !== 'mirror';
+}
+// mirror -> own copy at once; own copy -> mirror on a second click within 4 s (the pane's edits are discarded)
+function _paneToggleMode(rec) {
+    if (rec.mode === 'mirror') { rec.mode = 'own'; _paneShowMode(rec); return; }
+    if (rec.mode !== 'own') return;
+    if (!rec.armed) {
+        rec.armed = setTimeout(() => { rec.armed = 0; _paneShowMode(rec); }, 4000);
+        _paneShowMode(rec);
+        return;
+    }
+    clearTimeout(rec.armed); rec.armed = 0;
+    rec.mode = 'mirror';
+    _paneRefreshOne(rec);
+    _paneShowMode(rec);
+}
+// a pane reports an edit made in it (same origin: called from the pane's own pushUndo): a mirror becomes an own copy
+function _paneChildEdited(win) {
+    const rec = _panes.list.find(r => r.frame.contentWindow === win);
+    if (!rec || rec.mode !== 'mirror') return;
+    rec.mode = 'own';
+    _paneShowMode(rec);
+    showMessage('The pane you edited is now its own copy: edits in the main view no longer reload it.', 4000);
+}
+// Swap: the pane's alignment and view go to the main view and the main view's to the pane. A copy of the other
+// side's payload (JSON, so no object of one window lives on in the other) loads on each side; each payload carries
+// its view position. The pane then holds the former main alignment as its own copy (a mirror stays a mirror:
+// both held the same alignment); other mirror panes follow the new main view.
+// (state is a top-level const, not a property of window: another window reads it through these)
+function _paneRowCount() { return state.seqs ? state.seqs.length : 0; }
+function _paneFileName() { return state.currentFilename || ''; }
+function paneSwap(rec) {
+    let pw;
+    try { pw = rec.frame.contentWindow; if (!pw || !pw._paneRowCount || !pw._paneRowCount()) throw 0; } catch (e) { showMessage('The pane is still loading.', 2000); return; }
+    const theirs = JSON.parse(JSON.stringify(pw._buildSnapshotPayload()));
+    theirs.sourceTitle = pw._paneFileName() || theirs.sourceTitle || rec.name;
+    const mine = _buildSnapshotPayload();
+    mine.sourceTitle = state.currentFilename || mine.sourceTitle || 'alignment';
+    const mineName = mine.sourceTitle;
+    pw._loadSnapshotPayload(pw.JSON.parse(JSON.stringify(mine)));
+    _loadSnapshotPayload(theirs);
+    if (rec.mode !== 'mirror') { rec.mode = 'own'; rec.file = false; }
+    rec.name = mineName;
+    _paneShowMode(rec);
+    _panes.list.forEach(r => { if (r !== rec) _paneRefreshOne(r); });
+}
+// The pane layout for a saved snapshot: side, size, and per pane its mode with its place (a mirror) or its whole
+// content and view (an own copy, a file pane)
+function _paneLayoutPayload() {
+    if (_paneIsChild || !_panes.list.length) return null;
+    return {
+        side: _panes.side, frac: _panes.frac,
+        list: _panes.list.map(rec => {
+            let pw = null;
+            try { pw = rec.frame.contentWindow; if (!pw._paneRowCount || !pw._paneRowCount()) pw = null; } catch (e) { pw = null; }
+            if (rec.mode === 'mirror') return { mode: 'mirror', anchor: pw ? pw._captureViewAnchor() : null };
+            const payload = pw ? JSON.parse(JSON.stringify(pw._buildSnapshotPayload())) : null;
+            if (payload) payload.sourceTitle = rec.name;
+            return { mode: rec.mode, name: rec.name, payload };
+        }).filter(x => x.mode === 'mirror' || x.payload)
+    };
+}
+function _paneRestoreLayout(lay) {
+    if (_paneIsChild || !lay || !Array.isArray(lay.list) || !lay.list.length) return;
+    _panes.list.slice().forEach(paneClose);
+    const side = lay.side === 'below' ? 'below' : 'right';
+    if (Number.isFinite(lay.frac)) _panes.frac = Math.max(0.15, Math.min(0.8, lay.frac));
+    for (const p of lay.list.slice(0, _paneMax)) {
+        if (p.mode === 'mirror') {
+            const rec = paneOpen(side);
+            if (rec && p.anchor) _paneWhenLoaded(rec, pw => pw._applyViewAnchor(p.anchor));
+        } else if (p.payload && typeof p.payload.fasta === 'string') {
+            paneOpen(side, { name: String(p.name || 'alignment'), payload: p.payload, mode: p.mode === 'file' ? 'file' : 'own' });
+        }
+    }
+}
+// runs fn(paneWindow) once the pane has its alignment (up to 20 s)
+function _paneWhenLoaded(rec, fn, tries = 0) {
+    let pw = null;
+    try { pw = rec.frame.contentWindow; } catch (e) { /* not yet */ }
+    if (pw && pw._paneRowCount && pw._paneRowCount()) { setTimeout(() => fn(pw), 300); return; }
+    if (tries < 80 && _panes.list.includes(rec)) setTimeout(() => _paneWhenLoaded(rec, fn, tries + 1), 250);
 }
 function _paneRefreshAll() { _panes.list.forEach(_paneRefreshOne); }
 // called after every edit step: the panes follow once the edits stop for a moment
 function _paneEditNote() {
+    if (_paneIsChild) { try { window.parent._paneChildEdited?.(window); } catch (e) { /* not ours */ } return; }
     if (!_panes.list.length) return;
     clearTimeout(_panes.timer);
     _panes.timer = setTimeout(_paneRefreshAll, 700);
@@ -16443,7 +16551,8 @@ function _fromBase64Utf8(base64) {
     return new TextDecoder().decode(bytes);
 }
 
-function _buildSnapshotPayload() {
+// opts.panes: also the pane layout (a saved snapshot; not Clone Tab or a pane's own copy)
+function _buildSnapshotPayload(opts = {}) {
     const fasta = state.seqs.map(s => `>${s.fullHeader != null ? s.fullHeader : s.header}\n${s.seq}`).join('\n');
     const consensusTypeEl = document.querySelector('input[name="consensusType"]:checked');
     const shadeModeEl = document.querySelector('input[name="shadeMode"]:checked');
@@ -16513,7 +16622,8 @@ function _buildSnapshotPayload() {
         })) : null,
         selections: _snapshotSelections(),
         annotation: state.annot ? { text: state.annot.text, sourceName: state.annot.sourceName, shown: el('showAnnotation')?.checked !== false } : null,
-        dotBookmarks: state.dotBookmarks?.length ? state.dotBookmarks : null   // the dot-plot collection
+        dotBookmarks: state.dotBookmarks?.length ? state.dotBookmarks : null,   // the dot-plot collection
+        panes: opts.panes ? _paneLayoutPayload() : undefined
     };
 }
 
@@ -16715,6 +16825,8 @@ function _loadSnapshotPayload(payload) {
         } else {
             clearAnnotation();
         }
+        // a saved pane layout opens its panes again (in the main page only)
+        if (payload.panes) _paneRestoreLayout(payload.panes);
     });
 }
 
@@ -16850,7 +16962,7 @@ async function createSnapshot() {
     }
 
     try {
-        const payload = _buildSnapshotPayload();
+        const payload = _buildSnapshotPayload({ panes: true });   // a saved snapshot keeps the pane layout
         const encodedPayload = _toBase64Utf8(JSON.stringify(payload));
         const snapshotUrl = `${window.location.origin}${window.location.pathname}?snapshot=${encodeURIComponent(encodedPayload)}`;
         const fileBaseName = _sanitizeSnapshotFileBaseName(payload.sourceTitle || state.currentFilename || 'alignment_snapshot');
