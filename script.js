@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v290';
+const BUILD_TAG = 'v291';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -3469,7 +3469,7 @@ function _patchRowColumns(dataEl, index, start, end, oldS, oldE, newS, newE, cha
     const html = (a, b) => _seqDataSpansHtml(index, a, b + 1, p.standard, p.ambiguous, p.blackThresh, p.darkThresh, p.lightThresh, p.enableBlack, p.enableDark, p.enableLight, p.conservationData);
     const badgeOld = isLastBlock && oldE >= end - 1;
     const badgeNew = isLastBlock && newE >= end - 1;
-    const countable = !(state._brkBeforePos && state._brkBeforePos.size > 0) && !badgeOld && !badgeNew
+    const countable = !(state._brkBeforePos && state._brkBeforePos.size > 0) && !_foldDomInfo() && !badgeOld && !badgeNew
         && dataEl.childNodes.length === (oldE - oldS + 1);
     if (!countable || newS > oldE || newE < oldS) {
         dataEl.innerHTML = html(newS, newE) + (badgeNew ? _seqLengthBadgeHtml(index) : '');
@@ -3521,7 +3521,7 @@ function _patchBlockColumnWindow(blockDiv, blockIndex, start, end, fallbackS, fa
     if (ruler) {
         const rulerLen = newE - newS + 1;
         ruler.dataset.scale = rulerLen + ':' + newS;
-        if (state._diffColumns) ruler.innerHTML = generateScaleHTML(rulerLen, 10, newS);
+        if (state._diffColumns || _foldDomInfo()) ruler.innerHTML = generateScaleHTML(rulerLen, 10, newS);
         else ruler.textContent = generateScale(rulerLen, 10, newS);
         _applyColumnWindowStyle(ruler, blockLen, newS - start, charWidthPx);
     }
@@ -3565,7 +3565,7 @@ function _buildBlockElement(start, end, len, nameLen, stickyNames, standard, amb
     const scaleDataDiv = document.createElement('div');
     scaleDataDiv.className = 'seq-data';
     scaleDataDiv.dataset.scale = blockLen + ':' + start;   // lets Highlight diffs rebuild it in place
-    if (state._diffColumns) {
+    if (state._diffColumns || _foldDomInfo()) {
         scaleDataDiv.innerHTML = generateScaleHTML(blockLen, 10, start);
     } else {
         scaleDataDiv.textContent = generateScale(blockLen, 10, start);
@@ -3813,7 +3813,7 @@ function _buildUnifiedBlock(blockIndex, start, end, len, blockHeightPx, rowHeigh
     scaleDataDiv.className = 'seq-data';
     const rulerLen = colEnd - colStart + 1;
     scaleDataDiv.dataset.scale = rulerLen + ':' + colStart;
-    if (state._diffColumns) {
+    if (state._diffColumns || _foldDomInfo()) {
         scaleDataDiv.innerHTML = generateScaleHTML(rulerLen, 10, colStart);
     } else {
         scaleDataDiv.textContent = generateScale(rulerLen, 10, colStart);
@@ -8741,6 +8741,7 @@ function generateScaleHTML(maxLength, interval, startPos) {
     // ruler whose visible column count disagrees with the alignment beneath
     // it.
     const diffColumns = state._diffColumns;
+    const fd = _foldDomInfo();
 
     const parts = [];
     for (let i = 0; i < maxLength; i++) {
@@ -8762,8 +8763,12 @@ function generateScaleHTML(maxLength, interval, startPos) {
         // so without this the ruler is stripped to its breakpoint markers and
         // reads as a stray row of glyphs.
         const isVar = !!(diffColumns && diffColumns.has(absPos));
-        parts.push(`<span class="${isVar ? 'diff-highlight' : ''}" data-pos="${absPos}">${ch}</span>`);
+        // (a fold, unlike a var-sites breakpoint, has its marker in the ruler too: a click there shows the run)
+        if (fd && fd.before.has(absPos)) parts.push(_foldMarkerHtml(fd.before.get(absPos)));
+        const cls = (isVar ? 'diff-highlight' : '') + (fd && fd.hidden[absPos] ? ' fold-hidden' : '');
+        parts.push(`<span class="${cls.trim()}" data-pos="${absPos}">${ch}</span>`);
     }
+    if (fd && startPos + maxLength >= fd.len && fd.before.has(fd.len)) parts.push(_foldMarkerHtml(fd.before.get(fd.len)));
     return parts.join('');
 }
 
@@ -10535,6 +10540,34 @@ function _foldNormalize(ranges, len) {
     return out;
 }
 function _foldLen() { return state.seqs && state.seqs.length ? _maxOf(state.seqs, q => q.seq.length) : 0; }
+// Full / Block (A2): a hidden column's spans carry .fold-hidden (display: none) in every row, the consensus row and
+// the ruler, and one marker cell (.col-fold) stands before the first column shown after each run (at len for a run
+// that ends the alignment), so the ruler stays over its columns. Not in the windowed view (it builds only the
+// columns near the viewport, by column number): the commands go to Canvas there. null when nothing is folded here.
+function _foldDomInfo() {
+    const f = state.hiddenCols;
+    if (!f || !f.length || isCanvasMode() || state._needsWindowedDom) return null;
+    if (state._foldDom && state._foldDom.f === f) return state._foldDom;
+    const len = _foldLen();
+    const hidden = new Uint8Array(len + 1), before = new Map();
+    for (const r of f) {
+        for (let c = r[0]; c <= r[1] && c < len; c++) hidden[c] = 1;
+        before.set(Math.min(r[1] + 1, len), r);
+    }
+    state._foldDom = { f, len, hidden, before };
+    return state._foldDom;
+}
+function _foldMarkerHtml(r) {
+    return `<span class="col-fold" data-fold="${r[0]}-${r[1]}" title="${_foldRangeText(r)} \u00b7 click to show">${_FOLD_STYLE.symbol}</span>`;
+}
+function _foldMarkerEl(r) {
+    const m = document.createElement('span');
+    m.className = 'col-fold';
+    m.dataset.fold = r[0] + '-' + r[1];
+    m.title = _foldRangeText(r) + ' \u00b7 click to show';
+    m.textContent = _FOLD_STYLE.symbol;
+    return m;
+}
 // The fold holding a column, or null
 function _foldAt(col) {
     const f = state.hiddenCols;
@@ -10554,7 +10587,7 @@ function _foldRefreshUi() {
     const st = el('foldStatus');
     if (st) {
         const f = state.hiddenCols || [];
-        st.textContent = f.length ? `${_foldCount()} columns hidden in ${f.length} fold${f.length > 1 ? 's' : ''}` + (isCanvasMode() ? '' : ' (folded in Canvas view only)') : '';
+        st.textContent = f.length ? `${_foldCount()} columns hidden in ${f.length} fold${f.length > 1 ? 's' : ''}` + (isCanvasMode() || !state._needsWindowedDom ? '' : ' (folded in the Canvas view: this alignment is too large to fold in Full/Block)') : '';
     }
     const rv = el('revealColumnsButton');
     if (rv) rv.disabled = !(state.hiddenCols && state.hiddenCols.length);
@@ -10579,21 +10612,25 @@ function _foldApply(ranges) {
     }
     const a = isCanvasMode() ? _captureViewAnchor(true) : null;
     state.hiddenCols = norm;
+    state._foldDom = null;
     state._hiddenColsLen = len;
     _foldRefreshUi();
-    if (!isCanvasMode()) return;   // Full / Block show every column
+    if (!isCanvasMode() && state._needsWindowedDom) return;   // the windowed Full / Block view shows every column
+    const da = isCanvasMode() ? null : _captureViewAnchor(false);
     renderAlignment();
     if (a) _applyViewAnchor(a);
+    else if (da) _applyViewAnchor(da);
 }
 // Folds show in Canvas: the commands switch to it from Full or Block
 async function _foldEnsureCanvas() {
     if (isCanvasMode()) return true;
+    if (!state._needsWindowedDom && isSpanRenderMode()) return true;   // Full / Block fold their spans (A2)
     if (typeof bamState !== 'undefined' && bamState && bamState.active) { showMessage('Columns cannot be hidden in the reads view (its reference positions must stay continuous).', 4000); return false; }
     const r = el('modeCanvas');
     if (!r) return false;
     r.checked = true;
     await onModeChange();
-    showMessage('Switched to the Canvas view: hidden columns are folded there.', 3000);
+    showMessage('Switched to the Canvas view: this alignment is too large to fold columns in Full/Block.', 3500);
     return isCanvasMode();
 }
 // The selected columns: the column selection, else the columns of the residue selection
@@ -12581,7 +12618,9 @@ function _seqDataSpansHtml(index, start, end, standard, ambiguous, blackThresh, 
     const brkInfo = state._brkInfo || {};
 
     const ovCtx = _overlayRowCtx(index);
+    const fd = _foldDomInfo();
     for (let pos = start; pos < end; pos++) {
+            if (fd && fd.before.has(pos)) htmlParts.push(_foldMarkerHtml(fd.before.get(pos)));
             // Insert breakpoint marker before this position if needed
             if (showBrk && brkBeforePos.has(pos)) {
                 const r = brkInfo[pos];
@@ -12594,6 +12633,7 @@ function _seqDataSpansHtml(index, start, end, standard, ambiguous, blackThresh, 
 
             const posData = conservationData[pos] || { hasData: false, hasValidCoverage: false };
             let cls = applyConservationShadeClass(baseUp, posData, renderConfig);
+            if (fd && fd.hidden[pos]) cls += ' fold-hidden';
 
             // Codon analysis classes built inline (avoids 160K-node DOM scan)
             if (state._codonData && state._codonData.phase && state._codonData.phase[index]) {
@@ -12639,6 +12679,7 @@ function _seqDataSpansHtml(index, start, end, standard, ambiguous, blackThresh, 
             if (ov.rep) attrs += ` data-repeat-hl="1"`;
             htmlParts.push(`<span class="${cls}${baseClass ? ' ' + baseClass : ''}${colSelected}${ovc ? ' ' + ovc : ''}" data-pos="${pos}"${attrs}>${base}</span>`);
         }
+    if (fd && end >= fd.len && fd.before.has(fd.len)) htmlParts.push(_foldMarkerHtml(fd.before.get(fd.len)));   // a fold at the end
     return htmlParts.join('');
 }
 
@@ -12784,8 +12825,10 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
     const showBrk = state._brkBeforePos && state._brkBeforePos.size > 0;
     const brkBeforePos = state._brkBeforePos || new Set();
     const brkInfo = state._brkInfo || {};
+    const fd = _foldDomInfo();
 
     for (let pos = start; pos < end; pos++) {
+        if (fd && fd.before.has(pos)) dataSpan.appendChild(_foldMarkerEl(fd.before.get(pos)));
         // Insert breakpoint marker before this position if var-sites active
         if (showBrk && brkBeforePos.has(pos)) {
             const r = brkInfo[pos];
@@ -12807,6 +12850,7 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
 
         const span = document.createElement('span');
         span.className = baseClass;
+        if (fd && fd.hidden[pos]) span.classList.add('fold-hidden');
         span.dataset.pos = String(pos);
         span.textContent = displayBase;
 
@@ -12892,6 +12936,7 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
             registerSpanInCache(CONSENSUS_ROW_INDEX, pos, span);
         }
     }
+    if (fd && end >= fd.len && fd.before.has(fd.len)) dataSpan.appendChild(_foldMarkerEl(fd.before.get(fd.len)));
     // Apply repeat highlights to consensus line too
     if (state.repeatHighlights && state.repeatHighlights.size > 0) {
         _applyLineHighlights(dataSpan);
@@ -16326,6 +16371,18 @@ function _paneChildInit() {
         if (a) setTimeout(() => _applyViewAnchor(a), 50);   // keep this pane's own place
     });
     setTimeout(() => { if (!_menuMinimized) minimizeMenu(); }, 600);
+}
+// Full / Block: a click on a fold marker (any row, the consensus or the ruler) shows that run again
+function _foldDomInit() {
+    alignmentContainer?.addEventListener('click', e => {
+        const m = e.target.closest && e.target.closest('.col-fold');
+        if (!m || e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
+        const [a, b] = String(m.dataset.fold || '').split('-').map(Number);
+        if (!Number.isInteger(a) || !Number.isInteger(b)) return;
+        e.preventDefault(); e.stopPropagation();
+        hideTooltip?.();
+        _foldReveal([[a, b]]);
+    }, true);
 }
 function _paneInit() {
     el('paneSplitRight')?.addEventListener('click', () => paneOpen('right'));
@@ -25983,6 +26040,7 @@ function initializeAppUI() {
     document.querySelectorAll('input[name="caseQuick"]').forEach(r => r.addEventListener('change', () => { if (r.checked) setResidueCase(r.value); }));
     setResidueCase(state.residueCase || 'asis');
     _linkInit();
+    _foldDomInit();
     _paneInit();
 
     updateControlsOffset();
@@ -27004,6 +27062,7 @@ function canReshadeInPlace() {
         && !!state.spanCache && state.spanCache.size > 0
         && !(state._diffColumns && state._diffColumns.size)
         && !(state._brkBeforePos && state._brkBeforePos.size)
+        && !_foldDomInfo()
         && !state.trimBoundaries
         && !state.softTrimBoundaries;
 }
@@ -27218,7 +27277,7 @@ function canPatchColumnsInPlace(newWidth, oldWidth) {
     if (!state.spanCache) return false;
     // Every row must be indexed (the consensus row's entry makes a size test pass without it)
     for (let i = 0; i < state.seqs.length; i++) if (!state.spanCache.get(i)?.size) return false;
-    if (state._diffColumns?.size || state._brkBeforePos?.size || state.trimBoundaries || state.softTrimBoundaries) return false;
+    if (state._diffColumns?.size || state._brkBeforePos?.size || _foldDomInfo() || state.trimBoundaries || state.softTrimBoundaries) return false;
     if (state._codonData || state._clusterCharMap || state.repeatHighlights?.size || state.blockMask) return false;
     const grow = newWidth - oldWidth;
     if (grow !== 0 && grow !== 1) return false;
@@ -27708,6 +27767,7 @@ function canUseGeneDocDragOverlay(rowIndex) {
     return isSpanRenderMode()
         && !state.editLiveConservation
         && !(state._brkBeforePos && state._brkBeforePos.size)   // breakpoints insert extra spans
+        && !_foldDomInfo()                                      // so do fold markers
         && !(state._diffColumns && state._diffColumns.size)     // var-sites hides columns
         && !(state.selectedColumns && state.selectedColumns.size)
         && !(state.repeatHighlights && state.repeatHighlights.size)
@@ -33635,7 +33695,7 @@ function _clearRepeatHighlights() {
 }
 
 function _scrollToColumn(colIndex) {
-    if (isCanvasMode()) _foldRevealCol(colIndex);
+    if (isCanvasMode() || _foldDomInfo()) _foldRevealCol(colIndex);
     const container = document.getElementById('alignmentContainer');
     if (!container) return;
     // Canvas mode: pan the canvas instead of scrolling the container

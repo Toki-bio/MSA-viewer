@@ -8533,6 +8533,65 @@ check('Audit v284: hidden columns: Hide Gappy without a long task, markers at fu
   return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
 }, { timeoutMs: 180000 });
 
+// Split-view plan A2: hidden columns in Full and Block. A fold hides its columns in every row, the consensus row and
+// the ruler, and puts one marker cell (.col-fold) where they were, so the columns either side sit together and the
+// ruler stays over its columns; the marker's title says what is hidden and a click on it shows the run again; going
+// to a hidden column shows it; the view is not switched to Canvas. The windowed Full/Block view (large alignments)
+// still sends the commands to Canvas.
+check('Hidden columns in Full and Block: fold markers in rows, consensus and ruler, aligned, click reveals, go-to reveals, windowed goes to Canvas', async (page) => {
+  const bad = [], out = {};
+  const n = 30, len = 400;
+  await loadFasta(page, Array.from({ length: n }, (_, i) => `>s${i}\n` + Array.from({ length: len }, (_, j) => 'ACGT'[(i * 3 + j * 7 + (j % 5)) % 4]).join('')).join('\n') + '\n');
+  await setMode(page, 'full');
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { state.selectedColumns.clear(); for (let c = 100; c <= 249; c++) state.selectedColumns.add(c); updateColumnSelections(); return hideSelectedColumns(); });
+  await page.waitForTimeout(800);
+  const look = () => page.evaluate(() => {
+    const row = document.querySelector('.seq-line[data-seq-index="0"] .seq-data');
+    const cons = document.querySelector('.consensus-line .seq-data');
+    const ruler = document.querySelector('.scale-ruler-line .seq-data');
+    const vis = (root, p) => { const s = root && root.querySelector(`span[data-pos="${p}"]`); return s ? getComputedStyle(s).display !== 'none' : null; };
+    const left = (root, p) => { const s = root && root.querySelector(`span[data-pos="${p}"]`); return s ? Math.round(s.getBoundingClientRect().left) : null; };
+    const mk = root => root ? root.querySelectorAll('.col-fold').length : -1;
+    const m = row && row.querySelector('.col-fold');
+    return { canvas: document.getElementById('modeCanvas').checked, hidden: JSON.stringify(state.hiddenCols), v150: vis(row, 150), v99: vis(row, 99), v250: vis(row, 250),
+      markers: { row: mk(row), cons: mk(cons), ruler: mk(ruler) }, title: m ? m.title : '', next: m && m.nextElementSibling ? m.nextElementSibling.dataset.pos : null,
+      left250: { row: left(row, 250), cons: left(cons, 250), ruler: left(ruler, 250) }, status: el('foldStatus').textContent };
+  });
+  out.full = await look();
+  const f = out.full;
+  if (f.canvas) bad.push('hiding columns in Full switched to Canvas');
+  if (f.hidden !== '[[100,249]]' || f.v150 !== false || f.v99 !== true || f.v250 !== true) bad.push('Full: columns not hidden as asked: ' + JSON.stringify(f));
+  if (f.markers.row !== 1 || f.markers.cons !== 1 || f.markers.ruler !== 1 || f.next !== '250') bad.push('Full: markers ' + JSON.stringify(f.markers) + ' next ' + f.next);
+  if (!/150 columns hidden \(positions 101.250\)/.test(f.title)) bad.push('Full: marker title ' + f.title);
+  if (f.left250.row == null || Math.abs(f.left250.row - f.left250.cons) > 1 || Math.abs(f.left250.row - f.left250.ruler) > 1) bad.push('Full: column 251 not aligned in row / consensus / ruler ' + JSON.stringify(f.left250));
+  if (/Canvas/.test(f.status)) bad.push('Full: status still says Canvas only: ' + f.status);
+  // a click on the marker of another row shows the run again
+  await page.evaluate(() => document.querySelector('.seq-line[data-seq-index="3"] .col-fold').click());
+  await page.waitForTimeout(800);
+  out.afterClick = await look();
+  if (out.afterClick.hidden !== '[]' || out.afterClick.v150 !== true || out.afterClick.markers.row !== 0) bad.push('Full: click did not reveal ' + JSON.stringify(out.afterClick));
+
+  // Block: a fold inside a block, go-to reveals it
+  await setMode(page, 'block');
+  await page.waitForTimeout(500);
+  await page.evaluate(() => _foldApply([[10, 19]]));
+  await page.waitForTimeout(800);
+  out.block = await page.evaluate(() => ({ canvas: document.getElementById('modeCanvas').checked, markers: document.querySelectorAll('.seq-line .col-fold').length,
+    v15: getComputedStyle(document.querySelector('.seq-line[data-seq-index="0"] span[data-pos="15"]')).display }));
+  if (out.block.canvas || out.block.markers < n || out.block.v15 !== 'none') bad.push('Block: ' + JSON.stringify(out.block));
+  out.goto = await page.evaluate(async () => { _scrollToColumn(15); await new Promise(r => setTimeout(r, 800)); return { hidden: JSON.stringify(state.hiddenCols), v15: getComputedStyle(document.querySelector('.seq-line[data-seq-index="0"] span[data-pos="15"]')).display }; });
+  if (out.goto.hidden !== '[]' || out.goto.v15 === 'none') bad.push('Block: go to column 16 did not reveal ' + JSON.stringify(out.goto));
+
+  // windowed Full: the commands go to Canvas
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'full');
+  await page.waitForTimeout(800);
+  out.windowed = await page.evaluate(async () => { const w = !!state._needsWindowedDom; state.selectedColumns.clear(); for (let c = 10; c < 20; c++) state.selectedColumns.add(c); await hideSelectedColumns(); await new Promise(r => setTimeout(r, 800)); return { windowed: w, canvas: document.getElementById('modeCanvas').checked, hidden: JSON.stringify(state.hiddenCols) }; });
+  if (!out.windowed.windowed || !out.windowed.canvas || out.windowed.hidden !== '[[10,19]]') bad.push('windowed: ' + JSON.stringify(out.windowed));
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out).slice(0, 1500) : JSON.stringify(out).slice(0, 800) };
+}, { timeoutMs: 180000 });
+
 // Linked views: rows by sequence name (by index when the name is not there) and columns by column number or by
 // the residue index of an anchor sequence both alignments contain, which keeps two alignments of the same
 // sequences lined up on screen when their gaps differ. A position applied from a peer is not echoed back.

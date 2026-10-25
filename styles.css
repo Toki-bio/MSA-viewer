@@ -4491,3 +4491,9 @@ body.name-resizing { user-select: none; }
 .pane-head button { font-size: 12px; padding: 0 6px; cursor: pointer; }
 .pane iframe { flex: 1 1 auto; border: 0; width: 100%; min-height: 0; background: #fff; }
 .pane-dock.pane-dragging iframe { pointer-events: none; }
+
+/* Hidden columns in Full / Block (split-view plan A2): the folded spans go, one marker cell stands for them */
+.seq-data > span.fold-hidden { display: none !important; }
+.col-fold { display: inline-block; width: var(--res-w, 1ch); text-align: center; letter-spacing: normal; background-color: #f2c14e; color: #333; cursor: pointer; user-select: none; -webkit-user-select: none; box-shadow: inset 1px 0 #b8860b, inset -1px 0 #b8860b; }
+.col-fold:hover { filter: brightness(0.92); }
+.consensus-line .seq-data span.col-fold { background-color: #f2c14e !important; }
