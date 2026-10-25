@@ -8508,6 +8508,34 @@ check('Panes: Split right opens a linked read-only copy in the page, follows edi
   return { pass: ok, detail: JSON.stringify(out) };
 }, { timeoutMs: 120000 });
 
+// Split-view plan B2: Open file in pane loads another alignment of the same sequences (five extra gap columns) into a
+// pane, linked by rows and by anchor sequence; the pane is not a mirror, so an edit in the main view leaves it alone.
+check('Panes: Open file in pane links by anchor sequence and is not refreshed by edits', async (page) => {
+  const out = {};
+  const n = 300, len = 1000;
+  const row = i => Array.from({ length: len }, (_, j) => 'ACGT'[(i * 7 + j) % 4]).join('');
+  const faA = Array.from({ length: n }, (_, i) => `>seq${i}\n${row(i)}`).join('\n') + '\n';
+  const faB = Array.from({ length: n }, (_, i) => { const s = row(i); return `>seq${i}\n${s.slice(0, 200)}-----${s.slice(200)}`; }).join('\n') + '\n';
+  await loadFasta(page, faA);
+  await setMode(page, 'canvas');
+  await page.setInputFiles('body > input[type=file][hidden]', { name: 'other.fa', mimeType: 'text/plain', buffer: Buffer.from(faB) });
+  await page.waitForFunction(() => document.querySelector('#paneDock iframe'), null, { timeout: 15000 });
+  let fr;
+  for (let i = 0; i < 60 && !(fr && await fr.evaluate(() => typeof state !== 'undefined' && state.seqs.length).catch(() => 0)); i++) { await page.waitForTimeout(500); fr = page.frames().find(f => f !== page.mainFrame()); }
+  await page.waitForTimeout(1500);
+  out.child = await fr.evaluate(() => ({ n: state.seqs.length, w: state.seqs[0].seq.length, on: _link.on, by: _link.by, cols: _link.cols, name: state.currentFilename }));
+  out.main = await page.evaluate(() => ({ by: _link.by, cols: _link.cols }));
+  await page.evaluate(() => _applyViewAnchor({ row: 150, col: 300 }));
+  await page.waitForTimeout(1500);
+  out.at = await fr.evaluate(() => _captureViewAnchor());
+  await page.evaluate(() => { pushUndo('test edit'); state.seqs.pop(); });
+  await page.waitForTimeout(2500);
+  out.afterEdit = await fr.evaluate(() => state.seqs.length);
+  const ok = out.child.n === n && out.child.w === len + 5 && out.child.on && out.child.by === 'anchor' && out.child.cols
+    && out.main.by === 'anchor' && out.main.cols && out.at && out.at.row === 150 && Math.abs(out.at.col - 305) <= 1 && out.afterEdit === n;
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
 // Owner (2026-10-23): "a function to open alignment in new tab EXACTLY as it is in this tab, including all search
 // etc". Actions > Clone Tab hands the full snapshot payload to a new tab over the existing ?handoff channel
 // (postMessage, no storage quota): sequences, view (mode, zoom, case, shading, name length, diff / variable-sites /

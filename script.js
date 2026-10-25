@@ -16080,7 +16080,12 @@ function _paneEnsureDock() {
     _panes.dock = d;
     return d;
 }
-function _paneUrl() {
+function _paneUrl(file) {
+    if (file) {   // another alignment: only its text goes over, the pane parses it; columns link by anchor sequence
+        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        _newTabHandoffs.set(id, { fasta: file.text, name: file.name });
+        return { name: file.name, url: location.pathname + '?handoff=' + id + '&pane=1&link=' + encodeURIComponent(['1', '1', 'anchor', _link.anchor].join('|')) };
+    }
     const payload = _buildSnapshotPayload();
     const name = state.currentFilename || payload.sourceTitle || 'alignment';
     payload.sourceTitle = name;
@@ -16089,21 +16094,21 @@ function _paneUrl() {
     const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
     return { name, url: location.pathname + '?handoff=' + id + (view ? '&view=' + view : '') + '&pane=1&link=' + encodeURIComponent(['1', '0', _link.by, _link.anchor].join('|')) };
 }
-function paneOpen(side) {
+function paneOpen(side, file) {
     if (_paneIsChild) return;
     if (!state.seqs.length) { showMessage('Load an alignment first.', 2500); return; }
     if (_panes.list.length >= _paneMax) { showMessage(`At most ${_paneMax} extra panes for now.`, 3000); return; }
     if (_panes.list.length && _panes.side !== side) _panes.list.slice().forEach(paneClose);   // one direction at a time
     _panes.side = side;
     const dock = _paneEnsureDock();
-    const { name, url } = _paneUrl();
+    const { name, url } = _paneUrl(file);
     const wrap = document.createElement('div');
     wrap.className = 'pane';
     const head = document.createElement('div');
     head.className = 'pane-head';
     const title = document.createElement('span');
     title.className = 'pane-title';
-    title.textContent = name + ' (read-only copy)';
+    title.textContent = file ? name : name + ' (read-only copy)';
     const refresh = document.createElement('button');
     refresh.textContent = '↻'; refresh.title = 'Reload this pane from the main view';
     const close = document.createElement('button');
@@ -16113,11 +16118,12 @@ function paneOpen(side) {
     frame.title = 'Pane: ' + name;
     wrap.append(head, frame);
     dock.querySelector('.pane-holder').appendChild(wrap);
-    const rec = { wrap, frame, title };
+    const rec = { wrap, frame, title, file: !!file };
     _panes.list.push(rec);
     refresh.addEventListener('click', () => _paneRefreshOne(rec));
     close.addEventListener('click', () => paneClose(rec));
-    if (!_link.on) { _link.rows = true; _link.cols = false; _linkSet(true); }
+    if (!_link.on) { _link.rows = true; _link.cols = !!file; if (file) _link.by = 'anchor'; _linkSet(true); }
+    else if (file) { _link.cols = true; _link.by = 'anchor'; _linkPost({ type: 'settings', by: _link.by, anchor: _link.anchor }); _linkRefreshUi(); }
     _paneLayout();
     frame.src = url;
 }
@@ -16129,6 +16135,7 @@ function paneClose(rec) {
     _paneLayout();
 }
 function _paneRefreshOne(rec) {
+    if (rec.file) return;   // a pane that holds its own file is not a mirror
     try {
         const payload = _buildSnapshotPayload();
         payload.sourceTitle = state.currentFilename || payload.sourceTitle || 'alignment';
@@ -16158,6 +16165,18 @@ function _paneChildInit() {
 function _paneInit() {
     el('paneSplitRight')?.addEventListener('click', () => paneOpen('right'));
     el('paneSplitBelow')?.addEventListener('click', () => paneOpen('below'));
+    const pick = el('paneOpenFile');
+    if (pick) {
+        const input = document.createElement('input');
+        input.type = 'file'; input.hidden = true;
+        input.addEventListener('change', async () => {
+            const f = input.files && input.files[0];
+            input.value = '';
+            if (f) paneOpen(_panes.list.length ? _panes.side : 'right', { name: f.name, text: await f.text() });
+        });
+        document.body.appendChild(input);
+        pick.addEventListener('click', () => input.click());
+    }
     el('paneRefresh')?.addEventListener('click', () => { _paneRefreshAll(); showMessage('Panes refreshed', 1500); });
     window.addEventListener('resize', () => {
         if (!_panes.list.length || !_panes.dock) return;
@@ -25931,7 +25950,7 @@ function initializeAppUI() {
                 const fastaInputEl = el('fastaInput');
                 if (fastaInputEl) fastaInputEl.value = fasta;
                 state.currentFilename = name;
-                return Promise.resolve(parseAndRender(true)).then(() => showMessage(`Opened ${name}`, 2000));
+                return Promise.resolve(parseAndRender(true)).then(() => { if (autoLink) _linkFromUrlParam(autoLink); showMessage(`Opened ${name}`, 2000); });
             })
             .catch(err => showMessage(`Could not open the selected sequences: ${err.message}`, 6000));
     } else if (autoUrl) {
