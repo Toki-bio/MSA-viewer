@@ -317,8 +317,11 @@ html {
 }
 
 #actions-controls .action-section-columns .button-group {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+#actions-controls .action-section-columns .fold-gappy { grid-column: span 2; }
+#actions-controls .action-section-columns .fold-gappy button { width: auto; flex: 1 1 auto; }
+#actions-controls .action-section-columns .fold-status { grid-column: 1 / -1; }
 
 .actions-menu-footer {
     flex-shrink: 0;
@@ -4466,3 +4469,9 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 #alignmentContainer.name-resize-hover, #alignmentContainer.name-resize-hover *,
 body.name-resizing, body.name-resizing * { cursor: col-resize !important; }
 body.name-resizing { user-select: none; }
+
+/* Columns: hide gappy threshold and the fold count (hidden columns, Canvas) */
+.fold-gappy { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; white-space: nowrap; }
+.fold-gappy input { width: 3.2em; font-size: 11px; padding: 0 2px; }
+.fold-status { font-size: 10px; color: #8a6d00; align-self: center; }
+.fold-status:empty { display: none; }

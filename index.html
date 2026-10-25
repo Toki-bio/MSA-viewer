@@ -13,7 +13,7 @@
     <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
-    <link rel="stylesheet" href="styles.css?v=181">
+    <link rel="stylesheet" href="styles.css?v=182">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -922,6 +922,11 @@
                             <div class="action-section-label">Columns</div>
                             <div class="button-group">
                                 <button id="copyColumnsButton" title="Copy selected columns as FASTA (Ctrl+Shift+V)">Copy Cols</button>
+                                <button id="hideColumnsButton" title="Hide the selected columns (or the columns of the selected residues): each run folds into one marker cell in the Canvas view; click the marker to show it again">Hide Cols</button>
+                                <button id="hideUnselectedColumnsButton" title="Hide every column except the selected ones, so the selected regions sit next to each other (Canvas view)">Only Sel</button>
+                                <span class="fold-gappy" title="Hide the columns where at least this percentage of the rows has a gap (Canvas view)"><button id="hideGappyColumnsButton">Hide Gappy</button>&ge;<input type="number" id="hideGappyPct" aria-label="Hide Gappy: minimum percentage of rows with a gap" title="Minimum percentage of rows with a gap" min="1" max="100" step="1" value="100">%</span>
+                                <button id="revealColumnsButton" title="Show every hidden column again" disabled>Reveal</button>
+                                <span id="foldStatus" class="fold-status"></span>
                             </div>
                         </div>
                         <div class="action-section action-section-analysis">
@@ -1436,7 +1441,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=6"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=334"></script>
+    <script src="script.js?v=335"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>

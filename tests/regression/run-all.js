@@ -8317,6 +8317,107 @@ check('Search presets: save the active searches under a name, load them on anoth
 
 
 // Split-view plan, step B1 (owner, 2026-10-25): two tabs or windows of ViewAlign follow each other. Actions >
+// Hidden columns (split-view plan, step A1): a column range folds into one marker cell so the regions
+// either side sit next to each other. Folds are part of the view (state.hiddenCols), drawn in Canvas
+// through the slot layout; the marker says what is hidden and a click on it (row or ruler) reveals the
+// run; going to a hidden column reveals it; Full/Block show every column and keep the folds for when
+// Canvas comes back; Clone Tab carries them.
+check('Hidden columns: hide selected / all but selected / gappy, marker tooltip and click reveal, go-to reveals, Clone Tab', async (page) => {
+  const bad = [], out = {};
+  const n = 40, len = 600;
+  const rowSeq = i => Array.from({ length: len }, (_, j) => (j >= 500 && j < 510) ? '-' : (j >= 520 && j < 525 && i % 2 === 0) ? '-' : 'ACGT'[(i * 3 + j) % 4]).join('');
+  await loadFasta(page, Array.from({ length: n }, (_, i) => `>s${i}\n${rowSeq(i)}`).join('\n') + '\n');
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(400);
+  await page.click('.section-header[data-section="actions"]'); await page.waitForTimeout(200);
+  // the Actions menu closes on a click elsewhere (the canvas): open it again before a button, as a user would
+  const menuClosed = [];
+  const act = async (fn, label) => { if (!(await page.evaluate(() => !!el('hideColumnsButton').offsetParent))) { menuClosed.push(label); await page.click('.section-header[data-section="actions"]'); await page.waitForTimeout(200); } await fn(); };
+  const lay = () => page.evaluate(() => ({ hidden: JSON.stringify(state.hiddenCols || []), nSlots: _canvasState.nSlots, slots: _canvasState.slots ? Array.from(_canvasState.slots) : null, status: el('foldStatus')?.textContent || '' }));
+  const selCols = (ranges) => page.evaluate((ranges) => { state.selectedColumns.clear(); for (const [a, b] of ranges) for (let c = a; c <= b; c++) state.selectedColumns.add(c); updateColumnSelections(); }, ranges);
+  const clickSlot = async (slot, ruler) => {
+    // the open Actions menu covers the alignment: close it first
+    for (let k = 0; k < 3 && await page.evaluate(() => !!el('hideColumnsButton').offsetParent); k++) { await page.click('.section-header[data-section="actions"]'); await page.waitForTimeout(250); }
+    const g =await page.evaluate(() => { const m = _canvasState.metrics, r = el('alignmentCanvas').getBoundingClientRect(); return { left: r.left, top: r.top, nameW: m.nameW, charW: m.charW, headerH: m.headerH, trackH: m.trackH || 0, charH: m.charH, pitch: _canvasState.rowPitch, ox: _canvasState.offsetX }; });
+    const x = g.left + g.nameW + (slot + 0.5) * g.charW - g.ox, y = ruler ? g.top + g.trackH + 0.5 * g.charH : g.top + g.headerH + 2.5 * g.pitch;
+    // (the menus open on hover: leave them through a corner of the alignment away from the menus first)
+    const cr = await page.evaluate(() => { const r = el('alignmentCanvas').getBoundingClientRect(); return { x: r.right - 30, y: r.bottom - 30 }; });
+    await page.mouse.move(cr.x, cr.y); await page.waitForTimeout(300);
+    await page.mouse.move(x, y); await page.waitForTimeout(400);
+    const tip = await page.evaluate(() => document.body.innerText.match(/\d+ columns? hidden \(positions[^\n]*/)?.[0] || '');
+    out['at' + slot] = await page.evaluate(([x, y]) => { const h = _canvasHitTest(x, y) || _canvasHitTestRuler(x, y); const e = document.elementFromPoint(x, y); return { hit: h && { col: h.col, slot: h.slot, fold: !!h.fold }, el: e && (e.id || e.className) }; }, [x, y]);
+    await page.mouse.click(x, y); await page.waitForTimeout(500);
+    await page.mouse.move(5, 5);
+    return tip;
+  };
+
+  // 1. hide selected columns 101-300 (0-based 100..299): one marker before column 300
+  await selCols([[100, 299]]);
+  await act(() => page.click('#hideColumnsButton'), '#hideColumnsButton'); await page.waitForTimeout(500);
+  out.l1 = await lay();
+  if (out.l1.hidden !== '[[100,299]]') bad.push('hide selected: hiddenCols ' + out.l1.hidden);
+  if (out.l1.nSlots !== len - 200 + 1) bad.push(`hide selected: ${out.l1.nSlots} slots, ${len - 199} expected`);
+  if (!out.l1.slots || out.l1.slots[100] !== -1 - 300 || out.l1.slots[101] !== 300) bad.push('hide selected: slots ' + JSON.stringify(out.l1.slots && out.l1.slots.slice(98, 103)));
+  if (!/200 columns hidden in 1 fold/.test(out.l1.status)) bad.push('status: ' + out.l1.status);
+  delete out.l1.slots;
+  out.hits = await page.evaluate(() => { const m = _canvasState.metrics, r = el('alignmentCanvas').getBoundingClientRect(); const at = s => _canvasHitTest(r.left + m.nameW + (s + 0.5) * m.charW - _canvasState.offsetX, r.top + m.headerH + 0.5 * _canvasState.rowPitch);
+    return { before: at(99), marker: at(100), after: at(101), ruler: _canvasHitTestRuler(r.left + m.nameW + 101.5 * m.charW - _canvasState.offsetX, r.top + (m.trackH || 0) + 0.5 * m.charH) }; });
+  if (out.hits.before?.col !== 99 || out.hits.after?.col !== 300 || out.hits.ruler?.col !== 300 || !out.hits.marker?.brk || !out.hits.marker?.fold) bad.push('hit test: ' + JSON.stringify(out.hits));
+  // the marker cell carries the fold colour
+  out.markerColour = await page.evaluate(() => { const cv = el('alignmentCanvas'), m = _canvasState.metrics, dpr = m.dpr || 1, c = cv.getContext('2d');
+    const d = c.getImageData(Math.round((m.nameW + 100 * m.charW - _canvasState.offsetX + 2) * dpr), Math.round((m.headerH + 2) * dpr), 1, 1).data;
+    return { got: '#' + [d[0], d[1], d[2]].map(v => v.toString(16).padStart(2, '0')).join(''), want: _FOLD_STYLE.color.toLowerCase() }; });
+  if (out.markerColour.got !== out.markerColour.want) bad.push('marker colour ' + JSON.stringify(out.markerColour));
+  // hovering the marker says what is hidden; clicking it reveals
+  out.tip1 = await clickSlot(100, false);
+  if (!/200 columns hidden \(positions 101.300\)/.test(out.tip1)) bad.push('tooltip: ' + out.tip1);
+  out.l2 = await lay(); delete out.l2.slots;
+  if (out.l2.hidden !== '[]' || out.l2.nSlots !== len) bad.push('click reveal: ' + out.l2.hidden + ' ' + out.l2.nSlots);
+
+  // 2. hide all but selected (51-60, 401-410): three folds, the last one at the end of the alignment
+  await selCols([[50, 59], [400, 409]]);
+  await act(() => page.click('#hideUnselectedColumnsButton'), '#hideUnselectedColumnsButton'); await page.waitForTimeout(500);
+  out.l3 = await lay();
+  if (out.l3.hidden !== '[[0,49],[60,399],[410,599]]') bad.push('all but selected: ' + out.l3.hidden);
+  if (out.l3.nSlots !== 23) bad.push(`all but selected: ${out.l3.nSlots} slots, 23 expected`);
+  // a click on the ruler marker of the trailing fold reveals that fold only
+  out.tip2 = await clickSlot(22, true);
+  out.l4 = await lay(); delete out.l4.slots; delete out.l3.slots;
+  if (out.l4.hidden !== '[[0,49],[60,399]]') bad.push('ruler click on the trailing fold: ' + out.l4.hidden + ' (tip ' + out.tip2 + ')');
+  // going to a hidden column reveals its fold and brings the column into view
+  out.goto = await page.evaluate(async () => { _scrollToColumn(200); await new Promise(r => setTimeout(r, 600));
+    const m = _canvasState.metrics, s = _canvasColToSlot(200), vw = el('alignmentContainer').clientWidth;
+    return { hidden: JSON.stringify(state.hiddenCols), slot: s, x: m.nameW + s * m.charW - _canvasState.offsetX, vw }; });
+  if (out.goto.hidden !== '[[0,49]]' || !(out.goto.x > 0 && out.goto.x < out.goto.vw)) bad.push('go to column 201: ' + JSON.stringify(out.goto));
+  await act(() => page.click('#revealColumnsButton', { timeout: 3000 }).catch(e => bad.push('Reveal all: ' + e.message.slice(0, 120))), 'reveal'); await page.waitForTimeout(400);
+  out.revealAll = (await lay()).hidden;
+  if (out.revealAll !== '[]') bad.push('Reveal all left ' + out.revealAll);
+
+  // 3. hide gappy columns: 100 % hides the ten all-gap columns 501-510, 50 % also 521-525
+  await act(() => page.fill('#hideGappyPct', '100'), 'fill100'); await act(() => page.click('#hideGappyColumnsButton'), '#hideGappyColumnsButton'); await page.waitForTimeout(400);
+  out.g100 = (await lay()).hidden;
+  await act(() => page.click('#revealColumnsButton'), 'reveal2'); await page.waitForTimeout(300);
+  await act(() => page.fill('#hideGappyPct', '50'), 'fill50'); await act(() => page.click('#hideGappyColumnsButton'), '#hideGappyColumnsButton'); await page.waitForTimeout(400);
+  out.g50 = (await lay()).hidden;
+  if (out.g100 !== '[[500,509]]' || out.g50 !== '[[500,509],[520,524]]') bad.push('gappy: ' + out.g100 + ' / ' + out.g50);
+
+  // 4. Full shows every column and keeps the folds; back in Canvas they are folded again
+  await setMode(page, 'full'); await page.waitForTimeout(500);
+  out.full = await page.evaluate(() => ({ hidden: JSON.stringify(state.hiddenCols), cells: document.querySelectorAll('.seq-line[data-seq-index="0"] [data-pos="505"]').length }));
+  await setMode(page, 'canvas'); await page.waitForTimeout(500);
+  out.back = await lay(); delete out.back.slots;
+  if (out.full.hidden !== out.g50 || out.back.hidden !== out.g50 || out.back.nSlots !== len - 15 + 2) bad.push('mode round trip: ' + JSON.stringify({ full: out.full, back: out.back.hidden, nSlots: out.back.nSlots }));
+
+  // 5. Clone Tab carries the folds
+  const [popup] = await Promise.all([page.waitForEvent('popup', { timeout: 15000 }), act(() => page.click('#openViewInNewTabButton'), 'clone')]);
+  await popup.waitForFunction(() => typeof state !== 'undefined' && state.seqs.length > 0 && typeof _canvasState !== 'undefined' && _canvasState.canvas, null, { timeout: 20000 });
+  await popup.waitForTimeout(800);
+  out.clone = await popup.evaluate(() => ({ hidden: JSON.stringify(state.hiddenCols || []), nSlots: _canvasState.nSlots }));
+  await popup.close();
+  if (out.clone.hidden !== out.g50 || out.clone.nSlots !== len - 15 + 2) bad.push('Clone Tab: ' + JSON.stringify(out.clone));
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out).slice(0, 1500) : JSON.stringify({ tip1: out.tip1, l3: out.l3.hidden, g50: out.g50, menuReopened: menuClosed }) };
+}, { timeoutMs: 90000 });
+
 // Linked views: rows by sequence name (by index when the name is not there) and columns by column number or by
 // the residue index of an anchor sequence both alignments contain, which keeps two alignments of the same
 // sequences lined up on screen when their gaps differ. A position applied from a peer is not echoed back.

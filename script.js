@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v283';
+const BUILD_TAG = 'v284';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -5670,11 +5670,32 @@ function _canvasSlotToCol(slot) {
     if (!sl) return slot;
     if (slot >= sl.length) return -1;
     const p = sl[slot];
-    return p >= 0 ? p : -1 - p;
+    if (p >= 0) return p;
+    const c = -1 - p;
+    if (c < (_canvasState.slotOf ? _canvasState.slotOf.length : c + 1)) return c;
+    // the marker of a fold at the end of the alignment: the column shown before it
+    for (let s = slot - 1; s >= 0; s--) if (sl[s] >= 0) return sl[s];
+    return -1;
 }
 function _canvasColToSlot(col) {
     const so = _canvasState.slotOf;
     return so ? (col >= 0 && col < so.length ? so[col] : -1) : col;
+}
+// The slot to go to for a column: its own, or for a hidden column the marker of its run (the next
+// shown column when no marker is drawn), so going to it lands where it is folded
+function _canvasColToSlotNear(col) {
+    const so = _canvasState.slotOf;
+    if (!so) return col;
+    if (col < 0 || col >= so.length) return -1;
+    if (so[col] >= 0) return so[col];
+    const sl = _canvasState.slots;
+    for (let c = col + 1; c < so.length; c++) if (so[c] >= 0) return so[c] > 0 && sl[so[c] - 1] < 0 ? so[c] - 1 : so[c];
+    return Math.max(0, (_canvasState.nSlots || 1) - 1);
+}
+// The folds a marker slot stands for, or null
+function _canvasSlotFolds(slot) {
+    const fb = _canvasState.foldBefore;
+    return fb ? fb.get(slot) || null : null;
 }
 function _canvasSlotIsMarker(slot) {
     const sl = _canvasState.slots;
@@ -5719,7 +5740,7 @@ function _canvasHitTest(clientX, clientY, opts) {
             return { row, col: _canvasSlotToCol(col), slot: col, aaLane: Math.floor((inRow - baseH) / (_canvasState.aaRowH || 1)) };
         }
     }
-    if (_canvasSlotIsMarker(col)) return { row, col: _canvasSlotToCol(col), slot: col, brk: true };
+    if (_canvasSlotIsMarker(col)) return { row, col: _canvasSlotToCol(col), slot: col, brk: true, fold: _canvasSlotFolds(col) };
     return { row, col: _canvasSlotToCol(col), slot: col };
 }
 
@@ -5741,7 +5762,7 @@ function _canvasHitTestRuler(clientX, clientY) {
         ? _maxOf(state.seqs, s => s.seq.length)
         : 0;
     if (col < 0 || col >= (_canvasState.nSlots || len)) return null;
-    return { col: _canvasSlotToCol(col) };
+    return { col: _canvasSlotToCol(col), slot: col, fold: _canvasSlotFolds(col) };
 }
 
 // Hit-test the name column area (left side, x < NAME_W in canvas coords).
@@ -6087,18 +6108,35 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // breakpoint marker (the DOM puts a .col-breakpoint cell before the first shown column after
     // a hidden run). slots[s] = column, or -1 - column for the marker before that column;
     // slotOf[column] = slot, or -1 when hidden. Without the filter a slot is a column.
+    // Hidden columns (folds) use the same layout: one marker for each run of folded columns, before the
+    // next shown column (-1 - len for a fold at the end); foldBefore[slot] = the folds a marker stands for.
     const varHide = document.body.classList.contains('var-sites-only') && state._diffColumns && state._varSiteHiddenRanges;
-    let slots = null, slotOf = null;
-    if (varHide) {
+    const folds = state.hiddenCols && state.hiddenCols.length ? state.hiddenCols : null;
+    let slots = null, slotOf = null, foldBefore = null;
+    if (varHide || folds) {
         const arr = [];
         slotOf = new Int32Array(len).fill(-1);
-        const brk = state._brkBeforePos;
+        const brk = varHide ? state._brkBeforePos : null;
+        if (folds) foldBefore = new Map();
+        let fi = 0, pending = null;
         for (let p = 0; p < len; p++) {
-            if (!state._diffColumns.has(p)) continue;
-            if (brk && brk.has(p)) arr.push(-1 - p);
+            if (folds) {
+                while (fi < folds.length && folds[fi][1] < p) fi++;
+                if (fi < folds.length && folds[fi][0] <= p) {
+                    if (!pending) pending = [];
+                    if (pending[pending.length - 1] !== folds[fi]) pending.push(folds[fi]);
+                    continue;
+                }
+            }
+            if (varHide && !state._diffColumns.has(p)) continue;
+            if (pending || (brk && brk.has(p))) {
+                if (pending) { foldBefore.set(arr.length, pending); pending = null; }
+                arr.push(-1 - p);
+            }
             slotOf[p] = arr.length;
             arr.push(p);
         }
+        if (pending) { foldBefore.set(arr.length, pending); arr.push(-1 - len); }
         slots = Int32Array.from(arr);
     }
     const nSlots = slots ? slots.length : len;
@@ -6106,6 +6144,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const posSlot = c => slotOf ? (c < len ? slotOf[c] : -1) : c;   // -1 when the column is hidden
     _canvasState.slots = slots;
     _canvasState.slotOf = slotOf;
+    _canvasState.foldBefore = foldBefore;
     _canvasState.nSlots = nSlots;
     // The ruler text for the whole alignment, indexed by column. generateScale() drops a label
     // that does not fit the window it is asked for, so a text made per drawn strip would lose
@@ -6571,15 +6610,17 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const firstCol = Math.max(0, Math.floor((ox - NAME_W + cx0) / CHAR_W));
         const lastCol = Math.min(nSlots - 1, Math.ceil((ox - NAME_W + cx1) / CHAR_W));
         // A breakpoint marker cell (DOM .col-breakpoint): marker colour, hairline borders, symbol
-        const drawMarker = (x, y) => {
-            ctx.fillStyle = brkStyle.color || '#d0d0d0';
+        // A fold marker (hidden columns) has its own colour and symbol.
+        const drawMarker = (x, y, sI) => {
+            const fold = foldBefore && foldBefore.has(sI);
+            ctx.fillStyle = fold ? _FOLD_STYLE.color : (brkStyle.color || '#d0d0d0');
             ctx.fillRect(x, y, CHAR_W, CHAR_H);
-            ctx.fillStyle = '#b0b0b0';
+            ctx.fillStyle = fold ? '#b8860b' : '#b0b0b0';
             ctx.fillRect(x, y, HAIR, CHAR_H);
             ctx.fillRect(x + CHAR_W - HAIR, y, HAIR, CHAR_H);
             ctx.fillStyle = '#333';
             ctx.textAlign = 'center';
-            ctx.fillText(brkStyle.symbol || '\u22EE', x + CHAR_W / 2, y);
+            ctx.fillText(fold ? _FOLD_STYLE.symbol : (brkStyle.symbol || '\u22EE'), x + CHAR_W / 2, y);
             ctx.textAlign = 'start';
         };
         const firstRow = Math.max(0, Math.floor((oy - HEADER_H + cy0) / rowPitch));
@@ -6626,7 +6667,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             let rulerBold = false;
             for (let sI = firstCol; sI <= lastCol; sI++) {
                 const pc = slotPos(sI);
-                if (pc < 0) continue;
+                if (pc < 0) {
+                    // a fold marker is in the ruler too (a click there shows the run again)
+                    if (foldBefore && foldBefore.has(sI)) {
+                        const xm = NAME_W + sI * CHAR_W - ox;
+                        ctx.textBaseline = 'top'; drawMarker(xm, scaleY, sI); ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#666';
+                    }
+                    continue;
+                }
                 const ch = scaleTextAll[pc];
                 if (!ch || ch === ' ') continue;
                 const x = NAME_W + sI * CHAR_W - ox;
@@ -6666,7 +6714,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             if (!basesHidden) for (let sI = firstCol; sI <= lastCol; sI++) {
                 const x = NAME_W + sI * CHAR_W - ox;
                 const p = slotPos(sI);
-                if (p < 0) { drawMarker(x, y); continue; }
+                if (p < 0) { drawMarker(x, y, sI); continue; }
                 const raw = seq[p] || '-';
                 const base = caseMode === 'upper' ? raw.toUpperCase() : caseMode === 'lower' ? raw.toLowerCase() : raw;   // the aa | Aa | AA switch
                 const pd = consPos[p];
@@ -6890,7 +6938,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     for (let sI = firstCol; sI <= lastCol; sI++) {
                         const x = NAME_W + sI * CHAR_W - ox;
                         const p = slotPos(sI);
-                        if (p < 0) { drawMarker(x, textY); continue; }
+                        if (p < 0) { drawMarker(x, textY, sI); continue; }
                         let ch = cons.values[p] || '-';
                         if (ch !== '-' && ch !== '.') {
                             if (!cons.caseCache[p]) cons.caseCache[p] = _canvasConsensusUpper(ch, p, cons.threshold) ? 1 : 2;
@@ -6986,6 +7034,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     let dragging = false, dragStartX, dragStartY, dragOx, dragOy;
     canvas.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
+
+        // Fold marker (hidden columns): a plain click shows the run again
+        if (_canvasState.foldBefore && !isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
+            const fh = _canvasHitTest(e.clientX, e.clientY) || _canvasHitTestRuler(e.clientX, e.clientY);
+            if (fh && fh.fold) { e.preventDefault(); hideTooltip(); _foldReveal(fh.fold); return; }
+        }
 
         // Annotation track: a click selects the feature's columns (Shift adds)
         if (!isCtrlModifier(e) && !isAltModifier(e)) {
@@ -7221,6 +7275,18 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             return;
         }
         if (_lastTooltipCell && _lastTooltipCell.mask) { _lastTooltipCell = null; hideTooltip(); }
+        const rulerFold = !_canvasHoverCell && _canvasHitTestRuler(e.clientX, e.clientY);
+        if (rulerFold && rulerFold.fold) {
+            if (_lastTooltipCell && _lastTooltipCell.rulerSlot === rulerFold.slot) return;
+            _lastTooltipCell = { row: -1, col: -1, rulerSlot: rulerFold.slot };
+            const target = _getCanvasTooltipTarget();
+            target.style.left = e.clientX + 'px';
+            target.style.top = (e.clientY + 10) + 'px';
+            showTooltipAt(rulerFold.fold.map(_foldRangeText).join('; ') + ' \u00b7 click to show', target);
+            canvas.style.cursor = 'pointer';
+            return;
+        }
+        if (_lastTooltipCell && _lastTooltipCell.rulerSlot != null) { _lastTooltipCell = null; hideTooltip(); }
         if (canvas.style.cursor === 'pointer') canvas.style.cursor = 'default';
         // gap tools: the haloed crosshair over the cells, and the cell under the pointer outlined (overlay)
         const gapTool = state.editModeActive && GENEDOC_GAP_TOOLS.has(state.editTool);
@@ -7234,8 +7300,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             // Only update tooltip when the cell changes (like DOM mouseover
             // fires once per element, not per pixel).
             const lane = _canvasHoverCell.aaLane;
-            if (_lastTooltipCell && _lastTooltipCell.row === row && _lastTooltipCell.col === col && _lastTooltipCell.lane === lane) return;
-            _lastTooltipCell = { row, col, lane };
+            if (_lastTooltipCell && _lastTooltipCell.row === row && _lastTooltipCell.col === col && _lastTooltipCell.lane === lane && _lastTooltipCell.slot === _canvasHoverCell.slot) return;
+            _lastTooltipCell = { row, col, lane, slot: _canvasHoverCell.slot };
 
             // Translation track: the codon box's title or the frameshift mark's (as the DOM spans)
             if (lane != null) {
@@ -7267,6 +7333,16 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 return;
             }
 
+            // Fold marker: what is hidden, and that a click shows it
+            if (_canvasHoverCell.fold) {
+                const m = _canvasState.metrics;
+                const rect = canvas.getBoundingClientRect();
+                const target = _getCanvasTooltipTarget();
+                target.style.left = (rect.left + m.nameW + _canvasHoverCell.slot * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
+                target.style.top = (rect.top + (m.headerH || m.charH) + row * (_canvasState.rowPitch || m.charH) - _canvasState.offsetY) + 'px';
+                showTooltipAt(_canvasHoverCell.fold.map(_foldRangeText).join('; ') + ' \u00b7 click to show', target);
+                return;
+            }
             // Breakpoint marker hover tooltip (mirrors DOM .col-breakpoint title)
             if (_canvasHoverCell.brk && state._brkInfo && state._brkInfo[col]) {
                 const brkInfo = state._brkInfo[col];
@@ -10438,6 +10514,138 @@ function _updateCodonAnalysisState(len) {
     }
 }
 
+// ── HIDDEN COLUMNS (folds) ──────────────────────────────────────────────────
+// state.hiddenCols: sorted, disjoint, non-touching [start, end] column ranges (0-based, inclusive). A
+// property of the view like the colour scheme: the alignment does not change, analyses, Copy and Save
+// still see every column. Canvas lays the content out in slots (as for Variable sites only) and puts
+// one marker cell where a run is hidden; a click on the marker (row or ruler) shows the run again.
+// Full and Block show every column and keep the folds for when Canvas comes back.
+const _FOLD_STYLE = { color: '#f2c14e', symbol: '\u2194' };
+function _foldNormalize(ranges, len) {
+    const r = (ranges || []).map(x => [Math.max(0, x[0] | 0), Math.min(len - 1, x[1] | 0)]).filter(x => x[0] <= x[1]).sort((a, b) => a[0] - b[0]);
+    const out = [];
+    for (const x of r) {
+        const last = out[out.length - 1];
+        if (last && x[0] <= last[1] + 1) last[1] = Math.max(last[1], x[1]);
+        else out.push([x[0], x[1]]);
+    }
+    return out;
+}
+function _foldLen() { return state.seqs && state.seqs.length ? _maxOf(state.seqs, q => q.seq.length) : 0; }
+// The fold holding a column, or null
+function _foldAt(col) {
+    const f = state.hiddenCols;
+    if (!f || !f.length) return null;
+    let lo = 0, hi = f.length - 1;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (f[mid][1] < col) lo = mid + 1;
+        else if (f[mid][0] > col) hi = mid - 1;
+        else return f[mid];
+    }
+    return null;
+}
+function _foldCount() { return (state.hiddenCols || []).reduce((n, r) => n + r[1] - r[0] + 1, 0); }
+function _foldRangeText(r) { const n = r[1] - r[0] + 1; return `${n} column${n > 1 ? 's' : ''} hidden (positions ${r[0] + 1}\u2013${r[1] + 1})`; }
+function _foldRefreshUi() {
+    const st = el('foldStatus');
+    if (st) {
+        const f = state.hiddenCols || [];
+        st.textContent = f.length ? `${_foldCount()} columns hidden in ${f.length} fold${f.length > 1 ? 's' : ''}` + (isCanvasMode() ? '' : ' (folded in Canvas view only)') : '';
+    }
+    const rv = el('revealColumnsButton');
+    if (rv) rv.disabled = !(state.hiddenCols && state.hiddenCols.length);
+}
+// A different alignment length (columns added or removed by an edit) makes the ranges meaningless
+function _foldCheckLength(len) {
+    if (!state.hiddenCols || !state.hiddenCols.length) { state._hiddenColsLen = len; return; }
+    if (state._hiddenColsLen != null && state._hiddenColsLen !== len) {
+        state.hiddenCols = [];
+        showMessageAfterRender('Hidden columns are shown again: the alignment length changed.', 3500);
+    }
+    state._hiddenColsLen = len;
+}
+// Set the folds and redraw at the same place
+function _foldApply(ranges) {
+    const len = _foldLen();
+    if (!len) return;
+    const a = isCanvasMode() ? _captureViewAnchor(true) : null;
+    state.hiddenCols = _foldNormalize(ranges, len);
+    state._hiddenColsLen = len;
+    _foldRefreshUi();
+    if (!isCanvasMode()) return;   // Full / Block show every column
+    renderAlignment();
+    if (a) _applyViewAnchor(a);
+}
+// Folds show in Canvas: the commands switch to it from Full or Block
+async function _foldEnsureCanvas() {
+    if (isCanvasMode()) return true;
+    if (typeof bamState !== 'undefined' && bamState && bamState.active) { showMessage('Columns cannot be hidden in the reads view (its reference positions must stay continuous).', 4000); return false; }
+    const r = el('modeCanvas');
+    if (!r) return false;
+    r.checked = true;
+    await onModeChange();
+    showMessage('Switched to the Canvas view: hidden columns are folded there.', 3000);
+    return isCanvasMode();
+}
+// The selected columns: the column selection, else the columns of the residue selection
+function _foldSelectedColumns() {
+    const cols = new Set(state.selectedColumns);
+    if (!cols.size && state.selectedNucs) state.selectedNucs.forEach(set => set.forEach(c => cols.add(c)));
+    return [...cols].sort((a, b) => a - b);
+}
+function _foldRunsOf(cols) {
+    const runs = [];
+    for (const c of cols) { const last = runs[runs.length - 1]; if (last && c === last[1] + 1) last[1] = c; else runs.push([c, c]); }
+    return runs;
+}
+async function hideSelectedColumns() {
+    const cols = _foldSelectedColumns();
+    if (!cols.length) { showMessage('Select columns first (Ctrl+Alt+click or drag on the ruler), or a block of residues.', 3500); return; }
+    if (!await _foldEnsureCanvas()) return;
+    _foldApply([...(state.hiddenCols || []), ..._foldRunsOf(cols)]);
+    state.selectedColumns.clear(); updateColumnSelections();
+}
+async function hideUnselectedColumns() {
+    const cols = _foldSelectedColumns();
+    if (!cols.length) { showMessage('Select the columns to keep first (Ctrl+Alt+click or drag on the ruler), or a block of residues.', 3500); return; }
+    if (!await _foldEnsureCanvas()) return;
+    const len = _foldLen(), keep = new Set(cols), hide = [];
+    for (let c = 0; c < len; c++) if (!keep.has(c)) hide.push(c);
+    _foldApply([...(state.hiddenCols || []), ..._foldRunsOf(hide)]);
+}
+// Columns with at least pct % gaps ('-' or '.') among all rows
+async function hideGappyColumns() {
+    const pct = Math.min(100, Math.max(1, parseFloat(el('hideGappyPct')?.value) || 100));
+    const len = _foldLen(), n = state.seqs.length;
+    if (!len) return;
+    const need = Math.ceil(pct / 100 * n - 1e-9), hide = [];
+    for (let c = 0; c < len; c++) {
+        let g = 0;
+        for (let i = 0; i < n; i++) { const ch = state.seqs[i].seq[c]; if (ch === undefined || ch === '-' || ch === '.') g++; }
+        if (g >= need) hide.push(c);
+    }
+    if (!hide.length) { showMessage(`No column has ${pct} % or more gaps.`, 3000); return; }
+    if (!await _foldEnsureCanvas()) return;
+    _foldApply([...(state.hiddenCols || []), ..._foldRunsOf(hide)]);
+    showMessage(`${hide.length} column${hide.length > 1 ? 's' : ''} with ${pct} % or more gaps hidden.`, 3000);
+}
+function revealAllColumns() { if (state.hiddenCols && state.hiddenCols.length) _foldApply([]); }
+// Show the given folds again (a click on a marker)
+function _foldReveal(ranges) {
+    if (!ranges || !ranges.length) return;
+    const drop = new Set(ranges.map(r => r[0]));
+    _foldApply((state.hiddenCols || []).filter(r => !drop.has(r[0])));
+}
+// Going to a hidden column shows its run again first; true when it did
+function _foldRevealCol(col) {
+    const r = _foldAt(col);
+    if (!r) return false;
+    _foldReveal([r]);
+    showMessage(`Column ${col + 1} was hidden: ${_foldRangeText(r).replace(' hidden', '')} shown again.`, 3000);
+    return true;
+}
+
 function _computeVarSites(len) {
     const highlightDiffs = document.getElementById('highlightDiffs')?.checked;
     const varSites = document.getElementById('varSitesOnly')?.checked;
@@ -10764,6 +10972,7 @@ function renderAlignment(options = {}) {
     // Var-sites / highlight-diffs computation must run before the Canvas path
     // (which returns early) so Canvas mode has access to _diffColumns,
     // _brkBeforePos and _brkInfo for breakpoint marker rendering.
+    _foldCheckLength(len);
     _computeVarSites(len);
     _prepareAnnotLayout(len);
 
@@ -13393,6 +13602,7 @@ async function parseAndRender(isFromDrop = false) {
         }
         _clearClusterTrimState();
         _dropColumnAnalyses();
+        state.hiddenCols = [];
         // Chromatograms belong to the rows they were read for: keep a trace only if a row of the new
         // alignment has its name and its bases (forward, trimmed or reverse-complemented); a row of
         // another file that happens to share the name must not open it
@@ -13827,7 +14037,7 @@ function _applyViewAnchor(a) {
         if (!m) return;
         const pitch = _canvasState.rowPitch || m.charH;
         _canvasState.offsetY = a.row > 0 ? (m.headerH || m.charH) + a.row * pitch : 0;
-        const slot = _canvasColToSlot(a.col);
+        const slot = _canvasColToSlotNear(a.col);
         if (a.col <= 0) _canvasState.offsetX = 0;
         else if (slot >= 0) _canvasState.offsetX = slot * m.charW;
         _canvasState.scheduleDraw?.();
@@ -16059,7 +16269,8 @@ function _buildSnapshotPayload() {
             codonCode: el('codonCode')?.value,
             canvasOffsetX: _canvasState.offsetX || 0,
             canvasOffsetY: _canvasState.offsetY || 0,
-            diffsPausedByVarSites: !!state._diffsPausedByVarSites
+            diffsPausedByVarSites: !!state._diffsPausedByVarSites,
+            hiddenCols: state.hiddenCols && state.hiddenCols.length ? state.hiddenCols.map(r => [r[0], r[1]]) : null
         },
         trim: state.trimBoundaries ? { ...state.trimBoundaries, manualLeft: !!state.trimManualLeft, manualRight: !!state.trimManualRight } : null,
         colourState: colourMappings.length > 0 ? { mappings: colourMappings } : null,
@@ -16196,6 +16407,7 @@ function _applySnapshotView(view) {
     // diffs first, then variable sites (which pauses diffs): a snapshot with both ends as the origin did
     setBox('highlightDiffs', view.highlightDiffs);
     setBox('varSitesOnly', view.varSitesOnly);
+    if (Array.isArray(view.hiddenCols)) { const L = _foldLen(); state.hiddenCols = _foldNormalize(view.hiddenCols, L); state._hiddenColsLen = L; _foldRefreshUi(); }
     if (typeof view.diffsPausedByVarSites === 'boolean') state._diffsPausedByVarSites = view.diffsPausedByVarSites;
     setVal('codonFrame', view.codonFrame);
     setVal('codonCode', view.codonCode);
@@ -18986,9 +19198,10 @@ function _geJumpToCol(pos1) {
     const pos0 = Math.max(0, (Number(pos1) || 1) - 1 + _clusterAlignmentColumnOffset());
     const token = ++_geColFlashGen;
     if (typeof isCanvasMode === 'function' && isCanvasMode()) {
+        _foldRevealCol(pos0);
         const charW = _canvasState.metrics?.charW || 8;
         const viewW = (el('alignmentContainer') && el('alignmentContainer').clientWidth) || 600;
-        const slot0 = _canvasColToSlot(pos0);
+        const slot0 = _canvasColToSlotNear(pos0);
         _canvasState.offsetX = Math.max(0, (slot0 >= 0 ? slot0 : pos0) * charW - Math.min(viewW / 3, charW * 10));
         // flash the column without losing the user's own column selection (it was replaced, then emptied)
         const hadCol = state.selectedColumns.has(pos0);
@@ -25215,6 +25428,10 @@ function initializeAppUI() {
         'treeDownloadNewickBtn': downloadTreeNewick,
         'selectAllButton': selectAllSequences,
         'copyColumnsButton': copySelectedColumns,
+        'hideColumnsButton': hideSelectedColumns,
+        'hideUnselectedColumnsButton': hideUnselectedColumns,
+        'hideGappyColumnsButton': hideGappyColumns,
+        'revealColumnsButton': revealAllColumns,
         'realignBlockButton': realignSelectedBlock,
         'realignAllButton': realignAll,
         'realignSelectedButton': realignSelected,
@@ -33073,13 +33290,14 @@ function _clearRepeatHighlights() {
 }
 
 function _scrollToColumn(colIndex) {
+    if (isCanvasMode()) _foldRevealCol(colIndex);
     const container = document.getElementById('alignmentContainer');
     if (!container) return;
     // Canvas mode: pan the canvas instead of scrolling the container
     if (document.getElementById('modeCanvas')?.checked) {
         const m = _canvasState.metrics;
         if (m?.charW) {
-            const slotI = _canvasColToSlot(colIndex);
+            const slotI = _canvasColToSlotNear(colIndex);
             _canvasState.offsetX = Math.max(0, (slotI >= 0 ? slotI : colIndex) * m.charW - 120);
             _canvasState.scheduleDraw?.();
         }
