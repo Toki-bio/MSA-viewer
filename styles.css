@@ -288,6 +288,12 @@ html {
 #actions-controls .action-section-columns .action-section-label { border-left-color: #00897b; color: #00695c; }
 #actions-controls .action-section-analysis .action-section-label { border-left-color: #5c6bc0; color: #3949ab; }
 #actions-controls .action-section-settings .action-section-label { border-left-color: #546e7a; color: #37474f; }
+#actions-controls .action-section-link .action-section-label { border-left-color: #c2185b; color: #ad1457; }
+/* Linked views (split-view plan B1): one compact row of switches */
+#actions-controls .link-views-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 11px; }
+#actions-controls .link-views-row label { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; cursor: pointer; }
+#actions-controls .link-views-row select { font-size: 11px; max-width: 180px; }
+#actions-controls .link-views-status { color: #555; font-style: italic; }
 
 #actions-controls .button-group {
     display: grid;

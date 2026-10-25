@@ -8316,6 +8316,60 @@ check('Search presets: save the active searches under a name, load them on anoth
 });
 
 
+// Split-view plan, step B1 (owner, 2026-10-25): two tabs or windows of ViewAlign follow each other. Actions >
+// Linked views: rows by sequence name (by index when the name is not there) and columns by column number or by
+// the residue index of an anchor sequence both alignments contain, which keeps two alignments of the same
+// sequences lined up on screen when their gaps differ. A position applied from a peer is not echoed back.
+check('Linked views: a second tab follows rows and columns, by anchor sequence across different gaps, without echo', async (page) => {
+  const out = {};
+  const n = 400, len = 1000;   // (400 rows: a row can be put at the top of either view only when enough rows follow it)
+  const row = i => Array.from({ length: len }, (_, j) => 'ACGT'[(i * 7 + j) % 4]).join('');
+  const faA = Array.from({ length: n }, (_, i) => `>seq${i}\n${row(i)}`).join('\n') + '\n';
+  // the same sequences, five gap columns inserted before column 200 (column c >= 200 of A is c + 5 here), rows reversed
+  const faB = Array.from({ length: n }, (_, k) => { const i = n - 1 - k; const s = row(i); return `>seq${i}\n${s.slice(0, 200)}-----${s.slice(200)}`; }).join('\n') + '\n';
+  await loadFasta(page, faA);
+  await setMode(page, 'canvas');
+  // a second tab of the same browser profile (a BroadcastChannel does not cross profiles): opened from the page
+  const [p2] = await Promise.all([page.waitForEvent('popup', { timeout: 15000 }), page.evaluate(() => window.open(location.pathname, '_blank'))]);
+  await p2.waitForLoadState('load');
+  await p2.waitForFunction(() => typeof parseAndRender === 'function', null, { timeout: 15000 });
+  await loadFasta(p2, faB);
+  await setMode(p2, 'full');
+  const setLink = (pg, by, anchor) => pg.evaluate(([by, anchor]) => {
+    const fire = (id, v) => { const e = el(id); if (e.type === 'checkbox') e.checked = v; else e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); };
+    fire('linkViewsOn', true); fire('linkColsBy', by);
+    if (anchor) fire('linkAnchor', anchor);
+    return { on: _link.on, by: _link.by, anchor: _link.anchor, anchorOptions: [...el('linkAnchor').options].length };
+  }, [by, anchor]);
+  out.setA = await setLink(page, 'column'); out.setB = await setLink(p2, 'column');
+  await page.waitForTimeout(500);
+  out.peers = [await page.evaluate(() => _link.peers.size), await p2.evaluate(() => _link.peers.size)];
+  const where = pg => pg.evaluate(() => { const a = _captureViewAnchor(); return a && { row: a.row, name: state.seqs[a.row]?.header, col: a.col }; });
+  // by column number: tab 1 to row 300 / column 300; tab 2 shows seq300 (its row 99) at the top, column 300
+  await page.evaluate(() => _applyViewAnchor({ row: 300, col: 300 }));
+  await page.waitForTimeout(700);
+  out.colMode = await where(p2);
+  await page.waitForTimeout(700);
+  out.echo = { p1: await where(page), applied: [await page.evaluate(() => _link.stats.applied), await p2.evaluate(() => _link.stats.applied)] };
+  // by anchor sequence seq5: column 300 of A holds residue 301 of seq5, which sits in column 305 of B
+  out.setA2 = await setLink(page, 'anchor', 'seq5'); out.setB2 = await setLink(p2, 'anchor', 'seq5');
+  await page.evaluate(() => _applyViewAnchor({ row: 150, col: 300 }));
+  await page.waitForTimeout(700);
+  out.anchorMode = await where(p2);
+  // and back, from the Full-mode tab: its column 505 is column 500 of A; its row 300 is seq99
+  await p2.evaluate(() => _applyViewAnchor({ row: 300, col: 505 }));
+  await p2.waitForTimeout(700);
+  out.back = await where(page);
+  await p2.close();
+  const near = (a, b) => a != null && Math.abs(a - b) <= 1;
+  const ok = out.peers[0] === 1 && out.peers[1] === 1 && out.setA.anchorOptions > 0
+    && out.colMode && out.colMode.name === 'seq300' && near(out.colMode.col, 300)
+    && out.echo.p1.row === 300 && near(out.echo.p1.col, 300) && out.echo.applied[0] === 0 && out.echo.applied[1] === 1
+    && out.anchorMode && out.anchorMode.name === 'seq150' && near(out.anchorMode.col, 305)
+    && out.back && out.back.name === 'seq99' && near(out.back.col, 500);
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
 // Owner (2026-10-23): "a function to open alignment in new tab EXACTLY as it is in this tab, including all search
 // etc". Actions > Clone Tab hands the full snapshot payload to a new tab over the existing ?handoff channel
 // (postMessage, no storage quota): sequences, view (mode, zoom, case, shading, name length, diff / variable-sites /

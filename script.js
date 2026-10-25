@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v282';
+const BUILD_TAG = 'v283';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -15627,6 +15627,182 @@ window.addEventListener('message', (e) => {
     _newTabHandoffs.delete(m.id);
     e.source.postMessage({ type: 'viewalign-handoff', id: m.id, fasta: h.fasta, name: h.name, payload: h.payload || null }, location.origin);
 });
+// ============ LINKED VIEWS (split-view plan, step B1, 2026-10-25) ============
+// Two or more tabs or windows of ViewAlign follow each other's scrolling (Actions > Linked views). Positions,
+// not pixels, go over a BroadcastChannel (same origin, same browser profile): the row at the top, as a sequence
+// name (by index where the peer lacks the name), and the column at the left edge, as a column number or as the
+// residue index of an anchor sequence both alignments contain. The anchor keeps two alignments of the same
+// sequences lined up when their gaps differ: column c here -> residue k of the anchor -> the column holding
+// residue k there. A position applied from a peer is remembered and not sent back (no echo, no ping-pong).
+// The column method and the anchor are one setting for the whole group; rows / columns on or off are per tab.
+const _link = {
+    id: Math.random().toString(36).slice(2, 10), ch: null, on: false, rows: true, cols: true, by: 'column', anchor: '',
+    peers: new Map(),            // id -> { name, names: Set of that tab's sequence names }
+    muteUntil: 0, lastSent: null, lastApplied: null, raf: 0, hooked: false, seqsRef: null,
+    stats: { sent: 0, applied: 0 },
+};
+function _linkNames() { return state.seqs.map(s => String(s.header || '').trim()); }
+function _linkSeqIndexByName(name) {
+    const seqs = state.seqs;
+    if (!_link._nameMap || _link._nameMap.seqs !== seqs || _link._nameMap.n !== seqs.length) {
+        const m = new Map();
+        seqs.forEach((s, i) => { const k = String(s.header || '').trim(); if (!m.has(k)) m.set(k, i); });
+        _link._nameMap = { seqs, n: seqs.length, m };
+    }
+    const i = _link._nameMap.m.get(name);
+    return i == null ? -1 : i;
+}
+// residues up to and including a column (a gap column carries the count before it), and back
+function _linkGapless(sq) {
+    if (!sq.gaplessPositions || sq.gaplessPositions.length !== sq.seq.length) sq.gaplessPositions = calculateGaplessPositions(sq.seq);
+    return sq.gaplessPositions;
+}
+function _linkColToRes(seqIdx, col) {
+    const g = _linkGapless(state.seqs[seqIdx]);
+    return g.length ? g[Math.max(0, Math.min(col, g.length - 1))] || 0 : 0;
+}
+function _linkResToCol(seqIdx, res) {
+    const g = _linkGapless(state.seqs[seqIdx]);
+    if (res <= 0 || !g.length) return 0;
+    let lo = 0, hi = g.length - 1;             // the first column whose count reaches res is the residue's own column
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (g[mid] >= res) hi = mid; else lo = mid + 1; }
+    return lo;
+}
+function _linkPost(msg) { try { _link.ch?.postMessage({ ...msg, id: _link.id }); } catch (e) { /* channel closed */ } }
+function _linkHello(reply) { _linkPost({ type: reply ? 'peer' : 'hello', name: state.currentFilename || '', names: _linkNames() }); }
+function _linkEmit() {
+    if (!_link.on || !_link.ch || !state.seqs.length || _link.raf) return;
+    _link.raf = requestAnimationFrame(() => {
+        _link.raf = 0;
+        if (_link.seqsRef !== state.seqs) { _link.seqsRef = state.seqs; _linkHello(false); _linkRefreshUi(); }   // a new file: tell the peers our names
+        if (performance.now() < _link.muteUntil) return;
+        const a = _captureViewAnchor();
+        if (!a) return;
+        const key = a.row + ':' + a.col;
+        if (key === _link.lastSent || key === _link.lastApplied) return;
+        _link.lastSent = key;
+        const msg = { type: 'pos', row: a.row, rowName: String(state.seqs[a.row]?.header || '').trim(), col: a.col };
+        if (_link.by === 'anchor' && _link.anchor) {
+            const ai = _linkSeqIndexByName(_link.anchor);
+            if (ai >= 0) msg.anchor = { name: _link.anchor, res: _linkColToRes(ai, a.col) };
+        }
+        _link.stats.sent++;
+        _linkPost(msg);
+    });
+}
+function _linkApply(m) {
+    if (!_link.on || !state.seqs.length || (!_link.rows && !_link.cols)) return;
+    const cur = _captureViewAnchor() || { row: 0, col: 0 };
+    let row = cur.row, col = cur.col;
+    if (_link.rows) {
+        const byName = m.rowName ? _linkSeqIndexByName(m.rowName) : -1;
+        row = byName >= 0 ? byName : Math.max(0, Math.min(m.row | 0, state.seqs.length - 1));
+    }
+    if (_link.cols) {
+        const len = state.seqs[0]?.seq.length || 1;
+        let c = m.col | 0;
+        if (_link.by === 'anchor' && m.anchor) {
+            const ai = _linkSeqIndexByName(m.anchor.name);
+            if (ai >= 0) c = _linkResToCol(ai, m.anchor.res);
+        }
+        col = Math.max(0, Math.min(c, len - 1));
+    }
+    if (row === cur.row && col === cur.col) return;
+    _link.muteUntil = performance.now() + 250;
+    _link.stats.applied++;
+    _applyViewAnchor({ row, col });
+    // where we landed is not sent back (it can differ from the request by a column: clamping, Canvas slots)
+    requestAnimationFrame(() => { const a = _captureViewAnchor(); if (a) _link.lastApplied = a.row + ':' + a.col; });
+}
+function _linkOnMessage(e) {
+    const m = e.data;
+    if (!m || typeof m !== 'object' || m.id === _link.id) return;
+    if (m.type === 'hello' || m.type === 'peer') {
+        _link.peers.set(m.id, { name: m.name || '', names: new Set(Array.isArray(m.names) ? m.names : []) });
+        if (m.type === 'hello') { _linkHello(true); _linkPost({ type: 'settings', by: _link.by, anchor: _link.anchor }); }
+        _linkRefreshUi();
+    } else if (m.type === 'bye') {
+        _link.peers.delete(m.id); _linkRefreshUi();
+    } else if (m.type === 'settings') {
+        if (m.by === 'column' || m.by === 'anchor') _link.by = m.by;
+        if (typeof m.anchor === 'string') _link.anchor = m.anchor;
+        _linkRefreshUi();
+    } else if (m.type === 'pos') {
+        _linkApply(m);
+    }
+}
+function _linkHook() {
+    _link.hooked = true;
+    alignmentContainer.addEventListener('scroll', _linkEmit, { passive: true });   // Full / Block / windowed
+    window.addEventListener('scroll', _linkEmit, { passive: true });               // small alignments scroll the page
+    // Canvas: the persistent bars follow its offsets (and are re-synced after every repaint)
+    document.querySelectorAll('#viewer-container .horizontal-scrollbar, #viewer-container .vertical-scrollbar').forEach(b => b.addEventListener('scroll', _linkEmit, { passive: true }));
+    const prev = _canvasState.onOffsetChange;
+    _canvasState.onOffsetChange = () => { prev?.(); _linkEmit(); };
+    window.addEventListener('pagehide', () => { if (_link.on) _linkPost({ type: 'bye' }); });
+}
+function _linkSet(on) {
+    on = !!on;
+    if (on && typeof BroadcastChannel === 'undefined') { showMessage('Linked views need BroadcastChannel, which this browser does not have.', 4000); on = false; }
+    if (on !== _link.on) {
+        _link.on = on;
+        if (on) {
+            if (!_link.ch) { _link.ch = new BroadcastChannel('viewalign-link'); _link.ch.onmessage = _linkOnMessage; }
+            if (!_link.hooked) _linkHook();
+            _link.seqsRef = state.seqs;
+            _linkHello(false);
+        } else {
+            _linkPost({ type: 'bye' });
+            try { _link.ch?.close(); } catch (e) { /* already closed */ }
+            _link.ch = null; _link.peers.clear();
+        }
+    }
+    _linkRefreshUi();
+}
+function _linkRefreshUi() {
+    const on = el('linkViewsOn');
+    if (!on) return;
+    on.checked = _link.on;
+    el('linkRows').checked = _link.rows;
+    el('linkCols').checked = _link.cols;
+    el('linkColsBy').value = _link.by;
+    const sel = el('linkAnchor');
+    // anchor choices: our names that a peer has too; all our names while no peer is known
+    const own = _linkNames();
+    const peers = [..._link.peers.values()];
+    const shared = peers.length ? own.filter(nm => peers.some(pr => pr.names.has(nm))) : own;
+    const list = (shared.length ? shared : own).slice(0, 2000);
+    if (!list.includes(_link.anchor)) _link.anchor = list[0] || '';
+    sel.innerHTML = list.map(nm => `<option value="${_escapeHtml(nm)}"${nm === _link.anchor ? ' selected' : ''}>${_escapeHtml(nm)}</option>`).join('');
+    sel.hidden = _link.by !== 'anchor';
+    sel.title = peers.length && !shared.length ? 'No sequence name is shared with the other linked views: columns link by number' : 'The sequence whose residues line the views up';
+    const st = el('linkViewsStatus');
+    st.textContent = !_link.on ? '' : _link.peers.size ? `linked with ${_link.peers.size} other view${_link.peers.size === 1 ? '' : 's'}` : 'no other linked view yet: turn Link on there too';
+}
+// Clone Tab carries the link settings in the URL (?link=rows|cols|by|anchor), so the new tab starts linked
+function _linkUrlParam() {
+    return _link.on ? '&link=' + encodeURIComponent([_link.rows ? 1 : 0, _link.cols ? 1 : 0, _link.by, _link.anchor].join('|')) : '';
+}
+function _linkFromUrlParam(v) {
+    const [rows, cols, by, anchor] = String(v || '').split('|');
+    _link.rows = rows !== '0'; _link.cols = cols !== '0';
+    if (by === 'anchor' || by === 'column') _link.by = by;
+    if (anchor) _link.anchor = anchor;
+    _linkSet(true);
+}
+function _linkInit() {
+    const on = el('linkViewsOn');
+    if (!on) return;
+    on.addEventListener('change', () => _linkSet(on.checked));
+    el('linkRows').addEventListener('change', e => { _link.rows = e.target.checked; });
+    el('linkCols').addEventListener('change', e => { _link.cols = e.target.checked; });
+    const settings = () => { _linkPost({ type: 'settings', by: _link.by, anchor: _link.anchor }); _linkRefreshUi(); };
+    el('linkColsBy').addEventListener('change', e => { _link.by = e.target.value === 'anchor' ? 'anchor' : 'column'; settings(); });
+    el('linkAnchor').addEventListener('change', e => { _link.anchor = e.target.value; settings(); });
+    // the anchor list follows the loaded file when the menu is opened
+    document.querySelector('.section-header[data-section="actions"]')?.addEventListener('click', () => setTimeout(_linkRefreshUi, 0));
+}
+
 // Opens this whole view in a new tab, exactly as it is here (owner, 2026-10-23): the full snapshot payload
 // (sequences, view, Canvas position, searches, selections and marks, name colours, trim, annotation) goes over
 // the same postMessage hand-off as openSelectedInNewTab, so there is no storage quota or URL length to hit.
@@ -15638,13 +15814,13 @@ function openViewInNewTab() {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     _newTabHandoffs.set(id, { fasta: payload.fasta, name, payload });
     const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
-    const w = window.open(location.pathname + '?handoff=' + id + (view ? '&view=' + view : ''), '_blank');
+    const w = window.open(location.pathname + '?handoff=' + id + (view ? '&view=' + view : '') + _linkUrlParam(), '_blank');
     if (!w) {
         _newTabHandoffs.delete(id);
         showMessage("The browser blocked the new tab: allow pop-ups for this site.", 5000);
         return;
     }
-    showMessage('This view opened in a new tab', 2000);
+    showMessage(_link.on ? 'This view opened in a new tab, linked with this one' : 'This view opened in a new tab', 2000);
 }
 function openSelectedInNewTab() {
     if (state.selectedRows.size === 0) {
@@ -25245,6 +25421,7 @@ function initializeAppUI() {
     if (caseSel) caseSel.addEventListener('change', () => setResidueCase(caseSel.value || 'asis'));
     document.querySelectorAll('input[name="caseQuick"]').forEach(r => r.addEventListener('change', () => { if (r.checked) setResidueCase(r.value); }));
     setResidueCase(state.residueCase || 'asis');
+    _linkInit();
 
     updateControlsOffset();
     const controls = el('controls');
@@ -25324,6 +25501,7 @@ function initializeAppUI() {
     const autoMask  = urlParams.get('mask');
     const autoBed   = urlParams.get('bed');
     const autoHandoff = urlParams.get('handoff');   // Actions > New Tab (openSelectedInNewTab)
+    const autoLink = urlParams.get('link');         // Clone Tab from a linked view: start linked
     // Loaded after the alignment: the mask overlay, then the annotation track
     const _loadUrlExtras = () => {
         const p = autoMask ? _loadBlockMaskFromUrl(autoMask) : Promise.resolve();
@@ -25372,7 +25550,8 @@ function initializeAppUI() {
                 if (payload && typeof payload === 'object' && typeof payload.fasta === 'string') {
                     // Clone Tab: the whole view of the other tab
                     _loadSnapshotPayload(payload);
-                    showMessage(`Opened ${name} as in the other tab`, 2500);
+                    if (autoLink) _linkFromUrlParam(autoLink);
+                    showMessage(autoLink ? `Opened ${name} as in the other tab, linked with it` : `Opened ${name} as in the other tab`, 2500);
                     return;
                 }
                 const fastaInputEl = el('fastaInput');

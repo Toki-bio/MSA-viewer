@@ -13,7 +13,7 @@
     <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
-    <link rel="stylesheet" href="styles.css?v=180">
+    <link rel="stylesheet" href="styles.css?v=181">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -932,6 +932,20 @@
                                 <button id="repeatFinderMenuButton" title="Find tandem/direct/inverted repeats or SINE target-site duplications (TSD)">Repeats</button>
                             </div>
                         </div>
+                        <div class="action-section action-section-link">
+                            <div class="action-section-label">Linked views</div>
+                            <div class="link-views-row">
+                                <label title="Follow the scrolling of the other ViewAlign tabs and windows that have Link on (same browser). Open a second tab with Clone Tab or load another file there."><input type="checkbox" id="linkViewsOn"> Link</label>
+                                <label title="Keep the same sequence at the top: by name, by row number where the name is not there"><input type="checkbox" id="linkRows" checked> rows</label>
+                                <label title="Keep the same place along the alignment at the left edge"><input type="checkbox" id="linkCols" checked> columns</label>
+                                <select id="linkColsBy" title="How columns correspond between the views. By column number: the same column index. By anchor sequence: the column holding the same residue of one sequence both alignments contain, which keeps two alignments of the same sequences lined up when their gaps differ. One setting for all linked views.">
+                                    <option value="column">by column number</option>
+                                    <option value="anchor">by anchor sequence</option>
+                                </select>
+                                <select id="linkAnchor" hidden></select>
+                                <span id="linkViewsStatus" class="link-views-status"></span>
+                            </div>
+                        </div>
                         <div class="action-section action-section-settings">
                             <div class="action-section-label">Presets &amp; Help</div>
                             <div class="button-group">
@@ -1422,7 +1436,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=6"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=333"></script>
+    <script src="script.js?v=334"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>
