@@ -8418,6 +8418,121 @@ check('Hidden columns: hide selected / all but selected / gappy, marker tooltip 
   return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out).slice(0, 1500) : JSON.stringify({ tip1: out.tip1, l3: out.l3.hidden, g50: out.g50, menuReopened: menuClosed }) };
 }, { timeoutMs: 90000 });
 
+// GLM audit of v283/v284 (2026-10-25), linked views: the name -> row map was cached by array identity and length,
+// so a row dragged in place or renamed kept its old index (the follower lined up a wrong row); the anchor's residue
+// numbers were recomputed only on a length change (a residue typed over a gap kept the old numbers); a residue past
+// the anchor's end sent the follower to the alignment's last column instead of the anchor's last residue; the anchor
+// list stopped at 2000 names and replaced a chosen anchor beyond them; a tab that died without 'bye' stayed a peer.
+check('Audit v284: linked views follow moved/renamed rows, edited anchors, clamp past the anchor end, keep a far anchor, drop dead peers', async (page) => {
+  const bad = [], out = {};
+  const n = 2500, len = 60;
+  const row = i => (i === 1 ? 'A-CGTACGTA' + 'C'.repeat(len - 10) : i === 2 ? 'ACGTACGTAC' + 'G'.repeat(len - 20) + '-'.repeat(10) : Array.from({ length: len }, (_, j) => 'ACGT'[(i + j) % 4]).join(''));
+  await loadFasta(page, Array.from({ length: n }, (_, i) => `>s${i}\n${row(i)}`).join('\n') + '\n');
+  await setMode(page, 'canvas');
+  out.unit = await page.evaluate(() => {
+    const r = {};
+    r.before = _linkSeqIndexByName('s5');
+    const x = state.seqs.splice(5, 1)[0]; state.seqs.splice(0, 0, x);          // a row drag splices in place
+    r.moved = _linkSeqIndexByName('s5');
+    state.seqs[10].header = 'renamed'; r.renamed = _linkSeqIndexByName('renamed');
+    const i1 = state.seqs.findIndex(q => q.header === 's1');
+    r.res3 = _linkColToRes(i1, 3);                                              // A-CG: column 3 holds residue 3
+    state.seqs[i1].seq = '--' + state.seqs[i1].seq.slice(0, 1) + state.seqs[i1].seq.slice(2) + '';   // same length, residues shifted right
+    state.seqs[i1].seq = state.seqs[i1].seq.slice(0, 60);
+    const oracle = c => state.seqs[i1].seq.slice(0, c + 1).replace(/[-.]/g, '').length;
+    r.res3edit = _linkColToRes(i1, 3); r.res3oracle = oracle(3);
+    const i2 = state.seqs.findIndex(q => q.header === 's2');
+    r.past = _linkResToCol(i2, 10000); r.lastRes = state.seqs[i2].seq.search(/-+$/) - 1;
+    return r;
+  });
+  const u = out.unit;
+  if (u.before !== 5 || u.moved !== 0) bad.push(`moved row: ${u.before} -> ${u.moved}, 0 expected`);
+  if (u.renamed !== 10) bad.push(`renamed row: ${u.renamed}, 10 expected`);
+  if (u.res3edit !== u.res3oracle) bad.push(`anchor residue after a same-length edit: ${u.res3edit}, ${u.res3oracle} expected`);
+  if (u.past !== u.lastRes) bad.push(`residue past the anchor end went to column ${u.past}, the anchor's last residue is in ${u.lastRes}`);
+  // a chosen anchor beyond the first 2000 names stays chosen
+  out.far = await page.evaluate(() => { _link.by = 'anchor'; _link.anchor = 's2400'; _linkRefreshUi(); return { anchor: _link.anchor, opt: !![...el('linkAnchor').options].find(o => o.value === 's2400') }; });
+  if (out.far.anchor !== 's2400' || !out.far.opt) bad.push('far anchor: ' + JSON.stringify(out.far));
+  await page.evaluate(() => { _link.by = 'column'; _link.anchor = ''; });
+  // a peer that dies without 'bye' is dropped after a while; a live one is kept
+  await page.evaluate(() => { _link.aliveMs = 300; _link.pruneMs = 1500; _linkSet(true); });
+  const [p2] = await Promise.all([page.waitForEvent('popup', { timeout: 15000 }), page.evaluate(() => window.open(location.pathname, '_blank'))]);
+  await p2.waitForLoadState('load');
+  await p2.waitForFunction(() => typeof _linkSet === 'function', null, { timeout: 15000 });
+  await p2.evaluate(() => { _link.aliveMs = 300; _link.pruneMs = 1500; _linkSet(true); });
+  await page.waitForTimeout(2500);
+  out.alive = await page.evaluate(() => _link.peers.size);
+  await p2.evaluate(() => { clearInterval(_link.aliveTimer); _link.ch.onmessage = null; _link.ch.close(); _link.ch = null; });   // dies silently
+  await page.waitForTimeout(2800);
+  out.dead = await page.evaluate(() => ({ peers: _link.peers.size, status: el('linkViewsStatus').textContent }));
+  await p2.close();
+  await page.evaluate(() => _linkSet(false));
+  if (out.alive !== 1) bad.push(`a live peer was not kept (${out.alive} peers)`);
+  if (out.dead.peers !== 0 || !/no other linked view/.test(out.dead.status)) bad.push('dead peer: ' + JSON.stringify(out.dead));
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
+// GLM audit of v283/v284, hidden columns: Hide Gappy read every residue column by column in one task (a freeze on a
+// large alignment); a fold marker after a dimmed column (Highlight diffs) was drawn at 40 % opacity; hiding every
+// column left one marker whose hit test gave column -1; a new file left Reveal enabled and the fold count shown;
+// a view position taken at a fold marker came back one slot to the right.
+check('Audit v284: hidden columns: Hide Gappy without a long task, markers at full opacity, not all hidden, reset on a new file, anchor at a marker', async (page) => {
+  const bad = [], out = {};
+  const nR = 2000, nC = 10000;
+  // every 7th column is a gap in 60 % of the rows
+  const rowSeq = i => { let s = ''; for (let j = 0; j < nC; j++) s += (j % 7 === 3 && (i % 10) < 6) ? '-' : 'ACGT'[(i * 3 + j) % 4]; return s; };
+  await page.evaluate(([nR, nC]) => { window.__fa = null; }, [nR, nC]);
+  await loadFasta(page, Array.from({ length: nR }, (_, i) => `>r${i}\n${rowSeq(i)}`).join('\n') + '\n');
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(800);
+  const lt = await r2LongTasks(page, async () => {
+    await page.evaluate(() => { el('hideGappyPct').value = '50'; });
+    await page.evaluate(() => hideGappyColumns());
+    await page.waitForFunction(() => state.hiddenCols && state.hiddenCols.length > 0, null, { timeout: 60000 });
+  });
+  out.gappy = await page.evaluate(() => ({ n: state.hiddenCols.length, first: state.hiddenCols[0], total: _foldCount() }));
+  out.longTask = lt;
+  const expectN = Math.floor((nC - 4) / 7) + 1;
+  if (out.gappy.total !== expectN || out.gappy.first[0] !== 3) bad.push(`Hide Gappy hid ${out.gappy.total} columns (${expectN} expected), first ${JSON.stringify(out.gappy.first)}`);
+  if (lt.max > 250) bad.push(`Hide Gappy blocked the page for ${lt.max} ms`);
+  await page.evaluate(() => revealAllColumns());
+
+  // a small alignment: conserved columns 0-9, then a fold
+  const small = Array.from({ length: 12 }, (_, i) => `>q${i}\nAAAAAAAAAA${'ACGT'[i % 4].repeat(20)}`).join('\n') + '\n';
+  await loadFasta(page, small);
+  await setMode(page, 'canvas');
+  await page.evaluate(() => { const h = el('highlightDiffs'); h.checked = true; h.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(600);
+  await page.evaluate(() => _foldApply([[10, 14]]));
+  await page.waitForTimeout(400);
+  out.alpha = await page.evaluate(() => { const cv = el('alignmentCanvas'), m = _canvasState.metrics, dpr = m.dpr || 1, c = cv.getContext('2d');
+    const s = _canvasState.slots.indexOf(-1 - 15);
+    const d = c.getImageData(Math.round((m.nameW + s * m.charW - _canvasState.offsetX + 2) * dpr), Math.round((m.headerH + _canvasState.rowPitch + 2) * dpr), 1, 1).data;
+    return { slot: s, got: '#' + [d[0], d[1], d[2]].map(v => v.toString(16).padStart(2, '0')).join(''), want: _FOLD_STYLE.color.toLowerCase() }; });
+  if (out.alpha.got !== out.alpha.want) bad.push('marker after a dimmed column: ' + JSON.stringify(out.alpha));
+  await page.evaluate(() => { const h = el('highlightDiffs'); h.checked = false; h.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(400);
+
+  // a view position taken at a fold marker comes back to the marker
+  await page.evaluate(() => _foldApply([[2, 14]]));
+  await page.waitForTimeout(300);
+  out.anchor = await page.evaluate(() => { const m = _canvasState.metrics; _canvasState.offsetX = 2 * m.charW; _canvasState.scheduleDraw();
+    const a = _captureViewAnchor(true); const ox0 = _canvasState.offsetX; _canvasState.offsetX = 0; _applyViewAnchor(a); return { a, ox0, ox1: _canvasState.offsetX }; });
+  if (Math.abs(out.anchor.ox1 - out.anchor.ox0) > 0.5) bad.push('anchor at a marker: ' + JSON.stringify(out.anchor));
+
+  // hiding every column is refused
+  out.all = await page.evaluate(() => { _foldApply([]); state.selectedColumns.clear(); for (let c = 0; c < 30; c++) state.selectedColumns.add(c); return hideSelectedColumns().then(() => ({ hidden: JSON.stringify(state.hiddenCols), msg: /at least one column/i.test(document.body.innerText) })); });
+  if (out.all.hidden !== '[]' || !out.all.msg) bad.push('hiding every column: ' + JSON.stringify(out.all));
+
+  // a new file: no folds, Reveal disabled, no count
+  await page.evaluate(() => _foldApply([[3, 5]]));
+  await loadFasta(page, small);
+  await page.waitForTimeout(400);
+  out.reset = await page.evaluate(() => ({ hidden: JSON.stringify(state.hiddenCols), reveal: el('revealColumnsButton').disabled, status: el('foldStatus').textContent }));
+  if (out.reset.hidden !== '[]' || !out.reset.reveal || out.reset.status) bad.push('new file: ' + JSON.stringify(out.reset));
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 180000 });
+
 // Linked views: rows by sequence name (by index when the name is not there) and columns by column number or by
 // the residue index of an anchor sequence both alignments contain, which keeps two alignments of the same
 // sequences lined up on screen when their gaps differ. A position applied from a peer is not echoed back.

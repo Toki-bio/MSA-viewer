@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v288';
+const BUILD_TAG = 'v289';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -6613,6 +6613,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // A fold marker (hidden columns) has its own colour and symbol.
         const drawMarker = (x, y, sI) => {
             const fold = foldBefore && foldBefore.has(sI);
+            const alpha = ctx.globalAlpha;   // a marker after a dimmed column (Highlight diffs) is not dimmed
+            ctx.globalAlpha = 1;
             ctx.fillStyle = fold ? _FOLD_STYLE.color : (brkStyle.color || '#d0d0d0');
             ctx.fillRect(x, y, CHAR_W, CHAR_H);
             ctx.fillStyle = fold ? '#b8860b' : '#b0b0b0';
@@ -6622,6 +6624,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             ctx.textAlign = 'center';
             ctx.fillText(fold ? _FOLD_STYLE.symbol : (brkStyle.symbol || '\u22EE'), x + CHAR_W / 2, y);
             ctx.textAlign = 'start';
+            ctx.globalAlpha = alpha;
         };
         const firstRow = Math.max(0, Math.floor((oy - HEADER_H + cy0) / rowPitch));
         const lastRow = Math.min(nSeqs - 1, Math.floor((oy - HEADER_H + cy1 - 1) / rowPitch));
@@ -10558,19 +10561,24 @@ function _foldRefreshUi() {
 }
 // A different alignment length (columns added or removed by an edit) makes the ranges meaningless
 function _foldCheckLength(len) {
-    if (!state.hiddenCols || !state.hiddenCols.length) { state._hiddenColsLen = len; return; }
-    if (state._hiddenColsLen != null && state._hiddenColsLen !== len) {
+    if (state.hiddenCols && state.hiddenCols.length && state._hiddenColsLen != null && state._hiddenColsLen !== len) {
         state.hiddenCols = [];
         showMessageAfterRender('Hidden columns are shown again: the alignment length changed.', 3500);
     }
     state._hiddenColsLen = len;
+    _foldRefreshUi();   // also after a new file (Reveal and the count follow the folds)
 }
 // Set the folds and redraw at the same place
 function _foldApply(ranges) {
     const len = _foldLen();
     if (!len) return;
+    const norm = _foldNormalize(ranges, len);
+    if (norm.length === 1 && norm[0][0] === 0 && norm[0][1] === len - 1) {
+        showMessage('At least one column must stay shown.', 3500);
+        return false;
+    }
     const a = isCanvasMode() ? _captureViewAnchor(true) : null;
-    state.hiddenCols = _foldNormalize(ranges, len);
+    state.hiddenCols = norm;
     state._hiddenColsLen = len;
     _foldRefreshUi();
     if (!isCanvasMode()) return;   // Full / Block show every column
@@ -10603,7 +10611,7 @@ async function hideSelectedColumns() {
     const cols = _foldSelectedColumns();
     if (!cols.length) { showMessage('Select columns first (Ctrl+Alt+click or drag on the ruler), or a block of residues.', 3500); return; }
     if (!await _foldEnsureCanvas()) return;
-    _foldApply([...(state.hiddenCols || []), ..._foldRunsOf(cols)]);
+    if (_foldApply([...(state.hiddenCols || []), ..._foldRunsOf(cols)]) === false) return;
     state.selectedColumns.clear(); updateColumnSelections();
 }
 async function hideUnselectedColumns() {
@@ -10617,17 +10625,28 @@ async function hideUnselectedColumns() {
 // Columns with at least pct % gaps ('-' or '.') among all rows
 async function hideGappyColumns() {
     const pct = Math.min(100, Math.max(1, parseFloat(el('hideGappyPct')?.value) || 100));
-    const len = _foldLen(), n = state.seqs.length;
+    const len = _foldLen(), seqs = state.seqs, n = seqs.length;
     if (!len) return;
     const need = Math.ceil(pct / 100 * n - 1e-9), hide = [];
-    for (let c = 0; c < len; c++) {
-        let g = 0;
-        for (let i = 0; i < n; i++) { const ch = state.seqs[i].seq[c]; if (ch === undefined || ch === '-' || ch === '.') g++; }
-        if (g >= need) hide.push(c);
+    // gaps per column, row by row (a row shorter than the alignment counts as gaps at its end), in slices of
+    // ~30 ms so a large alignment does not freeze the page
+    const gaps = new Uint32Array(len);
+    let t0 = performance.now(), told = false;
+    for (let i = 0; i < n; i++) {
+        const q = seqs[i].seq, m = Math.min(q.length, len);
+        for (let c = 0; c < m; c++) { const k = q.charCodeAt(c); if (k === 45 || k === 46) gaps[c]++; }
+        for (let c = m; c < len; c++) gaps[c]++;
+        if (performance.now() - t0 > 30) {
+            if (!told) { told = true; showMessage('Looking for gappy columns...', 0); }
+            await new Promise(r => setTimeout(r, 0));
+            if (state.seqs !== seqs) return;   // another file came in meanwhile
+            t0 = performance.now();
+        }
     }
+    for (let c = 0; c < len; c++) if (gaps[c] >= need) hide.push(c);
     if (!hide.length) { showMessage(`No column has ${pct} % or more gaps.`, 3000); return; }
     if (!await _foldEnsureCanvas()) return;
-    _foldApply([...(state.hiddenCols || []), ..._foldRunsOf(hide)]);
+    if (_foldApply([...(state.hiddenCols || []), ..._foldRunsOf(hide)]) === false) return;
     showMessage(`${hide.length} column${hide.length > 1 ? 's' : ''} with ${pct} % or more gaps hidden.`, 3000);
 }
 function revealAllColumns() { if (state.hiddenCols && state.hiddenCols.length) _foldApply([]); }
@@ -14001,7 +14020,8 @@ function _captureViewAnchor(fromCanvas = isCanvasMode()) {
         const oy = _canvasState.offsetY || 0, ox = _canvasState.offsetX || 0;
         // Canvas is laid out in slots (Variable sites only hides columns): the slot's column
         const slot = Math.max(0, Math.ceil(ox / m.charW - 0.01));
-        const col = _canvasSlotToCol(slot);
+        const folds = _canvasSlotFolds(slot);
+        const col = folds ? folds[0][0] : _canvasSlotToCol(slot);
         return {
             row: Math.max(0, Math.ceil((oy - (m.headerH || m.charH)) / pitch - 0.01)),
             col: col >= 0 ? col : slot
@@ -15850,24 +15870,38 @@ window.addEventListener('message', (e) => {
 // The column method and the anchor are one setting for the whole group; rows / columns on or off are per tab.
 const _link = {
     id: Math.random().toString(36).slice(2, 10), ch: null, on: false, rows: true, cols: true, by: 'column', anchor: '',
-    peers: new Map(),            // id -> { name, names: Set of that tab's sequence names }
+    peers: new Map(),            // id -> { name, names: Set of that tab's sequence names, seen: time of its last message }
+    aliveMs: 5000, pruneMs: 90000, aliveTimer: 0,   // a peer that dies without 'bye' (crash) is dropped after pruneMs of silence
     muteUntil: 0, lastSent: null, lastApplied: null, raf: 0, hooked: false, seqsRef: null,
     stats: { sent: 0, applied: 0 },
 };
 function _linkNames() { return state.seqs.map(s => String(s.header || '').trim()); }
+// A row drag or a rename changes state.seqs in place (same array, same length), so a cached index is checked
+// against the row it names, and a miss rebuilds the map once
 function _linkSeqIndexByName(name) {
     const seqs = state.seqs;
-    if (!_link._nameMap || _link._nameMap.seqs !== seqs || _link._nameMap.n !== seqs.length) {
+    const nameOf = i => String(seqs[i]?.header || '').trim();
+    const build = () => {
         const m = new Map();
         seqs.forEach((s, i) => { const k = String(s.header || '').trim(); if (!m.has(k)) m.set(k, i); });
         _link._nameMap = { seqs, n: seqs.length, m };
-    }
-    const i = _link._nameMap.m.get(name);
+    };
+    let fresh = false;
+    if (!_link._nameMap || _link._nameMap.seqs !== seqs || _link._nameMap.n !== seqs.length) { build(); fresh = true; }
+    let i = _link._nameMap.m.get(name);
+    if (i != null && nameOf(i) === name) return i;
+    if (fresh) return -1;
+    build();
+    i = _link._nameMap.m.get(name);
     return i == null ? -1 : i;
 }
 // residues up to and including a column (a gap column carries the count before it), and back
+// (recomputed when the row's text changed, not only its length: a residue typed over a gap keeps the length)
 function _linkGapless(sq) {
-    if (!sq.gaplessPositions || sq.gaplessPositions.length !== sq.seq.length) sq.gaplessPositions = calculateGaplessPositions(sq.seq);
+    if (!sq.gaplessPositions || sq.gaplessPositions.length !== sq.seq.length || sq._linkGapFor !== sq.seq) {
+        sq.gaplessPositions = calculateGaplessPositions(sq.seq);
+        sq._linkGapFor = sq.seq;
+    }
     return sq.gaplessPositions;
 }
 function _linkColToRes(seqIdx, col) {
@@ -15877,6 +15911,8 @@ function _linkColToRes(seqIdx, col) {
 function _linkResToCol(seqIdx, res) {
     const g = _linkGapless(state.seqs[seqIdx]);
     if (res <= 0 || !g.length) return 0;
+    res = Math.min(res, g[g.length - 1] || 0);   // past the anchor's end: its last residue (not the alignment's last column)
+    if (res <= 0) return 0;
     let lo = 0, hi = g.length - 1;             // the first column whose count reaches res is the residue's own column
     while (lo < hi) { const mid = (lo + hi) >> 1; if (g[mid] >= res) hi = mid; else lo = mid + 1; }
     return lo;
@@ -15930,8 +15966,12 @@ function _linkApply(m) {
 function _linkOnMessage(e) {
     const m = e.data;
     if (!m || typeof m !== 'object' || m.id === _link.id) return;
-    if (m.type === 'hello' || m.type === 'peer') {
-        _link.peers.set(m.id, { name: m.name || '', names: new Set(Array.isArray(m.names) ? m.names : []) });
+    const known = _link.peers.get(m.id);
+    if (known) known.seen = performance.now();
+    if (m.type === 'alive') {
+        if (!known) _linkHello(false);   // a peer we had dropped (or never heard): ask for its names again
+    } else if (m.type === 'hello' || m.type === 'peer') {
+        _link.peers.set(m.id, { name: m.name || '', names: new Set(Array.isArray(m.names) ? m.names.map(String) : []), seen: performance.now() });
         if (m.type === 'hello') { _linkHello(true); _linkPost({ type: 'settings', by: _link.by, anchor: _link.anchor }); }
         _linkRefreshUi();
     } else if (m.type === 'bye') {
@@ -15964,13 +16004,26 @@ function _linkSet(on) {
             if (!_link.hooked) _linkHook();
             _link.seqsRef = state.seqs;
             _linkHello(false);
+            clearInterval(_link.aliveTimer);
+            _link.aliveTimer = setInterval(_linkAlive, _link.aliveMs);
         } else {
+            clearInterval(_link.aliveTimer); _link.aliveTimer = 0;
             _linkPost({ type: 'bye' });
             try { _link.ch?.close(); } catch (e) { /* already closed */ }
             _link.ch = null; _link.peers.clear();
         }
     }
     _linkRefreshUi();
+}
+// Heartbeat: say we are here, and drop peers silent for longer than pruneMs (a hidden tab's timers can be
+// throttled to once a minute, hence the generous limit)
+function _linkAlive() {
+    if (!_link.on || !_link.ch) return;
+    _linkPost({ type: 'alive' });
+    const now = performance.now();
+    let dropped = false;
+    for (const [id, p] of _link.peers) if (now - (p.seen || 0) > _link.pruneMs) { _link.peers.delete(id); dropped = true; }
+    if (dropped) _linkRefreshUi();
 }
 function _linkRefreshUi() {
     const on = el('linkViewsOn');
@@ -15984,8 +16037,11 @@ function _linkRefreshUi() {
     const own = _linkNames();
     const peers = [..._link.peers.values()];
     const shared = peers.length ? own.filter(nm => peers.some(pr => pr.names.has(nm))) : own;
-    const list = (shared.length ? shared : own).slice(0, 2000);
-    if (!list.includes(_link.anchor)) _link.anchor = list[0] || '';
+    const base = shared.length ? shared : own;
+    const list = base.slice(0, 2000);
+    // a chosen anchor beyond the first 2000 names stays chosen (and listed)
+    if (_link.anchor && !list.includes(_link.anchor) && base.includes(_link.anchor)) list.unshift(_link.anchor);
+    if (!list.includes(_link.anchor) && own.length) _link.anchor = list[0] || '';
     sel.innerHTML = list.map(nm => `<option value="${_escapeHtml(nm)}"${nm === _link.anchor ? ' selected' : ''}>${_escapeHtml(nm)}</option>`).join('');
     sel.hidden = _link.by !== 'anchor';
     sel.title = peers.length && !shared.length ? 'No sequence name is shared with the other linked views: columns link by number' : 'The sequence whose residues line the views up';
