@@ -8536,6 +8536,24 @@ check('Panes: Open file in pane links by anchor sequence and is not refreshed by
   return { pass: ok, detail: JSON.stringify(out) };
 }, { timeoutMs: 120000 });
 
+// Split-view plan B2: a pane of a large alignment (above the "Large alignment" dialog threshold) must load without
+// waiting for the dialog; the first measurement run left the pane stuck on it. Also three extra panes are allowed.
+check('Panes: a large alignment loads in a pane without the Large alignment dialog; three extra panes open', async (page) => {
+  const out = {};
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'canvas');
+  for (let k = 0; k < 4; k++) await page.evaluate(() => paneOpen('right'));
+  out.panes = await page.evaluate(() => document.querySelectorAll('#paneDock iframe').length);
+  for (let i = 0; i < 80; i++) {
+    await page.waitForTimeout(500);
+    const fr = page.frames().filter(f => f !== page.mainFrame());
+    out.loaded = (await Promise.all(fr.map(f => f.evaluate(() => typeof state !== 'undefined' && state.seqs.length).catch(() => 0)))).join(',');
+    if (fr.length === 3 && out.loaded === '1500,1500,1500') break;
+  }
+  out.dialog = (await Promise.all(page.frames().map(f => f.evaluate(() => !!document.querySelector('.align-load-dialog')).catch(() => false)))).some(Boolean);
+  return { pass: out.panes === 3 && out.loaded === '1500,1500,1500' && !out.dialog, detail: JSON.stringify(out) };
+}, { timeoutMs: 180000 });
+
 // Owner (2026-10-23): "a function to open alignment in new tab EXACTLY as it is in this tab, including all search
 // etc". Actions > Clone Tab hands the full snapshot payload to a new tab over the existing ?handoff channel
 // (postMessage, no storage quota): sequences, view (mode, zoom, case, shading, name length, diff / variable-sites /

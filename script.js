@@ -13236,6 +13236,7 @@ function _formatResidueCount(n) {
  * @returns {Promise<'cancel'|'proceed'>}
  */
 function showLargeAlignmentDialog(stats, classification, context = 'load') {
+    if (_paneIsChild && context === 'load') return Promise.resolve('proceed');   // a pane shows what its page already holds, or a file the user chose for it
     return new Promise((resolve) => {
         const backdrop = document.createElement('div');
         backdrop.className = 'blast-modal-backdrop align-load-dialog';
@@ -16022,7 +16023,7 @@ function _linkInit() {
 // (columns stay free, so two areas of one alignment can be read at once). A pane is a read-only mirror: after an
 // edit here the panes are reloaded from this view (debounced), each keeping its own position. Panes carry no
 // toolbar (it is minimised) and a slim header with the file name, a refresh and a close button.
-const _paneMax = 2;                       // secondary panes; the limit is to be raised once memory per pane is measured
+const _paneMax = 3;                       // extra panes (four views in all): measured 2026-10-25 on 1500 x 4000, about 30 to 45 MB of JS heap per pane, link latency 70 to 90 ms with three panes
 const _panes = { dock: null, side: 'right', frac: 0.42, list: [], timer: 0 };
 const _paneIsChild = (() => { try { return window.parent !== window && new URLSearchParams(location.search).get('pane') === '1'; } catch (e) { return false; } })();
 function _paneSizePx() {
