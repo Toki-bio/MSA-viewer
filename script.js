@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v291';
+const BUILD_TAG = 'v292';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -10568,6 +10568,26 @@ function _foldMarkerEl(r) {
     m.textContent = _FOLD_STYLE.symbol;
     return m;
 }
+// "Copy, Save, Tree: visible columns only" (owner: the whole alignment by default, this as an option): a row's
+// text without its folded columns
+function _foldVisibleOnly() { return !!(el('foldVisibleOnly')?.checked && state.hiddenCols && state.hiddenCols.length); }
+function _foldVisibleSeq(seq) {
+    let out = '', p = 0;
+    for (const r of state.hiddenCols) { out += seq.slice(p, r[0]); p = r[1] + 1; }
+    return out + seq.slice(p);
+}
+// The FASTA text of Copy Align / the toolbar Copy and Save, and of Copy Sel (selected rows, degapped)
+function _alignmentFastaText() {
+    const vis = _foldVisibleOnly();
+    return state.seqs.map(q => `>${q.fullHeader != null ? q.fullHeader : q.header}\n${vis ? _foldVisibleSeq(q.seq) : q.seq}`).join('\n');
+}
+function _selectedRowsFastaText() {
+    const vis = _foldVisibleOnly();
+    return Array.from(state.selectedRows).sort((a, b) => a - b).filter(i => state.seqs[i]).map(i => {
+        const q = state.seqs[i];
+        return `>${q.fullHeader || q.header}\n${degapResidues(vis ? _foldVisibleSeq(q.seq) : q.seq)}`;
+    }).join('\n');
+}
 // The fold holding a column, or null
 function _foldAt(col) {
     const f = state.hiddenCols;
@@ -10591,6 +10611,8 @@ function _foldRefreshUi() {
     }
     const rv = el('revealColumnsButton');
     if (rv) rv.disabled = !(state.hiddenCols && state.hiddenCols.length);
+    const vo = el('foldVisibleOnly');
+    if (vo) vo.disabled = !(state.hiddenCols && state.hiddenCols.length);
 }
 // A different alignment length (columns added or removed by an edit) makes the ranges meaningless
 function _foldCheckLength(len) {
@@ -15026,6 +15048,13 @@ function handleKeyDown(e) {
         else copySelected();
         e.preventDefault();
     }
+    // Hidden columns: Alt+H hides the selected columns, Alt+Shift+H hides all but them, Alt+U shows all again
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === 'KeyH' || (e.code === 'KeyU' && !e.shiftKey)) && !_isTextEntry(document.activeElement)) {
+        if (e.code === 'KeyU') revealAllColumns();
+        else if (e.shiftKey) hideUnselectedColumns();
+        else hideSelectedColumns();
+        e.preventDefault();
+    }
 
     // Page navigation. Canvas pans its own offset; a windowed view scrolls the container; a small
     // alignment scrolls the page, so the key is left to the browser (it used to scroll the
@@ -15477,13 +15506,9 @@ function copySelected() {
     if (state.selectedRows.size === 0) {
         return;
     }
-    const fasta = Array.from(state.selectedRows).sort((a,b) => a - b).map(i => {
-        const s = state.seqs[i];
-        const seq = degapResidues(s.seq);
-        return `>${s.fullHeader || s.header}\n${seq}`;
-    }).join('\n');
+    const fasta = _selectedRowsFastaText();
     navigator.clipboard.writeText(fasta).then(() => {
-        showMessage("Selected sequences copied as FASTA!", 2000);
+        showMessage(_foldVisibleOnly() ? 'Selected sequences copied as FASTA (visible columns only)' : "Selected sequences copied as FASTA!", 2000);
     }).catch(err => {
         console.error('Copy failed:', err);
         showMessage("Failed to copy. Check console.", 5000);
@@ -15494,11 +15519,11 @@ function copyAlignment() {
         showMessage("No alignment loaded to copy.", 3000);
         return;
     }
-    const fasta = state.seqs.map(s => `>${s.fullHeader != null ? s.fullHeader : s.header}\n${s.seq}`).join('\n');
+    const fasta = _alignmentFastaText();
     navigator.clipboard.writeText(fasta).then(() => {
         const seqCount = state.seqs.length;
         const seqLen = state.seqs[0]?.seq.length || 0;
-        showMessage(`Copied ${seqCount} sequences (${seqLen} bp) to clipboard!`, 2000);
+        showMessage(_foldVisibleOnly() ? `Copied ${seqCount} sequences, visible columns only (${seqLen - _foldCount()} of ${seqLen})` : `Copied ${seqCount} sequences (${seqLen} bp) to clipboard!`, 2500);
     }).catch(err => {
         console.error('Copy failed:', err);
         showMessage("Failed to copy. Check console.", 5000);
@@ -15509,8 +15534,8 @@ function downloadAlignment() {
         showMessage("No alignment loaded to save.", 3000);
         return;
     }
-    const fasta = state.seqs.map(s => `>${s.fullHeader != null ? s.fullHeader : s.header}\n${s.seq}`).join('\n');
-    const filename = (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '') + '.fasta';
+    const fasta = _alignmentFastaText();
+    const filename = (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '') + (_foldVisibleOnly() ? '_visible' : '') + '.fasta';
     const blob = new Blob([fasta], { type: 'text/plain;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -21759,7 +21784,10 @@ function getTreeInputSequences() {
 }
 
 function openTreeBuilder() {
-    const seqObjects = getTreeInputSequences();
+    const visOnly = _foldVisibleOnly();
+    const seqObjects = visOnly
+        ? getTreeInputSequences().map(q => ({ header: q.header, fullHeader: q.fullHeader, seq: _foldVisibleSeq(q.seq) }))
+        : getTreeInputSequences();
     if (seqObjects.length < 2) {
         showMessage('Need at least two sequences to build a tree.', 2200);
         return;
@@ -21785,7 +21813,7 @@ function openTreeBuilder() {
             const scope = state.selectedRows.size >= 2 ? 'selected sequences' : 'all sequences';
             if (summary) {
                 const st = result.stats;
-                summary.textContent = `${st.count} ${scope} | ${modelName}${proteinFallback ? ' (protein: JC69/K80 are nucleotide models)' : ''} | ${method.toUpperCase()} | avg ${st.averageDistance.toFixed(4)} | range ${st.minDistance.toFixed(4)}-${st.maxDistance.toFixed(4)}`;
+                summary.textContent = `${st.count} ${scope} | ${modelName}${proteinFallback ? ' (protein: JC69/K80 are nucleotide models)' : ''} | ${method.toUpperCase()}${visOnly ? ' | visible columns only' : ''} | avg ${st.averageDistance.toFixed(4)} | range ${st.minDistance.toFixed(4)}-${st.maxDistance.toFixed(4)}`;
                 // Pairs without a usable distance were set to the largest one: say which
                 if (st.filledWith !== null) {
                     const parts = [];

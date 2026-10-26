@@ -13,7 +13,7 @@
     <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
-    <link rel="stylesheet" href="styles.css?v=184">
+    <link rel="stylesheet" href="styles.css?v=185">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -857,10 +857,10 @@
                         <strong>Ctrl+B</strong><span>Consensus below</span>
                         <strong>Ctrl+Shift+K</strong><span>Copy consensus</span>
                         <strong>Alt+J</strong><span>Copy selected consensus</span>
+                        <strong>Alt+H / Alt+U</strong><span>Hide / show columns (Alt+Shift+H: keep selected)</span>
                         <div class="keys-cat">Search</div>
                         <strong>Ctrl+F</strong><span>Find motif</span>
-                        <strong>Ctrl+Shift+F</strong><span>Clear last search</span>
-                        <strong>Ctrl+Alt+F</strong><span>Clear all searches</span>
+                        <strong>Ctrl+Shift/Alt+F</strong><span>Clear last / all searches</span>
                         <div class="keys-cat">View</div>
                         <strong>Ctrl++ / -</strong><span>Zoom in/out</span>
                         <strong>Ctrl+0</strong><span>Reset zoom</span>
@@ -922,11 +922,12 @@
                             <div class="action-section-label">Columns</div>
                             <div class="button-group">
                                 <button id="copyColumnsButton" title="Copy selected columns as FASTA (Ctrl+Shift+V)">Copy Cols</button>
-                                <button id="hideColumnsButton" title="Hide the selected columns (or the columns of the selected residues): each run folds into one marker cell in the Canvas view; click the marker to show it again">Hide Cols</button>
-                                <button id="hideUnselectedColumnsButton" title="Hide every column except the selected ones, so the selected regions sit next to each other (Canvas view)">Only Sel</button>
-                                <span class="fold-gappy" title="Hide the columns where at least this percentage of the rows has a gap (Canvas view)"><button id="hideGappyColumnsButton">Hide Gappy</button>&ge;<input type="number" id="hideGappyPct" aria-label="Hide Gappy: minimum percentage of rows with a gap" title="Minimum percentage of rows with a gap" min="1" max="100" step="1" value="100">%</span>
-                                <button id="revealColumnsButton" title="Show every hidden column again" disabled>Reveal</button>
+                                <button id="hideColumnsButton" title="Hide the selected columns (or the columns of the selected residues), Alt+H: each run folds into one marker cell; click the marker to show it again">Hide Cols</button>
+                                <button id="hideUnselectedColumnsButton" title="Hide every column except the selected ones, so the selected regions sit next to each other (Alt+Shift+H)">Only Sel</button>
+                                <span class="fold-gappy" title="Hide the columns where at least this percentage of the rows has a gap"><button id="hideGappyColumnsButton">Hide Gappy</button>&ge;<input type="number" id="hideGappyPct" aria-label="Hide Gappy: minimum percentage of rows with a gap" title="Minimum percentage of rows with a gap" min="1" max="100" step="1" value="100">%</span>
+                                <button id="revealColumnsButton" title="Show every hidden column again (Alt+U)" disabled>Reveal</button>
                                 <span id="foldStatus" class="fold-status"></span>
+                                <label class="fold-visonly" title="Copy Align, Copy Sel, the toolbar Copy and Save, and the tree leave the hidden columns out (off: they use the whole alignment)"><input type="checkbox" id="foldVisibleOnly" disabled> Copy, Save, Tree: visible columns only</label>
                             </div>
                         </div>
                         <div class="action-section action-section-analysis">
@@ -1040,16 +1041,14 @@
                 <strong>Ctrl+A</strong><span>Select/deselect all sequences</span>
                 <strong>Ctrl+C, Alt+C</strong><span>Copy selected bases or sequences (Alt+C: as Copy Sel)</span>
                 <strong>Ctrl+Del</strong><span>Delete selected sequences</span>
-                <strong>Ctrl+Z</strong><span>Undo</span>
-                <strong>Ctrl+Y</strong><span>Redo</span>
+                <strong>Ctrl+Z / Ctrl+Y</strong><span>Undo / Redo</span>
                 <strong>Ctrl+R</strong><span>Reverse complement selected</span>
                 <strong>Ctrl+Shift+R</strong><span>Realign selected block</span>
                 <strong>Ctrl+U</strong><span>Duplicate selected</span>
                 <strong>Ctrl+B</strong><span>Insert consensus below</span>
                 <strong>Alt+T</strong><span>Open selected in new tab</span>
                 <strong>Ctrl+F</strong><span>Find motif</span>
-                <strong>Ctrl+Shift+F</strong><span>Clear last search</span>
-                <strong>Ctrl+Alt+F</strong><span>Clear all searches</span>
+                <strong>Ctrl+Shift/Alt+F</strong><span>Clear last / all searches</span>
                 <strong>Ctrl+Shift+S</strong><span>Save preset</span>
                 <strong>Ctrl+O</strong><span>Load preset</span>
                 <strong>Ctrl+Up / Ctrl+Down</strong><span>Move selected up/down</span>
@@ -1059,6 +1058,7 @@
                 <strong>Ctrl+D</strong><span>Delete selected columns (no prompt)</span>
                 <strong>Ctrl+Shift+K</strong><span>Copy consensus</span>
                 <strong>Alt+J</strong><span>Copy consensus of selected</span>
+                <strong>Alt+H / Alt+Shift+H / Alt+U</strong><span>Hide selected columns / all but them / show all</span>
                 <strong>Ctrl+L</strong><span>Load pasted input</span>
                 <strong>Ctrl++ / Ctrl+-</strong><span>Zoom in/out</span>
                 <strong>Ctrl+0</strong><span>Reset zoom to 100%</span>
@@ -1447,7 +1447,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=6"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=342"></script>
+    <script src="script.js?v=343"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>

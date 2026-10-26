@@ -8592,6 +8592,51 @@ check('Hidden columns in Full and Block: fold markers in rows, consensus and rul
   return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out).slice(0, 1500) : JSON.stringify(out).slice(0, 800) };
 }, { timeoutMs: 180000 });
 
+// Hidden columns, owner's decision 1: analyses, Copy and Save use the whole alignment; "visible columns only" is an
+// option. Actions > Columns > "Copy, Save, Tree: visible columns only" (off by default, usable when columns are
+// hidden) leaves the folded columns out of Copy Align, Copy Sel, the toolbar Copy / Save and the tree.
+check('Hidden columns: "visible columns only" leaves folds out of Copy / Save / Tree, off by default', async (page) => {
+  const bad = [], out = {};
+  // rows identical outside columns 11-30, all different inside: a tree of the visible columns has distance 0
+  const rows = Array.from({ length: 6 }, (_, i) => `>r${i}\n${'ACGTACGTAC'}${Array.from({ length: 20 }, (_, j) => 'ACGT'[(i + j) % 4]).join('')}${'GGCCTTAAGG'}`);
+  await loadFasta(page, rows.join('\n') + '\n');
+  await setMode(page, 'canvas');
+  await page.evaluate(() => _foldApply([[10, 29]]));
+  await page.waitForTimeout(400);
+  out.off = await page.evaluate(() => ({ box: el('foldVisibleOnly') ? el('foldVisibleOnly').checked : null, text: _alignmentFastaText() }));
+  if (out.off.box !== false) bad.push('the option is missing or on by default: ' + out.off.box);
+  if (!out.off.text.includes('ACGTACGTAC' + 'ACGT')) bad.push('off: Copy text lacks the hidden columns');
+  await page.evaluate(() => { const b = el('foldVisibleOnly'); b.checked = true; b.dispatchEvent(new Event('change', { bubbles: true })); });
+  out.on = await page.evaluate(() => ({ text: _alignmentFastaText(), sel: (() => { state.selectedRows = new Set([1]); return _selectedRowsFastaText(); })() }));
+  const want0 = 'ACGTACGTACGGCCTTAAGG';
+  if (!out.on.text.includes('>r0\n' + want0)) bad.push('on: Copy text is not the visible columns: ' + out.on.text.slice(0, 60));
+  if (!out.on.sel.includes('>r1\n' + want0)) bad.push('on: Copy Sel is not the visible columns: ' + out.on.sel.slice(0, 60));
+  await page.evaluate(() => { state.selectedRows = new Set(); openTreeBuilder(); });
+  await page.waitForTimeout(1500);
+  out.tree = await page.evaluate(() => el('treeBuilderSummary')?.textContent || '');
+  if (!/avg 0\.0000/.test(out.tree) || !/visible columns/.test(out.tree)) bad.push('on: tree not of the visible columns: ' + out.tree);
+  await page.evaluate(() => closeTreeBuilder());
+  // the folds go: the option has nothing to leave out, the whole alignment is copied
+  await page.evaluate(() => revealAllColumns());
+  out.after = await page.evaluate(() => ({ disabled: el('foldVisibleOnly').disabled, text: _alignmentFastaText() }));
+  if (!out.after.disabled || !out.after.text.includes('ACGTACGTAC' + 'ACGT')) bad.push('without folds: ' + JSON.stringify({ disabled: out.after.disabled }));
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out).slice(0, 900) : JSON.stringify({ tree: out.tree }) };
+}, { timeoutMs: 90000 });
+
+// Hidden columns: keys (free in the Keys list): Alt+H hides the selected columns, Alt+Shift+H keeps only them, Alt+U shows all.
+check('Hidden columns: Alt+H, Alt+Shift+H, Alt+U', async (page) => {
+  await loadFasta(page, Array.from({ length: 5 }, (_, i) => `>k${i}\n` + 'ACGT'.repeat(25)).join('\n') + '\n');
+  await setMode(page, 'canvas');
+  const sel = (a, b) => page.evaluate(([a, b]) => { state.selectedColumns.clear(); for (let c = a; c <= b; c++) state.selectedColumns.add(c); updateColumnSelections(); document.activeElement?.blur?.(); }, [a, b]);
+  const hid = () => page.evaluate(() => JSON.stringify(state.hiddenCols));
+  const out = {};
+  await sel(10, 19); await page.keyboard.press('Alt+KeyH'); await page.waitForTimeout(500); out.h = await hid();
+  await page.keyboard.press('Alt+KeyU'); await page.waitForTimeout(500); out.u = await hid();
+  await sel(40, 49); await page.keyboard.press('Alt+Shift+KeyH'); await page.waitForTimeout(500); out.sh = await hid();
+  const ok = out.h === '[[10,19]]' && out.u === '[]' && out.sh === '[[0,39],[50,99]]';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 // Linked views: rows by sequence name (by index when the name is not there) and columns by column number or by
 // the residue index of an anchor sequence both alignments contain, which keeps two alignments of the same
 // sequences lined up on screen when their gaps differ. A position applied from a peer is not echoed back.
