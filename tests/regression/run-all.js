@@ -8850,6 +8850,48 @@ check('Canvas: the last device-pixel columns are painted at a fractional pixel r
   } finally { await ctx.close(); }
 }, { timeoutMs: 90000 });
 
+// GLM audit of v294 (2026-10-27), confirmed findings: a Shift+click on a name in Canvas left the residue two-click
+// range armed (Full/Block cancel it), so the next residue click completed a range from the old cell; the header's
+// bp range was computed from gaplessPositions that a typed residue (same length) left stale; the dot plot's bitmap was
+// rounded to whole device pixels but shown at the unrounded CSS size (stretched, blurred) at a fractional ratio; and
+// PageUp/PageDown in Canvas stepped by parseInt of the now fractional canvas height.
+check('Audit v294: Canvas Shift+click on a name cancels a pending residue range, header bp after a same-length edit, dot plot and page step at a fractional ratio', async (page) => {
+  const bad = [], out = {};
+  const ctx = await page.context().browser().newContext({ viewport: { width: 1400, height: 700 }, deviceScaleFactor: 1.25 });
+  const p = await ctx.newPage();
+  try {
+    await p.goto(page.url(), { waitUntil: 'networkidle' });
+    await p.waitForFunction(() => typeof parseAndRender === 'function', null, { timeout: 15000 });
+    await loadFasta(p, Array.from({ length: 200 }, (_, i) => `>h${i}\n` + (i === 0 ? 'A-CGTACGTA' : 'ACGTACGTAC') + 'ACGT'.repeat(10)).join('\n') + '\n');
+    await setMode(p, 'canvas');
+    await p.waitForTimeout(500);
+    // 1. residue click, then Shift+click on a name: the residue range is no longer armed
+    const cell = await p.evaluate(() => { const m = _canvasState.metrics, r = _canvasState.canvas.getBoundingClientRect(); return { x: r.left + m.nameW + 5.5 * m.charW, y: r.top + m.headerH + 2.5 * _canvasState.rowPitch }; });
+    await p.mouse.click(cell.x, cell.y);
+    await p.waitForTimeout(200);
+    out.armed = await p.evaluate(() => !!state.pendingNucStart);
+    await p.evaluate(() => { state.lastSelectedIndex = 0; state.selectedRows = new Set([0]); });
+    await r2ClickName(p, 4, ['Shift']);
+    out.afterShift = await p.evaluate(() => state.pendingNucStart);
+    if (!out.armed || out.afterShift) bad.push('pending residue range after a Shift+click on a name: ' + JSON.stringify(out.afterShift));
+    // 2. a same-length edit (a residue typed over the gap) and a render: the bp range is the residues counted now
+    out.bp = await p.evaluate(() => { state.seqs[0].seq = 'AACGTACGTA' + state.seqs[0].seq.slice(10); renderAlignment();
+      const t = el('sourceInfo').textContent.match(/([\d-]+)\s*bp/); const lens = state.seqs.map(q => q.seq.replace(/[-.]/g, '').length);
+      return { shown: t && t[1], want: Math.min(...lens) === Math.max(...lens) ? String(Math.min(...lens)) : Math.min(...lens) + '-' + Math.max(...lens) }; });
+    if (out.bp.shown !== out.bp.want) bad.push('bp range after a same-length edit: ' + JSON.stringify(out.bp));
+    // 3. the dot plot's bitmap is exactly its CSS box in device pixels
+    out.dot = await p.evaluate(() => { const c = document.createElement('canvas'); document.body.appendChild(c); _dotSizeToViewport(c, 601, 301);
+      const r = { w: c.width, h: c.height, cssW: parseFloat(c.style.width), cssH: parseFloat(c.style.height), dpr: devicePixelRatio }; c.remove(); return r; });
+    if (Math.abs(out.dot.cssW * out.dot.dpr - out.dot.w) > 1e-6 || Math.abs(out.dot.cssH * out.dot.dpr - out.dot.h) > 1e-6) bad.push('dot plot bitmap vs CSS box: ' + JSON.stringify(out.dot));
+    // 4. PageDown steps 0.8 of the canvas height in CSS px (not of its integer part)
+    out.page = await p.evaluate(() => { _canvasState.offsetY = 0; const cv = _canvasState.canvas; const want = 0.8 * cv.height / devicePixelRatio;
+      document.activeElement?.blur?.(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true }));
+      return { got: _canvasState.offsetY, want, css: cv.style.height }; });
+    if (Math.abs(out.page.got - out.page.want) > 1 / 1.25 + 1e-6) bad.push('PageDown step: ' + JSON.stringify(out.page));
+  } finally { await ctx.close(); }
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 90000 });
+
 // Linked views: rows by sequence name (by index when the name is not there) and columns by column number or by
 // the residue index of an anchor sequence both alignments contain, which keeps two alignments of the same
 // sequences lined up on screen when their gaps differ. A position applied from a peer is not echoed back.

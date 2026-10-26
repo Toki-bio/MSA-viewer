@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v294';
+const BUILD_TAG = 'v295';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -7158,6 +7158,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const index = nameHit.row;
                 _rowRangeSelect(state.lastSelectedIndex, index, state.selectedRows.has(index));
                 state.lastSelectedIndex = index;
+                // a residue click before this started a two-click range; it must not complete with that old anchor (as in Full/Block)
+                if (state.pendingNucStart) { state.pendingNucStart = null; scheduleNucSelectionRefresh(); }
                 updateRowSelections();
                 hideTooltip();
                 scheduleOverlay();
@@ -11997,7 +11999,8 @@ function updateSourceInfo() {
 
     const seqCount = state.seqs.length;
     const aliLength = _maxOf(state.seqs, s => s.seq.length);
-    const gaplessLengths = state.seqs.map(seq => seq.gaplessPositions[seq.gaplessPositions.length - 1] || 0);
+    // (_linkGapless recounts a row whose text changed: a typed residue keeps the length and left the old counts)
+    const gaplessLengths = state.seqs.map(seq => { const g = _linkGapless(seq); return g[g.length - 1] || 0; });
     const minLength = _minOf(gaplessLengths);
     const maxLength = _maxOf(gaplessLengths);
     const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
@@ -15075,7 +15078,7 @@ function handleKeyDown(e) {
         const container = alignmentContainer;
         const direction = e.key === 'PageUp' ? -1 : 1;
         if (isCanvasMode() && _canvasState.canvas) {
-            _canvasState.offsetY += direction * (parseInt(_canvasState.canvas.style.height) || container.clientHeight) * 0.8;
+            _canvasState.offsetY += direction * (parseFloat(_canvasState.canvas.style.height) || container.clientHeight) * 0.8;
             (_canvasState.scheduleDrawMoved || _canvasState.scheduleDraw)?.();
             _canvasState.onOffsetChange?.();
             e.preventDefault();
@@ -31506,7 +31509,8 @@ function _dotSizeToViewport(canvas, vw, vh) {
     if (canvas.width !== Math.round(vw * dpr) || canvas.height !== Math.round(vh * dpr)) {
         canvas.width = Math.round(vw * dpr); canvas.height = Math.round(vh * dpr);
     }
-    canvas.style.width = vw + 'px'; canvas.style.height = vh + 'px';
+    // the CSS box is the bitmap's own size (a rounded bitmap in an unrounded box was stretched, blurred at 1.25 / 1.5)
+    canvas.style.width = (canvas.width / dpr) + 'px'; canvas.style.height = (canvas.height / dpr) + 'px';
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     return ctx;
