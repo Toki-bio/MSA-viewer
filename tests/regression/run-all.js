@@ -8743,6 +8743,113 @@ check('Audit v292 (2): a view position at a fold in Full, visible-only only wher
   return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
 }, { timeoutMs: 120000 });
 
+// Owner 2026-10-26: there was no way to deselect a range of rows (Shift+click and Ctrl+drag on names only added).
+// Now Shift+click on a row that is already selected deselects the rows from the last clicked one to it, and a Ctrl+drag
+// that starts on a selected row deselects the rows it passes over. Full and Canvas alike.
+check('Row selection: Shift+click on a selected row and Ctrl+drag from a selected row deselect a range (Full, Canvas)', async (page) => {
+  const bad = [], out = {};
+  await loadFasta(page, Array.from({ length: 20 }, (_, i) => `>r${i}\n` + 'ACGT'.repeat(15)).join('\n') + '\n');
+  const sel = () => page.evaluate(() => [...state.selectedRows].sort((a, b) => a - b).join(','));
+  for (const mode of ['full', 'canvas']) {
+    await setMode(page, mode);
+    await page.waitForTimeout(400);
+    await page.evaluate(() => { state.selectedRows.clear(); state.lastSelectedIndex = null; updateRowSelections(); });
+    await r2ClickName(page, 3, ['Control']);
+    await r2ClickName(page, 8, ['Shift']);
+    const a = await sel();
+    await r2ClickName(page, 5, ['Shift']);          // 5 is selected: 5..8 (from the last clicked, 8) go
+    const b = await sel();
+    await r2ClickName(page, 12, ['Shift']);         // 12 is not selected: 5..12 are added (anchor 5)
+    const c = await sel();
+    // Ctrl+drag from a selected row (7) down to row 10: 7..10 go
+    const p0 = await auditName(page, 7), p1 = await auditName(page, 10);
+    await page.keyboard.down('Control');
+    await page.mouse.move(p0.x, p0.y); await page.mouse.down();
+    await page.mouse.move(p1.x, (p0.y + p1.y) / 2, { steps: 4 }); await page.mouse.move(p1.x, p1.y, { steps: 4 });
+    await page.mouse.up();
+    await page.keyboard.up('Control');
+    await page.waitForTimeout(300);
+    const d = await sel();
+    // Ctrl+drag from an unselected row (15) to 17 still adds
+    const q0 = await auditName(page, 15), q1 = await auditName(page, 17);
+    await page.keyboard.down('Control');
+    await page.mouse.move(q0.x, q0.y); await page.mouse.down();
+    await page.mouse.move(q1.x, q1.y, { steps: 6 });
+    await page.mouse.up();
+    await page.keyboard.up('Control');
+    await page.waitForTimeout(300);
+    const e = await sel();
+    out[mode] = { a, b, c, d, e };
+    const want = { a: '3,4,5,6,7,8', b: '3,4', c: '3,4,5,6,7,8,9,10,11,12', d: '3,4,5,6,11,12', e: '3,4,5,6,11,12,15,16,17' };
+    for (const k of Object.keys(want)) if (out[mode][k] !== want[k]) bad.push(`${mode} ${k}: ${out[mode][k]} (want ${want[k]})`);
+  }
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
+// Owner 2026-10-26 (screenshot: "67 seq" over 6 rows): the header counts (seq, col, bp range) are written by
+// updateSourceInfo at the end of renderAlignment, but the Canvas path returns before that line, so in the Canvas
+// view (the default) a row delete, Undo or Redo left the old counts. Every view now updates them.
+check('Header counts follow row deletes, Undo and Redo in every view (Canvas returned before updating them)', async (page) => {
+  const bad = [], out = {};
+  const counts = () => page.evaluate(() => { const t = el('sourceInfo').textContent; const m = t.match(/(\d+)\s*seq,\s*(\d+)\s*col,\s*([\d-]+)/); return m ? m[1] + '|' + m[2] + '|' + m[3] : t; });
+  for (const mode of ['canvas', 'full', 'block']) {
+    await loadFasta(page, Array.from({ length: 20 }, (_, i) => `>c${i}\n` + 'ACGT'.repeat(10) + (i === 0 ? 'AAAAAAAAAA' : '----------')).join('\n') + '\n');
+    await setMode(page, mode);
+    await page.waitForTimeout(400);
+    const before = await counts();
+    page.once('dialog', d => d.accept());   // "Delete 3 sequence(s)?"
+    await page.evaluate(() => { state.selectedRows = new Set([0, 1, 2]); updateRowSelections(); deleteSelected(); });
+    await page.waitForTimeout(500);
+    const afterDelete = await counts();
+    await page.evaluate(() => undoDelete());
+    await page.waitForTimeout(500);
+    const afterUndo = await counts();
+    await page.evaluate(() => redoAction());
+    await page.waitForTimeout(500);
+    const afterRedo = await counts();
+    out[mode] = { before, afterDelete, afterUndo, afterRedo };
+    if (before !== '20|50|40-50' || afterDelete !== '17|50|40' || afterUndo !== '20|50|40-50' || afterRedo !== '17|50|40') bad.push(mode + ': ' + JSON.stringify(out[mode]));
+  }
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
+// Owner 2026-10-26 (screenshot at a 1.6 device-pixel ratio): slivers to the right of the length badges after scrolling
+// with the mouse held. The canvas bitmap is a whole number of device pixels and its CSS width is bitmap / dpr
+// (1971.875 px); the draw code read that width back with parseInt (1971), so the last ~1.4 device-pixel columns were
+// never painted: black after a full draw, and pieces of the badges after a frame-copy scroll moved them there.
+check('Canvas: the last device-pixel columns are painted at a fractional pixel ratio (no slivers right of the badges)', async (page) => {
+  const ctx = await page.context().browser().newContext({ viewport: { width: 1990, height: 420 }, deviceScaleFactor: 1.6 });
+  const p = await ctx.newPage();
+  try {
+    await p.goto(page.url(), { waitUntil: 'networkidle' });
+    await p.waitForFunction(() => typeof parseAndRender === 'function', null, { timeout: 15000 });
+    const fa = Array.from({ length: 6 }, (_, i) => `>G01_mollyHiFi_fam0${i}_n38_lat1_long_name\n` + Array.from({ length: 308 }, (_, j) => (j > 290 - i * 4) ? '-' : 'ACGT'[(i + j * 3) % 4]).join('')).join('\n') + '\n';
+    await loadFasta(p, fa);
+    await setMode(p, 'canvas');
+    await p.waitForTimeout(800);
+    // the right-edge columns of the canvas over the rows: [r, g, b] per device-pixel column, the last 3
+    const edge = () => p.evaluate(() => { const cv = _canvasState.canvas, c = cv.getContext('2d'), m = _canvasState.metrics, dpr = m.dpr || 1;
+      const y = Math.round((m.headerH + 2.5 * _canvasState.rowPitch) * dpr); const W = cv.width;
+      return { W, css: cv.style.width, cols: [W - 3, W - 2, W - 1].map(x => Array.from(c.getImageData(x, y, 1, 1).data.slice(0, 3)).join(',')) }; });
+    // to the right end, then a full draw
+    await p.evaluate(() => { _canvasState.offsetX = 1e9; _canvasState.scheduleDraw(); });
+    await p.waitForTimeout(300);
+    await p.evaluate(() => { const a = _captureViewAnchor(true); renderAlignment(); _applyViewAnchor(a); _canvasState.offsetX = 1e9; _canvasState.scheduleDraw(); });
+    await p.waitForTimeout(500);
+    const full = await edge();
+    // wheel steps back and forth near the end (frame copies), with the mouse held on a cell
+    const r = await p.evaluate(() => { const b = _canvasState.canvas.getBoundingClientRect(); return { x: b.left + 600, y: b.top + 60 }; });
+    await p.mouse.move(r.x, r.y); await p.mouse.down();
+    for (let i = 0; i < 12; i++) { await p.mouse.wheel(-25, 0); await p.waitForTimeout(20); }
+    for (let i = 0; i < 14; i++) { await p.mouse.wheel(25, 0); await p.waitForTimeout(20); }
+    await p.waitForTimeout(400);
+    await p.mouse.up();
+    const scrolled = await edge();
+    const white = e => e.cols.every(c => c === '255,255,255');
+    return { pass: white(full) && white(scrolled), detail: JSON.stringify({ full, scrolled }) };
+  } finally { await ctx.close(); }
+}, { timeoutMs: 90000 });
+
 // Linked views: rows by sequence name (by index when the name is not there) and columns by column number or by
 // the residue index of an anchor sequence both alignments contain, which keeps two alignments of the same
 // sequences lined up on screen when their gaps differ. A position applied from a peer is not echoed back.

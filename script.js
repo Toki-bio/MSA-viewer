@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v293';
+const BUILD_TAG = 'v294';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -6227,6 +6227,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         octx.setTransform(dpr, 0, 0, dpr, 0, 0);
         return true;
     }
+    // The canvas size in CSS px from its bitmap: the CSS width is bitmap / dpr (1971.875 at a 1.6 ratio) and parseInt
+    // of it (1971) left the last ~1.4 device-pixel columns unpainted (owner's slivers right of the length badges)
+    const _cssW = () => (canvas.width / dpr) || 800;
+    const _cssH = () => (canvas.height / dpr) || 600;
     // Scratch copy of the last frame for the scroll copy in draw(): drawImage composites
     // (source-over), so copying a canvas onto itself where the regions overlap would blend
     // antialiased pixels with what was there; copying via a cleared buffer is exact.
@@ -6246,7 +6250,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         overlayRaf = requestAnimationFrame(() => {
             overlayRaf = 0;
             if (drawRaf) return;            // the pending content draw redraws the overlay too
-            drawOverlay(_canvasState.offsetX, _canvasState.offsetY, parseInt(canvas.style.width) || 800, parseInt(canvas.style.height) || 600);
+            drawOverlay(_canvasState.offsetX, _canvasState.offsetY, _cssW(), _cssH());
         });
     }
     _canvasState.scheduleOverlay = scheduleOverlay;
@@ -6326,8 +6330,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     }
     function clampOffsets() {
         scrollbarInsets();
-        const w = (parseInt(canvas.style.width) || 800) - _insetR;
-        const h = (parseInt(canvas.style.height) || 600) - _insetB;
+        const w = (_cssW()) - _insetR;
+        const h = (_cssH()) - _insetB;
         // Whole device pixels: the frame copy in draw() then moves pixels exactly and the
         // strip it draws next to them lands on the same pixel phase.
         const q = v => Math.round(v * dpr) / dpr;
@@ -6348,8 +6352,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // Skip if offset hasn't changed and not explicitly marked dirty
         if (!_dirty && _canvasState.offsetX === _lastOffX && _canvasState.offsetY === _lastOffY) return;
         const t0 = performance.now();
-        const w = parseInt(canvas.style.width) || 800;
-        const h = parseInt(canvas.style.height) || 600;
+        const w = _cssW();
+        const h = _cssH();
         const ox = _canvasState.offsetX;
         const oy = _canvasState.offsetY;
         const W = canvas.width, H = canvas.height;
@@ -6433,7 +6437,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // accept the new state as drawn so the next scroll step can still copy the frame.
     _canvasState.redrawCells = (r0, r1, c0, c1) => {
         if (drawRaf || _dirty) return;                      // a full draw is coming anyway
-        const w = parseInt(canvas.style.width) || 800, h = parseInt(canvas.style.height) || 600;
+        const w = _cssW(), h = _cssH();
         const ox = _canvasState.offsetX, oy = _canvasState.offsetY, W = canvas.width, H = canvas.height;
         const clipDraw = (x0, y0, x1, y1) => {
             x0 = Math.max(0, Math.round(x0 * dpr)); y0 = Math.max(0, Math.round(y0 * dpr)); x1 = Math.min(W, Math.round(x1 * dpr)); y1 = Math.min(H, Math.round(y1 * dpr));
@@ -6998,7 +7002,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const _reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     function _wheelTo(dx, dy) {
         scrollbarInsets();
-        const w = (parseInt(canvas.style.width) || 800) - _insetR, h = (parseInt(canvas.style.height) || 600) - _insetB;
+        const w = (_cssW()) - _insetR, h = (_cssH()) - _insetB;
         const ox = _canvasState.offsetX, oy = _canvasState.offsetY;
         // a running animation continues from its own position; a view moved by other code since starts afresh
         const a = (_wheelAnim && _wheelAnim.lastX === ox && _wheelAnim.lastY === oy) ? _wheelAnim
@@ -7140,6 +7144,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 state.pendingNucStart = null;
                 scheduleNucSelectionRefresh();
                 toggleRowSelection(index);
+                state.dragRowRemove = !state.selectedRows.has(index);   // a drag from a selected row deselects
                 hideTooltip();
                 scheduleOverlay();
                 return;
@@ -7151,9 +7156,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             const nameHit = _canvasHitTestName(e.clientX, e.clientY);
             if (nameHit) {
                 const index = nameHit.row;
-                const start = Math.min(state.lastSelectedIndex, index);
-                const end = Math.max(state.lastSelectedIndex, index);
-                for (let i = start; i <= end; i++) state.selectedRows.add(i);
+                _rowRangeSelect(state.lastSelectedIndex, index, state.selectedRows.has(index));
                 state.lastSelectedIndex = index;
                 updateRowSelections();
                 hideTooltip();
@@ -11141,6 +11144,7 @@ function renderAlignment(options = {}) {
         }
         _syncSelectionDomFromState();
         syncCodonModePanel();
+        updateSourceInfo();   // the header counts (seq, col, bp): this path returns before the DOM path's update
         _flushRenderMessage();
         return;
     }
@@ -14656,16 +14660,13 @@ function handleRowSelectMouseDown(e) {
         state.pendingNucStart = null;
         scheduleNucSelectionRefresh();
         toggleRowSelection(index);
+        state.dragRowRemove = !state.selectedRows.has(index);   // a drag from a selected row deselects
         e.preventDefault();
         e.stopPropagation();
         return true;
     }
     if (e.shiftKey && state.lastSelectedIndex !== null) {
-        const start = Math.min(state.lastSelectedIndex, index);
-        const end = Math.max(state.lastSelectedIndex, index);
-        for (let i = start; i <= end; i++) {
-            state.selectedRows.add(i);
-        }
+        _rowRangeSelect(state.lastSelectedIndex, index, state.selectedRows.has(index));
         state.lastSelectedIndex = index;
         // a residue click before this started a two-click range; it must not complete with that old anchor
         if (state.pendingNucStart) { state.pendingNucStart = null; scheduleNucSelectionRefresh(); }
@@ -14677,6 +14678,14 @@ function handleRowSelectMouseDown(e) {
     return false;
 }
 
+// Shift+click on names: the rows from the last clicked one to this one are added, or, when this row is already
+// selected, deselected (owner 2026-10-26: there was no way to deselect a range)
+function _rowRangeSelect(from, to, remove) {
+    const start = Math.min(from, to), end = Math.max(from, to);
+    for (let i = start; i <= end; i++) {
+        if (remove) state.selectedRows.delete(i); else state.selectedRows.add(i);
+    }
+}
 // Selection helper consolidating toggle behavior
 function toggleRowSelection(index) {
     if (state.selectedRows.has(index)) {
@@ -14697,9 +14706,7 @@ function handleMouseMove(e) {
         if (document.getElementById('modeCanvas')?.checked) {
             const index = _canvasRowFromClientY(e.clientY);
             if (index >= 0) {
-                const start = Math.min(state.dragStartRow, index);
-                const end = Math.max(state.dragStartRow, index);
-                for (let i = start; i <= end; i++) state.selectedRows.add(i);
+                _rowRangeSelect(state.dragStartRow, index, !!state.dragRowRemove);
                 updateRowSelections();
                 (_canvasState.scheduleOverlay || _canvasState.scheduleDraw)?.();
             }
@@ -14710,11 +14717,7 @@ function handleMouseMove(e) {
                 // the consensus line is -1: dragging onto it selected "row -1", and Delete then
                 // spliced (-1, 1), removing the last sequence instead
                 if (Number.isInteger(index) && index >= 0 && Number.isInteger(state.dragStartRow) && state.dragStartRow >= 0) {
-                    const start = Math.min(state.dragStartRow, index);
-                    const end = Math.max(state.dragStartRow, index);
-                    for (let i = start; i <= end; i++) {
-                        state.selectedRows.add(i);
-                    }
+                    _rowRangeSelect(state.dragStartRow, index, !!state.dragRowRemove);
                     updateRowSelections();
                 }
             }
@@ -16881,7 +16884,7 @@ function _applySnapshotView(view) {
                 requestAnimationFrame(() => {
                     const cv = _canvasState.canvas;
                     if (!cv) return;
-                    const w = parseInt(cv.style.width) || cv.clientWidth, h = parseInt(cv.style.height) || cv.clientHeight;
+                    const w = parseFloat(cv.style.width) || cv.clientWidth, h = parseFloat(cv.style.height) || cv.clientHeight;
                     _canvasState.offsetX = Math.max(0, Math.min(ox, (_canvasState.totalContentW || 0) - w));   // not past the content
                     _canvasState.offsetY = Math.max(0, Math.min(oy, (_canvasState.totalContentH || 0) - h));
                     _canvasState.scheduleDraw?.(); _canvasState.onOffsetChange?.();
