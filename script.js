@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v292';
+const BUILD_TAG = 'v293';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 
@@ -10524,10 +10524,11 @@ function _updateCodonAnalysisState(len) {
 
 // ── HIDDEN COLUMNS (folds) ──────────────────────────────────────────────────
 // state.hiddenCols: sorted, disjoint, non-touching [start, end] column ranges (0-based, inclusive). A
-// property of the view like the colour scheme: the alignment does not change, analyses, Copy and Save
-// still see every column. Canvas lays the content out in slots (as for Variable sites only) and puts
+// property of the view like the colour scheme: the alignment does not change; analyses, Copy and Save
+// see every column unless 'visible columns only' is ticked. Canvas lays the content out in slots (as for Variable sites only) and puts
 // one marker cell where a run is hidden; a click on the marker (row or ruler) shows the run again.
-// Full and Block show every column and keep the folds for when Canvas comes back.
+// Full and Block hide the folded spans and show the same markers (_foldDomInfo); the windowed Full/Block view
+// shows every column (the commands go to Canvas there).
 const _FOLD_STYLE = { color: '#f2c14e', symbol: '\u2194' };
 function _foldNormalize(ranges, len) {
     const r = (ranges || []).map(x => [Math.max(0, x[0] | 0), Math.min(len - 1, x[1] | 0)]).filter(x => x[0] <= x[1]).sort((a, b) => a[0] - b[0]);
@@ -10570,7 +10571,10 @@ function _foldMarkerEl(r) {
 }
 // "Copy, Save, Tree: visible columns only" (owner: the whole alignment by default, this as an option): a row's
 // text without its folded columns
-function _foldVisibleOnly() { return !!(el('foldVisibleOnly')?.checked && state.hiddenCols && state.hiddenCols.length); }
+function _foldVisibleOnly() {
+    return !!(el('foldVisibleOnly')?.checked && state.hiddenCols && state.hiddenCols.length
+        && (isCanvasMode() || !state._needsWindowedDom));   // the windowed Full / Block view shows every column
+}
 function _foldVisibleSeq(seq) {
     let out = '', p = 0;
     for (const r of state.hiddenCols) { out += seq.slice(p, r[0]); p = r[1] + 1; }
@@ -10612,7 +10616,7 @@ function _foldRefreshUi() {
     const rv = el('revealColumnsButton');
     if (rv) rv.disabled = !(state.hiddenCols && state.hiddenCols.length);
     const vo = el('foldVisibleOnly');
-    if (vo) vo.disabled = !(state.hiddenCols && state.hiddenCols.length);
+    if (vo) { vo.disabled = !(state.hiddenCols && state.hiddenCols.length); if (vo.disabled) vo.checked = false; }
 }
 // A different alignment length (columns added or removed by an edit) makes the ranges meaningless
 function _foldCheckLength(len) {
@@ -10672,6 +10676,7 @@ async function hideSelectedColumns() {
     if (!await _foldEnsureCanvas()) return;
     if (_foldApply([...(state.hiddenCols || []), ..._foldRunsOf(cols)]) === false) return;
     state.selectedColumns.clear(); updateColumnSelections();
+    if (state.selectedNucs.size) { state.selectedNucs.clear(); state.pendingNucStart = null; scheduleNucSelectionRefresh(); }   // it is hidden now
 }
 async function hideUnselectedColumns() {
     const cols = _foldSelectedColumns();
@@ -10824,6 +10829,7 @@ function _computeVarSites(len) {
 // columns, draws breakpoint markers) now or on screen, or a non-span view.
 function _refreshDiffHighlightInPlace() {
     if (!isSpanRenderMode() || !state.seqs || state.seqs.length < 2) return false;
+    if (_foldDomInfo()) return false;   // folds: the ruler carries fold markers, a redraw keeps them
     if (el('varSitesOnly')?.checked || document.body.classList.contains('var-sites-only')) return false;
     if (!alignmentContainer?.querySelector('.seq-data')) return false;
     const len = state.seqs.reduce((m, s) => Math.max(m, s.seq.length), 0);
@@ -14161,8 +14167,11 @@ function _applyViewAnchor(a) {
         if (target) vScrollBy(target.getBoundingClientRect().top - _alignmentViewTop());
         if (!blocks || c.scrollWidth > c.clientWidth + 1) {
             const line = rowEl || block.querySelector('.seq-line[data-seq-index]:not([data-seq-index="-1"])');
-            const sp = line?.querySelector(`:scope > .seq-data > span[data-pos="${a.col}"]`);
-            if (a.col <= _blockStartColumn(block)) c.scrollLeft = 0;
+            let sp = line?.querySelector(`:scope > .seq-data > span[data-pos="${a.col}"]`);
+            // a hidden column (fold): its run's marker stands where it was
+            const fr = sp && sp.classList.contains('fold-hidden') ? _foldAt(a.col) : null;
+            if (fr) sp = line.querySelector(`:scope > .seq-data > .col-fold[data-fold="${fr[0]}-${fr[1]}"]`) || sp;
+            if (a.col <= _blockStartColumn(block) && !fr) c.scrollLeft = 0;
             else if (sp && sp.getBoundingClientRect().width > 0) c.scrollLeft += sp.getBoundingClientRect().left - _domDataLeft(line);
             else if (!blocks) c.scrollLeft = a.col * cellW();
         }
@@ -15441,6 +15450,7 @@ function undoDelete(quiet) {
     state.selectedColumns = last.selectedColumns || new Set();
     state.selectedNucs.clear();
     state.lastAction = null;
+    _paneEditNote?.();   // mirror panes follow Undo too
     if (quiet) return;
     renderAlignment();
     showMessage(`Undo: ${undoEntryLabel(last)}`, 2000);
@@ -15484,6 +15494,7 @@ function redoAction(quiet) {
     state.selectedColumns = next.selectedColumns || new Set();
     state.selectedNucs.clear();
     state.lastAction = null;
+    _paneEditNote?.();   // and Redo
     if (quiet) return;
     renderAlignment();
     showMessage(`Redo: ${undoEntryLabel(next)}`, 2000);
@@ -16169,7 +16180,7 @@ function _paneLayout() {
     const right = _panes.side === 'right';
     const px = _paneSizePx();
     d.style.display = 'flex';
-    d.className = 'pane-dock pane-dock-' + _panes.side;
+    d.className = 'pane-dock pane-dock-' + _panes.side + (d.classList.contains('pane-dragging') ? ' pane-dragging' : '');
     d.style.width = right ? px + 'px' : '';
     d.style.height = right ? '' : px + 'px';
     body.style.marginRight = right ? px + 'px' : '';
@@ -16211,12 +16222,12 @@ function _paneUrl(file) {
     if (file && file.payload) {   // an own copy from a saved snapshot: its alignment and its view
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         _newTabHandoffs.set(id, { fasta: file.payload.fasta, name: file.name, payload: file.payload });
-        return { name: file.name, url: location.pathname + '?handoff=' + id + '&pane=1&link=' + encodeURIComponent(['1', '0', _link.by, _link.anchor].join('|')) };
+        return { id, name: file.name, url: location.pathname + '?handoff=' + id + '&pane=1&link=' + encodeURIComponent(['1', '0', _link.by, _link.anchor].join('|')) };
     }
     if (file) {   // another alignment: only its text goes over, the pane parses it; columns link by anchor sequence
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         _newTabHandoffs.set(id, { fasta: file.text, name: file.name });
-        return { name: file.name, url: location.pathname + '?handoff=' + id + '&pane=1&link=' + encodeURIComponent(['1', '1', 'anchor', _link.anchor].join('|')) };
+        return { id, name: file.name, url: location.pathname + '?handoff=' + id + '&pane=1&link=' + encodeURIComponent(['1', '1', 'anchor', _link.anchor].join('|')) };
     }
     const payload = _buildSnapshotPayload();
     const name = state.currentFilename || payload.sourceTitle || 'alignment';
@@ -16224,7 +16235,7 @@ function _paneUrl(file) {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     _newTabHandoffs.set(id, { fasta: payload.fasta, name, payload });
     const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
-    return { name, url: location.pathname + '?handoff=' + id + (view ? '&view=' + view : '') + '&pane=1&link=' + encodeURIComponent(['1', '0', _link.by, _link.anchor].join('|')) };
+    return { id, name, url: location.pathname + '?handoff=' + id + (view ? '&view=' + view : '') + '&pane=1&link=' + encodeURIComponent(['1', '0', _link.by, _link.anchor].join('|')) };
 }
 function paneOpen(side, file) {
     if (_paneIsChild) return;
@@ -16233,7 +16244,7 @@ function paneOpen(side, file) {
     if (_panes.list.length && _panes.side !== side) _panes.list.slice().forEach(paneClose);   // one direction at a time
     _panes.side = side;
     const dock = _paneEnsureDock();
-    const { name, url } = _paneUrl(file);
+    const { id: handoffId, name, url } = _paneUrl(file);
     const wrap = document.createElement('div');
     wrap.className = 'pane';
     const head = document.createElement('div');
@@ -16257,7 +16268,7 @@ function paneOpen(side, file) {
     dock.querySelector('.pane-holder').appendChild(wrap);
     // mode: 'mirror' (follows the main view's edits, the default), 'own' (an own copy: edited here, or swapped),
     // 'file' (another alignment)
-    const rec = { wrap, frame, title, modeBtn, name, file: !!file, mode: file ? (file.mode || 'file') : 'mirror', armed: 0 };
+    const rec = { wrap, frame, title, modeBtn, name, handoffId, file: !!file, mode: file ? (file.mode || 'file') : 'mirror', armed: 0 };
     _panes.list.push(rec);
     _paneShowMode(rec);
     modeBtn.addEventListener('click', () => _paneToggleMode(rec));
@@ -16274,13 +16285,15 @@ function paneClose(rec) {
     const i = _panes.list.indexOf(rec);
     if (i < 0) return;
     _panes.list.splice(i, 1);
+    _newTabHandoffs.delete(rec.handoffId);   // still there when the pane closed before it loaded
+    clearTimeout(rec.armed); rec.armed = 0;
     rec.wrap.remove();
     _paneLayout();
 }
-function _paneRefreshOne(rec) {
+function _paneRefreshOne(rec, shared) {
     if (rec.mode !== 'mirror') return;   // an own copy or another file is not reloaded from the main view
     try {
-        const payload = _buildSnapshotPayload();
+        const payload = shared || _buildSnapshotPayload();
         payload.sourceTitle = state.currentFilename || payload.sourceTitle || 'alignment';
         rec.frame.contentWindow.postMessage({ type: 'viewalign-pane-load', payload }, location.origin);
         rec.name = payload.sourceTitle;
@@ -16328,6 +16341,16 @@ function _paneFileName() { return state.currentFilename || ''; }
 function paneSwap(rec) {
     let pw;
     try { pw = rec.frame.contentWindow; if (!pw || !pw._paneRowCount || !pw._paneRowCount()) throw 0; } catch (e) { showMessage('The pane is still loading.', 2000); return; }
+    if (rec.mode === 'mirror') {
+        const mine = _captureViewAnchor(), theirs = pw._captureViewAnchor();
+        _link.muteUntil = performance.now() + 400;
+        try { pw._link.muteUntil = pw.performance.now() + 400; } catch (e) { /* older pane */ }
+        if (theirs) _applyViewAnchor(theirs);
+        if (mine) pw._applyViewAnchor(mine);
+        return;
+    }
+    if (performance.now() - (_panes.swapAt || 0) < 2500) { showMessage('The last Swap is still loading.', 2000); return; }
+    _panes.swapAt = performance.now();
     const theirs = JSON.parse(JSON.stringify(pw._buildSnapshotPayload()));
     theirs.sourceTitle = pw._paneFileName() || theirs.sourceTitle || rec.name;
     const mine = _buildSnapshotPayload();
@@ -16377,7 +16400,11 @@ function _paneWhenLoaded(rec, fn, tries = 0) {
     if (pw && pw._paneRowCount && pw._paneRowCount()) { setTimeout(() => fn(pw), 300); return; }
     if (tries < 80 && _panes.list.includes(rec)) setTimeout(() => _paneWhenLoaded(rec, fn, tries + 1), 250);
 }
-function _paneRefreshAll() { _panes.list.forEach(_paneRefreshOne); }
+function _paneRefreshAll() {
+    if (!_panes.list.some(r => r.mode === 'mirror')) return;
+    const payload = _buildSnapshotPayload();   // one payload for every mirror
+    _panes.list.forEach(r => _paneRefreshOne(r, payload));
+}
 // called after every edit step: the panes follow once the edits stop for a moment
 function _paneEditNote() {
     if (_paneIsChild) { try { window.parent._paneChildEdited?.(window); } catch (e) { /* not ours */ } return; }
@@ -16392,8 +16419,9 @@ function _paneChildInit() {
         const m = e.data;
         if (e.origin !== location.origin || e.source !== window.parent || !m || m.type !== 'viewalign-pane-load' || !m.payload) return;
         const a = _captureViewAnchor();
-        _loadSnapshotPayload(m.payload);
-        if (a) setTimeout(() => _applyViewAnchor(a), 50);   // keep this pane's own place
+        if (m.payload.view) m.payload.view.keepPlace = true;   // not the main view's scroll position
+        // this pane's own place, once the load has finished (a timer could fire before it)
+        Promise.resolve(_loadSnapshotPayload(m.payload)).then(() => { if (a) requestAnimationFrame(() => _applyViewAnchor(a)); });
     });
     setTimeout(() => { if (!_menuMinimized) minimizeMenu(); }, 600);
 }
@@ -16840,6 +16868,7 @@ function _applySnapshotView(view) {
 
     renderAlignment();
 
+    if (view.keepPlace) return;   // a mirror pane reloading keeps its own place (it restores it itself)
     const scrollLeft = Number(view.scrollLeft || 0);
     const scrollTop = Number(view.scrollTop || 0);
     const ox = Number(view.canvasOffsetX || 0), oy = Number(view.canvasOffsetY || 0);
@@ -16878,7 +16907,7 @@ function _loadSnapshotPayload(payload) {
 
     // Parse and render first, THEN apply view settings
 
-    parseAndRender(true).then(() => {
+    return parseAndRender(true).then(() => {
         // the trim first: _applySnapshotView renders, and the consensus, the ruler and the Canvas read the trim then
         if (payload.trim && Number.isInteger(payload.trim.leftTrimEnd) && Number.isInteger(payload.trim.rightTrimStart)) {
             _setTrimBounds(payload.trim.leftTrimEnd, payload.trim.rightTrimStart, false);
@@ -17037,6 +17066,15 @@ function downloadSnapshotHtml(snapshotUrl, sourceTitle) {
     setTimeout(() => URL.revokeObjectURL(dlUrl), 2000);
 }
 
+// The snapshot link (?snapshot=, also in the HTML file) holds the whole alignment already: own-copy and file panes,
+// each a whole alignment more, go only into the JSON file; mirrors (a place each) stay in the link
+function _snapshotLinkPayload(payload) {
+    if (!payload.panes || !Array.isArray(payload.panes.list)) return payload;
+    const list = payload.panes.list.filter(p => p.mode === 'mirror');
+    const out = { ...payload, panes: list.length ? { ...payload.panes, list } : undefined };
+    out._panesLeftOut = payload.panes.list.length - list.length;
+    return out;
+}
 async function createSnapshot() {
     if (!state.seqs || state.seqs.length === 0) {
         showMessage('Load an alignment first, then create snapshot.', 3000);
@@ -17045,7 +17083,10 @@ async function createSnapshot() {
 
     try {
         const payload = _buildSnapshotPayload({ panes: true });   // a saved snapshot keeps the pane layout
-        const encodedPayload = _toBase64Utf8(JSON.stringify(payload));
+        const linkPayload = _snapshotLinkPayload(payload);
+        const leftOut = linkPayload._panesLeftOut || 0;
+        delete linkPayload._panesLeftOut;
+        const encodedPayload = _toBase64Utf8(JSON.stringify(linkPayload));
         const snapshotUrl = `${window.location.origin}${window.location.pathname}?snapshot=${encodeURIComponent(encodedPayload)}`;
         const fileBaseName = _sanitizeSnapshotFileBaseName(payload.sourceTitle || state.currentFilename || 'alignment_snapshot');
         const githubRelativePath = `snapshots/${fileBaseName}.json`;
@@ -17065,10 +17106,11 @@ async function createSnapshot() {
         downloadSnapshotHtml(snapshotUrl, payload.sourceTitle || state.currentFilename || 'alignment');
 
         const sizeKb = (snapshotUrl.length / 1024).toFixed(1);
+        const paneNote = leftOut ? ` The ${leftOut} pane${leftOut > 1 ? 's' : ''} with ${leftOut > 1 ? 'their' : 'its'} own alignment ${leftOut > 1 ? 'are' : 'is'} in the JSON file only.` : '';
         if (copied) {
-            showMessage(`Snapshot copied; JSON+HTML downloaded (${sizeKb} KB URL). Upload JSON to /${githubRelativePath} for short link mode.`, 5200);
+            showMessage(`Snapshot copied; JSON+HTML downloaded (${sizeKb} KB URL). Upload JSON to /${githubRelativePath} for short link mode.${paneNote}`, 5200);
         } else {
-            showMessage(`Snapshot JSON+HTML downloaded (${sizeKb} KB URL). Upload JSON to /${githubRelativePath} for short link mode.`, 5200);
+            showMessage(`Snapshot JSON+HTML downloaded (${sizeKb} KB URL). Upload JSON to /${githubRelativePath} for short link mode.${paneNote}`, 5200);
         }
 
         console.log('GitHub snapshot URL (after uploading JSON file):', githubSnapshotUrl);

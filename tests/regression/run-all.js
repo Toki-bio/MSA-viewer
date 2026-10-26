@@ -8637,6 +8637,112 @@ check('Hidden columns: Alt+H, Alt+Shift+H, Alt+U', async (page) => {
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// GLM audit of v285-v292 (2026-10-26), the findings reproduced here: turning Highlight diffs off rebuilt the Full ruler
+// as plain text without its fold markers (digits off their columns); Undo / Redo did not reload mirror panes; the
+// splitter drag lost .pane-dragging when the dock was laid out (the iframes then swallowed the pointer); Alt+H on a
+// residue selection kept the selection on the hidden residues (Copy Sel copied them); "visible columns only" stayed
+// ticked after the folds went and came back on the next fold; Swap with a mirror pane loaded the mirror's older
+// payload into the main view (an edit made just before was undone); closing a pane left its hand-off entry and its
+// armed mode timer behind.
+check('Audit v292: ruler markers after Highlight diffs, Undo reloads mirrors, splitter drag, Alt+H residue selection, visible-only reset, Swap with a mirror, pane close', async (page) => {
+  const bad = [], out = {};
+  const n = 300, len = 300;   // (enough rows to scroll a view to row 30)
+  const fa = Array.from({ length: n }, (_, i) => `>a${i}\n` + Array.from({ length: len }, (_, j) => 'ACGT'[(i * 3 + j * 7 + (j % 5)) % 4]).join('')).join('\n') + '\n';
+  await loadFasta(page, fa);
+  await setMode(page, 'full');
+  await page.waitForTimeout(400);
+  // 1. Highlight diffs on, then off, with a fold: the ruler keeps its marker and stays over its columns
+  await page.evaluate(() => _foldApply([[50, 99]]));
+  await page.waitForTimeout(500);
+  const tick = (on) => page.evaluate((on) => { const h = el('highlightDiffs'); h.checked = on; h.dispatchEvent(new Event('change', { bubbles: true })); }, on);
+  await tick(true); await page.waitForTimeout(800); await tick(false); await page.waitForTimeout(800);
+  out.ruler = await page.evaluate(() => { const r = document.querySelector('.scale-ruler-line .seq-data'), row = document.querySelector('.seq-line[data-seq-index="0"] .seq-data');
+    const l = (root) => { const s = root && root.querySelector('span[data-pos="100"]'); return s ? Math.round(s.getBoundingClientRect().left) : null; };
+    return { markers: r ? r.querySelectorAll('.col-fold').length : -1, ruler: l(r), row: l(row) }; });
+  if (out.ruler.markers !== 1 || out.ruler.ruler == null || Math.abs(out.ruler.ruler - out.ruler.row) > 1) bad.push('ruler after Highlight diffs off: ' + JSON.stringify(out.ruler));
+  await page.evaluate(() => _foldApply([]));
+
+  // 2. Alt+H on a residue selection: the selection does not stay on the hidden residues
+  out.nuc = await page.evaluate(async () => { state.selectedColumns.clear(); state.selectedNucs.clear(); state.selectedNucs.set(2, new Set([10, 11, 12])); await hideSelectedColumns(); return { hidden: JSON.stringify(state.hiddenCols), nucs: state.selectedNucs.size }; });
+  if (out.nuc.hidden !== '[[10,12]]' || out.nuc.nucs !== 0) bad.push('Alt+H on residues: ' + JSON.stringify(out.nuc));
+  // 3. visible-only is unticked when the folds go
+  out.vis = await page.evaluate(() => { const b = el('foldVisibleOnly'); b.checked = true; revealAllColumns(); const after = b.checked; _foldApply([[1, 2]]); const again = _foldVisibleOnly(); _foldApply([]); return { after, again }; });
+  if (out.vis.after || out.vis.again) bad.push('visible-only after Reveal: ' + JSON.stringify(out.vis));
+
+  // 4. a mirror pane follows Undo
+  await setMode(page, 'canvas');
+  await page.evaluate(() => el('paneSplitRight').click());
+  const frameN = async (k) => { let fr; for (let i = 0; i < 60; i++) { fr = page.frames().filter(f => f !== page.mainFrame())[k]; if (fr && await fr.evaluate(() => typeof state !== 'undefined' && state.seqs.length).catch(() => 0)) return fr; await page.waitForTimeout(500); } return fr; };
+  const fr = await frameN(0);
+  await page.waitForTimeout(800);
+  await page.evaluate(() => { pushUndo('test edit'); state.seqs.pop(); renderAlignment(); });
+  await page.waitForTimeout(2000);
+  out.afterEdit = await fr.evaluate(() => state.seqs.length);
+  await page.evaluate(() => undoDelete());
+  await page.waitForTimeout(2000);
+  out.afterUndo = { main: await page.evaluate(() => state.seqs.length), pane: await fr.evaluate(() => state.seqs.length) };
+  if (out.afterEdit !== n - 1 || out.afterUndo.main !== n || out.afterUndo.pane !== n) bad.push('mirror after Undo: ' + JSON.stringify({ afterEdit: out.afterEdit, afterUndo: out.afterUndo }));
+
+  // 5. the splitter drag keeps .pane-dragging while the dock is laid out
+  out.drag = await page.evaluate(() => { const d = el('paneDock'); d.classList.add('pane-dragging'); _paneLayout(); const kept = d.classList.contains('pane-dragging'); d.classList.remove('pane-dragging'); return kept; });
+  if (!out.drag) bad.push('_paneLayout dropped .pane-dragging');
+
+  // 6. Swap with a mirror pane: the main view keeps its (just edited) alignment; the places are exchanged
+  await page.evaluate(() => { _link.rows = false; });
+  await fr.evaluate(() => { _link.rows = false; _applyViewAnchor({ row: 30, col: 0 }); });
+  await page.evaluate(() => { _applyViewAnchor({ row: 5, col: 0 }); pushUndo('edit before swap'); state.seqs.pop(); renderAlignment(); });
+  await page.evaluate(() => _panes.list[0].wrap.querySelector('.pane-swap').click());   // at once: the mirror has not reloaded yet
+  await page.waitForTimeout(2000);
+  out.swap = await page.evaluate(() => ({ n: state.seqs.length, row: _captureViewAnchor().row, mode: _panes.list[0].mode }));
+  out.swapPane = await fr.evaluate(() => _captureViewAnchor().row);
+  if (out.swap.n !== n - 1 || Math.abs(out.swap.row - 30) > 1 || Math.abs(out.swapPane - 5) > 1 || out.swap.mode !== 'mirror') bad.push('Swap with a mirror: ' + JSON.stringify({ main: out.swap, paneRow: out.swapPane }));
+
+  // 7. closing a pane removes its hand-off entry and its armed timer
+  out.close = await page.evaluate(() => { const before = _newTabHandoffs.size; const rec = paneOpen('right'); rec.mode = 'own'; _paneToggleMode(rec); const armed = !!rec.armed; paneClose(rec); return { before, after: _newTabHandoffs.size, armed, armedAfter: !!rec.armed }; });
+  if (out.close.after !== out.close.before || !out.close.armed || out.close.armedAfter) bad.push('pane close: ' + JSON.stringify(out.close));
+  await page.evaluate(() => _panes.list.slice().forEach(paneClose));
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 180000 });
+
+// GLM audit of v285-v292, second part: in Full/Block a view position (Go to, linked views, mode switches) at a hidden
+// column scrolled by column number times the cell width, which overshoots by the folded width; "visible columns only"
+// dropped columns that the windowed Full/Block view shows (folds are not drawn there); the snapshot link
+// (?snapshot=, also in the HTML file) carried every own-copy pane's whole alignment, with no limit.
+check('Audit v292 (2): a view position at a fold in Full, visible-only only where folds show, own-copy panes out of the snapshot link', async (page) => {
+  const bad = [], out = {};
+  await loadFasta(page, Array.from({ length: 30 }, (_, i) => `>f${i}\n` + Array.from({ length: 800 }, (_, j) => 'ACGT'[(i + j * 3) % 4]).join('')).join('\n') + '\n');
+  await setMode(page, 'full');
+  await page.evaluate(() => _foldApply([[100, 249]]));
+  await page.waitForTimeout(600);
+  out.anchor = await page.evaluate(async () => {
+    _applyViewAnchor({ row: 0, col: 150 });   // hidden: lands on its marker
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const line = document.querySelector('.seq-line[data-seq-index="0"]');
+    const mk = line.querySelector('.col-fold');
+    return { markerAt: Math.round(mk.getBoundingClientRect().left - _domDataLeft(line)), scrollLeft: Math.round(alignmentContainer.scrollLeft) };
+  });
+  // (a visible column lands up to ~3 px off too: scrollLeft rounding with fractional cell widths; before the fix the
+  // marker was off by the folded width, 150 columns)
+  if (Math.abs(out.anchor.markerAt) > 3.9) bad.push('view position at a hidden column: the marker is ' + out.anchor.markerAt + ' px from the names');
+  // the snapshot link keeps mirror panes only
+  out.link = await page.evaluate(() => {
+    const p = { fasta: '>a\nAC', view: {}, panes: { side: 'right', frac: 0.4, list: [{ mode: 'mirror', anchor: { row: 1, col: 2 } }, { mode: 'own', name: 'x', payload: { fasta: '>b\nGG' } }] } };
+    const u = _snapshotLinkPayload(p);
+    return { modes: u.panes ? u.panes.list.map(x => x.mode).join() : '', fileKept: p.panes.list.length };
+  });
+  if (out.link.modes !== 'mirror' || out.link.fileKept !== 2) bad.push('snapshot link panes: ' + JSON.stringify(out.link));
+  // windowed Full: folds are not drawn there, so visible-only does not apply
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'canvas');
+  await page.evaluate(() => { _foldApply([[10, 19]]); const b = el('foldVisibleOnly'); b.checked = true; });
+  out.canvasVis = await page.evaluate(() => _foldVisibleOnly());
+  await setMode(page, 'full');
+  await page.waitForTimeout(800);
+  out.windowed = await page.evaluate(() => ({ windowed: !!state._needsWindowedDom, vis: _foldVisibleOnly(), len: _alignmentFastaText().split('\n')[1].length }));
+  if (!out.canvasVis || !out.windowed.windowed || out.windowed.vis || out.windowed.len !== 4000) bad.push('visible-only in the windowed view: ' + JSON.stringify({ canvas: out.canvasVis, ...out.windowed }));
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
 // Linked views: rows by sequence name (by index when the name is not there) and columns by column number or by
 // the residue index of an anchor sequence both alignments contain, which keeps two alignments of the same
 // sequences lined up on screen when their gaps differ. A position applied from a peer is not echoed back.
