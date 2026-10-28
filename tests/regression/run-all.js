@@ -2520,7 +2520,10 @@ check('Dot plot: maximize/edge resize, Full view, live recalculation, split halv
   out.recalcApplies = await page.evaluate(() => _dotPlotState.windowSize === 10);
   await page.click('#dotPlotLive');
   // split halves on the self-plot: upper SPIN, lower Dotter
-  await page.click('#dotPlotSplit'); await page.waitForTimeout(1800);
+  // (on by default since 2026-10-28, owner: tick it only if it is off)
+  out.splitDefault = await page.evaluate(() => document.getElementById('dotPlotSplit').checked);
+  if (!out.splitDefault) await page.click('#dotPlotSplit');
+  await page.waitForTimeout(1800);
   out.split = await page.evaluate(() => {
     const S = _dotPlotState;
     return { lower: !!(S.lower && S.lower.ready), upperSpin: S.spinMode, lowerSpin: S.lower?.spinMode,
@@ -2539,7 +2542,7 @@ check('Dot plot: maximize/edge resize, Full view, live recalculation, split halv
   out.splitDisabledForAB = await page.evaluate(() => document.getElementById('dotPlotSplit').disabled && !_dotPlotState.lower);
   const s = out.split;
   const ok = out.runsUsed && out.maximized && out.restored && out.leftResize && out.fullView && out.liveRecalc && out.notLive && out.recalcApplies
-    && s.lower && s.upperSpin === true && s.lowerSpin === false && s.upperCell && s.lowerCell && s.runs && out.hoverUpper && out.hoverLower && out.splitDisabledForAB;
+    && out.splitDefault && s.lower && s.upperSpin === true && s.lowerSpin === false && s.upperCell && s.lowerCell && s.runs && out.hoverUpper && out.hoverLower && out.splitDisabledForAB;
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
@@ -8889,6 +8892,206 @@ check('Audit v294: Canvas Shift+click on a name cancels a pending residue range,
       return { got: _canvasState.offsetY, want, css: cv.style.height }; });
     if (Math.abs(out.page.got - out.page.want) > 1 / 1.25 + 1e-6) bad.push('PageDown step: ' + JSON.stringify(out.page));
   } finally { await ctx.close(); }
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 90000 });
+
+// Owner 2026-10-28: "tooltip on consensus hover doesn't show". Full/Block attach it to each consensus span; the Canvas
+// view (the default) had no consensus hover at all. Both views now show the column's coverage and base percentages.
+check('Consensus hover shows the column tooltip (coverage, bases) in Canvas and Full, consensus on top and at the bottom', async (page) => {
+  const bad = [], out = {};
+  await loadFasta(page, Array.from({ length: 12 }, (_, i) => `>t${i}\n` + (i < 9 ? 'ACGTACGTAC' : 'TCGTACGTAC') + 'ACGT'.repeat(10)).join('\n') + '\n');
+  const tip = () => page.evaluate(() => { const t = [...document.querySelectorAll('.consensus-box')].find(e => getComputedStyle(e).display !== 'none' && getComputedStyle(e).visibility !== 'hidden')   /* (fixed: no offsetParent) */; return t ? t.textContent.replace(/\s+/g, ' ').trim() : ''; });
+  for (const mode of ['canvas', 'full']) {
+    for (const where of ['top', 'bottom']) {
+      await setMode(page, mode);
+      await page.evaluate((where) => { const r = document.querySelector(`input[name="consensusPosition"][value="${where}"]`); if (r) { r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); } }, where);
+      await page.waitForTimeout(600);
+      const pt = await page.evaluate((mode) => {
+        if (mode === 'canvas') { const m = _canvasState.metrics, r = _canvasState.canvas.getBoundingClientRect(), b = _canvasState.consBand;
+          if (!b) return null; return { x: r.left + m.nameW + 0.5 * m.charW - _canvasState.offsetX, y: r.top + b.y + b.textOff + m.charH / 2 - _canvasState.offsetY }; }
+        const s = document.querySelector('.consensus-line .seq-data span[data-pos="0"]'); if (!s) return null; const r = s.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      }, mode);
+      if (!pt) { bad.push(`${mode} ${where}: no consensus position`); continue; }
+      await page.mouse.move(5, 5); await page.waitForTimeout(150);
+      await page.mouse.move(pt.x, pt.y); await page.waitForTimeout(500);
+      const t = await tip();
+      out[mode + '-' + where] = t.slice(0, 80);
+      if (!/aln 1 .*Coverage: 100% \(12\/12\).*A.*75%.*T.*25%/.test(t)) bad.push(`${mode} ${where}: tooltip "${t.slice(0, 120)}"`);
+    }
+  }
+  await page.mouse.move(5, 5);
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
+}, { timeoutMs: 90000 });
+
+// Owner 2026-10-28: "when columns are selected the selection is barely visible on black cells". A column selection was
+// only a 28 % (Full/Block) or 15 % (Canvas) blue tint, nearly nothing over black shading. Each run of selected columns
+// now also has a bright edge line left and right (Canvas: drawn on the overlay; Full/Block: .col-sel-l / .col-sel-r).
+check('Column selection: a run of selected columns has bright edge lines that show on black cells (Canvas, Full)', async (page) => {
+  const bad = [], out = {};
+  // identical rows: every column conserved, shaded black
+  await loadFasta(page, Array.from({ length: 10 }, (_, i) => `>k${i}\n` + 'ACGTACGTAC'.repeat(4)).join('\n') + '\n');
+  const pick = () => page.evaluate(() => { state.selectedColumns = new Set([10, 11, 12]); updateColumnSelections(); _canvasState.scheduleOverlay?.(); });
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(600);
+  await pick();
+  await page.waitForTimeout(400);
+  out.canvas = await page.evaluate(() => {
+    const m = _canvasState.metrics, dpr = m.dpr || 1, ov = document.getElementById('alignmentCanvasOverlay') || _canvasState.overlay;
+    const base = _canvasState.canvas.getContext('2d');
+    const y = Math.round((m.headerH + 3 * _canvasState.rowPitch + 1) * dpr);   // the row's top pixel: above the letters
+    // composite of the base canvas and the overlay at a device pixel
+    const at = (cssX) => { const x = Math.round(cssX * dpr); const b = base.getImageData(x, y, 1, 1).data;
+      const o = ov ? ov.getContext('2d').getImageData(x, y, 1, 1).data : [0, 0, 0, 0]; const a = o[3] / 255;
+      return [0, 1, 2].map(i => Math.round(o[i] * a + b[i] * (1 - a))); };
+    const x0 = m.nameW + 10 * m.charW - _canvasState.offsetX;
+    return { baseMid: Array.from(base.getImageData(Math.round((x0 + 1.5 * m.charW) * dpr), y, 1, 1).data.slice(0, 3)), left: at(x0 + 0.5), right: at(x0 + 3 * m.charW - 0.75), inner: at(x0 + 1.5 * m.charW) };
+  });
+  const bright = c => c[2] >= 180 && c[0] <= 140;   // light blue
+  if (Math.max(...out.canvas.baseMid) > 60) bad.push('the test cells are not black: ' + JSON.stringify(out.canvas.baseMid));
+  if (!bright(out.canvas.left) || !bright(out.canvas.right)) bad.push('Canvas edge lines not visible on black: ' + JSON.stringify(out.canvas));
+  if (bright(out.canvas.inner)) bad.push('Canvas: an inner column has the edge colour');
+  await setMode(page, 'full');
+  await page.waitForTimeout(600);
+  await pick();
+  await page.waitForTimeout(300);
+  out.full = await page.evaluate(() => { const row = document.querySelector('.seq-line[data-seq-index="3"] .seq-data');
+    const c = p => { const s = row.querySelector(`span[data-pos="${p}"]`); return { cls: [...s.classList].filter(x => /col-sel|column-selected/.test(x)).join(' '), shadow: getComputedStyle(s).boxShadow }; };
+    return { c10: c(10), c11: c(11), c12: c(12), c13: c(13) }; });
+  const f = out.full;
+  if (!/col-sel-l/.test(f.c10.cls) || /col-sel-r/.test(f.c10.cls) || /col-sel-[lr]/.test(f.c11.cls) || !/col-sel-r/.test(f.c12.cls) || /column-selected/.test(f.c13.cls)) bad.push('Full edge classes: ' + JSON.stringify(f));
+  if (!/inset/.test(f.c10.shadow) || !/inset/.test(f.c12.shadow) || /inset/.test(f.c11.shadow)) bad.push('Full edge shadows: ' + JSON.stringify(f));
+  // deselect the middle column: 10 and 12 become runs of their own
+  await page.evaluate(() => { state.selectedColumns.delete(11); updateColumnSelections(); });
+  out.split = await page.evaluate(() => { const row = document.querySelector('.seq-line[data-seq-index="3"] .seq-data');
+    return [10, 12].map(p => [...row.querySelector(`span[data-pos="${p}"]`).classList].filter(x => /col-sel/.test(x)).sort().join(' ')); });
+  if (out.split.join('|') !== 'col-sel-l col-sel-r|col-sel-l col-sel-r') bad.push('after deselecting the middle column: ' + JSON.stringify(out.split));
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 90000 });
+
+// Owner 2026-10-28, dot plot: "Different settings below the diagonal" on by default (a self-plot opens with the other
+// method below the diagonal); a right-click menu on the plot acts on the highlighted green stretch under the pointer
+// (show it in the alignment, add it to the collection, copy it); the plain wheel zooms at the pointer (Shift+wheel
+// pans), and a drag pans without pinning a point.
+check('Dot plot: split halves by default, right-click menu on the green stretch, wheel zooms, drag pans', async (page) => {
+  const bad = [], out = {};
+  let sd = 3; const rnd = () => (sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
+  const rs = n => Array.from({ length: n }, () => 'ACGT'[rnd() * 4 | 0]).join('');
+  await loadFasta(page, ['>p0\n' + rs(400), '>p1\n' + rs(400), '>p2\n' + rs(400)].join('\n') + '\n');
+  await setMode(page, 'canvas');
+  await page.evaluate(() => { const s = state.seqs[1]; const u = s.seq.replace(/[-. ]/g, ''); openDotPlot(u, u, s.header, s.header, { rowIndexA: 1, rowIndexB: 1, alignedSeqA: s.seq, alignedSeqB: s.seq }); });
+  await page.waitForTimeout(2500);
+  out.split = await page.evaluate(() => { const S = _dotPlotState; return { box: el('dotPlotSplit').checked, ctlShown: !el('dotPlotLowerCtl').hidden, lower: !!(S.lower && S.lower.ready), upperSpin: S.spinMode, lowerSpin: S.lower?.spinMode }; });
+  const sp = out.split;
+  if (!sp.box || !sp.ctlShown || !sp.lower || sp.upperSpin === sp.lowerSpin) bad.push('split by default: ' + JSON.stringify(sp));
+  // right-click on the main diagonal (a stretch of the whole sequence)
+  const ov = await page.locator('#dotPlotOverlay').boundingBox();
+  const at = (r, c) => page.evaluate(([r, c]) => _dotCellToScreen(r, c), [r, c]);
+  const p = await at(30, 30);
+  await page.mouse.move(ov.x + p.x, ov.y + p.y); await page.waitForTimeout(200);
+  await page.mouse.click(ov.x + p.x, ov.y + p.y, { button: 'right' }); await page.waitForTimeout(300);
+  out.menu = await page.evaluate(() => { const m = document.querySelector('.dot-context-menu'); return m ? [...m.children].map(c => c.textContent) : null; });
+  if (!out.menu || !out.menu.some(t => /Show this stretch in the alignment/.test(t)) || !out.menu.some(t => /collection/.test(t))) bad.push('no stretch menu: ' + JSON.stringify(out.menu));
+  if (out.menu) {
+    const nBm = await page.evaluate(() => (state.dotBookmarks || []).length);
+    await page.evaluate(() => [...document.querySelector('.dot-context-menu').children].find(c => /collection/.test(c.textContent)).click());
+    out.bookmarks = await page.evaluate((n) => ({ added: (state.dotBookmarks || []).length - n, last: (state.dotBookmarks || []).slice(-1)[0] }), nBm);
+    if (out.bookmarks.added !== 1 || !(out.bookmarks.last && out.bookmarks.last.aStart <= 30 && out.bookmarks.last.aEnd > 30)) bad.push('add to collection: ' + JSON.stringify({ added: out.bookmarks.added }));
+    await page.mouse.click(ov.x + p.x, ov.y + p.y, { button: 'right' }); await page.waitForTimeout(300);
+    await page.evaluate(() => [...document.querySelector('.dot-context-menu').children].find(c => /Show this stretch/.test(c.textContent)).click());
+    await page.waitForTimeout(400);
+    out.shown = await page.evaluate(() => { const m = state.dotRegionMarks; const set = m && m.bySeq && m.bySeq.get(state.seqs[1]); return set ? set.size : 0; });
+    if (out.shown < 50) bad.push('show in alignment marked ' + out.shown + ' residues');
+    await page.evaluate(() => { document.querySelector('.dot-context-menu')?.remove(); });
+    // the collection entry from this test goes again
+    await page.evaluate(() => { state.dotBookmarks.pop(); _dotSaveBookmarks(); _dotRenderBookmarks(); });
+  }
+  // plain wheel zooms; Shift+wheel does not
+  const z0 = await page.evaluate(() => _dotPlotState.zoom);
+  await page.mouse.move(ov.x + ov.width / 2, ov.y + ov.height / 2);
+  await page.mouse.wheel(0, -200); await page.waitForTimeout(400);
+  const z1 = await page.evaluate(() => _dotPlotState.zoom);
+  await page.keyboard.down('Shift'); await page.mouse.wheel(0, 200); await page.keyboard.up('Shift'); await page.waitForTimeout(400);
+  const z2 = await page.evaluate(() => _dotPlotState.zoom);
+  out.zoom = { z0, z1, z2 };
+  if (!(z1 > z0 * 1.05) || Math.abs(z2 - z1) > 1e-9) bad.push('wheel zoom: ' + JSON.stringify(out.zoom));
+  // a drag pans and pins nothing (zoomed in far enough that the plot overflows its viewport both ways)
+  await page.evaluate(() => { for (let i = 0; i < 8; i++) _dotApplyZoom(1.15); }); await page.waitForTimeout(400);
+  const before = await page.evaluate(() => { const v = el('dotPlotViewport'); return { sl: v.scrollLeft, st: v.scrollTop, pin: _dotPlotState.pinnedRow }; });
+  const cx = ov.x + ov.width / 2, cy = ov.y + ov.height / 2;
+  await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move(cx - 80, cy - 60, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(300);
+  const after = await page.evaluate(() => { const v = el('dotPlotViewport'); return { sl: v.scrollLeft, st: v.scrollTop, pin: _dotPlotState.pinnedRow }; });
+  out.drag = { before, after };
+  if (!(after.sl > before.sl + 40) || !(after.st > before.st + 30) || after.pin !== before.pin) bad.push('drag pan: ' + JSON.stringify(out.drag));
+  await page.evaluate(() => document.getElementById('dotPlotCloseBtn')?.click());
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out).slice(0, 800) : JSON.stringify(out).slice(0, 600) };
+}, { timeoutMs: 120000 });
+
+// Owner 2026-10-28: "when several nucleotides are selected by mouse there should be a way to copy them in plain text or
+// FASTA format easily". With residues selected, the right-click menu (on a cell or a name, Canvas and Full/Block) starts
+// with "Copy selected bases: plain text" (one line per row, as Ctrl+C) and "...: FASTA" (>name:first-last residue).
+check('Residue selection: the right-click menu copies the selected bases as plain text or FASTA (Canvas, Full)', async (page) => {
+  const bad = [], out = {};
+  await loadFasta(page, ['>r0\nAAAACCCCGGGG', '>r1\nAC--GTACGTAC', '>r2\nTTTTGGGGCCCC'].join('\n') + '\n');
+  for (const mode of ['canvas', 'full']) {
+    await setMode(page, mode);
+    await page.waitForTimeout(400);
+    await page.evaluate(() => { window.__clip = null; navigator.clipboard.writeText = t => { window.__clip = t; return Promise.resolve(); };
+      state.selectedNucs.clear(); state.selectedNucs.set(1, new Set([1, 2, 3, 4, 5])); state.selectedNucs.set(2, new Set([1, 2, 3, 4, 5])); scheduleNucSelectionRefresh(); _canvasState.scheduleOverlay?.(); });
+    await page.waitForTimeout(300);
+    const p = await auditCell(page, 1, 4);
+    await page.mouse.click(p.x, p.y, { button: 'right' });
+    await page.waitForTimeout(300);
+    const items = await page.evaluate(() => { const m = document.querySelector('.context-menu'); return m ? [...m.children].map(c => c.textContent) : []; });
+    const pick = async (re) => { await page.evaluate((src) => { const re = new RegExp(src); const it = [...document.querySelector('.context-menu').children].find(c => re.test(c.textContent)); it && it.click(); }, re); await page.waitForTimeout(200); return page.evaluate(() => window.__clip); };
+    const plain = items.some(t => /selected bases.*plain/i.test(t)) ? await pick('selected bases.*plain') : null;
+    if (items.length) { await page.mouse.click(p.x, p.y, { button: 'right' }); await page.waitForTimeout(300); }
+    const fasta = items.some(t => /selected bases.*FASTA/i.test(t)) ? await pick('selected bases.*FASTA') : null;
+    await page.evaluate(() => { closeContextMenu(); });
+    out[mode] = { items: items.slice(0, 3), plain, fasta };
+    if (plain !== 'CGT\nTTTGG') bad.push(`${mode} plain: ${JSON.stringify(plain)}`);
+    if (fasta !== '>r1:2-4\nCGT\n>r2:2-6\nTTTGG\n') bad.push(`${mode} FASTA: ${JSON.stringify(fasta)}`);
+  }
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 90000 });
+
+// Owner 2026-10-28: "when using clustering there should be an option to do it only on selected columns or rectangle".
+// Clustering > "Selected columns only": Find SNP groups (and k-mer grouping) read only the columns of the column
+// selection (or of the selected residue block), first to last; all rows are grouped. The range is kept with the result
+// so its positions map back to alignment columns after the selection changes.
+check('Clustering: "Selected columns only" groups by the selected columns (column selection or residue block)', async (page) => {
+  const bad = [], out = {};
+  const row = i => (i < 8 ? 'AAAAAAAAAA' : 'CCCCCCCCCC') + 'GGGGGGGGGG' + (i % 2 ? 'AAAAAAAAAA' : 'TTTTTTTTTT') + 'GGGGGGGGGG';
+  await loadFasta(page, Array.from({ length: 16 }, (_, i) => `>c${i}\n${row(i)}`).join('\n') + '\n');
+  await setMode(page, 'canvas');
+  const groups = () => page.evaluate(() => state.seqs.map(q => (state.clusterMap && state.clusterMap[q.header] ? state.clusterMap[q.header].name : '-')));
+  const runGroups = async () => {
+    await page.evaluate(() => { state.clusterResults = null; el('clusterNowButton').click(); });
+    await page.waitForFunction(() => !!state.clusterResults, null, { timeout: 30000 });
+    await page.waitForTimeout(300);
+    return groups();
+  };
+  const parity = g => g.every((x, i) => x !== '-' && x === g[i % 2]) && g[0] !== g[1];
+  const halves = g => g.every((x, i) => x !== '-' && x === g[i < 8 ? 0 : 8]) && g[0] !== g[8];
+  // the option, off by default
+  out.box = await page.evaluate(() => el('clusterSelColsOnly') ? el('clusterSelColsOnly').checked : null);
+  if (out.box !== false) bad.push('the option is missing or on by default: ' + out.box);
+  // columns 1-10 selected: halves
+  await page.evaluate(() => { el('clusterSelColsOnly').checked = true; state.selectedColumns = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]); updateColumnSelections(); });
+  out.cols0 = await runGroups();
+  if (!halves(out.cols0)) bad.push('selected columns 1-10 did not give the two halves: ' + out.cols0.join(','));
+  // a residue block over columns 21-30: even / odd rows
+  await page.evaluate(() => { state.selectedColumns.clear(); updateColumnSelections(); _setNucRectangle(2, 20, 5, 29); });
+  out.block = await runGroups();
+  if (!parity(out.block)) bad.push('the residue block over columns 21-30 did not give even / odd rows: ' + out.block.join(','));
+  out.offset = await page.evaluate(() => _clusterAlignmentColumnOffset());
+  // the range stays with the result after the selection goes
+  await page.evaluate(() => { state.selectedNucs.clear(); scheduleNucSelectionRefresh(); });
+  out.offsetAfter = await page.evaluate(() => _clusterAlignmentColumnOffset());
+  if (out.offset !== 20 || out.offsetAfter !== 20) bad.push(`column offset of the result: ${out.offset} / after the selection went ${out.offsetAfter}`);
+  // option on with nothing selected: the whole alignment, said so
+  out.none = await page.evaluate(() => { state.selectedColumns.clear(); state.selectedNucs.clear(); return getSeqsForClustering()[0].seq.length; });
+  if (out.none !== 40) bad.push('with nothing selected the option should use every column: ' + out.none);
+  await page.evaluate(() => { el('clusterSelColsOnly').checked = false; });
   return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
 }, { timeoutMs: 90000 });
 

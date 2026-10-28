@@ -1039,6 +1039,12 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     current group is tried.
   </p>
   <p>
+    <strong>Selected columns only</strong> (off by default): Find SNP groups and k-mer grouping read only the
+    selected columns, or the columns of a selected block of residues, from the first to the last; every row is
+    grouped. The range is kept with the result, so positions in the group list stay alignment columns after the
+    selection changes. With nothing selected the whole alignment is used.
+  </p>
+  <p>
     Open <strong>Thresholds</strong> for the knobs below. They apply to SNP
     grouping and Clusterability, and Show 2D also reads Min Size / Min Features
     when it decides which local patterns are worth boxing.
@@ -1995,7 +2001,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>Context radius</td><td>Nucleotide context shown on hover (5-100 bp)</td></tr>
     <tr><td>RevComp B</td><td>Reverse-complement axis B to find inverted repeats</td></tr>
     <tr><td>Live update</td><td>On by default: the plot is recalculated as soon as a setting changes. Turn it off to change several settings on a long pair, then press <strong>Recalculate</strong> (highlighted while the plot is out of date)</td></tr>
-    <tr><td>Different settings below the diagonal</td><td>Self-plots only (a sequence against itself, without RevComp B), whose two halves are mirror images: the controls in the first row then apply above the diagonal and a second row below it, each with its own mode and sliders, e.g. Dotter above and SPIN below, or Dotter with two windows</td></tr>
+    <tr><td>Different settings below the diagonal</td><td>Self-plots only (a sequence against itself, without RevComp B), whose two halves are mirror images: the controls in the first row then apply above the diagonal and a second row below it, each with its own mode and sliders, e.g. Dotter above and SPIN below, or Dotter with two windows. On by default: a self-plot opens with the other method below the diagonal</td></tr>
   </table>
   <p>Unknown residues (N in DNA, X in protein) never count as matches, so a run of Ns
   does not draw a solid block; U and T are treated as the same base. <strong>Top Regions</strong>
@@ -2017,7 +2023,10 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   when the plot was opened from the alignment, the matching alignment columns. Click to pin a
   position, double-click to freeze the preview, and <strong>Copy region</strong> (in the toolbar) copies it as FASTA. The window can be moved by its title bar, resized from any edge or corner, and maximized with
   the button next to Close or a double-click on the title bar; the plot follows the new size.
-  Ctrl+wheel or the +/- buttons zoom up to 24 pixels per position, and <strong>Full view</strong>
+  The mouse wheel (or the +/- buttons) zooms at the pointer, up to 24 pixels per position; Shift+wheel or a sideways
+  swipe pans, and so does dragging the plot. A right-click on a dot opens a menu for the green stretch under the
+  pointer: <em>Show this stretch in the alignment</em>, <em>Add to the collection</em>, <em>Copy both stretches as
+  FASTA</em>. <strong>Full view</strong>
   fits the whole plot in the window again. Each diagonal run of dots is drawn as one smooth line
   through the matching positions (an isolated match as a round dot); very dense plots fall back
   to a pixel image in which, when zoomed out, a pixel shows a dot if any position under it has one.</p>
@@ -2257,6 +2266,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><th>Action</th><th>Result</th></tr>
     <tr><td>Click sequence name</td><td>Select that row only (replaces the row selection; clicking the only selected row again unselects it). Double-click renames</td></tr>
     <tr><td>Ctrl+Click name</td><td>Toggle row selection. Shift+Click selects the range from the last clicked row; Shift+Click on a row that is already selected deselects that range. Ctrl+drag over names selects the rows passed, or deselects them when the drag starts on a selected row</td></tr>
+    <tr><td>Right-click with residues selected</td><td>The menu starts with <em>Copy selected bases: plain text</em> (one line per row, as <kbd>Ctrl+C</kbd>) and <em>Copy selected bases: FASTA</em> (each row as <code>&gt;name:first-last</code>, residue numbers of the ungapped row)</td></tr>
     <tr><td>Click / Ctrl+Click residue</td><td>Select residues (bases) in that row; a second click in the same row extends to a range, or drag. A drag across rows, or a second click in another row, selects the rectangle of rows &times; columns between the two cells (Realign Block then realigns that block, &sect;3.2.1). In Edit mode, Ctrl is required (a plain click is for the edit tools)</td></tr>
     <tr><td>Ctrl+Alt+Click residue</td><td>Select column; Ctrl+Alt+drag selects a column range (§8.2)</td></tr>
     <tr><td>Drag sequence name</td><td>Reorder rows</td></tr>

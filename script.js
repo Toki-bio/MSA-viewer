@@ -3,9 +3,10 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v295';
+const BUILD_TAG = 'v296';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
+const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
 
 // ---- Browser compatibility ----
 // Supported: Chrome/Edge 80+, Firefox 100+ and Safari 15.4+ (reading .gz/BAM
@@ -225,6 +226,7 @@ function _checkedRadioValue(name, fallback) {
 }
 
 function _clusterAlignmentColumnOffset() {
+    if (state.clusterColumnRange) return state.clusterColumnRange.lo;   // "Selected columns only": kept with the result
     const stb = state.softTrimBoundaries;
     if (!stb) return 0;
     return (stb.leftTrimEnd >= 0) ? stb.leftTrimEnd + 1 : 0;
@@ -236,6 +238,7 @@ function _clearClusterTrimState() {
     state._clusterCharMap = null;
     state.clusterSource = null;
     state.clusterSourceLabel = null;
+    state.clusterColumnRange = null;
     state.softTrimBoundaries = null;
     state.trimBoundaries = null;
     state.trimManualLeft = false;
@@ -1028,6 +1031,10 @@ function applyColumnEdit(op, rows) {
     };
     state.trimBoundaries = bounds(state.trimBoundaries);
     state.softTrimBoundaries = bounds(state.softTrimBoundaries);
+    if (state.clusterColumnRange) {
+        const lo = f.firstGE(state.clusterColumnRange.lo), hi = f.lastLE(state.clusterColumnRange.hi);
+        state.clusterColumnRange = Number.isFinite(lo) && Number.isFinite(hi) && hi >= lo ? { lo, hi } : null;
+    }
     const newOffset = _clusterAlignmentColumnOffset();
 
     // SNP-group features: pos is 1-based inside the soft-trimmed window (column = pos - 1 + offset)
@@ -5767,6 +5774,18 @@ function _canvasHitTestRuler(clientX, clientY) {
 
 // Hit-test the name column area (left side, x < NAME_W in canvas coords).
 // Returns { row } or null if outside the name column's row range.
+// The consensus row's column under a point (Canvas), or -1
+function _canvasHitTestConsensus(clientX, clientY) {
+    const b = _canvasState.consBand, m = _canvasState.metrics, canvas = _canvasState.canvas;
+    if (!b || !m || !canvas || !b.values) return -1;
+    const r = canvas.getBoundingClientRect();
+    const x = clientX - r.left, y = clientY - r.top + _canvasState.offsetY;
+    if (y < b.y + b.textOff || y >= b.y + b.textOff + m.charH) return -1;
+    if (x < (el('stickyNames')?.checked ? m.nameW : m.nameW - _canvasState.offsetX)) return -1;
+    const slot = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
+    if (slot < 0 || slot >= (_canvasState.nSlots || 0) || _canvasSlotIsMarker(slot)) return -1;
+    return _canvasSlotToCol(slot);
+}
 function _canvasHitTestName(clientX, clientY) {
     const canvas = _canvasState.canvas;
     if (!canvas) return null;
@@ -6172,6 +6191,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const totalContentW = NAME_W + nSlots * CHAR_W + BADGE_GAP + BADGE_W + 4;
     _canvasState.badgeW = BADGE_GAP + BADGE_W;   // the length-badge column right of the last slot
     const totalContentH = HEADER_H +nSeqs * rowPitch + (consInfo && !consTop ? CONS_H : 0) + 4;
+    // where the consensus row is in content coordinates (its hover tooltip): under the ruler, or after the rows
+    _canvasState.consBand = consInfo ? { y: consTop ? TRACK_H + SCALE_H : HEADER_H + nSeqs * rowPitch, h: CONS_H, textOff: consTop ? 0 : CONS_GAP, values: consInfo.values } : null;
     // Exposed so the persistent horizontal/vertical scrollbars (real DOM
     // elements, since Canvas mode's own content isn't natively scrollable)
     // can size their thumbs and mirror pan position.
@@ -6506,16 +6527,26 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         }
 
         // Highlight selected columns (semi-transparent vertical strips)
+        // A tint alone vanished over black shading (owner 2026-10-28): each run of selected columns also has a
+        // bright line down its left and right edge (Full/Block: .col-sel-l / .col-sel-r)
         if (state.selectedColumns.size > 0) {
-            octx.fillStyle = 'rgba(25, 118, 210, 0.15)';
-            state.selectedColumns.forEach(pos => {
-                const sc = posSlot(pos);
-                if (sc < 0) return;
+            const dataTop = Math.max(0, HEADER_H - oy);
+            const dataBottom = Math.min(h, HEADER_H + nSeqs * rowPitch - oy);   // rowPitch: translation rows included
+            const slotsSel = new Set();
+            state.selectedColumns.forEach(pos => { const sc = posSlot(pos); if (sc >= 0) slotsSel.add(sc); });
+            octx.fillStyle = 'rgba(25, 118, 210, 0.28)';
+            slotsSel.forEach(sc => {
                 const x = NAME_W + sc * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) return;
-                const dataTop = Math.max(0, HEADER_H - oy);
-                const dataBottom = Math.min(h, HEADER_H + nSeqs * rowPitch - oy);   // rowPitch: translation rows included
                 octx.fillRect(x, dataTop, CHAR_W, dataBottom - dataTop);
+            });
+            octx.fillStyle = COL_SEL_EDGE;
+            const lw = Math.max(1.5, 2 / dpr);
+            slotsSel.forEach(sc => {
+                const x = NAME_W + sc * CHAR_W - ox;
+                if (x + CHAR_W < 0 || x > w) return;
+                if (!slotsSel.has(sc - 1)) octx.fillRect(x, dataTop, lw, dataBottom - dataTop);
+                if (!slotsSel.has(sc + 1)) octx.fillRect(x + CHAR_W - lw, dataTop, lw, dataBottom - dataTop);
             });
         }
 
@@ -7257,6 +7288,19 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             return;
         }
 
+        // Consensus row: the column's coverage and base percentages (as the Full/Block consensus spans)
+        const consCol = _canvasHoverCell ? -1 : _canvasHitTestConsensus(e.clientX, e.clientY);
+        if (consCol >= 0) {
+            if (_lastTooltipCell && _lastTooltipCell.cons === consCol) return;
+            _lastTooltipCell = { row: -1, col: -1, cons: consCol };
+            const m = _canvasState.metrics, r = canvas.getBoundingClientRect(), b = _canvasState.consBand;
+            const target = _getCanvasTooltipTarget();
+            target.style.left = (r.left + m.nameW + _canvasColToSlot(consCol) * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
+            target.style.top = (r.top + b.y + b.textOff - _canvasState.offsetY) + 'px';
+            showTooltipAt(_consensusTooltipHtml(consCol, b.values), target, { html: true, className: 'consensus-box' });
+            return;
+        }
+        if (_lastTooltipCell && _lastTooltipCell.cons != null) { _lastTooltipCell = null; hideTooltip(); }
         // Annotation track: the feature under the pointer, once per feature
         const annotHit = _canvasHitTestAnnot(e.clientX, e.clientY);
         if (annotHit) {
@@ -12204,6 +12248,23 @@ function copyNucPositions(seqStr, positions) {
     return degapResidues(String(seqStr || '').slice(lo, hi + 1));
 }
 
+// The selected bases as FASTA: per row ">name:first-last" (residue numbers of the ungapped row) and the bases, ungapped
+function buildNucFastaText() {
+    if (!state.selectedNucs.size) return '';
+    const parts = [];
+    for (const [i, posSet] of [...state.selectedNucs.entries()].sort((a, b) => a[0] - b[0])) {
+        if (!posSet || posSet.size === 0) continue;
+        const seqStr = getNucRowSequence(i);
+        if (!seqStr) continue;
+        const frag = copyNucPositions(seqStr, posSet);
+        if (!frag) continue;
+        const lo = Math.min(...posSet);
+        const first = degapResidues(String(seqStr).slice(0, lo)).length + 1;
+        const name = i === CONSENSUS_ROW_INDEX ? 'Consensus' : (state.seqs[i]?.fullHeader || state.seqs[i]?.header || 'row' + (i + 1));
+        parts.push(`>${name}:${first}-${first + frag.length - 1}\n${frag}\n`);
+    }
+    return parts.join('');
+}
 function buildNucCopyText() {
     if (!state.selectedNucs.size) return '';
     const parts = [];
@@ -12495,7 +12556,8 @@ function getSequenceBaseRenderClass(base, pos, config, conservationData) {
     const posData = conservationData?.[pos] || { hasData: false, hasValidCoverage: false };
     let cls = applyConservationShadeClass(baseUp, posData, config);
 
-    if (state.selectedColumns.has(pos)) cls += ' column-selected';
+    const sc = state.selectedColumns;
+    if (sc.has(pos)) cls += ' column-selected' + (sc.has(pos - 1) ? '' : ' col-sel-l') + (sc.has(pos + 1) ? '' : ' col-sel-r');
     if (baseClass) cls += ` ${baseClass}`;
     return cls;
 }
@@ -12701,7 +12763,7 @@ function _seqDataSpansHtml(index, start, end, standard, ambiguous, blackThresh, 
                 else if (pos >= state.trimBoundaries.rightTrimStart) cls += ' trim-right';
             }
 
-            const colSelected = selectedCols.has(pos) ? ' column-selected' : '';
+            const colSelected = selectedCols.has(pos) ? ' column-selected' + (selectedCols.has(pos - 1) ? '' : ' col-sel-l') + (selectedCols.has(pos + 1) ? '' : ' col-sel-r') : '';
             const ov = ovCtx.any ? residueOverlay(ovCtx, pos, base) : null;
             if (!ov) {
                 htmlParts.push(`<span class="${cls}${baseClass ? ' ' + baseClass : ''}${colSelected}" data-pos="${pos}">${base}</span>`);
@@ -12841,6 +12903,53 @@ function _canvasConsensusUpper(base, pos, threshold) {
     return max / n >= threshold;
 }
 
+// The consensus column tooltip: coverage and base percentages of column pos (Full/Block spans and the Canvas row)
+function _consensusTooltipHtml(pos, consensus) {
+    const totalSeqs = state.seqs.length || 1;
+    const colAll = state.seqs.map(s => s.seq[pos] || '-');
+    const nonGaps = colAll.filter(b => b !== '-' && b !== '.');
+    const coveragePct = Math.round((nonGaps.length / totalSeqs) * 100);
+    const counts = {};
+    for (const ch of nonGaps) {
+        const up = String(ch).toUpperCase();
+        const norm = up === 'U' ? 'T' : up;
+        counts[norm] = (counts[norm] || 0) + 1;
+    }
+    const denom = nonGaps.length || 1;
+    const entries = Object.entries(counts)
+        .filter(([b,_]) => b !== '-' && b !== '.')
+        .sort((a,b) => b[1]-a[1]);
+    const colorMap = { A:'#27ae60', C:'#2980b9', G:'#d35400', T:'#c0392b', N:'#7f8c8d' };
+    const consChar = consensus[pos] || '-';
+    const consGap = consChar === '-' || consChar === '.' || consChar === ' ';
+    let ungapped = 0;
+    for (let i = 0; i <= pos && i < consensus.length; i++) {
+        const c = consensus[i];
+        if (c && c !== '-' && c !== '.' && c !== ' ') ungapped++;
+    }
+    const ungappedHtml = consGap
+        ? (ungapped > 0
+            ? `<strong>—</strong> <span class="raw">(gap after ${ungapped})</span>`
+            : `<strong>—</strong> <span class="raw">(leading gap)</span>`)
+        : `<strong>${ungapped}</strong>`;
+    let html = `<div class="coord-row">aln <strong>${pos + 1}</strong> · ungapped ${ungappedHtml}</div>`;
+    html += `<div class="cov-row">Coverage: <strong>${coveragePct}%</strong> (${nonGaps.length}/${totalSeqs})</div>`;
+    if (entries.length === 0) {
+        html += '<div class="freq-row"><em>No bases</em></div>';
+    } else {
+        entries.forEach(([base,count]) => {
+            const pct = Math.round((count/denom)*100);
+            const color = colorMap[base] || '#555';
+            html += `<div class="freq-row"><span class="base" style="background:${color}">${base}</span><span class="pct">${pct}%</span><span class="raw">(${count})</span></div>`;
+        });
+    }
+    // Additional counts for ambiguous, etc.
+    const ambigBases = Object.keys(counts).filter(b => 'RYMKSWHBVD'.includes(b));
+    if (ambigBases.length) {
+        html += `<div class="freq-row"><span class="base" style="background:#8e44ad">Ambig</span><span class="pct">${ambigBases.length}</span></div>`;
+    }
+    return html;
+}
 function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, blackThresh, darkThresh, lightThresh, enableBlack, enableDark, enableLight, showLength = false, position = 'bottom', options = {}) {
     const consLine = document.createElement('div');
     consLine.className = `seq-line consensus-line consensus-${position}`;
@@ -12920,49 +13029,7 @@ function addConsensusLine(parent, consensus, start, end, nameLen, stickyNames, b
 
         // Tooltip on hover: show coverage and per-nucleotide percentages for this column
         span.addEventListener('mouseover', () => {
-            const totalSeqs = state.seqs.length || 1;
-            const colAll = state.seqs.map(s => s.seq[pos] || '-');
-            const nonGaps = colAll.filter(b => b !== '-' && b !== '.');
-            const coveragePct = Math.round((nonGaps.length / totalSeqs) * 100);
-            const counts = {};
-            for (const ch of nonGaps) {
-                const up = String(ch).toUpperCase();
-                const norm = up === 'U' ? 'T' : up;
-                counts[norm] = (counts[norm] || 0) + 1;
-            }
-            const denom = nonGaps.length || 1;
-            const entries = Object.entries(counts)
-                .filter(([b,_]) => b !== '-' && b !== '.')
-                .sort((a,b) => b[1]-a[1]);
-            const colorMap = { A:'#27ae60', C:'#2980b9', G:'#d35400', T:'#c0392b', N:'#7f8c8d' };
-            const consChar = consensus[pos] || '-';
-            const consGap = consChar === '-' || consChar === '.' || consChar === ' ';
-            let ungapped = 0;
-            for (let i = 0; i <= pos && i < consensus.length; i++) {
-                const c = consensus[i];
-                if (c && c !== '-' && c !== '.' && c !== ' ') ungapped++;
-            }
-            const ungappedHtml = consGap
-                ? (ungapped > 0
-                    ? `<strong>—</strong> <span class="raw">(gap after ${ungapped})</span>`
-                    : `<strong>—</strong> <span class="raw">(leading gap)</span>`)
-                : `<strong>${ungapped}</strong>`;
-            let html = `<div class="coord-row">aln <strong>${pos + 1}</strong> · ungapped ${ungappedHtml}</div>`;
-            html += `<div class="cov-row">Coverage: <strong>${coveragePct}%</strong> (${nonGaps.length}/${totalSeqs})</div>`;
-            if (entries.length === 0) {
-                html += '<div class="freq-row"><em>No bases</em></div>';
-            } else {
-                entries.forEach(([base,count]) => {
-                    const pct = Math.round((count/denom)*100);
-                    const color = colorMap[base] || '#555';
-                    html += `<div class="freq-row"><span class="base" style="background:${color}">${base}</span><span class="pct">${pct}%</span><span class="raw">(${count})</span></div>`;
-                });
-            }
-            // Additional counts for ambiguous, etc.
-            const ambigBases = Object.keys(counts).filter(b => 'RYMKSWHBVD'.includes(b));
-            if (ambigBases.length) {
-                html += `<div class="freq-row"><span class="base" style="background:#8e44ad">Ambig</span><span class="pct">${ambigBases.length}</span></div>`;
-            }
+            const html = _consensusTooltipHtml(pos, consensus);
             showTooltipAt(html, span, {html:true, className:'consensus-box'});
         });
         span.addEventListener('mouseout', () => hideTooltip());
@@ -19281,11 +19348,25 @@ function undoTrimming() {
 
 // Sequences as the clusterer wants them, respecting soft trim if active. Shared with the
 // clusterability probe so the two can never disagree about what was clustered.
-function getSeqsForClustering() {
+// Clustering > "Selected columns only" (owner 2026-10-28): the columns of the column selection, else of the selected
+// residues (a block), first to last; null when the option is off or nothing is selected
+function _clusterSelectedColumnRange() {
+    if (!el('clusterSelColsOnly')?.checked) return null;
+    let lo = Infinity, hi = -1;
+    state.selectedColumns.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; });
+    if (hi < 0) state.selectedNucs.forEach((set, row) => { if (row < 0 || !set) return; set.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; }); });
+    return hi >= 0 ? { lo, hi } : null;
+}
+// record: a clustering run (not the clusterability probe) keeps the range with its result
+function getSeqsForClustering(record = false) {
     const stb = state.softTrimBoundaries;
+    // the selected columns win over a soft trim; the range is kept with the result (_clusterAlignmentColumnOffset)
+    const selR = _clusterSelectedColumnRange();
+    if (record) state.clusterColumnRange = selR;
     return state.seqs.map(seq => {
         let s = seq.seq;
-        if (stb) {
+        if (selR) s = s.substring(selR.lo, selR.hi + 1);
+        else if (stb) {
             const leftEnd = (stb.leftTrimEnd >= 0) ? stb.leftTrimEnd + 1 : 0;
             const rightStart = (stb.rightTrimStart > leftEnd) ? stb.rightTrimStart : s.length;
             s = s.substring(leftEnd, rightStart);
@@ -19748,7 +19829,7 @@ async function clusterByGuideTree() {
     if (wantPeel && !canPeel) clampNote.push('Peel needs an alignment (all rows the same length), so the tree cut was used.');
     const peelDiag = Math.max(1, parseInt(el('guideTreePeelDiag')?.value, 10) || 2);
     return runWithProgress(canPeel ? 'Peeling groups by diagnostic columns...' : 'Grouping by k-mer tree...', () => {
-        const seqs = getSeqsForClustering();
+        const seqs = getSeqsForClustering(true);
         const t0 = performance.now();
         let cut;
         if (canPeel) {
@@ -20004,7 +20085,7 @@ async function clusterSequences() {
 async function _clusterSequencesNow(update) {
     updateClusteringStatus('Finding diagnostic types...');
 
-    const seqsForClustering = getSeqsForClustering();
+    const seqsForClustering = getSeqsForClustering(true);
     const clusterParams = getClusteringParameters();
     const within = !!el('clusterWithinTypes')?.checked;
     const clusterer = new SINEClusterer(seqsForClustering);
@@ -25102,6 +25183,25 @@ function showContextMenu(e, index) {
     contextMenu.style.visibility = 'hidden';
     contextMenu.style.left = `${e.pageX}px`;
     contextMenu.style.top = `${e.pageY}px`;
+    // Residues selected: their copy comes first (owner 2026-10-28: plain text or FASTA, easily)
+    if (state.selectedNucs.size > 0) {
+        const nucItem = (text, build, what) => {
+            const d = document.createElement('div');
+            d.textContent = text;
+            d.addEventListener('click', () => {
+                const t = build();
+                closeContextMenu();
+                if (!t) return;
+                navigator.clipboard.writeText(t).then(() => showMessage(`Copied the selected bases as ${what}`, 2000), () => showMessage('Could not copy (clipboard refused).', 3000));
+            });
+            contextMenu.appendChild(d);
+        };
+        nucItem('Copy selected bases: plain text', buildNucCopyText, 'plain text');
+        nucItem('Copy selected bases: FASTA', buildNucFastaText, 'FASTA');
+        const sep = document.createElement('div');
+        sep.style.borderTop = '1px solid #ccc'; sep.style.margin = '4px 0';
+        contextMenu.appendChild(sep);
+    }
     const copyFastaGapped = document.createElement('div');
     copyFastaGapped.textContent = 'Copy as FASTA gapped';
     copyFastaGapped.addEventListener('click', () => {
@@ -25507,9 +25607,15 @@ function updateColumnSelections() {
         if (!_appliedColumnSel.has(n)) changed.push(n);
     });
     _appliedColumnSel = next;
+    // the edges of a run (.col-sel-l / .col-sel-r) change for the changed columns and their neighbours
+    const touched = new Set();
+    changed.forEach(p => { touched.add(p); touched.add(p - 1); touched.add(p + 1); });
     // the consensus row is not part of a column selection (it was highlighted with it)
-    _forEachSpanInColumns(changed, (span, pos) => {
-        span.classList.toggle('column-selected', next.has(pos));
+    _forEachSpanInColumns([...touched].filter(p => p >= 0), (span, pos) => {
+        const on = next.has(pos);
+        span.classList.toggle('column-selected', on);
+        span.classList.toggle('col-sel-l', on && !next.has(pos - 1));
+        span.classList.toggle('col-sel-r', on && !next.has(pos + 1));
     }, true);
 }
 
@@ -31114,12 +31220,20 @@ function _dotBindPlotWheel(el) {
         const S = _dotPlotState;
         if ((!S.scores && !S.matchMap)) return;
         e.stopPropagation();
-
-        if (e.ctrlKey || e.metaKey) {
+        // The wheel zooms at the pointer (owner 2026-10-28; it scrolled, Ctrl+wheel zoomed). Shift+wheel, or a
+        // sideways trackpad swipe, pans; a drag on the plot pans too.
+        const vp = document.getElementById('dotPlotViewport');
+        if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+            if (!vp) return;
             e.preventDefault();
-            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-            _dotApplyZoom(factor, e.clientX, e.clientY);
+            vp.scrollLeft += e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+            if (!e.shiftKey) vp.scrollTop += e.deltaY;
+            return;
         }
+        if (!e.deltaY) return;
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        _dotApplyZoom(factor, e.clientX, e.clientY);
     }, { passive: false });
 }
 
@@ -31750,8 +31864,56 @@ function _dotRegionBookmarked(r) {
     const S = _dotPlotState, nameB = _dotPlotNameB(), revB = _dotPlotRevB();
     return (state.dotBookmarks || []).some(b => b.nameA === S.nameA && b.nameB === nameB && b.revB === revB && b.aStart === r.aStart && b.aEnd === r.aEnd && b.bStart === r.bStart && b.bEnd === r.bEnd);
 }
+// The diagonal run of dots through a cell (what the green line on hover shows), as a region; null off a dot
+function _dotStretchAt(row, col) {
+    const S = _dotPlotState;
+    if (!_dotIsDot(row, col)) return null;
+    let rA = row, cA = col, rB = row, cB = col;
+    while (rA - 1 >= 0 && cA - 1 >= 0 && _dotIsDot(rA - 1, cA - 1)) { rA--; cA--; }
+    while (rB + 1 < S.rows && cB + 1 < S.cols && _dotIsDot(rB + 1, cB + 1)) { rB++; cB++; }
+    let same = 0;
+    for (let i = 0; i <= rB - rA; i++) if (S.seqA[rA + i] === S.seqB[cA + i]) same++;
+    return { row, col, aStart: rA, aEnd: rB + 1, bStart: cA, bEnd: cB + 1, avgScore: Math.round(100 * same / (rB - rA + 1)) };
+}
+function _dotStretchMenu(e, r) {
+    const S = _dotPlotState;
+    closeContextMenu();
+    document.querySelectorAll('.dot-context-menu').forEach(m => m.remove());
+    const menu = document.createElement('div');
+    menu.className = 'context-menu dot-context-menu';
+    menu.style.position = 'fixed'; menu.style.zIndex = '10010';
+    menu.style.left = e.clientX + 'px'; menu.style.top = e.clientY + 'px';
+    const close = () => { menu.remove(); document.removeEventListener('mousedown', outside, true); };
+    const outside = (ev) => { if (!menu.contains(ev.target)) close(); };
+    const item = (text, fn, disabled) => {
+        const d = document.createElement('div');
+        d.textContent = text;
+        if (disabled) { d.style.color = '#999'; d.title = disabled; } else d.addEventListener('click', () => { close(); fn(); });
+        menu.appendChild(d);
+    };
+    const len = r.aEnd - r.aStart;
+    const rowA = S.meta?.rowIndexA, rowB = S.meta?.rowIndexB;
+    const canShow = Number.isInteger(rowA) && !!state.seqs[rowA];
+    item(`Show this stretch in the alignment (A ${r.aStart + 1}-${r.aEnd}, B ${r.bStart + 1}-${r.bEnd}, ${len} bp)`,
+        () => _dotShowStretch(rowA, Number.isInteger(rowB) && state.seqs[rowB] ? rowB : -1, r.aStart, r.aEnd, r.bStart, r.bEnd, /\(RevComp\)$/.test(S.nameB || '')),
+        canShow ? '' : 'This dot plot was not opened from alignment rows');
+    item('Add to the collection', () => _dotBookmarkStretch(r));
+    item('Copy both stretches as FASTA', () => {
+        const fa = `>${S.nameA}:${r.aStart + 1}-${r.aEnd}\n${S.seqA.slice(r.aStart, r.aEnd)}\n>${_dotPlotNameB()}:${r.bStart + 1}-${r.bEnd}\n${S.seqB.slice(r.bStart, r.bEnd)}\n`;
+        navigator.clipboard?.writeText(fa).then(() => showMessage('Copied both stretches as FASTA', 2000), () => showMessage('Could not copy (clipboard refused).', 3000));
+    });
+    document.body.appendChild(menu);
+    const mr = menu.getBoundingClientRect();
+    if (mr.right > innerWidth) menu.style.left = Math.max(0, e.clientX - mr.width) + 'px';
+    if (mr.bottom > innerHeight) menu.style.top = Math.max(0, e.clientY - mr.height) + 'px';
+    setTimeout(() => document.addEventListener('mousedown', outside, true), 0);
+}
 function _dotBookmarkRegion(idx) {
-    const S = _dotPlotState, r = S.regions?.[idx];
+    const r = _dotPlotState.regions?.[idx];
+    if (r) _dotBookmarkStretch(r);
+}
+function _dotBookmarkStretch(r) {
+    const S = _dotPlotState;
     if (!r) return;
     if (_dotRegionBookmarked(r)) { showMessage('This stretch is already in the collection.', 2500); return; }
     const H = _dotHalf(r.row, r.col);
@@ -32280,9 +32442,42 @@ function _initDotPlotEvents() {
             // Redraw pinned marker if present
             if (S.pinnedRow >= 0) _dotDrawOverlay(S.pinnedRow, S.pinnedCol);
         });
+        // Drag to pan the plot (the wheel zooms); a press that moved more than a few pixels is not a click
+        let pan = null, panned = false;
+        overlay.addEventListener('mousedown', (e) => {
+            if (e.button !== 0 || !viewport) return;
+            pan = { x: e.clientX, y: e.clientY, sl: viewport.scrollLeft, st: viewport.scrollTop, moved: false };
+            panned = false;
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!pan) return;
+            const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+            if (!pan.moved && Math.hypot(dx, dy) < 4) return;
+            pan.moved = true;
+            overlay.style.cursor = 'grabbing';
+            viewport.scrollLeft = pan.sl - dx;
+            viewport.scrollTop = pan.st - dy;
+        });
+        window.addEventListener('mouseup', () => {
+            if (!pan) return;
+            panned = pan.moved;
+            pan = null;
+            overlay.style.cursor = '';
+        });
+        // Right-click: what to do with the highlighted (green) stretch under the pointer
+        overlay.addEventListener('contextmenu', (e) => {
+            const S = _dotPlotState;
+            if (!S.scores && !S.matchMap) return;
+            const cell = _dotEventToCell(e);
+            const r = cell && _dotStretchAt(cell.row, cell.col);
+            if (!r) return;   // not on a dot: the browser's own menu
+            e.preventDefault();
+            _dotStretchMenu(e, r);
+        });
         // Click to pin a coordinate for region copying
         overlay.addEventListener('click', (e) => {
             const S = _dotPlotState;
+            if (panned) { panned = false; return; }   // the end of a drag
             if ((!S.scores && !S.matchMap) || S._frozen) return;
             const cell = _dotEventToCell(e);
             if (!cell) return;
@@ -32406,7 +32601,7 @@ function _initDotPlotEvents() {
     const splitBox = document.getElementById('dotPlotSplit');
     const lowerCtl = document.getElementById('dotPlotLowerCtl');
     const upperLabel = document.getElementById('dotPlotUpperLabel');
-    if (splitBox) splitBox.addEventListener('change', () => {
+    const splitLook = () => {
         if (lowerCtl) lowerCtl.hidden = !splitBox.checked;
         if (upperLabel) upperLabel.textContent = splitBox.checked ? 'Upper half:' : 'Mode:';
         if (splitBox.checked) {
@@ -32416,8 +32611,11 @@ function _initDotPlotEvents() {
             if (other) other.checked = true;
             _dotOnLowerModeChange();
         }
-        onSettingChange();
-    });
+    };
+    if (splitBox) {
+        splitBox.addEventListener('change', () => { splitLook(); onSettingChange(); });
+        splitLook();   // on by default (owner 2026-10-28): a self-plot shows the other method below the diagonal
+    }
     document.querySelectorAll('input[name="dotPlotModeLower"]').forEach(r => r.addEventListener('change', () => { _dotOnLowerModeChange(); onSettingChange(); }));
     document.getElementById('dotPlotWindowLower')?.addEventListener('input', onSettingChange);
     const lowerThresh = document.getElementById('dotPlotThresholdLower');

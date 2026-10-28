@@ -4498,3 +4498,11 @@ body.name-resizing { user-select: none; }
 .col-fold:hover { filter: brightness(0.92); }
 .consensus-line .seq-data span.col-fold { background-color: #f2c14e !important; }
 #actions-controls .action-section-columns .fold-visonly { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; font-size: 11px; }
+
+/* Column selection edges (owner 2026-10-28: the tint alone vanished over black shading): a bright line down the
+   left and right edge of each run of selected columns; colour = COL_SEL_EDGE in script.js. Residue selection frames
+   (.nuc-selected, !important) win where both apply. */
+.seq-data > span.column-selected.col-sel-l { box-shadow: inset 2px 0 0 0 #4fc3f7; }
+.seq-data > span.column-selected.col-sel-r { box-shadow: inset -2px 0 0 0 #4fc3f7; }
+.seq-data > span.column-selected.col-sel-l.col-sel-r { box-shadow: inset 2px 0 0 0 #4fc3f7, inset -2px 0 0 0 #4fc3f7; }
+.consensus-line .seq-data > span.column-selected { box-shadow: none; }

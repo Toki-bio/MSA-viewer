@@ -13,7 +13,7 @@
     <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
-    <link rel="stylesheet" href="styles.css?v=185">
+    <link rel="stylesheet" href="styles.css?v=186">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -454,6 +454,9 @@
                                 <div class="cluster-actions">
                                     <label class="cluster-split-label" title="When checked, Find SNP groups looks for exclusive SNPs inside existing groups instead of scanning the whole alignment. Groups that have no such SNPs stay as they are. If you select sequences, only the group(s) those rows belong to are split; with nothing selected, every current group is tried.">
                                         <input type="checkbox" id="clusterWithinTypes" style="margin: 0;"> Split existing groups
+                                    </label>
+                                    <label class="cluster-split-label" title="Find SNP groups and k-mer grouping read only the selected columns (or the columns of the selected residues), from the first to the last; every row is grouped. With nothing selected the whole alignment is used.">
+                                        <input type="checkbox" id="clusterSelColsOnly" style="margin: 0;"> Selected columns only
                                     </label>
                                 </div>
                                 <div id="clusterSplitHint" class="cluster-split-hint">Off: scans the whole alignment and replaces current colours. On: splits inside current groups (all of them, or only selected ones).</div>
@@ -1218,7 +1221,7 @@
                 <button id="dotPlotHelpBtn" class="dot-help-btn" title="Show / hide help for the dot plot" aria-label="Help">?</button>
             </div>
             <div id="dotPlotSplitRow" class="dot-split-row dot-ctl-row">
-                <label title="A sequence plotted against itself is symmetric, so each half can show the same comparison with its own method and settings: the controls above then apply above the diagonal, these below it. Only for a sequence against itself, without RevComp B."><input type="checkbox" id="dotPlotSplit"> Different settings below the diagonal</label>
+                <label title="A sequence plotted against itself is symmetric, so each half can show the same comparison with its own method and settings: the controls above then apply above the diagonal, these below it. Only for a sequence against itself, without RevComp B."><input type="checkbox" id="dotPlotSplit" checked> Different settings below the diagonal</label>
                 <span id="dotPlotLowerCtl" class="dot-lower-ctl" hidden>
                     <span style="font-weight:bold;">Lower half:</span>
                     <label title="Exact word match"><input type="radio" name="dotPlotModeLower" value="spin"> SPIN (word)</label>
@@ -1447,7 +1450,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=6"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=346"></script>
+    <script src="script.js?v=347"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>
