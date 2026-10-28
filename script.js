@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v296';
+const BUILD_TAG = 'v297';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -781,6 +781,13 @@ function overlayCoverageSentence(cov = overlayCoverage()) {
 // ---- Name cells: Colour Names and SNP-group colours, one painter ----
 // Colour Names own the fill; a group colour is the fill when there is no Colour Name, and a
 // stripe on the left edge when there is, so both stay visible whichever ran first.
+// A name cell's hover text: the full name (names are cut at the name width) and length, then its colour / group
+function _seqNameTitle(row, look) {
+    const q = state.seqs[row];
+    if (!q) return look?.title || '';
+    const base = `${q.header} (length: ${q.seq.length})`;
+    return look?.title ? base + ' | ' + look.title : base;
+}
 function nameCellLook(row) {
     const h = state.seqs[row]?.header;
     if (!h) return null;
@@ -802,7 +809,7 @@ function paintNameCells() {
               + (look.stripe ? ` box-shadow: inset 6px 0 0 ${look.stripe};` : '')
             : '';
         if ((el.getAttribute('style') || '') !== css) { if (css) el.setAttribute('style', css); else el.removeAttribute('style'); }
-        el.title = look?.title || '';
+        el.title = row >= 0 ? _seqNameTitle(row, look) : (look?.title || '');   // it wiped the full name
         el.classList.toggle('cluster-colored', !!look?.group);
     });
 }
@@ -5774,6 +5781,36 @@ function _canvasHitTestRuler(clientX, clientY) {
 
 // Hit-test the name column area (left side, x < NAME_W in canvas coords).
 // Returns { row } or null if outside the name column's row range.
+// The trim / soft-trim note for a consensus column (Full/Block: the span's title)
+function _consensusTrimHint(pos) {
+    const t = state.trimBoundaries, st = state.softTrimBoundaries;
+    let msg = '';
+    if (t && pos <= t.leftTrimEnd) msg = 'Will be removed (left end). Drag to move this border.';
+    else if (t && pos >= t.rightTrimStart) msg = 'Will be removed (right end). Drag to move this border.';
+    else if (!t && st && (pos <= st.leftTrimEnd || pos >= st.rightTrimStart)) msg = 'Excluded from clustering (soft trim)';
+    return msg ? `<div class="trim-row">${msg}</div>` : '';
+}
+// Canvas: the hover text of a length badge or a name, or null
+function _canvasSideTooltip(clientX, clientY) {
+    const m = _canvasState.metrics, canvas = _canvasState.canvas;
+    if (!m || !canvas || !state.seqs.length) return null;
+    const r = canvas.getBoundingClientRect();
+    const x = clientX - r.left, y = clientY - r.top;
+    const nameHit = _canvasHitTestName(clientX, clientY);
+    if (nameHit) return _seqNameTitle(nameHit.row, nameCellLook(nameHit.row));
+    const bx = (_canvasState.badgeX || 0) - _canvasState.offsetX;
+    if (_canvasState.badgeX == null || x < bx || x >= bx + (_canvasState.badgeBoxW || 0)) return null;
+    const pitch = _canvasState.rowPitch || m.charH;
+    const row = Math.floor((y - (m.headerH || m.charH) + _canvasState.offsetY) / pitch);
+    if (row >= 0 && row < state.seqs.length) { const g = _linkGapless(state.seqs[row]); return `Sequence length: ${g[g.length - 1] || 0} (gapless)`; }
+    const b = _canvasState.consBand;
+    const cy = y + _canvasState.offsetY;
+    if (b && b.values && cy >= b.y + b.textOff && cy < b.y + b.textOff + m.charH) {
+        let n = 0; for (const c of b.values) if (c && c !== '-' && c !== '.' && c !== ' ') n++;
+        return `Consensus length: ${n} (gapless)`;
+    }
+    return null;
+}
 // The consensus row's column under a point (Canvas), or -1
 function _canvasHitTestConsensus(clientX, clientY) {
     const b = _canvasState.consBand, m = _canvasState.metrics, canvas = _canvasState.canvas;
@@ -6190,6 +6227,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     })();
     const totalContentW = NAME_W + nSlots * CHAR_W + BADGE_GAP + BADGE_W + 4;
     _canvasState.badgeW = BADGE_GAP + BADGE_W;   // the length-badge column right of the last slot
+    _canvasState.badgeX = NAME_W + nSlots * CHAR_W + BADGE_GAP;   // content x of the badges (their hover)
+    _canvasState.badgeBoxW = BADGE_W;
     const totalContentH = HEADER_H +nSeqs * rowPitch + (consInfo && !consTop ? CONS_H : 0) + 4;
     // where the consensus row is in content coordinates (its hover tooltip): under the ruler, or after the rows
     _canvasState.consBand = consInfo ? { y: consTop ? TRACK_H + SCALE_H : HEADER_H + nSeqs * rowPitch, h: CONS_H, textOff: consTop ? 0 : CONS_GAP, values: consInfo.values } : null;
@@ -7073,6 +7112,19 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     canvas.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
 
+        // Trim borders: a press on a consensus cell that will be removed drags that border
+        if (state.trimBoundaries && !isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
+            const tc = _canvasHitTestConsensus(e.clientX, e.clientY);
+            const t = state.trimBoundaries;
+            if (tc >= 0 && (tc <= t.leftTrimEnd || tc >= t.rightTrimStart)) {
+                _trimDragSide = tc <= t.leftTrimEnd ? 'left' : 'right';
+                e.preventDefault(); e.stopPropagation(); hideTooltip();
+                document.body.style.cursor = 'ew-resize';
+                document.body.style.userSelect = 'none';
+                return;
+            }
+        }
+
         // Fold marker (hidden columns): a plain click shows the run again
         if (_canvasState.foldBefore && !isCtrlModifier(e) && !isAltModifier(e) && !e.shiftKey) {
             const fh = _canvasHitTest(e.clientX, e.clientY) || _canvasHitTestRuler(e.clientX, e.clientY);
@@ -7288,6 +7340,18 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             return;
         }
 
+        // Length badges and names: the Full/Block titles (sequence length; the full name)
+        const sideTip = _canvasHoverCell ? null : _canvasSideTooltip(e.clientX, e.clientY);
+        if (sideTip) {
+            if (_lastTooltipCell && _lastTooltipCell.side === sideTip) return;
+            _lastTooltipCell = { row: -1, col: -1, side: sideTip };
+            const target = _getCanvasTooltipTarget();
+            target.style.left = e.clientX + 'px';
+            target.style.top = (e.clientY + 10) + 'px';
+            showTooltipAt(sideTip, target);
+            return;
+        }
+        if (_lastTooltipCell && _lastTooltipCell.side != null) { _lastTooltipCell = null; hideTooltip(); }
         // Consensus row: the column's coverage and base percentages (as the Full/Block consensus spans)
         const consCol = _canvasHoverCell ? -1 : _canvasHitTestConsensus(e.clientX, e.clientY);
         if (consCol >= 0) {
@@ -7297,7 +7361,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             const target = _getCanvasTooltipTarget();
             target.style.left = (r.left + m.nameW + _canvasColToSlot(consCol) * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
             target.style.top = (r.top + b.y + b.textOff - _canvasState.offsetY) + 'px';
-            showTooltipAt(_consensusTooltipHtml(consCol, b.values), target, { html: true, className: 'consensus-box' });
+            showTooltipAt(_consensusTooltipHtml(consCol, b.values) + _consensusTrimHint(consCol), target, { html: true, className: 'consensus-box' });
             return;
         }
         if (_lastTooltipCell && _lastTooltipCell.cons != null) { _lastTooltipCell = null; hideTooltip(); }
@@ -7423,7 +7487,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     const target = _getCanvasTooltipTarget();
                     target.style.left = (rect.left + m.nameW + _canvasColToSlot(col) * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
                     target.style.top = (rect.top + (m.headerH || m.charH) + row * (_canvasState.rowPitch || m.charH) - _canvasState.offsetY) + 'px';   // rows are rowPitch apart (translation tracks)
-                    showTooltipAt(`${seqObj.header}: ${gaplessPos}`, target);
+                    const ovT = residueOverlay(_overlayRowCtx(row), col, base);   // the span's title in Full/Block
+                    showTooltipAt(`${seqObj.header}: ${gaplessPos}` + (ovT && ovT.titles.length ? ' | ' + ovT.titles.join(' | ') : ''), target);
                     return;
                 }
             }
@@ -19211,10 +19276,15 @@ function handleTrimEdgeMouseDown(e) {
 
 function _onTrimDragMove(e) {
     if (!_trimDragSide || !state.trimBoundaries) return;
-    const hit = document.elementFromPoint(e.clientX, e.clientY);
-    const span = hit && hit.closest && hit.closest('.seq-data span[data-pos]');
-    if (!span) return;
-    const pos = parseInt(span.dataset.pos, 10);
+    let pos;
+    if (isCanvasMode()) pos = _canvasColFromClientX(e.clientX);   // no spans: the column under the pointer
+    else {
+        const hit = document.elementFromPoint(e.clientX, e.clientY);
+        const span = hit && hit.closest && hit.closest('.seq-data span[data-pos]');
+        if (!span) return;
+        pos = parseInt(span.dataset.pos, 10);
+    }
+    if (!(pos >= 0)) return;
     if (Number.isNaN(pos)) return;
     const b = state.trimBoundaries;
     if (_trimDragSide === 'left') _setTrimBounds(pos, b.rightTrimStart, 'left');

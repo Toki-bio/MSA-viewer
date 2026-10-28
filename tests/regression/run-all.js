@@ -9095,6 +9095,68 @@ check('Clustering: "Selected columns only" groups by the selected columns (colum
   return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
 }, { timeoutMs: 90000 });
 
+// Owner 2026-10-28: what else did Full/Block have that Canvas lacked? Per-span titles and listeners: the titles of search
+// hits and marks on a residue, the length badges' titles, the name cell's full name, dragging the trim borders on the
+// consensus row (and its hint), the soft-trim hint. Canvas shows them now, with the Full/Block text.
+check('Canvas has the Full/Block hovers and the trim-border drag: residue mark titles, length badges, full names, trim and soft-trim hints', async (page) => {
+  const bad = [], out = {};
+  const longName = 'G01_mollyHiFi_fam013_n38_lat1_a_very_long_sequence_name_that_is_cut_off';
+  await loadFasta(page, [`>${longName}\nACGTACGTACGTAAAAACCCCCGGGGGTTTTTACGTACGTAC`, '>s1\nACGTACGTACGTAAAAACCCCCGGGGGTTTTTACGTACGT--', '>s2\nACGTACGTACGTAAAAACCCCCGGGGGTTTTTACGTACGTAC'].join('\n') + '\n');
+  const tip = () => page.evaluate(() => { const t = [...document.querySelectorAll('.tooltip')].find(e => getComputedStyle(e).display !== 'none'); return t ? t.textContent.replace(/\s+/g, ' ').trim() : ''; });
+  const hover = async (x, y) => { await page.mouse.move(5, 5); await page.waitForTimeout(150); await page.mouse.move(x, y); await page.waitForTimeout(450); return tip(); };
+  // a mark with a title (search hits have none): a dot-plot stretch on row 1, residues 16-26
+  await page.evaluate(() => _dotShowStretch(1, -1, 15, 26, 0, 0, false));
+  // the Full/Block texts are the reference
+  await setMode(page, 'full');
+  await page.waitForTimeout(500);
+  out.ref = await page.evaluate((longName) => {
+    const sp = document.querySelector('.seq-line[data-seq-index="1"] .seq-data > span[data-pos="18"]');
+    const badge = document.querySelector('.seq-line[data-seq-index="1"] .seq-length');
+    const nm = [...document.querySelectorAll('.seq-line[data-seq-index="0"] .seq-name, .seq-line[data-seq-index="0"] .seq-name *')].map(e => e.title).find(Boolean);
+    return { hit: sp && sp.title, badge: badge && badge.title, name: nm };
+  }, longName);
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(600);
+  const g = await page.evaluate(() => { const m = _canvasState.metrics, r = _canvasState.canvas.getBoundingClientRect(), b = _canvasState.consBand;
+    return { left: r.left, top: r.top, nameW: m.nameW, charW: m.charW, headerH: m.headerH, pitch: _canvasState.rowPitch, ox: _canvasState.offsetX, oy: _canvasState.offsetY, badgeX: _canvasState.badgeX, consY: b ? b.y + b.textOff : null, charH: m.charH }; });
+  const cellXY = (row, col) => ({ x: g.left + g.nameW + (col + 0.5) * g.charW - g.ox, y: g.top + g.headerH + (row + 0.5) * g.pitch - g.oy });
+  // 1. a residue in a search hit: the hit's title as well as name: position
+  let c = cellXY(1, 18);
+  out.hit = await hover(c.x, c.y);
+  if (out.ref.hit !== 'dot-plot stretch' || !out.hit.includes('dot-plot stretch')) bad.push(`mark title: Canvas "${out.hit}", Full title "${out.ref.hit}"`);
+  // 2. the length badge
+  out.badge = g.badgeX == null ? '' : await hover(g.left + g.badgeX + 6 - g.ox, g.top + g.headerH + 1.5 * g.pitch - g.oy);
+  if (!out.ref.badge || out.badge !== out.ref.badge) bad.push(`length badge: Canvas "${out.badge}", Full "${out.ref.badge}"`);
+  // 3. the name: its full text
+  out.name = await hover(g.left + 20, g.top + g.headerH + 0.5 * g.pitch - g.oy);
+  // (the name-colour painter wiped this title in Full/Block too: both now carry the full name)
+  const wantName = `${longName} (length: 42)`;
+  if (out.ref.name !== wantName || out.name !== wantName) bad.push(`name: Canvas "${out.name}", Full "${out.ref.name}", want "${wantName}"`);
+  // 4. trim: the hint on the consensus and a drag of the left border from column 6 to 11
+  await page.evaluate(() => { _setTrimBounds(5, 35, true); });
+  await page.waitForTimeout(500);
+  const g2 = await page.evaluate(() => { const b = _canvasState.consBand; return { consY: b.y + b.textOff, ox: _canvasState.offsetX, oy: _canvasState.offsetY }; });
+  const consXY = col => ({ x: g.left + g.nameW + (col + 0.5) * g.charW - g2.ox, y: g.top + g2.consY + g.charH / 2 - g2.oy });
+  c = consXY(5);
+  out.trimTip = await hover(c.x, c.y);
+  if (!/Will be removed \(left end\)/.test(out.trimTip)) bad.push('trim hint: ' + out.trimTip);
+  await page.mouse.move(c.x, c.y); await page.mouse.down();
+  const c2 = consXY(10);
+  await page.mouse.move(c2.x, c2.y, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(500);
+  out.trim = await page.evaluate(() => state.trimBoundaries && [state.trimBoundaries.leftTrimEnd, state.trimBoundaries.rightTrimStart]);
+  if (!out.trim || out.trim[0] !== 10 || out.trim[1] !== 35) bad.push('trim drag: ' + JSON.stringify(out.trim));
+  await page.evaluate(() => { _clearTrimPreview?.(); state.trimBoundaries = null; renderAlignment(); });
+  // 5. soft trim: the consensus says the column is left out of clustering
+  await page.evaluate(() => { state.softTrimBoundaries = { leftTrimEnd: 3, rightTrimStart: 38 }; renderAlignment(); });
+  await page.waitForTimeout(500);
+  const g3 = await page.evaluate(() => { const b = _canvasState.consBand; return { consY: b.y + b.textOff, ox: _canvasState.offsetX, oy: _canvasState.offsetY }; });
+  out.soft = await hover(g.left + g.nameW + 1.5 * g.charW - g3.ox, g.top + g3.consY + g.charH / 2 - g3.oy);
+  if (!/Excluded from clustering \(soft trim\)/.test(out.soft)) bad.push('soft trim hint: ' + out.soft);
+  await page.evaluate(() => { state.softTrimBoundaries = null; renderAlignment(); });
+  await page.mouse.move(5, 5);
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
 // Linked views: rows by sequence name (by index when the name is not there) and columns by column number or by
 // the residue index of an anchor sequence both alignments contain, which keeps two alignments of the same
 // sequences lined up on screen when their gaps differ. A position applied from a peer is not echoed back.
