@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v299';
+const BUILD_TAG = 'v300';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -5816,7 +5816,9 @@ function _canvasSideTooltip(clientX, clientY) {
 function _canvasConsValues() {
     const b = _canvasState.consBand;
     if (!b) return null;
-    if (!b.values && state.consensusCache?.values) b.values = state.consensusCache.values;   // computed after the render
+    // edits recompute the consensus into state.consensusCache without a re-render; above 2 M residues it comes after it
+    const c = state.consensusCache, len = state.seqs[0]?.seq.length;
+    if (c?.values && c.len === len) b.values = c.values;
     return b.values;
 }
 function _canvasHitTestConsensus(clientX, clientY) {
@@ -7352,8 +7354,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // Length badges and names: the Full/Block titles (sequence length; the full name)
         const sideTip = _canvasHoverCell ? null : _canvasSideTooltip(e.clientX, e.clientY);
         if (sideTip) {
-            if (_lastTooltipCell && _lastTooltipCell.side === sideTip) return;
-            _lastTooltipCell = { row: -1, col: -1, side: sideTip };
+            const sideKey = sideTip + '@' + Math.floor(e.clientY / (_canvasState.rowPitch || 1));
+            if (_lastTooltipCell && _lastTooltipCell.side === sideKey) return;
+            _lastTooltipCell = { row: -1, col: -1, side: sideKey };
             const target = _getCanvasTooltipTarget();
             target.style.left = e.clientX + 'px';
             target.style.top = (e.clientY + 10) + 'px';
@@ -19285,6 +19288,7 @@ function handleTrimEdgeMouseDown(e) {
 
 function _onTrimDragMove(e) {
     if (!_trimDragSide || !state.trimBoundaries) return;
+    if (e.buttons === 0) { _endTrimDrag(); return; }   // released outside the window
     let pos;
     if (isCanvasMode()) pos = _canvasColFromClientX(e.clientX);   // no spans: the column under the pointer
     else {
@@ -19451,6 +19455,41 @@ function _clusterRemapRows(results, rows) {
     (results.clusters || []).forEach(c => (c.sequences || []).forEach(fix));
     (results.unassigned || []).forEach(fix);
     return results;
+}
+// A "Selected rows only" run keeps the groups of the other rows (membership, colour, name; their diagnostic columns
+// came from another run, so they are dropped). New groups get names and colours the kept ones do not use.
+// Returns a note when a selected name also names an unselected row (groups are keyed by name: it shares the colour).
+function _clusterKeepOutside(results, rows) {
+    if (!rows || !results) return '';
+    const inSub = new Set(rows.map(r => state.seqs[r]?.header));
+    const rowSet = new Set(rows);
+    let dup = 0;
+    state.seqs.forEach((q, i) => { if (!rowSet.has(i) && inSub.has(q.header)) dup++; });
+    const prev = state.clusterResults;
+    const kept = [];
+    if (prev) {
+        (prev.clusters || []).forEach(c => {
+            const seqs = (c.sequences || []).filter(q => !inSub.has(q.id));
+            if (seqs.length) kept.push(Object.assign({}, c, { sequences: seqs, size: seqs.length, nPerfect: 0, perfectFeatures: [], cloudyFeatures: [], motifRuns: [] }));
+        });
+        (prev.unassigned || []).forEach(q => { if (!inSub.has(q.id)) results.unassigned.push(q); });
+    }
+    if (kept.length) {
+        const usedNames = new Set(kept.map(c => c._typeName)), usedColors = new Set(kept.map(c => c.color));
+        const palette = SINEClusterer.getClusterColors().filter(c => !usedColors.has(c));
+        let n = 1, pi = 0;
+        results.clusters.forEach(c => {
+            while (usedNames.has('Group ' + n)) n++;
+            c._typeName = 'Group ' + n; usedNames.add(c._typeName);
+            if (pi < palette.length) c.color = palette[pi++];
+        });
+        results.clusters = results.clusters.concat(kept);
+        if (results.summary) {
+            const nAs = results.clusters.reduce((a, c) => a + (c.sequences || []).length, 0);
+            Object.assign(results.summary, { nClusters: results.clusters.length, nAssigned: nAs, nUnassigned: results.unassigned.length, nTotal: nAs + results.unassigned.length });
+        }
+    }
+    return dup ? `${dup} unselected row${dup === 1 ? ' has' : 's have'} the same name as a selected one and share${dup === 1 ? 's' : ''} its group colour.` : '';
 }
 // record: a clustering run (not the clusterability probe) keeps the range with its result.
 // rows: only these alignment rows (the "Selected rows only" subset), in this order
@@ -19910,8 +19949,10 @@ async function clusterByGuideTree() {
     const typed = rawGroups === '' || rawGroups == null ? NaN : Number(rawGroups);
     let groupsArg = (autoGroups || !Number.isFinite(typed)) ? 'auto' : Math.round(typed);
     const clampNote = [];
+    const subRows = _clusterSelectedRows();
+    if (subRows && subRows.length < 3) { showMessage('Selected rows only: select at least 3 sequences (or a rectangle over 3 rows).', 5000); return; }
     if (groupsArg !== 'auto') {
-        const lo = 1, hi = state.seqs.length;
+        const lo = 1, hi = subRows ? subRows.length : state.seqs.length;
         if (groupsArg < lo || groupsArg > hi) { clampNote.push(`Groups ${groupsArg} is outside 1-${hi}; using ${Math.max(lo, Math.min(hi, groupsArg))}.`); groupsArg = Math.max(lo, Math.min(hi, groupsArg)); }
     }
     const minSize = Math.max(1, parseInt(el('guideTreeMinSize')?.value, 10) || 1);
@@ -19919,13 +19960,11 @@ async function clusterByGuideTree() {
     // Distance: the alignment columns (default; no k) or k-mer counts. The alignment distance needs
     // an alignment: with rows of different lengths the k-mer distance is used.
     const wantAligned = (el('guideTreeMetric')?.value || 'pdist') === 'pdist';
-    const metric = wantAligned && KmerTree.isAligned(getSeqsForClustering()) ? 'pdist' : 'jaccard';
+    const metric = wantAligned && KmerTree.isAligned(getSeqsForClustering(false, subRows)) ? 'pdist' : 'jaccard';
     const wantPeel = el('guideTreeMethod')?.value === 'peel';
-    const canPeel = wantPeel && typeof Peel !== 'undefined' && KmerTree.isAligned(getSeqsForClustering());
+    const canPeel = wantPeel && typeof Peel !== 'undefined' && KmerTree.isAligned(getSeqsForClustering(false, subRows));
     if (wantPeel && !canPeel) clampNote.push('Peel needs an alignment (all rows the same length), so the tree cut was used.');
     const peelDiag = Math.max(1, parseInt(el('guideTreePeelDiag')?.value, 10) || 2);
-    const subRows = _clusterSelectedRows();
-    if (subRows && subRows.length < 3) { showMessage('Selected rows only: select at least 3 sequences (or a rectangle over 3 rows).', 5000); return; }
     return runWithProgress(canPeel ? 'Peeling groups by diagnostic columns...' : 'Grouping by k-mer tree...', () => {
         const seqs = getSeqsForClustering(true, subRows);
         const t0 = performance.now();
@@ -19950,11 +19989,10 @@ async function clusterByGuideTree() {
         const unassigned = cut.unassigned.map(i => ({ id: seqs[i].id, index: i, seq: seqs[i].seq, obj: state.seqs[i] }));
         const nAssigned = seqs.length - unassigned.length;
         _clusterRemapRows({ clusters, unassigned }, subRows);
-        _commitTypeResults({
-            clusters,
-            unassigned,
-            summary: { nClusters: clusters.length, nAssigned, nUnassigned: unassigned.length, nTotal: seqs.length }
-        }, 'kmers', (canPeel ? 'peeled groups' : k + '-mer groups') + (subRows ? ` of ${subRows.length} selected rows` : ''));
+        const res = { clusters, unassigned, summary: { nClusters: clusters.length, nAssigned, nUnassigned: unassigned.length, nTotal: seqs.length } };
+        const dupNote = _clusterKeepOutside(res, subRows);
+        if (dupNote) clampNote.push(dupNote);
+        _commitTypeResults(res, 'kmers', (canPeel ? 'peeled groups' : k + '-mer groups') + (subRows ? ` of ${subRows.length} selected rows` : ''));
         const warn = clampNote.slice();
         if (!cut.auto && !cut.reached) warn.push(`Only ${clusters.length} group${clusters.length === 1 ? '' : 's'} of at least ${minSize} sequences exist (asked for ${cut.asked ?? cut.target}); lower Min size or Groups.`);
         if (cut.warnings.includes('k-too-long')) warn.push(`k=${k} is too long for these sequences: most pairs share no ${k}-mers, so the tree is unreliable. Use a smaller k or the aligned-columns distance.`);
@@ -20169,7 +20207,8 @@ async function clusterSequences() {
         showMessage("Need at least 3 sequences to cluster.", 3000);
         return;
     }
-    const residues = state.seqs.length * _maxOf(state.seqs, s => s.seq.length);
+    const subRows = el('clusterWithinTypes')?.checked ? null : _clusterSelectedRows();
+    const residues = (subRows ? subRows.length : state.seqs.length) * _maxOf(state.seqs, s => s.seq.length);   // the rows that are run
     if (!confirmIfLarge('Clustering', residues, 200000,
         'can take several minutes - its cost grows much faster than the alignment does')) {
         return;
@@ -20220,7 +20259,11 @@ async function _clusterSequencesNow(update) {
     }
 
     clusterer.attachCharacterization(clusterResults.clusters, { unionCloudy: true });
-    if (subRows) { _clusterRemapRows(clusterResults, subRows); sourceLabel += ` of ${subRows.length} selected rows`; }
+    if (subRows) {
+        _clusterRemapRows(clusterResults, subRows); sourceLabel += ` of ${subRows.length} selected rows`;
+        const dupNote = _clusterKeepOutside(clusterResults, subRows);
+        if (dupNote) showMessage(dupNote, 8000);
+    }
     debugLog(`Diagnostic types: ${clusterResults.summary.nClusters} found, ${clusterResults.summary.nAssigned} assigned, ${clusterResults.summary.nUnassigned} unassigned`);
     _commitTypeResults(clusterResults, source, sourceLabel);
     displayClusteringResults(clusterResults);

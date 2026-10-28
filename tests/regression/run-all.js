@@ -9131,6 +9131,85 @@ check('Clustering: "Selected rows only" groups only the selected sequences or th
   return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
 }, { timeoutMs: 90000 });
 
+// GLM audit of v299 (2026-10-28), confirmed findings reproduced: the Canvas consensus tooltip kept the values of the
+// render after an edit recomputed the consensus; a "Selected rows only" run wiped the groups of the other rows; the
+// row-length probe and the cost prompt looked at every row, not the selected ones; a selected name that also sits on an
+// unselected row gave that row the colour silently; a Canvas trim drag released outside the window stayed latched; the
+// length-badge tooltip stayed where it first showed while the pointer moved down the badges.
+check('Audit v299: live consensus tooltip, subset run keeps the other groups, subset probes and cost, duplicate-name note, trim drag ends without a button, badge tooltip follows', async (page) => {
+  const bad = [], out = {};
+  const row = i => (i < 8 ? 'AAAAAAAAAA' : 'CCCCCCCCCC') + 'GGGGGGGGGG' + (i % 2 ? 'AAAAAAAAAA' : 'TTTTTTTTTT') + 'GGGGGGGGGG';
+  await loadFasta(page, Array.from({ length: 16 }, (_, i) => `>c${i}\n${row(i)}`).join('\n') + '\n');
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(500);
+  const groups = () => page.evaluate(() => state.seqs.map(q => (state.clusterMap && state.clusterMap[q.header] ? state.clusterMap[q.header].name : '-')));
+  // 1. the consensus recomputed by an edit (no re-render) is what the tooltip reads
+  out.cons = await page.evaluate(() => { const c = state.consensusCache; if (!c || !c.values) return 'no cache';
+    const v = Array.from(c.values); v[0] = 'T'; state.consensusCache = Object.assign({}, c, { values: v }); return _canvasConsValues() === v ? 'live' : 'stale'; });
+  if (out.cons !== 'live') bad.push('consensus tooltip values after an edit: ' + out.cons);
+  await page.evaluate(() => renderAlignment());
+  await page.waitForTimeout(300);
+  // 2. the whole alignment grouped, then rows 1-6 only: rows 7-16 keep their groups
+  await page.evaluate(() => { el('clusterSelColsOnly').checked = true; state.selectedColumns = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]); updateColumnSelections(); state.clusterResults = null; el('clusterNowButton').click(); });
+  await page.waitForFunction(() => !!state.clusterResults, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  out.whole = await groups();
+  await page.evaluate(() => { state.selectedColumns = new Set([20, 21, 22, 23, 24, 25, 26, 27, 28, 29]); updateColumnSelections(); el('clusterSelRowsOnly').checked = true;
+    state.selectedRows.clear(); for (let r = 0; r < 6; r++) state.selectedRows.add(r); window._prevRes = state.clusterResults; el('clusterNowButton').click(); });
+  await page.waitForFunction(() => state.clusterResults !== window._prevRes, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  out.sub = await groups();
+  const sameOutside = out.sub.slice(6).every(x => x !== '-') && out.sub.slice(6).every((x, j) => (out.whole[6 + j] === out.whole[8]) === (x === out.sub[8]));
+  if (!sameOutside) bad.push('rows outside the subset lost or changed their groups: ' + out.whole.join(',') + ' -> ' + out.sub.join(','));
+  if (out.sub[0] === out.sub[1] || out.sub[0] !== out.sub[2] || out.sub.slice(0, 6).some(x => x === '-')) bad.push('subset rows 1-6 not grouped even / odd: ' + out.sub.join(','));
+  const names = new Set(out.sub.filter(x => x !== '-'));
+  out.nNames = names.size; out.nClusters = await page.evaluate(() => state.clusterResults.clusters.length);
+  if (out.nNames !== out.nClusters) bad.push(`group names collide: ${out.nNames} names for ${out.nClusters} groups`);
+  out.colours = await page.evaluate(() => { const c = state.clusterResults.clusters.map(x => x.color); return new Set(c).size === c.length; });
+  if (!out.colours) bad.push('two groups share a colour after the subset run');
+  // 3. the cost prompt is sized from the selected rows
+  out.cost = await page.evaluate(() => { let got = null; const orig = window.confirmIfLarge; window.confirmIfLarge = (op, res) => { got = res; return false; };
+    try { clusterSequences(); } finally { window.confirmIfLarge = orig; } return got; });
+  if (out.cost !== 6 * 40) bad.push('cost prompt residues for 6 selected rows: ' + out.cost);
+  await page.evaluate(() => { el('clusterSelColsOnly').checked = false; state.selectedColumns.clear(); updateColumnSelections(); });
+  // 4. one short row outside the subset does not switch the aligned distance off
+  await page.evaluate(() => { state.seqs[15].seq = state.seqs[15].seq.slice(0, 30); el('guideTreeMetric').value = 'pdist'; el('guideTreeMethod').value = 'tree';
+    el('guideTreeAuto').checked = false; el('guideTreeGroups').value = '2'; state.selectedRows.clear(); for (let r = 0; r < 8; r++) state.selectedRows.add(r); window._prevRes = state.clusterResults; });
+  await page.evaluate(() => clusterByGuideTree());
+  await page.waitForFunction(() => state.clusterResults !== window._prevRes, null, { timeout: 30000 }).catch(() => {});
+  out.metric = await page.evaluate(() => state._geMeta && state._geMeta.metric);
+  if (out.metric !== 'pdist') bad.push('a short row outside the subset switched the distance: ' + out.metric);
+  // 5. a selected name that also names an unselected row: said so
+  out.dup = await page.evaluate(async () => { state.seqs[10].header = 'c1'; const msgs = []; const orig = window.showMessage; window.showMessage = (m, ...a) => { msgs.push(String(m)); return orig(m, ...a); };
+    try { window._prevRes = state.clusterResults; await clusterByGuideTree(); } finally { window.showMessage = orig; } return msgs.join(' || '); });
+  if (!/same name/i.test(out.dup)) bad.push('no note about a selected name on an unselected row: ' + out.dup);
+  await page.evaluate(() => { el('clusterSelRowsOnly').checked = false; el('guideTreeAuto').checked = true; el('guideTreeGroups').value = ''; state.selectedRows.clear(); });
+  // 6. a Canvas trim drag ends at a move with no button (released outside the window)
+  await page.evaluate(() => { _setTrimBounds(5, 35, true); });
+  await page.waitForTimeout(400);
+  out.trim = await page.evaluate(() => { const m = _canvasState.metrics, r = _canvasState.canvas.getBoundingClientRect(), b = _canvasState.consBand;
+    const x = r.left + m.nameW + 2.5 * m.charW - _canvasState.offsetX, y = r.top + b.y + b.textOff + m.charH / 2 - _canvasState.offsetY;
+    _canvasState.canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    const started = _trimDragSide;
+    document.dispatchEvent(new MouseEvent('mousemove', { buttons: 0, clientX: x + 40, clientY: y, bubbles: true }));
+    return { started, after: _trimDragSide, cursor: document.body.style.cursor }; });
+  if (out.trim.started !== 'left' || out.trim.after || out.trim.cursor === 'ew-resize') bad.push('trim drag after the button was released outside: ' + JSON.stringify(out.trim));
+  await page.evaluate(() => { _endTrimDrag(); state.trimBoundaries = null; renderAlignment(); });
+  await page.waitForTimeout(400);
+  // 7. the length-badge tooltip follows the pointer down the badges (same text on every row)
+  const g = await page.evaluate(() => { const m = _canvasState.metrics, r = _canvasState.canvas.getBoundingClientRect();
+    return { x: r.left + _canvasState.badgeX + 6 - _canvasState.offsetX, y0: r.top + m.headerH - _canvasState.offsetY, pitch: _canvasState.rowPitch }; });
+  const tipTop = () => page.evaluate(() => { const t = [...document.querySelectorAll('.tooltip')].find(e => getComputedStyle(e).display !== 'none'); return t ? t.getBoundingClientRect().top : null; });
+  await page.mouse.move(5, 5); await page.waitForTimeout(150);
+  await page.mouse.move(g.x, g.y0 + 1.5 * g.pitch); await page.waitForTimeout(400);
+  out.tip1 = await tipTop();
+  await page.mouse.move(g.x, g.y0 + 6.5 * g.pitch, { steps: 4 }); await page.waitForTimeout(400);
+  out.tip2 = await tipTop();
+  if (out.tip1 == null || out.tip2 == null || !(out.tip2 - out.tip1 > 3 * g.pitch)) bad.push(`badge tooltip did not follow: ${out.tip1} -> ${out.tip2}`);
+  await page.mouse.move(5, 5);
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
 // Owner 2026-10-28: what else did Full/Block have that Canvas lacked? Per-span titles and listeners: the titles of search
 // hits and marks on a residue, the length badges' titles, the name cell's full name, dragging the trim borders on the
 // consensus row (and its hint), the soft-trim hint. Canvas shows them now, with the Full/Block text.
