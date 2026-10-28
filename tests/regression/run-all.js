@@ -9157,6 +9157,66 @@ check('Canvas has the Full/Block hovers and the trim-border drag: residue mark t
   return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
 }, { timeoutMs: 120000 });
 
+// GLM audit of v296 (2026-10-28), confirmed and uncertain findings reproduced: the Canvas consensus tooltip kept the
+// consensus values of the render (none above 2 M residues, where the consensus is computed later); a dot-plot drag kept
+// panning after the button was released outside the window; "Selected columns only" ignored residues selected in the
+// consensus row; column-selection edges joined over a hidden column in Canvas but not in Full/Block; Shift+wheel panned
+// by raw line deltas (Firefox: ~3 px a notch); re-ticking the split box reset the lower half's method.
+check('Audit v296: consensus tooltip without render-time values, dot pan ends without a button, consensus-row columns for clustering, edges over hidden columns, line-mode wheel pan, split re-tick', async (page) => {
+  const bad = [], out = {};
+  await loadFasta(page, Array.from({ length: 12 }, (_, i) => `>t${i}\n` + (i < 9 ? 'ACGTACGTAC' : 'TCGTACGTAC') + 'ACGT'.repeat(10)).join('\n') + '\n');
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(500);
+  // 1. a consensus band whose values were not ready at render (as above 2 M residues) uses the computed consensus
+  out.cons = await page.evaluate(() => { const b = _canvasState.consBand; b.values = null; const m = _canvasState.metrics, r = _canvasState.canvas.getBoundingClientRect();
+    return _canvasHitTestConsensus(r.left + m.nameW + 0.5 * m.charW - _canvasState.offsetX, r.top + b.y + b.textOff + m.charH / 2 - _canvasState.offsetY); });
+  if (out.cons !== 0) bad.push('consensus hover with no render-time values gave column ' + out.cons);
+  await page.evaluate(() => renderAlignment());
+  // 3. consensus-row residues give the columns
+  out.consRange = await page.evaluate(() => { el('clusterSelColsOnly').checked = true; state.selectedColumns.clear(); state.selectedNucs.clear(); state.selectedNucs.set(CONSENSUS_ROW_INDEX, new Set([20, 21, 22, 23])); const r = _clusterSelectedColumnRange(); el('clusterSelColsOnly').checked = false; state.selectedNucs.clear(); return r; });
+  if (!out.consRange || out.consRange.lo !== 20 || out.consRange.hi !== 23) bad.push('consensus-row selection range: ' + JSON.stringify(out.consRange));
+  // 4. edges over a hidden column: as in Full/Block (by column), not joined
+  await page.evaluate(() => { _foldApply([[11, 11]]); state.selectedColumns = new Set([10, 12]); updateColumnSelections(); _canvasState.scheduleOverlay?.(); });
+  await page.waitForTimeout(400);
+  out.edges = await page.evaluate(() => { const m = _canvasState.metrics, dpr = m.dpr || 1, ov = document.getElementById('alignmentCanvasOverlay'), c = ov.getContext('2d');
+    const y = Math.round((m.headerH + 3 * _canvasState.rowPitch + 1) * dpr); const s10 = _canvasColToSlot(10), s12 = _canvasColToSlot(12);
+    const px = cssX => Array.from(c.getImageData(Math.round(cssX * dpr), y, 1, 1).data);
+    // the right edge of column 10's slot and the left edge of column 12's slot
+    return { right10: px(m.nameW + (s10 + 1) * m.charW - 0.75 - _canvasState.offsetX), left12: px(m.nameW + s12 * m.charW + 0.5 - _canvasState.offsetX) }; });
+  const edge = p => p[3] > 150 && p[2] > 180;
+  if (!edge(out.edges.right10) || !edge(out.edges.left12)) bad.push('edges over a hidden column: ' + JSON.stringify(out.edges));
+  await page.evaluate(() => { _foldApply([]); state.selectedColumns.clear(); updateColumnSelections(); });
+  // dot plot
+  await page.evaluate(() => { const s = state.seqs[1]; const u = (s.seq + s.seq + s.seq).replace(/[-. ]/g, ''); openDotPlot(u, u, s.header, s.header, null); });
+  await page.waitForTimeout(2500);
+  // 6. split re-tick keeps the lower method the user chose
+  out.split = await page.evaluate(async () => { const box = el('dotPlotSplit'); const same = document.querySelector('input[name="dotPlotModeLower"][value="spin"]'); same.checked = true; same.dispatchEvent(new Event('change', { bubbles: true }));
+    box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true }));
+    return document.querySelector('input[name="dotPlotModeLower"]:checked').value; });
+  if (out.split !== 'spin') bad.push('re-ticking the split reset the lower method to ' + out.split);
+  // 5. line-mode wheel: Shift+wheel by 3 lines pans by about three lines' height, not 3 px
+  await page.evaluate(() => { for (let i = 0; i < 10; i++) _dotApplyZoom(1.15); });
+  await page.waitForTimeout(300);
+  out.wheel = await page.evaluate(() => { const v = el('dotPlotViewport'), ov = el('dotPlotOverlay'); v.scrollLeft = 0; const r = ov.getBoundingClientRect();
+    ov.dispatchEvent(new WheelEvent('wheel', { deltaY: 3, deltaMode: 1, shiftKey: true, clientX: r.left + 50, clientY: r.top + 50, bubbles: true, cancelable: true })); return v.scrollLeft; });
+  if (!(out.wheel >= 30)) bad.push('Shift+wheel in line mode panned ' + out.wheel + ' px');
+  // 2. a pan with the button released outside the window ends at the next move without a button
+  const ov = await page.locator('#dotPlotOverlay').boundingBox();
+  out.pan = await page.evaluate(async ([x, y]) => { const v = el('dotPlotViewport'), o = el('dotPlotOverlay');
+    o.dispatchEvent(new MouseEvent('mousedown', { button: 0, buttons: 1, clientX: x, clientY: y, bubbles: true }));
+    window.dispatchEvent(new MouseEvent('mousemove', { buttons: 1, clientX: x - 30, clientY: y, bubbles: true }));
+    const mid = v.scrollLeft;
+    // released outside: no mouseup here; the next move comes with no button held
+    window.dispatchEvent(new MouseEvent('mousemove', { buttons: 0, clientX: x - 200, clientY: y, bubbles: true }));
+    return { mid, after: v.scrollLeft, cursor: o.style.cursor }; }, [ov.x + ov.width / 2, ov.y + ov.height / 2]);
+  if (out.pan.after !== out.pan.mid || out.pan.cursor === 'grabbing') bad.push('pan after the button was released outside: ' + JSON.stringify(out.pan));
+  // 7. zoom buttons say what the wheel does now
+  out.titles = await page.evaluate(() => [el('dotPlotZoomIn').title, el('dotPlotZoomOut').title]);
+  if (out.titles.some(t => /Ctrl\+wheel/.test(t))) bad.push('zoom button titles: ' + JSON.stringify(out.titles));
+  await page.evaluate(() => document.getElementById('dotPlotCloseBtn')?.click());
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
 // Linked views: rows by sequence name (by index when the name is not there) and columns by column number or by
 // the residue index of an anchor sequence both alignments contain, which keeps two alignments of the same
 // sequences lined up on screen when their gaps differ. A position applied from a peer is not echoed back.

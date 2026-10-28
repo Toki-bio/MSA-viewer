@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v297';
+const BUILD_TAG = 'v298';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -5805,16 +5805,23 @@ function _canvasSideTooltip(clientX, clientY) {
     if (row >= 0 && row < state.seqs.length) { const g = _linkGapless(state.seqs[row]); return `Sequence length: ${g[g.length - 1] || 0} (gapless)`; }
     const b = _canvasState.consBand;
     const cy = y + _canvasState.offsetY;
-    if (b && b.values && cy >= b.y + b.textOff && cy < b.y + b.textOff + m.charH) {
-        let n = 0; for (const c of b.values) if (c && c !== '-' && c !== '.' && c !== ' ') n++;
+    const bv = _canvasConsValues();
+    if (b && bv && cy >= b.y + b.textOff && cy < b.y + b.textOff + m.charH) {
+        let n = 0; for (const c of bv) if (c && c !== '-' && c !== '.' && c !== ' ') n++;
         return `Consensus length: ${n} (gapless)`;
     }
     return null;
 }
 // The consensus row's column under a point (Canvas), or -1
+function _canvasConsValues() {
+    const b = _canvasState.consBand;
+    if (!b) return null;
+    if (!b.values && state.consensusCache?.values) b.values = state.consensusCache.values;   // computed after the render
+    return b.values;
+}
 function _canvasHitTestConsensus(clientX, clientY) {
     const b = _canvasState.consBand, m = _canvasState.metrics, canvas = _canvasState.canvas;
-    if (!b || !m || !canvas || !b.values) return -1;
+    if (!b || !m || !canvas) return -1;
     const r = canvas.getBoundingClientRect();
     const x = clientX - r.left, y = clientY - r.top + _canvasState.offsetY;
     if (y < b.y + b.textOff || y >= b.y + b.textOff + m.charH) return -1;
@@ -6571,8 +6578,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         if (state.selectedColumns.size > 0) {
             const dataTop = Math.max(0, HEADER_H - oy);
             const dataBottom = Math.min(h, HEADER_H + nSeqs * rowPitch - oy);   // rowPitch: translation rows included
-            const slotsSel = new Set();
-            state.selectedColumns.forEach(pos => { const sc = posSlot(pos); if (sc >= 0) slotsSel.add(sc); });
+            const slotsSel = new Set(), colOfSlot = new Map();
+            state.selectedColumns.forEach(pos => { const sc = posSlot(pos); if (sc >= 0) { slotsSel.add(sc); colOfSlot.set(sc, pos); } });
+            const selC = state.selectedColumns;
             octx.fillStyle = 'rgba(25, 118, 210, 0.28)';
             slotsSel.forEach(sc => {
                 const x = NAME_W + sc * CHAR_W - ox;
@@ -6584,8 +6592,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             slotsSel.forEach(sc => {
                 const x = NAME_W + sc * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) return;
-                if (!slotsSel.has(sc - 1)) octx.fillRect(x, dataTop, lw, dataBottom - dataTop);
-                if (!slotsSel.has(sc + 1)) octx.fillRect(x + CHAR_W - lw, dataTop, lw, dataBottom - dataTop);
+                const pc = colOfSlot.get(sc);   // by column, as Full/Block: a hidden column in between ends the run
+                if (!selC.has(pc - 1)) octx.fillRect(x, dataTop, lw, dataBottom - dataTop);
+                if (!selC.has(pc + 1)) octx.fillRect(x + CHAR_W - lw, dataTop, lw, dataBottom - dataTop);
             });
         }
 
@@ -7361,7 +7370,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             const target = _getCanvasTooltipTarget();
             target.style.left = (r.left + m.nameW + _canvasColToSlot(consCol) * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
             target.style.top = (r.top + b.y + b.textOff - _canvasState.offsetY) + 'px';
-            showTooltipAt(_consensusTooltipHtml(consCol, b.values) + _consensusTrimHint(consCol), target, { html: true, className: 'consensus-box' });
+            showTooltipAt(_consensusTooltipHtml(consCol, _canvasConsValues() || []) + _consensusTrimHint(consCol), target, { html: true, className: 'consensus-box' });
             return;
         }
         if (_lastTooltipCell && _lastTooltipCell.cons != null) { _lastTooltipCell = null; hideTooltip(); }
@@ -19424,7 +19433,7 @@ function _clusterSelectedColumnRange() {
     if (!el('clusterSelColsOnly')?.checked) return null;
     let lo = Infinity, hi = -1;
     state.selectedColumns.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; });
-    if (hi < 0) state.selectedNucs.forEach((set, row) => { if (row < 0 || !set) return; set.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; }); });
+    if (hi < 0) state.selectedNucs.forEach((set) => { if (!set) return; set.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; }); });   // the consensus row too
     return hi >= 0 ? { lo, hi } : null;
 }
 // record: a clustering run (not the clusterability probe) keeps the range with its result
@@ -31296,8 +31305,9 @@ function _dotBindPlotWheel(el) {
         if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
             if (!vp) return;
             e.preventDefault();
-            vp.scrollLeft += e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
-            if (!e.shiftKey) vp.scrollTop += e.deltaY;
+            const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? vp.clientHeight : 1;   // lines (Firefox) or pages
+            vp.scrollLeft += (e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * k;
+            if (!e.shiftKey) vp.scrollTop += e.deltaY * k;
             return;
         }
         if (!e.deltaY) return;
@@ -32521,6 +32531,7 @@ function _initDotPlotEvents() {
         });
         window.addEventListener('mousemove', (e) => {
             if (!pan) return;
+            if (!(e.buttons & 1)) { pan = null; overlay.style.cursor = ''; return; }   // released outside the window
             const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
             if (!pan.moved && Math.hypot(dx, dy) < 4) return;
             pan.moved = true;
@@ -32674,7 +32685,8 @@ function _initDotPlotEvents() {
     const splitLook = () => {
         if (lowerCtl) lowerCtl.hidden = !splitBox.checked;
         if (upperLabel) upperLabel.textContent = splitBox.checked ? 'Upper half:' : 'Mode:';
-        if (splitBox.checked) {
+        if (splitBox.checked && !splitBox._lowerChosen) {
+            splitBox._lowerChosen = true;   // later ticks keep the method chosen below the diagonal
             // start with the other method below the diagonal
             const upperSpin = document.querySelector('input[name="dotPlotMode"][value="spin"]')?.checked;
             const other = document.querySelector(`input[name="dotPlotModeLower"][value="${upperSpin ? 'doter' : 'spin'}"]`);
