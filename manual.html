@@ -1045,6 +1045,12 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     selection changes. With nothing selected the whole alignment is used.
   </p>
   <p>
+    <strong>Selected rows only</strong> (off by default): Find SNP groups and k-mer grouping group only the selected
+    sequences, or the rows of a selected block of residues; the other rows get no group. With both options on, a
+    rectangle groups its own rows by its own columns. It needs at least 3 rows, and is not used with
+    <strong>Split existing groups</strong>, which splits the current groups as they are.
+  </p>
+  <p>
     Open <strong>Thresholds</strong> for the knobs below. They apply to SNP
     grouping and Clusterability, and Show 2D also reads Min Size / Min Features
     when it decides which local patterns are worth boxing.

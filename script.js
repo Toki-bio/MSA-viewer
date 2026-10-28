@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v298';
+const BUILD_TAG = 'v299';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -19436,13 +19436,30 @@ function _clusterSelectedColumnRange() {
     if (hi < 0) state.selectedNucs.forEach((set) => { if (!set) return; set.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; }); });   // the consensus row too
     return hi >= 0 ? { lo, hi } : null;
 }
-// record: a clustering run (not the clusterability probe) keeps the range with its result
-function getSeqsForClustering(record = false) {
+// Clustering > "Selected rows only" (owner 2026-10-28, "only on selected columns or rectangle"): the selected
+// sequences, else the rows of the selected residues (a rectangle), in alignment order; null when off or none
+function _clusterSelectedRows() {
+    if (!el('clusterSelRowsOnly')?.checked) return null;
+    let rows = [...state.selectedRows].filter(r => state.seqs[r]);
+    if (!rows.length) rows = [...state.selectedNucs.keys()].filter(r => r >= 0 && state.seqs[r] && state.selectedNucs.get(r)?.size);
+    return rows.length ? rows.sort((a, b) => a - b) : null;
+}
+// A run on a row subset numbered its sequences 0..n-1: give them their alignment rows back
+function _clusterRemapRows(results, rows) {
+    if (!rows || !results) return results;
+    const fix = q => { if (q && q.index != null && rows[q.index] != null) { q.index = rows[q.index]; if ('obj' in q) q.obj = state.seqs[q.index]; } };
+    (results.clusters || []).forEach(c => (c.sequences || []).forEach(fix));
+    (results.unassigned || []).forEach(fix);
+    return results;
+}
+// record: a clustering run (not the clusterability probe) keeps the range with its result.
+// rows: only these alignment rows (the "Selected rows only" subset), in this order
+function getSeqsForClustering(record = false, rows = null) {
     const stb = state.softTrimBoundaries;
     // the selected columns win over a soft trim; the range is kept with the result (_clusterAlignmentColumnOffset)
     const selR = _clusterSelectedColumnRange();
     if (record) state.clusterColumnRange = selR;
-    return state.seqs.map(seq => {
+    return (rows ? rows.map(r => state.seqs[r]) : state.seqs).map(seq => {
         let s = seq.seq;
         if (selR) s = s.substring(selR.lo, selR.hi + 1);
         else if (stb) {
@@ -19907,8 +19924,10 @@ async function clusterByGuideTree() {
     const canPeel = wantPeel && typeof Peel !== 'undefined' && KmerTree.isAligned(getSeqsForClustering());
     if (wantPeel && !canPeel) clampNote.push('Peel needs an alignment (all rows the same length), so the tree cut was used.');
     const peelDiag = Math.max(1, parseInt(el('guideTreePeelDiag')?.value, 10) || 2);
+    const subRows = _clusterSelectedRows();
+    if (subRows && subRows.length < 3) { showMessage('Selected rows only: select at least 3 sequences (or a rectangle over 3 rows).', 5000); return; }
     return runWithProgress(canPeel ? 'Peeling groups by diagnostic columns...' : 'Grouping by k-mer tree...', () => {
-        const seqs = getSeqsForClustering(true);
+        const seqs = getSeqsForClustering(true, subRows);
         const t0 = performance.now();
         let cut;
         if (canPeel) {
@@ -19929,12 +19948,13 @@ async function clusterByGuideTree() {
         const clusterer = new SINEClusterer(seqs);
         clusterer.attachCharacterization(clusters);
         const unassigned = cut.unassigned.map(i => ({ id: seqs[i].id, index: i, seq: seqs[i].seq, obj: state.seqs[i] }));
-        const nAssigned = state.seqs.length - unassigned.length;
+        const nAssigned = seqs.length - unassigned.length;
+        _clusterRemapRows({ clusters, unassigned }, subRows);
         _commitTypeResults({
             clusters,
             unassigned,
-            summary: { nClusters: clusters.length, nAssigned, nUnassigned: unassigned.length, nTotal: state.seqs.length }
-        }, 'kmers', canPeel ? 'peeled groups' : k + '-mer groups');
+            summary: { nClusters: clusters.length, nAssigned, nUnassigned: unassigned.length, nTotal: seqs.length }
+        }, 'kmers', (canPeel ? 'peeled groups' : k + '-mer groups') + (subRows ? ` of ${subRows.length} selected rows` : ''));
         const warn = clampNote.slice();
         if (!cut.auto && !cut.reached) warn.push(`Only ${clusters.length} group${clusters.length === 1 ? '' : 's'} of at least ${minSize} sequences exist (asked for ${cut.asked ?? cut.target}); lower Min size or Groups.`);
         if (cut.warnings.includes('k-too-long')) warn.push(`k=${k} is too long for these sequences: most pairs share no ${k}-mers, so the tree is unreliable. Use a smaller k or the aligned-columns distance.`);
@@ -19943,7 +19963,7 @@ async function clusterByGuideTree() {
         if (warn.length) showMessage(warn.join(' '), 8000);
         state._geMeta = {
             nGroups: clusters.length,
-            nSeqs: state.seqs.length,
+            nSeqs: seqs.length,
             nUnassigned: unassigned.length,
             minSize,
             metric: cut.metric,
@@ -20164,9 +20184,11 @@ async function clusterSequences() {
 async function _clusterSequencesNow(update) {
     updateClusteringStatus('Finding diagnostic types...');
 
-    const seqsForClustering = getSeqsForClustering(true);
-    const clusterParams = getClusteringParameters();
     const within = !!el('clusterWithinTypes')?.checked;
+    const subRows = within ? null : _clusterSelectedRows();   // Split existing groups splits the current groups as they are
+    if (subRows && subRows.length < 3) { showMessage('Selected rows only: select at least 3 sequences (or a rectangle over 3 rows).', 5000); updateClusteringStatus(''); return; }
+    const seqsForClustering = getSeqsForClustering(true, subRows);
+    const clusterParams = getClusteringParameters();
     const clusterer = new SINEClusterer(seqsForClustering);
     let clusterResults;
     let source = 'diagnostics';
@@ -20198,6 +20220,7 @@ async function _clusterSequencesNow(update) {
     }
 
     clusterer.attachCharacterization(clusterResults.clusters, { unionCloudy: true });
+    if (subRows) { _clusterRemapRows(clusterResults, subRows); sourceLabel += ` of ${subRows.length} selected rows`; }
     debugLog(`Diagnostic types: ${clusterResults.summary.nClusters} found, ${clusterResults.summary.nAssigned} assigned, ${clusterResults.summary.nUnassigned} unassigned`);
     _commitTypeResults(clusterResults, source, sourceLabel);
     displayClusteringResults(clusterResults);

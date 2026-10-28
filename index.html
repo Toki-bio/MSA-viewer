@@ -458,6 +458,9 @@
                                     <label class="cluster-split-label" title="Find SNP groups and k-mer grouping read only the selected columns (or the columns of the selected residues), from the first to the last; every row is grouped. With nothing selected the whole alignment is used.">
                                         <input type="checkbox" id="clusterSelColsOnly" style="margin: 0;"> Selected columns only
                                     </label>
+                                    <label class="cluster-split-label" title="Find SNP groups and k-mer grouping group only the selected sequences (or the rows of the selected residues, such as a rectangle); the other rows are left without a group. Needs at least 3 rows. Not used with Split existing groups.">
+                                        <input type="checkbox" id="clusterSelRowsOnly" style="margin: 0;"> Selected rows only
+                                    </label>
                                 </div>
                                 <div id="clusterSplitHint" class="cluster-split-hint">Off: scans the whole alignment and replaces current colours. On: splits inside current groups (all of them, or only selected ones).</div>
                                 <div id="clusteringStatus" class="cluster-progress" style="font-size: 10px; color: #555; margin: 6px 0 0;"></div>
@@ -1450,7 +1453,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=6"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=349"></script>
+    <script src="script.js?v=350"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>

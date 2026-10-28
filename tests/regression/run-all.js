@@ -9095,6 +9095,42 @@ check('Clustering: "Selected columns only" groups by the selected columns (colum
   return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
 }, { timeoutMs: 90000 });
 
+// Owner 2026-10-28 ("only on selected columns or rectangle"): "Selected rows only" groups only the selected sequences or
+// the rows of a residue rectangle; the other rows get no group, and the result's row numbers are the alignment's.
+check('Clustering: "Selected rows only" groups only the selected sequences or the rectangle rows', async (page) => {
+  const bad = [], out = {};
+  const row = i => (i < 8 ? 'AAAAAAAAAA' : 'CCCCCCCCCC') + 'GGGGGGGGGG' + (i % 2 ? 'AAAAAAAAAA' : 'TTTTTTTTTT') + 'GGGGGGGGGG';
+  await loadFasta(page, Array.from({ length: 16 }, (_, i) => `>c${i}\n${row(i)}`).join('\n') + '\n');
+  await setMode(page, 'canvas');
+  const groups = () => page.evaluate(() => state.seqs.map(q => (state.clusterMap && state.clusterMap[q.header] ? state.clusterMap[q.header].name : '-')));
+  const indexOk = () => page.evaluate(() => { const r = state.clusterResults; const all = [...(r.clusters || []).flatMap(c => c.sequences || []), ...(r.unassigned || [])];
+    return all.every(q => state.seqs[q.index] && state.seqs[q.index].header === q.id && (!('obj' in q) || q.obj === state.seqs[q.index])); });
+  const inside = (g, lo, hi) => g.every((x, i) => (i >= lo && i <= hi) ? x !== '-' : x === '-');
+  out.box = await page.evaluate(() => el('clusterSelRowsOnly') ? el('clusterSelRowsOnly').checked : null);
+  if (out.box !== false) bad.push('the option is missing or on by default: ' + out.box);
+  // a rectangle over rows 5-12, columns 21-30, both options: even / odd inside, nothing outside
+  await page.evaluate(() => { el('clusterSelColsOnly').checked = true; el('clusterSelRowsOnly').checked = true; _setNucRectangle(4, 20, 11, 29); state.clusterResults = null; el('clusterNowButton').click(); });
+  await page.waitForFunction(() => !!state.clusterResults, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  out.rect = await groups();
+  if (!inside(out.rect, 4, 11) || !out.rect.slice(4, 12).every((x, j) => x === out.rect[4 + (j % 2)]) || out.rect[4] === out.rect[5]) bad.push('rectangle rows 5-12: ' + out.rect.join(','));
+  if (!(await indexOk())) bad.push('SNP groups: a result row number is not the alignment row');
+  // selected sequences 9-16 and the k-mer tree, 2 groups, every column
+  await page.evaluate(() => { el('clusterSelColsOnly').checked = false; state.selectedNucs.clear(); state.selectedRows.clear(); for (let r = 8; r < 16; r++) state.selectedRows.add(r);
+    el('guideTreeAuto').checked = false; el('guideTreeGroups').value = '2'; state.clusterResults = null; });
+  await page.evaluate(() => clusterByGuideTree());
+  await page.waitForFunction(() => !!state.clusterResults, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  out.kmer = await groups();
+  if (!inside(out.kmer, 8, 15) || !out.kmer.slice(8).every((x, j) => x === out.kmer[8 + (j % 2)]) || out.kmer[8] === out.kmer[9]) bad.push('k-mer groups of rows 9-16: ' + out.kmer.join(','));
+  if (!(await indexOk())) bad.push('k-mer groups: a result row number is not the alignment row');
+  // two rows only: refused, said so
+  out.few = await page.evaluate(() => { state.selectedRows.clear(); state.selectedRows.add(0); state.selectedRows.add(1); const before = state.clusterResults; clusterByGuideTree(); return state.clusterResults === before; });
+  if (!out.few) bad.push('two selected rows were grouped');
+  await page.evaluate(() => { el('clusterSelRowsOnly').checked = false; el('guideTreeAuto').checked = true; el('guideTreeGroups').value = ''; state.selectedRows.clear(); });
+  return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
+}, { timeoutMs: 90000 });
+
 // Owner 2026-10-28: what else did Full/Block have that Canvas lacked? Per-span titles and listeners: the titles of search
 // hits and marks on a residue, the length badges' titles, the name cell's full name, dragging the trim borders on the
 // consensus row (and its hint), the soft-trim hint. Canvas shows them now, with the Full/Block text.
