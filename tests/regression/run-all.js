@@ -9326,6 +9326,236 @@ check('Canvas: Ctrl+A shows the selection at once (Undo of a column delete or a 
   return { pass: !bad.length, detail: (bad.length ? 'not shown at once: ' + bad.join(', ') + ' | ' : '') + JSON.stringify(out) };
 });
 
+// GLM Canvas bug hunt 2026-10-30: the annotation track drew and hit-tested features by alignment column while
+// the cells are drawn by slot, so with hidden columns a gene box stood over the wrong residues and its hover was lost.
+check('Canvas: the annotation track follows hidden columns (box over its own residues, hover finds it)', async (page) => {
+  await loadFasta(page, Array.from({ length: 6 }, (_, i) => `>s${i}\n${'ACGTACGTAC'.repeat(6)}\n`).join(''));
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(400);
+  const out = {};
+  for (const [key, fold] of [['plain', []], ['fold5-14', [[5, 14]]], ['fold33-35', [[33, 35]]]]) {
+    out[key] = await page.evaluate(async (fold) => {
+      setAnnotation('s0\t30\t40\tgeneA\t0\t+\t30\t40\t255,0,0\n', 'x.bed');
+      _foldApply(fold);
+      await new Promise(r => setTimeout(r, 500));
+      const c = _canvasState.canvas, m = _canvasState.metrics, dpr = devicePixelRatio;
+      const d = c.getContext('2d').getImageData(0, Math.floor(m.trackH / 2 * dpr), c.width, 1).data;
+      let a = -1, b = -1;
+      for (let x = 0; x < c.width; x++) { const i = 4 * x; if (d[i] > 200 && d[i + 1] < 60 && d[i + 2] < 60) { if (a < 0) a = x; b = x; } }
+      const slot = x => Math.floor((x / dpr + _canvasState.offsetX - m.nameW) / m.charW);
+      const want = [_canvasColToSlot(30), _canvasColToSlot(39)];
+      const rect = c.getBoundingClientRect();
+      const hit = _canvasHitTestAnnot(rect.left + m.nameW + (want[0] + 0.5) * m.charW - _canvasState.offsetX, rect.top + m.trackH / 2);
+      return { want, drawn: [slot(a), slot(b)], hitCol: hit ? hit.col : null };
+    }, fold);
+  }
+  const bad = Object.entries(out).filter(([, v]) => v.drawn[0] !== v.want[0] || v.drawn[1] !== v.want[1] || v.hitCol !== 30).map(([k]) => k);
+  return { pass: !bad.length, detail: (bad.length ? 'wrong: ' + bad.join(', ') + ' | ' : '') + JSON.stringify(out) };
+});
+
+// GLM Canvas bug hunt 2026-10-30: a press on empty canvas (the pan path) marked the view dirty without scheduling a draw,
+// and the one-cell repaint of Type mode skips while the view is dirty: the typed letter was not drawn until a scroll.
+check('Canvas Type tool: a letter typed after a click on empty canvas is drawn at once', async (page) => {
+  const out = {};
+  for (const pressFirst of [false, true]) {
+    await loadFasta(page, Array.from({ length: 4 }, (_, i) => `>s${i}\n${'ACGTACGTAC'.repeat(3)}\n`).join(''));
+    await setMode(page, 'canvas');
+    await page.waitForTimeout(400);
+    const pt = await page.evaluate(() => {
+      state.editModeActive = true; state.editTool = 'residue'; renderAlignment();
+      const r = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics;
+      return { cx: r.left + m.nameW + 5.5 * m.charW, cy: r.top + m.headerH + 1.5 * _canvasState.rowPitch, ex: r.left + 300, ey: r.bottom - 30 };
+    });
+    await page.waitForTimeout(400);
+    if (pressFirst) { await page.mouse.click(pt.ex, pt.ey); await page.waitForTimeout(200); }
+    await page.mouse.click(pt.cx, pt.cy); await page.waitForTimeout(200);
+    await page.keyboard.press('t'); await page.waitForTimeout(400);
+    out[pressFirst ? 'afterEmptyClick' : 'plain'] = await page.evaluate(async () => {
+      const c = _canvasState.canvas, g = c.getContext('2d'), a = g.getImageData(0, 0, c.width, c.height).data;
+      _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res))); await new Promise(res => setTimeout(res, 150));
+      const b = g.getImageData(0, 0, c.width, c.height).data;
+      let stale = 0; for (let i = 0; i < a.length; i += 4) if (a[i] !== b[i] || a[i + 1] !== b[i + 1]) stale++;
+      const typed = state.seqs[1].seq[5];
+      state.editModeActive = false; state.editCell = null;
+      return { typed, stale };
+    });
+  }
+  const bad = Object.entries(out).filter(([, v]) => v.typed !== 'T' || v.stale).map(([k]) => k);
+  return { pass: !bad.length, detail: (bad.length ? 'not drawn: ' + bad.join(', ') + ' | ' : '') + JSON.stringify(out) };
+});
+
+// GLM Canvas bug hunt 2026-10-30: a pan or a row drag whose mouseup never came (focus lost mid-drag) went on with no button
+// held: the next move panned the view or a later click dropped rows. A move with no button ends them (as the dot-plot pan).
+check('Canvas: a pan or a row drag ends on a move with no button held (mouseup lost)', async (page) => {
+  await loadFasta(page, Array.from({ length: 6 }, (_, i) => `>s${i}\n${'ACGTACGTAC'.repeat(3)}\n`).join(''));
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(400);
+  const pt = await page.evaluate(() => { const r = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics;
+    return { nx: r.left + 10, ny: r.top + m.headerH + 1.5 * _canvasState.rowPitch, ex: r.left + 300, ey: r.bottom - 30 }; });
+  const lose = () => page.evaluate(() => window.dispatchEvent(new MouseEvent('mousemove', { clientX: 400, clientY: 300, buttons: 0, bubbles: true })));
+  const out = {};
+  // row drag started, mouseup lost
+  await page.mouse.move(pt.nx, pt.ny); await page.mouse.down(); await page.mouse.move(pt.nx, pt.ny + 30, { steps: 4 });
+  await page.evaluate(() => { window.__drag = !!_canvasState.rowDrag; window.__started = !!_canvasState.rowDrag?.started; });
+  await lose();
+  out.rowDrag = await page.evaluate(() => ({ began: window.__drag && window.__started, left: !!_canvasState.rowDrag, noSelect: document.body.classList.contains('no-select'), order: state.seqs.map(s => s.header).join('') }));
+  await page.mouse.up();
+  // pan, mouseup lost, then a move with no button must not pan
+  await page.mouse.move(pt.ex, pt.ey); await page.mouse.down();
+  await lose();
+  const y0 = await page.evaluate(() => _canvasState.offsetY);
+  await page.evaluate(() => window.dispatchEvent(new MouseEvent('mousemove', { clientX: 400, clientY: 100, buttons: 0, bubbles: true })));
+  out.pan = { moved: (await page.evaluate(() => _canvasState.offsetY)) !== y0 };
+  await page.mouse.up();
+  const ok = out.rowDrag.began && !out.rowDrag.left && !out.rowDrag.noSelect && out.rowDrag.order === 's0s1s2s3s4s5' && !out.pan.moved;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM Canvas bug hunt 2026-10-30: with Name length "No limit" a rename widens the Full/Block name column at once; Canvas
+// kept its old width (the long name cut) until the next render.
+check('Canvas: a rename under Name length "No limit" widens the name column at once', async (page) => {
+  await loadFasta(page, Array.from({ length: 4 }, (_, i) => `>s${i}\n${'ACGTACGTAC'.repeat(3)}\n`).join(''));
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(400);
+  await page.evaluate(() => { const c = el('nameLengthNoLimit'); if (!c.checked) c.click(); });
+  await page.waitForTimeout(400);
+  const r = await page.evaluate(async () => {
+    const before = _canvasState.metrics.nameW;
+    _commitSeqRename(1, 'a_much_longer_sequence_name_x');
+    await new Promise(res => setTimeout(res, 500));
+    const after = _canvasState.metrics.nameW;
+    renderAlignment(); await new Promise(res => setTimeout(res, 500));
+    const want = _canvasState.metrics.nameW;
+    el('nameLengthNoLimit').click();
+    return { before, after, want };
+  });
+  return { pass: r.after === r.want && r.want > r.before, detail: JSON.stringify(r) };
+});
+
+// GLM Canvas bug hunt 2026-10-30: the wheel scrolled the Canvas under an open name editor, which stayed where it was,
+// over another row. The wheel now ends the edit as a click outside does (the name is kept).
+check('Canvas: the wheel ends an open name edit (the box does not stay over another row)', async (page) => {
+  await loadFasta(page, Array.from({ length: 60 }, (_, i) => `>s${i}\n${'ACGTACGTAC'.repeat(3)}\n`).join(''));
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(400);
+  await page.evaluate(() => _startSeqNameEditCanvas(2));
+  await page.keyboard.type('renamed');
+  const r0 = await page.evaluate(() => { const r = _canvasState.canvas.getBoundingClientRect(); return { x: r.left + 400, y: r.top + 200 }; });
+  await page.mouse.move(r0.x, r0.y); await page.mouse.wheel(0, 300); await page.waitForTimeout(600);
+  const r = await page.evaluate(() => ({ open: !!document.querySelector('.canvas-name-edit'), name: state.seqs[2].header, scrolled: _canvasState.offsetY > 0 }));
+  return { pass: !r.open && r.name === 'renamed' && r.scrolled, detail: JSON.stringify(r) };
+});
+
+// GLM Canvas bug hunt 2026-10-30: the amino-acid letter sat on the codon's middle column only, so with that column hidden
+// (a fold, Variable sites only) Canvas drew the coloured codon box with no letter in it.
+check('Canvas codon rows: a codon whose middle column is hidden keeps its amino-acid letter', async (page) => {
+  const cds = 'ATGGCTAAAGGTCTGCAAGAATTCGGTACCTGGAAACCGATGCTTGCAGGTAAAGAACTGTTCCCGGGATCCTAA';
+  await page.setInputFiles('#fileInput', { name: 'cds.fa', mimeType: 'text/plain', buffer: Buffer.from(['a', 'b', 'c'].map(n => `>${n}\n${cds}`).join('\n') + '\n') });
+  await page.waitForTimeout(1200);
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await page.evaluate(() => { const e = document.getElementById('codonAnalysis'); e.checked = true; e.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(900);
+  const out = {};
+  for (const [key, fold] of [['shown', []], ['middleHidden', [[4, 4]]]]) {
+    out[key] = await page.evaluate(async (fold) => {
+      _foldApply(fold);
+      await new Promise(r => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), 700));
+      const c = _canvasState.canvas, m = _canvasState.metrics, dpr = m.dpr || devicePixelRatio;
+      // codon 2 (columns 3-5) of row 0: its box from the slot of column 3 to the slot of column 5
+      const s0 = _canvasColToSlot(3), s1 = _canvasColToSlot(5);
+      const x0 = m.nameW + s0 * m.charW - _canvasState.offsetX, x1 = m.nameW + (s1 + 1) * m.charW - _canvasState.offsetX;
+      const y0 = m.headerH + _canvasState.charH - _canvasState.offsetY;
+      const d = c.getContext('2d').getImageData(Math.round(x0 * dpr), Math.round(y0 * dpr), Math.round((x1 - x0) * dpr), Math.round(_canvasState.aaRowH * dpr)).data;
+      const cols = new Map();
+      for (let i = 0; i < d.length; i += 4) { const k = d[i] + ',' + d[i + 1] + ',' + d[i + 2]; cols.set(k, (cols.get(k) || 0) + 1); }
+      const sorted = [...cols.entries()].sort((a, b) => b[1] - a[1]);
+      // the box colour and white are the two big ones; the letter adds pixels of another colour
+      const letterPx = sorted.slice(2).reduce((a, [, n]) => a + n, 0);
+      return { slots: [s0, s1], letterPx };
+    }, fold);
+  }
+  const ok = out.shown.letterPx > 10 && out.middleHidden.letterPx > 10;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM Canvas bug hunt 2026-10-30: a draw queued (or a wheel easing running, 150 ms) before a re-render ran the OLD
+// renderer's draw, which clamped the shared offsets to the old content size: a wheel then a click on a fold marker
+// (the reveal makes the content wider) jumped the view back.
+check('Canvas: a draw or wheel easing queued before a re-render does not clamp the new view to the old size', async (page) => {
+  await loadFasta(page, Array.from({ length: 6 }, (_, i) => `>s${i}\n${'ACGTACGTAC'.repeat(60)}\n`).join(''));
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(400);
+  const r = await page.evaluate(async () => {
+    _foldApply([[20, 500]]);
+    await new Promise(res => setTimeout(res, 400));
+    const out = {};
+    for (const how of ['none', 'draw', 'wheel']) {
+      _foldApply([[20, 500]]);
+      await new Promise(res => setTimeout(res, 300));
+      if (how === 'draw') _canvasState.scheduleDraw();
+      else if (how === 'wheel') _canvasState.canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, deltaX: 0, bubbles: true, cancelable: true }));
+      _foldApply([]);                                  // re-render, the content is wider now
+      const want = 1000;
+      _canvasState.offsetX = want; _canvasState.scheduleDrawMoved();
+      await new Promise(res => setTimeout(res, 400));
+      out[how] = { want, got: _canvasState.offsetX };
+    }
+    return out;
+  });
+  const bad = Object.entries(r).filter(([, v]) => v.got !== v.want).map(([k]) => k);
+  return { pass: !bad.length, detail: (bad.length ? 'clamped by the old view: ' + bad.join(', ') + ' | ' : '') + JSON.stringify(r) };
+});
+
+// GLM Canvas bug hunt 2026-10-30: the Canvas wheel took deltas as pixels (a Firefox line notch, deltaMode 1 with deltaY 3,
+// moved 3 px) and swallowed Ctrl+wheel, the browser's zoom (Full/Block let it through).
+check('Canvas wheel: line and page deltas scroll a line or a page, Ctrl+wheel is left to the browser zoom', async (page) => {
+  await loadFasta(page, Array.from({ length: 300 }, (_, i) => `>s${i}\n${'ACGTACGTAC'.repeat(30)}\n`).join(''));
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(1000);   // past the render's delayed scroll restore (600 ms), which stops a running easing
+  const r = await page.evaluate(async () => {
+    const c = _canvasState.canvas, out = {};
+    const roll = async (o) => {
+      _canvasState.offsetY = 0; _canvasState.scheduleDrawMoved(); await new Promise(res => setTimeout(res, 100));
+      const passed = c.dispatchEvent(new WheelEvent('wheel', Object.assign({ deltaX: 0, bubbles: true, cancelable: true }, o)));
+      await new Promise(res => setTimeout(res, 400));
+      return { dy: Math.round(_canvasState.offsetY), passed };
+    };
+    out.pixels = await roll({ deltaY: 100, deltaMode: 0 });
+    out.lines = await roll({ deltaY: 3, deltaMode: 1 });
+    out.page = await roll({ deltaY: 1, deltaMode: 2 });
+    out.ctrl = await roll({ deltaY: 100, deltaMode: 0, ctrlKey: true });
+    out.viewH = Math.round(c.height / devicePixelRatio);
+    return out;
+  });
+  const ok = r.pixels.dy === 100 && r.lines.dy >= 40 && r.page.dy >= r.viewH / 2 && r.ctrl.passed && r.ctrl.dy === 0;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+// GLM Canvas bug hunt 2026-10-30: residues selected on the consensus row (Full/Block paint them; copy and clustering use
+// them) were not drawn in Canvas, at the top or at the bottom.
+check('Canvas draws a residue selection on the consensus row (band at the top and at the bottom)', async (page) => {
+  await loadFasta(page, Array.from({ length: 4 }, (_, i) => `>s${i}\n${'ACGTACGTAC'.repeat(3)}\n`).join(''));
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(400);
+  await page.mouse.move(2, 2);
+  const out = {};
+  for (const pos of ['top', 'bottom']) {
+    await page.evaluate((pos) => document.querySelector(`input[name=consensusPosition][value=${pos}]`).click(), pos);
+    await page.waitForTimeout(500);
+    out[pos] = await page.evaluate(async () => {
+      state.selectedNucs.clear(); state.selectedNucs.set(-1, new Set([3, 4, 5]));
+      _canvasState.scheduleDraw(); await new Promise(res => setTimeout(res, 300));
+      const o = _canvasState.overlay, d = o.getContext('2d').getImageData(0, 0, o.width, o.height).data, dpr = devicePixelRatio, b = _canvasState.consBand;
+      let n = 0;
+      for (let y = Math.floor(b.y * dpr); y < Math.floor((b.y + b.h) * dpr) && y < o.height; y++) for (let x = 0; x < o.width; x++) if (d[4 * (y * o.width + x) + 3]) n++;
+      state.selectedNucs.clear(); _canvasState.scheduleDraw();
+      return { position: _canvasState.consensus?.position, bandY: b.y, painted: n };
+    });
+  }
+  const ok = out.top.painted > 0 && out.bottom.painted > 0 && out.top.position !== out.bottom.position;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 // Owner 2026-10-28: what else did Full/Block have that Canvas lacked? Per-span titles and listeners: the titles of search
 // hits and marks on a residue, the length badges' titles, the name cell's full name, dragging the trim borders on the
 // consensus row (and its hint), the soft-trim hint. Canvas shows them now, with the Full/Block text.

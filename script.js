@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v302';
+const BUILD_TAG = 'v303';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -5896,6 +5896,7 @@ function _startSeqNameEditCanvas(index) {
         document.removeEventListener('mousedown', onOutside, true);
         const newName = input.value.trim();
         input.remove();
+        canvas.removeEventListener('wheel', onWheel);
         const row = state.seqs.indexOf(obj);
         if (commit && row >= 0 && _commitSeqRename(row, newName)) _canvasState.scheduleDraw?.();
     };
@@ -5910,6 +5911,9 @@ function _startSeqNameEditCanvas(index) {
     input.addEventListener('blur', () => finish(true));
     const onOutside = (e) => { if (e.target !== input) finish(true); };
     document.addEventListener('mousedown', onOutside, true);
+    // the box is placed once: scrolling the Canvas under it left it over another row
+    const onWheel = () => finish(true);
+    canvas.addEventListener('wheel', onWheel, { passive: true });
 }
 
 // Get the row index from a y coordinate in canvas viewport space.
@@ -6306,11 +6310,13 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const back = document.createElement('canvas');
     const bctx = back.getContext('2d', { alpha: false });
     let drawRaf = 0, overlayRaf = 0;
+    // A frame queued before a re-render ran this (old) renderer: its clampOffsets held the new view to the old size
+    const _isCurrent = () => _canvasState.canvas === canvas;
     function scheduleDraw() {
         if (drawRaf) return;
         drawRaf = requestAnimationFrame(() => {
             drawRaf = 0;
-            draw();
+            if (_isCurrent()) draw();
         });
     }
     // Selection-only change: redraw the overlay layer, leave the cells alone
@@ -6318,7 +6324,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         if (overlayRaf) return;
         overlayRaf = requestAnimationFrame(() => {
             overlayRaf = 0;
-            if (drawRaf) return;            // the pending content draw redraws the overlay too
+            if (drawRaf || !_isCurrent()) return;   // the pending content draw redraws the overlay too
             drawOverlay(_canvasState.offsetX, _canvasState.offsetY, _cssW(), _cssH());
         });
     }
@@ -6337,6 +6343,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     _canvasState.mousemoveHandler = (e) => {
         // Row reorder drag (press on a name, move 4 px): the drop target follows the pointer
         const rd = _canvasState.rowDrag;
+        // the mouseup was lost (focus left the window mid-drag): end the drag here, drop nothing (as the dot-plot pan)
+        if ((rd || dragging) && e.buttons === 0) { _canvasState.mouseupHandler(null); return; }
         if (rd) {
             const dx = e.clientX - rd.startX, dy = e.clientY - rd.startY;
             if (!rd.started) {
@@ -6619,8 +6627,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             octx.strokeStyle = 'rgba(140, 100, 0, 0.9)';
             octx.lineWidth = 1;
             state.selectedNucs.forEach((posSet, rowIdx) => {
-                if (rowIdx < 0 || !posSet || posSet.size === 0) return;
-                const y = HEADER_H +rowIdx * rowPitch - oy;
+                if (!posSet || posSet.size === 0) return;
+                // the consensus row (Full/Block paint its selected cells; copy and clustering use them)
+                if (rowIdx < 0 && (rowIdx !== CONSENSUS_ROW_INDEX || !consInfo)) return;
+                const y = rowIdx < 0 ? (consTop ? TRACK_H + SCALE_H - oy : HEADER_H + nSeqs * rowPitch - oy + CONS_GAP) : HEADER_H + rowIdx * rowPitch - oy;
                 if (y + CHAR_H < 0 || y > h) return;
                 // one tint and one frame per run of shown cells (a box per cell drew borders between them)
                 // a run = consecutive shown slots AND consecutive alignment positions: a hidden column (Variable
@@ -6903,7 +6913,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                         if (xm1 > xm0) { ctx.fillStyle = colr.bg; ctx.fillRect(xm0, boxY, xm1 - xm0, AA_BOX_H); }
                         if (fsStart.size) for (const c of cols) if (fsStart.has(c)) { const sc = posSlot(c); if (sc >= 0) { ctx.fillStyle = aaPal.fs.fg; ctx.fillRect(NAME_W + sc * CHAR_W - ox, boxY, 2 * CSS1, AA_BOX_H); } }   // .aa-fs-at
                         const sm = posSlot(cols[Math.floor(cols.length / 2)]);
-                        if (sm >= 0) { ctx.fillStyle = colr.fg; ctx.fillText(entry.aa, NAME_W + sm * CHAR_W - ox + CHAR_W / 2, boxY + AA_BOX_H / 2); }
+                        ctx.fillStyle = colr.fg; ctx.fillText(entry.aa, sm >= 0 ? NAME_W + sm * CHAR_W - ox + CHAR_W / 2 : (x0 + x1) / 2, boxY + AA_BOX_H / 2);   // middle column hidden: the box's centre
                     }
                     if (fsStart.size) {   // a frameshift starting on a gap: no codon box there, a red "!" on a pale cell (.aa-fs)
                         const covered = new Set();
@@ -7096,7 +7106,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     }
     function _wheelStep(now) {
         const a = _wheelAnim;
-        if (!a) { _canvasState.wheelAnimating = false; return; }
+        if (!a || !_isCurrent()) { if (_isCurrent()) _canvasState.wheelAnimating = false; return; }
         a.raf = 0;
         if (a.lastX !== _canvasState.offsetX || a.lastY !== _canvasState.offsetY) { _wheelAnim = null; _canvasState.wheelAnimating = false; return; }   // moved by other code: give way
         const p = Math.min(1, Math.max(0, now - a.t0) / WHEEL_EASE_MS), e = 1 - Math.pow(1 - p, 3);   // ease-out (a frame's timestamp can precede the wheel event)
@@ -7109,13 +7119,16 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         if (p < 1) a.raf = requestAnimationFrame(_wheelStep); else { _wheelAnim = null; _canvasState.wheelAnimating = false; }
     }
     canvas.addEventListener('wheel', (e) => {
+        if (e.ctrlKey) return;   // the browser's zoom, as in Full/Block
         e.preventDefault();
-        if (_reducedMotion() || (Math.abs(e.deltaY) < 40 && Math.abs(e.deltaX) < 40)) {
+        const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? _cssH() : 1;   // lines (Firefox) or pages
+        const dx = e.deltaX * k, dy = e.deltaY * k;
+        if (_reducedMotion() || (Math.abs(dy) < 40 && Math.abs(dx) < 40)) {
             _wheelAnim = null; _canvasState.wheelAnimating = false;
-            _canvasState.offsetX += e.deltaX;
-            _canvasState.offsetY += e.deltaY;
+            _canvasState.offsetX += dx;
+            _canvasState.offsetY += dy;
             scheduleDraw();
-        } else _wheelTo(e.deltaX, e.deltaY);
+        } else _wheelTo(dx, dy);
     }, { passive: false });
 
     // Touch/drag pan
@@ -7321,7 +7334,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         dragOx = _canvasState.offsetX;
         dragOy = _canvasState.offsetY;
         canvas.style.cursor = 'grabbing';
-        _markDirty();
+        // dirty with no draw scheduled made redrawCells skip (a letter typed after a click here was not drawn)
+        _markDirty(); scheduleDraw();
     });
     // Double-click on a name renames it in place (as in the DOM view)
     canvas.addEventListener('dblclick', (e) => {
@@ -8561,6 +8575,16 @@ function _annotTrackHeightPx(charH) {
     return L ? L.lanes * charH : 0;
 }
 
+// The slots of a feature's columns a..b: first to last shown column (a fold inside stays under the box), null when all
+// are hidden. The cells are drawn by slot; by column the box stood over other residues once columns were hidden.
+function _annotSlotSpan(a, b) {
+    const so = _canvasState.slotOf;
+    if (!so) return [a, b];
+    let c0 = Math.max(0, a), c1 = Math.min(so.length - 1, b);
+    while (c0 <= c1 && so[c0] < 0) c0++;
+    while (c1 >= c0 && so[c1] < 0) c1--;
+    return c0 <= c1 ? [so[c0], so[c1]] : null;
+}
 function _canvasDrawAnnotTrack(ctx, o) {
     const L = state._annotLayout;
     const { ox, oy, w, NAME_W, CHAR_W, CHAR_H, TRACK_H, firstCol, lastCol, stickyNames, fontSizePx } = o;
@@ -8572,8 +8596,11 @@ function _canvasDrawAnnotTrack(ctx, o) {
     ctx.fillRect(0, y0, w, TRACK_H);
     const labelFont = Math.max(8, Math.round(fontSizePx * 0.72)) + 'px Arial, Helvetica, sans-serif';
     const dataLeft = stickyNames ? NAME_W : Math.max(0, NAME_W - ox);
-    for (const d of _annotFeatsInRange(firstCol, lastCol)) {
-        const x0 = NAME_W + d.cs * CHAR_W - ox, x1 = NAME_W + (d.ce + 1) * CHAR_W - ox;
+    // firstCol/lastCol are slots
+    for (const d of L.feats) {
+        const sp = _annotSlotSpan(d.cs, d.ce);
+        if (!sp || sp[1] < firstCol || sp[0] > lastCol) continue;
+        const x0 = NAME_W + sp[0] * CHAR_W - ox, x1 = NAME_W + (sp[1] + 1) * CHAR_W - ox;
         const y = y0 + d.lane * CHAR_H + 1, hh = CHAR_H - 2;
         const ah = Math.min(6, (x1 - x0) / 2);
         ctx.fillStyle = d.color;
@@ -8588,7 +8615,9 @@ function _canvasDrawAnnotTrack(ctx, o) {
         ctx.closePath();
         ctx.fill();
         for (const [a, b] of _annotIntronCols(d)) {    // introns: box cut, a thin line joins the exons (as in the DOM track)
-            const ix0 = NAME_W + a * CHAR_W - ox, ix1 = NAME_W + (b + 1) * CHAR_W - ox;
+            const isp = _annotSlotSpan(a, b);
+            if (!isp) continue;
+            const ix0 = NAME_W + isp[0] * CHAR_W - ox, ix1 = NAME_W + (isp[1] + 1) * CHAR_W - ox;
             ctx.fillStyle = '#fff'; ctx.fillRect(ix0, y, ix1 - ix0, hh);
             ctx.fillStyle = d.color; ctx.fillRect(ix0, y + hh / 2 - 1, ix1 - ix0, 2);
         }
@@ -8632,10 +8661,10 @@ function _canvasHitTestAnnot(clientX, clientY) {
     const x = clientX - rect.left;
     const y = clientY - rect.top + _canvasState.offsetY;
     if (y < 0 || y >= m.trackH || x < m.nameW) return null;
-    const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
+    const slot = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
     const lane = Math.floor(y / m.charH);
-    const d = L.feats.find(q => q.lane === lane && q.cs <= col && q.ce >= col);
-    return d ? { d, col, lane } : null;
+    const d = L.feats.find(q => { if (q.lane !== lane) return false; const sp = _annotSlotSpan(q.cs, q.ce); return !!sp && sp[0] <= slot && sp[1] >= slot; });
+    return d ? { d, col: _canvasSlotToCol(slot), lane } : null;
 }
 
 // Loading, clearing, the Settings panel
@@ -12722,7 +12751,10 @@ function _commitSeqRename(index, newName) {
     _migrateColourMapping(oldName, newName);
     _relabelSeqNameCells(index);
     // "No limit" sizes the name column to the longest name, which may just have changed
-    if (el('nameLengthNoLimit')?.checked) applyNameLengthLive(effectiveNameLength());
+    if (el('nameLengthNoLimit')?.checked) {
+        applyNameLengthLive(effectiveNameLength());
+        if (isCanvasMode()) renderAlignment();   // Canvas sizes its name column when it renders
+    }
     showMessage('Sequence renamed', 1500);
     return true;
 }
