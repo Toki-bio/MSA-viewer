@@ -9210,6 +9210,85 @@ check('Audit v299: live consensus tooltip, subset run keeps the other groups, su
   return { pass: !bad.length, detail: bad.length ? bad.join('; ') + ' | ' + JSON.stringify(out) : JSON.stringify(out) };
 }, { timeoutMs: 120000 });
 
+// TSD finder misses (reported 2026-10-29): planted-TSD alignments, auto mode, default parameters. The 3' copy was looked
+// for only 0-3 residues past one alignment-wide boundary, so a copy whose A-rich tail runs past it lost its TSD; the
+// boundary trim stopped at one chance-conserved flank column; 5'-truncated copies pulled the left edge in. Measured on
+// 18 rsi plates: 67 % of SINEderella-rule TSDs found before, 89 % after. Copies without a TSD must not get more calls.
+check('TSD finder: finds TSDs past a long A-rich tail, A-rich TSDs, 5 copies, truncated copies; no more calls without a TSD', async (page) => {
+  const r = await page.evaluate(() => {
+    let seed = 1;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+    const base = () => 'ACGT'[ri(0, 3)];
+    const randSeq = n => Array.from({ length: n }, base).join('');
+    const mutate = (s, p) => s.split('').map(c => rnd() < p ? 'ACGT'.replace(c, '')[ri(0, 2)] : c).join('');
+    // copy: 5' flank | TSD | SINE body | poly-A tail (gaps after it) | TSD (30 %: 1 mismatch) | 3' flank
+    const build = o => {
+      o = Object.assign({ n: 20, body: 180, div: 0.12, tail: [12, 12], tsd: [8, 16], flank: 50, trunc5: 0, aTsd: 0, noTsd: false }, o);
+      const cons = randSeq(o.body), rows = [];
+      for (let i = 0; i < o.n; i++) {
+        let tsd = randSeq(ri(o.tsd[0], o.tsd[1]));
+        if (rnd() < o.aTsd) tsd = 'AAAA' + tsd.slice(4);
+        let tsd2 = rnd() < 0.3 ? mutate(tsd, 1 / tsd.length) : tsd;
+        if (o.noTsd) tsd2 = randSeq(tsd.length);
+        let body = mutate(cons, o.div), lead = '';
+        if (rnd() < o.trunc5) { const cut = ri(20, 80); lead = '-'.repeat(cut); body = body.slice(cut); }
+        const tl = ri(o.tail[0], o.tail[1]);
+        const tail = 'A'.repeat(tl) + '-'.repeat(o.tail[1] - tl);
+        const left = (randSeq(o.flank) + tsd).padStart(o.flank + o.tsd[1], '-');
+        const right = (tsd2 + randSeq(o.flank)).padEnd(o.flank + o.tsd[1], '-');
+        rows.push({ header: 'copy' + (i + 1), seq: left + lead + body + tail + right, tsd, tsd2, upEnd: left.length - 1, downStart: left.length + lead.length + body.length + tail.length });
+      }
+      return rows;
+    };
+    // right: covers >= 80 % of the planted copy on both sides, at most 4 bases longer
+    const score = rows => {
+      const res = _findTSD(rows, 'auto', { minLen: 4, maxLen: 20, maxDiv: 20, flankSize: 30 });
+      const by = new Map(res.map(x => [x.seqIndex, x]));
+      let right = 0, long = 0;
+      rows.forEach((row, i) => { const x = by.get(i); if (!x) return;
+        if (x.upPositions.length >= 10) long++;
+        const L = row.tsd.length;
+        const cu = x.upPositions.filter(c => c > row.upEnd - L && c <= row.upEnd).length;
+        const cd = x.downPositions.filter(c => c >= row.downStart && c < row.downStart + row.tsd2.length).length;
+        if (cu >= 0.8 * L && cd >= 0.8 * row.tsd2.length && x.upPositions.length <= L + 4) right++; });
+      return { right, long };
+    };
+    const run = o => { let right = 0, long = 0, n = 0;
+      for (let k = 0; k < 20; k++) { seed = 1000 + k * 7919; const rows = build(o); const s = score(rows); right += s.right; long += s.long; n += rows.length; }
+      return { right: Math.round(100 * right / n), long: Math.round(100 * long / n) }; };
+    const out = {
+      baseline: run({}).right,
+      longTail: run({ tail: [8, 30] }).right,
+      aTsd: run({ aTsd: 0.5 }).right,
+      five: run({ n: 5 }).right,
+      trunc: run({ trunc5: 0.3 }).right,
+      noTsdLong: run({ noTsd: true }).long
+    };
+    // one copy (as rsi w43714) carries a 22-bp (AAATA)n tail past the others' ends, then a 16-bp TSD with 1 mismatch
+    seed = 77;
+    const rows = build({ tail: [12, 12] }), w = rows[6];
+    const tsdUp = 'AGAAAAACGCCAGGTA', tsdDn = 'AAAAAAACGCCAGGTA', ext = 'AAATAAAATAAAATAAAATAAA';
+    w.seq = randSeq(50) + tsdUp + w.seq.slice(w.upEnd + 1, w.downStart) + ext + tsdDn + randSeq(30);   // 5' block keeps its 66 columns
+    const aliLen = Math.max(...rows.map(q => q.seq.length));
+    rows.forEach(q => { q.seq = q.seq.padEnd(aliLen, '-'); });
+    const res = _findTSD(rows, 'auto', { minLen: 4, maxLen: 20, maxDiv: 20, flankSize: 30 });
+    const x = res.find(y => y.seqIndex === 6);
+    out.w43714 = x ? x.upTSD + '/' + x.downTSD : 'none';
+    return out;
+  });
+  const bad = [];
+  if (r.baseline < 90) bad.push('baseline ' + r.baseline + '%');
+  if (r.longTail < 88) bad.push('variable tail ' + r.longTail + '%');
+  if (r.aTsd < 80) bad.push('A-rich TSD ' + r.aTsd + '%');
+  if (r.five < 80) bad.push('5 copies ' + r.five + '%');
+  if (r.trunc < 90) bad.push('truncated copies ' + r.trunc + '%');
+  if (r.noTsdLong > 2) bad.push('calls >= 10 bp on copies without a TSD ' + r.noTsdLong + '%');
+  const [wu, wd] = r.w43714.split('/');
+  if (!wd || !wu.endsWith('ACGCCAGGTA') || !wd.endsWith('ACGCCAGGTA') || wu.length < 14) bad.push('copy after a long A-rich tail: ' + r.w43714);
+  return { pass: !bad.length, detail: (bad.length ? bad.join('; ') + ' | ' : '') + JSON.stringify(r) };
+});
+
 // Owner 2026-10-28: what else did Full/Block have that Canvas lacked? Per-span titles and listeners: the titles of search
 // hits and marks on a residue, the length badges' titles, the name cell's full name, dragging the trim borders on the
 // consensus row (and its hint), the soft-trim hint. Canvas shows them now, with the Full/Block text.

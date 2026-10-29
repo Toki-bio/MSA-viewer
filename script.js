@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v300';
+const BUILD_TAG = 'v301';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -33490,9 +33490,9 @@ function _columnConservationScores(seqs, aliLen, minCoverageFrac = 0.35) {
         }
         if (validCount < minCount) continue;
         const topCount = Math.max(...Object.values(counts));
-        const identity = topCount / validCount;
-        const coverage = validCount / Math.max(1, seqs.length);
-        scores[column] = identity * coverage;
+        // identity among the copies present (minCount above): identity x coverage let 30 % 5'-truncated copies
+        // pull the left edge 9 columns into the body
+        scores[column] = topCount / validCount;
     }
     return scores;
 }
@@ -33558,10 +33558,12 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
         // The first/last window that passes can still start in the flank: 3 conserved columns
         // and 5 random ones average above the threshold. Trim each edge inward, within that
         // window, to the first column that is itself conserved, or the edge sits on the TSD
-        // (it did, by 4-5 columns on each side, on a plate with planted TSDs).
+        // (it did, by 4-5 columns on each side, on a plate with planted TSDs). The edge stops at a run of 3
+        // conserved columns: one flank column with 12 of 20 bases alike by chance stopped it in the flank.
         if (leftBoundary >= 0 && rightBoundary >= leftBoundary) {
-            for (let k = 0; k < windowWidth - 1 && leftBoundary < rightBoundary && scores[leftBoundary] < threshold; k++) leftBoundary++;
-            for (let k = 0; k < windowWidth - 1 && rightBoundary > leftBoundary && scores[rightBoundary] < threshold; k++) rightBoundary--;
+            const runIn = (c, d) => scores[c] >= threshold && scores[c + d] >= threshold && scores[c + 2 * d] >= threshold;
+            for (let k = 0; k < windowWidth - 1 && leftBoundary < rightBoundary && !runIn(leftBoundary, 1); k++) leftBoundary++;
+            for (let k = 0; k < windowWidth - 1 && rightBoundary > leftBoundary && !runIn(rightBoundary, -1); k++) rightBoundary--;
         }
         if (leftBoundary >= 0 && rightBoundary >= leftBoundary) {
             return {
@@ -33592,7 +33594,12 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
     };
 }
 
-function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, minTsdLen, maxTsdLen, maxDiv) {
+// boundaryIndex: the first residue of downstreamWindow past the SINE body. wide (auto / reference modes): the 3' copy
+// may also start up to 6 residues before it or 30 past it (a copy's own A-rich tail runs on past the alignment-wide
+// boundary; rsi tails of (AAATA)n go 10-30 bp), but there only as a strict TSD, >= 10 bp with <= 10 % mismatches
+// (SINEderella's rule). Measured on 18 rsi plates: 67 % -> 89 % of such TSDs found, chance calls 3.5 % -> 8 %.
+function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, minTsdLen, maxTsdLen, maxDiv, boundaryIndex = 0, wide = false) {
+    if (wide) return _findBestTsdWide(upstreamWindow, downstreamWindow, boundaryIndex, minTsdLen, maxTsdLen, maxDiv);
     let bestTsd = null;
     const maxUpstreamOffset = 4;
     for (let tsdLen = minTsdLen; tsdLen <= maxTsdLen; tsdLen++) {
@@ -33640,6 +33647,49 @@ function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, m
  * Auto mode anchors on the conserved 5-prime SINE boundary and fuzzily scans a
  * broader 3-prime region, because the 3-prime tail/end is often less crisp.
  */
+function _findBestTsdWide(upstreamWindow, downstreamWindow, iB, minTsdLen, maxTsdLen, maxDiv) {
+    const LOOK = 6, FAR = 30;
+    let bestTsd = null;
+    for (let tsdLen = minTsdLen; tsdLen <= maxTsdLen; tsdLen++) {
+        if (upstreamWindow.bases.length < tsdLen) continue;
+        const closestUpstreamStart = upstreamWindow.bases.length - tsdLen;
+        for (let upstreamOffset = 0; upstreamOffset <= Math.min(4, closestUpstreamStart); upstreamOffset++) {
+            const upstreamStart = closestUpstreamStart - upstreamOffset;
+            const upstreamCandidate = _sliceCollectedWindow(upstreamWindow, upstreamStart, tsdLen);
+            const upstreamSeq = upstreamCandidate.bases.join('');
+            const lastStart = Math.min(iB + FAR, downstreamWindow.bases.length - tsdLen);
+            for (let ds = Math.max(0, iB - LOOK); ds <= lastStart; ds++) {
+                const downstreamCandidate = _sliceCollectedWindow(downstreamWindow, ds, tsdLen);
+                const downstreamSeq = downstreamCandidate.bases.join('');
+                const mismatches = _tsdMismatchCount(upstreamSeq, downstreamSeq);
+                const divergence = mismatches / tsdLen;
+                if (divergence > maxDiv) continue;
+                const far = ds < iB || ds > iB + 3;   // outside the 0-3 residues past the boundary
+                if (far && (tsdLen < 10 || mismatches > Math.floor(tsdLen / 10))) continue;
+                // a 3' copy starting inside the body matches exactly there: else a 6-bp TSD next to a poly-A tail
+                // lost to a 10-bp pair reaching 4 bases into the tail with a mismatch (AAGA+TSD / AAAA+TSD)
+                if (ds < iB && _tsdMismatchCount(upstreamSeq.slice(0, iB - ds), downstreamSeq.slice(0, iB - ds)) > 0) continue;
+                const away = far ? Math.abs(ds - iB) * 0.2 : ds - iB;
+                const score = (1 - divergence) * Math.sqrt(tsdLen) - upstreamOffset * 0.04 - away * 0.1;
+                if (!bestTsd || score > bestTsd.score || (score === bestTsd.score && tsdLen > bestTsd.length)) {
+                    bestTsd = {
+                        score,
+                        length: tsdLen,
+                        divergence,
+                        mismatches,
+                        upSeq: upstreamSeq,
+                        downSeq: downstreamSeq,
+                        upCols: upstreamCandidate.columns,
+                        downCols: downstreamCandidate.columns,
+                        upstreamOffset,
+                        boundaryDistance: ds - iB
+                    };
+                }
+            }
+        }
+    }
+    return bestTsd;
+}
 function _findTSD(seqs, mode, params) {
     const results = [];
     const aliLen = _maxOf(seqs, seqObj => seqObj.seq.length);
@@ -33657,6 +33707,7 @@ function _findTSD(seqs, mode, params) {
         const seq = seqs[seqIndex].seq;
         let upstreamWindow;
         let downstreamWindow;
+        let boundaryIndex = 0;   // first residue of downstreamWindow past the SINE body
 
         if (mode === 'manual') {
             upstreamWindow = _collectUngappedBasesWithColumns(seq, boundaries.upStart, boundaries.upEnd);
@@ -33666,15 +33717,17 @@ function _findTSD(seqs, mode, params) {
             const upstreamStart = Math.max(0, upstreamCollected.bases.length - flankSize);
             upstreamWindow = _sliceCollectedWindow(upstreamCollected, upstreamStart, upstreamCollected.bases.length - upstreamStart);
             const downstreamEndCol = Math.min(aliLen - 1, boundaries.rightBoundary + flankSize + maxTsdLen + 6);
-            downstreamWindow = _collectUngappedBasesWithColumns(seq, boundaries.rightBoundary + 1, downstreamEndCol);
+            downstreamWindow = _collectUngappedBasesWithColumns(seq, Math.max(0, boundaries.rightBoundary - 40), downstreamEndCol);
+            boundaryIndex = downstreamWindow.columns.findIndex(c => c > boundaries.rightBoundary);
+            if (boundaryIndex < 0) boundaryIndex = downstreamWindow.bases.length;
         }
 
-        if (upstreamWindow.bases.length < minTsdLen || downstreamWindow.bases.length < minTsdLen) {
+        if (upstreamWindow.bases.length < minTsdLen || downstreamWindow.bases.length - boundaryIndex < minTsdLen) {
             const side = upstreamWindow.bases.length < minTsdLen ? '5′' : '3′';
             misses.push({ seqIndex, obj: seqs[seqIndex], seqName: seqs[seqIndex].header, reason: `no ${side} flank bases next to the SINE body (copy truncated or flank all gaps)` });
             continue;
         }
-        const bestTsd = _findBestTsdInFlanks(upstreamWindow, downstreamWindow, boundaries.rightBoundary, minTsdLen, maxTsdLen, maxDiv);
+        const bestTsd = _findBestTsdInFlanks(upstreamWindow, downstreamWindow, boundaries.rightBoundary, minTsdLen, maxTsdLen, maxDiv, boundaryIndex, mode !== 'manual');
         if (!bestTsd) {
             misses.push({ seqIndex, obj: seqs[seqIndex], seqName: seqs[seqIndex].header, reason: `no pair of ${minTsdLen}–${maxTsdLen} bp with ≤${Math.round(maxDiv * 100)}% mismatch near the SINE ends` });
             continue;

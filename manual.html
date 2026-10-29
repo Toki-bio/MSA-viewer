@@ -2082,12 +2082,15 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     (Actions → <strong>Repeats</strong>, or right-click → <strong>Find TSD (SINE)</strong>), locates short
     duplications flanking SINE/TE insertion boundaries in aligned sequences. For each sequence it compares a short window
     just upstream of the insertion against a short window just downstream, trying a small
-    range of nearby offsets and lengths, and keeps the best-scoring near-match as the TSD.
+    range of nearby offsets and lengths, and keeps the best-scoring near-match as the TSD. In Auto and Reference
+    modes the 3′ copy is looked for from 6 bases before the body's end to 30 past it, because a copy's own A-rich tail
+    often runs on past the end found for the whole alignment; away from the first 0–3 bases only a strict pair counts
+    (at least 10 bp, at most 10% mismatches). Manual mode searches the ranges given.
   </p>
   <p><strong>SINE boundary detection modes:</strong></p>
   <table>
     <tr><th>Mode</th><th>How it works</th></tr>
-    <tr><td><strong>Auto</strong> (default)</td><td>Scans every alignment column for a run where most sequences agree on the same base ("column-level conservation") - this identifies the SINE body without relying on any one sequence's gap pattern. Each edge is then trimmed to the first column that is itself conserved, so the body does not reach into the flank where the TSD lies. Falls back to <strong>Reference</strong> mode if no clear conserved run is found (e.g. too few non-reference sequences to score conservation against).</td></tr>
+    <tr><td><strong>Auto</strong> (default)</td><td>Scans every alignment column for a run where most sequences agree on the same base ("column-level conservation") - this identifies the SINE body without relying on any one sequence's gap pattern. Each edge is then trimmed inward to the first run of 3 conserved columns, so the body does not reach into the flank where the TSD lies; a column counts the copies present there, so 5′-truncated copies do not pull the edge in. Falls back to <strong>Reference</strong> mode if no clear conserved run is found (e.g. too few non-reference sequences to score conservation against).</td></tr>
     <tr><td><strong>Reference</strong></td><td>Uses row 1 (or consensus) gap pattern to locate SINE borders. Gap-free regions in the reference define the SINE body; flanking gaps define the host sequence.</td></tr>
     <tr><td><strong>Manual</strong></td><td>User specifies the 5′ and 3′ flank column ranges explicitly. <strong>Use selected columns as the SINE body</strong> fills both ranges from Ctrl+Alt-selected columns.</td></tr>
   </table>
