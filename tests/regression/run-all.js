@@ -9289,6 +9289,43 @@ check('TSD finder: finds TSDs past a long A-rich tail, A-rich TSDs, 5 copies, tr
   return { pass: !bad.length, detail: (bad.length ? bad.join('; ') + ' | ' : '') + JSON.stringify(r) };
 });
 
+// Canvas drew a row selection made by Ctrl+A only at its next redraw: Ctrl+A said "All sequences selected." and showed
+// nothing (owner's report 2026-10-29). Undo of a column delete and of a row move are controls (they redraw already). Oracle: the overlay
+// and cells after the key are the same as after a forced redraw.
+check('Canvas: Ctrl+A shows the selection at once (Undo of a column delete or a row move as controls)', async (page) => {
+  await loadFasta(page, Array.from({ length: 6 }, (_, i) => `>s${i}\n${'ACGTACGTAC'.repeat(3)}${'ACGT'[i % 4]}AAA\n`).join(''));
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(500);
+  const cases = [['none', ['Control+a']], ['rows', ['Control+a']], ['cols', ['Control+d', 'Control+z']], ['row2', ['Control+ArrowDown', 'Control+z']]];
+  const out = {};
+  for (const [setup, keys] of cases) {
+    await page.evaluate((setup) => {
+      state.selectedRows.clear(); state.selectedColumns.clear(); state.selectedNucs.clear();
+      if (setup === 'rows') { state.selectedRows.add(1); state.selectedRows.add(3); }
+      if (setup === 'row2') state.selectedRows.add(2);
+      if (setup === 'cols') [3, 4, 5].forEach(c => state.selectedColumns.add(c));
+      renderAlignment();
+    }, setup);
+    await page.waitForTimeout(400);
+    await page.mouse.move(2, 2);   // off the Canvas: a hover draw is not what is measured
+    for (const k of keys) { await page.keyboard.press(k); await page.waitForTimeout(350); }
+    await page.waitForTimeout(300);
+    out[setup + ':' + keys.join('>')] = await page.evaluate(async () => {
+      // the overlay layer holds the selection; the cells layer is not what is measured here
+      const o = _canvasState.overlay, g = o.getContext('2d');
+      const grab = () => g.getImageData(0, 0, o.width, o.height).data;
+      const a = grab();
+      _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res))); await new Promise(res => setTimeout(res, 150));
+      const b = grab();
+      let diff = 0, painted = 0;
+      for (let i = 0; i < a.length; i += 4) { if (a[i] !== b[i] || a[i + 3] !== b[i + 3]) diff++; if (b[i + 3]) painted++; }
+      return { sel: state.selectedRows.size + 'r' + state.selectedColumns.size + 'c', shown: diff === 0 && painted > 0, diff, painted };
+    });
+  }
+  const bad = Object.entries(out).filter(([, v]) => !v.shown || v.sel === '0r0c').map(([k]) => k);
+  return { pass: !bad.length, detail: (bad.length ? 'not shown at once: ' + bad.join(', ') + ' | ' : '') + JSON.stringify(out) };
+});
+
 // Owner 2026-10-28: what else did Full/Block have that Canvas lacked? Per-span titles and listeners: the titles of search
 // hits and marks on a residue, the length badges' titles, the name cell's full name, dragging the trim borders on the
 // consensus row (and its hint), the soft-trim hint. Canvas shows them now, with the Full/Block text.

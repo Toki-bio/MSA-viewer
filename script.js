@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v301';
+const BUILD_TAG = 'v302';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -25695,6 +25695,8 @@ function updateRowSelections() {
     }
     _updateSplitHint();
     scheduleSelectionsPanelRefresh();
+    // Canvas draws selections on its overlay: without this, Ctrl+A said "All sequences selected." and showed nothing
+    if (isCanvasMode()) _canvasState.scheduleOverlay?.();
 }
 // Column highlight: toggle .column-selected on the spans of the columns that changed since
 // the last call, nothing else. Rows drawn later (render, windowed scroll) bake the class in
@@ -25741,6 +25743,7 @@ function _forEachSpanInColumns(cols, callback, skipConsensus = false) {
 }
 function updateColumnSelections() {
     scheduleSelectionsPanelRefresh();
+    if (isCanvasMode()) _canvasState.scheduleOverlay?.();   // Canvas: the overlay holds the column selection too
     const sel = state.selectedColumns;
     const changed = [];
     _appliedColumnSel.forEach(pos => { if (!sel.has(pos)) changed.push(pos); });
