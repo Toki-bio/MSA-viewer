@@ -34110,11 +34110,12 @@ function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, m
                 if (divergence > maxDiv) continue;
                 // scored and reported without the mismatches near its ends (_tsdTrimPair)
                 let t = _tsdTrimPair(upstreamSeq, downstreamSeq);
-                // trimmed one base below the minimum length: the whole pair, its one end mismatch included (a 12-bp TSD
-                // whose last base mismatched was dropped at length 12-20; GLM d305 #6). Pairs trimmed by more, or with
-                // more mismatches, stay out: kept whole they added chance calls on the rsi control (176 -> 179).
+                // trimmed below the minimum length by its mismatched last base alone: the whole pair, that mismatch included (a
+                // 12-bp TSD whose last base mismatched was dropped at length 12-20; GLM d305 #6). Any other trim keeps it out:
+                // kept whole, pairs trimmed by more added chance calls on the rsi control (176 -> 179), and pairs trimmed at
+                // the start (AATAA/AGTAA) turned 5 rsi misses into 5-6 bp A-rich chance calls.
                 if (t.hi - t.lo < minTsdLen) {
-                    if (t.hi - t.lo < minTsdLen - 1 || mismatches > 1) continue;
+                    if (t.lo > 0 || t.hi !== tsdLen - 1 || mismatches > 1) continue;   // only the last base trimmed
                     t = { lo: 0, hi: tsdLen };
                 }
                 const len = t.hi - t.lo, upSeq = upstreamSeq.slice(t.lo, t.hi), downSeq = downstreamSeq.slice(t.lo, t.hi);
@@ -34177,11 +34178,12 @@ function _findBestTsdWide(upstreamWindow, downstreamWindow, iB, minTsdLen, maxTs
                 if (ds < iB && _tsdMismatchCount(upstreamSeq.slice(0, iB - ds), downstreamSeq.slice(0, iB - ds)) > 0) continue;
                 // the pair is scored and reported without the mismatches near its ends (_tsdTrimPair)
                 let t = _tsdTrimPair(upstreamSeq, downstreamSeq);
-                // trimmed one base below the minimum length: the whole pair, its one end mismatch included (a 12-bp TSD
-                // whose last base mismatched was dropped at length 12-20; GLM d305 #6). Pairs trimmed by more, or with
-                // more mismatches, stay out: kept whole they added chance calls on the rsi control (176 -> 179).
+                // trimmed below the minimum length by its mismatched last base alone: the whole pair, that mismatch included (a
+                // 12-bp TSD whose last base mismatched was dropped at length 12-20; GLM d305 #6). Any other trim keeps it out:
+                // kept whole, pairs trimmed by more added chance calls on the rsi control (176 -> 179), and pairs trimmed at
+                // the start (AATAA/AGTAA) turned 5 rsi misses into 5-6 bp A-rich chance calls.
                 if (t.hi - t.lo < minTsdLen) {
-                    if (t.hi - t.lo < minTsdLen - 1 || mismatches > 1) continue;
+                    if (t.lo > 0 || t.hi !== tsdLen - 1 || mismatches > 1) continue;   // only the last base trimmed
                     t = { lo: 0, hi: tsdLen };
                 }
                 const len = t.hi - t.lo, upSeq = upstreamSeq.slice(t.lo, t.hi), downSeq = downstreamSeq.slice(t.lo, t.hi);
