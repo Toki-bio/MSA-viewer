@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v305';
+const BUILD_TAG = 'v306';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -26464,6 +26464,7 @@ function initializeAppUI() {
     //   ?title=<text>                      - optional display title
     //   ?mask=<url>                        - fetch a 2D block-mask JSON and overlay it
     //   ?bed=<url>                         - fetch a BED file and show it as the annotation track
+    //   ?reads=<url>                       - fetch a SAM/BAM mapped to a loaded row and open Reads mode
     //   ?view=full|block|canvas             - open in this view (full/block is remembered as the user's choice)
     const urlParams = new URLSearchParams(window.location.search);
     {
@@ -26484,12 +26485,22 @@ function initializeAppUI() {
     const autoTitle = urlParams.get('title');
     const autoMask  = urlParams.get('mask');
     const autoBed   = urlParams.get('bed');
+    const autoReads = urlParams.get('reads');
     const autoHandoff = urlParams.get('handoff');   // Actions > New Tab (openSelectedInNewTab)
     const autoLink = urlParams.get('link');         // Clone Tab from a linked view: start linked
     // Loaded after the alignment: the mask overlay, then the annotation track
     const _loadUrlExtras = () => {
-        const p = autoMask ? _loadBlockMaskFromUrl(autoMask) : Promise.resolve();
-        return autoBed ? p.then(() => loadAnnotationFromUrl(autoBed)) : p;
+        let p = autoMask ? _loadBlockMaskFromUrl(autoMask) : Promise.resolve();
+        if (autoBed) p = p.then(() => loadAnnotationFromUrl(autoBed));
+        return autoReads ? p.then(() => _loadReadsFromUrl(autoReads)) : p;
+    };
+    // ?reads=: the file goes through the SAM/BAM button's loader, which matches it to the loaded row and opens Reads mode
+    const _loadReadsFromUrl = (u) => {
+        showMessage('Loading reads from URL...', 0);
+        return fetch(u)
+            .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`); return r.blob(); })
+            .then(b => handleBamFile({ target: { files: [new File([b], u.split('?')[0].split('/').pop() || 'reads.sam')], value: '' } }))
+            .catch(err => showMessage(`Failed to load reads from URL: ${err.message}`, 6000));
     };
     const _loadBlockMaskFromUrl = (u) => fetch(u)
         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })

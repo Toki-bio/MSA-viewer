@@ -8,6 +8,19 @@ const CHECKS = [];
 function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
 const { withTimeout, checkTimeoutMs } = require('../lib/check-timeout');   // a time limit per check (2026-10-23)
 
+check('URL ?reads=: a SAM next to ?url= opens Reads mode with every mapped read', async (page) => {
+    const fs = require('fs');
+    const path = require('path');
+    const sam = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'reads', 'gene_reads.sam'), 'utf8');
+    const expected = sam.split('\n').filter(l => l && !l.startsWith('@') && !(Number(l.split('\t')[1]) & 0x904)).length;
+    const origin = new URL(page.url()).origin;
+    await page.goto(`${origin}/index.html?url=tests/fixtures/reads/gene_ref.fa&reads=tests/fixtures/reads/gene_reads.sam`, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => typeof bamState !== 'undefined' && bamState.allReads && bamState.allReads.length > 0, null, { timeout: 15000 });
+    const r = await page.evaluate(() => ({ reads: bamState.allReads.length, readsMode: document.getElementById('modeReads')?.checked }));
+    const pass = r.reads === expected && r.readsMode === true;
+    return { pass, detail: `reads ${r.reads} (SAM has ${expected} mapped primary), Reads mode ${r.readsMode}` };
+});
+
 check('Reads mode: SAM loads 3 mapped reads with correct track packing', async (page) => {
     // 1. Load a 32bp reference sequence
     const refFasta = '>ref\nACGTACGTACGTACGTACGTACGTACGTACGT\n';
