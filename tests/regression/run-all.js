@@ -10368,6 +10368,132 @@ check('TSD finder d305: Manual prefill scans the alignment once, not on every mo
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// GLM db2 #1, #12, #13: Reference row mode with a reference row that has residues in the first and last column, and
+// copies too divergent for a conservation signal: the row was set aside as the body, then taken as the body after all,
+// with a note that the body was "from row 1". A body from column 1 was said to reach "the end of the alignment", and a
+// copy's own all-gap 3' flank was blamed on the body too.
+check('TSD finder db2: a full-width reference row without a conservation signal is not the body; each short flank side gets its own reason', async (page) => {
+  const out = {};
+  const r = rfRng(77);
+  let fa = `>reference\n${r.seq(200)}\n`;
+  for (let i = 0; i < 6; i++) fa += `>copy${i}\n${r.seq(200)}\n`;
+  await loadFasta(page, fa);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  const f = await _tsdAuditFind(page, 'topseq');
+  out.note = f.note;
+  out.label = await page.evaluate(() => _lastTsdResults.boundaries?.label || '');
+  const q = rfRng(78), body = q.seq(80);
+  const seqs = [];
+  for (let i = 0; i < 7; i++) seqs.push({ header: `c${i}`, seq: body + q.seq(40) });
+  seqs.push({ header: 'gapped', seq: body + '-'.repeat(40) });
+  out.reasons = await page.evaluate((seqs) => { const res = _findTSD(seqs, 'auto', { minLen: 4, maxLen: 20, maxDiv: 20, flankSize: 30 });
+    return { left: res.boundaries.leftBoundary, misses: res.misses.map(m => m.seqName + ': ' + m.reason) }; }, seqs);
+  const gapped = out.reasons.misses.find(x => /^gapped/.test(x)) || '', copies = out.reasons.misses.filter(x => /^c\d/.test(x));
+  const ok = !/row 1/.test(out.note) && /no SINE body found/.test(out.note) && /fallback/.test(out.label)
+    && out.reasons.left === 0 && out.reasons.misses.every(x => !/end of the alignment/.test(x))
+    && /5′: the SINE body found reaches the alignment's first column; 3′: copy truncated or flank all gaps/.test(gapped)
+    && copies.length >= 1 && copies.every(x => /no 5′ flank bases .*first column/.test(x));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM db2 #2: "Search N bp on each side" was not held to its field's 5-200: 0 was used as 1, and 1000 as 1000 (the 3'
+// copy was then looked for up to 1000 bp past the body).
+check('TSD finder db2: Search N bp on each side is held to its field 5-200', async (page) => {
+  await loadFasta(page, `>a\n${'ACGT'.repeat(30)}\n>b\n${'ACGT'.repeat(30)}\n`);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  const out = {};
+  for (const v of ['0', '1000', '50']) { await page.fill('#tsdFlankSize', v); out[v] = await page.evaluate(() => _readTsdParams().flankSize); }
+  await page.fill('#tsdFlankSize', '30');
+  const ok = out['0'] === 5 && out['1000'] === 200 && out['50'] === 50;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM db2 #9: a Manual search stopped by an invalid region showed only the message, while Mark, Copy table and the faint
+// preview still worked on the previous run's TSDs.
+check('TSD finder db2: a search stopped by an invalid Manual region forgets the last results (no Mark, Copy or preview)', async (page) => {
+  const out = {};
+  await loadFasta(page, _rfTsdPlate(31, 8, 0, 9));
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await _tsdAuditFind(page, 'auto');
+  const st = () => page.evaluate(() => ({ n: _lastTsdResults.length, tools: !document.getElementById('tsdResultTools').hidden, preview: state.tsdPreview ? state.tsdPreview.size : 0,
+    attention: document.getElementById('tsdMarkBtn').classList.contains('rf-btn-attention'), text: document.getElementById('repeatResults').textContent.slice(0, 60) }));
+  out.found = await st();
+  await page.click('label:has(input[name="tsdMode"][value="manual"])');
+  await page.fill('#tsdUpStart', '5'); await page.fill('#tsdUpEnd', '2');
+  await page.click('#repeatRunBtn'); await page.waitForTimeout(200);
+  out.invalid = await st();
+  const ok = out.found.n >= 7 && out.found.tools && out.found.preview > 0
+    && /^Invalid pre-SINE region/.test(out.invalid.text) && out.invalid.n === 0 && !out.invalid.tools && out.invalid.preview === 0 && !out.invalid.attention;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM db2 #6, #20: the faint TSD preview stayed on the rows when another window (Dot plot, Clustering...) closed the
+// Repeat Finder; and reopening the window on the same TSD table did not show it again (only a new search did).
+check('TSD finder db2: the faint preview goes with the window however it closes, and comes back on reopening unless marked', async (page) => {
+  const out = {};
+  await loadFasta(page, _rfTsdPlate(31, 8, 0, 9));
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await _tsdAuditFind(page, 'auto');
+  const pv = () => page.evaluate(() => ({ rows: state.tsdPreview ? state.tsdPreview.size : 0, attention: document.getElementById('tsdMarkBtn').classList.contains('rf-btn-attention') }));
+  out.found = await pv();
+  await page.evaluate(() => showExclusiveModal('infoModal')); await page.waitForTimeout(150);
+  out.otherWindow = await pv();
+  await page.evaluate(() => { document.getElementById('infoModal').style.display = 'none'; openRepeatFinder(0, 'tsd'); }); await page.waitForTimeout(150);
+  out.reopened = await pv();
+  out.table = await page.evaluate(() => /TSD in/.test(document.querySelector('#repeatResults .rf-big')?.textContent || ''));
+  await page.click('#tsdMarkBtn'); await page.waitForTimeout(150);
+  await page.click('#repeatFinderCloseBtn'); await page.waitForTimeout(150);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd')); await page.waitForTimeout(150);
+  out.reopenedMarked = await pv();
+  const ok = out.found.rows >= 7 && out.found.attention && out.otherWindow.rows === 0 && !out.otherWindow.attention
+    && out.table && out.reopened.rows === out.found.rows && out.reopened.attention && out.reopenedMarked.rows === 0 && !out.reopenedMarked.attention;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM db2 #14, #21: every result row had a "Remove this highlight" x, which did nothing on a row not highlighted; the
+// window reopened on another sequence (Find repeats on another row) kept the first sequence's One sequence table under
+// the new choice in the list.
+check('Repeat Finder db2: the x is shown only on highlighted rows; reopening on another sequence does not keep a One sequence table', async (page) => {
+  const r = rfRng(5), u = r.seq(15), v = r.seq(25);
+  await loadFasta(page, `>t\n${r.seq(50) + u + r.seq(60) + u + r.seq(60) + v + r.seq(50) + v + r.seq(40)}\n>o\n${r.seq(375)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const out = {};
+  const f = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 10, maxDiv: 0 });
+  out.rows = f.rows;
+  const vis = () => page.evaluate(() => [...document.querySelectorAll('#repeatResults tbody tr')].map(tr => getComputedStyle(tr.querySelector('.repeat-remove-btn')).visibility).join(','));
+  out.before = await vis();
+  await page.click('#repeatResults tbody tr:nth-child(1)');
+  out.after = await vis();
+  await page.click('#repeatFinderCloseBtn'); await page.waitForTimeout(150);
+  await page.evaluate(() => openRepeatFinder(1)); await page.waitForTimeout(150);
+  out.other = await page.evaluate(() => ({ table: !!document.querySelector('#repeatResults .rf-summary'), text: document.getElementById('repeatResults').textContent.slice(0, 50),
+    pick: document.getElementById('repeatFinderSeqSelect').selectedOptions[0]?.textContent || '' }));
+  const ok = out.rows === 2 && out.before === 'hidden,hidden' && out.after === 'visible,hidden' && !out.other.table && /o$/.test(out.other.pick);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM db2 #11: colour marks, then lower case, then Ctrl+Z (the case is back), then Remove marks: the colour marks came
+// back on screen while the message said "nothing to change".
+check('TSD marking db2: Remove marks after Ctrl+Z says when it brings the marking before back', async (page) => {
+  const out = {};
+  await loadFasta(page, _rfTsdPlate(31, 8, 0, 9));
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await _tsdAuditFind(page, 'auto');
+  await page.selectOption('#tsdMarkStyle', 'color');
+  await page.click('#tsdMarkBtn'); await page.waitForTimeout(150);
+  out.colour = await page.evaluate(() => state.tsdMarks.size);
+  await page.selectOption('#tsdMarkStyle', 'lowercase');
+  await page.click('#tsdMarkBtn'); await page.waitForTimeout(150);
+  out.lower = await page.evaluate(() => state.tsdMarks.size);
+  await page.evaluate(() => undoDelete(true)); await page.waitForTimeout(200);
+  await _rfMessages(page);
+  await page.click('#tsdUndoMarkBtn'); await page.waitForTimeout(150);
+  out.back = await page.evaluate(() => state.tsdMarks.size);
+  out.msg = await page.evaluate(() => window.__msgs.join(' | '));
+  const ok = out.colour >= 7 && out.lower === 0 && out.back === out.colour && /already undone/.test(out.msg) && !/nothing to change/.test(out.msg) && /before it is shown again/.test(out.msg);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 // Canvas Block prototype 2026-10-30 found it: dragging a Canvas scrollbar marked the view dirty on every step, so each
 // step was a full redraw (p95 75-92 ms) instead of the frame copy the wheel uses (p95 ~4 ms).
 check('Canvas: dragging the vertical and horizontal scrollbars moves the picture by frame copy, not full redraws', async (page) => {

@@ -2656,6 +2656,8 @@ function showExclusiveModal(id) {
         if (!modal) return;
         // the dot plot's marks and click-through backdrop live with its window (GLM audit, v278)
         if (modalId === 'dotPlotModal' && modal.style.display !== 'none' && typeof _dotClearRegionMarks === 'function') _dotClearRegionMarks();
+        // so does the Repeat Finder's faint TSD preview: it stayed on the rows when another window closed it (GLM db2 #6)
+        if (modalId === 'repeatFinderModal' && modal.style.display !== 'none' && typeof _hideTsdPreviewWithWindow === 'function') _hideTsdPreviewWithWindow();
         modal.style.display = 'none';
     });
     const modal = el(id);
@@ -32727,8 +32729,8 @@ function _initDotPlotEvents() {
         // ANCESTOR before the event ever reaches the overlay, and
         // stopPropagation() during capture halts the entire remaining
         // journey (including the target/bubble phases), so the overlay's
-        // Ctrl+wheel zoom handler was being silently killed before it could
-        // ever run.
+        // wheel zoom handler (Ctrl+wheel when this was written; a plain wheel
+        // since 2026-10-28) was being silently killed before it could ever run.
         [dotModal, dotDialog].forEach((el) => {
             if (!el || el._dotWheelBound) return;
             el._dotWheelBound = true;
@@ -32937,7 +32939,9 @@ let _repeatFinderListObjs = [];   // the sequence of each entry in the list, as 
 let _lastRepeatResults = [];
 let _lastRepeatView = null;   // mode, label and length the results were made with
 let _lastTsdResults = [];
-// What #repeatResults shows: a repeat mode's table, 'tsd', or null (a message). Reopening the panel keeps a table.
+// What #repeatResults shows: a repeat mode's table, 'tsd', or null (a message). Reopening the panel keeps the table
+// when it is of the mode the panel opens in (a table left under another mode's controls by a mode switch is not kept;
+// GLM db2 #15) and, for One sequence, of the sequence it opens on.
 let _repeatResultsShown = null;
 const _repeatColorPalette = ["#ff6b6b","#ffa94d","#ffd43b","#69db7c","#4dabf7","#da77f2","#20c997","#ff8787","#74c0fc","#f783ac","#ffe066","#63e6be","#a9e34b","#e599f7","#66d9e8","#fcc419","#94d82d","#ff922b","#be4bdb","#339af0"];
 
@@ -32956,7 +32960,7 @@ function _syncTsdModeSubUI() {
 function _initTsdColumnDefaults() {
     if (!state.seqs?.length) return;
     const aliLen = _maxOf(state.seqs, s => s.seq.length);
-    const flank = parseInt(document.getElementById('tsdFlankSize')?.value, 10) || 30;
+    const flank = _readTsdParams().flankSize;
     const upEnd = document.getElementById('tsdUpEnd');
     const downStart = document.getElementById('tsdDownStart');
     const downEnd = document.getElementById('tsdDownEnd');
@@ -32976,7 +32980,7 @@ function _prefillTsdManualFromAuto() {
     const els = ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id));
     if (els.some(e => !e || e.dataset.userSet === '1')) return false;
     const aliLen = _maxOf(state.seqs, s => s.seq.length);
-    const flankSize = parseInt(document.getElementById('tsdFlankSize')?.value, 10) || 30;
+    const flankSize = _readTsdParams().flankSize;
     const m = _tsdPrefillMemo, key = [state.seqs.length, aliLen, flankSize].join(',');
     if (m && m.seqs === state.seqs && m.key === key) {   // _initTsdColumnDefaults has just reset the fields
         if (m.ok) m.values.forEach((v, i) => { els[i].value = v; });
@@ -33001,7 +33005,7 @@ function _readTsdParams() {
     return {
         minLen, maxLen,
         maxDiv: Math.max(0, lim('tsdMaxDiv', num('tsdMaxDiv', 20))),   // the field's own 0-50 (it was 0-100)
-        flankSize: Math.max(1, num('tsdFlankSize', 30)),
+        flankSize: lim('tsdFlankSize', num('tsdFlankSize', 30)),   // the field's own 5-200: 0 was used as 1, 1000 as 1000 (GLM db2 #2)
         upStart: parseInt(document.getElementById('tsdUpStart')?.value, 10) || 1,
         upEnd: Math.max(0, num('tsdUpEnd', 30)),
         downStart: parseInt(document.getElementById('tsdDownStart')?.value, 10) || 1,
@@ -33110,7 +33114,9 @@ function _fillRepeatFinderSeqSelect(seqIndex) {
     // whatever row then had that number (or none, reporting "No repeats" for a row that was gone)
     sel.onchange = () => { _repeatFinderSeqIndex = parseInt(sel.value); _repeatFinderSeqObj = _repeatFinderListObjs[_repeatFinderSeqIndex] || null; };
 }
-// Row of the "One sequence" choice now (-1 if it was deleted); the list is rebuilt when rows changed
+// Row of the "One sequence" choice now; the list is rebuilt when rows changed. -1 if it was deleted and no row has its
+// name: _seqObjResolver falls back to a row with the same name (as after an Undo that replaced the row objects), so with
+// two rows of one name, deleting the chosen one moves the choice to the other (GLM db2 #4)
 function _repeatFinderCurrentRow() {
     const obj = _repeatFinderSeqObj;
     let row = obj ? _seqObjResolver()(obj) : (_repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0);
@@ -33133,6 +33139,7 @@ function _resetRepeatFinderForNewFile() {
     _repeatUnitWord();
     _lastTsdResults = [];
     _repeatResultsShown = null;
+    _tsdPreviewOnReopen = false;
     _tsdPrefillMemo = null;
     // the TSD columns typed or filled for the previous file are not this file's: back to the defaults
     ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].forEach(id => { const e = document.getElementById(id); if (e) delete e.dataset.userSet; });
@@ -33147,6 +33154,8 @@ function _resetRepeatFinderForNewFile() {
 
 function openRepeatFinder(seqIndex, preferredMode = null) {
     if (seqIndex === undefined || seqIndex === null || seqIndex < 0) seqIndex = 0;
+    const reshowPreview = _tsdPreviewOnReopen;
+    _tsdPreviewOnReopen = false;
     _repeatFinderSeqIndex = seqIndex;
     if (preferredMode) {
         const modeRadio = document.querySelector(`input[name="repeatMode"][value="${preferredMode}"]`);
@@ -33165,11 +33174,15 @@ function openRepeatFinder(seqIndex, preferredMode = null) {
     // Reopening the window kept nothing: the table of the last search (and the rows clicked in it) had to be
     // searched again. The table of this mode stays; a repeat table is redrawn so its rows show the highlights now.
     const resultsEl = document.getElementById('repeatResults');
-    if (_repeatResultsShown === mode && resultsEl.querySelector('.rf-summary')) {
+    // ... unless it is a One-sequence table and the window opens on another sequence: the list showed the new pick
+    // under the old sequence's table (GLM db2 #21)
+    const otherSeq = mode !== 'tsd' && _lastRepeatView?.obj && _seqObjResolver()(_lastRepeatView.obj) !== seqIndex;
+    if (_repeatResultsShown === mode && resultsEl.querySelector('.rf-summary') && !otherSeq) {
         if (mode !== 'tsd' && _lastRepeatResults.length && _lastRepeatView?.mode === mode) {
             const v = _lastRepeatView;
             _renderRepeatResultsHTML(resultsEl, _lastRepeatResults, v.mode, v.name || '', v.totalLen, v);
         }
+        if (mode === 'tsd' && reshowPreview) _setTsdPreview(_lastTsdResults);
         return;
     }
     _repeatResultsShown = null;
@@ -33220,6 +33233,14 @@ function _setTsdPreview(results) {
     state.tsdPreview = marks && marks.size ? marks : null;
     document.getElementById('tsdMarkBtn')?.classList.toggle('rf-btn-attention', !!state.tsdPreview);
     syncResidueOverlays();
+}
+// Closing the window hides the faint preview (it belongs to the open window); reopening it on the same TSD table showed
+// the table without it, so the TSDs found could only be seen again by searching again (GLM db2 #20). It comes back
+// unless the TSDs were marked meanwhile (the marks replace the preview).
+let _tsdPreviewOnReopen = false;
+function _hideTsdPreviewWithWindow() {
+    _tsdPreviewOnReopen = !!state.tsdPreview;
+    _clearTsdPreview();
 }
 function _clearTsdPreview() {
     if (!state.tsdPreview && !document.getElementById('tsdMarkBtn')?.classList.contains('rf-btn-attention')) return;
@@ -33345,7 +33366,12 @@ function undoTsdMarking() {
     state.tsdMarkColor = backup.previousColor || '#ffd54f';
     state.tsdMarkUndo = backup.prior || null;
     renderAlignment({ deferConservation: true });
-    showMessage(caseAlreadyBack ? 'The lower-case TSD marking was already undone (main Undo); nothing to change.' : 'TSD marking undone.', caseAlreadyBack ? 2800 : 1600);
+    // the marks of the marking before come back even when the case was already back: "nothing to change" was said while
+    // they reappeared (GLM db2 #11)
+    const restored = caseAlreadyBack && (state.tsdMarks?.size || 0) > 0;
+    showMessage(!caseAlreadyBack ? 'TSD marking undone.'
+        : restored ? 'The lower-case TSD marking was already undone (main Undo or an edit); the marking before it is shown again.'
+        : 'The lower-case TSD marking was already undone (main Undo or an edit); nothing to change.', caseAlreadyBack ? 2800 : 1600);
 }
 
 const _RF_COMP = { A: 'T', C: 'G', G: 'C', T: 'A', U: 'A', N: 'N', R: 'Y', Y: 'R', S: 'S', W: 'W',
@@ -34003,10 +34029,11 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
     // flanks and its first-to-last residue is no SINE body ("TSD in 3 of 20" with nothing said): the body then
     // comes from column conservation, as in Auto, and the label says so.
     let noRefNote = '';
+    let fullWidth = false;
     if (mode === 'topseq') {
         // a reference row with residues in the first and the last column (a full reference locus, flanks included)
-        // made the whole alignment the body, and no copy had a flank: the body then comes from conservation too
-        let fullWidth = false;
+        // made the whole alignment the body, and no copy had a flank: the body then comes from conservation too, and
+        // without a conservation signal no body is found (the row is not taken as the body after all)
         if (ref.named) {
             const refBoundary = _boundaryFromReferenceSeq(ref.seq, aliLen, flankSize, `reference: ${ref.label}`);
             fullWidth = !!refBoundary && refBoundary.leftBoundary <= 0 && refBoundary.rightBoundary >= aliLen - 1;
@@ -34067,7 +34094,9 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
             };
         }
 
-        const refBoundary = _boundaryFromReferenceSeq(ref.seq, aliLen, flankSize, `${noRefNote}reference: ${ref.named ? '' : 'row 1, '}${ref.label} (conservation found no signal)`);
+        // not the full-width reference row set aside above: it came back here as the body, with a note that it was
+        // "row 1" (GLM db2 #1, #12)
+        const refBoundary = fullWidth ? null : _boundaryFromReferenceSeq(ref.seq, aliLen, flankSize, `${noRefNote}reference: ${ref.named ? '' : 'row 1, '}${ref.label} (conservation found no signal)`);
         if (refBoundary) return Object.assign(refBoundary, { note: noRefNote && `${noRefNote}column conservation found no SINE body either, so the body is from row 1 (${ref.label})` });
     }
 
@@ -34263,8 +34292,14 @@ function _findTSD(seqs, mode, params) {
         if (upShort || downShort) {
             // both sides named when both are short (only the 5' side was); a body reaching the alignment's end is said
             // to be the cause (it was blamed on the copy)
+            // each side its own cause: a body from column 1 was said to reach "the end", and a copy's own empty 3' flank
+            // was blamed on the body too (GLM db2 #13)
             const side = upShort && downShort ? '5′ and 3′' : upShort ? '5′' : '3′';
-            const why = (upShort && noUpCols) || (downShort && noDownCols) ? 'the SINE body found reaches the end of the alignment' : 'copy truncated or flank all gaps';
+            const upWhy = noUpCols ? 'the SINE body found reaches the alignment\'s first column' : 'copy truncated or flank all gaps';
+            const downWhy = noDownCols ? 'the SINE body found reaches the alignment\'s last column' : 'copy truncated or flank all gaps';
+            const why = !(upShort && downShort) ? (upShort ? upWhy : downWhy)
+                : noUpCols && noDownCols ? 'the SINE body found reaches the end of the alignment on both sides'
+                : upWhy === downWhy ? upWhy : `5′: ${upWhy}; 3′: ${downWhy}`;
             misses.push({ seqIndex, obj: seqs[seqIndex], seqName: seqs[seqIndex].header, reason: `no ${side} flank bases next to the SINE body (${why})` });
             continue;
         }
@@ -34436,7 +34471,8 @@ function runRepeatAnalysis() {
             }
             _lastRepeatResults = allResults;
             const name = targets.length === 1 ? displayName : `${targets.length} sequences`;
-            _lastRepeatView = { mode, name, totalLen, unit, note: notes.join('; ') };
+            // obj: the sequence a One-sequence table is about, so reopening on another sequence does not keep it
+            _lastRepeatView = { mode, name, totalLen, unit, note: notes.join('; '), obj: scope === 'single' && targets.length === 1 ? state.seqs[targets[0].index] : null };
             _renderRepeatResultsHTML(resultsEl, allResults, mode, name, totalLen, _lastRepeatView);
         } catch (e) {
             resultsEl.textContent = `Error: ${e.message}`;
@@ -34450,22 +34486,31 @@ function runTsdAnalysis() {
     const tsdMode = document.querySelector('input[name="tsdMode"]:checked')?.value || 'auto';
     const params = _readTsdParams();
     const aliLen = _maxOf(state.seqs, s => s.seq.length);
+    // a search that stops with a message forgets the previous results: Mark, Copy table and the faint preview still
+    // worked on the last run's TSDs under "Invalid pre-SINE region" (GLM db2 #9)
+    const fail = (msg) => {
+        _lastTsdResults = [];
+        _repeatResultsShown = null;
+        _syncTsdResultTools(true);
+        _clearTsdPreview();
+        resultsEl.textContent = msg;
+    };
 
     if (tsdMode === 'manual') {
         if (params.upStart < 1 || params.upEnd < params.upStart) {
-            resultsEl.textContent = 'Invalid pre-SINE region: check start/end columns.';
+            fail('Invalid pre-SINE region: check start/end columns.');
             return;
         }
         if (params.downStart < 1 || params.downEnd < params.downStart) {
-            resultsEl.textContent = 'Invalid post-SINE region: check start/end columns.';
+            fail('Invalid post-SINE region: check start/end columns.');
             return;
         }
         if (params.upEnd >= params.downStart) {
-            resultsEl.textContent = 'Pre-SINE and post-SINE regions must not overlap (leave room for the SINE body between them).';
+            fail('Pre-SINE and post-SINE regions must not overlap (leave room for the SINE body between them).');
             return;
         }
         if (params.downEnd > aliLen) {
-            resultsEl.textContent = `Post-SINE end column exceeds alignment length (${aliLen}).`;
+            fail(`Post-SINE end column exceeds alignment length (${aliLen}).`);
             return;
         }
     }
@@ -34478,7 +34523,7 @@ function runTsdAnalysis() {
             _renderTsdResultsHTML(resultsEl, results, tsdMode, params);
             _setTsdPreview(results);
         } catch (e) {
-            resultsEl.textContent = `Error: ${e.message}`;
+            fail(`Error: ${e.message}`);
         }
     }, 30);
 }
@@ -34820,7 +34865,7 @@ function _initRepeatFinderEvents() {
     if (closeBtn) closeBtn.addEventListener('click', () => {
         // the repeat highlights stay (they are listed in the Selections panel, and Clear highlights removes them):
         // closing the window to look at them took them away. The faint TSD preview belongs to the open window.
-        _clearTsdPreview();
+        _hideTsdPreviewWithWindow();
         const modal = document.getElementById('repeatFinderModal');
         if (modal) modal.style.display = 'none';
     });
