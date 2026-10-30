@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v306';
+const BUILD_TAG = 'v307';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -29796,7 +29796,7 @@ function makeBarInputGuard(bar) {
         syncing = true;
         if (isCanvasMode()) {
             _canvasState.offsetX = bar.scrollLeft;
-            _canvasState.scheduleDraw?.();
+            _canvasState.scheduleDrawMoved?.();   // only the view moved: frame copy, not a full redraw
         } else {
             alignment.scrollLeft = bar.scrollLeft;
             // The bar reached a position the alignment cannot: its width is stale
@@ -29860,7 +29860,7 @@ function makeBarInputGuard(bar) {
         const newScroll = bar.scrollLeft;   // clamped by the browser
         if (isCanvasMode()) {
             _canvasState.offsetX = newScroll;
-            _canvasState.scheduleDraw?.();
+            _canvasState.scheduleDrawMoved?.();   // only the view moved: frame copy, not a full redraw
         } else {
             alignment.scrollLeft = newScroll;
         }
@@ -29972,7 +29972,7 @@ function makeBarInputGuard(bar) {
         syncing = true;
         if (isCanvasMode()) {
             _canvasState.offsetY = bar.scrollTop;
-            _canvasState.scheduleDraw?.();
+            _canvasState.scheduleDrawMoved?.();   // only the view moved: frame copy, not a full redraw
         } else {
             alignment.scrollTop = bar.scrollTop;
         }
@@ -30028,7 +30028,7 @@ function makeBarInputGuard(bar) {
         const newScroll = bar.scrollTop;   // clamped by the browser
         if (isCanvasMode()) {
             _canvasState.offsetY = newScroll;
-            _canvasState.scheduleDraw?.();
+            _canvasState.scheduleDrawMoved?.();   // only the view moved: frame copy, not a full redraw
         } else {
             alignment.scrollTop = newScroll;
         }
@@ -33035,8 +33035,23 @@ function _syncRepeatFinderModeUI() {
     if (tsdPanel) tsdPanel.style.display = isTsd ? '' : 'none';
     if (clearBtn) clearBtn.style.display = isTsd ? 'none' : '';
     if (scopeRow) scopeRow.style.display = isTsd ? 'none' : '';
+    // Min length: the whole array in Tandem (owner 2026-10-30), one copy in Direct/Inverted
+    const minLabel = document.getElementById('repeatMinLenLabel');
+    const minText = document.getElementById('repeatMinLenText');
+    if (minText) minText.textContent = mode === 'tandem' ? 'Min array length' : 'Min length';
+    // Tandem starts at 20 (at 10, random sequence gives about one chance array per kb), Direct/Inverted at 10;
+    // a value the user typed is kept across mode changes
+    const minInp = document.getElementById('repeatMinLen');
+    if (minInp && !minInp.dataset.userSet) minInp.value = mode === 'tandem' ? '20' : '10';
+    if (minLabel) minLabel.title = mode === 'tandem'
+        ? 'Shortest tandem array reported: all copies together, any unit length'
+        : 'Shortest repeat reported: the length of one copy';
+    const divLabel = document.getElementById('repeatMaxDiv')?.closest('label');
+    if (divLabel) divLabel.title = mode === 'tandem'
+        ? 'Maximum mismatch against the consensus unit, per base of the array (0 = identical copies)'
+        : 'Maximum mismatch between repeat copies (0 = identical)';
     _syncTsdResultTools(isTsd);
-    const scope =document.querySelector('input[name="repeatScope"]:checked')?.value || 'single';
+    const scope = document.querySelector('input[name="repeatScope"]:checked')?.value || 'single';
     const seqSel = document.getElementById('repeatFinderSeqSelect');
     if (seqSel) seqSel.style.display = scope === 'single' ? '' : 'none';
     if (isTsd) _initTsdColumnDefaults();
@@ -33371,12 +33386,10 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
     const seqU = protein ? seq.toUpperCase() : seq.toUpperCase().replace(/U/g, 'T');
     const n = seqU.length;
     const none = () => { const r = []; r.total = 0; return r; };
+    // Tandem: minLen is the length of the whole array (one array, not two copies)
+    if (type === 'tandem') return _findTandemRepeats(seqU, minLen, maxDivPct, { protein, cap });
     if (n < minLen * 2) return none();
 
-    // For tandem: look for repeated units adjacent to each other
-    if (type === 'tandem') {
-        return _findTandemRepeats(seqU, minLen, maxDivPct);
-    }
     // reverse complement has no meaning for amino acids
     if (type === 'inverted' && protein) return none();
 
@@ -33575,76 +33588,171 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
 }
 
 /**
- * Find tandem repeats using simplified TRF-like logic.
+ * Tandem arrays (2026-10-30, owner's decision: "Min length" is the length of the whole array, all copies together;
+ * units are tried from 1 upward, so mononucleotide runs, microsatellites and minisatellites are all found).
+ *
+ * Positions are indices into the ungapped, upper-cased sequence. A result is {start, end (exclusive), unitLen,
+ * copies (length / unitLen, one decimal: a partial last unit counts, as in TRF), length, unit (the consensus unit,
+ * read from the array's first base), divergence (string, 1 decimal: mismatches against the consensus unit, per
+ * base of the array), mismatches}.
+ *
+ * - Each unit length p (1 .. TANDEM_MAX_UNIT, at most half the sequence) is scanned once for stretches where a base
+ *   equals the base p further on (+1 match, a mismatch penalised; X-drop). N and other ambiguity codes never match.
+ * - Each stretch is refined against its consensus unit (majority base per unit position, recomputed until stable):
+ *   the array is the best-scoring segment with +1 per base equal to the consensus and -(1-d)/d per other base, so it
+ *   starts and ends on a matching base and its mismatches stay below the divergence limit d. Parts of the stretch
+ *   left outside are searched again on their own (two neighbouring arrays of one unit length stay two arrays).
+ * - One row per array: an array whose unit length is a multiple of an array already found (smaller units first)
+ *   and which lies at least half inside it is the same array (CACA... is CA, not CACA); the part outside, if any,
+ *   is searched again. A short array lying wholly inside a longer array of a longer unit is part of that unit and is
+ *   not listed.
+ * - Substitutions only: an insertion or deletion inside an array ends it there.
+ * - At most `cap` results, longest first; results.total is the number found. The scan costs about
+ *   length x unit lengths; past TANDEM_WORK_LIMIT the longest unit tried is lowered and results.maxUnit says so.
  */
-function _findTandemRepeats(seq, minUnitLen, maxDivPct) {
-    const results = [];
+const TANDEM_MAX_UNIT = 500;
+const TANDEM_WORK_LIMIT = 150000000;
+function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
+    const protein = !!opts.protein;
+    const cap = opts.cap || 100;
     const n = seq.length;
-    const maxDiv = maxDivPct / 100;
-    const maxUnitLen = Math.min(Math.floor(n / 2), 200);
-    // copies of the unit at `start` that follow it within the limit, and their mismatches
-    const scan = (start, unitLen) => {
-        const allowed = Math.floor(unitLen * maxDiv + 1e-9);
-        let copies = 1, mism = 0, pos = start + unitLen;
-        while (pos + unitLen <= n) {
-            let mm = 0;
-            for (let k = 0; k < unitLen && mm <= allowed; k++) {
-                if (seq[start + k] !== seq[pos + k]) mm++;
-            }
-            if (mm > allowed) break;
-            copies++;
-            mism += mm;
-            pos += unitLen;
-        }
-        return { copies, mism };
-    };
-
-    const overlapsKept = (s, unitLen, totalLen) => {
-        const e = s + totalLen;
-        return results.some(r => {
-            const ov = Math.min(e, r.end) - Math.max(s, r.start);
-            if (ov <= 0) return false;
-            const sameArray = r.unitLen === unitLen || unitLen % r.unitLen === 0
-                || Math.abs(r.unitLen - unitLen) < 3;
-            return sameArray && ov >= 0.5 * totalLen;
-        });
-    };
-
-    for (let unitLen = minUnitLen; unitLen <= maxUnitLen; unitLen++) {
-        const allowed = Math.floor(unitLen * maxDiv + 1e-9);
-        for (let start = 0; start <= n - unitLen * 2; start++) {
-            // quick reject: the next unit already differs too much
-            let mm0 = 0;
-            for (let k = 0; k < unitLen && mm0 <= allowed; k++) if (seq.charCodeAt(start + k) !== seq.charCodeAt(start + unitLen + k)) mm0++;
-            if (mm0 > allowed) continue;
-            let found = scan(start, unitLen);
-            if (found.copies < 2) continue;
-            if (overlapsKept(start, unitLen, found.copies * unitLen)) continue;
-            // The first unit met may start inside the array (a base early, its shifted unit then carrying a
-            // mismatch in every copy): of the phases start .. start + unitLen - 1 keep the one with the most copies,
-            // then the fewest mismatches, then the earliest, so the array starts on the first base of its first
-            // full unit.
-            let s0 = start;
-            for (let s2 = start + 1; s2 < start + unitLen && s2 <= n - unitLen * 2; s2++) {
-                const f = scan(s2, unitLen);
-                if (f.copies > found.copies || (f.copies === found.copies && f.mism < found.mism)) { found = f; s0 = s2; }
-            }
-            if (found.copies < 2) continue;
-            const totalLen = found.copies * unitLen;
-            if (s0 !== start && overlapsKept(s0, unitLen, totalLen)) continue;
-            const avgDiv = (found.mism / ((found.copies - 1) * unitLen) * 100).toFixed(1);
-            results.push({
-                start: s0, end: s0 + totalLen,
-                unitLen, copies: found.copies,
-                unit: seq.substring(s0, s0 + unitLen), divergence: avgDiv,
-                region: seq.substring(s0, s0 + totalLen)
-            });
-        }
-        if (results.length > 100) break;
+    const d = Math.max(0, maxDivPct) / 100;
+    const minL = Math.max(2, minLen | 0);
+    // residue codes 0..K-1; -1 never matches (N and other ambiguity codes; X, B, Z, J and stops in protein)
+    const K = protein ? 26 : 4;
+    const code = new Int8Array(n);
+    const NUC = { A: 0, C: 1, G: 2, T: 3 };
+    for (let i = 0; i < n; i++) {
+        const c = seq[i];
+        if (protein) code[i] = (c >= 'A' && c <= 'Z' && c !== 'X' && c !== 'B' && c !== 'Z' && c !== 'J') ? c.charCodeAt(0) - 65 : -1;
+        else code[i] = c in NUC ? NUC[c] : -1;
     }
-    results.sort((a, b) => b.copies * b.unitLen - a.copies * a.unitLen);
-    const out = results.slice(0, 50);
-    out.total = results.length;
+    const letter = (c) => c < 0 ? 'N' : (protein ? String.fromCharCode(c + 65) : 'ACGT'[c]);
+    const results = [];
+    results.total = 0;
+    if (n < minL) return results;
+
+    // consensus scoring: a segment with a positive score has mismatches < d * length
+    const pen = d > 0 ? (1 - d) / d : n + 1;
+    // neighbour scan: one substitution shows twice (against the copy before and the copy after)
+    const penRaw = d > 0 ? Math.max(1, (1 - 2 * d) / (2 * d)) : n + 1;
+    const xdrop = d > 0 ? 3 * penRaw + 5 : 0.5;
+    const fullMax = Math.min(TANDEM_MAX_UNIT, Math.floor(n / 2));
+    const maxUnit = Math.min(fullMax, Math.max(1, Math.floor(TANDEM_WORK_LIMIT / Math.max(1, n))));
+
+    const kept = [];                                  // accepted arrays, smaller units first
+    const owner = new Int32Array(n).fill(-1);         // the first (smallest-unit) array covering each base
+
+    // the accepted array, of a unit dividing p, that covers at least half of [x, y)
+    const explainedBy = (x, y, p) => {
+        const ov = new Map();
+        for (let i = x; i < y; i++) {
+            const o = owner[i];
+            if (o >= 0 && p % kept[o].unitLen === 0) ov.set(o, (ov.get(o) || 0) + 1);
+        }
+        let best = -1, bestOv = 0;
+        for (const [o, c] of ov) if (c > bestOv) { best = o; bestOv = c; }
+        return bestOv * 2 >= (y - x) ? kept[best] : null;
+    };
+
+    // majority residue per unit position over [s, e), positions counted from a; a tie goes to the first copy's residue
+    const counts = new Int32Array(TANDEM_MAX_UNIT * 26);
+    const consensus = (s, e, a, p) => {
+        counts.fill(0, 0, p * K);
+        const cons = new Int8Array(p).fill(-1);
+        for (let i = s; i < e; i++) {
+            const c = code[i];
+            if (c < 0) continue;
+            const ph = (i - a) % p;
+            const v = ++counts[ph * K + c];
+            if (cons[ph] < 0 || v > counts[ph * K + cons[ph]]) cons[ph] = c;
+        }
+        return cons;
+    };
+    // best-scoring segment of [a, b) against the consensus; null if none scores above 0
+    const bestSegment = (a, b, p, cons) => {
+        let cur = 0, st = a, best = 0, bs = -1, be = -1;
+        for (let i = a; i < b; i++) {
+            const v = code[i] >= 0 && code[i] === cons[(i - a) % p] ? 1 : -pen;
+            if (cur <= 0) { if (v < 0) continue; cur = 0; st = i; }
+            cur += v;
+            if (cur > best) { best = cur; bs = st; be = i + 1; }
+        }
+        return bs < 0 ? null : [bs, be];
+    };
+
+    for (let p = 1; p <= maxUnit; p++) {
+        const need = Math.max(minL, 2 * p);
+        const work = [];
+        // stretches where base i equals base i + p; [a, e] compared with [a + p, e + p], so the array is [a, e + p + 1)
+        const lim = n - p;
+        let i = 0;
+        while (i < lim) {
+            if (!(code[i] >= 0 && code[i] === code[i + p])) { i++; continue; }
+            let cur = 0, best = 0, bestEnd = i, j = i;
+            for (; j < lim; j++) {
+                cur += (code[j] >= 0 && code[j] === code[j + p]) ? 1 : -penRaw;
+                if (cur > best) { best = cur; bestEnd = j; }
+                else if (cur <= 0 || cur < best - xdrop) break;
+            }
+            if (bestEnd - i + 1 >= p && bestEnd + p + 1 - i >= need) work.push([i, bestEnd + p + 1]);
+            i = bestEnd + 1;
+        }
+        while (work.length) {
+            const [a, b] = work.pop();
+            if (b - a < need) continue;
+            // already found with a smaller unit: search only what lies outside that array
+            let K0 = explainedBy(a, b, p);
+            if (K0) {
+                work.push([a, Math.min(b, K0.start)], [Math.max(a, K0.end), b]);
+                continue;
+            }
+            let s = a, e = b, cons = null;
+            for (let it = 0; it < 4; it++) {
+                cons = consensus(s, e, a, p);
+                const seg = bestSegment(a, b, p, cons);
+                if (!seg) { s = e = -1; break; }
+                if (seg[0] === s && seg[1] === e) break;
+                s = seg[0]; e = seg[1];
+            }
+            if (s < 0) continue;
+            const L = e - s;
+            if (L < need) {
+                work.push([a, s], [e, b]);
+                continue;
+            }
+            K0 = explainedBy(s, e, p);
+            if (K0) {
+                work.push([a, Math.min(b, K0.start)], [Math.max(a, K0.end), b]);
+                continue;
+            }
+            let mism = 0;
+            for (let k = s; k < e; k++) if (!(code[k] >= 0 && code[k] === cons[(k - a) % p])) mism++;
+            let unit = '';
+            for (let k = 0; k < p; k++) unit += letter(cons[(s - a + k) % p]);
+            const idx = kept.length;
+            kept.push({ start: s, end: e, unitLen: p, copies: Math.round(L / p * 10) / 10, length: L, unit,
+                divergence: (mism / L * 100).toFixed(1), mismatches: mism });
+            for (let k = s; k < e; k++) if (owner[k] < 0) owner[k] = idx;
+            work.push([a, s], [e, b]);
+        }
+    }
+
+    // a short array wholly inside a longer array of a longer unit is part of that unit
+    const byStart = kept.slice().sort((x, y) => (x.start - y.start) || (y.length - x.length));
+    const active = [];
+    const listed = [];
+    for (const r of byStart) {
+        for (let k = active.length - 1; k >= 0; k--) if (active[k].end <= r.start) active.splice(k, 1);
+        if (active.some(f => f.end >= r.end && f.unitLen > r.unitLen && f.length > r.length)) continue;
+        listed.push(r);
+        active.push(r);
+    }
+    listed.sort((x, y) => (y.length - x.length) || (x.unitLen - y.unitLen) || (x.start - y.start));
+    const out = listed.slice(0, cap);
+    out.total = listed.length;
+    out.maxUnit = maxUnit;
+    if (maxUnit < fullMax) out.unitLimited = true;
     return out;
 }
 
@@ -34235,6 +34343,7 @@ function runRepeatAnalysis() {
                 const where = targets.length > 1 ? ` in ${t.name}` : '';
                 if (seqResults.total > seqResults.length) notes.push(`showing the ${seqResults.length} longest of ${seqResults.total}${where}`);
                 if (seqResults.searchedTo != null) notes.push(`search stopped at ${seqResults.searchedTo} of ${t.seq.length} ${unit}${where} (work limit; low-complexity sequence)`);
+                if (seqResults.unitLimited) notes.push(`units up to ${seqResults.maxUnit} ${unit} searched${where} (work limit; long sequence)`);
                 const mapped = seqResults.map(r => {
                     r.seqIndex = t.index;
                     r.obj = state.seqs[t.index];
@@ -34274,7 +34383,7 @@ function runRepeatAnalysis() {
                 _repeatResultsShown = null;
                 _lastRepeatResults = [];
                 _lastRepeatView = null;
-                resultsEl.textContent = `No ${mode} repeats found (min ${minLen} ${unit}, max ${maxDiv}% divergence)${notes.length ? '; ' + notes.join('; ') : ''}.`;
+                resultsEl.textContent = `No ${mode} repeats found (min ${mode === 'tandem' ? 'array length ' : ''}${minLen} ${unit}, max ${maxDiv}% divergence)${notes.length ? '; ' + notes.join('; ') : ''}.`;
                 return;
             }
             _lastRepeatResults = allResults;
@@ -34515,12 +34624,13 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength, view = 
     if (tools) tools.hidden = true;
     const multi = new Set(results.map(r => r.seqIndex)).size > 1;
     const kind = { tandem: 'tandem', direct: 'direct', inverted: 'inverted' }[mode] || mode;
-    let html = `<div class="rf-summary"><span class="rf-big">${results.length} ${kind} repeat${results.length === 1 ? '' : 's'}</span>` +
+    const noun = mode === 'tandem' ? 'array' : 'repeat';
+    let html = `<div class="rf-summary"><span class="rf-big">${results.length} ${kind} ${noun}${results.length === 1 ? '' : 's'}</span>` +
         `<span class="rf-chip">${esc(seqName || '')}${seqLength ? `, ${seqLength} ${unit}` : ''}</span>` +
         (view.note ? `<span class="rf-chip">${esc(view.note)}</span>` : '') + '</div>' +
         '<div class="rf-hint">Click a row to highlight the repeat in its sequence; click again to remove.</div>';
     const head = mode === 'tandem'
-        ? '<th style="width:26px"></th>' + (multi ? '<th>Sequence</th>' : '') + '<th class="rf-num-cell">Columns</th><th class="rf-num-cell">Unit</th><th class="rf-num-cell">Copies</th><th class="rf-num-cell">Div.</th><th>Unit sequence</th><th style="width:22px"></th>'
+        ? '<th style="width:26px"></th>' + (multi ? '<th>Sequence</th>' : '') + '<th class="rf-num-cell">Columns</th><th class="rf-num-cell" title="Unit length (period)">Unit</th><th class="rf-num-cell" title="Array length / unit length; a partial last unit counts">Copies</th><th class="rf-num-cell" title="Array length, all copies together">Length</th><th class="rf-num-cell" title="Mismatches against the consensus unit, per base of the array">Div.</th><th>Consensus unit</th><th style="width:22px"></th>'
         : '<th style="width:26px"></th>' + (multi ? '<th>Sequence</th>' : '') + '<th class="rf-num-cell">Copy A</th><th class="rf-num-cell">Copy B</th><th class="rf-num-cell">Length</th><th class="rf-num-cell">Div.</th><th>Sequence of copy A</th><th style="width:22px"></th>';
     html += `<table class="rf-table"><thead><tr>${head}</tr></thead><tbody>`;
     results.forEach((r, i) => {
@@ -34530,7 +34640,7 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength, view = 
         const segs = _repeatResultSegs(r, mode);
         let cells;
         if (mode === 'tandem') {
-            cells = `<td class="rf-num-cell">${r.start + 1}–${r.end}</td><td class="rf-num-cell">${r.unitLen} ${unit}</td><td class="rf-num-cell">${r.copies}×</td>` +
+            cells = `<td class="rf-num-cell">${r.start + 1}–${r.end}</td><td class="rf-num-cell">${r.unitLen} ${unit}</td><td class="rf-num-cell">${r.copies}×</td><td class="rf-num-cell">${r.length ?? (r.end - r.start)}</td>` +
                 `<td class="rf-num-cell">${r.divergence}%</td><td class="rf-name rf-pair" title="${esc(r.unit)}">${esc(r.unit)}</td>`;
         } else {
             const endA = r.alignEnd != null ? r.alignEnd : (r.posA + r.length);
@@ -34651,6 +34761,8 @@ function _scrollToColumn(colIndex) {
 }
 
 function _initRepeatFinderEvents() {
+    const minLenInput = document.getElementById('repeatMinLen');
+    if (minLenInput) minLenInput.addEventListener('input', () => { minLenInput.dataset.userSet = '1'; });
     const clearBtn = document.getElementById('repeatClearHighlightsBtn');
     if (clearBtn) clearBtn.addEventListener('click', _clearRepeatHighlights);
     const closeBtn = document.getElementById('repeatFinderCloseBtn');

@@ -9732,11 +9732,11 @@ check('Repeat Finder: typed values outside a field range are clamped to it, writ
   const r = rfRng(13);
   await loadFasta(page, `>t\n${r.seq(300)}\n>o\n${r.seq(300)}\n`);
   await page.evaluate(() => openRepeatFinder(0));
-  const f = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 999, maxDiv: 999 });
+  const f = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 1999, maxDiv: 999 });   // Min length range 3-1000 since owner 2026-10-30 (was 3-50)
   const fields = await page.evaluate(() => [document.getElementById('repeatMinLen').value, document.getElementById('repeatMaxDiv').value]);
   const g = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 0, maxDiv: -5 });
   const fields2 = await page.evaluate(() => [document.getElementById('repeatMinLen').value, document.getElementById('repeatMaxDiv').value]);
-  const ok = fields[0] === '50' && fields[1] === '50' && /50 ?bp/.test(f.text) && /50 ?%/.test(f.text) && !/999/.test(f.text)
+  const ok = fields[0] === '1000' && fields[1] === '50' && /1000 ?bp/.test(f.text) && /50 ?%/.test(f.text) && !/999/.test(f.text)
     && fields2[0] === '3' && fields2[1] === '0';
   return { pass: ok, detail: JSON.stringify({ text: f.text.slice(0, 120), fields, fields2, text2: g.text.slice(0, 80) }) };
 });
@@ -10111,6 +10111,170 @@ check('TSD finder: Manual starts from the Auto SINE body; Reference row without 
   const ok = l && fields === `1,${l - 1},${+rr + 1},480` && /TSD in (19|20) of 20 copies/.test(man.head)
     && /no row named consensus/.test(ref.note) && /TSD in (1[6-9]|20) of 20 copies/.test(ref.head);
   return { pass: !!ok, detail: JSON.stringify(out) };
+});
+
+// Owner 2026-10-30: Tandem "Min length" is the array's total length; (CA)15 with Min 20 is ONE row, unit CA x 15, 30 bp, exact ends.
+check('Repeat Finder tandem rework: (CA)15 with Min array length 20 is one row, unit CA x 15, 30 bp, exact ends', async (page) => {
+  const r = rfRng(501), s = r.seq(230).split('');
+  for (let i = 0; i < 30; i++) s[100 + i] = 'CA'[i % 2];
+  s[99] = rfOther('A'); s[130] = rfOther('C');
+  await loadFasta(page, `>ca\n${s.join('')}\n>o\n${r.seq(230)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 20, maxDiv: 15 });
+  const row = await page.evaluate(() => [...(document.querySelector('#repeatResults tbody tr')?.children || [])].map(td => td.textContent.trim()).join('|'));
+  const h = f.res[0] || {};
+  const ok = f.res.length === 1 && h.start === 100 && h.end === 130 && h.unitLen === 2 && h.copies === 15 && h.divergence === '0.0'
+    && /\|CA\|/.test(row) && /\|15×\|/.test(row) && /\|30\|/.test(row);
+  return { pass: ok, detail: JSON.stringify({ res: f.res, row, text: f.text.slice(0, 80) }) };
+});
+
+// Owner 2026-10-30: each array one row with its smallest period; partial last unit counted (GLM #25); divergence vs the consensus unit, a mutated copy neither splits nor skews.
+check('Repeat Finder tandem rework: A x 25, AGGCT x 6, 12-bp x 4.5, mutated copies: one row each, right period, copies, length, ends, divergence', async (page) => {
+  const r = rfRng(502), parts = [], plants = [];
+  let pos = 0;
+  const add = (str, plant) => { if (plant) plants.push(Object.assign({ start: pos, end: pos + plant.len }, plant)); parts.push(str); pos += str.length; };
+  const spacer = () => add(r.seq(60));
+  const u12 = 'ACGTTGCATCAG', u12b = 'GATCCTAGGTCA';
+  const u12bMut = u12b.slice(0, 8) + rfOther(u12b[8]) + u12b.slice(9);
+  spacer(); add('A'.repeat(25), { name: 'A25', unitLen: 1, copies: 25, len: 25, div: '0.0', unit: 'A' });
+  spacer(); add('AGGCT'.repeat(6), { name: 'AGGCTx6', unitLen: 5, copies: 6, len: 30, div: '0.0', unit: 'AGGCT' });
+  spacer(); add(u12.repeat(4) + u12.slice(0, 6), { name: '12x4.5', unitLen: 12, copies: 4.5, len: 54, div: '0.0', unit: u12 });
+  spacer(); add(u12bMut + u12b.repeat(4), { name: '12x5 first copy mutated', unitLen: 12, copies: 5, len: 60, div: (100 / 60).toFixed(1), unit: u12b });
+  spacer(); add('CA'.repeat(7) + 'CG' + 'CA'.repeat(7), { name: '(CA)15 one interior mutation', unitLen: 2, copies: 15, len: 30, div: (100 / 30).toFixed(1), unit: 'CA' });
+  // a mutated first unit CG: its lone C before the mismatch is not a copy, the array starts on the next CA
+  spacer(); add('CG'); const caStart = pos; add('CA'.repeat(14), { name: '(CA)n mutated first unit', unitLen: 2, copies: 14, len: 28, div: '0.0', unit: 'CA' });
+  spacer();
+  // the base on each side of a plant is unlike the array's next base there (the boundary is not a matter of chance)
+  const s = parts.join('').split('');
+  for (const p of plants) {
+    if (p.start !== caStart) s[p.start - 1] = rfOther(p.unit[p.unitLen - 1]);
+    s[p.end] = rfOther(p.unit[p.len % p.unitLen]);
+  }
+  await loadFasta(page, `>mix\n${s.join('')}\n>o\n${r.seq(s.length)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 20, maxDiv: 15 });
+  const units = await page.evaluate(() => (_lastRepeatResults || []).map(x => x.unit));
+  const out = {};
+  for (const p of plants) {
+    const hits = f.res.map((h, i) => Object.assign({ unit: units[i] }, h)).filter(h => h.start < p.end && h.end > p.start);
+    const h = hits[0] || {};
+    out[p.name] = { n: hits.length, got: hits.map(x => `${x.start}-${x.end} p${x.unitLen} ${x.unit} x${x.copies} ${x.divergence}%`).join(' | '),
+      want: `${p.start}-${p.end} p${p.unitLen} ${p.unit} x${p.copies} ${p.div}%`,
+      ok: hits.length === 1 && h.start === p.start && h.end === p.end && h.unitLen === p.unitLen && h.copies === p.copies && h.divergence === p.div && h.unit === p.unit };
+  }
+  const stray = f.res.filter(h => !plants.some(p => h.start < p.end && h.end > p.start)).length;
+  const ok = Object.values(out).every(o => o.ok) && stray === 0;
+  return { pass: ok, detail: JSON.stringify({ out, stray, text: f.text.slice(0, 80) }) };
+});
+
+// Owner 2026-10-30: random sequence gives no tandem rows of >= 20 bp at the default divergence (no false arrays).
+check('Repeat Finder tandem rework: random background gives no tandem arrays of 20 bp or more at the default divergence', async (page) => {
+  const r = rfRng(503);
+  let fa = '';
+  for (let i = 0; i < 10; i++) fa += `>rand${i}\n${r.seq(10000)}\n`;
+  await loadFasta(page, fa);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'all', minLen: 20, maxDiv: 15 });
+  const ok = f.rows === 0 && /^No tandem/.test(f.text) && f.ms < 15000;
+  return { pass: ok, detail: JSON.stringify({ rows: f.rows, ms: f.ms, res: f.res.slice(0, 5), text: f.text.slice(0, 100) }) };
+}, { timeoutMs: 120000 });
+
+// GLM #10: a long simple run froze the tab; 50 kb with 20 kb poly-A and 5 kb (CA)n finishes in seconds, one row each.
+check('Repeat Finder tandem rework: 50 kb with a 20 kb poly-A and a 5 kb (CA)n finishes in seconds, one row each', async (page) => {
+  const r = rfRng(504);
+  const s = (r.seq(15000) + 'A'.repeat(20000) + r.seq(5000) + 'CA'.repeat(2500) + r.seq(5000)).split('');
+  s[14999] = rfOther('A'); s[35000] = rfOther('A'); s[39999] = rfOther('A'); s[45000] = rfOther('C');
+  await loadFasta(page, `>long\n${s.join('')}\n>o\n${r.seq(1000)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 20, maxDiv: 15 });
+  const polyA = f.res.filter(h => h.start < 35000 && h.end > 15000), ca = f.res.filter(h => h.start < 45000 && h.end > 40000);
+  const ok = f.ms < 5000 && polyA.length === 1 && polyA[0].start === 15000 && polyA[0].end === 35000 && polyA[0].unitLen === 1 && polyA[0].copies === 20000
+    && ca.length === 1 && ca[0].start === 40000 && ca[0].end === 45000 && ca[0].unitLen === 2 && ca[0].copies === 2500;
+  return { pass: ok, detail: JSON.stringify({ ms: f.ms, polyA, ca, rows: f.rows, text: f.text.slice(0, 100) }) };
+}, { timeoutMs: 120000 });
+
+// GLM #44: tandem results were cut to 50 (and the unit scan stopped at 100 results) without a word; a capped list says so.
+check('Repeat Finder tandem rework: a capped tandem list says how many were found', async (page) => {
+  const r = rfRng(505);
+  let s = r.seq(50);
+  for (let i = 0; i < 150; i++) s += 'AAT'.repeat(8) + rfOther('A') + r.seq(49);
+  await loadFasta(page, `>micro\n${s}\n>o\n${r.seq(1000)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 20, maxDiv: 0 });
+  const m = f.text.match(/showing the (\d+) longest of (\d+)/);
+  const ok = !!m && +m[1] === f.rows && +m[2] >= 150 && f.res.every(h => h.unitLen === 3);
+  return { pass: ok, detail: JSON.stringify({ rows: f.rows, text: f.text.slice(0, 160), units: [...new Set(f.res.map(h => h.unitLen))] }) };
+});
+
+// Owner 2026-10-30: the Min length field takes up to 1000 bp, so Direct can ask for long repeats only (an LTR pair, not shorter pairs).
+check('Repeat Finder tandem rework: Min length accepts 1000, Direct with Min 300 finds a 300-bp LTR pair and no shorter pairs', async (page) => {
+  const r = rfRng(506), s = r.seq(3000).split('');
+  const ltr = r.seq(300), short1 = r.seq(100), short2 = r.seq(250);
+  const put = (p, str) => { for (let k = 0; k < str.length; k++) s[p + k] = str[k]; };
+  put(200, ltr); put(2200, ltr); put(700, short1); put(900, short1); put(1200, short2); put(1700, short2);
+  for (const [a, b, L] of [[200, 2200, 300], [700, 900, 100], [1200, 1700, 250]]) { s[b - 1] = rfOther(s[a - 1]); s[b + L] = rfOther(s[a + L]); }
+  await loadFasta(page, `>ltr\n${s.join('')}\n>o\n${r.seq(3000)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  await rfFind(page, { mode: 'direct', scope: 'single', minLen: 1000, maxDiv: 0 });
+  const field1000 = await page.evaluate(() => document.getElementById('repeatMinLen').value);
+  const f = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 300, maxDiv: 0 });
+  const ok = field1000 === '1000' && f.res.length === 1 && f.res[0].posA === 200 && f.res[0].posB === 2200 && f.res[0].length === 300;
+  return { pass: ok, detail: JSON.stringify({ field1000, res: f.res.slice(0, 5), text: f.text.slice(0, 100) }) };
+});
+
+// Owner 2026-10-30: the Min length label and tooltip follow the mode: "Min array length" for Tandem, "Min length" (copy) for Direct/Inverted.
+check('Repeat Finder tandem rework: the Min length label and tooltip change with the mode', async (page) => {
+  await loadFasta(page, `>a\n${'ACGT'.repeat(30)}\n>b\n${'ACGT'.repeat(30)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const out = {};
+  for (const mode of ['tandem', 'direct', 'inverted', 'tandem']) {
+    await page.click(`label:has(input[name="repeatMode"][value="${mode}"])`);
+    out[mode] = await page.evaluate(() => { const l = document.getElementById('repeatMinLen').closest('label'); return { text: l.textContent.replace(/\s+/g, ' ').trim(), title: l.title }; });
+  }
+  const ok = /^Min array length\b/.test(out.tandem.text) && /array/i.test(out.tandem.title)
+    && ['direct', 'inverted'].every(m => /^Min length\b/.test(out[m].text) && !/array/i.test(out[m].text) && /cop/i.test(out[m].title));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Owner 2026-10-30: Tandem "Min length" became the whole array length; the shared default of 10 then listed about one
+// chance array per kb of random sequence. Tandem starts at 20, Direct/Inverted at 10, and a value the user typed stays.
+check('Repeat Finder: Min length starts at 20 for Tandem and 10 for Direct/Inverted, and a typed value is kept', async (page) => {
+  await loadFasta(page, `>t
+${'ACGT'.repeat(100)}
+`);
+  const out = await page.evaluate(() => {
+    openRepeatFinder(0);
+    const f = document.getElementById('repeatMinLen');
+    const pick = (m) => { const r = document.querySelector(`input[name="repeatMode"][value="${m}"]`); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); return f.value; };
+    const o = { tandem: pick('tandem'), direct: pick('direct'), inverted: pick('inverted'), tandem2: pick('tandem') };
+    f.value = '15'; f.dispatchEvent(new Event('input', { bubbles: true }));
+    o.typedThenDirect = pick('direct'); o.typedThenTandem = pick('tandem');
+    return o;
+  });
+  const ok = out.tandem === '20' && out.direct === '10' && out.inverted === '10' && out.tandem2 === '20' && out.typedThenDirect === '15' && out.typedThenTandem === '15';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Canvas Block prototype 2026-10-30 found it: dragging a Canvas scrollbar marked the view dirty on every step, so each
+// step was a full redraw (p95 75-92 ms) instead of the frame copy the wheel uses (p95 ~4 ms).
+check('Canvas: dragging the vertical and horizontal scrollbars moves the picture by frame copy, not full redraws', async (page) => {
+  await loadFasta(page, Array.from({ length: 300 }, (_, i) => `>s${i}
+${'ACGTTGCAAC'.repeat(60)}
+`).join(''));
+  await setMode(page, 'canvas');
+  await page.waitForTimeout(800);
+  const out = {};
+  for (const [k, sel] of [['vertical', '.vertical-scrollbar'], ['horizontal', '.horizontal-scrollbar']]) {
+    const box = await page.evaluate((sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; }, sel);
+    await page.evaluate(() => { _canvasState.stats.full = 0; _canvasState.stats.blit = 0; });
+    const x0 = box.x + (k === 'vertical' ? box.w / 2 : 6), y0 = box.y + (k === 'vertical' ? 6 : box.h / 2);
+    await page.mouse.move(x0, y0); await page.mouse.down();
+    for (let i = 1; i <= 10; i++) { await page.mouse.move(x0 + (k === 'vertical' ? 0 : 15 * i), y0 + (k === 'vertical' ? 15 * i : 0)); await page.waitForTimeout(60); }
+    await page.mouse.up(); await page.waitForTimeout(300);
+    out[k] = await page.evaluate(() => ({ full: _canvasState.stats.full, blit: _canvasState.stats.blit, ox: Math.round(_canvasState.offsetX), oy: Math.round(_canvasState.offsetY) }));
+  }
+  const ok = out.vertical.oy > 0 && out.vertical.blit >= 5 && out.vertical.full <= 1 && out.horizontal.ox > 0 && out.horizontal.blit >= 5 && out.horizontal.full <= 1;
+  return { pass: ok, detail: JSON.stringify(out) };
 });
 
 // Owner 2026-10-28: what else did Full/Block have that Canvas lacked? Per-span titles and listeners: the titles of search
