@@ -9556,6 +9556,209 @@ check('Canvas draws a residue selection on the consensus row (band at the top an
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// ---- Repeat Finder fixes 2026-10-30 (browser audit B1, B6-B10 + convenience) ----
+// A seeded generator and a panel driver shared by the checks below: set the panel the way a user does
+// (radio labels, typed fields), press Find, wait for the results.
+function rfRng(seed) {
+  let s = seed >>> 0 || 1;
+  const f = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  f.int = (n) => Math.floor(f() * n);
+  f.seq = (n) => Array.from({ length: n }, () => 'ACGT'[f.int(4)]).join('');
+  return f;
+}
+const RF_COMP = { A: 'T', C: 'G', G: 'C', T: 'A' };
+const rfRevcomp = (s) => s.split('').reverse().map(c => RF_COMP[c]).join('');
+const rfOther = (b) => 'ACGT'.split('').find(x => x !== b);   // a base unlike b
+async function rfFind(page, o) {
+  await page.evaluate(() => { if (document.getElementById('repeatFinderModal').style.display === 'none') openRepeatFinder(0); });
+  if (o.mode) await page.click(`label:has(input[name="repeatMode"][value="${o.mode}"])`);
+  if (o.scope) await page.click(`label:has(input[name="repeatScope"][value="${o.scope}"])`);
+  if (o.minLen !== undefined) await page.fill('#repeatMinLen', String(o.minLen));
+  if (o.maxDiv !== undefined) await page.fill('#repeatMaxDiv', String(o.maxDiv));
+  await page.evaluate(() => { document.getElementById('repeatResults').textContent = '__PENDING__'; });
+  const t0 = Date.now();
+  await page.click('#repeatRunBtn');
+  await page.waitForFunction(() => { const t = document.getElementById('repeatResults').textContent; return t !== '__PENDING__' && !/^Searching/.test(t); }, null, { timeout: 60000, polling: 50 });
+  const ms = Date.now() - t0;
+  return page.evaluate((ms) => ({
+    ms,
+    text: document.getElementById('repeatResults').textContent.slice(0, 300),
+    rows: document.querySelectorAll('#repeatResults tbody tr').length,
+    res: (_lastRepeatResults || []).map(r => ({ posA: r.posA, posB: r.posB, length: r.length, divergence: r.divergence, start: r.start, end: r.end, unitLen: r.unitLen, copies: r.copies, seqName: r.seqName })),
+  }), ms);
+}
+
+// B1: Direct/Inverted stopped scanning once 500 raw candidates existed, so in a long sequence everything past the
+// first ~2 kb was never searched (silently), and the search froze the tab for 4-9 s at 12 kb.
+check('Repeat Finder Direct and Inverted search the whole of a long sequence, fast, and say when the list is capped', async (page) => {
+  const L = 12000, r = rfRng(4242), s = r.seq(L).split('');
+  const u = r.seq(30), v = r.seq(25);
+  const put = (p, str) => { for (let k = 0; k < str.length; k++) s[p + k] = str[k]; };
+  put(9600, u); put(10800, u);            // direct pair at 80 % / 90 %
+  put(8400, v); put(9000, rfRevcomp(v));  // inverted pair at 70 % / 75 %
+  await loadFasta(page, `>long\n${s.join('')}\n>other\n${r.seq(L)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const out = {};
+  for (const mode of ['direct', 'inverted']) {
+    const f = await rfFind(page, { mode, scope: 'single', minLen: 10, maxDiv: 15 });
+    const want = mode === 'direct' ? [9600, 10800] : [8400, 9000];
+    const hit = f.res.find(h => Math.abs(h.posA - want[0]) < 5 && Math.abs(h.posB - want[1]) < 5);
+    out[mode] = { ms: f.ms, rows: f.rows, found: !!hit, hit, capped: /showing the 100 longest of \d+/.test(f.text), text: f.text.slice(0, 90) };
+  }
+  const ok = ['direct', 'inverted'].every(m => out[m].found && out[m].ms < 4000 && out[m].capped);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// B8: matches were extended while divergence stayed under the limit and never trimmed, so a perfect 25-bp repeat
+// was reported as ~32 bp at 12.5 %, and tandem arrays started 1 bp early with the shifted unit's mismatches.
+check('Repeat Finder reports exact boundaries: perfect copies at 0 %, copies never start or end on a mismatch, tandem arrays from their first base', async (page) => {
+  const r = rfRng(77), out = {};
+  // direct: a 25-bp copy at 100 and 400 (0-based), three flank bases on each side forced to differ
+  const u0 = rfRng(78).seq(25);
+  const mm = u0.split(''); mm[3] = rfOther(mm[3]); mm[7] = rfOther(mm[7]);
+  for (const [k, copyB] of [['exact', u0], ['twoMismatches', mm.join('')]]) {
+    const s = rfRng(79).seq(600).split('');
+    for (let i = 0; i < 25; i++) { s[100 + i] = u0[i]; s[400 + i] = copyB[i]; }
+    for (let d = 1; d <= 3; d++) { s[400 - d] = rfOther(s[100 - d]); s[424 + d] = rfOther(s[124 + d]); }
+    await loadFasta(page, `>t\n${s.join('')}\n>o\n${r.seq(600)}\n`);
+    const f = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 10, maxDiv: 15 });
+    out[k] = f.res[0];
+  }
+  // tandem: 12-bp unit x5 at 100, the base before differs from the unit's last base, the base after from its first
+  { const s = r.seq(600).split(''), t = r.seq(12);
+    for (let i = 0; i < 60; i++) s[100 + i] = t[i % 12];
+    s[99] = rfOther(t[11]); s[160] = rfOther(t[0]);
+    await loadFasta(page, `>t\n${s.join('')}\n>o\n${r.seq(600)}\n`);
+    const f = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 10, maxDiv: 15 });
+    out.tandem = f.res.find(h => h.unitLen === 12);
+  }
+  const e = out.exact || {}, m = out.twoMismatches || {}, t = out.tandem || {};
+  const ok = e.posA === 100 && e.posB === 400 && e.length === 25 && e.divergence === '0.0'
+    && m.posA === 100 && m.posB === 400 && m.length === 25 && m.divergence === '8.0'
+    && t.start === 100 && t.end === 160 && t.copies === 5 && t.divergence === '0.0';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// B9: a perfect palindrome or a hairpin with a 0-1 bp loop was never reported: the arms ran into each other and the
+// overlapping pair was dropped. The arms are now split at the centre.
+check('Repeat Finder Inverted reports perfect palindromes and 1-bp-loop hairpins, arms split at the centre', async (page) => {
+  const out = {};
+  for (const loop of [0, 1]) {
+    const r = rfRng(300 + loop), s = r.seq(500).split(''), arm = r.seq(12);
+    const bStart = 212 + loop;
+    for (let i = 0; i < 12; i++) s[200 + i] = arm[i];
+    if (loop) s[212] = 'A';
+    const rc = rfRevcomp(arm);
+    for (let i = 0; i < 12; i++) s[bStart + i] = rc[i];
+    // the outward neighbours must not pair (else the true arms are longer)
+    for (let d = 1; d <= 3; d++) s[bStart + 11 + d] = rfOther(RF_COMP[s[200 - d]]);
+    await loadFasta(page, `>hp\n${s.join('')}\n>o\n${r.seq(500)}\n`);
+    for (const md of [0, 15]) {
+      const f = await rfFind(page, { mode: 'inverted', scope: 'single', minLen: 10, maxDiv: md });
+      const h = f.res.find(x => x.posA === 200);
+      out[`loop${loop}_div${md}`] = h ? `${h.posA}/${h.posB} len ${h.length} div ${h.divergence}` : 'missing';
+    }
+  }
+  const ok = out.loop0_div0 === '200/212 len 12 div 0.0' && out.loop0_div15 === '200/212 len 12 div 0.0'
+    && out.loop1_div0 === '200/213 len 12 div 0.0' && out.loop1_div15 === '200/213 len 12 div 0.0';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// B6: loading a new file while the panel was open left the old results table and the old sequence list; clicking an
+// old row painted the new file.
+check('Repeat Finder: a new file clears the open panel results and rebuilds its sequence list', async (page) => {
+  const r = rfRng(5), u = r.seq(15);
+  const a1 = r.seq(80) + u + r.seq(100) + u + r.seq(80);
+  await loadFasta(page, `>fileA_row0\n${a1}\n>fileA_row1\n${r.seq(a1.length)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 10, maxDiv: 0 });
+  await page.selectOption('#repeatFinderSeqSelect', '1');
+  await loadFasta(page, `>fileB_row0\n${r.seq(300)}\n>fileB_row1\n${r.seq(300)}\n>fileB_row2\n${r.seq(300)}\n`);
+  const s = await page.evaluate(() => ({
+    open: document.getElementById('repeatFinderModal').style.display !== 'none',
+    rows: document.querySelectorAll('#repeatResults tbody tr').length,
+    text: document.getElementById('repeatResults').textContent.slice(0, 60),
+    list: [...document.getElementById('repeatFinderSeqSelect').options].map(o => o.textContent).join('|'),
+    chosen: document.getElementById('repeatFinderSeqSelect').value, idx: _repeatFinderSeqIndex,
+    results: _lastRepeatResults.length,
+  }));
+  const ok = f.rows > 0 && s.open && s.rows === 0 && s.results === 0 && !/fileA/.test(s.list) && /fileB_row2/.test(s.list)
+    && s.chosen === '0' && s.idx <= 0;
+  return { pass: ok, detail: JSON.stringify({ before: f.rows, after: s }) };
+});
+
+// B7: "Clear highlights" after a search that found nothing re-rendered the PREVIOUS search's table.
+check('Repeat Finder: Clear highlights after an empty search keeps the No-repeats message', async (page) => {
+  const r = rfRng(9), u = r.seq(20);
+  await loadFasta(page, `>t\n${r.seq(100) + u + r.seq(100) + u + r.seq(100)}\n>o\n${r.seq(340)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f1 = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 10, maxDiv: 0 });
+  const f2 = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 40, maxDiv: 0 });
+  await page.click('#repeatClearHighlightsBtn');
+  await page.waitForTimeout(200);
+  const after = await page.evaluate(() => ({ text: document.getElementById('repeatResults').textContent.slice(0, 80), rows: document.querySelectorAll('#repeatResults tbody tr').length }));
+  const ok = f1.rows > 0 && /^No /.test(f2.text) && /^No /.test(after.text) && after.rows === 0;
+  return { pass: ok, detail: JSON.stringify({ first: f1.rows, second: f2.text.slice(0, 60), after }) };
+});
+
+// B10: a TSD min length of 0 typed by hand was clamped to 1 (the field's min is 2) and gave 1-bp TSDs. The Find
+// handler reads the fields through _readTsdParams, so the check reads them the same way after typing.
+check('TSD finder: typed lengths are clamped to the fields own min and max', async (page) => {
+  await loadFasta(page, `>a\n${'ACGT'.repeat(30)}\n>b\n${'ACGT'.repeat(30)}\n`);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  const out = {};
+  for (const [mn, mx] of [[0, 0], [1, 999], [99, 3]]) {
+    await page.fill('#tsdMinLen', String(mn)); await page.fill('#tsdMaxLen', String(mx));
+    const p = await page.evaluate(() => _readTsdParams());
+    out[`${mn}-${mx}`] = [p.minLen, p.maxLen];
+  }
+  const ok = JSON.stringify(out) === JSON.stringify({ '0-0': [2, 2], '1-999': [2, 50], '99-3': [30, 30] });
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Convenience: "Selected rows" with nothing selected silently searched the (hidden) one-sequence choice.
+check('Repeat Finder: Selected rows with nothing selected says so and does not search', async (page) => {
+  const r = rfRng(11), u = r.seq(12);
+  await loadFasta(page, `>t0\n${r.seq(100) + u.repeat(3) + r.seq(100)}\n>t1\n${r.seq(236)}\n`);
+  await page.evaluate(() => { openRepeatFinder(0); state.selectedRows.clear(); });
+  const f = await rfFind(page, { mode: 'tandem', scope: 'selected', minLen: 10, maxDiv: 0 });
+  const ok = f.rows === 0 && f.res.length === 0 && /select/i.test(f.text) && !/^No tandem/.test(f.text);
+  return { pass: ok, detail: JSON.stringify({ text: f.text.slice(0, 120), rows: f.rows }) };
+});
+
+// Convenience: typed values were clamped silently (Max divergence 999 used as 100 while the field's max is 50, and the
+// message printed 999). Clamp to the field's own min/max, write it back, and report the values actually used.
+check('Repeat Finder: typed values outside a field range are clamped to it, written back and reported', async (page) => {
+  const r = rfRng(13);
+  await loadFasta(page, `>t\n${r.seq(300)}\n>o\n${r.seq(300)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 999, maxDiv: 999 });
+  const fields = await page.evaluate(() => [document.getElementById('repeatMinLen').value, document.getElementById('repeatMaxDiv').value]);
+  const g = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 0, maxDiv: -5 });
+  const fields2 = await page.evaluate(() => [document.getElementById('repeatMinLen').value, document.getElementById('repeatMaxDiv').value]);
+  const ok = fields[0] === '50' && fields[1] === '50' && /50 ?bp/.test(f.text) && /50 ?%/.test(f.text) && !/999/.test(f.text)
+    && fields2[0] === '3' && fields2[1] === '0';
+  return { pass: ok, detail: JSON.stringify({ text: f.text.slice(0, 120), fields, fields2, text2: g.text.slice(0, 80) }) };
+});
+
+// Convenience: protein alignments were reported with "bp" units.
+check('Repeat Finder: protein alignments are reported in aa, not bp', async (page) => {
+  const r = rfRng(9), aa = 'ACDEFGHIKLMNPQRSTVWY';
+  const p = n => Array.from({ length: n }, () => aa[r.int(20)]).join('');
+  const motif = p(15);
+  const s0 = p(60) + motif + p(80) + motif + p(60) + 'QPQPQPQPQPQPQPQPQPQP' + p(40);
+  await loadFasta(page, `>prot0\n${s0}\n>prot1\n${p(s0.length)}\n>prot2\n${p(s0.length)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const out = {};
+  for (const mode of ['tandem', 'direct']) {
+    const f = await rfFind(page, { mode, scope: 'single', minLen: 10, maxDiv: 15 });
+    const txt = await page.evaluate(() => document.getElementById('repeatResults').textContent + ' | ' + document.getElementById('repeatParamsGeneral').textContent);
+    out[mode] = { rows: f.rows, bp: /\bbp\b/.test(txt), aa: /\baa\b/.test(txt), found: mode === 'direct' ? f.res.some(h => h.posA === 60 && h.posB === 155 && h.length === 15) : f.rows > 0 };
+  }
+  const ok = ['tandem', 'direct'].every(m => out[m].rows > 0 && !out[m].bp && out[m].aa && out[m].found);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 // GLM Canvas bug hunt 2026-10-30 (#16): with few rows the vertical scrollbar is hidden (visibility), but Canvas still
 // reserved its 7 px, so a wide alignment scrolled 7 px past its last column. A shown bar must still be reserved, and
 // going from many rows to few in one session must drop it.
