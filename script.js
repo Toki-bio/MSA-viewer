@@ -5551,6 +5551,43 @@ function _populateAlignedAARow(dataCol, aaSeqData, viewStart, viewEnd, frameShif
 // onOffsetChange: optional callback (registered by setupPersistentScrollbar) invoked after each
 // draw() so the scrollbar can mirror wheel-scroll/drag-pan that didn't originate from the bar itself.
 const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen: 0, scheduleDraw: null, totalContentW: 0, totalContentH: 0, onOffsetChange: null, resizeHandler: null, mousemoveHandler: null, mouseupHandler: null, canvas: null, rowPitch: 0 };
+
+// PROTOTYPE (branch proto-canvas-block, opt-in only: ?view=cblock or window.vaCanvasBlock(true)):
+// the Canvas renderer draws the wrapped Block layout. Layout abstraction:
+//   strip (default): one band; content (x, y) = (NAME_W + slot*CHAR_W, HEADER_H + row*pitch).
+//   block: bands of bandCols slots stacked vertically, band b at content y = b*bandH; each band is
+//     a complete strip (ruler, consensus, rows) of slots [b*bandCols, (b+1)*bandCols) drawn by the
+//     SAME drawRegion with a per-band virtual offset (ox_b = s0*CHAR_W, oy_b = oy - b*bandH) under
+//     a clip to the band's rectangle. drawOverlay works the same way. Hit tests go through
+//     _canvasLocal(), which turns a client point into (band-local x, y, ox, oy, slot range), so the
+//     strip arithmetic in every hit test is unchanged. Horizontal offset is always 0 (bands fit
+//     the width: bandCols = min(Block width slider, what fits)), the frame copy is the vertical one,
+//     and the exposed strip is widened to the band's line edges (bandEdges) instead of row edges.
+let _canvasBlockLayout = false;
+window.vaCanvasBlock = (on) => { _canvasBlockLayout = !!on; if (on) { const r = document.getElementById('modeCanvas'); if (r) r.checked = true; } return renderAlignment(); };
+// A client point in the coordinates the strip hit tests expect: canvas-relative x, y and the
+// offsets, or in Block layout band-local y with the band's virtual offsets and its slot range.
+function _canvasLocal(clientX, clientY) {
+    const canvas = _canvasState.canvas;
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left, y = clientY - rect.top;
+    const L = _canvasState.layout;
+    if (!L) return { x, y, ox: _canvasState.offsetX, oy: _canvasState.offsetY, s0: 0, s1: Infinity, sticky: !!el('stickyNames')?.checked, rect, band: 0, last: true };
+    const cy = (clientY == null ? 0 : y) + _canvasState.offsetY;
+    const b = Math.max(0, Math.min(L.nBands - 1, Math.floor(cy / L.bandH)));
+    let ry = cy - b * L.bandH;
+    if (ry >= L.bandBodyH) ry = 1e9;   // the gap between bands: no line there
+    const s0 = b * L.bandCols;
+    return { x, y: ry, ox: s0 * _canvasState.metrics.charW, oy: 0, s0, s1: Math.min(L.nSlots, s0 + L.bandCols), sticky: true, rect, band: b, last: b === L.nBands - 1 };
+}
+// Client position of the top-left corner of a cell (row, slot), any layout
+function _canvasCellClient(row, slot) {
+    const m = _canvasState.metrics, rect = _canvasState.canvas.getBoundingClientRect();
+    const pitch = _canvasState.rowPitch || m.charH, L = _canvasState.layout;
+    if (!L) return { x: rect.left + m.nameW + slot * m.charW - _canvasState.offsetX, y: rect.top + (m.headerH || m.charH) + row * pitch - _canvasState.offsetY };
+    const b = Math.floor(slot / L.bandCols);
+    return { x: rect.left + m.nameW + (slot - b * L.bandCols) * m.charW, y: rect.top + b * L.bandH + (m.headerH || m.charH) + row * pitch - _canvasState.offsetY };
+}
 // Cancellation token for the Canvas mode's deferred (chunked) conservation/
 // consensus jobs; reassigned + old one cancelled on every render so a
 // superseded background job can't clobber a newer one's results.
@@ -5721,9 +5758,8 @@ function _canvasHitTest(clientX, clientY, opts) {
     if (!canvas) return null;
     const m = _canvasState.metrics;
     if (!m || !m.nameW) return null;
-    const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x, y = P.y;
     const NAME_W = m.nameW;
     const HEADER_H = m.headerH || m.charH; // ruler row plus the annotation track, when shown
     const CHAR_W = m.charW;
@@ -5731,12 +5767,12 @@ function _canvasHitTest(clientX, clientY, opts) {
     const rowPitch = _canvasState.rowPitch || CHAR_H;
     // The name column covers the cells that scrolled under it (sticky names), so a press
     // there is on a name, never on a cell; without sticky names the names scroll away.
-    if (x < (el('stickyNames')?.checked ? NAME_W : NAME_W - _canvasState.offsetX)) return null;
+    if (x < (P.sticky ? NAME_W : NAME_W - P.ox)) return null;
     // Subtract the name column and scale ruler offsets, then add back the pan
     // offset so the result is in content (not viewport) coordinates.
-    const col = Math.floor((x - NAME_W + _canvasState.offsetX) / CHAR_W);
-    const row = Math.floor((y - HEADER_H +_canvasState.offsetY) / rowPitch);
-    if (col < 0 || row < 0) return null;
+    const col = Math.floor((x - NAME_W + P.ox) / CHAR_W);
+    const row = Math.floor((y - HEADER_H + P.oy) / rowPitch);
+    if (col < 0 || row < 0 || col >= P.s1) return null;
     const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
     const len = state.seqs && state.seqs.length > 0
         ? _maxOf(state.seqs, s => s.seq.length)
@@ -5748,7 +5784,7 @@ function _canvasHitTest(clientX, clientY, opts) {
     if (_canvasState.aaRows) {
         const hasAa = !!(state._codonData?.aaSeq?.[row]?.length);
         const baseH = (_canvasState.aaOnly && hasAa) ? 0 : (_canvasState.charH || CHAR_H);
-        const inRow = (y - HEADER_H + _canvasState.offsetY) - row * rowPitch;
+        const inRow = (y - HEADER_H + P.oy) - row * rowPitch;
         if (inRow >= baseH) {
             if (!(opts && opts.aaRows) || !hasAa) return null;
             return { row, col: _canvasSlotToCol(col), slot: col, aaLane: Math.floor((inRow - baseH) / (_canvasState.aaRowH || 1)) };
@@ -5765,13 +5801,13 @@ function _canvasHitTestRuler(clientX, clientY) {
     if (!canvas) return null;
     const m = _canvasState.metrics;
     if (!m || !m.nameW) return null;
-    const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x, y = P.y;
     const trackH = m.trackH || 0;             // annotation track above the ruler
     if (y < trackH || y >= trackH + m.charH) return null;  // not in ruler row
-    if (x < (el('stickyNames')?.checked ? m.nameW : m.nameW - _canvasState.offsetX)) return null;   // name column corner
-    const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
+    if (x < (P.sticky ? m.nameW : m.nameW - P.ox)) return null;   // name column corner
+    const col = Math.floor((x - m.nameW + P.ox) / m.charW);
+    if (col >= P.s1) return null;
     const len = state.seqs && state.seqs.length > 0
         ? _maxOf(state.seqs, s => s.seq.length)
         : 0;
@@ -5794,17 +5830,17 @@ function _consensusTrimHint(pos) {
 function _canvasSideTooltip(clientX, clientY) {
     const m = _canvasState.metrics, canvas = _canvasState.canvas;
     if (!m || !canvas || !state.seqs.length) return null;
-    const r = canvas.getBoundingClientRect();
-    const x = clientX - r.left, y = clientY - r.top;
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x, y = P.y;
     const nameHit = _canvasHitTestName(clientX, clientY);
     if (nameHit) return _seqNameTitle(nameHit.row, nameCellLook(nameHit.row));
-    const bx = (_canvasState.badgeX || 0) - _canvasState.offsetX;
-    if (_canvasState.badgeX == null || x < bx || x >= bx + (_canvasState.badgeBoxW || 0)) return null;
+    const bx = (_canvasState.badgeX || 0) - P.ox;
+    if (!P.last || _canvasState.badgeX == null || x < bx || x >= bx + (_canvasState.badgeBoxW || 0)) return null;
     const pitch = _canvasState.rowPitch || m.charH;
-    const row = Math.floor((y - (m.headerH || m.charH) + _canvasState.offsetY) / pitch);
+    const row = Math.floor((y - (m.headerH || m.charH) + P.oy) / pitch);
     if (row >= 0 && row < state.seqs.length) { const g = _linkGapless(state.seqs[row]); return `Sequence length: ${g[g.length - 1] || 0} (gapless)`; }
     const b = _canvasState.consBand;
-    const cy = y + _canvasState.offsetY;
+    const cy = y + P.oy;
     const bv = _canvasConsValues();
     if (b && bv && cy >= b.y + b.textOff && cy < b.y + b.textOff + m.charH) {
         let n = 0; for (const c of bv) if (c && c !== '-' && c !== '.' && c !== ' ') n++;
@@ -5824,12 +5860,12 @@ function _canvasConsValues() {
 function _canvasHitTestConsensus(clientX, clientY) {
     const b = _canvasState.consBand, m = _canvasState.metrics, canvas = _canvasState.canvas;
     if (!b || !m || !canvas) return -1;
-    const r = canvas.getBoundingClientRect();
-    const x = clientX - r.left, y = clientY - r.top + _canvasState.offsetY;
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x, y = P.y + P.oy;
     if (y < b.y + b.textOff || y >= b.y + b.textOff + m.charH) return -1;
-    if (x < (el('stickyNames')?.checked ? m.nameW : m.nameW - _canvasState.offsetX)) return -1;
-    const slot = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
-    if (slot < 0 || slot >= (_canvasState.nSlots || 0) || _canvasSlotIsMarker(slot)) return -1;
+    if (x < (P.sticky ? m.nameW : m.nameW - P.ox)) return -1;
+    const slot = Math.floor((x - m.nameW + P.ox) / m.charW);
+    if (slot < 0 || slot >= P.s1 || slot >= (_canvasState.nSlots || 0) || _canvasSlotIsMarker(slot)) return -1;
     return _canvasSlotToCol(slot);
 }
 function _canvasHitTestName(clientX, clientY) {
@@ -5837,13 +5873,12 @@ function _canvasHitTestName(clientX, clientY) {
     if (!canvas) return null;
     const m = _canvasState.metrics;
     if (!m || !m.nameW) return null;
-    const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-    const nx = el('stickyNames')?.checked ? 0 : -_canvasState.offsetX;   // static names scroll with the content
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x, y = P.y;
+    const nx = P.sticky ? 0 : -P.ox;   // static names scroll with the content
     if (x < nx || x >= nx + m.nameW) return null;   // not in name column
     if (y < (m.headerH || m.charH)) return null; // ruler / annotation corner
-    const row = Math.floor((y - (m.headerH || m.charH) + _canvasState.offsetY) / (_canvasState.rowPitch || m.charH));
+    const row = Math.floor((y - (m.headerH || m.charH) + P.oy) / (_canvasState.rowPitch || m.charH));
     const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
     if (row < 0 || row >= nSeqs) return null;
     return { row };
@@ -5857,7 +5892,8 @@ function _canvasRowDropTarget(clientY) {
     const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
     if (!nSeqs) return null;
     const pitch = _canvasState.rowPitch || m.charH;
-    const y = clientY - canvas.getBoundingClientRect().top - (m.headerH || m.charH) + _canvasState.offsetY;
+    const P = _canvasLocal(0, clientY);
+    const y = P.y - (m.headerH || m.charH) + P.oy;
     const row = Math.max(0, Math.min(nSeqs - 1, Math.floor(y / pitch)));
     const above = row === 0 ? y < pitch / 2 : (row === nSeqs - 1 ? y < row * pitch + pitch / 2 : (y - row * pitch) < pitch / 2);
     return { row, above };
@@ -5923,9 +5959,8 @@ function _canvasRowFromClientY(clientY) {
     if (!canvas) return -1;
     const m = _canvasState.metrics;
     if (!m || !m.nameW) return -1;
-    const rect = canvas.getBoundingClientRect();
-    const y = clientY - rect.top;
-    const row = Math.floor((y - (m.headerH || m.charH) + _canvasState.offsetY) / (_canvasState.rowPitch || m.charH));
+    const P = _canvasLocal(0, clientY);
+    const row = Math.floor((P.y - (m.headerH || m.charH) + P.oy) / (_canvasState.rowPitch || m.charH));
     const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
     if (row < 0 || row >= nSeqs) return -1;
     return row;
@@ -5933,15 +5968,16 @@ function _canvasRowFromClientY(clientY) {
 
 // Get the column index from an x coordinate in canvas viewport space.
 // Unlike _canvasHitTestRuler, this works for any y (used during drag).
-function _canvasColFromClientX(clientX) {
+function _canvasColFromClientX(clientX, clientY) {
     const canvas = _canvasState.canvas;
     if (!canvas) return -1;
     const m = _canvasState.metrics;
     if (!m || !m.nameW) return -1;
-    const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    if (x < (el('stickyNames')?.checked ? m.nameW : m.nameW - _canvasState.offsetX)) return -1;
-    const col = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x;
+    if (x < (P.sticky ? m.nameW : m.nameW - P.ox)) return -1;
+    const col = Math.floor((x - m.nameW + P.ox) / m.charW);
+    if (col >= P.s1) return -1;
     const len = state.seqs && state.seqs.length > 0
         ? _maxOf(state.seqs, s => s.seq.length)
         : 0;
@@ -6028,6 +6064,10 @@ function _fitAlignmentViewport() {
 
 function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
                                   enableBlack, enableDark, enableLight, nameLen, stickyNames, consInfo = null) {
+    // PROTOTYPE Block layout (see _canvasBlockLayout): every band shows its names
+    const blockLayout = !!_canvasBlockLayout;
+    if (blockLayout) stickyNames = true;
+    _canvasState.layout = null;
     alignmentContainer.innerHTML = '';
     alignmentContainer.style.overflow = 'hidden';
     alignmentContainer.style.position = 'relative';
@@ -6238,11 +6278,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         ctx.restore();
         return Math.ceil(tw + 2 * BADGE_PAD + 2);
     })();
-    const totalContentW = NAME_W + nSlots * CHAR_W + BADGE_GAP + BADGE_W + 4;
+    let totalContentW = NAME_W + nSlots * CHAR_W + BADGE_GAP + BADGE_W + 4;
     _canvasState.badgeW = BADGE_GAP + BADGE_W;   // the length-badge column right of the last slot
     _canvasState.badgeX = NAME_W + nSlots * CHAR_W + BADGE_GAP;   // content x of the badges (their hover)
     _canvasState.badgeBoxW = BADGE_W;
-    const totalContentH = HEADER_H +nSeqs * rowPitch + (consInfo && !consTop ? CONS_H : 0) + 4;
+    let totalContentH = HEADER_H +nSeqs * rowPitch + (consInfo && !consTop ? CONS_H : 0) + 4;
     // where the consensus row is in content coordinates (its hover tooltip): under the ruler, or after the rows
     _canvasState.consBand = consInfo ? { y: consTop ? TRACK_H + SCALE_H : HEADER_H + nSeqs * rowPitch, h: CONS_H, textOff: consTop ? 0 : CONS_GAP, values: consInfo.values } : null;
     // Exposed so the persistent horizontal/vertical scrollbars (real DOM
@@ -6250,6 +6290,59 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // can size their thumbs and mirror pan position.
     _canvasState.totalContentW = totalContentW;
     _canvasState.totalContentH = totalContentH;
+
+    // PROTOTYPE Block layout: bands of bandCols slots, each a whole strip (ruler, consensus, rows)
+    // followed by the DOM's 24 px block gap. Every band has the same height, so the band of a
+    // content y is floor(y / bandH). bandEdges: band-relative y of every line edge (the frame copy
+    // widens its exposed strip to these, as it does to row edges in the strip layout).
+    const BLOCK_GAP = Math.round(24 * dpr) / dpr;
+    const bandBodyH = HEADER_H + nSeqs * rowPitch + (consInfo && !consTop ? CONS_H : 0);
+    const bandH = bandBodyH + BLOCK_GAP;
+    const bandEdges = (() => {
+        const e = new Set([0, bandBodyH, bandH]);
+        if (TRACK_H) e.add(TRACK_H);
+        e.add(TRACK_H + SCALE_H);
+        for (let i = 0; i <= nSeqs; i++) e.add(HEADER_H + i * rowPitch);
+        return Float64Array.from([...e].sort((a, b) => a - b));
+    })();
+    let bandCols = nSlots, nBands = 1, bandScale = [];
+    // band-local draw parameters read by drawRegion (defaults = the strip: everything)
+    let _bS0 = 0, _bS1 = nSlots, _bScale = null, _bLast = true;
+    const bandSlot0 = b => b * bandCols;
+    const bandSlot1 = b => Math.min(nSlots, (b + 1) * bandCols);
+    const bandRight = b => NAME_W + (bandSlot1(b) - bandSlot0(b)) * CHAR_W + (b === nBands - 1 ? BADGE_GAP + BADGE_W + 4 : 0);
+    const bandRuler = b => {
+        if (slots) return null;   // hidden columns: the whole-alignment text (labels at a band edge may be cut)
+        if (!bandScale[b]) bandScale[b] = generateScale(bandSlot1(b) - bandSlot0(b), _canvasScaleInterval(CHAR_W), bandSlot0(b));
+        return bandScale[b];
+    };
+    _canvasState.relayoutMs = 0;
+    // (Re)wrap to the viewport width; keeps the top-left visible slot's band row in view. True when it changed.
+    function relayout() {
+        if (!blockLayout) return false;
+        const t0 = performance.now();
+        const slider = parseInt(el('blockSizeSlider')?.value, 10) || 60;
+        const avail = (canvas.width / dpr || 800) - NAME_W - BADGE_GAP - BADGE_W - 4 - 12;   // 12: the vertical scrollbar over the right edge
+        const cols = Math.max(1, Math.min(slider, nSlots, Math.max(10, Math.floor(avail / CHAR_W))));
+        if (cols === bandCols && _canvasState.layout) return false;
+        const hadLayout = !!_canvasState.layout;
+        const oldB = Math.floor(_canvasState.offsetY / bandH), inBand = _canvasState.offsetY - oldB * bandH;
+        const firstSlot = oldB * bandCols;
+        bandCols = cols;
+        nBands = Math.max(1, Math.ceil(nSlots / bandCols));
+        bandScale = [];
+        totalContentW = 0;   // nothing to scroll sideways: the bands fit the width
+        totalContentH = nBands * bandH - BLOCK_GAP + 4;
+        _canvasState.totalContentW = totalContentW;
+        _canvasState.totalContentH = totalContentH;
+        _canvasState.offsetX = 0;
+        if (hadLayout) _canvasState.offsetY = Math.floor(firstSlot / bandCols) * bandH + inBand;
+        _canvasState.layout = { kind: 'block', bandCols, nBands, bandH, bandBodyH, nSlots };
+        _canvasState.relayoutMs = performance.now() - t0;
+        window._syncVerticalScrollbar?.();
+        window._syncHorizontalScrollbar?.();
+        return true;
+    }
 
     // Resize canvas to viewport. The container's height is set from its position (the
     // controls above it change height: edit toolbar, menus), so recompute both here; cheap
@@ -6298,6 +6391,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         overlay.style.width = canvas.style.width;
         overlay.style.height = canvas.style.height;
         octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        relayout();
         return true;
     }
     // The canvas size in CSS px from its bitmap: the CSS width is bitmap / dpr (1971.875 at a 1.6 ratio) and parseInt
@@ -6453,7 +6547,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             clearWhite(ctx, 0, 0, w, h);
-            drawRegion(ox, oy, w, h, x0 / dpr, y0 / dpr, x1 / dpr, y1 / dpr);
+            drawArea(ox, oy, w, h, x0 / dpr, y0 / dpr, x1 / dpr, y1 / dpr);
             ctx.restore();
         };
         if (canBlit) {
@@ -6475,6 +6569,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             // cell is either copied whole or drawn whole: a cell cut by the clip would have
             // its antialiased edge pixels composited twice (copy, then draw).
             const rowEdgeDev = (yDev, up) => {   // device y of the row edge at/above (up) or at/below yDev
+                if (blockLayout) {   // the line edges of the band the point is in
+                    const cy = yDev / dpr + oy, b = Math.floor(cy / bandH), ry = cy - b * bandH;
+                    let e = up ? 0 : bandH;
+                    if (up) { for (let i = bandEdges.length - 1; i >= 0; i--) if (bandEdges[i] <= ry + 1e-6) { e = bandEdges[i]; break; } }
+                    else { for (let i = 0; i < bandEdges.length; i++) if (bandEdges[i] >= ry - 1e-6) { e = bandEdges[i]; break; } }
+                    const ed = Math.round((b * bandH + e - oy) * dpr);
+                    return up ? Math.max(0, Math.min(ed, yDev)) : Math.min(H, Math.max(ed, yDev));
+                }
                 const k = (yDev / dpr - HEADER_H + oy) / rowPitch;
                 const kk = up ? Math.floor(k + 1e-6) : Math.ceil(k - 1e-6);
                 const e = Math.round((HEADER_H + kk * rowPitch - oy) * dpr);
@@ -6498,7 +6600,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             _canvasState.stats.blitMs.push(performance.now() - t0);
         } else {
             clearWhite(ctx, 0, 0, w, h);
-            drawRegion(ox, oy, w, h, 0, 0, w, h);
+            drawArea(ox, oy, w, h, 0, 0, w, h);
             _canvasState.stats.full++;
             _canvasState.stats.fullMs.push(performance.now() - t0);
         }
@@ -6515,6 +6617,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // accept the new state as drawn so the next scroll step can still copy the frame.
     _canvasState.redrawCells = (r0, r1, c0, c1) => {
         if (drawRaf || _dirty) return;                      // a full draw is coming anyway
+        if (blockLayout) { _markDirty(); scheduleDraw(); return; }   // PROTOTYPE: no band-aware partial repaint yet
         const w = _cssW(), h = _cssH();
         const ox = _canvasState.offsetX, oy = _canvasState.offsetY, W = canvas.width, H = canvas.height;
         const clipDraw = (x0, y0, x1, y1) => {
@@ -6542,8 +6645,38 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
 
     // The overlay layer: selections, the pending/edit cell and the row drag indicator, in
     // content coordinates. Cleared and redrawn whole; a few fills, under a millisecond.
+    // The bands that intersect the viewport rows [cy0, cy1): calls f(b, top) with the band's view y
+    function forBands(oy, cy0, cy1, f) {
+        const b0 = Math.max(0, Math.floor((oy + cy0) / bandH)), b1 = Math.min(nBands - 1, Math.floor((oy + cy1 - 1e-6) / bandH));
+        for (let b = b0; b <= b1; b++) f(b, b * bandH - oy);
+    }
+    // drawRegion through the layout: the strip as is, or each band as a strip with its own virtual offsets,
+    // clipped to the band's rectangle (the gap between bands stays white)
+    function drawArea(ox, oy, w, h, cx0, cy0, cx1, cy1) {
+        if (!blockLayout) return drawRegion(ox, oy, w, h, cx0, cy0, cx1, cy1);
+        forBands(oy, cy0, cy1, (b, top) => {
+            const y0 = Math.max(cy0, top), y1 = Math.min(cy1, top + bandBodyH), right = Math.min(cx1, bandRight(b));
+            if (y1 <= y0 || right <= cx0) return;
+            ctx.save();
+            ctx.beginPath(); ctx.rect(0, top, bandRight(b), bandBodyH); ctx.clip();
+            _bS0 = bandSlot0(b); _bS1 = bandSlot1(b); _bScale = bandRuler(b); _bLast = b === nBands - 1;
+            drawRegion(_bS0 * CHAR_W, oy - b * bandH, w, h, cx0, y0, right, y1);
+            ctx.restore();
+        });
+        _bS0 = 0; _bS1 = nSlots; _bScale = null; _bLast = true;
+    }
     function drawOverlay(ox, oy, w, h) {
+        if (!blockLayout) return drawOverlayStrip(ox, oy, w, h);
         octx.clearRect(0, 0, w, h);
+        forBands(oy, 0, h, (b, top) => {
+            octx.save();
+            octx.beginPath(); octx.rect(0, top, bandRight(b), bandBodyH); octx.clip();
+            drawOverlayStrip(bandSlot0(b) * CHAR_W, oy - b * bandH, w, h, true);
+            octx.restore();
+        });
+    }
+    function drawOverlayStrip(ox, oy, w, h, noClear) {
+        if (!noClear) octx.clearRect(0, 0, w, h);
         // Row reorder in progress: tint the dragged names, draw the drop bar in the name column
         const rd = _canvasState.rowDrag;
         if (rd && rd.started) {
@@ -6703,8 +6836,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // [cx0, cx1) x [cy0, cy1) of the viewport (the caller has set the clip).
     function drawRegion(ox, oy, w, h, cx0, cy0, cx1, cy1) {
         // firstCol/lastCol are SLOTS (columns without Variable sites only)
-        const firstCol = Math.max(0, Math.floor((ox - NAME_W + cx0) / CHAR_W));
-        const lastCol = Math.min(nSlots - 1, Math.ceil((ox - NAME_W + cx1) / CHAR_W));
+        const firstCol = Math.max(_bS0, Math.floor((ox - NAME_W + cx0) / CHAR_W));
+        const lastCol = Math.min(_bS1 - 1, Math.ceil((ox - NAME_W + cx1) / CHAR_W));
         // A breakpoint marker cell (DOM .col-breakpoint): marker colour, hairline borders, symbol
         // A fold marker (hidden columns) has its own colour and symbol.
         const drawMarker = (x, y, sI) => {
@@ -6774,7 +6907,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     }
                     continue;
                 }
-                const ch = scaleTextAll[pc];
+                const ch = _bScale ? _bScale[pc - _bS0] : scaleTextAll[pc];
                 if (!ch || ch === ' ') continue;
                 const x = NAME_W + sI * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) continue;
@@ -6965,7 +7098,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             ctx.fillText(String(n), badgeX + BADGE_W / 2, y + 1);
             ctx.textAlign = 'start';
         };
-        const badgesVisible = badgeX < cx1 && badgeX + BADGE_W > cx0;
+        const badgesVisible = _bLast && badgeX < cx1 && badgeX + BADGE_W > cx0;
         if (badgesVisible) {
             ctx.font = BADGE_FONT;
             for (let i = firstRow; i <= lastRow; i++) drawBadge(_gaplessLen(state.seqs[i]), HEADER_H + i * rowPitch - oy);
@@ -7123,7 +7256,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         if (e.ctrlKey) return;   // the browser's zoom, as in Full/Block
         e.preventDefault();
         const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? _cssH() : 1;   // lines (Firefox) or pages
-        const dx = e.deltaX * k, dy = e.deltaY * k;
+        const dx = blockLayout ? 0 : e.deltaX * k, dy = e.deltaY * k;   // Block layout: the bands fit the width
         if (_reducedMotion() || (Math.abs(dy) < 40 && Math.abs(dx) < 40)) {
             _wheelAnim = null; _canvasState.wheelAnimating = false;
             _canvasState.offsetX += dx;
@@ -7510,10 +7643,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     // showTooltipAt places the tooltip directly above the
                     // cell, matching DOM mode's span-anchored positioning.
                     const m = _canvasState.metrics;
-                    const rect = canvas.getBoundingClientRect();
                     const target = _getCanvasTooltipTarget();
-                    target.style.left = (rect.left + m.nameW + _canvasColToSlot(col) * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
-                    target.style.top = (rect.top + (m.headerH || m.charH) + row * (_canvasState.rowPitch || m.charH) - _canvasState.offsetY) + 'px';   // rows are rowPitch apart (translation tracks)
+                    const cc = _canvasCellClient(row, _canvasColToSlot(col));   // any layout (strip or Block bands)
+                    target.style.left = (cc.x + m.charW / 2) + 'px';
+                    target.style.top = cc.y + 'px';   // rows are rowPitch apart (translation tracks)
                     const ovT = residueOverlay(_overlayRowCtx(row), col, base);   // the span's title in Full/Block
                     showTooltipAt(`${seqObj.header}: ${gaplessPos}` + (ovT && ovT.titles.length ? ' | ' + ovT.titles.join(' | ') : ''), target);
                     return;
@@ -7554,7 +7687,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     if (_canvasState.pendingAnchor) {
         const a = _canvasState.pendingAnchor;
         _canvasState.pendingAnchor = null;
-        _applyViewAnchor(a);
+        if (!blockLayout) _applyViewAnchor(a);   // PROTOTYPE: anchors are strip coordinates
     }
     scheduleDraw();
 }
@@ -14906,7 +15039,7 @@ function handleMouseMove(e) {
     } else if (state.dragMode === 'col') {
         hideTooltip();
         if (document.getElementById('modeCanvas')?.checked) {
-            const pos = _canvasColFromClientX(e.clientX);
+            const pos = _canvasColFromClientX(e.clientX, e.clientY);
             if (pos >= 0) {
                 const start = Math.min(state.dragStartCol, pos);
                 const end = Math.max(state.dragStartCol, pos);
@@ -26469,7 +26602,8 @@ function initializeAppUI() {
     const urlParams = new URLSearchParams(window.location.search);
     {
         const v = (urlParams.get('view') || '').toLowerCase();
-        const id = { full: 'modeSingle', single: 'modeSingle', block: 'modeBlocks', blocks: 'modeBlocks', canvas: 'modeCanvas' }[v];
+        const id = { full: 'modeSingle', single: 'modeSingle', block: 'modeBlocks', blocks: 'modeBlocks', canvas: 'modeCanvas', cblock: 'modeCanvas' }[v];
+        if (v === 'cblock') _canvasBlockLayout = true;   // PROTOTYPE: Canvas drawing the wrapped Block layout
         if (id && document.getElementById(id)) {
             document.getElementById(id).checked = true;
             _lastModeRadioId = id;
