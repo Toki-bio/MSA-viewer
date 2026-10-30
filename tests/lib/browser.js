@@ -40,9 +40,22 @@ async function launch(opts = {}) {
     const extra = opts.scrollbars ? { ignoreDefaultArgs: ['--hide-scrollbars'] } : {};
     browser = await chromium.launch({ executablePath: findChrome(), headless: true, ...extra });
   }
+  if (!opts.canvasBlock) _domBlockHook(browser);
   _launched.add(browser);
   browser.on('disconnected', () => _launched.delete(browser));
   return browser;
+}
+// The Block view is drawn by the Canvas renderer (Canvas Block). The checks written for the old
+// DOM Block keep testing it: every page of a browser from launch() starts with
+// window.__vaDomBlockForTests set, which makes the Block radio show the DOM Block (script.js
+// _domBlockForTests, also ?view=domblock), whatever URL the check navigates to.
+// launch({ canvasBlock: true }) leaves it out (checks of Canvas Block itself).
+function _domBlockHook(browser) {
+  const add = (ctx) => ctx.addInitScript(() => { window.__vaDomBlockForTests = true; });
+  const newContext = browser.newContext.bind(browser);
+  browser.newContext = async (...a) => { const c = await newContext(...a); await add(c); return c; };
+  const newPage = browser.newPage.bind(browser);
+  browser.newPage = async (...a) => { const p = await newPage(...a); await add(p.context()); return p; };
 }
 // Closes every browser still open except those in `keep` (each under its own time limit); returns how many were closed
 async function closeLaunched(limitMs = 10000, keep = []) {
@@ -133,7 +146,10 @@ async function loadSyntheticFasta(page, nSeq, nCol, alphabet = 'ACGT') {
   await page.waitForTimeout(200);
 }
 
+// block: the DOM Block on pages from launch() (window.__vaDomBlockForTests, see _domBlockHook);
+// domblock says so explicitly (it also sets the flag on a page without the hook)
 async function setMode(page, mode) {
+  if (mode === 'domblock') { await page.evaluate(() => { _domBlockForTests = true; }); mode = 'block'; }
   const id = { full: 'modeSingle', block: 'modeBlocks', canvas: 'modeCanvas' }[mode];
   if (!id) throw new Error(`unknown mode: ${mode}`);
   // Full and Block ask "Full mode on a large alignment" for any tall (>500 rows), long (>3000

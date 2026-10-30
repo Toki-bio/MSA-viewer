@@ -6,7 +6,7 @@ const { serve, launch, openView, waitFor, q } = require('./common');
   for (const mode of ['block', 'cblock']) {
     const page = await openView(browser, base, process.argv[2] || 'small25x800.fas', 'cblock');
     if (mode === 'block') {
-      await page.evaluate(async () => { el('blockSizeSlider').value = _canvasState.layout.bandCols; _canvasBlockLayout = false; document.getElementById('modeBlocks').checked = true; await onModeChange(); });
+      await page.evaluate(async () => { el('blockSizeSlider').value = _canvasState.layout.bandCols; _domBlockForTests = true; document.getElementById('modeBlocks').checked = true; await onModeChange(); });
       await waitFor(page, () => document.querySelector('.block-block .seq-data span[data-pos]')); await page.waitForTimeout(800);
     }
     const res = [];

@@ -5,7 +5,7 @@ const path = require('path');
   const fx = process.argv[2] || 'aln600x600.fas';
   const { srv, base } = await serve();
   const browser = await launch(!!process.env.HEADFUL);
-  for (const view of ['cblock', 'block', 'canvas']) {
+  for (const view of ['cblock', 'domblock', 'canvas']) {
     const page = await openView(browser, base, fx, view);
     const info = await page.evaluate(() => ({ L: _canvasState.layout, slider: el('blockSizeSlider').value, canvas: !!document.getElementById('alignmentCanvas'), err: null }));
     console.log(view, JSON.stringify(info));

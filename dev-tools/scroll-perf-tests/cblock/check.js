@@ -8,7 +8,7 @@ const rec = (name, pass, detail) => { results.push({ name, pass, detail }); cons
 async function toDomBlock(page, width) {
   await page.evaluate(async (w) => {
     if (w) { el('blockSizeSlider').value = w; el('blockSizeInput').value = w; }
-    _canvasBlockLayout = false;
+    _domBlockForTests = true;   // the old DOM Block (test-only, script.js isDomBlock)
     document.getElementById('modeBlocks').checked = true;
     await onModeChange();
   }, width);

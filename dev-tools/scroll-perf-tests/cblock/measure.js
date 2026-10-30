@@ -32,7 +32,7 @@ const HEADFUL = !!process.env.HEADFUL;
     const switchMs = await page.evaluate(async (mode) => {
       window.showLargeAlignmentDialog = async () => 'proceed';
       const t0 = performance.now();
-      if (mode === 'block') { document.getElementById('modeBlocks').checked = true; await onModeChange(); }
+      if (mode === 'block') { _domBlockForTests = true; document.getElementById('modeBlocks').checked = true; await onModeChange(); }
       else if (mode === 'cblock') { await vaCanvasBlock(false); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); const t1 = performance.now(); await vaCanvasBlock(true); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return performance.now() - t1; }
       else { await vaCanvasBlock(true); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); const t1 = performance.now(); await vaCanvasBlock(false); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return performance.now() - t1; }
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));

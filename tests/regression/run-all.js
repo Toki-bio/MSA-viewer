@@ -5023,6 +5023,127 @@ check('Default view: Canvas at every size; a chosen Full/Block holds for small f
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// ---- Canvas Block (batch 1, 2026-10-31): the Block view is drawn by the Canvas renderer ----
+// The owner made Canvas Block THE Block view. The old DOM Block stays reachable only for the DOM
+// checks (?view=domblock / window.__vaDomBlockForTests, set on every page by tests/lib/browser.js),
+// so these checks open their own browser without that hook: launch({ canvasBlock: true }).
+async function withCanvasBlockPage(page, fn) {
+  const origin = new URL(page.url()).origin;
+  const b = await launch({ canvasBlock: true });
+  try {
+    const p = await b.newPage({ viewport: { width: 1400, height: 900 } });
+    p.setDefaultTimeout(30000);
+    return await fn(p, origin);
+  } finally { await b.close().catch(() => {}); }
+}
+const CB_STATE = () => ({
+  radio: document.querySelector('input[name="mode"]:checked')?.id || null,
+  canvas: !!document.getElementById('alignmentCanvas'),
+  layout: (typeof _canvasState !== 'undefined' && _canvasState.layout) ? { kind: _canvasState.layout.kind, bandCols: _canvasState.layout.bandCols, nBands: _canvasState.layout.nBands } : null,
+  domBlocks: document.querySelectorAll('.block-block').length,
+  hbar: getComputedStyle(document.querySelector('.horizontal-scrollbar')).visibility,
+});
+const cbIsCanvasBlock = s => s.radio === 'modeBlocks' && s.canvas && !!s.layout && s.layout.kind === 'block' && s.domBlocks === 0;
+
+check('Canvas Block: clicking the Block radio draws on the canvas in bands (no DOM blocks), horizontal bar hidden', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  // Before batch 1 the Block radio built the DOM Block (.block-block elements, no canvas)
+  await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(20, 900));
+  await p.waitForTimeout(500);
+  const before = await p.evaluate(CB_STATE);
+  await p.click('.section-header[data-section="display"]');
+  await p.click('#modeBlocks');
+  await p.waitForTimeout(900);
+  const after = await p.evaluate(CB_STATE);
+  const ok = before.radio === 'modeCanvas' && cbIsCanvasBlock(after) && after.layout.nBands > 1 && after.hbar === 'hidden';
+  return { pass: ok, detail: JSON.stringify({ before, after }) };
+}));
+
+check('Canvas Block: ?view=block opens Canvas Block, ?view=domblock the old DOM Block', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const url = v => origin + '/index.html?view=' + v + '&url=' + encodeURIComponent(origin + '/examples/svk_k4.fa');
+  const open = async (v) => {
+    await p.goto(url(v), { waitUntil: 'networkidle' });
+    await p.waitForFunction(() => typeof state !== 'undefined' && state.seqs && state.seqs.length > 0, null, { timeout: 15000 });
+    await p.waitForTimeout(700);
+    return p.evaluate(CB_STATE);
+  };
+  const block = await open('block');
+  const dom = await open('domblock');
+  const ok = cbIsCanvasBlock(block) && dom.radio === 'modeBlocks' && !dom.canvas && !dom.layout && dom.domBlocks > 1;
+  return { pass: ok, detail: JSON.stringify({ block, dom }) };
+}));
+
+check('Canvas Block: the Block size slider sets the band width', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(12, 1000));
+  await p.waitForTimeout(600);
+  const setSlider = async (v) => {
+    await p.evaluate((v) => { const s = document.getElementById('blockSizeSlider'); s.value = String(v); s.dispatchEvent(new Event('input', { bubbles: true })); }, v);
+    await p.waitForTimeout(700);
+    return p.evaluate(() => ({ slider: +document.getElementById('blockSizeSlider').value, input: +document.getElementById('blockSizeInput').value, layout: _canvasState.layout ? { bandCols: _canvasState.layout.bandCols, nBands: _canvasState.layout.nBands } : null, sliderEnabled: getComputedStyle(document.getElementById('blockSizeContainer')).pointerEvents !== 'none' }));
+  };
+  const a = await setSlider(60);
+  const b = await setSlider(100);
+  const ok = !!a.layout && a.layout.bandCols === 60 && a.layout.nBands === Math.ceil(1000 / 60)
+    && !!b.layout && b.layout.bandCols === 100 && b.layout.nBands === 10 && a.input === 60 && b.input === 100 && b.sliderEnabled;
+  return { pass: ok, detail: JSON.stringify({ a, b }) };
+}));
+
+check('Canvas Block: a preset and a snapshot saved in Block restore Block (Canvas Block)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(12, 700));
+  await p.waitForTimeout(600);
+  const saved = await p.evaluate(CB_STATE);
+  // preset: Save Preset in Block, go to Canvas, Load Preset
+  await p.evaluate(() => { savePreset(); const r = document.getElementById('modeCanvas'); r.checked = true; return onModeChange(); });
+  await p.waitForTimeout(500);
+  const inCanvas = await p.evaluate(CB_STATE);
+  await p.evaluate(() => loadPreset());
+  await p.waitForTimeout(900);
+  const preset = await p.evaluate(CB_STATE);
+  // snapshot: built in Block, loaded from Canvas
+  const payload = await p.evaluate(() => _buildSnapshotPayload());
+  await p.evaluate(() => { const r = document.getElementById('modeCanvas'); r.checked = true; return onModeChange(); });
+  await p.waitForTimeout(500);
+  await p.evaluate((pl) => _loadSnapshotPayload(pl), payload);
+  await p.waitForTimeout(900);
+  const snap = await p.evaluate(CB_STATE);
+  const ok = cbIsCanvasBlock(saved) && inCanvas.radio === 'modeCanvas' && !inCanvas.layout && cbIsCanvasBlock(preset) && cbIsCanvasBlock(snap);
+  return { pass: ok, detail: JSON.stringify({ saved, inCanvas, preset, snap }) };
+}));
+
+check('Canvas Block: entering Block on a tall alignment asks nothing; the Screen button fits the bands to the window', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  // The "large alignment" dialog protected the DOM Block; Canvas Block draws only what is in view.
+  await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(600, 120));   // 600 rows: isTall
+  await p.waitForTimeout(600);
+  const tall = await p.evaluate(() => !!(state.alignmentIndex && (state.alignmentIndex.isTall || state.alignmentIndex.isLong || state.alignmentIndex.isCrazy)));
+  await p.click('.section-header[data-section="display"]');
+  await p.click('#modeBlocks');
+  const dialog = await p.waitForSelector('#alignLoadProceed', { timeout: 1500 }).then(() => true).catch(() => false);
+  if (dialog) await p.click('#alignLoadProceed');
+  await p.waitForTimeout(700);
+  const entered = await p.evaluate(CB_STATE);
+  // Screen: a long alignment, slider at 40, then the Screen button
+  await loadFasta(p, makeFasta(10, 2000));
+  await p.waitForTimeout(600);
+  await p.evaluate(() => { const s = document.getElementById('blockSizeSlider'); s.value = '40'; s.dispatchEvent(new Event('input', { bubbles: true })); });
+  await p.waitForTimeout(700);
+  const at40 = await p.evaluate(() => _canvasState.layout && _canvasState.layout.bandCols);
+  const menuOpen = await p.evaluate(() => document.querySelector('.section-header[data-section="display"]').closest('.menu-section').classList.contains('menu-open'));
+  if (!menuOpen) await p.click('.section-header[data-section="display"]');
+  await p.click('#blockSizeScreenBtn');
+  await p.waitForTimeout(700);
+  const screen = await p.evaluate(() => {
+    const L = _canvasState.layout, m = _canvasState.metrics, cv = _canvasState.canvas;
+    const right = L ? m.nameW + L.bandCols * m.charW + (_canvasState.badgeW || 0) : 0;   // the widest band's right edge (last band: + badges)
+    return { slider: +document.getElementById('blockSizeSlider').value, bandCols: L && L.bandCols, fit: _canvasState.blockFitCols, right: Math.round(right), canvasW: Math.round(parseFloat(cv.style.width)) };
+  });
+  const ok = tall && !dialog && cbIsCanvasBlock(entered) && at40 === 40
+    && screen.bandCols > 40 && screen.slider === screen.bandCols && screen.bandCols === screen.fit && screen.right <= screen.canvasW;
+  return { pass: ok, detail: JSON.stringify({ tall, dialog, entered, at40, screen }) };
+}));
+
 check('Realign all keeps a row that has only gaps (MAFFT and codon/MACSE), as a gap row of the new width', async (page) => {
   const fa = '>a\nATGGCTAAAGGTCTGCAAGAATTCGGTACC\n>empty\n------------------------------\n>b\nATGGCTAAGGGTCTGCAAGAATTCGGAACC\n>c\nATGGCAAAAGGTCTGCAGGAATTCGGTACC\n';
   const out = {};
@@ -11167,7 +11288,7 @@ async function main() {
       let outcome;
       const t0 = Date.now();
       try {
-        await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
+        await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
         outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
       } catch (e) {
         outcome = { pass: false, detail: `threw: ${e.message}` };

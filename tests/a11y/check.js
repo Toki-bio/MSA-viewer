@@ -133,7 +133,7 @@ async function main() {
       page.on('pageerror', e => errors.push(e.message));
       let outcome;
       try {
-        await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
+        await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
         outcome = await withTimeout(fn(page, baseUrl), checkTimeoutMs(opts));
         if (outcome.pass && errors.length) outcome = { pass: false, detail: 'page errors: ' + errors.join(' | ') };
       } catch (e) { outcome = { pass: false, detail: 'threw: ' + e.message }; }

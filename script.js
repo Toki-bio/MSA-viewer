@@ -7,6 +7,8 @@ const BUILD_TAG = 'v307';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
+// Test-only: the Block radio shows the old DOM Block renderer (see isBlockLayout / isDomBlock)
+let _domBlockForTests = typeof window !== 'undefined' && !!window.__vaDomBlockForTests;
 
 // ---- Browser compatibility ----
 // Supported: Chrome/Edge 80+, Firefox 100+ and Safari 15.4+ (reading .gz/BAM
@@ -1272,7 +1274,7 @@ function _clusterCharDiag(header, pos, base) {
 }
 
 function applyClusterVisualsFromState() {
-    if (document.getElementById('modeCanvas')?.checked || document.getElementById('modeReads')?.checked) return;
+    if (isCanvasMode() || document.getElementById('modeReads')?.checked) return;
     paintNameCells();
 }
 
@@ -3179,7 +3181,7 @@ function toggleStickyNames() {
     // DOM mode picks this up via the CSS class toggle above (no .seq-name
     // elements exist in Canvas mode); Canvas bakes stickyNames into its
     // render closure instead, so it needs an explicit re-render to take effect.
-    if (document.getElementById('modeCanvas')?.checked) debounceRender();
+    if (isCanvasMode()) debounceRender();
 }
 function calculateGaplessPositions(sequence) {
     const positions = [];
@@ -4316,7 +4318,7 @@ function _refreshUnifiedWindowOnScroll(container) {
 
 const _unifiedScrollController = _createWindowedScrollController(
     (container) => _refreshUnifiedWindowOnScroll(container),
-    () => (document.getElementById('modeSingle')?.checked || document.getElementById('modeBlocks')?.checked) && !!state._needsWindowedDom
+    () => (document.getElementById('modeSingle')?.checked || isDomBlock()) && !!state._needsWindowedDom
 );
 function _setupUnifiedScrollListener(container) {
     _unifiedScrollController.bind(container);
@@ -5552,7 +5554,7 @@ function _populateAlignedAARow(dataCol, aaSeqData, viewStart, viewEnd, frameShif
 // draw() so the scrollbar can mirror wheel-scroll/drag-pan that didn't originate from the bar itself.
 const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen: 0, scheduleDraw: null, totalContentW: 0, totalContentH: 0, onOffsetChange: null, resizeHandler: null, mousemoveHandler: null, mouseupHandler: null, canvas: null, rowPitch: 0 };
 
-// PROTOTYPE (branch proto-canvas-block, opt-in only: ?view=cblock or window.vaCanvasBlock(true)):
+// Block view (isBlockLayout(); prototyped on branch proto-canvas-block as ?view=cblock):
 // the Canvas renderer draws the wrapped Block layout. Layout abstraction:
 //   strip (default): one band; content (x, y) = (NAME_W + slot*CHAR_W, HEADER_H + row*pitch).
 //   block: bands of bandCols slots stacked vertically, band b at content y = b*bandH; each band is
@@ -5563,8 +5565,15 @@ const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen
 //     strip arithmetic in every hit test is unchanged. Horizontal offset is always 0 (bands fit
 //     the width: bandCols = min(Block width slider, what fits)), the frame copy is the vertical one,
 //     and the exposed strip is widened to the band's line edges (bandEdges) instead of row edges.
-let _canvasBlockLayout = false;
-window.vaCanvasBlock = (on) => { _canvasBlockLayout = !!on; if (on) { const r = document.getElementById('modeCanvas'); if (r) r.checked = true; } return renderAlignment(); };
+// Since batch 1 this is the Block view itself (isBlockLayout()). vaCanvasBlock(on): Block (true) or
+// the Canvas strip (false) without the mode-switch bookkeeping, for the measurement scripts.
+window.vaCanvasBlock = (on) => {
+    _domBlockForTests = false;
+    const r = document.getElementById(on ? 'modeBlocks' : 'modeCanvas');
+    if (r) r.checked = true;
+    _lastModeRadioId = r ? r.id : _lastModeRadioId;
+    return renderAlignment();
+};
 // A client point in the coordinates the strip hit tests expect: canvas-relative x, y and the
 // offsets, or in Block layout band-local y with the band's virtual offsets and its slot range.
 function _canvasLocal(clientX, clientY) {
@@ -6064,8 +6073,8 @@ function _fitAlignmentViewport() {
 
 function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, darkThresh, lightThresh,
                                   enableBlack, enableDark, enableLight, nameLen, stickyNames, consInfo = null) {
-    // PROTOTYPE Block layout (see _canvasBlockLayout): every band shows its names
-    const blockLayout = !!_canvasBlockLayout;
+    // Block layout (isBlockLayout()): every band shows its names
+    const blockLayout = isBlockLayout();
     if (blockLayout) stickyNames = true;
     _canvasState.layout = null;
     alignmentContainer.innerHTML = '';
@@ -6323,7 +6332,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const t0 = performance.now();
         const slider = parseInt(el('blockSizeSlider')?.value, 10) || 60;
         const avail = (canvas.width / dpr || 800) - NAME_W - BADGE_GAP - BADGE_W - 4 - 12;   // 12: the vertical scrollbar over the right edge
-        const cols = Math.max(1, Math.min(slider, nSlots, Math.max(10, Math.floor(avail / CHAR_W))));
+        const fit = Math.max(10, Math.floor(avail / CHAR_W));
+        _canvasState.blockFitCols = fit;   // what fits the window (the Screen button, setBlockSizeToScreen)
+        const cols = Math.max(1, Math.min(slider, nSlots, fit));
         if (cols === bandCols && _canvasState.layout) return false;
         const hadLayout = !!_canvasState.layout;
         const oldB = Math.floor(_canvasState.offsetY / bandH), inBand = _canvasState.offsetY - oldB * bandH;
@@ -6350,7 +6361,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     let _lastRect = '';
     function resize(force) {
         if ((window.devicePixelRatio || 1) !== dpr) {   // another screen scale: everything is sized for the old one
-            if (!_canvasState._dprRerender) { _canvasState._dprRerender = true; setTimeout(() => { _canvasState._dprRerender = false; if (document.getElementById('modeCanvas')?.checked) renderAlignment(); }, 0); }
+            if (!_canvasState._dprRerender) { _canvasState._dprRerender = true; setTimeout(() => { _canvasState._dprRerender = false; if (isCanvasMode()) renderAlignment(); }, 0); }
             return false;
         }
         const hCss = _fitAlignmentViewport();
@@ -11219,7 +11230,7 @@ function renderAlignment(options = {}) {
     // 0 instead of where the user actually scrolled to). Save and restore
     // around the rebuild, scoped to when windowing might apply so this doesn't
     // change scroll behavior anywhere else.
-    const _preserveScrollTop = ((document.getElementById('modeSingle')?.checked || document.getElementById('modeBlocks')?.checked) && _needsWindowed)
+    const _preserveScrollTop = ((document.getElementById('modeSingle')?.checked || isDomBlock()) && _needsWindowed)
         ? alignmentContainer.scrollTop : null;
     // The same for scrollLeft: emptying the container zeroed it, and the column window was then
     // built from that 0, so every redraw (colour scheme, consensus, Highlight diffs, zoom) threw a
@@ -11281,7 +11292,7 @@ function renderAlignment(options = {}) {
     const enableDark = el('enableDark').checked;
     const enableLight = el('enableLight').checked;
     const stickyNames = el('stickyNames').checked;
-    const useBlocks = el('modeBlocks').checked;
+    const useBlocks = isDomBlock();   // the DOM Block layout (Canvas Block returns in the Canvas path below)
 
     // (len, TOTAL_RESIDUES, and _needsWindowed are computed earlier in
     //  renderAlignment, before _preserveScrollTop, to avoid a
@@ -11299,15 +11310,18 @@ function renderAlignment(options = {}) {
     const CANVAS_AUTO_THRESHOLD = ALIGN_CANVAS_DEFAULT_RESIDUES;
     let _renderStartTime = performance.now();
     const userWantsCanvas = document.getElementById('modeCanvas')?.checked;
+    // The size switch protects the DOM views; Block is drawn by the Canvas renderer and needs no
+    // protection (the default view for a new file is still Canvas: !_userChoseDomView).
+    const sizeWantsCanvas = TOTAL_RESIDUES >= CANVAS_AUTO_THRESHOLD && !isBlockLayout();
 
-    if (!userWantsCanvas && !_userDismissedAutoCanvas && (TOTAL_RESIDUES >= CANVAS_AUTO_THRESHOLD || !_userChoseDomView)) {
+    if (!userWantsCanvas && !_userDismissedAutoCanvas && (sizeWantsCanvas || !_userChoseDomView)) {
         const canvasRadio = document.getElementById('modeCanvas');
         if (canvasRadio) canvasRadio.checked = true;
         _lastModeRadioId = 'modeCanvas'; // bypasses onModeChange, so sync explicitly
         syncQuickModeSwitch();
         syncCodonModePanel(); // this bypasses onModeChange, so sync explicitly
         const note = `Canvas view: everything works here as in Full view; `
-            + `Full or Block (mode switch at the top) give the DOM views, Block with wrapped rows.`;
+            + `Full or Block (mode switch at the top): Full gives the DOM view, Block wraps the rows.`;
         if (!_canvasNoteShown) {                        // once per session: Canvas is simply the default view
             _canvasNoteShown = true;
             showMessage(note, 10000);
@@ -11340,7 +11354,7 @@ function renderAlignment(options = {}) {
     // (len is declared above, before TOTAL_RESIDUES calculation)
 
     const shadeMode = _checkedRadioValue('shadeMode', 'all');
-    const useCanvas = document.getElementById('modeCanvas')?.checked;
+    const useCanvas = isCanvasMode();   // Canvas, or Block (Canvas Block)
 
     // Var-sites / highlight-diffs computation must run before the Canvas path
     // (which returns early) so Canvas mode has access to _diffColumns,
@@ -11393,7 +11407,7 @@ function renderAlignment(options = {}) {
                 preCalculateConservationChunked(state.seqs.slice(), len, shadeMode, (data) => {
                     if (myToken.cancelled) return;
                     state.conservationDataCache = { len, shadeMode, data, fp: _seqsFingerprint() };
-                    if (document.getElementById('modeCanvas')?.checked) renderAlignment(options);
+                    if (isCanvasMode()) renderAlignment(options);
                 }, myToken);
             };
             if (typeof requestIdleCallback === 'function') {
@@ -11712,7 +11726,7 @@ function _scheduleBlockMaskOverlay() {
 
 function renderBlockMaskOverlay() {
     document.querySelectorAll('.block-mask-layer').forEach(el => el.remove());
-    if (document.getElementById('modeCanvas')?.checked) { _canvasState.scheduleOverlay?.(); return; }   // Canvas: the overlay layer draws (or clears) it
+    if (isCanvasMode()) { _canvasState.scheduleOverlay?.(); return; }   // Canvas / Block: the overlay layer draws (or clears) it
     const mask = state.blockMask;
     if (!mask || !Array.isArray(mask.blocks) || !Array.isArray(mask.row_headers)) return;
     const windowed = !!state._needsWindowedDom;
@@ -13378,9 +13392,9 @@ function setZoom(percent) {
     // heights, and the browser rounds each row's painted background independently
     // leaving 1px unpainted seams between rows at some zoom levels.
     const size = Math.max(1, Math.round((percent / 100) * 13));
-    const isCanvas = document.getElementById('modeCanvas')?.checked;
+    const isCanvas = isCanvasMode();   // Canvas or Block (Canvas Block)
     const isWindowedDom = state._needsWindowedDom &&
-        (document.getElementById('modeSingle')?.checked || document.getElementById('modeBlocks')?.checked);
+        (document.getElementById('modeSingle')?.checked || isDomBlock());
     // Window geometry must be measured at the final font size, not midway
     // through the container's 0.1s CSS font-size transition. A big span view skips the
     // transition too: every animation step re-laid out every residue span (zoom took 5-13 s
@@ -14407,6 +14421,7 @@ function _captureViewAnchor(fromCanvas = isCanvasMode()) {
     if (fromCanvas) {
         const m = _canvasState.metrics;
         if (!m || !_canvasState.canvas) return null;
+        if (_canvasState.layout) return null;   // Canvas Block: anchors are strip coordinates (later batch)
         const pitch = _canvasState.rowPitch || m.charH;
         const oy = _canvasState.offsetY || 0, ox = _canvasState.offsetX || 0;
         // Canvas is laid out in slots (Variable sites only hides columns): the slot's column
@@ -14447,6 +14462,7 @@ function _applyViewAnchor(a) {
     if (isCanvasMode()) {
         const m = _canvasState.metrics;
         if (!m) return;
+        if (_canvasState.layout) return;   // Canvas Block: anchors are strip coordinates (later batch)
         const pitch = _canvasState.rowPitch || m.charH;
         _canvasState.offsetY = a.row > 0 ? (m.headerH || m.charH) + a.row * pitch : 0;
         const slot = _canvasColToSlotNear(a.col);
@@ -14462,7 +14478,7 @@ function _applyViewAnchor(a) {
         return;
     }
     const c = alignmentContainer;
-    const blocks = !!el('modeBlocks')?.checked;
+    const blocks = isDomBlock();   // (Canvas Block returned above)
     const p = _unifiedWindowRenderParams;
     const windowed = !!state._needsWindowedDom && !!p;
     const cellW = () => parseFloat(c.style.getPropertyValue('--res-w')) || _unifiedCharWidthPx || 7.8;
@@ -14513,8 +14529,10 @@ async function onModeChange() {
     // exactly what happened for Full mode originally. Gate entry into
     // both Full and Block specifically, using the same size classification,
     // regardless of whether the load-time dialog was already dismissed once.
+    // Block is drawn by the Canvas renderer since batch 1 of Canvas Block: no gate for it (the
+    // test-only DOM Block, _domBlockForTests, keeps it).
     const enteringFull = document.getElementById('modeSingle')?.checked;
-    const enteringBlocks = document.getElementById('modeBlocks')?.checked;
+    const enteringBlocks = isDomBlock();
     if (enteringFull || enteringBlocks) {
         const idx = state.alignmentIndex;
         if (idx && (idx.isCrazy || idx.isTall || idx.isLong)) {
@@ -14539,8 +14557,8 @@ async function onModeChange() {
     const VIEW_MODES = ['modeSingle', 'modeBlocks', 'modeCanvas'];
     const enteringView = VIEW_MODES.includes(document.querySelector('input[name="mode"]:checked')?.id);
     const viewAnchor = enteringView && VIEW_MODES.includes(_lastModeRadioId) && state.seqs?.length
-        ? _captureViewAnchor(_lastModeRadioId === 'modeCanvas') : null;
-    if (document.getElementById('modeCanvas')?.checked) {
+        ? _captureViewAnchor(_lastModeRadioId === 'modeCanvas' || (_lastModeRadioId === 'modeBlocks' && !_domBlockForTests)) : null;
+    if (isCanvasMode()) {
         // Entering Canvas mode: these caches are keyed only by length/shadeMode,
         // so any same-length edit made while away from Canvas (residue edits,
         // gap ops, sorts, realigns, etc.) would otherwise go undetected and
@@ -14607,6 +14625,21 @@ function _computeLargeAlignmentBlockChars() {
     return Math.max(40, Math.min(300, Math.floor(available / charPx)));
 }
 
+// Block (Canvas Block): how many columns fit across the canvas, from the Canvas metrics. The last
+// layout's own figure (relayout) when Block is on screen, else from the cell width the Canvas
+// renderer measured for the current font and the canvas' width. 0 when there are no metrics yet.
+function _canvasBlockFitChars() {
+    if (_canvasState.layout && _canvasState.blockFitCols > 0) return _canvasState.blockFitCols;
+    const m = _canvasState.metrics;
+    const fontPx = parseFloat(getComputedStyle(alignmentContainer).fontSize) || 13;
+    if (!m || !m.charW || m.fontSizePx !== fontPx) return 0;
+    const viewW = (_canvasState.canvas && _canvasState.canvas.isConnected && parseFloat(_canvasState.canvas.style.width)) || 0;
+    if (!viewW) return 0;
+    const nameW = effectiveNameLength() * m.charW + 8;
+    const badge = (_canvasState.badgeW || 40) + 4;
+    return Math.max(10, Math.floor((viewW - nameW - badge - 12) / m.charW));
+}
+
 // Called once, before the FIRST renderAlignment() of a newly loaded large
 // alignment, so that render uses a screen-fitted block size from the start.
 //
@@ -14625,7 +14658,10 @@ function _computeLargeAlignmentBlockChars() {
 // size — no second render needed, no overflow window.
 function fitBlockSizeBeforeInitialRender() {
     if (!_isLargeAlignmentPending()) return;
-    const chars = _computeLargeAlignmentBlockChars();
+    // Block (Canvas Block): from the Canvas metrics when there are any (the bands are clamped to
+    // what fits at render anyway, so this only sets the number)
+    const cfit = isBlockLayout() ? _canvasBlockFitChars() : 0;
+    const chars = cfit > 0 ? Math.max(40, Math.min(300, cfit)) : _computeLargeAlignmentBlockChars();
     const slider = el('blockSizeSlider');
     const input = el('blockSizeInput');
     if (slider) slider.value = chars;
@@ -14638,6 +14674,22 @@ function setBlockSizeToScreen() {
     // from the container width minus the name column width.
     const container = document.getElementById('alignmentContainer');
     if (!container) return;
+
+    // Block (Canvas Block): from the Canvas metrics, the band width that fits the canvas. The bands
+    // never overflow (bandCols = min(slider, what fits)); redrawn only when the bands change.
+    if (isBlockLayout()) {
+        const fit = _canvasBlockFitChars();
+        if (fit > 0) {
+            const chars = Math.max(40, Math.min(300, fit));
+            const slider = el('blockSizeSlider');
+            const input = el('blockSizeInput');
+            if (slider) { slider.value = chars; updateSliderBackground(slider); }
+            if (input) input.value = chars;
+            const L = _canvasState.layout;
+            if (!L || Math.max(1, Math.min(chars, L.nSlots, fit)) !== L.bandCols) renderAlignment();
+            return;
+        }
+    }
 
     // For large alignments, getBoundingClientRect() forces a synchronous reflow
     // over millions of DOM spans, which can take tens of seconds. Use a
@@ -14905,7 +14957,7 @@ function handleNucleotideSelectMouseDown(e) {
     const span = closestFromEvent(e, '.seq-data span[data-pos]');
     if (!span || span.classList.contains('seq-length')) return false;
 
-    if (document.getElementById('modeCanvas')?.checked || document.getElementById('modeReads')?.checked) {
+    if (isCanvasMode() || document.getElementById('modeReads')?.checked) {
         return false; // Canvas mode handles selection via its own mousedown handler
     }
 
@@ -15017,7 +15069,7 @@ function handleMouseMove(e) {
     }
     if (!state.isDragging) return;
     if (state.dragMode === 'row') {
-        if (document.getElementById('modeCanvas')?.checked) {
+        if (isCanvasMode()) {
             const index = _canvasRowFromClientY(e.clientY);
             if (index >= 0) {
                 _rowRangeSelect(state.dragStartRow, index, !!state.dragRowRemove);
@@ -15038,7 +15090,7 @@ function handleMouseMove(e) {
         }
     } else if (state.dragMode === 'col') {
         hideTooltip();
-        if (document.getElementById('modeCanvas')?.checked) {
+        if (isCanvasMode()) {
             const pos = _canvasColFromClientX(e.clientX, e.clientY);
             if (pos >= 0) {
                 const start = Math.min(state.dragStartCol, pos);
@@ -15061,7 +15113,7 @@ function handleMouseMove(e) {
             }
         }
     } else if (state.dragMode === 'nuc') {
-        if (document.getElementById('modeCanvas')?.checked) {
+        if (isCanvasMode()) {
             // Canvas mode: hit-test instead of DOM span lookup
             const hit = _canvasHitTest(e.clientX, e.clientY);
             if (hit && hit.row === state.dragStartRow) {
@@ -16565,7 +16617,7 @@ function _paneUrl(file) {
     payload.sourceTitle = name;
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     _newTabHandoffs.set(id, { fasta: payload.fasta, name, payload });
-    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    const view = { modeSingle: 'full', modeBlocks: _domBlockForTests ? 'domblock' : 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
     return { id, name, url: location.pathname + '?handoff=' + id + (view ? '&view=' + view : '') + '&pane=1&link=' + encodeURIComponent(['1', '0', _link.by, _link.anchor].join('|')) };
 }
 function paneOpen(side, file) {
@@ -16804,7 +16856,7 @@ function openViewInNewTab() {
     payload.sourceTitle = name;
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     _newTabHandoffs.set(id, { fasta: payload.fasta, name, payload });
-    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    const view = { modeSingle: 'full', modeBlocks: _domBlockForTests ? 'domblock' : 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
     const w = window.open(location.pathname + '?handoff=' + id + (view ? '&view=' + view : '') + _linkUrlParam(), '_blank');
     if (!w) {
         _newTabHandoffs.delete(id);
@@ -16827,7 +16879,7 @@ function openSelectedInNewTab() {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     _newTabHandoffs.set(id, { fasta, name: `${base} (${rows.length} selected)` });
     // the new tab opens in the view of this one
-    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    const view = { modeSingle: 'full', modeBlocks: _domBlockForTests ? 'domblock' : 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
     const w = window.open(location.pathname + '?handoff=' + id + (view ? '&view=' + view : ''), '_blank');
     if (!w) {
         _newTabHandoffs.delete(id);
@@ -25640,7 +25692,7 @@ function showContextMenu(e, index) {
             closeContextMenu();
             // the row's name, wherever the menu was opened: e.target may be a residue in the sequence,
             // which the old inline box replaced (the residue vanished and the box sat inside the row)
-            if (document.getElementById('modeCanvas')?.checked) { _startSeqNameEditCanvas(index); return; }
+            if (isCanvasMode()) { _startSeqNameEditCanvas(index); return; }
             const nameEl = document.querySelector(`#alignmentContainer .seq-line[data-seq-index="${index}"] .seq-name`);
             if (nameEl) _startSeqNameEdit(nameEl, index);
         });
@@ -26613,11 +26665,13 @@ function initializeAppUI() {
     //   ?bed=<url>                         - fetch a BED file and show it as the annotation track
     //   ?reads=<url>                       - fetch a SAM/BAM mapped to a loaded row and open Reads mode
     //   ?view=full|block|canvas             - open in this view (full/block is remembered as the user's choice)
+    //   ?view=domblock                      - test-only: Block drawn by the old DOM renderer
     const urlParams = new URLSearchParams(window.location.search);
     {
         const v = (urlParams.get('view') || '').toLowerCase();
-        const id = { full: 'modeSingle', single: 'modeSingle', block: 'modeBlocks', blocks: 'modeBlocks', canvas: 'modeCanvas', cblock: 'modeCanvas' }[v];
-        if (v === 'cblock') _canvasBlockLayout = true;   // PROTOTYPE: Canvas drawing the wrapped Block layout
+        // domblock: the old DOM Block renderer, test-only (see _domBlockForTests); cblock: the prototype's name for Block
+        const id = { full: 'modeSingle', single: 'modeSingle', block: 'modeBlocks', blocks: 'modeBlocks', cblock: 'modeBlocks', domblock: 'modeBlocks', canvas: 'modeCanvas' }[v];
+        if (v === 'domblock') _domBlockForTests = true;
         if (id && document.getElementById(id)) {
             document.getElementById(id).checked = true;
             _lastModeRadioId = id;
@@ -27512,11 +27566,25 @@ function _recalcConservation() {
 // Block/Full are the only modes that build per-residue spans, so they are the only
 // ones with a span cache to keep warm.
 function isSpanRenderMode() {
-    return !el('modeCanvas')?.checked && !el('modeReads')?.checked;
+    return !isCanvasMode() && !el('modeReads')?.checked;
 }
 
+// The Block view is the Canvas renderer drawing the wrapped Block layout (bands). The old DOM
+// Block renderer stays reachable for the existing DOM checks only: ?view=domblock (or
+// window.__vaDomBlockForTests set before the page loads, which tests/lib/browser.js does) makes
+// the Block radio show it exactly as before, windowing included. No UI selects it.
+// (_domBlockForTests is declared at the top of the file.)
+// Block radio on and drawn by the Canvas renderer (Canvas Block)
+function isBlockLayout() {
+    return !!el('modeBlocks')?.checked && !_domBlockForTests;
+}
+// Block radio on and drawn by the old DOM renderer (test-only, see _domBlockForTests)
+function isDomBlock() {
+    return !!el('modeBlocks')?.checked && !!_domBlockForTests;
+}
+// The Canvas renderer draws the alignment: the Canvas view, or the Block view (Canvas Block)
 function isCanvasMode() {
-    return !!el('modeCanvas')?.checked;
+    return !!el('modeCanvas')?.checked || isBlockLayout();
 }
 
 function isEditModeSupported() {
@@ -27805,7 +27873,7 @@ function canPatchColumnsInPlace(newWidth, oldWidth) {
     const grow = newWidth - oldWidth;
     if (grow !== 0 && grow !== 1) return false;
     if (grow === 1) {
-        const useBlocks = el('modeBlocks')?.checked;
+        const useBlocks = isDomBlock();   // (span render mode: Block here is the DOM Block)
         const blockWidth = parseInt(el('blockSizeSlider')?.value, 10);
         // Block mode: a full last block would need a new block, which only a render can add
         if (useBlocks && (!(blockWidth > 0) || oldWidth % blockWidth === 0)) return false;
@@ -29913,7 +29981,7 @@ function makeBarInputGuard(bar) {
     // Canvas mode's content is a single absolutely-positioned <canvas> panned via
     // _canvasState.offsetX (alignment.scrollLeft/scrollWidth are meaningless there),
     // so this bar drives that offset directly instead of the DOM scroll position.
-    const isCanvasMode = () => document.getElementById('modeCanvas')?.checked;
+    // (isCanvasMode(): Canvas or Block, both drawn by the Canvas renderer)
 
     // The bar is shown only when the alignment is wider than its viewport, like
     // the vertical bar. Before, the thumb was always at least the viewport + 1px,
@@ -29930,7 +29998,8 @@ function makeBarInputGuard(bar) {
         const contentW = isCanvasMode()
             ? (_canvasState.totalContentW || viewW)
             : (alignment.scrollWidth || viewW);
-        const scrollable = contentW > viewW + 1;
+        // Block: the bands fit the width, nothing to scroll sideways (the bar stays hidden)
+        const scrollable = !isBlockLayout() && contentW > viewW + 1;
         if (bar.style.visibility !== (scrollable ? '' : 'hidden')) _canvasState.invalidateInsets?.();   // Canvas reserves only a shown bar
         bar.style.visibility = scrollable ? '' : 'hidden';
         thumb.style.width = (scrollable ? contentW - viewW + bar.clientWidth : 0) + 'px';
@@ -30074,7 +30143,7 @@ function makeBarInputGuard(bar) {
     const thumb = document.querySelector('.vertical-scrollbar-thumb');
     if (!alignment || !bar || !thumb) return;
 
-    const isCanvasMode = () => document.getElementById('modeCanvas')?.checked;
+    // (isCanvasMode(): Canvas or Block, both drawn by the Canvas renderer)
     let syncing = false;
     const barInput = makeBarInputGuard(bar);
     const grip = _attachScrollbarGrip(bar, false);

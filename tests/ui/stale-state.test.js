@@ -29,7 +29,7 @@ const SNAP = () => ({
   const page = await browser.newPage({ viewport: { width: 1366, height: 768 } });
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
   const open = async (rel) => { await page.setInputFiles('#fileInput', path.join(ROOT, rel)); await page.waitForTimeout(1500); };
   const analyse = async () => {
     await page.evaluate(() => document.getElementById('clusterGuideTreeButton').click());

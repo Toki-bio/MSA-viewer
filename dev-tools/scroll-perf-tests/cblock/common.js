@@ -28,7 +28,7 @@ async function waitFor(page, fn, arg, ms = 120000) {
   while (Date.now() - t0 < ms) { if (await page.evaluate(fn, arg).catch(() => false)) return; await page.waitForTimeout(100); }
   throw new Error('waitFor timeout ' + fn.toString().slice(0, 120));
 }
-// open the app on a fixture in a view; view = block | canvas | cblock
+// open the app on a fixture in a view; view = domblock (old DOM Block) | canvas | cblock/block (Canvas Block)
 async function openView(browser, base, fx, view, vp = { width: 1600, height: 900 }) {
   const page = await browser.newPage({ viewport: vp });
   page.on('pageerror', e => console.log('PAGEERROR', e.message));

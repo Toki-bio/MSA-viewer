@@ -21,7 +21,7 @@ const SCROLL_SIZES = [
 async function benchScroll(browser, baseUrl, nSeq, nCol) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   page.setDefaultTimeout(90000);
-  await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
   const t0 = Date.now();
   await loadSyntheticFasta(page, nSeq, nCol);
   const loadMs = Date.now() - t0;
@@ -65,7 +65,7 @@ async function benchScroll(browser, baseUrl, nSeq, nCol) {
 async function benchTyping(browser, baseUrl) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   page.setDefaultTimeout(30000);
-  await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
   await loadSyntheticFasta(page, 200, 20000); // 4M residues, realistic editing target size
   await setMode(page, 'full');
   const timings = await page.evaluate(async () => {

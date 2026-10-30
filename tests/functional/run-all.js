@@ -1151,7 +1151,7 @@ async function main() {
             let outcome;
             const t0 = Date.now();
             try {
-                await page.goto(baseUrl + '/index.html?view=block', { waitUntil: 'networkidle' });
+                await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
                 outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
             } catch (e) {
                 outcome = { pass: false, detail: `threw: ${e.message}` };
