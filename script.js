@@ -13715,6 +13715,13 @@ async function parseAndRender(isFromDrop = false) {
     _parseNotice = '';
     const inputText = fastaInput.value.trim().replace(/\r\n?/g, '\n'); // CR-only (classic Mac) files too
     if (!inputText) {
+        // Load with an emptied paste box replaced the view with this prompt but kept the alignment in state (Save, Copy
+        // and the open Repeat Finder still used it; GLM d305 #22): the alignment shown stays, and the message says why
+        if (!isFromDrop && state.seqs?.length) {
+            statusMessage.style.display = 'none';
+            showMessage('The paste box is empty: paste FASTA or MSF first (the alignment shown is kept).', 4000);
+            return;
+        }
         alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
         statusMessage.style.display = 'none';
         if (isFromDrop) {
@@ -14089,10 +14096,6 @@ async function parseAndRender(isFromDrop = false) {
         _clearFailedLoad();
     }
 }
-// Mirrors the canonical mode radios' checked state onto the always-visible
-// top-bar quick switcher. Called after any change to the real radios,
-// including ones the quick switcher itself didn't trigger (Display dropdown,
-// the auto-switch-to-Canvas heuristic, snapshot/session restore, etc).
 // The "Canvas" chip next to the mode radios duplicated the radio once Canvas became the default
 // view (owner: "two Canvas buttons at the top"); the radio's title carries what the chip said.
 function ensureCanvasModeNotice() {
@@ -31244,8 +31247,10 @@ function _dotRunWorker(file, message) {
         cancel(new Error('cancelled'));
     }
     return new Promise((res, rej) => {
-        const w = file === 'word' ? (_dotWordWorker ||= new Worker('doter-word-worker.js?v=' + BUILD_TAG.replace(/^v/, '')))
-                                  : (_dotPlotWorker ||= new Worker('doter-worker.js?v=' + BUILD_TAG.replace(/^v/, '')));
+        // plain assignments: ||= (ES2021) does not parse in Chrome/Edge 80-84, and the whole script then fails
+        if (file === 'word' && !_dotWordWorker) _dotWordWorker = new Worker('doter-word-worker.js?v=' + BUILD_TAG.replace(/^v/, ''));
+        if (file !== 'word' && !_dotPlotWorker) _dotPlotWorker = new Worker('doter-worker.js?v=' + BUILD_TAG.replace(/^v/, ''));
+        const w = file === 'word' ? _dotWordWorker : _dotPlotWorker;
         const done = () => { w.removeEventListener('message', ok); w.removeEventListener('error', no);
             if (_dotWorkerJobs[file] === no) delete _dotWorkerJobs[file]; };
         const ok = (e) => { done(); if (e.data.error) { rej(new Error(e.data.error)); return; } res(e.data); };
@@ -32963,19 +32968,30 @@ function _initTsdColumnDefaults() {
 
 // Manual opened with the alignment's first and last 30 columns as the flanks, where a TSD is found only by chance
 // ("1 of 20"): the fields start from the SINE body Auto finds, unless the user has typed or filled them.
+// The scan ran again on every panel open and every switch to TSD while Manual was checked (10 s on 1000 rows x
+// 50 kb; GLM d305 #23): its result is kept for the same alignment (rows, length, Search N bp) and written back.
+let _tsdPrefillMemo = null;
 function _prefillTsdManualFromAuto() {
     if (!state.seqs?.length) return false;
     const els = ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id));
     if (els.some(e => !e || e.dataset.userSet === '1')) return false;
     const aliLen = _maxOf(state.seqs, s => s.seq.length);
     const flankSize = parseInt(document.getElementById('tsdFlankSize')?.value, 10) || 30;
+    const m = _tsdPrefillMemo, key = [state.seqs.length, aliLen, flankSize].join(',');
+    if (m && m.seqs === state.seqs && m.key === key) {   // _initTsdColumnDefaults has just reset the fields
+        if (m.ok) m.values.forEach((v, i) => { els[i].value = v; });
+        return m.ok;
+    }
     const b = _findSineBoundaryColumns(state.seqs, 'auto', { flankSize }, aliLen);
-    if (!b || b.leftBoundary < 1 || b.rightBoundary > aliLen - 2 || /fallback/.test(b.label)) return false;
-    els[0].value = 1;
-    els[1].value = b.leftBoundary;            // last 5' flank column, 1-based
-    els[2].value = b.rightBoundary + 2;       // first 3' flank column, 1-based
-    els[3].value = aliLen;
-    return true;
+    const ok = !(!b || b.leftBoundary < 1 || b.rightBoundary > aliLen - 2 || /fallback/.test(b.label));
+    if (ok) {
+        els[0].value = 1;
+        els[1].value = b.leftBoundary;            // last 5' flank column, 1-based
+        els[2].value = b.rightBoundary + 2;       // first 3' flank column, 1-based
+        els[3].value = aliLen;
+    }
+    _tsdPrefillMemo = { seqs: state.seqs, key, values: els.map(e => e.value), ok };
+    return ok;
 }
 
 function _readTsdParams() {
@@ -33117,6 +33133,7 @@ function _resetRepeatFinderForNewFile() {
     _repeatUnitWord();
     _lastTsdResults = [];
     _repeatResultsShown = null;
+    _tsdPrefillMemo = null;
     // the TSD columns typed or filled for the previous file are not this file's: back to the defaults
     ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].forEach(id => { const e = document.getElementById(id); if (e) delete e.dataset.userSet; });
     const upStart = document.getElementById('tsdUpStart');
@@ -33342,17 +33359,19 @@ function _revComp(seq) {
  * holds an exact run of at least ceil((L - m) / (m + 1)) bases (pigeonhole: m mismatches cut the L - m matches
  * into at most m + 1 runs). The smallest such run over every L >= minLen is the longest seed that still hits every
  * qualifying pair. Seeds are kept between 4 and 10 bases: when the bound is below 4 (short repeats at high
- * divergence) the guarantee no longer holds and such pairs can be missed.
+ * divergence) the guarantee no longer holds and such pairs can be missed; _findRepeats then sets results.seedLimited
+ * and the summary says so. Seeds of 1-3 bases made the search 3-100x slower (5 kb random, Min 6 / 50 %: 57 ms at 4,
+ * 218 ms at 3, 685 ms at 2, 5.6 s at 1). raw: the bound itself, not kept to 4-10.
  */
-function _repeatSeedLength(minLen, maxDiv) {
+function _repeatSeedLength(minLen, maxDiv, raw = false) {
     let k = Infinity;
     for (let L = minLen; L < minLen + 100000; L++) {
         const m = Math.floor(L * maxDiv + 1e-9);
         k = Math.min(k, Math.ceil((L - m) / (m + 1)));
         // (L - Ld) / (Ld + 1) only grows with L: once it reaches k no longer L can lower k
-        if (k <= 4 || (L - L * maxDiv) / (L * maxDiv + 1) >= k) break;
+        if (k <= (raw ? 1 : 4) || (L - L * maxDiv) / (L * maxDiv + 1) >= k) break;
     }
-    return Math.max(4, Math.min(10, k));
+    return raw ? k : Math.max(4, Math.min(10, k));
 }
 
 /**
@@ -33484,7 +33503,10 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
         if (!best) return;
         emit(best.s, best.len, best.mm);
         pick(lo, best.s - 1, match, maxLen, emit);
-        // after a copy cut short to avoid overlap, the rest of the stretch is the same tandem run: do not list it again
+        // after a copy cut short to avoid overlap, the rest of the stretch is the same tandem run and is not listed: in 3
+        // tandem copies the pair copy 2 / copy 3 is not a row (copy 1 / copy 2 and copy 1 / copy 3 are), even when it
+        // differs more than copy 1 / copy 2 does (GLM d305 #9). Listing every pair of copies would give a long array a
+        // row per pair; Tandem lists the array as one row.
         if (!best.truncated) pick(best.s + best.len, hi, match, maxLen, emit);
     };
 
@@ -33550,7 +33572,8 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
         if (key >= 0) { next[x] = head[key]; head[key] = x; }
     }
 
-    // Longest first, then least divergent; drop shifted copies of a pair already listed (>= 70 % of both copies shared)
+    // Longest first, then least divergent; drop shifted copies of a pair already listed: both copies overlap the listed
+    // pair's copies by >= 70 % of the SHORTER of the two pairs' length (a short pair nested in a long one is dropped)
     candidates.sort((a, b) => (b.length - a.length) || (a.mm / a.length - b.mm / b.length) || (a.posA - b.posA));
     const BIN = 64, bins = new Map();
     const maxKept = candidates.length ? candidates[0].length : 0;
@@ -33584,6 +33607,8 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
     }));
     results.total = kept.length;
     if (searchedTo < n) results.searchedTo = searchedTo;
+    // copies sharing no exact run of k bases are not seeded (the seed is never below 4)
+    if (_repeatSeedLength(minLen, maxDiv, true) < k) results.seedLimited = k;
     return results;
 }
 
@@ -33835,7 +33860,8 @@ function _tsdMismatchCount(firstSeq, secondSeq) {
 }
 
 // [lo, hi) of a TSD pair (two equal-length strings) without its weak ends: a mismatch as the last base, and at the
-// start a mismatch within the first 4 bases with only A's before it (the 3' copy starts right after the poly-A
+// start a mismatch within the first 4 bases with nothing or only A's before it (a mismatch as the first base is
+// trimmed like one as the last; the 3' copy starts right after the poly-A
 // tail, so a few tail A's matching A's of the 5' flank are chance). An N is not a match. Scored with them,
 // (1 - div) * sqrt(len) put 17 bp with 1 mismatch (AAAC/AAAA, then the planted 13 bp) above the planted exact 13 bp,
 // and a pair with a mismatch at its end above the same pair without that base. Trimming the start after any
@@ -33871,7 +33897,8 @@ function _tsdGapFraction(seq) {
 function _isTsdReferenceRow(seqObj) {
     if (!seqObj) return false;
     const header = String(seqObj.header || seqObj.fullHeader || '').toLowerCase();   // the name, not a description
-    return /consensus|reference|\bref\b|^ref[_\W]|master|t1_\d|_cons\b|^cons_seq|^grp\d+cons\d+seq/.test(header);
+    // (t1_\d, undocumented, matched gene-like copy names such as Gst1_8 or Cdt1_2: GLM d305 #10)
+    return /consensus|reference|\bref\b|^ref[_\W]|master|_cons\b|^cons_seq|^grp\d+cons\d+seq/.test(header);
 }
 
 // First and last residue of the reference row (the name is kept for the benchmark scripts that extract these
@@ -33920,8 +33947,14 @@ function _boundaryFromReferenceSeq(refSeq, aliLen, flankSize, label) {
 
 function _columnConservationScores(seqs, aliLen, minCoverageFrac = 0.35) {
     const scores = new Array(aliLen).fill(0);
-    // at least 4 bases: 2 of 3 alike (0.67) is chance in a gap-padded flank, and with 8 copies (threshold 0.58)
-    // it put the left edge at column 24 of a 100-column flank block (seen once row 1 was no longer left out)
+    // fewer than 3 rows to score (e.g. a named consensus row and one copy): one row is "100 % conserved" wherever it
+    // has a base, the body covered the whole copy and no TSD was found (GLM d305 #5). No conservation signal then;
+    // the reference row gives the body.
+    if (seqs.length < 3) return scores;
+    // a column scores only when it has at least min(4, rows) bases, and at least 35 % of the rows (so with 3 or 4
+    // rows every row needs a base there): 2 of 3 alike (0.67) is chance in a gap-padded flank, and with 8 copies
+    // (threshold 0.58) it put the left edge at column 24 of a 100-column flank block (seen once row 1 was no longer
+    // left out)
     const minCount = Math.max(Math.min(4, seqs.length), Math.ceil(seqs.length * minCoverageFrac));
     for (let column = 0; column < aliLen; column++) {
         const counts = {};
@@ -34076,8 +34109,14 @@ function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, m
                 const divergence = mismatches / tsdLen;
                 if (divergence > maxDiv) continue;
                 // scored and reported without the mismatches near its ends (_tsdTrimPair)
-                const t = _tsdTrimPair(upstreamSeq, downstreamSeq);
-                if (t.hi - t.lo < minTsdLen) continue;
+                let t = _tsdTrimPair(upstreamSeq, downstreamSeq);
+                // trimmed one base below the minimum length: the whole pair, its one end mismatch included (a 12-bp TSD
+                // whose last base mismatched was dropped at length 12-20; GLM d305 #6). Pairs trimmed by more, or with
+                // more mismatches, stay out: kept whole they added chance calls on the rsi control (176 -> 179).
+                if (t.hi - t.lo < minTsdLen) {
+                    if (t.hi - t.lo < minTsdLen - 1 || mismatches > 1) continue;
+                    t = { lo: 0, hi: tsdLen };
+                }
                 const len = t.hi - t.lo, upSeq = upstreamSeq.slice(t.lo, t.hi), downSeq = downstreamSeq.slice(t.lo, t.hi);
                 const mm = len === tsdLen ? mismatches : _tsdMismatchCount(upSeq, downSeq);
                 if (mm / len > maxDiv) continue;
@@ -34137,8 +34176,14 @@ function _findBestTsdWide(upstreamWindow, downstreamWindow, iB, minTsdLen, maxTs
                 // lost to a 10-bp pair reaching 4 bases into the tail with a mismatch (AAGA+TSD / AAAA+TSD)
                 if (ds < iB && _tsdMismatchCount(upstreamSeq.slice(0, iB - ds), downstreamSeq.slice(0, iB - ds)) > 0) continue;
                 // the pair is scored and reported without the mismatches near its ends (_tsdTrimPair)
-                const t = _tsdTrimPair(upstreamSeq, downstreamSeq);
-                if (t.hi - t.lo < minTsdLen) continue;
+                let t = _tsdTrimPair(upstreamSeq, downstreamSeq);
+                // trimmed one base below the minimum length: the whole pair, its one end mismatch included (a 12-bp TSD
+                // whose last base mismatched was dropped at length 12-20; GLM d305 #6). Pairs trimmed by more, or with
+                // more mismatches, stay out: kept whole they added chance calls on the rsi control (176 -> 179).
+                if (t.hi - t.lo < minTsdLen) {
+                    if (t.hi - t.lo < minTsdLen - 1 || mismatches > 1) continue;
+                    t = { lo: 0, hi: tsdLen };
+                }
                 const len = t.hi - t.lo, upSeq = upstreamSeq.slice(t.lo, t.hi), downSeq = downstreamSeq.slice(t.lo, t.hi);
                 const mm = len === tsdLen ? mismatches : _tsdMismatchCount(upSeq, downSeq);
                 if (mm / len > maxDiv) continue;
@@ -34344,6 +34389,7 @@ function runRepeatAnalysis() {
                 if (seqResults.total > seqResults.length) notes.push(`showing the ${seqResults.length} longest of ${seqResults.total}${where}`);
                 if (seqResults.searchedTo != null) notes.push(`search stopped at ${seqResults.searchedTo} of ${t.seq.length} ${unit}${where} (work limit; low-complexity sequence)`);
                 if (seqResults.unitLimited) notes.push(`units up to ${seqResults.maxUnit} ${unit} searched${where} (work limit; long sequence)`);
+                if (seqResults.seedLimited && !notes.some(x => /exact run of/.test(x))) notes.push(`at ${minLen} ${unit} and ${maxDiv}% divergence, copies that share no exact run of ${seqResults.seedLimited} ${unit} can be missed (raise Min length or lower Max divergence)`);
                 const mapped = seqResults.map(r => {
                     r.seqIndex = t.index;
                     r.obj = state.seqs[t.index];
@@ -34444,7 +34490,9 @@ function _renderTsdResultsHTML(el, results, tsdMode, params) {
     const b = results.boundaries;
     // never silent: rows left out of the search, and a Reference row search that had no reference row
     const skipped = results.skipped || [];
-    const notesHtml = (b?.note ? `<div class="rf-hint rf-note">Reference row: ${esc(b.note)}.</div>` : '') +
+    // every note is about the reference row and names it itself ("Reference row: no row named consensus ..." said
+    // the opposite of what followed; GLM d305 #18, #27)
+    const notesHtml = (b?.note ? `<div class="rf-hint rf-note">Note: ${esc(b.note)}.</div>` : '') +
         (b?.flankNote ? `<div class="rf-hint rf-flanknote">No flanks: ${esc(b.flankNote)}.</div>` : '') +
         (skipped.length ? `<div class="rf-hint rf-skipped">${skipped.map(s => `${esc(s.seqName)}: ${esc(s.reason)}`).join('<br>')}</div>` : '');
     const bodyChip = (b && Number.isInteger(b.leftBoundary) && Number.isInteger(b.rightBoundary) && tsdMode !== 'manual')
@@ -34495,7 +34543,8 @@ function _renderTsdResultsHTML(el, results, tsdMode, params) {
         let a = '', c = '';
         for (let k = 0; k < Math.max(up.length, down.length); k++) {
             const x = up[k] || '', y = down[k] || '';
-            const mm = x.toUpperCase() !== y.toUpperCase();
+            // an N (either copy) counts 0.5 in the Mismatch column, so it is marked here too (N against N was not)
+            const mm = x.toUpperCase() !== y.toUpperCase() || x.toUpperCase() === 'N';
             a += mm ? `<span class="rf-mm">${esc(x)}</span>` : esc(x);
             c += mm ? `<span class="rf-mm">${esc(y)}</span>` : esc(y);
         }

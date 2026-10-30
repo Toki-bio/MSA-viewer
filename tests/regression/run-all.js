@@ -10255,6 +10255,119 @@ ${'ACGT'.repeat(100)}
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// GLM audit d305 #4: seeds are at least 4 bases, so at Min length 6 / 50 % divergence copies sharing no exact run of
+// 4 bases were missed and the summary said nothing (seeds of 1-3 bases made the search 3-10x slower: measured
+// 2026-10-31, 5 kb random, Min 6 / 50 %: 57 ms at 4, 218 ms at 3, 685 ms at 2, 5.6 s at 1). The summary now says so.
+check('Repeat Finder d305: Direct/Inverted say when short divergent copies can be missed (seed of 4 bases)', async (page) => {
+  await loadFasta(page, `>t\n${rfRng(31).seq(800)}\n>o\n${rfRng(32).seq(800)}\n`);
+  const lo = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 6, maxDiv: 50 });
+  const hi = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 20, maxDiv: 10 });
+  const out = { lo: lo.text.slice(0, 300), hi: hi.text.slice(0, 300) };
+  const ok = /exact run of 4/.test(lo.text) && !/exact run of/.test(hi.text);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM audit d305 #5, #6, #10, #18/#27: (#5) a named consensus row plus ONE copy left one row to score conservation, so
+// every column of that copy was "100 % conserved", the body covered the alignment and no TSD was found; (#6) a TSD of
+// exactly the minimum length whose last base mismatches was trimmed below the minimum and dropped; (#10) a copy named
+// like a gene (Gst1_8) matched the undocumented pattern t1_\d and was taken for the reference row; (#18/#27) every
+// note was printed after "Reference row: ", also "Reference row: no row named consensus ...".
+check('TSD finder d305: consensus + one copy, a minimum-length TSD with a mismatched last base, gene-like names, the note prefix', async (page) => {
+  const out = {};
+  const one = _tsdAuditAlignment({ seed: 5, n: 1, consensusRow: true, tsdLens: [10] });
+  await loadFasta(page, one.fasta);
+  const r1 = await _tsdAuditFind(page, 'auto');
+  const t1 = one.truth[one.rows[1].header];
+  out.one = { res: r1.res.map(x => x.up + '/' + x.down), truth: t1.tsd, body: r1.body };
+  // 12 copies, a 12-bp TSD whose 3' copy differs in its last base; length 12-20, max mismatch 10 %
+  const g = rfRng(606), body = g.seq(200);
+  let fa = '';
+  for (let i = 0; i < 12; i++) {
+    const t = g.seq(12), t3 = t.slice(0, 11) + rfOther(t[11]);
+    fa += `>copy${i}\n${g.seq(50)}${t}${body}${'A'.repeat(12)}${t3}${g.seq(50)}\n`;
+  }
+  await loadFasta(page, fa);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await page.fill('#tsdMinLen', '12'); await page.fill('#tsdMaxLen', '20'); await page.fill('#tsdMaxDiv', '10');
+  const r6 = await _tsdAuditFind(page, 'auto');
+  out.min12 = { found: r6.res.length, lens: [...new Set(r6.res.map(x => x.up.length))] };
+  await page.fill('#tsdMinLen', '4'); await page.fill('#tsdMaxDiv', '20');
+  // copy 0 renamed like a gene; no row is a reference row, so Reference row says so (without a "Reference row:" prefix)
+  const b = _tsdAuditAlignment(_TSD_AUDIT.B);
+  await loadFasta(page, b.fasta.replace(/^>copy0_/, '>Gst1_8_copy0_'));
+  const rr = await _tsdAuditFind(page, 'topseq');
+  out.gene = { note: rr.note, isRef: await page.evaluate(() => ['Gst1_8', 'Cdt1_2'].map(h => _isTsdReferenceRow({ header: h }))) };
+  const ok = out.one.res.length === 1 && out.one.res[0] === `${t1.tsd}/${t1.tsd}`
+    && out.min12.found >= 11 && out.min12.lens.every(l => l >= 12)
+    && /^Note: no row named consensus/.test(out.gene.note) && !/Reference row: no row/.test(out.gene.note)
+    && out.gene.isRef.every(v => v === false);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM audit d305 #29: an N against an N counts 0.5 in the Mismatch column but was drawn as a plain match
+check('TSD finder d305: an N in a TSD is marked in the pair display, as the Mismatch count counts it', async (page) => {
+  const g = rfRng(707), body = g.seq(200);
+  let fa = '';
+  for (let i = 0; i < 10; i++) {
+    let t = g.seq(14);
+    if (i === 0) t = t.slice(0, 6) + 'N' + t.slice(7);
+    fa += `>copy${i}\n${g.seq(50)}${t}${body}${'A'.repeat(12)}${t}${g.seq(50)}\n`;
+  }
+  await loadFasta(page, fa);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await _tsdAuditFind(page, 'auto');
+  const out = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('#repeatResults tbody tr')].find(tr => tr.querySelector('.rf-name')?.textContent === 'copy0');
+    const r = (_lastTsdResults || []).find(x => x.seqName === 'copy0');
+    return { tsd: r ? r.upTSD + '/' + r.downTSD + ' mm ' + r.mismatches : null,
+      marked: row ? [...row.querySelectorAll('.rf-mm')].map(s => s.textContent).join('') : null };
+  });
+  const ok = !!out.tsd && /N/.test(out.tsd) && /N/.test(out.marked || '');
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM audit d305 #22: Load with an emptied paste box replaced the view with the paste prompt but kept the alignment in
+// state (Save, Copy and the open Repeat Finder still worked on rows no longer shown). The alignment now stays shown.
+check('Load with an empty paste box keeps the alignment shown and says the box is empty', async (page) => {
+  await loadFasta(page, `>a\n${rfRng(8).seq(300)}\n>b\n${rfRng(9).seq(300)}\n`);
+  await _rfMessages(page);
+  await page.evaluate(() => { document.getElementById('fastaInput').value = ''; });
+  await page.evaluate(() => document.getElementById('loadButton').click());   // the paste area is folded after a load
+  await page.waitForTimeout(300);
+  const out = await page.evaluate(() => ({
+    rows: state.seqs.length,
+    prompt: /Paste MSF or FASTA into the box/.test(document.getElementById('alignmentContainer')?.textContent || ''),
+    msgs: window.__msgs.join(' | ') }));
+  const ok = out.rows === 2 && !out.prompt && /empty/i.test(out.msgs);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM audit d305 #23: with Manual checked, every panel open and every switch to TSD reran the Auto SINE-body scan to
+// prefill the fields again (10 s on 1000 rows x 50 kb, measured 2026-10-31). It now runs once per alignment.
+check('TSD finder d305: Manual prefill scans the alignment once, not on every mode switch', async (page) => {
+  const a = _tsdAuditAlignment(_TSD_AUDIT.E);
+  await loadFasta(page, a.fasta);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await page.click('label:has(input[name="repeatMode"][value="tsd"])');
+  await page.click('label:has(input[name="tsdMode"][value="manual"])');
+  const first = await page.evaluate(() => ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id).value).join(','));
+  await page.evaluate(() => { window.__scans = 0; const f = window._findSineBoundaryColumns; window._findSineBoundaryColumns = function () { window.__scans++; return f.apply(this, arguments); }; });
+  for (let k = 0; k < 3; k++) {
+    await page.click('label:has(input[name="repeatMode"][value="direct"])');
+    await page.click('label:has(input[name="repeatMode"][value="tsd"])');
+  }
+  await page.click('#repeatFinderCloseBtn');
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  const out = await page.evaluate(() => ({ scans: window.__scans, fields: ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id).value).join(',') }));
+  // a new alignment is prefilled again
+  await loadFasta(page, _tsdAuditAlignment({ ..._TSD_AUDIT.E, seed: 9 }).fasta);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  out.newScans = await page.evaluate(() => window.__scans);
+  out.first = first;
+  const ok = out.scans === 0 && out.fields === first && first !== '1,30,451,480' && out.newScans >= 1;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 // Canvas Block prototype 2026-10-30 found it: dragging a Canvas scrollbar marked the view dirty on every step, so each
 // step was a full redraw (p95 75-92 ms) instead of the frame copy the wheel uses (p95 ~4 ms).
 check('Canvas: dragging the vertical and horizontal scrollbars moves the picture by frame copy, not full redraws', async (page) => {
