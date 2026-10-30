@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v303';
+const BUILD_TAG = 'v304';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -6396,6 +6396,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const cover = (sel, horiz) => {
             const b = document.querySelector(sel);
             if (!b || !b.offsetParent) return null;   // not shown (yet)
+            if (getComputedStyle(b).visibility === 'hidden') return 0;   // nothing to scroll: hidden, cells show under it
             const r = b.getBoundingClientRect();
             const ox = Math.min(cr.right, r.right) - Math.max(cr.left, r.left), oy = Math.min(cr.bottom, r.bottom) - Math.max(cr.top, r.top);
             if (ox <= 0 || oy <= 0) return 0;
@@ -29770,6 +29771,7 @@ function makeBarInputGuard(bar) {
             ? (_canvasState.totalContentW || viewW)
             : (alignment.scrollWidth || viewW);
         const scrollable = contentW > viewW + 1;
+        if (bar.style.visibility !== (scrollable ? '' : 'hidden')) _canvasState.invalidateInsets?.();   // Canvas reserves only a shown bar
         bar.style.visibility = scrollable ? '' : 'hidden';
         thumb.style.width = (scrollable ? contentW - viewW + bar.clientWidth : 0) + 'px';
         bar.scrollLeft = isCanvasMode() ? (_canvasState.offsetX || 0) : alignment.scrollLeft;
@@ -29931,6 +29933,7 @@ function makeBarInputGuard(bar) {
             const h = _canvasState.totalContentH || viewH;
             // shown only when the rows do not fit, like the horizontal bar (visibility, so the layout does not jump)
             const scrollable = h > viewH + 1;
+            if (bar.style.visibility !== (scrollable ? '' : 'hidden')) _canvasState.invalidateInsets?.();   // Canvas reserves only a shown bar
             bar.style.visibility = scrollable ? '' : 'hidden';
             thumb.style.height = (scrollable ? h - viewH + bar.clientHeight : 0) + 'px';
             bar.scrollTop = _canvasState.offsetY || 0;

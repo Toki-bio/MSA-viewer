@@ -9511,7 +9511,7 @@ check('Canvas: a draw or wheel easing queued before a re-render does not clamp t
 check('Canvas wheel: line and page deltas scroll a line or a page, Ctrl+wheel is left to the browser zoom', async (page) => {
   await loadFasta(page, Array.from({ length: 300 }, (_, i) => `>s${i}\n${'ACGTACGTAC'.repeat(30)}\n`).join(''));
   await setMode(page, 'canvas');
-  await page.waitForTimeout(1000);   // past the render's delayed scroll restore (600 ms), which stops a running easing
+  await page.waitForTimeout(1000);   // settle after the render (a re-render DURING an easing stops it part-way, by design)
   const r = await page.evaluate(async () => {
     const c = _canvasState.canvas, out = {};
     const roll = async (o) => {
@@ -9553,6 +9553,29 @@ check('Canvas draws a residue selection on the consensus row (band at the top an
     });
   }
   const ok = out.top.painted > 0 && out.bottom.painted > 0 && out.top.position !== out.bottom.position;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM Canvas bug hunt 2026-10-30 (#16): with few rows the vertical scrollbar is hidden (visibility), but Canvas still
+// reserved its 7 px, so a wide alignment scrolled 7 px past its last column. A shown bar must still be reserved, and
+// going from many rows to few in one session must drop it.
+check('Canvas reserves the vertical scrollbar strip only while the bar is shown', async (page) => {
+  const fa = (n) => Array.from({ length: n }, (_, i) => `>s${i}
+${'ACGT'.repeat(750)}
+`).join('');
+  const out = {};
+  for (const [k, n] of [['few', 4], ['many', 300], ['manyThenFew', 4]]) {
+    await loadFasta(page, fa(n));
+    await setMode(page, 'canvas');
+    await page.waitForTimeout(800);
+    out[k] = await page.evaluate(async () => {
+      const cs = _canvasState, c = cs.canvas, b = document.querySelector('.vertical-scrollbar');
+      cs.offsetX = 1e9; cs.scheduleDrawMoved(); await new Promise(r => setTimeout(r, 300));
+      return { bar: getComputedStyle(b).visibility, past: Math.round(cs.offsetX - (cs.totalContentW - parseFloat(c.style.width))) };
+    });
+  }
+  const ok = out.few.bar === 'hidden' && out.few.past === 0 && out.many.bar !== 'hidden' && out.many.past > 0
+    && out.manyThenFew.bar === 'hidden' && out.manyThenFew.past === 0;
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
