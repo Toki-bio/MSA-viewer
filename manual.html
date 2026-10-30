@@ -2066,14 +2066,15 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><th>Repeat Type</th><th>Description</th></tr>
     <tr><td><strong>Tandem</strong></td><td>Adjacent repeated units (e.g., ATGATGATG). Searches for consecutive copies of a motif.</td></tr>
     <tr><td><strong>Direct</strong></td><td>Two copies of the same sequence in the same orientation, anywhere in the sequence.</td></tr>
-    <tr><td><strong>Inverted</strong></td><td>Two copies in opposite orientation (reverse-complement). Finds palindromic/inverted repeat structures.</td></tr>
+    <tr><td><strong>Inverted</strong></td><td>Two copies in opposite orientation (reverse-complement). Finds palindromic/inverted repeat structures; a perfect palindrome or a hairpin with a loop of 0–1 bases is reported as its two arms, split at the centre.</td></tr>
   </table>
   <p><strong>Parameters:</strong></p>
   <ul>
-    <li><strong>Search in</strong> - one sequence (chosen in the list), all sequences, or the selected rows</li>
-    <li><strong>Min length</strong> - minimum repeat unit length in bp (default: 10, range: 3–50)</li>
+    <li><strong>Search in</strong> - one sequence (chosen in the list), all sequences, or the selected rows (with no rows selected the panel says so and does not search)</li>
+    <li><strong>Min length</strong> - for Tandem the shortest unit, for Direct and Inverted the shortest copy, in bp (aa for a protein alignment) (default: 10, range: 3–50)</li>
     <li><strong>Max divergence</strong> - maximum allowed mismatch rate between repeat copies (default: 15%, range: 0–50%)</li>
   </ul>
+  <p>A value typed outside a field's range is set to the nearest allowed value, shown in the field, and the results give the values used. Direct and inverted repeats are found from short exact matches extended in both directions; a copy always starts and ends on a matching base, so a perfect repeat is reported at its own length with 0% divergence. The whole sequence is searched; at most the 100 longest pairs per sequence are listed, and the summary then says how many were found ("showing the 100 longest of N"). In long low-complexity sequence the search can stop at a work limit, and the summary says where. Tandem arrays start on the first base of their first full unit.</p>
   <p>Results list each repeat with its sequence (when several were searched), columns, unit or copy length, divergence and sequence. Clicking a row highlights the repeat in the sequence where it was found (both copies, for direct and inverted repeats) and scrolls to it; <strong>Clear highlights</strong> removes them. The Repeat Finder is a floating panel: the alignment stays visible and usable while it is open, and the panel can be moved and resized.</p>
 
   <h3 id="ac-tsd-finder">9.9 TSD Finder</h3>
