@@ -2085,14 +2085,16 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     range of nearby offsets and lengths, and keeps the best-scoring near-match as the TSD. In Auto and Reference
     modes the 3′ copy is looked for from 6 bases before the body's end to 30 past it, because a copy's own A-rich tail
     often runs on past the end found for the whole alignment; away from the first 0–3 bases only a strict pair counts
-    (at least 10 bp, at most 10% mismatches). Manual mode searches the ranges given.
+    (at least 10 bp, at most 10% mismatches). Manual mode searches the ranges given. A pair never ends on a mismatch,
+    and a mismatch within its first 4 bases with only A's before it is cut off with those A's (tail A's matching flank
+    A's by chance), so a mismatch does not lengthen a TSD.
   </p>
   <p><strong>SINE boundary detection modes:</strong></p>
   <table>
     <tr><th>Mode</th><th>How it works</th></tr>
     <tr><td><strong>Auto</strong> (default)</td><td>Scans every alignment column for a run where most sequences agree on the same base ("column-level conservation") - this identifies the SINE body without relying on any one sequence's gap pattern. Each edge is then trimmed inward to the first run of 3 conserved columns, so the body does not reach into the flank where the TSD lies; a column counts the copies present there, so 5′-truncated copies do not pull the edge in. Falls back to <strong>Reference</strong> mode if no clear conserved run is found (e.g. too few non-reference sequences to score conservation against).</td></tr>
-    <tr><td><strong>Reference</strong></td><td>Uses row 1 (or consensus) gap pattern to locate SINE borders. Gap-free regions in the reference define the SINE body; flanking gaps define the host sequence.</td></tr>
-    <tr><td><strong>Manual</strong></td><td>User specifies the 5′ and 3′ flank column ranges explicitly. <strong>Use selected columns as the SINE body</strong> fills both ranges from Ctrl+Alt-selected columns.</td></tr>
+    <tr><td><strong>Reference</strong></td><td>Uses the reference / consensus row: the first row whose name contains <em>consensus</em>, <em>reference</em>, <em>ref</em> (as a word or a <code>REF_</code> prefix), <em>master</em> or <em>_cons</em>, or a consensus row ViewAlign inserted. Its first to last residue is the SINE body (gaps inside it do not matter); flanking gaps define the host sequence. If no row is named so, the results say so and the body is found as in Auto. A reference row that is gap-padded is not searched for a TSD itself; it is named under the results.</td></tr>
+    <tr><td><strong>Manual</strong></td><td>User specifies the 5′ and 3′ flank column ranges explicitly. They start from the SINE body Auto finds (5′ flank from column 1 to the body, 3′ flank from the body to the end) until you change them. <strong>Use selected columns as the SINE body</strong> fills both ranges from Ctrl+Alt-selected columns.</td></tr>
   </table>
   <p>
     <strong>Which to use:</strong> start with <strong>Auto</strong> - it needs no reference

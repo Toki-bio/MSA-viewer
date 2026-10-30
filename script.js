@@ -32942,6 +32942,24 @@ function _initTsdColumnDefaults() {
     if (upEnd && upEnd.dataset.userSet !== '1') upEnd.value = Math.min(flank, aliLen);
     if (downStart && downStart.dataset.userSet !== '1') downStart.value = Math.max(1, aliLen - flank + 1);
     if (downEnd && downEnd.dataset.userSet !== '1') downEnd.value = aliLen;
+    if (document.querySelector('input[name="tsdMode"][value="manual"]')?.checked) _prefillTsdManualFromAuto();
+}
+
+// Manual opened with the alignment's first and last 30 columns as the flanks, where a TSD is found only by chance
+// ("1 of 20"): the fields start from the SINE body Auto finds, unless the user has typed or filled them.
+function _prefillTsdManualFromAuto() {
+    if (!state.seqs?.length) return false;
+    const els = ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id));
+    if (els.some(e => !e || e.dataset.userSet === '1')) return false;
+    const aliLen = _maxOf(state.seqs, s => s.seq.length);
+    const flankSize = parseInt(document.getElementById('tsdFlankSize')?.value, 10) || 30;
+    const b = _findSineBoundaryColumns(state.seqs, 'auto', { flankSize }, aliLen);
+    if (!b || b.leftBoundary < 1 || b.rightBoundary > aliLen - 2 || /fallback/.test(b.label)) return false;
+    els[0].value = 1;
+    els[1].value = b.leftBoundary;            // last 5' flank column, 1-based
+    els[2].value = b.rightBoundary + 2;       // first 3' flank column, 1-based
+    els[3].value = aliLen;
+    return true;
 }
 
 function _readTsdParams() {
@@ -33447,6 +33465,27 @@ function _tsdMismatchCount(firstSeq, secondSeq) {
     return mismatches;
 }
 
+// [lo, hi) of a TSD pair (two equal-length strings) without its weak ends: a mismatch as the last base, and at the
+// start a mismatch within the first 4 bases with only A's before it (the 3' copy starts right after the poly-A
+// tail, so a few tail A's matching A's of the 5' flank are chance). An N is not a match. Scored with them,
+// (1 - div) * sqrt(len) put 17 bp with 1 mismatch (AAAC/AAAA, then the planted 13 bp) above the planted exact 13 bp,
+// and a pair with a mismatch at its end above the same pair without that base. Trimming the start after any
+// mismatch within 4 bases, not only after A's, cost 19 of 941 rsi TSDs: real TSDs have mismatches near their ends.
+function _tsdTrimPair(a, b) {
+    const ok = k => a[k] === b[k] && a[k] !== 'N';
+    let lo = 0, hi = a.length, moved = true;
+    while (moved && hi > lo) {
+        moved = false;
+        for (let k = lo; k < Math.min(hi, lo + 4); k++) {
+            if (ok(k)) continue;
+            if (/^A*$/.test(a.slice(lo, k))) { lo = k + 1; moved = true; }
+            break;
+        }
+        if (hi > lo && !ok(hi - 1)) { hi--; moved = true; }
+    }
+    return { lo, hi: Math.max(lo, hi) };
+}
+
 function _tsdGapFraction(seq) {
     if (!seq || !seq.length) return 1;
     let gaps = 0;
@@ -33457,47 +33496,43 @@ function _tsdGapFraction(seq) {
     return gaps / seq.length;
 }
 
-function _isTsdReferenceRow(seqObj, index = 0) {
+// A reference / consensus row is known by its name only (consensus, reference, REF_..., ViewAlign's own
+// "cons_seq1-5" and "Grp1Cons5seq" rows). Row 1 used to count as one whenever it had >= 8 % gaps, and an ordinary
+// copy padded with gaps (normal in a copy alignment without a consensus row) was then left out of the search.
+function _isTsdReferenceRow(seqObj) {
     if (!seqObj) return false;
-    const header = String(seqObj.header || seqObj.fullHeader || '').toLowerCase();
-    if (/consensus|reference|\bref\b|master|t1_\d|_cons\b/.test(header)) return true;
-    return index === 0 && _tsdGapFraction(seqObj.seq) >= 0.08;
+    const header = String(seqObj.header || seqObj.fullHeader || '').toLowerCase();   // the name, not a description
+    return /consensus|reference|\bref\b|^ref[_\W]|master|t1_\d|_cons\b|^cons_seq|^grp\d+cons\d+seq/.test(header);
 }
 
+// First and last residue of the reference row (the name is kept for the benchmark scripts that extract these
+// functions). It was the longest gap-free run: a consensus with a 1-column gap where one copy has an insertion
+// cut the SINE body in two, and the TSDs were looked for inside the SINE.
 function _largestNonGapBlockBounds(seq) {
-    let best = { start: -1, end: -1, len: 0 };
-    let curStart = -1;
+    let first = -1, last = -1;
     for (let column = 0; column < seq.length; column++) {
-        if (_tsdBase(seq[column])) {
-            if (curStart < 0) curStart = column;
-        } else if (curStart >= 0) {
-            const blockLen = column - curStart;
-            if (blockLen > best.len) best = { start: curStart, end: column - 1, len: blockLen };
-            curStart = -1;
-        }
+        if (!_tsdBase(seq[column])) continue;
+        if (first < 0) first = column;
+        last = column;
     }
-    if (curStart >= 0) {
-        const blockLen = seq.length - curStart;
-        if (blockLen > best.len) best = { start: curStart, end: seq.length - 1, len: blockLen };
-    }
-    if (best.start < 0) return { first: -1, last: -1 };
-    return { first: best.start, last: best.end };
+    return { first, last };
 }
 
+// named: false when no row is named as a reference / consensus row (row 1 is then only a stand-in)
 function _pickTsdReferenceSeq(seqs) {
     if (!seqs?.length) return null;
     for (let i = 0; i < seqs.length; i++) {
-        if (_isTsdReferenceRow(seqs[i], i)) {
+        if (_isTsdReferenceRow(seqs[i])) {
             const name = seqs[i].header || `row ${i + 1}`;
-            return { seq: seqs[i].seq, label: name, index: i };
+            return { seq: seqs[i].seq, label: name, index: i, named: true };
         }
     }
     const row0 = seqs[0];
-    return { seq: row0.seq, label: row0.header || 'row 1', index: 0 };
+    return { seq: row0.seq, label: row0.header || 'row 1', index: 0, named: false };
 }
 
 function _seqsForTsdBoundaryScoring(seqs) {
-    return seqs.filter((seqObj, index) => !_isTsdReferenceRow(seqObj, index));
+    return seqs.filter(seqObj => !_isTsdReferenceRow(seqObj));
 }
 
 function _boundaryFromReferenceSeq(refSeq, aliLen, flankSize, label) {
@@ -33516,7 +33551,9 @@ function _boundaryFromReferenceSeq(refSeq, aliLen, flankSize, label) {
 
 function _columnConservationScores(seqs, aliLen, minCoverageFrac = 0.35) {
     const scores = new Array(aliLen).fill(0);
-    const minCount = Math.max(3, Math.ceil(seqs.length * minCoverageFrac));
+    // at least 4 bases: 2 of 3 alike (0.67) is chance in a gap-padded flank, and with 8 copies (threshold 0.58)
+    // it put the left edge at column 24 of a 100-column flank block (seen once row 1 was no longer left out)
+    const minCount = Math.max(Math.min(4, seqs.length), Math.ceil(seqs.length * minCoverageFrac));
     for (let column = 0; column < aliLen; column++) {
         const counts = {};
         let validCount = 0;
@@ -33560,10 +33597,16 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
 
     const ref = _pickTsdReferenceSeq(seqs);
 
-    // 'topseq' is explicitly "use the reference row" - unchanged.
+    // 'topseq' is explicitly "use the reference row". Without a row named as one, row 1 is a copy with its
+    // flanks and its first-to-last residue is no SINE body ("TSD in 3 of 20" with nothing said): the body then
+    // comes from column conservation, as in Auto, and the label says so.
+    let noRefNote = '';
     if (mode === 'topseq') {
-        const refBoundary = _boundaryFromReferenceSeq(ref.seq, aliLen, flankSize, `reference: ${ref.label}`);
-        if (refBoundary) return refBoundary;
+        if (ref.named) {
+            const refBoundary = _boundaryFromReferenceSeq(ref.seq, aliLen, flankSize, `reference: ${ref.label}`);
+            if (refBoundary) return refBoundary;
+        }
+        noRefNote = ref.named ? `reference row ${ref.label} has no residues; ` : 'no row named consensus / reference / REF_; ';
     }
 
     // 'auto' tries genuine alignment-wide column-conservation detection first (matching
@@ -33571,7 +33614,7 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
     // scoring finds no real signal on both sides - it used to always prefer the reference
     // row and only reach this path when that row was 100% gaps, making 'auto' functionally
     // identical to 'topseq' in every normal case.
-    if (mode === 'auto') {
+    if (mode === 'auto' || mode === 'topseq') {
         const scoringSeqs = _seqsForTsdBoundaryScoring(seqs);
         const scoreSeqs = scoringSeqs.length ? scoringSeqs : seqs;
         const scores = _columnConservationScores(scoreSeqs, aliLen);
@@ -33611,12 +33654,13 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
                 upEnd: Math.max(0, leftBoundary - 1),
                 downStart: Math.min(aliLen - 1, rightBoundary + 1),
                 downEnd: Math.min(aliLen - 1, rightBoundary + flankSize),
-                label: `auto conservation ${leftBoundary + 1}/${rightBoundary + 1}`
+                label: `${noRefNote}auto conservation ${leftBoundary + 1}/${rightBoundary + 1}`,
+                note: noRefNote && noRefNote + 'the SINE body was found from column conservation, as in Auto'
             };
         }
 
-        const refBoundary = _boundaryFromReferenceSeq(ref.seq, aliLen, flankSize, `reference: ${ref.label} (conservation found no signal)`);
-        if (refBoundary) return refBoundary;
+        const refBoundary = _boundaryFromReferenceSeq(ref.seq, aliLen, flankSize, `${noRefNote}reference: ${ref.named ? '' : 'row 1, '}${ref.label} (conservation found no signal)`);
+        if (refBoundary) return Object.assign(refBoundary, { note: noRefNote && `${noRefNote}column conservation found no SINE body either, so the body is from row 1 (${ref.label})` });
     }
 
     // Last-resort fallback: no reference row content and (for 'auto') no conservation
@@ -33628,7 +33672,8 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
         upEnd: -1,
         downStart: aliLen,
         downEnd: aliLen - 1,
-        label: 'fallback: no boundary detected'
+        label: `${noRefNote}fallback: no boundary detected`,
+        note: noRefNote && noRefNote + 'no SINE body found'
     };
 }
 
@@ -33654,23 +33699,31 @@ function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, m
                 const mismatches = _tsdMismatchCount(upstreamSeq, downstreamSeq);
                 const divergence = mismatches / tsdLen;
                 if (divergence > maxDiv) continue;
-                const downstreamColumn = downstreamCandidate.columns[0] ?? rightBoundary + 1;
+                // scored and reported without the mismatches near its ends (_tsdTrimPair)
+                const t = _tsdTrimPair(upstreamSeq, downstreamSeq);
+                if (t.hi - t.lo < minTsdLen) continue;
+                const len = t.hi - t.lo, upSeq = upstreamSeq.slice(t.lo, t.hi), downSeq = downstreamSeq.slice(t.lo, t.hi);
+                const mm = len === tsdLen ? mismatches : _tsdMismatchCount(upSeq, downSeq);
+                if (mm / len > maxDiv) continue;
+                const off = upstreamOffset + (tsdLen - t.hi), dsTrim = downstreamStart + t.lo;
+                const upCols = upstreamCandidate.columns.slice(t.lo, t.hi), downCols = downstreamCandidate.columns.slice(t.lo, t.hi);
+                const downstreamColumn = downCols[0] ?? rightBoundary + 1;
                 const boundaryDistance = Math.abs(downstreamColumn - (rightBoundary + 1));
-                const score = (1 - divergence) * Math.sqrt(tsdLen)
-                    - upstreamOffset * 0.04
+                const score = (1 - mm / len) * Math.sqrt(len)
+                    - off * 0.04
                     - boundaryDistance * 0.08
-                    - downstreamStart * 0.05;
-                if (!bestTsd || score > bestTsd.score || (score === bestTsd.score && tsdLen > bestTsd.length)) {
+                    - dsTrim * 0.05;
+                if (!bestTsd || score > bestTsd.score || (score === bestTsd.score && len > bestTsd.length)) {
                     bestTsd = {
                         score,
-                        length: tsdLen,
-                        divergence,
-                        mismatches,
-                        upSeq: upstreamSeq,
-                        downSeq: downstreamSeq,
-                        upCols: upstreamCandidate.columns,
-                        downCols: downstreamCandidate.columns,
-                        upstreamOffset,
+                        length: len,
+                        divergence: mm / len,
+                        mismatches: mm,
+                        upSeq,
+                        downSeq,
+                        upCols,
+                        downCols,
+                        upstreamOffset: off,
                         boundaryDistance
                     };
                 }
@@ -33707,20 +33760,30 @@ function _findBestTsdWide(upstreamWindow, downstreamWindow, iB, minTsdLen, maxTs
                 // a 3' copy starting inside the body matches exactly there: else a 6-bp TSD next to a poly-A tail
                 // lost to a 10-bp pair reaching 4 bases into the tail with a mismatch (AAGA+TSD / AAAA+TSD)
                 if (ds < iB && _tsdMismatchCount(upstreamSeq.slice(0, iB - ds), downstreamSeq.slice(0, iB - ds)) > 0) continue;
-                const away = far ? Math.abs(ds - iB) * 0.2 : ds - iB;
-                const score = (1 - divergence) * Math.sqrt(tsdLen) - upstreamOffset * 0.04 - away * 0.1;
-                if (!bestTsd || score > bestTsd.score || (score === bestTsd.score && tsdLen > bestTsd.length)) {
+                // the pair is scored and reported without the mismatches near its ends (_tsdTrimPair)
+                const t = _tsdTrimPair(upstreamSeq, downstreamSeq);
+                if (t.hi - t.lo < minTsdLen) continue;
+                const len = t.hi - t.lo, upSeq = upstreamSeq.slice(t.lo, t.hi), downSeq = downstreamSeq.slice(t.lo, t.hi);
+                const mm = len === tsdLen ? mismatches : _tsdMismatchCount(upSeq, downSeq);
+                if (mm / len > maxDiv) continue;
+                const off = upstreamOffset + (tsdLen - t.hi), d = ds + t.lo - iB;
+                // distance from the boundary: 0.1 per residue for the first 3 past it, then 0.02 per residue but never
+                // less than at 3 (it fell from 0.3 at +3 to 0.08 at +4, so a 20-bp TSD at +3 lost its first base to
+                // the same TSD less one base at +4); 0.02 per residue inside the body
+                const away = d < 0 ? -d * 0.02 : d <= 3 ? d * 0.1 : Math.max(0.3, d * 0.02);
+                const score = (1 - mm / len) * Math.sqrt(len) - off * 0.04 - away;
+                if (!bestTsd || score > bestTsd.score || (score === bestTsd.score && len > bestTsd.length)) {
                     bestTsd = {
                         score,
-                        length: tsdLen,
-                        divergence,
-                        mismatches,
-                        upSeq: upstreamSeq,
-                        downSeq: downstreamSeq,
-                        upCols: upstreamCandidate.columns,
-                        downCols: downstreamCandidate.columns,
-                        upstreamOffset,
-                        boundaryDistance: ds - iB
+                        length: len,
+                        divergence: mm / len,
+                        mismatches: mm,
+                        upSeq,
+                        downSeq,
+                        upCols: upstreamCandidate.columns.slice(t.lo, t.hi),
+                        downCols: downstreamCandidate.columns.slice(t.lo, t.hi),
+                        upstreamOffset: off,
+                        boundaryDistance: d
                     };
                 }
             }
@@ -33738,8 +33801,10 @@ function _findTSD(seqs, mode, params) {
     const boundaries = _findSineBoundaryColumns(seqs, mode, params, aliLen);
 
     const misses = [];   // copies searched without a TSD, with the reason (shown in the results)
+    const skipped = [];  // rows not searched (a gap-padded reference / consensus row), with the reason (shown too)
     for (let seqIndex = 0; seqIndex < seqs.length; seqIndex++) {
-        if (_isTsdReferenceRow(seqs[seqIndex], seqIndex) && _tsdGapFraction(seqs[seqIndex].seq) >= 0.2) {
+        if (_isTsdReferenceRow(seqs[seqIndex]) && _tsdGapFraction(seqs[seqIndex].seq) >= 0.2) {
+            skipped.push({ seqIndex, obj: seqs[seqIndex], seqName: seqs[seqIndex].header, reason: 'not searched: named as a reference / consensus row, and gap-padded (no flanks)' });
             continue;
         }
         const seq = seqs[seqIndex].seq;
@@ -33800,6 +33865,7 @@ function _findTSD(seqs, mode, params) {
         });
     }
     results.misses = misses;
+    results.skipped = skipped;
     results.boundaries = boundaries;
     return results;
 }
@@ -33947,6 +34013,10 @@ function _renderTsdResultsHTML(el, results, tsdMode, params) {
     const misses = results.misses || [];
     const tested = results.length + misses.length;
     const b = results.boundaries;
+    // never silent: rows left out of the search, and a Reference row search that had no reference row
+    const skipped = results.skipped || [];
+    const notesHtml = (b?.note ? `<div class="rf-hint rf-note">Reference row: ${esc(b.note)}.</div>` : '') +
+        (skipped.length ? `<div class="rf-hint rf-skipped">${skipped.map(s => `${esc(s.seqName)}: ${esc(s.reason)}`).join('<br>')}</div>` : '');
     const bodyChip = (b && Number.isInteger(b.leftBoundary) && Number.isInteger(b.rightBoundary) && tsdMode !== 'manual')
         ? `<span class="rf-chip" title="${esc(b.label || '')}">SINE body: columns ${b.leftBoundary + 1}–${b.rightBoundary + 1}</span>` : '';
     const missesHtml = misses.length ? `<details class="rf-misses"><summary>${misses.length} cop${misses.length === 1 ? 'y' : 'ies'} without a TSD</summary><ul>` +
@@ -33956,7 +34026,7 @@ function _renderTsdResultsHTML(el, results, tsdMode, params) {
         let hint = 'Try a wider search window, a higher mismatch limit, or another way of finding the SINE body.';
         if (tsdMode === 'manual') hint = `Columns ${params.upStart}–${params.upEnd} (5′) against ${params.downStart}–${params.downEnd} (3′). ` + hint;
         el.innerHTML = `<div class="rf-summary"><span class="rf-big">No TSD found</span><span class="rf-chip">${tested} copies searched</span>${bodyChip}</div>` +
-            `<div class="rf-hint">${esc(hint)}</div>${missesHtml}`;
+            `<div class="rf-hint">${esc(hint)}</div>${notesHtml}${missesHtml}`;
         _wireTsdGoto(el);
         return;
     }
@@ -33980,7 +34050,7 @@ function _renderTsdResultsHTML(el, results, tsdMode, params) {
         '<div class="rf-hint">Each row shows the 5′ copy above the 3′ copy; mismatches are red; the small grey letters are the 3 bases on each side of a copy (if they match across the two rows, the TSD may be longer). Click a row to show it in the alignment. Click a column title to sort.</div>' +
         '<table class="rf-table"><colgroup><col style="width:30px"><col><col style="width:27%"><col style="width:48px"><col style="width:62px"><col style="width:92px"></colgroup>' +
         '<thead><tr><th data-sort="order">#</th><th data-sort="name">Sequence</th><th>TSD (5′ / 3′)</th>' +
-        '<th data-sort="len" class="rf-num-cell">Length</th><th data-sort="mm" class="rf-num-cell">Mismatch</th><th>Columns</th></tr></thead><tbody></tbody></table>' + missesHtml;
+        '<th data-sort="len" class="rf-num-cell">Length</th><th data-sort="mm" class="rf-num-cell">Mismatch</th><th>Columns</th></tr></thead><tbody></tbody></table>' + notesHtml + missesHtml;
     el.innerHTML = html;
 
     // 3 bases outside each copy, small and grey; padded to 3 so the two rows stay in register
@@ -34257,6 +34327,7 @@ function _initRepeatFinderEvents() {
     });
     document.querySelectorAll('input[name="tsdMode"]').forEach(radio => {
         radio.addEventListener('change', _syncTsdModeSubUI);
+        radio.addEventListener('change', () => { if (radio.value === 'manual' && radio.checked) _prefillTsdManualFromAuto(); });
     });
     document.querySelectorAll('input[name="repeatScope"]').forEach(radio => {
         radio.addEventListener('change', _syncRepeatFinderModeUI);

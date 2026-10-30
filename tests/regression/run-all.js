@@ -9579,6 +9579,138 @@ ${'ACGT'.repeat(750)}
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// TSD audit 2026-10-30 (B2-B5): planted-TSD copy alignments with known truth, the generator of the audit (tsdgen.js).
+// Columns: 100 flank | 250 body | 30 tail block | 100 flank; truth = the planted 5' and 3' TSD of each copy.
+function _tsdAuditAlignment(o = {}) {
+  let s = (o.seed || 1) >>> 0 || 1;
+  const r = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  const int = n => Math.floor(r() * n), rs = n => Array.from({ length: n }, () => 'ACGT'[int(4)]).join('');
+  const n = o.n || 20, bodyLen = 250, LF = 100, TAIL = 30, RF = 100;
+  const body = rs(bodyLen), rows = [], truth = {};
+  if (o.consensusRow) rows.push({ header: 'consensus', seq: '-'.repeat(LF) + body + 'A'.repeat(20) + '-'.repeat(TAIL - 20) + '-'.repeat(RF) });
+  for (let i = 0; i < n; i++) {
+    const mut = (o.mutLo ?? 0.05) + r() * ((o.mutHi ?? 0.25) - (o.mutLo ?? 0.05));
+    const b = body.split('').map(c => (r() < mut ? 'ACGT'.replace(c, '')[int(3)] : c));
+    for (let k = 0; k < 2; k++) b[30 + int(bodyLen - 60)] = '-';
+    const truncBy = (o.trunc || []).includes(i) ? 30 + int(60) : 0;
+    for (let k = 0; k < truncBy; k++) b[k] = '-';
+    const tsdLen = o.tsdLens ? o.tsdLens[i % o.tsdLens.length] : 6 + int(15);
+    const tsd = rs(tsdLen);
+    let tsd3 = tsd;
+    const kind = (o.noTsd || []).includes(i) ? 'none' : (o.mm1 || []).includes(i) ? 'mm1' : 'exact';
+    if (kind === 'mm1') { const p = 1 + int(tsdLen - 2); tsd3 = tsd.slice(0, p) + 'ACGT'.replace(tsd[p], '')[int(3)] + tsd.slice(p + 1); }
+    if (kind === 'none') tsd3 = rs(tsdLen);
+    const f5len = 40 + int(41), f3len = 40 + int(41);   // drawn in this order, as in tsdgen.js
+    const f5 = rs(f5len), f3 = rs(f3len);
+    const tailLen = 12 + int(14);
+    let tail = 'A'.repeat(tailLen); if (r() < 0.3) tail = tail.slice(0, 5) + 'G' + tail.slice(6);
+    const left = f5 + tsd, right = tsd3 + f3;
+    const header = `copy${i}_${kind}${truncBy ? '_trunc' + truncBy : ''}_tsd${tsdLen}`;
+    rows.push({ header, seq: '-'.repeat(LF - left.length) + left + b.join('') + tail + '-'.repeat(TAIL - tailLen) + right + '-'.repeat(RF - right.length) });
+    truth[header] = { tsd, tsd3, kind };
+  }
+  return { rows, truth, fasta: rows.map(x => `>${x.header}\n${x.seq}\n`).join('') };
+}
+const _TSD_AUDIT = {
+  A: { seed: 1, n: 20, consensusRow: true, trunc: [3, 7, 11], noTsd: [5, 15], mm1: [9] },
+  B: { seed: 1, n: 20, consensusRow: false, trunc: [3, 7, 11], noTsd: [5, 15], mm1: [9] },
+  D: { seed: 3, n: 8, consensusRow: false, trunc: [2], noTsd: [6], mm1: [4] },
+  E: { seed: 4, n: 20, consensusRow: true, mutLo: 0.05, mutHi: 0.10, trunc: [], noTsd: [], mm1: [], tsdLens: [6, 7, 8] },
+};
+// open the TSD finder, pick the SINE-body mode by its label, press Find; the results as the panel shows them
+async function _tsdAuditFind(page, tsdMode) {
+  await page.evaluate(() => { if (document.getElementById('repeatFinderModal').style.display === 'none') openRepeatFinder(0, 'tsd'); });
+  await page.click('label:has(input[name="repeatMode"][value="tsd"])');
+  if (tsdMode) await page.click(`label:has(input[name="tsdMode"][value="${tsdMode}"])`);
+  await page.evaluate(() => { document.getElementById('repeatResults').textContent = '__PENDING__'; });
+  await page.click('#repeatRunBtn');
+  await page.waitForFunction(() => { const t = document.getElementById('repeatResults').textContent; return t !== '__PENDING__' && !/^Searching/.test(t); }, null, { timeout: 30000 });
+  return page.evaluate(() => ({
+    head: document.querySelector('#repeatResults .rf-big')?.textContent || '',
+    body: [...document.querySelectorAll('#repeatResults .rf-chip')].map(c => c.textContent).find(t => /SINE body/.test(t)) || '',
+    note: document.querySelector('#repeatResults .rf-note')?.textContent || '',
+    skipped: document.querySelector('#repeatResults .rf-skipped')?.textContent || '',
+    res: (_lastTsdResults || []).map(x => ({ name: x.seqName, up: x.upTSD, down: x.downTSD, mm: x.mismatches })),
+    misses: (_lastTsdResults?.misses || []).map(m => m.seqName),
+  }));
+}
+
+// B2: row 1 with >= 8 % gaps was taken for a consensus row and, with >= 20 %, left out of the search without a word
+// (copy alignments without a consensus row are gap-padded like that). A named consensus row is still not searched,
+// but the results say so.
+check('TSD finder: a gap-padded copy in row 1 is searched, not taken for the consensus; a skipped consensus row is named', async (page) => {
+  const d = _tsdAuditAlignment(_TSD_AUDIT.D);
+  await loadFasta(page, d.fasta);
+  const r = await _tsdAuditFind(page, 'auto');
+  const c0 = r.res.find(x => x.name.startsWith('copy0'));
+  const a = _tsdAuditAlignment(_TSD_AUDIT.A);
+  await loadFasta(page, a.fasta);
+  const ra = await _tsdAuditFind(page, 'auto');
+  const out = { head: r.head, copy0: c0 ? c0.up + '/' + c0.down : (r.misses.some(m => m.startsWith('copy0')) ? 'in misses' : 'left out'),
+    truth0: d.truth[d.rows[0].header].tsd, headA: ra.head, skippedA: ra.skipped };
+  const ok = /TSD in \d+ of 8 copies/.test(r.head) && c0 && c0.up === out.truth0 && c0.down === out.truth0
+    && /of 20 copies/.test(ra.head) && /^consensus: not searched/.test(ra.skipped);
+  return { pass: !!ok, detail: JSON.stringify(out) };
+});
+
+// B3: the 3' distance penalty fell from 0.3 at +3 to 0.08 at +4, so a planted 20-bp TSD starting 3 residues past the
+// SINE end was reported at +4 without its first base (Auto and Reference row).
+check('TSD finder: a 20-bp TSD a few bases past the SINE end keeps its first base (Auto, Reference row)', async (page) => {
+  const a = _tsdAuditAlignment(_TSD_AUDIT.A);
+  const name = a.rows.find(x => x.header.startsWith('copy14')).header;
+  await loadFasta(page, a.fasta);
+  const out = { truth: a.truth[name].tsd };
+  for (const m of ['auto', 'topseq']) { const x = (await _tsdAuditFind(page, m)).res.find(y => y.name === name); out[m] = x ? x.up + '/' + x.down : 'none'; }
+  const want = out.truth + '/' + out.truth;
+  return { pass: out.auto === want && out.topseq === want, detail: JSON.stringify(out) };
+});
+
+// B4: (1 - div) * sqrt(len) scored a pair lengthened by a few bases with a mismatch above the exact planted pair:
+// copy1's exact 13-bp TSD came out as AAACAGTC.../AAAAAGTC... (17 bp, 1 mismatch); pairs also ended on a mismatch.
+check('TSD finder: a pair is not lengthened past a mismatch at its end or into tail As (Auto, Reference row)', async (page) => {
+  const out = {}, endMm = [];
+  for (const key of ['A', 'D']) {
+    const a = _tsdAuditAlignment(_TSD_AUDIT[key]);
+    await loadFasta(page, a.fasta);
+    for (const m of ['auto', 'topseq']) {
+      const r = await _tsdAuditFind(page, m);
+      r.res.forEach(x => { const L = x.up.length; if (x.up[L - 1] !== x.down[L - 1] || x.up[0] !== x.down[0]) endMm.push(key + m + ':' + x.name + ' ' + x.up + '/' + x.down); });
+      if (key === 'A') { const name = a.rows.find(y => y.header.startsWith('copy1_')).header; const x = r.res.find(y => y.name === name); out['A1 ' + m] = x ? x.up + '/' + x.down : 'none'; out.truth = a.truth[name].tsd; }
+    }
+  }
+  const want = out.truth + '/' + out.truth;
+  return { pass: out['A1 auto'] === want && out['A1 topseq'] === want && !endMm.length, detail: JSON.stringify({ out, endMm }) };
+});
+
+// B5: Reference row used the longest gap-free run of the reference row as the SINE body: a consensus with a 1-column
+// gap (where one copy has an insertion) gave body 182-300 and "TSD in 3 of 20".
+check('TSD finder: Reference row with 1-column gaps inside the consensus keeps the whole SINE body', async (page) => {
+  const a = _tsdAuditAlignment(_TSD_AUDIT.A);
+  const c = a.rows[0].seq;
+  a.rows[0].seq = c.slice(0, 180) + '-' + c.slice(181, 300) + '-' + c.slice(301);
+  await loadFasta(page, a.rows.map(x => `>${x.header}\n${x.seq}\n`).join(''));
+  const r = await _tsdAuditFind(page, 'topseq');
+  return { pass: /columns 101–370/.test(r.body) && /TSD in (19|20) of 20 copies/.test(r.head), detail: JSON.stringify({ head: r.head, body: r.body }) };
+});
+
+// Manual opened with the alignment's first/last 30 columns as flanks ("1 of 20" by chance): it starts from the Auto
+// body now. Reference row without a reference / consensus row used row 1 (a copy with flanks) without a word.
+check('TSD finder: Manual starts from the Auto SINE body; Reference row without a reference row says so', async (page) => {
+  const e = _tsdAuditAlignment(_TSD_AUDIT.E);
+  await loadFasta(page, e.fasta);
+  const auto = await _tsdAuditFind(page, 'auto');
+  const man = await _tsdAuditFind(page, 'manual');
+  const fields = await page.evaluate(() => ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id).value).join(','));
+  const b = _tsdAuditAlignment(_TSD_AUDIT.B);
+  await loadFasta(page, b.fasta);
+  const ref = await _tsdAuditFind(page, 'topseq');
+  const [, l, rr] = auto.body.match(/columns (\d+)–(\d+)/) || [];
+  const out = { autoBody: auto.body, fields, manual: man.head, refHead: ref.head, refNote: ref.note };
+  const ok = l && fields === `1,${l - 1},${+rr + 1},480` && /TSD in (19|20) of 20 copies/.test(man.head)
+    && /no row named consensus/.test(ref.note) && /TSD in (1[6-9]|20) of 20 copies/.test(ref.head);
+  return { pass: !!ok, detail: JSON.stringify(out) };
+});
+
 // Owner 2026-10-28: what else did Full/Block have that Canvas lacked? Per-span titles and listeners: the titles of search
 // hits and marks on a residue, the length badges' titles, the name cell's full name, dragging the trim borders on the
 // consensus row (and its hint), the soft-trim hint. Canvas shows them now, with the Full/Block text.
