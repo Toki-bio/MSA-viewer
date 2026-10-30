@@ -15255,6 +15255,20 @@ function handleKeyDown(e) {
                 redoAction();
                 e.preventDefault();
                 break;
+            case 'f':
+                // Canvas draws the letters as pixels, so the browser's find bar finds nothing in the
+                // alignment: Ctrl+F opens ViewAlign's motif search (all rows, gaps skipped) instead
+                if (isCanvasMode() && !e.shiftKey && !e.altKey) {
+                    const inp = el('searchInput');
+                    const sec = inp?.closest('.menu-section');
+                    if (inp) {
+                        if (sec) openMenuSection(sec);
+                        inp.focus();
+                        inp.select();
+                        e.preventDefault();
+                    }
+                }
+                break;
             case 'b':
                 insertGroupConsensus();
                 e.preventDefault();

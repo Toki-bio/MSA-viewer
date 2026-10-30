@@ -10277,6 +10277,32 @@ ${'ACGTTGCAAC'.repeat(60)}
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// Owner 2026-10-31: Canvas letters are pixels, so the browser's find bar finds nothing there; Ctrl+F opens the motif
+// search box instead. Full keeps the browser's find bar (its letters are page text).
+check('Canvas: Ctrl+F opens the motif search box; Full leaves Ctrl+F to the browser', async (page) => {
+  await loadFasta(page, '>a\nACGTACGTGGTTCGAACGT\n>b\nACGTACGTGGTTCGAACGT\n');
+  const press = async (mode) => {
+    await setMode(page, mode);
+    await page.waitForTimeout(400);
+    await page.evaluate(() => { document.activeElement?.blur(); document.querySelectorAll('.menu-open').forEach(s => s.classList.remove('menu-open')); });
+    await page.mouse.click(5, 5);
+    const prevented = await page.evaluate(() => {
+      const ev = new KeyboardEvent('keydown', { key: 'f', code: 'KeyF', ctrlKey: true, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    });
+    return page.evaluate((prevented) => {
+      const inp = document.getElementById('searchInput');
+      const r = inp.getBoundingClientRect();
+      return { prevented, focused: document.activeElement === inp, visible: r.width > 0 && r.height > 0 && getComputedStyle(inp).visibility !== 'hidden' };
+    }, prevented);
+  };
+  const canvas = await press('canvas');
+  const full = await press('full');
+  const ok = canvas.prevented && canvas.focused && canvas.visible && !full.prevented && !full.focused;
+  return { pass: ok, detail: JSON.stringify({ canvas, full }) };
+});
+
 // Owner 2026-10-28: what else did Full/Block have that Canvas lacked? Per-span titles and listeners: the titles of search
 // hits and marks on a residue, the length badges' titles, the name cell's full name, dragging the trim borders on the
 // consensus row (and its hint), the soft-trim hint. Canvas shows them now, with the Full/Block text.
