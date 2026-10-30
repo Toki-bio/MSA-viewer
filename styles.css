@@ -4083,6 +4083,7 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 .rf-seg label:has(input:focus-visible) { outline: 2px solid #1976d2; outline-offset: -2px; }
 .rf-btn { font: inherit; font-size: 12px; padding: 3px 10px; border: 1px solid #c9ced6; border-radius: 5px; background: #fff; color: #1f2937; cursor: pointer; }
 .rf-btn:hover { background: #f1f4f8; }
+.rf-btn:disabled { opacity: 0.45; cursor: default; background: #fff; }
 .rf-btn-primary { background: #1976d2; border-color: #1976d2; color: #fff; font-weight: 600; padding: 4px 18px; }
 .rf-btn-primary:hover { background: #1565c0; }
 /* the Mark button after a TSD run: the found TSDs are shown faintly and this is the next step */

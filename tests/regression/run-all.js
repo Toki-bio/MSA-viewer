@@ -9759,6 +9759,205 @@ check('Repeat Finder: protein alignments are reported in aa, not bp', async (pag
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// GLM Repeat Finder audit batch 2 (2026-10-30). Shared: a copy alignment with a planted TSD in each copy, the 3' copy
+// `off` residues past the SINE body (flanks random, so only the planted pair is a strict TSD).
+function _rfTsdPlate(seed, n, off, tsdLen = 12, o = {}) {
+  const r = rfRng(seed), body = r.seq(120), rows = [];
+  for (let i = 0; i < n; i++) { const t = r.seq(tsdLen); rows.push({ header: `c${i}`, seq: r.seq(30) + t + body + r.seq(off) + t + r.seq(60 - off) }); }
+  if (o.fullRef) rows.unshift({ header: 'reference', seq: r.seq(30 + tsdLen) + body + r.seq(60 + tsdLen) });
+  return rows.map(x => `>${x.header}\n${x.seq}\n`).join('');
+}
+async function _rfMessages(page) { await page.evaluate(() => { window.__msgs = []; if (!window.__msgWrapped) { const om = window.showMessage; window.showMessage = (m, t) => { window.__msgs.push(String(m)); return om(m, t); }; window.__msgWrapped = true; } }); }
+
+// GLM #3, #21, #17, #48: a new search kept the previous table's highlights under their old place in the list (the new
+// row 1 came up highlighted while the old repeat stayed painted; clicking it removed the old paint); closing the window
+// removed every highlight, and reopening it replaced the table with "Choose what to find".
+check('Repeat Finder: a new search keeps only the highlights of repeats it finds again; closing and reopening keeps the table and highlights', async (page) => {
+  const r = rfRng(5), u = r.seq(15), v = r.seq(25);
+  await loadFasta(page, `>t\n${r.seq(50) + u + r.seq(60) + u + r.seq(60) + v + r.seq(50) + v + r.seq(40)}\n>o\n${r.seq(375)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const out = {};
+  const f1 = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 10, maxDiv: 0 });
+  const L = f1.res.map(x => x.length);   // the planted 25 and 15 bp, lengthened by chance matching neighbours
+  out.first = L.join(',');
+  await page.click('#repeatResults tbody tr:nth-child(1)');   // the 25-bp pair
+  await page.click('#repeatResults tbody tr:nth-child(2)');   // the 15-bp pair
+  const painted = () => page.evaluate(() => document.querySelectorAll('.seq-data > span[data-repeat-hl="1"]').length);
+  out.paintedBefore = await painted();
+  await rfFind(page, { mode: 'direct', scope: 'single', minLen: 20, maxDiv: 0 });   // only the 25-bp pair is found now
+  const state1 = () => page.evaluate(() => ({ keys: [...state.repeatHighlights.keys()].join(','), active: [...document.querySelectorAll('#repeatResults tbody tr')].map(tr => tr.dataset.active || '-').join(','), rows: document.querySelectorAll('#repeatResults tbody tr').length }));
+  out.after = await state1();
+  out.paintedAfter = await painted();
+  await page.click('#repeatFinderCloseBtn'); await page.waitForTimeout(200);
+  out.closedKeys = await page.evaluate(() => state.repeatHighlights.size);
+  out.paintedClosed = await painted();
+  await page.evaluate(() => openRepeatFinder(0)); await page.waitForTimeout(200);
+  out.reopened = await state1();
+  const ok = L.length === 2 && L[0] >= 25 && L[0] < 30 && L[1] >= 15 && L[1] < 20 && out.paintedBefore === 2 * (L[0] + L[1]) && out.after.keys === 'direct-0' && out.after.active === '1'
+    && out.paintedAfter === 2 * L[0] && out.closedKeys === 1 && out.paintedClosed === 2 * L[0] && out.reopened.rows === 1 && out.reopened.active === '1';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM #11, #14: "One sequence" kept a row number: after rows were deleted with the window open, Find searched whatever
+// row then had that number, and with the chosen row gone it reported "No repeats" for a row that did not exist.
+check('Repeat Finder: One sequence follows its sequence when rows are deleted with the window open, and says when it is gone', async (page) => {
+  const r = rfRng(8);
+  let fa = '';
+  for (let i = 0; i < 6; i++) fa += `>row${i}\n${i === 3 ? r.seq(80) + 'ACGTTGCA'.repeat(4) + r.seq(88) : r.seq(200)}\n`;
+  await loadFasta(page, fa);
+  await page.evaluate(() => { window.confirm = () => true; openRepeatFinder(3, 'tandem'); });
+  await page.evaluate(() => { deleteSequence(0); deleteSequence(0); });
+  await page.waitForTimeout(300);
+  const f = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 8, maxDiv: 0 });
+  const shown = await page.evaluate(() => document.getElementById('repeatFinderSeqSelect').selectedOptions[0]?.textContent || '');
+  await page.evaluate(() => deleteSequence(state.seqs.findIndex(s => s.header === 'row3')));
+  await page.waitForTimeout(300);
+  const g = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 8, maxDiv: 0 });
+  const out = { names: [...new Set(f.res.map(x => x.seqName))].join(','), found: f.res.some(x => x.unitLen === 8 && x.copies === 4), shown, gone: g.text.slice(0, 90), goneRows: g.rows };
+  const ok = out.names === 'row3' && out.found && /row3/.test(shown) && /row3 is no longer in the alignment/.test(out.gone) && out.goneRows === 0;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM #7, #19, #42: Mark pressed twice (lower case) replaced the backup with an empty one, so Remove marks did nothing
+// while saying "undone"; lower case on lower-case letters wiped the colour marks and said "Marked"; Remove marks after the
+// main Undo had brought the case back pushed an empty step onto the main Undo.
+check('TSD marking: Mark pressed twice, lower case on lower-case letters and Remove marks after Ctrl+Z change nothing and say so', async (page) => {
+  const out = {};
+  const lc = () => page.evaluate(() => state.seqs.reduce((n, s) => n + (s.seq.match(/[a-z]/g) || []).length, 0));
+  await loadFasta(page, _rfTsdPlate(31, 8, 0, 9));
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await _tsdAuditFind(page, 'auto');
+  out.found = await page.evaluate(() => _lastTsdResults.length);
+  await page.selectOption('#tsdMarkStyle', 'lowercase');
+  await page.click('#tsdMarkBtn'); await page.waitForTimeout(150);
+  out.lowered = await lc();
+  await _rfMessages(page);
+  await page.click('#tsdMarkBtn'); await page.waitForTimeout(150);
+  out.secondMsg = await page.evaluate(() => window.__msgs.join(' | '));
+  await page.click('#tsdUndoMarkBtn'); await page.waitForTimeout(150);
+  out.afterRemove = await lc();
+  // lower case again, main Undo brings the case back, then Remove marks: no step added to the main Undo
+  await page.click('#tsdMarkBtn'); await page.waitForTimeout(150);
+  await page.evaluate(() => undoDelete(true)); await page.waitForTimeout(200);
+  out.afterCtrlZ = await lc();
+  const h0 = await page.evaluate(() => state.deletedHistory.length);
+  await _rfMessages(page);
+  await page.click('#tsdUndoMarkBtn'); await page.waitForTimeout(150);
+  out.undoSteps = await page.evaluate((h0) => state.deletedHistory.length - h0, h0);
+  out.removeMsg = await page.evaluate(() => window.__msgs.join(' | '));
+  // an all-lower-case file: colour marks, then lower case changes nothing and keeps them
+  await loadFasta(page, _rfTsdPlate(31, 8, 0, 9).replace(/^([^>].*)$/gm, s => s.toLowerCase()));
+  await _tsdAuditFind(page, 'auto');
+  await page.selectOption('#tsdMarkStyle', 'color');
+  await page.click('#tsdMarkBtn'); await page.waitForTimeout(150);
+  out.colourRows = await page.evaluate(() => state.tsdMarks.size);
+  await _rfMessages(page);
+  await page.selectOption('#tsdMarkStyle', 'lowercase');
+  await page.click('#tsdMarkBtn'); await page.waitForTimeout(150);
+  out.colourRowsAfter = await page.evaluate(() => state.tsdMarks.size);
+  out.lcMsg = await page.evaluate(() => window.__msgs.join(' | '));
+  const ok = out.found >= 7 && out.lowered >= 100 && /already lower case/.test(out.secondMsg) && out.afterRemove === 0
+    && out.afterCtrlZ === 0 && out.undoSteps === 0 && /already undone/.test(out.removeMsg)
+    && out.colourRows >= 7 && out.colourRowsAfter === out.colourRows && /already lower case/.test(out.lcMsg) && !/Marked/.test(out.lcMsg);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM #16, #33: max mismatch typed above the field's 50 % was used up to 100 %; in Auto the 3' copy was looked for up
+// to 30 residues past the body whatever "Search N bp on each side" said (found at 24 with 10, never at 40 with 50).
+check('TSD finder: max mismatch is held to its field; the 3prime copy is looked for as far as Search N bp says', async (page) => {
+  const out = {};
+  await loadFasta(page, _rfTsdPlate(21, 7, 24));
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await page.fill('#tsdMaxDiv', '99');
+  out.maxDiv = await page.evaluate(() => _readTsdParams().maxDiv);
+  await page.fill('#tsdMaxDiv', '20');
+  const far = async (flank) => { await page.fill('#tsdFlankSize', String(flank)); await _tsdAuditFind(page, 'auto');
+    return page.evaluate(() => _lastTsdResults.filter(x => x.tsdLen >= 10 && x.upTSD === x.downTSD).map(x => x.downstreamOffset)); };
+  out.at24 = { s10: await far(10), s30: await far(30) };
+  await loadFasta(page, _rfTsdPlate(22, 7, 40));   // 7 copies: with 8 the conservation threshold is 0.58 and this plate's random 3' flank passed it
+  out.at40 = { s30: await far(30), s50: await far(50) };
+  await page.fill('#tsdFlankSize', '30');
+  const n = (a, lo) => a.filter(d => d >= lo).length;
+  const ok = out.maxDiv === 50 && n(out.at24.s10, 11) === 0 && n(out.at24.s30, 20) >= 5 && n(out.at40.s30, 31) === 0 && n(out.at40.s50, 35) >= 4;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM #5, #27, #41: a SINE body reaching the alignment's ends (2 rows alike in their flanks, or a reference row with its
+// flanks) left no flank in any row, and every copy was blamed ("copy truncated or flank all gaps"); a reference row with
+// residues in the first and last column was taken as the body; a copy short on both sides was said to lack only its 5' flank.
+check('TSD finder: a SINE body reaching the alignment ends is given as the reason; a full-width reference row is not the body; both short flanks are named', async (page) => {
+  const out = {};
+  await loadFasta(page, `>chr7_copyA_master\n${'TTGCAAGGCTAATCGGATTCA'.repeat(6)}\n>SINE_dup1\n${'TTGCAAGGCTAATCGGATTCA'.repeat(6)}\n`);
+  const a = await _tsdAuditFind(page, 'auto');
+  out.two = { head: a.head, flankNote: await page.evaluate(() => document.querySelector('#repeatResults .rf-flanknote')?.textContent || ''), reason: await page.evaluate(() => _lastTsdResults.misses[0]?.reason || '') };
+  await loadFasta(page, _rfTsdPlate(41, 8, 0, 12, { fullRef: true }));
+  const f = await _tsdAuditFind(page, 'topseq');
+  out.fullRef = { head: f.head, note: f.note };
+  out.both = await page.evaluate(() => _findTSD([{ header: 'row0', seq: 'A'.repeat(30) }, { header: 'both', seq: '--AC------AAAAAAAAAA--GT------' }], 'manual',
+    { minLen: 3, maxLen: 9, maxDiv: 20, flankSize: 30, upStart: 1, upEnd: 10, downStart: 21, downEnd: 30 }).misses.map(m => m.seqName + ': ' + m.reason));
+  const ok = /reaches the alignment's first and last columns/.test(out.two.flankNote) && /5′ and 3′ flank/.test(out.two.reason) && /reaches the end of the alignment/.test(out.two.reason)
+    && /TSD in [78] of 9 copies/.test(out.fullRef.head) && /first to the last column/.test(out.fullRef.note)
+    && out.both.some(x => /^both: no 5′ and 3′ flank/.test(x));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM #38, #43, #45, #34: the median of an even count was the upper middle value; with no TSD found the Copy table row
+// was hidden, so the copies without one could not be copied; a body selected from column 1 put 0 in the 5' field ("Invalid
+// pre-SINE region"); columns typed or filled for one file stayed for the next.
+check('TSD finder: median of an even count, copies without a TSD can be copied, a body from column 1 says there is no flank, a new file resets the columns', async (page) => {
+  const out = {};
+  await loadFasta(page, `>a\n${rfRng(1).seq(1000)}\n>b\n${rfRng(2).seq(1000)}\n>c\n${rfRng(3).seq(1000)}\n`);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  out.median = await page.evaluate(() => {
+    const mk = (n, L) => ({ seqName: n, tsdLen: L, upTSD: 'A'.repeat(L), downTSD: 'A'.repeat(L), mismatches: 0, divergence: '0.0', upCols: '1-2', downCols: '3-4', upFlank: {}, downFlank: {} });
+    const res = [mk('a', 7), mk('b', 9), mk('c', 7), mk('d', 9)]; res.misses = []; res.boundaries = { leftBoundary: 10, rightBoundary: 20 };
+    const el = document.createElement('div'); _renderTsdResultsHTML(el, res, 'auto', {});
+    return [...el.querySelectorAll('.rf-chip')].map(c => c.textContent).find(t => /median/.test(t));
+  });
+  await page.fill('#tsdMinLen', '12'); await page.fill('#tsdMaxDiv', '0');
+  await _tsdAuditFind(page, 'auto');
+  await page.evaluate(() => { window.__copied = null; navigator.clipboard.writeText = (t) => { window.__copied = t; return Promise.resolve(); }; });
+  out.tools = await page.evaluate(() => ({ found: _lastTsdResults.length, misses: _lastTsdResults.misses.length, shown: !document.getElementById('tsdResultTools').hidden, markOff: document.getElementById('tsdMarkBtn').disabled }));
+  if (out.tools.shown) { await page.click('#tsdCopyBtn'); await page.waitForTimeout(100); }
+  out.copiedLines = await page.evaluate(() => (window.__copied || '').trim().split('\n').length);
+  await page.fill('#tsdMinLen', '4'); await page.fill('#tsdMaxDiv', '20');
+  await page.click('label:has(input[name="tsdMode"][value="manual"])');
+  await _rfMessages(page);
+  await page.evaluate(() => { state.selectedColumns = new Set([0, 1, 2, 3, 4]); });
+  await page.click('#tsdFillFromSelectionBtn');
+  out.col1 = { upEnd: await page.evaluate(() => document.getElementById('tsdUpEnd').value), msg: await page.evaluate(() => window.__msgs.join(' | ')) };
+  await page.evaluate(() => { state.selectedColumns = new Set([300, 301, 302, 600]); });
+  await page.click('#tsdFillFromSelectionBtn');
+  out.filled = await page.evaluate(() => ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id).value).join(','));
+  await loadFasta(page, `>a\n${rfRng(4).seq(400)}\n>b\n${rfRng(5).seq(400)}\n`);
+  out.newFile = await page.evaluate(() => ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id).value + (document.getElementById(id).dataset.userSet ? '*' : '')).join(','));
+  const nf = out.newFile.split(',');
+  const ok = /median 8\b/.test(out.median || '') && out.tools.found === 0 && out.tools.misses === 3 && out.tools.shown && out.tools.markOff && out.copiedLines === 4
+    && out.col1.upEnd !== '0' && /no 5′ flank/.test(out.col1.msg) && out.filled === '1,300,602,1000'
+    && !/\*/.test(out.newFile) && nf.every(x => +x >= 1 && +x <= 400) && nf[3] === '400';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM #32, #40: the 3 grey flank letters of each TSD were found by collecting the whole row (twice per TSD): seconds of
+// frozen tab on 1000 rows of 100 kb. Same letters, read outward from the copy.
+check('TSD finder: the flank letters next to a TSD are read from the copy outward, not from the whole row', async (page) => {
+  const r = await page.evaluate(() => {
+    let x = 7; const rnd = () => { x = (x * 16807) % 2147483647; return x; };
+    const row = Array.from({ length: 100000 }, () => '-ACGTNRacgt-'[rnd() % 12]).join('');
+    const ref = (seq, cols, n = 3) => {   // the old way: every base of the row with its column
+      const b = [], c = []; for (let k = 0; k < seq.length; k++) { const t = _tsdBase(seq[k]); if (t) { b.push(t); c.push(k); } }
+      const i0 = c.indexOf(cols[0]), i1 = c.indexOf(cols[cols.length - 1]); if (i0 < 0 || i1 < 0) return { before: '', after: '' };
+      return { before: b.slice(Math.max(0, i0 - n), i0).join(''), after: b.slice(i1 + 1, i1 + 1 + n).join('') };
+    };
+    const picks = []; for (let k = 0; k < 300; k++) { const c = rnd() % row.length; picks.push([c, c + (rnd() % 20)]); }
+    picks.push([0, 3], [row.length - 4, row.length - 1], [1, 1]);
+    let bad = 0; for (const p of picks) { const a = JSON.stringify(_tsdFlanks(row, p)), b = JSON.stringify(ref(row, p)); if (a !== b) bad++; }
+    const t0 = performance.now(); for (let k = 0; k < 2000; k++) _tsdFlanks(row, [50000, 50005]); const ms = performance.now() - t0;
+    return { bad, ms: Math.round(ms) };
+  });
+  return { pass: r.bad === 0 && r.ms < 300, detail: JSON.stringify(r) };
+});
+
 // GLM Canvas bug hunt 2026-10-30 (#16): with few rows the vertical scrollbar is hidden (visibility), but Canvas still
 // reserved its 7 px, so a wide alignment scrolled 7 px past its last column. A shown bar must still be reserved, and
 // going from many rows to few in one session must drop it.

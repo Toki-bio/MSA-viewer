@@ -32915,10 +32915,14 @@ function _initDotPlotEvents() {
 
 let _repeatFinderSeqIndex = -1;
 // Repeat highlighting state
-state.repeatHighlights = state.repeatHighlights || new Map(); // repeatId => {start, end, color}
+state.repeatHighlights = state.repeatHighlights || new Map(); // repeatId ("mode-index") => {segs: [[startCol, endCol), ...], row, color, anchor?} (_repeatInfoFromRow)
+let _repeatFinderSeqObj = null;   // the sequence chosen under "One sequence" (the row index alone went stale when rows moved)
+let _repeatFinderListObjs = [];   // the sequence of each entry in the list, as it was built
 let _lastRepeatResults = [];
 let _lastRepeatView = null;   // mode, label and length the results were made with
 let _lastTsdResults = [];
+// What #repeatResults shows: a repeat mode's table, 'tsd', or null (a message). Reopening the panel keeps a table.
+let _repeatResultsShown = null;
 const _repeatColorPalette = ["#ff6b6b","#ffa94d","#ffd43b","#69db7c","#4dabf7","#da77f2","#20c997","#ff8787","#74c0fc","#f783ac","#ffe066","#63e6be","#a9e34b","#e599f7","#66d9e8","#fcc419","#94d82d","#ff922b","#be4bdb","#339af0"];
 
 function _syncTsdModeSubUI() {
@@ -32969,7 +32973,7 @@ function _readTsdParams() {
     const minLen = lim('tsdMinLen', num('tsdMinLen', 4)), maxLen = Math.max(minLen, lim('tsdMaxLen', num('tsdMaxLen', 20)));
     return {
         minLen, maxLen,
-        maxDiv: Math.min(100, Math.max(0, num('tsdMaxDiv', 20))),
+        maxDiv: Math.max(0, lim('tsdMaxDiv', num('tsdMaxDiv', 20))),   // the field's own 0-50 (it was 0-100)
         flankSize: Math.max(1, num('tsdFlankSize', 30)),
         upStart: parseInt(document.getElementById('tsdUpStart')?.value, 10) || 1,
         upEnd: Math.max(0, num('tsdUpEnd', 30)),
@@ -32985,7 +32989,16 @@ function _fillTsdRegionsFromSelection() {
     }
     const cols = [...state.selectedColumns].sort((a, b) => a - b);
     const aliLen = _maxOf(state.seqs, s => s.seq.length);
-    const manual = document.querySelector('input[name="tsdMode"][value="manual"]');
+    // a body from column 1 (or to the last column) left the flank field at 0 (or past the end), and Find said only
+    // "Invalid pre-SINE region"
+    const atStart = cols[0] <= 0, atEnd = cols[cols.length - 1] >= aliLen - 1;
+    if (atStart || atEnd) {
+        const where = atStart && atEnd ? 'first and last columns' : atStart ? 'first column' : 'last column';
+        const side = atStart && atEnd ? '5′ or 3′ flank' : atStart ? '5′ flank' : '3′ flank';
+        showMessage(`The selected columns reach the alignment's ${where}: there is no ${side} left to search for a TSD. Select the SINE body only.`, 4500);
+        return;
+    }
+    const manual =document.querySelector('input[name="tsdMode"][value="manual"]');
     if (manual) manual.checked = true;
     const upStartEl = document.getElementById('tsdUpStart');
     const upEndEl = document.getElementById('tsdUpEnd');
@@ -33011,13 +33024,23 @@ function _syncRepeatFinderModeUI() {
     if (tsdPanel) tsdPanel.style.display = isTsd ? '' : 'none';
     if (clearBtn) clearBtn.style.display = isTsd ? 'none' : '';
     if (scopeRow) scopeRow.style.display = isTsd ? 'none' : '';
-    const tools = document.getElementById('tsdResultTools');
-    if (tools) tools.hidden = !(isTsd && _lastTsdResults && _lastTsdResults.length);
-    const scope = document.querySelector('input[name="repeatScope"]:checked')?.value || 'single';
+    _syncTsdResultTools(isTsd);
+    const scope =document.querySelector('input[name="repeatScope"]:checked')?.value || 'single';
     const seqSel = document.getElementById('repeatFinderSeqSelect');
     if (seqSel) seqSel.style.display = scope === 'single' ? '' : 'none';
     if (isTsd) _initTsdColumnDefaults();
     _syncTsdModeSubUI();
+}
+
+// The Mark / Copy row under TSD results. It was hidden when no copy had a TSD, so the list of copies without one
+// (with the reasons) could not be copied; it now shows for any search result, with Mark off when nothing was found.
+function _syncTsdResultTools(isTsd = true) {
+    const tools = document.getElementById('tsdResultTools');
+    const res = _lastTsdResults || [];
+    const any = res.length + (res.misses?.length || 0) > 0;
+    if (tools) tools.hidden = !(isTsd && any);
+    const mark = document.getElementById('tsdMarkBtn');
+    if (mark) { mark.disabled = !res.length; mark.title = res.length ? 'Show every found TSD in the alignment' : 'No TSD was found to mark'; }
 }
 
 // "aa" for a protein alignment, "bp" otherwise; also sets the unit labels of the panel's settings
@@ -33031,6 +33054,8 @@ function _fillRepeatFinderSeqSelect(seqIndex) {
     const sel = document.getElementById('repeatFinderSeqSelect');
     if (!sel) return;
     sel.innerHTML = '';
+    _repeatFinderListObjs = (state.seqs || []).slice();
+    _repeatFinderSeqObj = state.seqs?.[seqIndex] || null;
     (state.seqs || []).forEach((s, i) => {
         const opt = document.createElement('option');
         opt.value = i;
@@ -33039,7 +33064,22 @@ function _fillRepeatFinderSeqSelect(seqIndex) {
         if (i === seqIndex) opt.selected = true;
         sel.appendChild(opt);
     });
-    sel.onchange = () => { _repeatFinderSeqIndex = parseInt(sel.value); };
+    // the pick is a sequence, not a row number: rows deleted or moved while the panel is open made Find search
+    // whatever row then had that number (or none, reporting "No repeats" for a row that was gone)
+    sel.onchange = () => { _repeatFinderSeqIndex = parseInt(sel.value); _repeatFinderSeqObj = _repeatFinderListObjs[_repeatFinderSeqIndex] || null; };
+}
+// Row of the "One sequence" choice now (-1 if it was deleted); the list is rebuilt when rows changed
+function _repeatFinderCurrentRow() {
+    const obj = _repeatFinderSeqObj;
+    let row = obj ? _seqObjResolver()(obj) : (_repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0);
+    if (row >= (state.seqs?.length || 0)) row = -1;
+    const listStale = _repeatFinderListObjs.length !== state.seqs.length || _repeatFinderListObjs.some((o, i) => o !== state.seqs[i]);
+    if (row >= 0) {
+        _repeatFinderSeqIndex = row;
+        if (listStale) _fillRepeatFinderSeqSelect(row);
+        _repeatFinderSeqObj = state.seqs[row];
+    }
+    return row;
 }
 
 // A new file: the open panel's results, sequence list and units belong to the previous one
@@ -33049,6 +33089,13 @@ function _resetRepeatFinderForNewFile() {
     _repeatFinderSeqIndex = 0;
     _fillRepeatFinderSeqSelect(0);
     _repeatUnitWord();
+    _lastTsdResults = [];
+    _repeatResultsShown = null;
+    // the TSD columns typed or filled for the previous file are not this file's: back to the defaults
+    ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].forEach(id => { const e = document.getElementById(id); if (e) delete e.dataset.userSet; });
+    const upStart = document.getElementById('tsdUpStart');
+    if (upStart) upStart.value = 1;
+    if (document.getElementById('repeatFinderModal')?.style.display !== 'none') _initTsdColumnDefaults();   // else on opening
     const tools = document.getElementById('tsdResultTools');
     if (tools) tools.hidden = true;
     const el = document.getElementById('repeatResults');
@@ -33072,7 +33119,18 @@ function openRepeatFinder(seqIndex, preferredMode = null) {
         _initWindowFrame(document.getElementById('repeatFinderModalInner'), document.getElementById('repeatFinderDragHandle'), document.getElementById('repeatFinderMaxBtn'), { minW: 420, minH: 260 });
     }
     const mode = document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem';
-    document.getElementById('repeatResults').textContent = mode === 'tsd'
+    // Reopening the window kept nothing: the table of the last search (and the rows clicked in it) had to be
+    // searched again. The table of this mode stays; a repeat table is redrawn so its rows show the highlights now.
+    const resultsEl = document.getElementById('repeatResults');
+    if (_repeatResultsShown === mode && resultsEl.querySelector('.rf-summary')) {
+        if (mode !== 'tsd' && _lastRepeatResults.length && _lastRepeatView?.mode === mode) {
+            const v = _lastRepeatView;
+            _renderRepeatResultsHTML(resultsEl, _lastRepeatResults, v.mode, v.name || '', v.totalLen, v);
+        }
+        return;
+    }
+    _repeatResultsShown = null;
+    resultsEl.textContent = mode === 'tsd'
         ? 'The SINE body is found automatically (or set it under Manual); press Find to search both flanks of every copy.'
         : 'Choose what to find, then press Find.';
     // Inverted repeats and TSDs are DNA ideas (reverse complement, target-site duplication)
@@ -33146,11 +33204,14 @@ function applyTsdMarking() {
     const previousStyle = state.tsdMarkStyle;
     const previousColor = state.tsdMarkColor;
 
+    // A marking that changes nothing (Mark pressed again, or lower case on residues already lower case) used to
+    // replace the backup of the real one, so "Remove marks" then did nothing while saying "undone", and lower case on
+    // lower-case input wiped the colour marks while saying "Marked". It now leaves everything as it is and says so.
     if (style === 'lowercase') {
-        pushUndo('tsd-mark-lowercase');
         // the residues whose letter this lowercases, kept as residue anchors for the undo
         lowered = new ResidueMarks();
-        state.seqs = state.seqs.map((seqObj, rowIndex) => {
+        let changed = false;
+        const nextSeqs = state.seqs.map((seqObj, rowIndex) => {
             const markPositions = rowMarks.get(rowIndex);
             if (!markPositions?.size) return seqObj;
             const chars = seqObj.seq.split('');
@@ -33163,20 +33224,41 @@ function applyTsdMarking() {
                 n++;
             }
             if (!done.size) return seqObj;
+            changed = true;
             const nextSeq = chars.join('');
             const next = { ...seqObj, seq: nextSeq, gaplessPositions: calculateGaplessPositions(nextSeq) };
             lowered.bySeq.set(next, done);
             return next;
         });
+        if (!changed) {
+            showMessage('The TSD residues are already lower case: nothing was changed. Colour or Bold marks them in lower-case sequences.', 3500);
+            return;
+        }
+        pushUndo('tsd-mark-lowercase');
+        state.seqs = nextSeqs;
         state.tsdMarks = new Map();
         state.tsdMarkStyle = style;
     } else {
+        const same = (a, b) => {
+            if (!a || a.size !== b.size) return false;
+            for (const [row, cols] of b) { const x = a.get(row); if (!x || x.size !== cols.size) return false; for (const c of cols) if (!x.has(c)) return false; }
+            return true;
+        };
+        if (state.tsdMarkStyle === style && (style !== 'color' || state.tsdMarkColor === color) && same(state.tsdMarks, rowMarks)) {
+            state.tsdPreview = null;
+            document.getElementById('tsdMarkBtn')?.classList.remove('rf-btn-attention');
+            syncResidueOverlays();
+            showMessage('These TSDs are already marked.', 2000);
+            return;
+        }
         state.tsdMarks = rowMarks;
         state.tsdMarkStyle = style;
         state.tsdMarkColor = color;
     }
 
-    state.tsdMarkUndo = { style, previousMarks, previousStyle, previousColor, lowered };
+    // prior: the marking before this one, so Remove marks steps back through them (lower case, then colour: the
+    // colour's undo used to drop the lower case's backup)
+    state.tsdMarkUndo = { style, previousMarks, previousStyle, previousColor, lowered, prior: state.tsdMarkUndo || null };
     state.tsdPreview = null;   // the marks replace the preview
     document.getElementById('tsdMarkBtn')?.classList.remove('rf-btn-attention');
     renderAlignment({ deferConservation: true });
@@ -33196,25 +33278,31 @@ function undoTsdMarking() {
         return;
     }
 
+    let caseAlreadyBack = false;
     if (backup.style === 'lowercase' && backup.lowered) {
-        pushUndo('tsd-unmark-lowercase');   // a step of the main Undo like the marking itself
         // upper-case exactly the residues that marking lowercased, wherever they are now (a
-        // restored copy of the old string would undo edits made since, and was keyed by row)
+        // restored copy of the old string would undo edits made since, and was keyed by row).
+        // Nothing to change (the main Undo already brought the case back): no empty step of the main Undo.
+        const changes = [];
         backup.lowered.forEach((cols, row) => {
             const obj = state.seqs[row];
             if (!obj) return;
             const chars = obj.seq.split('');
-            cols.forEach(c => { if (/[a-z]/.test(chars[c] || '')) chars[c] = chars[c].toUpperCase(); });
-            const next = chars.join('');
-            state.seqs[row] = { ...obj, seq: next, gaplessPositions: calculateGaplessPositions(next) };
+            let n = 0;
+            cols.forEach(c => { if (/[a-z]/.test(chars[c] || '')) { chars[c] = chars[c].toUpperCase(); n++; } });
+            if (n) changes.push([row, obj, chars.join('')]);
         });
+        if (changes.length) {
+            pushUndo('tsd-unmark-lowercase');   // a step of the main Undo like the marking itself
+            changes.forEach(([row, obj, next]) => { state.seqs[row] = { ...obj, seq: next, gaplessPositions: calculateGaplessPositions(next) }; });
+        } else caseAlreadyBack = true;
     }
     state.tsdMarks = backup.previousMarks || new Map();
     state.tsdMarkStyle = backup.previousStyle || 'color';
     state.tsdMarkColor = backup.previousColor || '#ffd54f';
-    state.tsdMarkUndo = null;
+    state.tsdMarkUndo = backup.prior || null;
     renderAlignment({ deferConservation: true });
-    showMessage('TSD marking undone.', 1600);
+    showMessage(caseAlreadyBack ? 'The lower-case TSD marking was already undone (main Undo); nothing to change.' : 'TSD marking undone.', caseAlreadyBack ? 2800 : 1600);
 }
 
 const _RF_COMP = { A: 'T', C: 'G', G: 'C', T: 'A', U: 'A', N: 'N', R: 'Y', Y: 'R', S: 'S', W: 'W',
@@ -33597,11 +33685,13 @@ function _columnOfResidue(row, n) {
 function _tsdFlanks(seq, cols, n = 3) {
     const none = { before: '', after: '' };
     if (!cols || !cols.length) return none;
-    const all = _collectUngappedBasesWithColumns(seq, 0, seq.length - 1);
-    const i0 = all.columns.indexOf(cols[0]);
-    const i1 = all.columns.indexOf(cols[cols.length - 1]);
-    if (i0 < 0 || i1 < 0) return none;
-    return { before: all.bases.slice(Math.max(0, i0 - n), i0).join(''), after: all.bases.slice(i1 + 1, i1 + 1 + n).join('') };
+    const c0 = cols[0], c1 = cols[cols.length - 1];
+    if (!_tsdBase(seq[c0]) || !_tsdBase(seq[c1])) return none;
+    // walk out from the copy (it collected the whole row, twice per TSD: seconds on 1000 rows of 100 kb)
+    let before = '', after = '';
+    for (let c = c0 - 1; c >= 0 && before.length < n; c--) { const b = _tsdBase(seq[c]); if (b) before = b + before; }
+    for (let c = c1 + 1; c < seq.length && after.length < n; c++) { const b = _tsdBase(seq[c]); if (b) after += b; }
+    return { before, after };
 }
 
 function _sliceCollectedWindow(collected, startIndex, length) {
@@ -33762,11 +33852,17 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
     // comes from column conservation, as in Auto, and the label says so.
     let noRefNote = '';
     if (mode === 'topseq') {
+        // a reference row with residues in the first and the last column (a full reference locus, flanks included)
+        // made the whole alignment the body, and no copy had a flank: the body then comes from conservation too
+        let fullWidth = false;
         if (ref.named) {
             const refBoundary = _boundaryFromReferenceSeq(ref.seq, aliLen, flankSize, `reference: ${ref.label}`);
-            if (refBoundary) return refBoundary;
+            fullWidth = !!refBoundary && refBoundary.leftBoundary <= 0 && refBoundary.rightBoundary >= aliLen - 1;
+            if (refBoundary && !fullWidth) return refBoundary;
         }
-        noRefNote = ref.named ? `reference row ${ref.label} has no residues; ` : 'no row named consensus / reference / REF_; ';
+        noRefNote = !ref.named ? 'no row named consensus / reference / REF_; '
+            : fullWidth ? `reference row ${ref.label} has residues from the first to the last column (its flanks too), so it does not mark the SINE body; `
+            : `reference row ${ref.label} has no residues; `;
     }
 
     // 'auto' tries genuine alignment-wide column-conservation detection first (matching
@@ -33838,11 +33934,12 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
 }
 
 // boundaryIndex: the first residue of downstreamWindow past the SINE body. wide (auto / reference modes): the 3' copy
-// may also start up to 6 residues before it or 30 past it (a copy's own A-rich tail runs on past the alignment-wide
+// may also start up to 6 residues before it or `far` past it (the "Search N bp on each side" value, 30 by default; it
+// was always 30, so a 10-bp search window still found 3' copies 24 bp out and a 50-bp one never past 30) (a copy's own A-rich tail runs on past the alignment-wide
 // boundary; rsi tails of (AAATA)n go 10-30 bp), but there only as a strict TSD, >= 10 bp with <= 10 % mismatches
 // (SINEderella's rule). Measured on 18 rsi plates: 67 % -> 89 % of such TSDs found, chance calls 3.5 % -> 8 %.
-function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, minTsdLen, maxTsdLen, maxDiv, boundaryIndex = 0, wide = false) {
-    if (wide) return _findBestTsdWide(upstreamWindow, downstreamWindow, boundaryIndex, minTsdLen, maxTsdLen, maxDiv);
+function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, minTsdLen, maxTsdLen, maxDiv, boundaryIndex = 0, wide = false, far = 30) {
+    if (wide) return _findBestTsdWide(upstreamWindow, downstreamWindow, boundaryIndex, minTsdLen, maxTsdLen, maxDiv, far);
     let bestTsd = null;
     const maxUpstreamOffset = 4;
     for (let tsdLen = minTsdLen; tsdLen <= maxTsdLen; tsdLen++) {
@@ -33898,8 +33995,8 @@ function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, m
  * Auto mode anchors on the conserved 5-prime SINE boundary and fuzzily scans a
  * broader 3-prime region, because the 3-prime tail/end is often less crisp.
  */
-function _findBestTsdWide(upstreamWindow, downstreamWindow, iB, minTsdLen, maxTsdLen, maxDiv) {
-    const LOOK = 6, FAR = 30;
+function _findBestTsdWide(upstreamWindow, downstreamWindow, iB, minTsdLen, maxTsdLen, maxDiv, far = 30) {
+    const LOOK = 6, FAR = far;
     let bestTsd = null;
     for (let tsdLen = minTsdLen; tsdLen <= maxTsdLen; tsdLen++) {
         if (upstreamWindow.bases.length < tsdLen) continue;
@@ -33959,6 +34056,17 @@ function _findTSD(seqs, mode, params) {
     const maxDiv = (Number.isFinite(params.maxDiv) ? params.maxDiv : 20) / 100;
     const flankSize = params.flankSize || 30;
     const boundaries = _findSineBoundaryColumns(seqs, mode, params, aliLen);
+    // A body from the first to the last column leaves no flank in any row. Every copy was then reported as
+    // "copy truncated or flank all gaps"; the results now say why (e.g. 2 rows alike in their flanks too, or a
+    // reference row that includes its flanks)
+    const noUpCols = mode !== 'manual' && boundaries.leftBoundary <= 0;
+    const noDownCols = mode !== 'manual' && boundaries.rightBoundary >= aliLen - 1;
+    if (noUpCols || noDownCols) {
+        const ends = noUpCols && noDownCols ? 'first and last columns' : noUpCols ? 'first column' : 'last column';
+        const side = noUpCols && noDownCols ? '5′ or 3′' : noUpCols ? '5′' : '3′';
+        boundaries.flankNote = `the SINE body found (columns ${boundaries.leftBoundary + 1}–${boundaries.rightBoundary + 1}) reaches the alignment's ${ends}, so no row has a ${side} flank to search. ` +
+            `This happens when the copies agree in their flanks too (${seqs.length} row${seqs.length === 1 ? '' : 's'} here) or the reference row includes its flanks; set the SINE body under Manual`;
+    }
 
     const misses = [];   // copies searched without a TSD, with the reason (shown in the results)
     const skipped = [];  // rows not searched (a gap-padded reference / consensus row), with the reason (shown too)
@@ -33985,12 +34093,16 @@ function _findTSD(seqs, mode, params) {
             if (boundaryIndex < 0) boundaryIndex = downstreamWindow.bases.length;
         }
 
-        if (upstreamWindow.bases.length < minTsdLen || downstreamWindow.bases.length - boundaryIndex < minTsdLen) {
-            const side = upstreamWindow.bases.length < minTsdLen ? '5′' : '3′';
-            misses.push({ seqIndex, obj: seqs[seqIndex], seqName: seqs[seqIndex].header, reason: `no ${side} flank bases next to the SINE body (copy truncated or flank all gaps)` });
+        const upShort = upstreamWindow.bases.length < minTsdLen, downShort = downstreamWindow.bases.length - boundaryIndex < minTsdLen;
+        if (upShort || downShort) {
+            // both sides named when both are short (only the 5' side was); a body reaching the alignment's end is said
+            // to be the cause (it was blamed on the copy)
+            const side = upShort && downShort ? '5′ and 3′' : upShort ? '5′' : '3′';
+            const why = (upShort && noUpCols) || (downShort && noDownCols) ? 'the SINE body found reaches the end of the alignment' : 'copy truncated or flank all gaps';
+            misses.push({ seqIndex, obj: seqs[seqIndex], seqName: seqs[seqIndex].header, reason: `no ${side} flank bases next to the SINE body (${why})` });
             continue;
         }
-        const bestTsd = _findBestTsdInFlanks(upstreamWindow, downstreamWindow, boundaries.rightBoundary, minTsdLen, maxTsdLen, maxDiv, boundaryIndex, mode !== 'manual');
+        const bestTsd = _findBestTsdInFlanks(upstreamWindow, downstreamWindow, boundaries.rightBoundary, minTsdLen, maxTsdLen, maxDiv, boundaryIndex, mode !== 'manual', flankSize);
         if (!bestTsd) {
             misses.push({ seqIndex, obj: seqs[seqIndex], seqName: seqs[seqIndex].header, reason: `no pair of ${minTsdLen}–${maxTsdLen} bp with ≤${Math.round(maxDiv * 100)}% mismatch near the SINE ends` });
             continue;
@@ -34063,7 +34175,16 @@ function runRepeatAnalysis() {
         });
     }
     if (targets.length === 0) {
-        const si = _repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0;
+        const si = _repeatFinderCurrentRow();
+        if (si < 0) {
+            const gone = _repeatFinderSeqObj?.header || 'The chosen sequence';
+            _fillRepeatFinderSeqSelect(0);
+            _lastRepeatResults = [];
+            _lastRepeatView = null;
+            _repeatResultsShown = null;
+            resultsEl.textContent = `${gone} is no longer in the alignment: choose a sequence in the list (it now shows the current rows), then press Find.`;
+            return;
+        }
         targets = [{ index: si, seq: state.seqs[si]?.seq.replace(/[-. ]/g, '') || '', name: state.seqs[si]?.header || '', fullSeq: state.seqs[si]?.seq || '' }];
     }
 
@@ -34136,8 +34257,10 @@ function runRepeatAnalysis() {
                 });
                 allResults = allResults.concat(mapped);
             }
+            _carryRepeatHighlights(mode, allResults);
             if (allResults.length === 0) {
                 // forget the previous table, or Clear highlights brings it back
+                _repeatResultsShown = null;
                 _lastRepeatResults = [];
                 _lastRepeatView = null;
                 resultsEl.textContent = `No ${mode} repeats found (min ${minLen} ${unit}, max ${maxDiv}% divergence)${notes.length ? '; ' + notes.join('; ') : ''}.`;
@@ -34194,14 +34317,15 @@ function runTsdAnalysis() {
 
 function _renderTsdResultsHTML(el, results, tsdMode, params) {
     const esc = _escapeHtml;
-    const tools = document.getElementById('tsdResultTools');
-    if (tools) tools.hidden = !results.length;
+    _repeatResultsShown = 'tsd';
+    _syncTsdResultTools(true);
     const misses = results.misses || [];
     const tested = results.length + misses.length;
     const b = results.boundaries;
     // never silent: rows left out of the search, and a Reference row search that had no reference row
     const skipped = results.skipped || [];
     const notesHtml = (b?.note ? `<div class="rf-hint rf-note">Reference row: ${esc(b.note)}.</div>` : '') +
+        (b?.flankNote ? `<div class="rf-hint rf-flanknote">No flanks: ${esc(b.flankNote)}.</div>` : '') +
         (skipped.length ? `<div class="rf-hint rf-skipped">${skipped.map(s => `${esc(s.seqName)}: ${esc(s.reason)}`).join('<br>')}</div>` : '');
     const bodyChip = (b && Number.isInteger(b.leftBoundary) && Number.isInteger(b.rightBoundary) && tsdMode !== 'manual')
         ? `<span class="rf-chip" title="${esc(b.label || '')}">SINE body: columns ${b.leftBoundary + 1}–${b.rightBoundary + 1}</span>` : '';
@@ -34218,7 +34342,9 @@ function _renderTsdResultsHTML(el, results, tsdMode, params) {
     }
 
     const lens = results.map(r => r.tsdLen).sort((x, y) => x - y);
-    const median = lens[Math.floor(lens.length / 2)];
+    // the mean of the two middle lengths for an even count (lens[n / 2] gave 9 for 7, 7, 9, 9)
+    const mid = lens.length >> 1;
+    const median = lens.length % 2 ? lens[mid] : (lens[mid - 1] + lens[mid]) / 2;
     const exact = results.filter(r => Number(r.mismatches) === 0).length;
     const counts = new Map();
     lens.forEach(n => counts.set(n, (counts.get(n) || 0) + 1));
@@ -34332,17 +34458,44 @@ function _wireTsdGoto(el) {
 }
 function _copyTsdTable() {
     const res = _lastTsdResults || [];
-    if (!res.length) { showMessage('Run the TSD search first.', 2000); return; }
+    if (!res.length && !res.misses?.length) { showMessage('Run the TSD search first.', 2000); return; }
     const lines = ['sequence\ttsd_length\tmismatches\ttsd_5prime\ttsd_3prime\tcolumns_5prime\tcolumns_3prime\tnote'];
     res.forEach(r => lines.push([r.seqName, r.tsdLen, r.mismatches, r.upTSD, r.downTSD, r.upCols, r.downCols, ''].join('\t')));
     (res.misses || []).forEach(m => lines.push([m.seqName, '', '', '', '', '', '', m.reason].join('\t')));
     const text = lines.join('\n') + '\n';
     if (navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(text).then(() => showMessage(`Copied ${res.length} TSDs`, 1800), () => showMessage('Clipboard not available', 2500));
+        navigator.clipboard.writeText(text).then(() => showMessage(`Copied ${res.length} TSDs${res.misses?.length ? ` and ${res.misses.length} cop${res.misses.length === 1 ? 'y' : 'ies'} without one` : ''}`, 1800), () => showMessage('Clipboard not available', 2500));
     } else showMessage('Clipboard not available', 2500);
 }
 
+// The columns a result row highlights, "start-end[;start-end]" (end exclusive)
+function _repeatResultSegs(r, mode) {
+    if (mode === 'tandem') return `${r.start}-${r.end}`;
+    const endA = r.alignEnd != null ? r.alignEnd : (r.posA + r.length);
+    const endB = r.alignEndB != null ? r.alignEndB : (r.posB + r.length);
+    return `${r.posA}-${endA};${r.posB}-${endB}`;
+}
+// A new search of a mode replaces that mode's table, and its highlights were keyed by place in the old table
+// ("direct-3"): the new row 3 came up highlighted while the old repeat stayed painted, and clicking it removed the
+// old paint. A highlighted repeat the new search finds again keeps its highlight under its new place; the others go.
+function _carryRepeatHighlights(mode, results) {
+    const hl = state.repeatHighlights;
+    const old = [...hl.entries()].filter(([k]) => k.startsWith(mode + '-'));
+    if (!old.length) return;
+    const prev = _lastRepeatView?.mode === mode ? (_lastRepeatResults || []) : [];
+    old.forEach(([k]) => hl.delete(k));
+    old.forEach(([k, info]) => {
+        const was = prev[parseInt(k.split('-').pop(), 10)];
+        if (!was) return;
+        const segs = _repeatResultSegs(was, mode);
+        const j = results.findIndex(r => r.obj === was.obj && _repeatResultSegs(r, mode) === segs);
+        if (j >= 0 && !hl.has(mode + '-' + j)) hl.set(mode + '-' + j, { ...info, color: _repeatColorPalette[j % _repeatColorPalette.length] });
+    });
+    _paintRepeatHighlight(null, false);
+}
+
 function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength, view = {}) {
+    _repeatResultsShown = mode;
     const unit = view.unit || _repeatUnitWord();
     const esc = _escapeHtml;
     const colors = _repeatColorPalette;
@@ -34363,15 +34516,14 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength, view = 
         const color = colors[i % colors.length];
         const rid = mode + '-' + i;
         const active = hl.has(rid);
-        let segs, cells;
+        const segs = _repeatResultSegs(r, mode);
+        let cells;
         if (mode === 'tandem') {
-            segs = `${r.start}-${r.end}`;
             cells = `<td class="rf-num-cell">${r.start + 1}–${r.end}</td><td class="rf-num-cell">${r.unitLen} ${unit}</td><td class="rf-num-cell">${r.copies}×</td>` +
                 `<td class="rf-num-cell">${r.divergence}%</td><td class="rf-name rf-pair" title="${esc(r.unit)}">${esc(r.unit)}</td>`;
         } else {
             const endA = r.alignEnd != null ? r.alignEnd : (r.posA + r.length);
             const endB = r.alignEndB != null ? r.alignEndB : (r.posB + r.length);
-            segs = `${r.posA}-${endA};${r.posB}-${endB}`;
             cells = `<td class="rf-num-cell">${r.posA + 1}–${endA}</td><td class="rf-num-cell">${r.posB + 1}–${endB}</td><td class="rf-num-cell">${r.length}</td>` +
                 `<td class="rf-num-cell">${r.divergence}%</td><td class="rf-name rf-pair" title="${esc(r.seqA)}">${esc(r.seqA)}</td>`;
         }
@@ -34492,7 +34644,8 @@ function _initRepeatFinderEvents() {
     if (clearBtn) clearBtn.addEventListener('click', _clearRepeatHighlights);
     const closeBtn = document.getElementById('repeatFinderCloseBtn');
     if (closeBtn) closeBtn.addEventListener('click', () => {
-        _clearRepeatHighlights();
+        // the repeat highlights stay (they are listed in the Selections panel, and Clear highlights removes them):
+        // closing the window to look at them took them away. The faint TSD preview belongs to the open window.
         _clearTsdPreview();
         const modal = document.getElementById('repeatFinderModal');
         if (modal) modal.style.display = 'none';
