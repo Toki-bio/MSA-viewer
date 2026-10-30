@@ -5557,11 +5557,13 @@ const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen
 // Block view (isBlockLayout(); prototyped on branch proto-canvas-block as ?view=cblock):
 // the Canvas renderer draws the wrapped Block layout. Layout abstraction:
 //   strip (default): one band; content (x, y) = (NAME_W + slot*CHAR_W, HEADER_H + row*pitch).
-//   block: bands of bandCols slots stacked vertically, band b at content y = b*bandH; each band is
-//     a complete strip (ruler, consensus, rows) of slots [b*bandCols, (b+1)*bandCols) drawn by the
-//     SAME drawRegion with a per-band virtual offset (ox_b = s0*CHAR_W, oy_b = oy - b*bandH) under
-//     a clip to the band's rectangle. drawOverlay works the same way. Hit tests go through
-//     _canvasLocal(), which turns a client point into (band-local x, y, ox, oy, slot range), so the
+//   block: bands of bandCols slots stacked vertically, band b at content y = bandTop[b] (a prefix
+//     sum: with codon analysis by gene a band has only the translation lanes of its genes, so bands
+//     differ in height); each band is a complete strip (ruler, consensus, rows) of slots
+//     [b*bandCols, (b+1)*bandCols) drawn by the SAME drawRegion with a per-band virtual offset
+//     (ox_b = s0*CHAR_W, oy_b = oy - bandTop[b]) and row pitch under a clip to the band's rectangle.
+//     drawOverlay works the same way. Hit tests go through _canvasLocal(), which turns a client
+//     point into (band-local x, y mapped onto the strip's row pitch, ox, oy, slot range), so the
 //     strip arithmetic in every hit test is unchanged. Horizontal offset is always 0 (bands fit
 //     the width: bandCols = min(Block width slider, what fits)), the frame copy is the vertical one,
 //     and the exposed strip is widened to the band's line edges (bandEdges) instead of row edges.
@@ -5583,19 +5585,30 @@ function _canvasLocal(clientX, clientY) {
     const L = _canvasState.layout;
     if (!L) return { x, y, ox: _canvasState.offsetX, oy: _canvasState.offsetY, s0: 0, s1: Infinity, sticky: !!el('stickyNames')?.checked, rect, band: 0, last: true };
     const cy = (clientY == null ? 0 : y) + _canvasState.offsetY;
-    const b = Math.max(0, Math.min(L.nBands - 1, Math.floor(cy / L.bandH)));
-    let ry = cy - b * L.bandH;
-    if (ry >= L.bandBodyH) ry = 1e9;   // the gap between bands: no line there
+    const b = L.bandAt(cy);   // bands differ in height (translation lanes): binary search of their tops
+    let ry = cy - L.bandTop[b];
+    if (ry >= L.bandBody[b]) ry = 1e9;   // the gap between bands: no line there
+    else {
+        // The hit tests divide by the strip's row pitch; a band whose rows have fewer translation
+        // lanes is mapped onto it row by row (same row, same offset into the row; the lanes a band
+        // has are the first ones), and the lines under the rows move down with them.
+        const p = L.bandPitch[b], P0 = _canvasState.rowPitch, m = _canvasState.metrics, H0 = m.headerH || m.charH;
+        if (p !== P0 && ry >= H0) {
+            const rel = ry - H0, nS = _canvasState.seqsLen || 0;
+            if (rel < nS * p) { const r = Math.floor(rel / p); ry = H0 + r * P0 + (rel - r * p); }
+            else ry += nS * (P0 - p);
+        }
+    }
     const s0 = b * L.bandCols;
-    return { x, y: ry, ox: s0 * _canvasState.metrics.charW, oy: 0, s0, s1: Math.min(L.nSlots, s0 + L.bandCols), sticky: true, rect, band: b, last: b === L.nBands - 1 };
+    return { x, y: ry, ox: s0 * _canvasState.metrics.charW, oy: 0, s0, s1: Math.min(L.nSlots, s0 + L.bandCols), sticky: true, rect, band: b, last: b === L.nBands - 1, lanes: L.bandLanes[b] };
 }
 // Client position of the top-left corner of a cell (row, slot), any layout
 function _canvasCellClient(row, slot) {
     const m = _canvasState.metrics, rect = _canvasState.canvas.getBoundingClientRect();
     const pitch = _canvasState.rowPitch || m.charH, L = _canvasState.layout;
     if (!L) return { x: rect.left + m.nameW + slot * m.charW - _canvasState.offsetX, y: rect.top + (m.headerH || m.charH) + row * pitch - _canvasState.offsetY };
-    const b = Math.floor(slot / L.bandCols);
-    return { x: rect.left + m.nameW + (slot - b * L.bandCols) * m.charW, y: rect.top + b * L.bandH + (m.headerH || m.charH) + row * pitch - _canvasState.offsetY };
+    const b = Math.max(0, Math.min(L.nBands - 1, Math.floor(slot / L.bandCols)));
+    return { x: rect.left + m.nameW + (slot - b * L.bandCols) * m.charW, y: rect.top + L.bandTop[b] + (m.headerH || m.charH) + row * L.bandPitch[b] - _canvasState.offsetY };
 }
 // Cancellation token for the Canvas mode's deferred (chunked) conservation/
 // consensus jobs; reassigned + old one cancelled on every render so a
@@ -5790,7 +5803,7 @@ function _canvasHitTest(clientX, clientY, opts) {
     // Codon analysis: below the bases of a row lies its translation track, which is not a cell
     // (the DOM has no span[data-pos] there); with AA only the bases of a translated row are
     // hidden. Only the hover tooltip asks for track hits (opts.aaRows).
-    if (_canvasState.aaRows) {
+    if (P.lanes != null ? P.lanes : _canvasState.aaRows) {   // Block: the band's lanes (none in a band without genes)
         const hasAa = !!(state._codonData?.aaSeq?.[row]?.length);
         const baseH = (_canvasState.aaOnly && hasAa) ? 0 : (_canvasState.charH || CHAR_H);
         const inRow = (y - HEADER_H + P.oy) - row * rowPitch;
@@ -6139,8 +6152,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     const AA_PAD_T = hasCodon ? dpx(1) : 0;
     const aaRowH = hasCodon ? AA_PAD_T + AA_BOX_H + dpx(3) : 0;
     const aaOnly = hasCodon && _aaOnlyActive();
-    const rowPitch = (aaOnly ? 0 : CHAR_H) + aaRowCount * aaRowH;
-    _canvasState.rowPitch = rowPitch;
+    // Pitch of a row with k translation rows. Block layout: codon analysis by gene gives each band only
+    // the lanes of the genes in its columns (as the DOM Block gives each block), so rowPitch is set per
+    // band while a band is drawn (setBand); basePitch, the strip's, is what the hit tests see
+    // (_canvasLocal maps a band's rows onto it).
+    const pitchOf = k => (aaOnly && k > 0 ? 0 : CHAR_H) + k * aaRowH;
+    const basePitch = pitchOf(aaRowCount);
+    let rowPitch = basePitch;
+    _canvasState.rowPitch = basePitch;
     _canvasState.aaRowH = aaRowH;
     _canvasState.aaRows = aaRowCount;
     _canvasState.aaOnly = aaOnly;
@@ -6300,31 +6319,74 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     _canvasState.totalContentW = totalContentW;
     _canvasState.totalContentH = totalContentH;
 
-    // PROTOTYPE Block layout: bands of bandCols slots, each a whole strip (ruler, consensus, rows)
-    // followed by the DOM's 24 px block gap. Every band has the same height, so the band of a
-    // content y is floor(y / bandH). bandEdges: band-relative y of every line edge (the frame copy
-    // widens its exposed strip to these, as it does to row edges in the strip layout).
+    // Block layout: bands of bandCols slots, each a whole strip (ruler, consensus, rows) followed by
+    // the DOM's 24 px block gap. Bands differ in height when codon analysis by gene gives them
+    // different translation lane counts (bandLanes, as the DOM Block's per-block lanes: 0 where no
+    // gene is, 2 only where genes overlap), so band b starts at content y bandTop[b] (a prefix sum)
+    // and the band of a content y is found by binary search (bandAt). bandEdgesOf(b): band-relative
+    // y of every line edge of band b (the frame copy widens its exposed strip to these, as it does
+    // to row edges in the strip layout).
     const BLOCK_GAP = Math.round(24 * dpr) / dpr;
-    const bandBodyH = HEADER_H + nSeqs * rowPitch + (consInfo && !consTop ? CONS_H : 0);
-    const bandH = bandBodyH + BLOCK_GAP;
-    const bandEdges = (() => {
-        const e = new Set([0, bandBodyH, bandH]);
-        if (TRACK_H) e.add(TRACK_H);
-        e.add(TRACK_H + SCALE_H);
-        for (let i = 0; i <= nSeqs; i++) e.add(HEADER_H + i * rowPitch);
-        return Float64Array.from([...e].sort((a, b) => a - b));
-    })();
+    const CONS_BOTTOM_H = consInfo && !consTop ? CONS_H : 0;
+    const bodyOf = p => HEADER_H + nSeqs * p + CONS_BOTTOM_H;   // a band's height without the gap, rows of pitch p
+    const _edgeCache = new Map();   // pitch -> sorted band-relative line edges
+    const edgesOfPitch = p => {
+        let r = _edgeCache.get(p);
+        if (!r) {
+            const body = bodyOf(p), e = new Set([0, body, body + BLOCK_GAP]);
+            if (TRACK_H) e.add(TRACK_H);
+            e.add(TRACK_H + SCALE_H);
+            for (let i = 0; i <= nSeqs; i++) e.add(HEADER_H + i * p);
+            r = Float64Array.from([...e].sort((x, y) => x - y));
+            _edgeCache.set(p, r);
+        }
+        return r;
+    };
     let bandCols = nSlots, nBands = 1, bandScale = [];
-    // band-local draw parameters read by drawRegion (defaults = the strip: everything)
-    let _bS0 = 0, _bS1 = nSlots, _bScale = null, _bLast = true;
+    let bandLanes = Uint8Array.of(aaRowCount), bandPitch = Float64Array.of(basePitch);
+    let bandBody = Float64Array.of(bodyOf(basePitch)), bandTop = Float64Array.of(0, bodyOf(basePitch) + BLOCK_GAP);
+    const bandEdgesOf = b => edgesOfPitch(bandPitch[b]);
+    const bandAt = cy => {   // the band holding content y (clamped to the first / last)
+        let lo = 0, hi = nBands - 1;
+        while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (bandTop[mid] <= cy) lo = mid; else hi = mid - 1; }
+        return lo;
+    };
+    // band-local draw parameters read by drawRegion (defaults = the strip: everything); _bLanes -1: all lanes
+    let _bS0 = 0, _bS1 = nSlots, _bScale = null, _bScaleC0 = 0, _bLast = true, _bLanes = -1;
     const bandSlot0 = b => b * bandCols;
     const bandSlot1 = b => Math.min(nSlots, (b + 1) * bandCols);
     const bandRight = b => NAME_W + (bandSlot1(b) - bandSlot0(b)) * CHAR_W + (b === nBands - 1 ? BADGE_GAP + BADGE_W + 4 : 0);
+    // The columns a band covers, [c0, c1): its slots' columns, and with hidden columns the hidden runs
+    // its markers stand for (a marker's run belongs to the marker's band)
+    const slotColEnd = s => { const p = slots[s]; return p >= 0 ? p : -2 - p; };   // a marker: the last hidden column before it
+    const bandColRange = b => {
+        if (!slots) return [bandSlot0(b), bandSlot1(b)];
+        return [b === 0 ? 0 : slotColEnd(bandSlot0(b) - 1) + 1, b === nBands - 1 ? len : slotColEnd(bandSlot1(b) - 1) + 1];
+    };
+    // The band's ruler, as the DOM Block makes each block's (generateScale over the block's columns):
+    // a label that does not fit the band is left out, not cut at the band's edge. [text, first column]
     const bandRuler = b => {
-        if (slots) return null;   // hidden columns: the whole-alignment text (labels at a band edge may be cut)
-        if (!bandScale[b]) bandScale[b] = generateScale(bandSlot1(b) - bandSlot0(b), _canvasScaleInterval(CHAR_W), bandSlot0(b));
+        if (!bandScale[b]) { const [c0, c1] = bandColRange(b); bandScale[b] = [generateScale(Math.max(0, c1 - c0), _canvasScaleInterval(CHAR_W), c0), c0]; }
         return bandScale[b];
     };
+    // Translation lanes of band b: by gene those of the genes in its shown columns, else every band the same
+    const byGeneLanes = hasCodon && !!state._codonData.byGene;
+    const laneCountOf = b => {
+        if (!byGeneLanes) return aaRowCount;
+        if (!slots) return _codonLanesForRange(bandSlot0(b), bandSlot1(b));
+        const cl = state._codonData.colLanes;
+        if (!cl) return aaRowCount;
+        let k = 0;
+        for (let s = bandSlot0(b), e = bandSlot1(b); s < e && k < 2; s++) { const p = slots[s]; if (p >= 0 && cl[p] > k) k = cl[p]; }
+        return k;
+    };
+    // Draw band b (drawRegion / drawOverlayStrip read these), and back to the strip
+    const setBand = b => {
+        _bS0 = bandSlot0(b); _bS1 = bandSlot1(b); _bLast = b === nBands - 1;
+        const r = bandRuler(b); _bScale = r[0]; _bScaleC0 = r[1];
+        rowPitch = bandPitch[b]; _bLanes = bandLanes[b];
+    };
+    const clearBand = () => { _bS0 = 0; _bS1 = nSlots; _bScale = null; _bScaleC0 = 0; _bLast = true; rowPitch = basePitch; _bLanes = -1; };
     _canvasState.relayoutMs = 0;
     // (Re)wrap to the viewport width; keeps the top-left visible slot's band row in view. True when it changed.
     function relayout() {
@@ -6337,18 +6399,32 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const cols = Math.max(1, Math.min(slider, nSlots, fit));
         if (cols === bandCols && _canvasState.layout) return false;
         const hadLayout = !!_canvasState.layout;
-        const oldB = Math.floor(_canvasState.offsetY / bandH), inBand = _canvasState.offsetY - oldB * bandH;
+        // where the view is: the band at its top, how far into that band (in its lines), its first slot
+        const oldB = hadLayout ? bandAt(_canvasState.offsetY) : 0;
+        const inBand = _canvasState.offsetY - bandTop[oldB];
         const firstSlot = oldB * bandCols;
         bandCols = cols;
         nBands = Math.max(1, Math.ceil(nSlots / bandCols));
         bandScale = [];
+        bandLanes = new Uint8Array(nBands);
+        bandPitch = new Float64Array(nBands);
+        bandBody = new Float64Array(nBands);
+        bandTop = new Float64Array(nBands + 1);
+        for (let b = 0; b < nBands; b++) {
+            bandLanes[b] = laneCountOf(b);
+            bandPitch[b] = pitchOf(bandLanes[b]);
+            bandBody[b] = bodyOf(bandPitch[b]);
+            bandTop[b + 1] = bandTop[b] + bandBody[b] + BLOCK_GAP;
+        }
         totalContentW = 0;   // nothing to scroll sideways: the bands fit the width
-        totalContentH = nBands * bandH - BLOCK_GAP + 4;
+        totalContentH = bandTop[nBands] - BLOCK_GAP + 4;
         _canvasState.totalContentW = totalContentW;
         _canvasState.totalContentH = totalContentH;
         _canvasState.offsetX = 0;
-        if (hadLayout) _canvasState.offsetY = Math.floor(firstSlot / bandCols) * bandH + inBand;
-        _canvasState.layout = { kind: 'block', bandCols, nBands, bandH, bandBodyH, nSlots };
+        if (hadLayout) { const nb = Math.min(nBands - 1, Math.floor(firstSlot / bandCols)); _canvasState.offsetY = bandTop[nb] + Math.min(inBand, bandTop[nb + 1] - bandTop[nb] - 1); }
+        // bandH / bandBodyH: band 0's (every band's without codon analysis by gene)
+        _canvasState.layout = { kind: 'block', bandCols, nBands, bandH: bandTop[1] - bandTop[0], bandBodyH: bandBody[0], nSlots,
+            bandTop, bandBody, bandPitch, bandLanes, bandAt };
         _canvasState.relayoutMs = performance.now() - t0;
         window._syncVerticalScrollbar?.();
         window._syncHorizontalScrollbar?.();
@@ -6581,11 +6657,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             // its antialiased edge pixels composited twice (copy, then draw).
             const rowEdgeDev = (yDev, up) => {   // device y of the row edge at/above (up) or at/below yDev
                 if (blockLayout) {   // the line edges of the band the point is in
-                    const cy = yDev / dpr + oy, b = Math.floor(cy / bandH), ry = cy - b * bandH;
-                    let e = up ? 0 : bandH;
+                    const cy = yDev / dpr + oy, b = bandAt(cy), ry = cy - bandTop[b], bandEdges = bandEdgesOf(b);
+                    let e = up ? 0 : bandTop[b + 1] - bandTop[b];
                     if (up) { for (let i = bandEdges.length - 1; i >= 0; i--) if (bandEdges[i] <= ry + 1e-6) { e = bandEdges[i]; break; } }
                     else { for (let i = 0; i < bandEdges.length; i++) if (bandEdges[i] >= ry - 1e-6) { e = bandEdges[i]; break; } }
-                    const ed = Math.round((b * bandH + e - oy) * dpr);
+                    const ed = Math.round((bandTop[b] + e - oy) * dpr);
                     return up ? Math.max(0, Math.min(ed, yDev)) : Math.min(H, Math.max(ed, yDev));
                 }
                 const k = (yDev / dpr - HEADER_H + oy) / rowPitch;
@@ -6628,7 +6704,6 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // accept the new state as drawn so the next scroll step can still copy the frame.
     _canvasState.redrawCells = (r0, r1, c0, c1) => {
         if (drawRaf || _dirty) return;                      // a full draw is coming anyway
-        if (blockLayout) { _markDirty(); scheduleDraw(); return; }   // PROTOTYPE: no band-aware partial repaint yet
         const w = _cssW(), h = _cssH();
         const ox = _canvasState.offsetX, oy = _canvasState.offsetY, W = canvas.width, H = canvas.height;
         const clipDraw = (x0, y0, x1, y1) => {
@@ -6639,17 +6714,31 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             clearWhite(ctx, 0, 0, w, h);
-            drawRegion(ox, oy, w, h, x0 / dpr, y0 / dpr, x1 / dpr, y1 / dpr);
+            drawArea(ox, oy, w, h, x0 / dpr, y0 / dpr, x1 / dpr, y1 / dpr);
             ctx.restore();
         };
-        clipDraw(0, HEADER_H + r0 * rowPitch - oy, w, HEADER_H + (r1 + 1) * rowPitch - oy);
         let s0 = c0, s1 = c1;
         if (slotOf) {   // hidden columns have no slot; repaint the band of the shown ones
             s0 = Infinity; s1 = -1;
             for (let c = Math.max(0, c0); c <= Math.min(len - 1, c1); c++) { const sc = slotOf[c]; if (sc >= 0) { if (sc < s0) s0 = sc; if (sc > s1) s1 = sc; } }
         }
-        if (s1 >= s0) clipDraw(NAME_W + s0 * CHAR_W - ox, 0, NAME_W + (s1 + 1) * CHAR_W - ox, h);
-        if (consInfo) { const consY = consTop ? TRACK_H + SCALE_H - oy : HEADER_H + nSeqs * rowPitch - oy; clipDraw(0, consY, w, consY + CONS_H); }
+        if (!blockLayout) {
+            clipDraw(0, HEADER_H + r0 * rowPitch - oy, w, HEADER_H + (r1 + 1) * rowPitch - oy);
+            if (s1 >= s0) clipDraw(NAME_W + s0 * CHAR_W - ox, 0, NAME_W + (s1 + 1) * CHAR_W - ox, h);
+            if (consInfo) { const consY = consTop ? TRACK_H + SCALE_H - oy : HEADER_H + nSeqs * rowPitch - oy; clipDraw(0, consY, w, consY + CONS_H); }
+        } else {
+            // Block: the same three repaints in every band in view - the rows (an insertion shifts the
+            // rest of the row, which runs on through the later bands), the changed slots where they are
+            // (their band only) and the consensus row of each band
+            forBands(oy, 0, h, (b, top) => {
+                const p = bandPitch[b], right = bandRight(b), b0 = bandSlot0(b);
+                clipDraw(0, top + HEADER_H + r0 * p, right, top + HEADER_H + (r1 + 1) * p);
+                const a = Math.max(s0, b0), z = Math.min(s1, bandSlot1(b) - 1);
+                if (z >= a) clipDraw(NAME_W + (a - b0) * CHAR_W, top, NAME_W + (z + 1 - b0) * CHAR_W, top + bandBody[b]);
+                if (consInfo) { const consY = top + (consTop ? TRACK_H + SCALE_H : HEADER_H + nSeqs * p); clipDraw(0, consY, right, consY + CONS_H); }
+            });
+        }
+        _canvasState.stats.cells = (_canvasState.stats.cells || 0) + 1;
         _lastSig = contentSig();
         drawOverlay(ox, oy, w, h);
     };
@@ -6658,33 +6747,48 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // content coordinates. Cleared and redrawn whole; a few fills, under a millisecond.
     // The bands that intersect the viewport rows [cy0, cy1): calls f(b, top) with the band's view y
     function forBands(oy, cy0, cy1, f) {
-        const b0 = Math.max(0, Math.floor((oy + cy0) / bandH)), b1 = Math.min(nBands - 1, Math.floor((oy + cy1 - 1e-6) / bandH));
-        for (let b = b0; b <= b1; b++) f(b, b * bandH - oy);
+        const b0 = bandAt(oy + cy0), b1 = bandAt(oy + cy1 - 1e-6);
+        for (let b = b0; b <= b1; b++) f(b, bandTop[b] - oy);
     }
     // drawRegion through the layout: the strip as is, or each band as a strip with its own virtual offsets,
     // clipped to the band's rectangle (the gap between bands stays white)
     function drawArea(ox, oy, w, h, cx0, cy0, cx1, cy1) {
         if (!blockLayout) return drawRegion(ox, oy, w, h, cx0, cy0, cx1, cy1);
         forBands(oy, cy0, cy1, (b, top) => {
-            const y0 = Math.max(cy0, top), y1 = Math.min(cy1, top + bandBodyH), right = Math.min(cx1, bandRight(b));
+            const y0 = Math.max(cy0, top), y1 = Math.min(cy1, top + bandBody[b]), right = Math.min(cx1, bandRight(b));
             if (y1 <= y0 || right <= cx0) return;
             ctx.save();
-            ctx.beginPath(); ctx.rect(0, top, bandRight(b), bandBodyH); ctx.clip();
-            _bS0 = bandSlot0(b); _bS1 = bandSlot1(b); _bScale = bandRuler(b); _bLast = b === nBands - 1;
-            drawRegion(_bS0 * CHAR_W, oy - b * bandH, w, h, cx0, y0, right, y1);
+            ctx.beginPath(); ctx.rect(0, top, bandRight(b), bandBody[b]); ctx.clip();
+            setBand(b);
+            drawRegion(_bS0 * CHAR_W, oy - bandTop[b], w, h, cx0, y0, right, y1);
             ctx.restore();
         });
-        _bS0 = 0; _bS1 = nSlots; _bScale = null; _bLast = true;
+        clearBand();
     }
+    // Show 2D: the block mask rectangles depend only on the row pitch: made once per overlay draw for
+    // each pitch the bands in view use (they were made again for every band). _canvasState.maskRects
+    // (their click and tooltip) are the strip's, at basePitch.
+    let _maskByPitch = null;
+    const maskRectsFor = p => {
+        if (!state.blockMask) return null;
+        if (!_maskByPitch) _maskByPitch = new Map();
+        let r = _maskByPitch.get(p);
+        if (!r) { r = _canvasBlockMaskRects(CHAR_W, p, nSeqs, posSlot); _maskByPitch.set(p, r); _canvasState.maskRectsMade = (_canvasState.maskRectsMade || 0) + 1; }
+        return r;
+    };
     function drawOverlay(ox, oy, w, h) {
+        _maskByPitch = null;
+        _canvasState.maskRects = maskRectsFor(basePitch);
         if (!blockLayout) return drawOverlayStrip(ox, oy, w, h);
         octx.clearRect(0, 0, w, h);
         forBands(oy, 0, h, (b, top) => {
             octx.save();
-            octx.beginPath(); octx.rect(0, top, bandRight(b), bandBodyH); octx.clip();
-            drawOverlayStrip(bandSlot0(b) * CHAR_W, oy - b * bandH, w, h, true);
+            octx.beginPath(); octx.rect(0, top, bandRight(b), bandBody[b]); octx.clip();
+            setBand(b);
+            drawOverlayStrip(bandSlot0(b) * CHAR_W, oy - bandTop[b], w, h, true);
             octx.restore();
         });
+        clearBand();
     }
     function drawOverlayStrip(ox, oy, w, h, noClear) {
         if (!noClear) octx.clearRect(0, 0, w, h);
@@ -6709,9 +6813,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const clipData = () => { octx.save(); if (stickyNames) { octx.beginPath(); octx.rect(NAME_W, 0, Math.max(0, w - NAME_W), h); octx.clip(); } };
         clipData();
         // Show 2D: the block mask rectangles (DOM: .block-mask-layer SVG), kept for hit-testing
-        _canvasState.maskRects = state.blockMask ? _canvasBlockMaskRects(CHAR_W, rowPitch, nSeqs, posSlot) : null;
-        if (_canvasState.maskRects && _canvasState.maskRects.length) {
-            for (const r of _canvasState.maskRects) {
+        const maskRects = maskRectsFor(rowPitch);
+        if (maskRects && maskRects.length) {
+            for (const r of maskRects) {
                 const x = NAME_W + r.x - ox, y = HEADER_H + r.y - oy;
                 if (x + r.w < 0 || x > w || y + r.h < 0 || y > h) continue;
                 octx.globalAlpha = r.op;
@@ -6918,7 +7022,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     }
                     continue;
                 }
-                const ch = _bScale ? _bScale[pc - _bS0] : scaleTextAll[pc];
+                const ch = _bScale ? _bScale[pc - _bScaleC0] : scaleTextAll[pc];
                 if (!ch || ch === ' ') continue;
                 const x = NAME_W + sI * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) continue;
@@ -6948,7 +7052,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             // Codon analysis on this row: stop codon bases (span.codon-stop), synonymous /
             // non-synonymous underlines (span.codon-syn / .codon-nonsyn); AA only hides the bases
             const cd = hasCodon ? state._codonData : null;
-            const codonRows = cd ? _canvasCodonRows(i) : null;
+            let codonRows = cd ? _canvasCodonRows(i) : null;
+            if (codonRows && _bLanes >= 0 && codonRows.length > _bLanes) codonRows = codonRows.slice(0, _bLanes);   // Block: this band's lanes
             const basesHidden = aaOnly && codonRows && codonRows.some(r => r.aaData && r.aaData.length);
             const stopSet = cd && cd.stops && cd.stops[i] && cd.stops[i].length ? new Set(cd.stops[i]) : null;
             const snRow = cd && cd.synNonSyn ? cd.synNonSyn[i] : null;

@@ -5144,6 +5144,202 @@ check('Canvas Block: entering Block on a tall alignment asks nothing; the Screen
   return { pass: ok, detail: JSON.stringify({ tall, dialog, entered, at40, screen }) };
 }));
 
+// ---- Canvas Block batch 2 (2026-10-31): bands of different heights, per-band ruler, partial repaint ----
+// Codon analysis by gene: the DOM Block gives each block only the translation lanes of the genes in
+// its columns (0 without a gene, 2 only where genes overlap), so blocks differ in height. Canvas Block
+// first gave every band the alignment's lane count (cd.lanes): bands without genes had empty
+// translation rows and every band had the same height. Each band must have the DOM block's lane
+// count, and a click or hover in a band below a taller band must hit the row and column drawn there
+// (band positions computed here from the DOM's lane counts, not from the renderer).
+function cbCodonFixture() {
+  let x = 12345;
+  const rnd = () => (x = (x * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const base = Array.from({ length: 300 }, () => 'ACGT'[Math.floor(rnd() * 4)]).join('');
+  let fasta = `>ref\n${base}\n`;
+  for (let i = 1; i < 6; i++) fasta += `>copy${i}\n${base.split('').map((c, j) => (j * 7 + i * 13) % 41 === 0 ? 'ACGT'[('ACGT'.indexOf(c) + i) % 4] : c).join('')}\n`;
+  // gene A columns 60-149, gene B 120-209 (both + strand): B's codons in 120-149 go to lane 2
+  const bed = [['geneA', 60, 150], ['geneB', 120, 210]].map(([g, a, b]) => `ref\t${a}\t${b}\t${g}\t0\t+\t${a}\t${b}\t0\t1\t${b - a}\t0\tCDS: ${g}`).join('\n');
+  return { fasta, bed };
+}
+check('Canvas Block: codon analysis by gene gives each band the DOM block\'s translation lanes; clicks and hover below a taller band hit the right cell', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  const { fasta, bed } = cbCodonFixture();
+  await loadFasta(p, fasta);
+  await p.waitForTimeout(500);
+  await p.evaluate(async (bed) => {
+    const bs = document.getElementById('blockSizeSlider'); bs.value = '50'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 400));
+    setAnnotation(bed, 'genes.bed');
+    const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 1200));
+  }, bed);
+  // the DOM Block's translation rows per block / rows = its lanes there
+  const dom = await p.evaluate(async () => {
+    _domBlockForTests = true; document.getElementById('modeBlocks').checked = true; await onModeChange();
+    await new Promise(r => setTimeout(r, 800));
+    const n = state.seqs.length;
+    const lanes = [...document.querySelectorAll('.block-block')].map(b => b.querySelectorAll('.aa-row').length / n);
+    _domBlockForTests = false; await onModeChange();
+    await new Promise(r => setTimeout(r, 800));
+    return { lanes, byGene: !!state._codonData?.byGene };
+  });
+  await p.evaluate(() => { window.__tips = []; const o = showTooltipAt; window.showTooltipAt = (c, t, opt) => { window.__tips.push(String(c)); return o(c, t, opt); }; });
+  const cv = await p.evaluate(() => {
+    const L = _canvasState.layout, m = _canvasState.metrics;
+    // lanes drawn per band, from the distance between two rows of the band
+    const lanes = [];
+    for (let b = 0; L && b < L.nBands; b++) { const s = b * L.bandCols; lanes.push(Math.round((_canvasCellClient(1, s).y - _canvasCellClient(0, s).y - _canvasState.charH) / _canvasState.aaRowH)); }
+    const cons = _canvasState.consBand && _canvasState.consensus && _canvasState.consensus.position === 'bottom' ? _canvasState.consBand.h : 0;
+    return { isBlock: !!L && L.kind === 'block', bandCols: L && L.bandCols, nBands: L && L.nBands, lanes, headerH: m.headerH, charH: _canvasState.charH, aaRowH: _canvasState.aaRowH, nameW: m.nameW, charW: m.charW, cons, gap: Math.round(24 * devicePixelRatio) / devicePixelRatio };
+  });
+  // band tops from the DOM lane counts: header + rows (bases + lanes) + bottom consensus + 24 px gap
+  const nSeq = 6, pitch = k => cv.charH + k * cv.aaRowH;
+  const top = b => { let t = 0; for (let k = 0; k < b; k++) t += cv.headerH + nSeq * pitch(dom.lanes[k]) + cv.cons + cv.gap; return t; };
+  const probe = async (row, col) => {
+    const b = Math.floor(col / cv.bandCols);
+    await p.evaluate((y) => { _canvasState.offsetY = y; _canvasState.scheduleDrawMoved(); }, Math.max(0, top(b) - 10));
+    await p.waitForTimeout(250);
+    const pt = await p.evaluate(({ y, x }) => { const r = _canvasState.canvas.getBoundingClientRect(); return { x: r.left + x, y: r.top + y - _canvasState.offsetY, nx: r.left + 30 }; },
+      { x: cv.nameW + (col - b * cv.bandCols + 0.5) * cv.charW, y: top(b) + cv.headerH + row * pitch(dom.lanes[b]) + cv.charH / 2 });
+    const hit = await p.evaluate(({ x, y }) => _canvasHitTest(x, y), pt);
+    await p.evaluate(() => { window.__tips = []; });
+    await p.mouse.move(pt.x, pt.y); await p.waitForTimeout(350);
+    const tip = await p.evaluate(() => window.__tips[window.__tips.length - 1] || '');
+    await p.mouse.move(pt.nx, pt.y); await p.mouse.click(pt.nx, pt.y); await p.waitForTimeout(250);
+    const rows = await p.evaluate(() => [...state.selectedRows]);
+    await p.evaluate(() => { state.selectedRows.clear(); _canvasState.scheduleOverlay?.(); });
+    const name = ['ref', 'copy1', 'copy2', 'copy3', 'copy4', 'copy5'][row];
+    return { band: b, hit, tipOk: tip.startsWith(name + ':') && tip.includes(String(col + 1)), tip: tip.slice(0, 40), rows, ok: !!hit && hit.row === row && hit.col === col && rows.length === 1 && rows[0] === row };
+  };
+  const probes = [await probe(4, 175), await probe(2, 270), await probe(5, 130)];
+  // wheel scrolling over bands of different heights: the frame copy (exposed strip widened to the
+  // line edges of the band it is in) must give the pixels of a full redraw
+  await p.evaluate(async () => {   // read back a few times first: Chrome then draws this canvas in software for good
+    const c = _canvasState.canvas, g = c.getContext('2d');
+    _canvasState.offsetY = 0;
+    for (let i = 0; i < 6; i++) { g.getImageData(0, 0, c.width, c.height); _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res))); }
+  });
+  const box = await p.evaluate(() => { const r = _canvasState.canvas.getBoundingClientRect(); return { x: r.left + r.width * 0.6, y: r.top + r.height * 0.5 }; });
+  await p.mouse.move(box.x, box.y);
+  const scroll = [];
+  for (const dy of [120, 120, 120, 120, 120, -100, -100]) {
+    await p.evaluate(() => { _canvasState.stats.blit = 0; _canvasState.stats.full = 0; });
+    await p.mouse.wheel(0, dy); await p.waitForTimeout(250);
+    scroll.push(await p.evaluate(async () => {
+      const c = _canvasState.canvas, g = c.getContext('2d'), a = g.getImageData(0, 0, c.width, c.height).data, st = { blit: _canvasState.stats.blit, full: _canvasState.stats.full, oy: _canvasState.offsetY };
+      _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+      const b = g.getImageData(0, 0, c.width, c.height).data;
+      // diff: pixels that differ by more than text antialiasing does (Chrome's GPU and software canvas
+      // drawing give letters fringes up to ~17 apart, and it may move this canvas from one to the
+      // other at any read-back); a misplaced or missing cell, letter or line differs by far more
+      let diff = 0, aa = 0;
+      for (let i = 0; i < a.length; i += 4) {
+        const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2]));
+        if (d > 48) diff++; else if (d) aa++;
+      }
+      return { ...st, diff, aa };
+    }));
+  }
+  const scrollOk = scroll.every(r => r.diff === 0) && scroll.filter(r => r.blit > 0 && r.full === 0).length >= 5;
+  const lanesOk = dom.byGene && cv.isBlock && cv.bandCols === 50 && dom.lanes.length === cv.nBands && dom.lanes.join() === cv.lanes.join()
+    && dom.lanes.includes(0) && dom.lanes.includes(1) && dom.lanes.includes(2);
+  const ok = lanesOk && probes.every(q => q.ok && q.tipOk) && scrollOk;
+  return { pass: ok, detail: JSON.stringify({ domLanes: dom.lanes, canvasLanes: cv.lanes, probes, scroll }) };
+}));
+
+// Hidden columns (a fold) or Variable sites only: Canvas Block drew every band's ruler from the
+// whole-alignment ruler text, so a label straddling a band's first column was cut ('0' of '90'
+// alone at the band's left edge). The DOM Block makes each block's ruler for the block's own
+// columns and leaves such a label out. Band 2 must show ink exactly where DOM block 2 has a label
+// character, column for column (block width 89: band 2 starts at column 90, inside the label '90').
+check('Canvas Block: with a hidden-column fold, band 2\'s ruler shows the labels DOM Block\'s block 2 shows (none cut at the band edge)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(8, 400));
+  await p.waitForTimeout(500);
+  await p.evaluate(async () => {
+    const bs = document.getElementById('blockSizeSlider'); bs.value = '89'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 400));
+    await new Promise(r => setTimeout(r, 400));
+    _foldApply([[100, 104]]);
+    await new Promise(r => setTimeout(r, 600));
+  });
+  const dom = await p.evaluate(async () => {
+    _domBlockForTests = true; document.getElementById('modeBlocks').checked = true; await onModeChange();
+    await new Promise(r => setTimeout(r, 800));
+    const blk = document.querySelectorAll('.block-block')[1];
+    const out = {};
+    for (const sp of blk.querySelectorAll('.scale-ruler-line .seq-data span[data-pos]')) if (!sp.classList.contains('fold-hidden')) out[sp.dataset.pos] = (sp.textContent || ' ').trim() ? 1 : 0;
+    _domBlockForTests = false; await onModeChange();
+    await new Promise(r => setTimeout(r, 800));
+    return out;
+  });
+  const cv = await p.evaluate(() => {
+    _canvasState.offsetY = 0; _canvasState.scheduleDraw();
+    return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => {
+      const L = _canvasState.layout, m = _canvasState.metrics, c = _canvasState.canvas, d = devicePixelRatio, g = c.getContext('2d'), r = c.getBoundingClientRect();
+      const out = {}, b = 1, s0 = b * L.bandCols, s1 = Math.min(L.nSlots, s0 + L.bandCols);
+      const rulerTop = _canvasCellClient(0, s0).y - r.top - m.headerH + (m.trackH || 0);
+      for (let s = s0; s < s1; s++) {
+        if (_canvasSlotIsMarker(s)) continue;
+        const col = _canvasSlotToCol(s);
+        const x = Math.round((m.nameW + (s - s0) * m.charW) * d), y = Math.round(rulerTop * d);
+        const px = g.getImageData(x + 1, y + 1, Math.max(1, Math.round(m.charW * d) - 2), Math.max(1, Math.round(m.charH * d) - 2)).data;
+        let ink = 0; for (let i = 0; i < px.length; i += 4) if (px[i] + px[i + 1] + px[i + 2] < 600) ink++;
+        out[col] = ink > 2 ? 1 : 0;
+      }
+      res({ bandCols: L.bandCols, out });
+    })));
+  });
+  const diff = [];
+  let common = 0, labels = 0;
+  for (const [col, v] of Object.entries(dom)) {
+    if (!(col in cv.out)) continue;
+    common++; labels += v;
+    if (cv.out[col] !== v) diff.push(`${col}: canvas ${cv.out[col] ? 'ink' : 'blank'}, DOM ${v ? 'label' : 'blank'}`);
+  }
+  const ok = cv.bandCols === 89 && common >= 80 && labels >= 10 && diff.length === 0;
+  return { pass: ok, detail: JSON.stringify({ bandCols: cv.bandCols, common, labels, diff: diff.slice(0, 8) }) };
+}));
+
+// Type mode in Block: the one-cell repaint (redrawCells) fell back to a full redraw in Canvas Block.
+// It must repaint just the changed cells in the band where they are (no full draw), and the
+// picture must equal a full redraw.
+check('Canvas Block: a typed letter repaints only its cells (no full redraw), pixel-identical to a full redraw', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(10, 300));
+  await p.waitForTimeout(500);
+  await p.evaluate(async () => {
+    const bs = document.getElementById('blockSizeSlider'); bs.value = '60'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 400));
+    await new Promise(r => setTimeout(r, 400));
+    state.editModeActive = true; state.editTool = 'residue'; renderAlignment();
+    await new Promise(r => setTimeout(r, 500));
+  });
+  const out = {};
+  for (const [row, col] of [[3, 75], [6, 140]]) {   // band 2 and band 3
+    const pt = await p.evaluate(({ row, col }) => { const c = _canvasCellClient(row, _canvasColToSlot(col)), m = _canvasState.metrics; return { x: c.x + m.charW / 2, y: c.y + m.charH / 2 }; }, { row, col });
+    await p.mouse.click(pt.x, pt.y); await p.waitForTimeout(250);
+    // Chrome moves a canvas that is read back (getImageData) from GPU to software drawing after a few
+    // reads, and text antialiasing differs by a unit between the two (the click may have made a new
+    // canvas): read and redraw until it has, so every picture compared below comes from one path
+    await p.evaluate(async () => {
+      const c = _canvasState.canvas, g = c.getContext('2d');
+      for (let i = 0; i < 6; i++) { g.getImageData(0, 0, c.width, c.height); _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res))); }
+    });
+    const before = await p.evaluate(() => ({ full: _canvasState.stats.full, cells: _canvasState.stats.cells || 0 }));
+    await p.keyboard.press('w'); await p.waitForTimeout(400);
+    out[row + ':' + col] = await p.evaluate(async ({ row, col, before }) => {
+      const c = _canvasState.canvas, g = c.getContext('2d');
+      const st = { full: _canvasState.stats.full - before.full, cells: (_canvasState.stats.cells || 0) - before.cells, typed: state.seqs[row].seq[col] };
+      const a = g.getImageData(0, 0, c.width, c.height).data;
+      _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res))); await new Promise(res => setTimeout(res, 150));
+      const b = g.getImageData(0, 0, c.width, c.height).data;
+      let stale = 0; for (let i = 0; i < a.length; i += 4) if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) stale++;
+      return { ...st, stale };
+    }, { row, col, before });
+  }
+  await p.evaluate(() => { state.editModeActive = false; state.editCell = null; });
+  const ok = Object.values(out).every(v => v.typed === 'W' && v.full === 0 && v.cells === 1 && v.stale === 0);
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
 check('Realign all keeps a row that has only gaps (MAFFT and codon/MACSE), as a gap row of the new width', async (page) => {
   const fa = '>a\nATGGCTAAAGGTCTGCAAGAATTCGGTACC\n>empty\n------------------------------\n>b\nATGGCTAAGGGTCTGCAAGAATTCGGAACC\n>c\nATGGCAAAAGGTCTGCAGGAATTCGGTACC\n';
   const out = {};
