@@ -6810,6 +6810,15 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             else if (dxDev < 0) drawClipped(fixed, 0, colEdgeDev(fixed - dxDev, false), H);
             else if (dyDev > 0) drawClipped(0, rowEdgeDev(H - dyDev, true), W, H);
             else drawClipped(0, 0, W, rowEdgeDev(-dyDev, false));
+            // The copied side's canvas edge: Chrome does not draw text whose ink would reach only the
+            // canvas's last device row (the tip of a '4' at 1.5x), so a full redraw leaves that row
+            // white while the copy brings the tip in from a frame where the text was further inside.
+            // Redraw the lines within 2 CSS px of that edge (a name's descender hangs about a pixel
+            // below its row) as a full redraw draws them.
+            if (dxDev > 0 && !fixed) drawClipped(0, 0, colEdgeDev(1, false), H);
+            else if (dxDev < 0) drawClipped(colEdgeDev(W - 1, true), 0, W, H);
+            else if (dyDev > 0) drawClipped(0, 0, W, rowEdgeDev(Math.ceil(2 * dpr), false));
+            else if (dyDev < 0) drawClipped(0, rowEdgeDev(H - Math.ceil(2 * dpr), true), W, H);
             // When NAME_W * dpr is not whole, the device pixel column the name edge falls into
             // holds both name backing and content: redraw it.
             const edge = Math.floor(NAME_W * dpr);
@@ -7102,7 +7111,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             ctx.globalAlpha = alpha;
         };
         const firstRow = Math.max(0, Math.floor((oy - HEADER_H + cy0) / rowPitch));
-        const lastRow = Math.min(nSeqs - 1, Math.floor((oy - HEADER_H + cy1 - 1) / rowPitch));
+        // the last row whose top is above cy1 (it was floor(... + cy1 - 1): a row whose top lay in the
+        // last CSS pixel was left out, so a full redraw left its first device row(s) white)
+        const lastRow = Math.min(nSeqs - 1, Math.ceil((oy - HEADER_H + cy1) / rowPitch) - 1);
         // The name column is at [0, NAME_W) when sticky, else scrolls with the content
         const withNames = stickyNames ? cx0 < NAME_W : cx0 < NAME_W - ox;
 

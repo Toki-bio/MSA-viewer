@@ -5388,7 +5388,10 @@ check('Canvas Block: with codon lanes and an annotation track, a scrolled frame 
       const steps = [];
       for (const dy of [120, 120, 120, 120, 120, -100, -100, 37, 53]) {
         await p.evaluate(() => { _canvasState.stats.blit = 0; _canvasState.stats.full = 0; });
-        await p.mouse.wheel(0, dy); await p.waitForTimeout(300);
+        // under load the eased step's last frame was still pending at 300 ms (whole-frame diffs, wheelAnimating
+        // still true): wait for the animation and its last frame before reading the pixels
+        await p.mouse.wheel(0, dy); await p.waitForTimeout(300); await settleWheel(p);
+        await p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
         steps.push(await p.evaluate(async () => {
           const c = _canvasState.canvas, g = c.getContext('2d'), a = g.getImageData(0, 0, c.width, c.height).data, st = { blit: _canvasState.stats.blit, full: _canvasState.stats.full, oy: Math.round(_canvasState.offsetY) };
           _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
@@ -5405,6 +5408,70 @@ check('Canvas Block: with codon lanes and an annotation track, a scrolled frame 
   const ok = Object.values(out).every(v => v.ok);
   return { pass: ok, detail: JSON.stringify(out) };
 });
+
+// The check above failed now and then (7 pixels, max 218-255, at 1x and at 1.5x): a full redraw
+// left the canvas's bottom device row blank where a frame copy showed ink. Two causes, both in the
+// full redraw, both only when something's top reaches into the last device row:
+// - drawRegion's lastRow left out a row whose top lies in the last CSS pixel (floor(... + cy1 - 1)),
+//   so its first device row(s) stayed white (a whole line of cells, 0.0.0 vs 255);
+// - Chrome does not draw text whose ink reaches only the canvas's last device row (the tip of the
+//   '4' of 'copy4' at 1.5x): drawn on a 1240-row canvas the same pixel row has ink, on 1239 none.
+// A frame copy brings those pixels in from a frame where the row was further up. The check above
+// meets them only when the eased wheel steps happen to stop at such an offset; this one scrolls
+// up one device pixel at a time (the bottom rows are then always the copied side) over 70 CSS px
+// and compares the bottom two device rows with a full redraw at every step.
+check('Canvas Block: scrolling up one device pixel at a time, the bottom edge rows of each frame copy equal a full redraw (1x/1.25x/1.5x)', async (page) => {
+  const origin = new URL(page.url()).origin;
+  const b = await launch({ canvasBlock: true });
+  const out = {};
+  try {
+    for (const dsf of [1, 1.25, 1.5]) {
+      const p = await b.newPage({ viewport: { width: 1000, height: 450 }, deviceScaleFactor: dsf });   // small: a full redraw per step
+      p.setDefaultTimeout(60000);
+      await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+      const { fasta, bed } = cbCodonFixture();
+      await loadFasta(p, fasta);
+      await p.waitForTimeout(500);
+      out[dsf] = await p.evaluate(async (bed) => {
+        const bs = document.getElementById('blockSizeSlider'); bs.value = '50'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 400));
+        setAnnotation(bed, 'genes.bed');
+        const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+        await new Promise(r => setTimeout(r, 1200));
+        const c = _canvasState.canvas, g = c.getContext('2d'), dpr = devicePixelRatio;
+        const frame = () => new Promise(res => requestAnimationFrame(res));   // the draw's frame was requested first: it has run when this one runs
+        const y0 = c.height - 2, rows = () => g.getImageData(0, y0, c.width, 2).data;
+        const L = _canvasState.layout, h = c.height / dpr;
+        _canvasState.offsetY = Math.round((L.bandTop[3] + L.bandBody[3] - h) * dpr) / dpr;   // the bottom edge at band 3's end (rows with 1-2 codon lanes)
+        for (let i = 0; i < 6; i++) { g.getImageData(0, 0, c.width, c.height); _canvasState.scheduleDraw(); await frame(); }   // software canvas for good (see above)
+        const start = _canvasState.offsetY, bad = [];
+        let steps = 0, blits = 0, faint = 0;
+        for (let k = 1; k <= Math.round(70 * dpr); k++) {
+          _canvasState.stats.blit = 0; _canvasState.stats.full = 0;
+          _canvasState.offsetY = start - k / dpr; _canvasState.scheduleDrawMoved(); await frame();
+          if (_canvasState.stats.blit === 1 && _canvasState.stats.full === 0) blits++;
+          const a = rows();
+          _canvasState.scheduleDraw(); await frame();
+          const f = rows();
+          let diff = 0, max = 0;
+          for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - f[i]), Math.abs(a[i + 1] - f[i + 1]), Math.abs(a[i + 2] - f[i + 2])); if (d) { diff++; if (d > max) max = d; } }
+          steps++;
+          // a lost row or text tip differs by 170-255; text redrawn in a strip can differ from the same
+          // text in a full redraw by up to 4 levels of antialiasing (a separate, known effect: see the
+          // report of 2026-10-31), which is not what this check is about
+          if (max > 16 && bad.length < 5) bad.push({ oy: +_canvasState.offsetY.toFixed(2), diff, max });
+          else if (max > 16) bad.push(null);
+          if (diff && max <= 16) faint++;
+          // the full redraw is the next step's previous frame: its bottom rows reach the edge only
+          // in the next copy, from one or two device rows further up
+        }
+        return { start, steps, blits, faint, nBad: bad.length, bad: bad.filter(Boolean) };
+      }, bed);
+      await p.close();
+    }
+  } finally { await b.close().catch(() => {}); }
+  const ok = Object.values(out).every(v => v.steps >= 70 && v.blits === v.steps && v.nBad === 0);
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 240000 });
 
 // ---- Canvas Block navigation (batch 3, 2026-10-31) ----
 // Before batch 3 every "go to" in the Block view did nothing or went to the wrong place: _scrollToColumn
