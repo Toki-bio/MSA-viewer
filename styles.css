@@ -4517,3 +4517,8 @@ body.name-resizing { user-select: none; }
 .seq-data > span.column-selected.col-sel-r { box-shadow: inset -2px 0 0 0 #4fc3f7; }
 .seq-data > span.column-selected.col-sel-l.col-sel-r { box-shadow: inset 2px 0 0 0 #4fc3f7, inset -2px 0 0 0 #4fc3f7; }
 .consensus-line .seq-data > span.column-selected { box-shadow: none; }
+.rf-table tr.rf-group { cursor: pointer; background: #f3f6fa; }
+.rf-table tr.rf-group .rf-caret { display: inline-block; width: 14px; text-align: center; color: #456; }
+.rf-table tr.rf-member td:first-child { padding-left: 14px; }
+.rf-table tr.rf-member { background: #fbfcfe; }
+.rf-table tr.rf-more td { cursor: pointer; color: #1a5fb4; font-style: italic; }

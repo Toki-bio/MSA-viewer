@@ -11875,11 +11875,14 @@ check('Repeat Finder owner 2026-10-31: Direct lists every adjacent copy pair of 
   const long = r.seq(100) + u.repeat(60) + r.seq(100);
   await loadFasta(page, `>run60\n${long}\n>o\n${r.seq(long.length)}\n`);
   const f60 = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 15, maxDiv: 0 });
-  out.x60 = { rows: f60.rows, text: f60.text.slice(0, 120) };
+  out.x60 = { rows: f60.rows, pairs: f60.res.length, text: f60.text.slice(0, 120) };
   const want3 = ['100/120/20', '100/140/20', '120/140/20'];
   const want4 = ['100/120/20', '100/140/40', '100/160/20', '120/140/20', '140/160/20'];
+  // B2 (owner 2026-10-31): the 60 copies are a tandem array, so their pairs are one group row "(unit)n, 145 pairs" that
+  // opens to them. Expectation changed from 100 rows and "showing the 100 longest of 145" to: one row, all 145 pairs kept
+  // (x3 and x4 are read from the pairs, grouped or not, as before)
   const ok = JSON.stringify(out.x3) === JSON.stringify(want3) && JSON.stringify(out.x4) === JSON.stringify(want4)
-    && out.x60.rows === 100 && /showing the 100 longest of \d{3,}/.test(out.x60.text);
+    && out.x60.rows === 1 && out.x60.pairs === 145 && /1 microsatellite group \(145 direct pairs\)/.test(out.x60.text);
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
@@ -12007,7 +12010,9 @@ check('Repeat Finder owner 2026-10-31: the search run in slices gives the same r
         let totals = [];
         for (const i of rows) {
           const ung = state.seqs[i].seq.replace(/[-. ]/g, '');
-          const res = _findRepeats(ung, minLen, 15, mode, { protein });
+          // Direct/Inverted are grouped by microsatellite unit since B2 (owner 2026-10-31): compared with the grouped
+          // search run at once (was _findRepeats, the ungrouped list of 100; the same pairs, see the B2 checks)
+          const res = mode === 'tandem' ? _findRepeats(ung, minLen, 15, mode, { protein }) : _findRepeatsGrouped(ung, minLen, 15, mode, { protein });
           totals.push(res.total);
           // ungapped positions to columns, as the panel does
           const cols = [];
@@ -12138,7 +12143,10 @@ check('Repeat Finder m307: a Min length typed for one file goes back to the mode
 // a 15-bp unit is not listed at 20), which neither the tooltip nor the manual said; and the manual said a substituted
 // FIRST copy stays in the array, while the array is the best-scoring stretch and starts on an agreeing base, so a
 // substitution in the first few bases leaves the bases before it outside (measured below, and what the manual now says).
-check('Repeat Finder m307: tooltip and manual say an array needs two full copies; the manual says a substitution near the start of the first copy is left outside', async (page) => {
+// Owner's decision 2026-10-31 ("include"): the substituted first copy is now part of the array. Expectation changed from
+// rows 'first:36-87' and the manual's "substitution in the first few bases of the first copy" (left outside) to
+// 'first:25-87' (the two flank bases before it, CA, continue the unit in phase) and the manual's "reported whole".
+check('Repeat Finder m307: tooltip and manual say an array needs two full copies; the manual says a substituted first copy is reported whole', async (page) => {
   const L = 'GGTTAGGTCCTAGGATCGTTGAGGTCA', R = 'TTGGAGTCAGGTTCCGAGTGGATCTTG', u = 'ACGTTGCATGCA';
   const m = u.split(''); m[5] = 'A'; m[8] = 'C';
   await loadFasta(page, `>first\n${L + m.join('') + u.repeat(4) + R}\n>u15\n${L + ('ACGTTGCATGCAAGT'.repeat(2)).slice(0, 21) + R}\n`);
@@ -12148,14 +12156,174 @@ check('Repeat Finder m307: tooltip and manual say an array needs two full copies
     const manual = await (await fetch('manual.html')).text();
     return { title: document.getElementById('repeatMinLenLabel').title,
       manualTwo: /two full copies/.test(manual), manualOldClaim: /\(also the first\)/.test(manual),
-      manualStart: /substitution in the first few bases of the first copy/.test(manual) };
+      manualStart: /is reported whole, from its first base/.test(manual) };
   });
   out.rows = f.res.map(x => `${x.seqName}:${x.start}-${x.end}`);
-  // the substituted first copy (bases 27-38, substitutions at 32 and 35) is outside: the array starts at 36
+  // the substituted first copy (bases 27-38, substitutions at 32 and 35) is inside, with the flank's CA before it that
+  // continues the unit in phase (the flank's base before that, T, does not)
   const ok = /two full copies/.test(out.title) && out.manualTwo && !out.manualOldClaim && out.manualStart
-    && out.rows.join() === 'first:36-87';
+    && out.rows.join() === 'first:25-87';
   return { pass: ok, detail: JSON.stringify(out) };
 });
+
+// Owner's decision 2026-10-31 ("include, test"): a substitution in the first few bases of the first copy (or the last few
+// of the last) left the agreeing bases before (after) it outside the array: the array was the best-scoring stretch, and
+// fewer than ~6 agreeing bases before a substitution scored below zero at 15 %. Each end is now extended over a run
+// beyond it that agrees with the consensus unit at more than 70 % and holds at least 6 agreeing bases (and the array
+// stays within Max divergence). Random
+// flanks must not be pulled in: over 1,000 planted arrays between random flanks the mean number of flank bases inside the
+// reported array stays under 1 (0.56 before the change, ~0.8 after, at 15 %).
+check('Repeat Finder tandem ends (owner 2026-10-31): substituted first and last copies are reported whole; random flanks stay out', async (page) => {
+  const L = 'GGTTAGGTCCTAGGATCGTTGAGGTTT', R = 'TTGGAGTCAGGTTCCGAGTGGATCTTG', u = 'ACGTTGCATGCA';
+  const first = u.split(''); first[5] = 'A'; first[8] = 'C';          // 6th and 9th bases of the first copy
+  const last = u.split(''); last[3] = 'A'; last[6] = 'G';             // 7th and 4th bases from the end of the last copy
+  await loadFasta(page, `>first\n${L + first.join('') + u.repeat(4) + R}\n>last\n${L + u.repeat(4) + last.join('') + R}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'all', minLen: 20, maxDiv: 15 });
+  const rows = f.res.map(x => `${x.seqName}:${x.start}-${x.end}:${x.unitLen}`).sort();
+  const flank = await page.evaluate(() => {
+    let s = 4242;
+    const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+    const rs = (n) => { let t = ''; for (let i = 0; i < n; i++) t += 'ACGT'[Math.floor(rnd() * 4)]; return t; };
+    let out = 0, found = 0, max = 0;
+    for (let t = 0; t < 1000; t++) {
+      const p = 1 + Math.floor(rnd() * 12), c = 3 + Math.floor(rnd() * 8);
+      const arr = rs(p).repeat(c).split('');
+      const ns = Math.floor(rnd() * 3);
+      for (let j = 0; j < ns; j++) { const k = Math.floor(rnd() * arr.length); arr[k] = 'ACGT'.replace(arr[k], '')[Math.floor(rnd() * 3)]; }
+      const seq = rs(100) + arr.join('') + rs(100), A0 = 100, A1 = 100 + arr.length;
+      const x = _findRepeats(seq, 10, 15, 'tandem').filter(y => y.unitLen === p && y.start < A1 && y.end > A0).sort((a, b) => b.length - a.length)[0];
+      if (!x) continue;
+      const o = Math.max(0, A0 - x.start) + Math.max(0, x.end - A1);
+      out += o; found++; max = Math.max(max, o);
+    }
+    return { mean: +(out / found).toFixed(3), max, found };
+  });
+  const want = ['first:27-87:12', 'last:27-87:12'];
+  const ok = JSON.stringify(rows) === JSON.stringify(want) && flank.mean < 1 && flank.found > 700;
+  return { pass: ok, detail: JSON.stringify({ rows, flank }) };
+});
+
+// ---- Repeat Finder B2 (owner's decision 2026-10-31): Direct/Inverted pairs inside microsatellites grouped by unit ----
+// Until v313 the 100 rows were the 100 longest pairs, and in low-complexity sequence they were all pairs of one
+// microsatellite against another ((AT)n against (AT)n): in a 25 kb row of 1-kb low-complexity and random blocks the 4
+// planted direct repeats ranked 742-1762 of 6,179 and none was shown. The inputs below are those of the owner's
+// examples (ranking_examples.md, 2026-10-31), built with the same generator.
+function b2Inputs() {
+  let seed = 20261031;
+  const rnd = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+  const rs = n => { let s = ''; for (let i = 0; i < n; i++) s += 'ACGT'[Math.floor(rnd() * 4)]; return s; };
+  const RC = { A: 'T', C: 'G', G: 'C', T: 'A' };
+  const rc = s => s.split('').reverse().map(c => RC[c]).join('');
+  const mutate = (s, pct) => s.split('').map(c => rnd() < pct ? 'ACGT'.replace(c, '')[Math.floor(rnd() * 3)] : c).join('');
+  const planted = (base, list) => {
+    const s = base.split(''), out = [];
+    const put = (p, str) => { for (let i = 0; i < str.length; i++) s[p + i] = str[i]; };
+    for (const [type, a, b, len, div] of list) { const u = rs(len); put(a, u); put(b, type === 'direct' ? mutate(u, div) : rc(mutate(u, div))); out.push({ type, a, b, len }); }
+    return { seq: s.join(''), planted: out };
+  };
+  const lc = ['AT', 'CA', 'CAG', 'A'];
+  let mixBase = '';
+  for (let i = 0; i < 25; i++) mixBase += i % 2 ? rs(1000) : lc[(i / 2) % 4].repeat(1000).slice(0, 1000);
+  const mix = planted(mixBase, [
+    ['direct', 1100, 3300, 40, 0.05], ['direct', 5200, 13400, 60, 0.08], ['direct', 9300, 21500, 35, 0.0],
+    ['direct', 17100, 23200, 80, 0.1], ['inverted', 1500, 7600, 40, 0.05], ['inverted', 11200, 19700, 50, 0.08],
+    ['inverted', 15300, 23700, 30, 0.0]]);
+  planted(rs(5000), [['direct', 300, 2900, 120, 0.06], ['direct', 900, 1300, 25, 0.0], ['direct', 3500, 4600, 300, 0.12],
+    ['inverted', 1700, 2200, 45, 0.05], ['inverted', 4000, 4400, 30, 0.1]]);   // (the item-2 row: keeps the generator in step)
+  const alu = rs(260) + 'AAAAAAAAAAAAAGAAAAAAAAAAAAAACAAAAAAAAAAA';
+  const base = rs(6000).split('');
+  const put = (p, str) => { for (let i = 0; i < str.length; i++) base[p + i] = str[i]; };
+  put(800, alu); put(3900, mutate(alu, 0.12));
+  const ir = rs(40); put(2200, ir); put(2700, rc(ir));
+  put(1600, 'CA'.repeat(25)); put(5000, 'AAT'.repeat(15));
+  return { mix, real6: base.join(''), other: rs(25000) };
+}
+// the table as shown: [kind, text] per row ('g' group, 'p' pair, 'm' pair inside an opened group, 'more')
+const b2Table = (page) => page.evaluate(() => [...document.querySelectorAll('#repeatResults tbody tr')].map(tr => {
+  const kind = tr.classList.contains('rf-group') ? 'g' : tr.classList.contains('rf-member') ? 'm' : tr.classList.contains('rf-more') ? 'more' : 'p';
+  const td = [...tr.children].map(c => c.textContent.trim());
+  return kind === 'p' || kind === 'm' ? [kind, td[1], td[2]] : [kind, td.join(' ').replace(/\s+/g, ' ')];
+}));
+const b2Hit = (row, p) => { const a = parseInt(row[1], 10) - 1, b = parseInt(row[2], 10) - 1; return Math.abs(a - p.a) < 8 && Math.abs(b - p.b) < 8; };
+
+check('Repeat Finder B2 (owner 2026-10-31): mixed row, Direct: 4 microsatellite group rows, then the 4 planted pairs at ranks 5-8; a group opens to its pairs', async (page) => {
+  const { mix, other } = b2Inputs();
+  await loadFasta(page, `>mix\n${mix.seq}\n>o\n${other}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 10, maxDiv: 15 });
+  const rows = await b2Table(page);
+  const pl = mix.planted.filter(p => p.type === 'direct');
+  const plRanks = pl.map(p => rows.findIndex(r => r[0] === 'p' && b2Hit(r, p)) + 1).sort((x, y) => x - y);
+  const groupsTop4 = rows.slice(0, 4).every(r => r[0] === 'g');
+  // open the first group: its pairs come under it, 20, then "show 20 more"
+  await page.click('#repeatResults tr.rf-group');
+  await page.waitForTimeout(200);
+  const opened = await b2Table(page);
+  const members = opened.filter(r => r[0] === 'm').length, more = opened.some(r => r[0] === 'more');
+  const hl = await page.evaluate(() => [...state.repeatHighlights.keys()]);
+  await page.click('#repeatResults tr.rf-more');
+  await page.waitForTimeout(200);
+  const members2 = (await b2Table(page)).filter(r => r[0] === 'm').length;
+  // a pair inside the group highlights and goes to its row like any other
+  await page.click('#repeatResults tr.rf-member');
+  await page.waitForTimeout(200);
+  const hl2 = await page.evaluate(() => [...state.repeatHighlights.keys()]);
+  const out = { text: f.text.slice(0, 160), first5: rows.slice(0, 5).map(r => r.slice(0, 2).join(' ')), plRanks, members, more, members2, hl, hl2 };
+  const ok = groupsTop4 && JSON.stringify(plRanks) === JSON.stringify([5, 6, 7, 8]) && /microsatellite groups/.test(f.text)
+    && /showing the 100 longest of/.test(f.text) && members === 20 && more && members2 === 40
+    && hl.some(k => /^direct-g\d+$/.test(k)) && hl2.some(k => /^direct-\d+$/.test(k));
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
+check('Repeat Finder B2 (owner 2026-10-31): Inverted on the mixed row puts the 3 planted pairs right after the (AT)n group; the realistic 6 kb row lists the Alu-like pair and the 40-bp inverted repeat first', async (page) => {
+  const { mix, real6, other } = b2Inputs();
+  await loadFasta(page, `>mix\n${mix.seq}\n>o\n${other}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  await rfFind(page, { mode: 'inverted', scope: 'single', minLen: 10, maxDiv: 15 });
+  const inv = await b2Table(page);
+  const pl = mix.planted.filter(p => p.type === 'inverted');
+  const invRanks = pl.map(p => inv.findIndex(r => r[0] === 'p' && b2Hit(r, p)) + 1).sort((x, y) => x - y);
+  await loadFasta(page, `>real6\n${real6}\n>o\n${other.slice(0, 6000)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const fd = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 10, maxDiv: 15 });
+  const dir = await b2Table(page);
+  const fi = await rfFind(page, { mode: 'inverted', scope: 'single', minLen: 10, maxDiv: 15 });
+  const inv6 = await b2Table(page);
+  const out = { inv: inv.slice(0, 5).map(r => r.slice(0, 2).join(' ')), invRanks, dir: dir.slice(0, 4).map(r => r.slice(0, 3).join(' ')), inv6: inv6.slice(0, 2).map(r => r.slice(0, 3).join(' ')), textD: fd.text.slice(0, 120) };
+  const ok = inv[0][0] === 'g' && /\(AT\)n/.test(inv[0][1]) && JSON.stringify(invRanks) === JSON.stringify([2, 3, 4])
+    && dir[0][0] === 'p' && b2Hit(dir[0], { a: 800, b: 3900 }) && dir.slice(1, 3).every(r => r[0] === 'g')
+    && inv6[0][0] === 'p' && b2Hit(inv6[0], { a: 2200, b: 2700 });
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
+// No pair is lost or added by the grouping: the pairs of the groups and the other pairs together are exactly the pairs
+// of the ungrouped search (no list cap), for Direct and Inverted, on one and on several sequences (groups per sequence).
+check('Repeat Finder B2 (owner 2026-10-31): grouped pairs plus the other pairs are exactly the ungrouped pairs; groups are per sequence', async (page) => {
+  const { mix, real6 } = b2Inputs();
+  await loadFasta(page, `>mix\n${mix.seq}\n>real6\n${real6 + mix.seq.slice(0, 19000)}\n`);
+  const out = await page.evaluate(() => {
+    const res = {};
+    for (const mode of ['direct', 'inverted']) for (const i of [0, 1]) {
+      const seq = state.seqs[i].seq;
+      const key = (p) => `${p.posA}/${p.posB}/${p.length}/${p.divergence}`;
+      const flat = _findRepeats(seq, 10, 15, mode, { cap: Infinity }).map(key).sort();
+      const g = _findRepeatsGrouped(seq, 10, 15, mode, { cap: Infinity });
+      const grouped = g.map(key).sort();
+      const inGroups = g.filter(p => p.groupKey !== undefined).length;
+      res[`${mode}/${i}`] = { same: JSON.stringify(flat) === JSON.stringify(grouped), pairs: flat.length, inGroups, groups: g.groups.map(x => `(${x.unit})n ${x.n}`).join(', '),
+        countsAgree: g.groups.reduce((s, x) => s + x.n, 0) === inGroups };
+    }
+    return res;
+  });
+  // All: each sequence has its own groups (both have (AT)n etc.)
+  await page.evaluate(() => openRepeatFinder(0));
+  await rfFind(page, { mode: 'direct', scope: 'all', minLen: 10, maxDiv: 15 });
+  const perSeq = await page.evaluate(() => (_lastRepeatView.groups || []).map(g => `${g.seqName}:(${g.unit})n`));
+  const ok = Object.values(out).every(x => x.same && x.countsAgree) && out['direct/0'].inGroups > 1000
+    && perSeq.filter(x => x.startsWith('mix:')).length >= 4 && perSeq.filter(x => x.startsWith('real6:')).length >= 4;
+  return { pass: ok, detail: JSON.stringify({ out, perSeq }) };
+}, { timeoutMs: 180000 });
 
 // Canvas Block prototype 2026-10-30 found it: dragging a Canvas scrollbar marked the view dirty on every step, so each
 // step was a full redraw (p95 75-92 ms) instead of the frame copy the wheel uses (p95 ~4 ms).

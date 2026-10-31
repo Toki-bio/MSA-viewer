@@ -34749,6 +34749,89 @@ function* _findRepeatsSteps(seq, minLen, maxDivPct, type, opts = {}) {
 }
 
 /**
+ * Direct and Inverted pairs inside microsatellites, grouped (owner's decision 2026-10-31, option B2). In low-complexity
+ * sequence the long pairs of one microsatellite against itself or another of the same unit ((AT)n against (AT)n) filled
+ * the list of 100: in a 25 kb row of mixed low-complexity and random blocks, 99 of the 100 rows, and the 4 planted
+ * direct repeats ranked 742-1762 of 6,179.
+ * - The Tandem search (Min array length TANDEM_GROUP_MIN_LEN, Max divergence TANDEM_GROUP_MAX_DIV, whatever the
+ *   panel's settings) gives the sequence's tandem arrays.
+ * - A pair both of whose copies lie (at least 70 % of each) inside tandem arrays of the same unit, up to rotation (and
+ *   for Inverted, copy B's array may have the reverse-complement unit), joins that unit's group: one row per unit,
+ *   "(AT)n, 1,654 pairs (in 4 tandem arrays, 4,002 bp)", ranked by its longest pair. Other pairs are rows as before.
+ * - Up to `cap` rows (groups and pairs) are kept, longest first; every pair of a kept group is kept (the panel shows
+ *   them 20 at a time). results.groups: [{ key, unit, unitLen, n, longest, arrays: [{start, end}], bp }], each pair of a
+ *   group has .groupKey; results.rowsTotal / rowsShown: rows before and after the cap; results.total: pairs found.
+ * - No pair is lost or added: the pairs are those of _findRepeats with no cap, the groups only gather them.
+ */
+const TANDEM_GROUP_MIN_LEN = 20;
+const TANDEM_GROUP_MAX_DIV = 15;
+function _findRepeatsGrouped(seq, minLen, maxDivPct, type, opts = {}) {
+    return _drainRepeatSteps(_findRepeatsGroupedSteps(seq, minLen, maxDivPct, type, opts));
+}
+function* _findRepeatsGroupedSteps(seq, minLen, maxDivPct, type, opts = {}) {
+    const protein = !!opts.protein;
+    const rowCap = opts.cap || 100;
+    const stop = opts.stop || null;
+    const g = _findRepeatsSteps(seq, minLen, maxDivPct, type, { ...opts, cap: Infinity });
+    let r;
+    while (!(r = g.next()).done) yield 0.85 * r.value;
+    const all = r.value;
+    let arrays = [];
+    if (all.length && !(stop && stop.now)) {
+        const seqU = protein ? seq.toUpperCase() : seq.toUpperCase().replace(/U/g, 'T');
+        const tg = _findTandemRepeatsSteps(seqU, TANDEM_GROUP_MIN_LEN, TANDEM_GROUP_MAX_DIV, { protein, cap: Infinity });
+        while (!(r = tg.next()).done) yield 0.85 + 0.1 * r.value;
+        arrays = r.value.slice().sort((x, y) => x.start - y.start);
+    }
+    // the unit up to rotation (CA = AC); inverted: copy B is read on the other strand
+    const canon = (u) => { let best = u; for (let i = 1; i < u.length; i++) { const v = u.slice(i) + u.slice(0, i); if (v < best) best = v; } return best; };
+    const keyOf = arrays.map(a => canon(a.unit));
+    const rcKeyOf = arrays.map(a => protein ? null : canon(_revComp(a.unit)));
+    const arrayAt = (s, e) => {   // the array holding at least 70 % of [s, e), or -1
+        for (let i = 0; i < arrays.length && arrays[i].start < e; i++) {
+            const A = arrays[i];
+            if (Math.min(e, A.end) - Math.max(s, A.start) >= 0.7 * (e - s)) return i;
+        }
+        return -1;
+    };
+    const groups = new Map();
+    let done = 0;
+    for (const p of all) {
+        if ((++done & 1023) === 0) yield 0.95 + 0.05 * done / all.length;
+        const ia = arrayAt(p.posA, p.posA + p.length);
+        if (ia < 0) continue;
+        const ib = arrayAt(p.posB, p.posB + p.length);
+        if (ib < 0 || arrays[ib].unitLen !== arrays[ia].unitLen) continue;
+        const key = keyOf[ia];
+        if (keyOf[ib] !== key && !(type === 'inverted' && rcKeyOf[ib] === key)) continue;
+        let grp = groups.get(key);
+        if (!grp) { grp = { key, unit: key, unitLen: arrays[ia].unitLen, n: 0, longest: 0, arr: new Set() }; groups.set(key, grp); }
+        grp.n++;
+        grp.longest = Math.max(grp.longest, p.length);
+        grp.arr.add(ia); grp.arr.add(ib);
+        p.groupKey = key;
+    }
+    // rows: groups and the other pairs, longest first (a group before a pair of its length); keep `cap` rows
+    const rows = [...groups.values(), ...all.filter(p => p.groupKey === undefined)];
+    rows.sort((x, y) => ((y.longest ?? y.length) - (x.longest ?? x.length)) || ((y.key ? 1 : 0) - (x.key ? 1 : 0)));
+    const keptRows = rows.slice(0, rowCap);
+    const keptGroups = new Set(keptRows.filter(x => x.key).map(x => x.key)), keptPairs = new Set(keptRows);
+    const out = all.filter(p => p.groupKey === undefined ? keptPairs.has(p) : keptGroups.has(p.groupKey));
+    out.groups = keptRows.filter(x => x.key).map(grp => {
+        const arrs = [...grp.arr].sort((x, y) => x - y).map(i => ({ start: arrays[i].start, end: arrays[i].end }));
+        return { key: grp.key, unit: grp.unit, unitLen: grp.unitLen, n: grp.n, longest: grp.longest, arrays: arrs,
+            bp: arrs.reduce((s, a) => s + a.end - a.start, 0) };
+    });
+    out.total = all.length;
+    out.rowsTotal = rows.length;
+    out.rowsShown = keptRows.length;
+    out.groupedPairs = [...groups.values()].reduce((s, x) => s + x.n, 0);
+    out.groupsTotal = groups.size;
+    for (const k of ['searchedTo', 'stoppedByUser', 'seedLimited']) if (all[k] !== undefined) out[k] = all[k];
+    return out;
+}
+
+/**
  * Tandem arrays (2026-10-30, owner's decision: "Min length" is the length of the whole array, all copies together;
  * units are tried from 1 upward, so mononucleotide runs, microsatellites and minisatellites are all found).
  *
@@ -34920,22 +35003,63 @@ function* _findTandemRepeatsSteps(seq, minLen, maxDivPct, opts = {}) {
                 s = seg[0]; e = seg[1];
             }
             if (s < 0) continue;
-            const L = e - s;
+            let L = e - s;
             if (L < need) {
                 work.push([a, s], [e, b]);
                 continue;
             }
+            // The ends (owner's decision 2026-10-31, "include"): the array is the best-scoring stretch at the divergence
+            // limit d, so a substitution in the first few bases of the first copy (or the last few of the last) left the
+            // agreeing bases before (after) it outside: a 12-bp unit whose first copy differs at its 6th and 9th bases
+            // started after the 9th. Each end is now extended over the best-scoring run beyond it, scored +1 per base
+            // agreeing with the consensus unit (in phase) and -max(7/3, (1 - 2d)/(2d)) per other base, i.e. a run that
+            // agrees at more than max(70 %, 1 - 2d) of its bases; the extension starts and ends on an agreeing base and
+            // the whole array stays within d. The run must hold at least 6 agreeing bases (ACACA after two substitutions
+            // before a (CA)n is chance), and only an array that reached Min array length without it is extended (else 11
+            // chance arrays of 10-18-bp units in 100 kb of random sequence reached 20 bp). Random flank agrees at ~25 %
+            // and is barely taken (measured over 3,000 planted arrays between random flanks; see the regression check).
+            if (d > 0) {
+                const agree = (i) => code[i] >= 0 && code[i] === cons[((i - a) % p + p) % p];
+                const pen2 = Math.max(7 / 3, (1 - 2 * d) / (2 * d));   // at least 70 % agreement, whatever d
+                const drop = 3 * pen2 + 3;
+                const reach = (from, step) => {   // the furthest end of the best-scoring run beyond `from` with 6+ agreeing bases
+                    let cur = 0, best = 0, at = from, agreeing = 0;
+                    for (let i = from + step; i >= 0 && i < n; i += step) {
+                        const ok = agree(i);
+                        if (ok) agreeing++;
+                        cur += ok ? 1 : -pen2;
+                        if (cur > best && agreeing >= 6) { best = cur; at = i; } else if (best - cur > drop) break;
+                    }
+                    return at;
+                };
+                const mmIn = (x, y) => { let m = 0; for (let k = x; k < y; k++) if (!agree(k)) m++; return m; };
+                const ns = reach(s, -1), ne = reach(e - 1, 1) + 1;
+                const within = (x, y) => mmIn(x, y) <= Math.floor((y - x) * d + 1e-9);
+                if (ns < s || ne > e) {
+                    if (within(ns, ne)) { s = ns; e = ne; }
+                    else if (ns < s && within(ns, e)) s = ns;
+                    else if (ne > e && within(s, ne)) e = ne;
+                }
+                L = e - s;
+            }
             K0 = explainedBy(s, e, p);
             if (K0) {
-                work.push([a, Math.min(b, K0.start)], [Math.max(a, K0.end), b]);
+                // the array, extended past [a, b), can be explained by an array lying beyond [a, b): then nothing of
+                // [a, b) is left out by it, and pushing [a, b) again looped for ever
+                for (const [x, y] of [[a, Math.min(b, K0.start)], [Math.max(a, K0.end), b]]) if (y - x < b - a) work.push([x, y]);
                 continue;
             }
             let mism = 0;
-            for (let k = s; k < e; k++) if (!(code[k] >= 0 && code[k] === cons[(k - a) % p])) mism++;
+            for (let k = s; k < e; k++) if (!(code[k] >= 0 && code[k] === cons[((k - a) % p + p) % p])) mism++;
             let unit = '';
-            for (let k = 0; k < p; k++) unit += letter(cons[(s - a + k) % p]);
+            for (let k = 0; k < p; k++) unit += letter(cons[((s - a + k) % p + p) % p]);
+            // a consensus unit that is itself repeated (AAAAA) is its shortest period (A): the same bases agree with it,
+            // so the mismatches are the same (an A-rich tail at 12 % came out as (AAAAA)n once its ends were extended)
+            let q = p;
+            for (let r = 1; r < p; r++) if (p % r === 0 && unit === unit.slice(0, r).repeat(p / r)) { q = r; break; }
+            if (q < p) unit = unit.slice(0, q);
             const idx = kept.length;
-            kept.push({ start: s, end: e, unitLen: p, copies: Math.round(L / p * 10) / 10, length: L, unit,
+            kept.push({ start: s, end: e, unitLen: q, copies: Math.round(L / q * 10) / 10, length: L, unit,
                 divergence: (mism / L * 100).toFixed(1), mismatches: mism });
             for (let k = s; k < e; k++) if (owner[k] < 0) owner[k] = idx;
             work.push([a, s], [e, b]);
@@ -34943,12 +35067,16 @@ function* _findTandemRepeatsSteps(seq, minLen, maxDivPct, opts = {}) {
     }
 
     // a short array wholly inside a longer array of a longer unit is part of that unit
-    const byStart = kept.slice().sort((x, y) => (x.start - y.start) || (y.length - x.length));
+    // Two units can give the very same stretch (since the ends are extended, 2026-10-31: an A-rich tail at 12 % came out
+    // as (AAAAA)n and as a 16-bp unit over the same 41 bp): it is one array, listed with the smaller unit.
+    const byStart = kept.slice().sort((x, y) => (x.start - y.start) || (y.length - x.length) || (x.unitLen - y.unitLen));
     const active = [];
     const listed = [];
     for (const r of byStart) {
         for (let k = active.length - 1; k >= 0; k--) if (active[k].end <= r.start) active.splice(k, 1);
         if (active.some(f => f.end >= r.end && f.unitLen > r.unitLen && f.length > r.length)) continue;
+        // not listed, but still covers what lies inside it as before
+        if (active.some(f => f.start === r.start && f.end === r.end && f.unitLen < r.unitLen)) { active.push(r); continue; }
         listed.push(r);
         active.push(r);
     }
@@ -35618,7 +35746,7 @@ function _startRepeatJob(o) {
     const { resultsEl, mode, targets } = o;
     const M = targets.length;
     const job = { ...o, M, i: 0, gen: null, frac: 0, paused: false, stop: { now: false }, cancelled: false,
-        allResults: [], notes: [], displayName: '', totalLen: 0, done: 0, partial: false,
+        allResults: [], notes: [], displayName: '', totalLen: 0, done: 0, partial: false, groups: [],
         t0: performance.now(), slices: 0, maxSliceMs: 0 };
     _repeatJob = job;
     _setRepeatRunning(true);
@@ -35679,7 +35807,8 @@ function _repeatJobStep(job) {
                 while (job.i < job.M && !job.targets[job.i].seq) job.i++;
                 if (job.i >= job.M || job.stop.now) { _finishRepeatJob(job); return; }
                 const t = job.targets[job.i];
-                job.gen = _findRepeatsSteps(t.seq, job.minLen, job.maxDiv, job.mode, { protein: job.protein, stop: job.stop });
+                // Direct/Inverted: pairs inside microsatellites grouped by unit (owner 2026-10-31, B2)
+                job.gen = (job.mode === 'tandem' ? _findRepeatsSteps : _findRepeatsGroupedSteps)(t.seq, job.minLen, job.maxDiv, job.mode, { protein: job.protein, stop: job.stop });
                 job.frac = 0;
             }
             const r = job.gen.next();
@@ -35715,7 +35844,9 @@ function _collectRepeatJobRow(job, t, seqResults) {
     for (let c = 0; c < t.fullSeq.length; c++) {
         if (!' -.'.includes(t.fullSeq[c])) { gs2al[gs++] = c; }
     }
-    if (seqResults.total > seqResults.length) notes.push(`showing the ${seqResults.length} longest of ${seqResults.total}${where}`);
+    if (seqResults.rowsTotal != null) {   // grouped Direct/Inverted: rows are groups and pairs
+        if (seqResults.rowsTotal > seqResults.rowsShown) notes.push(`showing the ${seqResults.rowsShown} longest of ${seqResults.rowsTotal}${where}`);
+    } else if (seqResults.total > seqResults.length) notes.push(`showing the ${seqResults.length} longest of ${seqResults.total}${where}`);
     if (seqResults.stoppedByUser) {
         if (mode === 'tandem') notes.push(`stopped by you${where}: units up to ${seqResults.maxUnit} ${unit} searched`);
         else notes.push(`stopped by you${where} at ${seqResults.searchedTo ?? t.seq.length} of ${t.seq.length} ${unit}`);
@@ -35723,7 +35854,21 @@ function _collectRepeatJobRow(job, t, seqResults) {
     if (seqResults.unitLimited) notes.push(`units up to ${seqResults.maxUnit} ${unit} searched${where} (work limit; long sequence)`);
     if (seqResults.seedLimited && !notes.some(x => /exact run of/.test(x))) notes.push(`at ${minLen} ${unit} and ${maxDiv}% divergence, copies that share no exact run of ${seqResults.seedLimited} ${unit} can be missed (raise Min length or lower Max divergence)`);
     const row = state.seqs.indexOf(t.obj);
+    // this sequence's microsatellite groups (B2), their arrays in alignment columns; a pair's .group is the group's index
+    const gidOf = new Map();
+    if (seqResults.rowsTotal != null) {
+        job.ungroupedTotal = (job.ungroupedTotal || 0) + seqResults.rowsTotal - (seqResults.groupsTotal || 0);
+        job.groupedPairs = (job.groupedPairs || 0) + (seqResults.groupedPairs || 0);
+        job.rowsTotal = (job.rowsTotal || 0) + seqResults.rowsTotal;
+        for (const g of seqResults.groups || []) {
+            const arrays = g.arrays.map(A => [gs2al[A.start] ?? A.start, (gs2al[A.end - 1] ?? (A.end - 1)) + 1]);
+            gidOf.set(g.key, job.groups.length);
+            job.groups.push({ id: job.groups.length, unit: g.unit, unitLen: g.unitLen, n: g.n, longest: g.longest, bp: g.bp,
+                arrays, seqIndex: row >= 0 ? row : t.index, obj: t.obj, seqName: t.name });
+        }
+    }
     for (const r of seqResults) {
+        if (r.groupKey !== undefined) r.group = gidOf.get(r.groupKey);
         r.seqIndex = row >= 0 ? row : t.index;
         r.obj = t.obj;
         r.seqName = t.name;
@@ -35778,7 +35923,10 @@ function _finishRepeatJob(job) {
     _lastRepeatResults = allResults;
     const name = targets.length === 1 ? job.displayName : `${job.cancelled ? searched : targets.length} sequences`;
     // obj: the sequence a One-sequence table is about, so reopening on another sequence does not keep it
-    _lastRepeatView = { mode, name, totalLen: job.totalLen, unit, note: notes.join('; '), obj: scope === 'single' && targets.length === 1 ? targets[0].obj : null };
+    _lastRepeatView = { mode, name, totalLen: job.totalLen, unit, note: notes.join('; '), obj: scope === 'single' && targets.length === 1 ? targets[0].obj : null,
+        // B2: microsatellite groups (each { id, unit, n, longest, bp, arrays: [[col, endCol)], seqIndex, obj }) and the
+        // pairs each shows when opened (20 at a time)
+        groups: job.groups, groupedPairs: job.groupedPairs || 0, ungroupedTotal: job.ungroupedTotal || 0, expanded: new Map() };
     _renderRepeatResultsHTML(resultsEl, allResults, mode, name, job.totalLen, _lastRepeatView);
 }
 
@@ -36033,15 +36181,22 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength, view = 
     const multi = new Set(results.map(r => r.seqIndex)).size > 1;
     const kind = { tandem: 'tandem', direct: 'direct', inverted: 'inverted' }[mode] || mode;
     const noun = mode === 'tandem' ? 'array' : 'repeat';
-    let html = `<div class="rf-summary"><span class="rf-big">${results.length} ${kind} ${noun}${results.length === 1 ? '' : 's'}</span>` +
+    // B2 (owner 2026-10-31): Direct/Inverted pairs inside microsatellites shown as one row per unit and sequence
+    const groups = mode !== 'tandem' && view.groups?.length ? view.groups : null;
+    const fmt = (x) => Number(x).toLocaleString('en-US');
+    const big = groups
+        ? `${view.ungroupedTotal ? `${fmt(view.ungroupedTotal)} ${kind} repeat${view.ungroupedTotal === 1 ? '' : 's'} and ` : ''}${groups.length} microsatellite group${groups.length === 1 ? '' : 's'} (${fmt(view.groupedPairs)} ${kind} pairs)`
+        : `${results.length} ${kind} ${noun}${results.length === 1 ? '' : 's'}`;
+    let html = `<div class="rf-summary"><span class="rf-big">${big}</span>` +
         `<span class="rf-chip">${esc(seqName || '')}${seqLength ? `, ${seqLength} ${unit}` : ''}</span>` +
         (view.note ? `<span class="rf-chip">${esc(view.note)}</span>` : '') + '</div>' +
-        '<div class="rf-hint">Click a row to highlight the repeat in its sequence; click again to remove.</div>';
+        '<div class="rf-hint">Click a row to highlight the repeat in its sequence; click again to remove.' +
+        (groups ? ' Click a ▸ microsatellite row to list its pairs and highlight its arrays.' : '') + '</div>';
     const head = mode === 'tandem'
         ? '<th style="width:26px"></th>' + (multi ? '<th>Sequence</th>' : '') + '<th class="rf-num-cell">Columns</th><th class="rf-num-cell" title="Unit length (period)">Unit</th><th class="rf-num-cell" title="Array length / unit length; a partial last unit counts">Copies</th><th class="rf-num-cell" title="Array length, all copies together">Length</th><th class="rf-num-cell" title="Mismatches against the consensus unit, per base of the array">Div.</th><th>Consensus unit</th><th style="width:22px"></th>'
         : '<th style="width:26px"></th>' + (multi ? '<th>Sequence</th>' : '') + '<th class="rf-num-cell">Copy A</th><th class="rf-num-cell">Copy B</th><th class="rf-num-cell">Length</th><th class="rf-num-cell">Div.</th><th>Sequence of copy A</th><th style="width:22px"></th>';
     html += `<table class="rf-table"><thead><tr>${head}</tr></thead><tbody>`;
-    results.forEach((r, i) => {
+    const pairRow = (r, i, cls) => {
         const color = colors[i % colors.length];
         const rid = mode + '-' + i;
         const active = hl.has(rid);
@@ -36061,12 +36216,41 @@ function _renderRepeatResultsHTML(el, results, mode, seqName, seqLength, view = 
             r._info = { segs: segs.split(';').map(x => x.split('-').map(Number)), row: r.seqIndex, color: null };
             _anchorRepeat(r._info);
         }
-        html += `<tr data-repeat-id="${rid}" data-row="${r.seqIndex ?? ''}" data-segs="${segs}" data-color="${color}" data-active="${active ? '1' : ''}"` +
+        html += `<tr${cls ? ` class="${cls}"` : ''} data-repeat-id="${rid}" data-row="${r.seqIndex ?? ''}" data-segs="${segs}" data-color="${color}" data-active="${active ? '1' : ''}"` +
             `${active ? ` style="background:${color}55"` : ''} onclick="_toggleRepeatHighlight(this)">` +
             `<td><span class="rf-swatch" style="background:${color}"></span></td>` +
             (multi ? `<td class="rf-name" title="${esc(r.seqName || '')}">${esc(r.seqName || '')}</td>` : '') + cells +
             `<td><button class="rf-x repeat-remove-btn" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">×</button></td></tr>`;
-    });
+    };
+    if (!groups) results.forEach((r, i) => pairRow(r, i));
+    else {
+        // rows of each sequence: its groups and its other pairs, longest first (a group by its longest pair); the pairs of
+        // an opened group under it, 20 at a time
+        const members = new Map(groups.map(g => [g.id, []]));
+        const order = [];   // [seqIndex, length, isGroup, payload]
+        results.forEach((r, i) => { if (r.group != null && members.has(r.group)) members.get(r.group).push(i); else order.push([r.seqIndex, r.length, 0, i]); });
+        groups.forEach(g => order.push([g.seqIndex, g.longest, 1, g]));
+        const seqOrder = [...new Set(results.map(r => r.seqIndex))];
+        order.sort((x, y) => (seqOrder.indexOf(x[0]) - seqOrder.indexOf(y[0])) || (y[1] - x[1]) || (y[2] - x[2]));
+        for (const [, , isGroup, x] of order) {
+            if (!isGroup) { pairRow(results[x], x); continue; }
+            const g = x, rid = `${mode}-g${g.id}`, open = view.expanded?.has(g.id), active = hl.has(rid);
+            const color = colors[g.id % colors.length];
+            const segs = g.arrays.map(([a, z]) => `${a}-${z}`).join(';');
+            const label = `(${esc(g.unit.length > 24 ? g.unit.slice(0, 24) + '…' : g.unit)})n, ${fmt(g.n)} pair${g.n === 1 ? '' : 's'}`;
+            html += `<tr class="rf-group" data-group="${g.id}" data-repeat-id="${rid}" data-row="${g.seqIndex ?? ''}" data-segs="${segs}" data-color="${color}" data-active="${active ? '1' : ''}"` +
+                `${active ? ` style="background:${color}55"` : ''} onclick="_toggleRepeatGroup(this)" title="${open ? 'Close the list of' : 'List'} the pairs of this microsatellite unit${open ? '' : ' and highlight its arrays'}">` +
+                `<td><span class="rf-caret">${open ? '▾' : '▸'}</span></td>` +
+                (multi ? `<td class="rf-name" title="${esc(g.seqName || '')}">${esc(g.seqName || '')}</td>` : '') +
+                `<td colspan="2"><strong>${label}</strong> (in ${g.arrays.length} tandem array${g.arrays.length === 1 ? '' : 's'}, ${fmt(g.bp)} ${unit})</td>` +
+                `<td class="rf-num-cell">${g.longest}</td><td></td><td class="rf-name">longest pair</td>` +
+                `<td><button class="rf-x repeat-remove-btn" title="Remove this highlight" onclick="event.stopPropagation();_removeRepeatHighlight(this.closest('tr'))">×</button></td></tr>`;
+            if (!open) continue;
+            const list = members.get(g.id), shown = Math.min(list.length, view.expanded.get(g.id) || 20);
+            for (let k = 0; k < shown; k++) pairRow(results[list[k]], list[k], 'rf-member');
+            if (shown < list.length) html += `<tr class="rf-more" onclick="_moreRepeatGroup(${g.id})"><td></td><td colspan="${multi ? 7 : 6}">show ${Math.min(20, list.length - shown)} more of this group (${fmt(list.length - shown)} left)</td></tr>`;
+        }
+    }
     html += '</tbody></table>';
     el.innerHTML = html;
 }
@@ -36117,6 +36301,35 @@ function _toggleRepeatHighlight(row) {
     else requestAnimationFrame(() => _scrollToColumn(info.segs[0]?.[0] ?? 0));
     row.dataset.active = '1';
     row.style.background = info.color + '55';
+}
+
+// B2: open or close a microsatellite group row: its pairs are listed under it (20 at a time) and its arrays highlighted
+function _toggleRepeatGroup(tr) {
+    const v = _lastRepeatView;
+    const id = parseInt(tr.dataset.group, 10);
+    if (!v || !Number.isInteger(id)) return;
+    if (!v.expanded) v.expanded = new Map();
+    const rid = tr.dataset.repeatId, hl = state.repeatHighlights;
+    if (v.expanded.has(id)) {
+        v.expanded.delete(id);
+        if (hl.has(rid)) { hl.delete(rid); _paintRepeatHighlight(null, false); }
+    } else {
+        v.expanded.set(id, 20);
+        const info = _repeatInfoFromRow(tr);
+        _anchorRepeat(info);
+        hl.set(rid, info);
+        _paintRepeatHighlight(info, true);
+        if (info.row !== null) { const w = _repeatView(info); if (w.row >= 0) _showRowInAlignment(w.row, w.segs[0]?.[0]); }
+    }
+    const el = document.getElementById('repeatResults');
+    if (el) _renderRepeatResultsHTML(el, _lastRepeatResults, v.mode, v.name || '', v.totalLen, v);
+}
+function _moreRepeatGroup(id) {
+    const v = _lastRepeatView;
+    if (!v?.expanded?.has(id)) return;
+    v.expanded.set(id, v.expanded.get(id) + 20);
+    const el = document.getElementById('repeatResults');
+    if (el) _renderRepeatResultsHTML(el, _lastRepeatResults, v.mode, v.name || '', v.totalLen, v);
 }
 
 function _applyLineHighlights(dataSpan) {
