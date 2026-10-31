@@ -12493,6 +12493,94 @@ check('Statistics windowed matrix: columns windowed too, the cell under the poin
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+// ---- Hover tooltip after a scroll under a still pointer (owner, 2026-10-31) ----
+// Before the fix, in Canvas and Canvas Block a wheel scroll (or a scrollbar drag, page key, go-to) with the
+// mouse held still left the hover tooltip on the residue that had been under the pointer BEFORE the scroll:
+// on mito62x16808 the tooltip still said "seq0028: 57" while seq0041 was under the pointer. The tooltip must
+// now name what is under the pointer once the scroll settles (or be hidden). Full and DOM Block (windowed,
+// 1500x4000) were already right on 0a84b3b - the browser's own hover update after a DOM scroll fires
+// mouseover on the new span - and their checks guard that this stays so. The expected text is computed
+// here from the element at the point (Full / DOM Block) or from the row/column geometry (Canvas), not from
+// the hover code; Canvas Block's banded geometry is read through _canvasHitTest, which the fix does not touch.
+const TIP_ORACLE = (pt) => {
+  const t = document.getElementById('tooltip');
+  const shown = t && t.style.display !== 'none' ? t.textContent : null;
+  const e = document.elementFromPoint(pt.x, pt.y);
+  let cell = null;
+  if (e && e.tagName === 'CANVAS' && typeof _canvasState !== 'undefined' && _canvasState.canvas) {
+    const cs = _canvasState, m = cs.metrics;
+    if (cs.layout && cs.layout.kind === 'block') { const h = _canvasHitTest(pt.x, pt.y); if (h && h.row >= 0) cell = { row: h.row, col: h.col }; }
+    else {
+      const r = cs.canvas.getBoundingClientRect();
+      cell = { row: Math.floor((pt.y - r.top - (m.headerH || m.charH) + cs.offsetY) / (cs.rowPitch || m.charH)), col: Math.floor((pt.x - r.left - m.nameW + cs.offsetX) / m.charW) };
+    }
+  } else if (e && e.matches('.seq-data > span[data-pos]')) {
+    const ln = e.closest('.seq-line');
+    if (ln && !ln.classList.contains('consensus-line')) cell = { row: +ln.dataset.seqIndex, col: +e.dataset.pos };
+  }
+  const s = cell && state.seqs[cell.row];
+  const want = s && s.seq[cell.col] && s.seq[cell.col] !== '-' ? s.header + ': ' + s.gaplessPositions[cell.col] : null;
+  return { shown, want, el: e ? e.tagName + '.' + (e.className || '') : null };
+};
+const tipOk = (r) => r.shown === null || (!!r.want && (r.shown === r.want || r.shown.startsWith(r.want + ' |')));
+// hover, then scroll with the mouse held still: by the wheel, then by moving the scroller/offset as a
+// scrollbar drag or a page key does (no wheel, no pointer event)
+async function tooltipAfterScroll(p, scrollBy) {
+  const pt = { x: 700, y: 520 };
+  await p.mouse.move(pt.x - 9, pt.y - 7); await p.mouse.move(pt.x, pt.y);
+  await p.waitForTimeout(300);
+  const before = await p.evaluate(TIP_ORACLE, pt);
+  for (let i = 0; i < 3; i++) { await p.mouse.wheel(0, 300); await p.waitForTimeout(60); }
+  await settleWheel(p);
+  await p.waitForTimeout(500);
+  const wheel = await p.evaluate(TIP_ORACLE, pt);
+  await p.evaluate(scrollBy);
+  await p.waitForTimeout(600);
+  const bar = await p.evaluate(TIP_ORACLE, pt);
+  const ok = !!before.want && before.shown === before.want
+    && wheel.want !== before.want && tipOk(wheel)
+    && bar.want !== wheel.want && tipOk(bar);
+  return { ok, r: { before, wheel, bar } };
+}
+// a scrollbar drag in Full/DOM Block: the scroller's scrollTop moves (no wheel event)
+const DOM_SCROLL = () => {
+  const c = [document.getElementById('alignmentContainer'), document.scrollingElement].concat([...document.querySelectorAll('#alignmentContainer *')])
+    .find(x => x && x.scrollHeight > x.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(x).overflowY) || x === document.scrollingElement && x.scrollHeight > x.clientHeight + 50);
+  c.scrollTop += 200;
+};
+// a scrollbar drag / page key in Canvas: the offset moves and only the view is redrawn (frame copy)
+const CANVAS_SCROLL = () => { _canvasState.offsetY += 200; _canvasState.scheduleDrawMoved(); };
+
+check('hover tooltip after a scroll under a still pointer: Full names what is now under the pointer', async (page) => {
+  await loadSyntheticFasta(page, 1500, 4000);   // windowed Full (a small Full got Chrome's own hover update)
+  await setMode(page, 'full');
+  const { ok, r } = await tooltipAfterScroll(page, DOM_SCROLL);
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+check('hover tooltip after a scroll under a still pointer: DOM Block names what is now under the pointer', async (page) => {
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'domblock');
+  const { ok, r } = await tooltipAfterScroll(page, DOM_SCROLL);
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+check('hover tooltip after a scroll under a still pointer: Canvas names what is now under the pointer', async (page) => {
+  await loadFasta(page, makeFasta(120, 900));
+  await setMode(page, 'canvas');
+  const { ok, r } = await tooltipAfterScroll(page, CANVAS_SCROLL);
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
+check('Canvas Block: hover tooltip after a scroll under a still pointer names what is now under the pointer', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(40, 1500));
+  await p.waitForTimeout(600);
+  const st = await p.evaluate(CB_STATE);
+  const { ok, r } = await tooltipAfterScroll(p, CANVAS_SCROLL);
+  return { pass: ok && cbIsCanvasBlock(st), detail: JSON.stringify({ st, r }) };
+}));
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

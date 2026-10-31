@@ -6098,6 +6098,34 @@ function _canvasColFromClientX(clientX, clientY) {
 let _canvasHoverCell = null;
 let _gapCursorOn = false, _gapHoverKey = '';   // the gap tools' cursor and outlined cell in Canvas
 
+// Hover after a scroll under a still pointer (owner, 2026-10-31). A wheel, a scrollbar drag, a page key or a
+// go-to moves the Canvas / Canvas Block cells without a pointer event (nothing in the DOM scrolls, so the
+// browser's own post-scroll hover update - which keeps Full and DOM Block right - never reaches the canvas),
+// and the tooltip kept naming the residue that had been under the pointer before the scroll. Now the first
+// moved frame hides it, and once the view has been still for ~100 ms the canvas's own mousemove handler runs
+// once at the resting pointer, so every hover tooltip (residue, consensus, annotation, names and length
+// badges, folds) follows. One timer per scroll, one hit test after it: nothing per frame but a time stamp.
+let _canvasHoverPt = null;   // { canvas, x, y, modifier keys } of the last pointer move over the canvas
+let _canvasRehoverTimer = 0, _canvasRehoverDue = 0;
+const CANVAS_REHOVER_MS = 100;
+function _canvasRehoverSoon() {
+    if (tooltip && tooltip.style.display !== 'none') hideTooltip();   // stale from the first moved frame on
+    _canvasRehoverDue = performance.now() + CANVAS_REHOVER_MS;
+    if (!_canvasRehoverTimer) _canvasRehoverTimer = setTimeout(_canvasRehoverTick, CANVAS_REHOVER_MS);
+}
+function _canvasRehoverTick() {
+    const wait = _canvasRehoverDue - performance.now();
+    if (wait > 1) { _canvasRehoverTimer = setTimeout(_canvasRehoverTick, wait); return; }
+    _canvasRehoverTimer = 0;
+    const p = _canvasHoverPt, canvas = _canvasState.canvas;
+    if (!p || !canvas || p.canvas !== canvas || !canvas.isConnected) return;
+    if (document.elementFromPoint(p.x, p.y) !== canvas) return;   // a dialog or menu now lies over that point
+    const ev = new MouseEvent('mousemove', { bubbles: false, cancelable: true, view: window, clientX: p.x, clientY: p.y,
+        ctrlKey: p.ctrlKey, altKey: p.altKey, shiftKey: p.shiftKey, metaKey: p.metaKey });
+    ev.__vaRehover = true;
+    canvas.dispatchEvent(ev);   // not bubbling: the window's drag handlers never see it
+}
+
 // Phase 4: reusable 1×1 px element positioned at a canvas cell, used as the
 // positioning anchor for showTooltipAt (which calls getBoundingClientRect on
 // its target).  Created lazily so it only exists when Canvas mode is active.
@@ -6725,6 +6753,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         _lastSig = sig;
         const canBlit = !_dirty && same && _lastOffX >= 0 && ((dxDev === 0) !== (dyDev === 0))
             && Math.abs(dxDev) < W && Math.abs(dyDev) < H;
+        if (_canvasHoverPt && (ox !== _lastOffX || oy !== _lastOffY)) _canvasRehoverSoon();   // the cells moved under a still pointer
         _lastOffX = ox; _lastOffY = oy; _dirty = false;
         // Draws what intersects a device-pixel rectangle of the viewport, nothing else.
         const drawClipped = (x0, y0, x1, y1) => {
@@ -7744,6 +7773,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // a modifier-drag (column select) is in progress.
     let _lastTooltipCell = null;
     canvas.addEventListener('mousemove', (e) => {
+        // where the pointer rests, so a scroll under a still pointer can hover again (_canvasRehoverSoon)
+        _canvasHoverPt = { canvas, x: e.clientX, y: e.clientY, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey, metaKey: e.metaKey };
+        if (e.__vaRehover) _lastTooltipCell = null;   // the view moved: the same cell is a new hover (its tooltip was hidden)
         _canvasHoverCell = _canvasHitTest(e.clientX, e.clientY, { aaRows: true });
 
         // Suppress tooltip during pan-drag, selection drag, a Move/Slide or row drag, or column-select mode
@@ -7917,6 +7949,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
 
     // Phase 4: hide tooltip when the mouse leaves the canvas
     canvas.addEventListener('mouseleave', () => {
+        _canvasHoverPt = null;
         _lastTooltipCell = null;
         hideTooltip();
     });
