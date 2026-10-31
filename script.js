@@ -6535,11 +6535,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     function relayout() {
         if (!blockLayout) return false;
         const t0 = performance.now();
-        const slider = parseInt(el('blockSizeSlider')?.value, 10) || 60;
+        const slider = blockSizeRequested();   // the width asked for; the slider shows the width drawn
         const avail = (canvas.width / dpr || 800) - NAME_W - BADGE_GAP - BADGE_W - 4 - 12;   // 12: the vertical scrollbar over the right edge
         const fit = Math.max(10, Math.floor(avail / CHAR_W));
         _canvasState.blockFitCols = fit;   // what fits the window (the Screen button, setBlockSizeToScreen)
         const cols = Math.max(1, Math.min(slider, nSlots, fit));
+        _syncBlockSizeDisplay(Math.min(slider, fit));   // the band width (a short alignment's one band is narrower still)
         if (cols === bandCols && _canvasState.layout) return false;
         const hadLayout = !!_canvasState.layout;
         // where the view is: the band at its top, how far into that band (in its lines), its first slot
@@ -11692,7 +11693,7 @@ function renderAlignment(options = {}) {
         // Canvas dispatch is handled below
     }
 
-    const blockWidth = parseInt(el('blockSizeSlider').value);
+    const blockWidth = blockSizeRequested();
     const nameLen = effectiveNameLength();
     // Update CSS variable for scale ruler padding
     document.documentElement.style.setProperty('--nameLen', nameLen);
@@ -14716,6 +14717,7 @@ function _syncBlockSizeControl() {
         container.style.opacity = isBlocks ? '1' : '0.4';
         container.style.pointerEvents = isBlocks ? 'auto' : 'none';
     }
+    _syncBlockSizeDisplay();   // out of Block: the width asked for, no "fits" note
 }
 
 function syncQuickModeSwitch() {
@@ -15035,6 +15037,60 @@ function _computeLargeAlignmentBlockChars() {
     return Math.max(40, Math.min(300, Math.floor(available / charPx)));
 }
 
+// ---- Block size: the width asked for and the width drawn (owner 2026-10-31) ----
+// The Block size slider and box show the band width DRAWN. When the window holds fewer columns than were
+// asked for, the bands wrap at what fits (at least 10 columns), the note beside the box says "fits (150
+// set)", and the bands grow back to the width asked for when the window is wide enough again. The width
+// asked for (_blockReq) is what the slider, the box, Screen, presets and snapshots set, and what presets
+// and snapshots store. Before, the slider kept showing the width asked for (40 at the least) while the
+// bands were narrower.
+let _blockReq = null;
+let _blockShown = null;   // the value _syncBlockSizeDisplay last put on the slider
+// a width asked for is 40-300 (the slider's range); a band drawn can be narrower, down to 10 (relayout)
+const BLOCK_SIZE_MIN = 40, BLOCK_SIZE_MAX = 300;
+function _clampBlockSize(n) { n = Math.round(Number(n)); return Number.isFinite(n) ? Math.max(BLOCK_SIZE_MIN, Math.min(BLOCK_SIZE_MAX, n)) : null; }
+function blockSizeRequested() {
+    const slider = el('blockSizeSlider');
+    const v = parseInt(slider?.value, 10);
+    // the slider set by anything else than the display (an older path writing its value): a new request
+    if (Number.isFinite(v) && v !== _blockShown) { _blockReq = _clampBlockSize(v); _blockShown = v; }
+    return _blockReq ?? (Number.isFinite(v) ? v : 60);
+}
+// A width asked for (the slider, the box, Screen, a preset, a snapshot): shown at once, drawn at the next render
+function setBlockSizeRequested(n) {
+    const v = _clampBlockSize(n);
+    if (v == null) return;
+    _blockReq = v;
+    _syncBlockSizeDisplay();
+}
+// Show the drawn width on the slider and the box, the width asked for in the note (only when they differ).
+// drawn: the band width of the Block on screen; without it, the last layout's (Block) or the width asked for.
+function _syncBlockSizeDisplay(drawn) {
+    const slider = el('blockSizeSlider'), input = el('blockSizeInput'), note = el('blockSizeSetNote');
+    if (!slider) return;
+    const req = _blockReq ?? (parseInt(slider.value, 10) || 60);
+    _blockReq = req;
+    const L = _canvasState.layout;
+    if (drawn == null) drawn = isBlockLayout() && L && L.kind === 'block' ? Math.min(req, _canvasState.blockFitCols || req) : req;
+    const fitting = drawn < req && isBlockLayout();
+    const shown = fitting ? drawn : req;
+    const min = String(Math.min(40, shown));   // the slider's 40 floor: lower while the window holds fewer
+    if (slider.min !== min) slider.min = min;
+    if (input && input.min !== min) input.min = min;
+    if (!slider._dragging) { slider.value = shown; _blockShown = parseInt(slider.value, 10); updateSliderBackground(slider); }
+    if (input && !input._typing) input.value = shown;   // not under the user's typing (until Enter / leaving the box)
+    const tip = fitting
+        ? `Block size ${req} is set; the window holds ${drawn} columns, so the blocks wrap at ${drawn}. They grow back to ${req} when the window is wider.`
+        : 'Block size in Block mode (40-300 characters)';
+    slider.title = tip;
+    if (input) input.title = tip;
+    if (note) {
+        note.textContent = fitting ? `fits (${req} set)` : '';
+        note.title = fitting ? tip : '';
+        note.style.display = fitting ? '' : 'none';
+    }
+}
+
 // Block (Canvas Block): how many columns fit across the canvas, from the Canvas metrics. The last
 // layout's own figure (relayout) when Block is on screen, else from the cell width the Canvas
 // renderer measured for the current font and the canvas' width. 0 when there are no metrics yet.
@@ -15072,10 +15128,7 @@ function fitBlockSizeBeforeInitialRender() {
     // what fits at render anyway, so this only sets the number)
     const cfit = isBlockLayout() ? _canvasBlockFitChars() : 0;
     const chars = cfit > 0 ? Math.max(40, Math.min(300, cfit)) : _computeLargeAlignmentBlockChars();
-    const slider = el('blockSizeSlider');
-    const input = el('blockSizeInput');
-    if (slider) slider.value = chars;
-    if (input) input.value = chars;
+    setBlockSizeRequested(chars);
 }
 
 function setBlockSizeToScreen() {
@@ -15090,11 +15143,9 @@ function setBlockSizeToScreen() {
     if (isBlockLayout()) {
         const fit = _canvasBlockFitChars();
         if (fit > 0) {
+            // what fits is the width asked for now (40 at the least: below, the bands still wrap at what fits)
             const chars = Math.max(40, Math.min(300, fit));
-            const slider = el('blockSizeSlider');
-            const input = el('blockSizeInput');
-            if (slider) { slider.value = chars; updateSliderBackground(slider); }
-            if (input) input.value = chars;
+            setBlockSizeRequested(chars);
             const L = _canvasState.layout;
             if (!L || Math.max(1, Math.min(chars, L.nSlots, fit)) !== L.bandCols) renderAlignment();
             return;
@@ -15110,11 +15161,8 @@ function setBlockSizeToScreen() {
     // button after a zoom); it is needed, see there.
     if (_isLargeAlignmentPending()) {
         const chars = _computeLargeAlignmentBlockChars();
-        const slider = el('blockSizeSlider');
-        const input = el('blockSizeInput');
-        const prev = parseInt(slider?.value || '200', 10);
-        if (slider) slider.value = chars;
-        if (input) input.value = chars;
+        const prev = blockSizeRequested();
+        setBlockSizeRequested(chars);
         // Redraw with it when it changed (no measuring needed: the estimate is from the zoom).
         // This used to stop at the number for every alignment over 80,000 residues, so after a
         // zoom the Screen button changed the slider while the blocks kept overflowing.
@@ -15145,12 +15193,8 @@ function setBlockSizeToScreen() {
     }
     const available = container.clientWidth - namePx - 20; // 20px safety margin
     const chars = Math.max(40, Math.min(300, Math.floor(available / charPx)));
-    // Update slider and input
-    const slider = el('blockSizeSlider');
-    const input = el('blockSizeInput');
-    const prev = parseInt(slider?.value || '200', 10);
-    if (slider) slider.value = chars;
-    if (input) input.value = chars;
+    const prev = blockSizeRequested();
+    setBlockSizeRequested(chars);
     // Block size only affects Block mode. Canvas/Full/Compact don't reflow to it,
     // so avoid a redundant second full render on load for those modes. In Block
     // mode, re-render only when the computed size actually changed.
@@ -17315,7 +17359,7 @@ function savePreset() {
         zoom: el('zoomSlider').value,
         zoomFormat: 'logSlider',
         mode: el('modeCanvas')?.checked ? 'canvas' : (el('modeBlocks').checked ? 'blocks' : 'single'),
-        blockSize: el('blockSizeSlider').value,
+        blockSize: String(blockSizeRequested()),   // the width asked for, not the narrower one a small window drew
         nameLen: el('nameLengthSlider').value,
         consensusThreshold: el('consensusThreshold').value,
         groupConsensusThreshold: el('groupConsensusThreshold')?.value ?? DEFAULTS.groupConsensusThreshold,
@@ -17371,6 +17415,10 @@ function loadPreset() {
                 updateSliderBackground(sliderEl);
             }
             if (inputElement) inputElement.value = clamped;
+            return;
+        }
+        if (k === 'blockSize') {
+            if (value != null) setBlockSizeRequested(value);
             return;
         }
         if (k === 'zoom') {
@@ -17472,7 +17520,7 @@ function _buildSnapshotPayload(opts = {}) {
             zoomFormat: 'logSlider',
             mode: el('modeCanvas')?.checked ? 'canvas' : (el('modeBlocks')?.checked ? 'blocks' : 'single'),
             residueCase: state.residueCase || 'asis',
-            blockSize: el('blockSizeSlider')?.value,
+            blockSize: String(blockSizeRequested()),   // the width asked for (the slider shows the one drawn)
             nameLen: el('nameLengthSlider')?.value,
             consensusThreshold: el('consensusThreshold')?.value,
             groupConsensusThreshold: el('groupConsensusThreshold')?.value,
@@ -17559,7 +17607,7 @@ function _applySnapshotView(view) {
         }
         setZoom(_sliderToZoom(n));
     });
-    applySliderPair('blockSize', 'blockSizeSlider', 'blockSizeInput');
+    applySliderPair('blockSize', 'blockSizeSlider', 'blockSizeInput', (v) => setBlockSizeRequested(v));
     applySliderPair('nameLen', 'nameLengthSlider', 'nameLengthInput', (v) => setNameLengthUI(v));
     applySliderPair('consensusThreshold', 'consensusThreshold', 'consensusThresholdInput', (v) => setConsensusThresholdUI(v));
     applySliderPair('groupConsensusThreshold', 'groupConsensusThreshold', 'groupConsensusThresholdInput', (v) => setGroupConsensusThresholdUI(v));
@@ -18166,7 +18214,7 @@ function _exportCellClass(base, posData, config) {
 // batch 5 they wrapped at the slider, which Canvas Block can exceed on a narrow window. Every column is
 // exported whatever the view hides (hidden columns, Variable sites only), as from the old DOM Block.
 function _exportBlockWidth() {
-    const slider = parseInt(el('blockSizeSlider')?.value, 10) || 60;
+    const slider = blockSizeRequested();
     const fit = isBlockLayout() && _canvasState.layout?.kind === 'block' ? _canvasState.blockFitCols : 0;
     return fit > 0 ? Math.min(slider, fit) : slider;
 }
@@ -27851,6 +27899,7 @@ function attachUIListeners() {
                 } else {
                     input.value = slider.value;
                 }
+                if (sliderId === 'blockSizeSlider') { _blockReq = _clampBlockSize(slider.value); _blockShown = parseInt(slider.value, 10); }
                 updateSliderBackground(slider);
                 if (sliderId.includes('black') || sliderId.includes('dark') || sliderId.includes('light')) {
                     validateThresholds();
@@ -27861,6 +27910,13 @@ function attachUIListeners() {
                 renderCb();
             });
             if (sliderId === 'nameLengthSlider') slider.addEventListener('change', () => renderCb());
+            if (sliderId === 'blockSizeSlider') {
+                // while the thumb is held it stays where it is dragged; on release it shows the width drawn
+                slider.addEventListener('pointerdown', () => { slider._dragging = true; });
+                const release = () => { if (!slider._dragging) return; slider._dragging = false; _syncBlockSizeDisplay(); };
+                slider.addEventListener('change', release);
+                window.addEventListener('pointerup', release);
+            }
 
             input.addEventListener('input', () => {
                 if (sliderId === 'consensusThreshold') {
@@ -27900,6 +27956,8 @@ function attachUIListeners() {
                     // paired number box. Only push a value across once it's a real
                     // number; an empty/partial box just leaves the slider where it was.
                     slider.value = input.value;
+                    // Block size: a width typed is a width asked for (the slider clamps it to its range)
+                    if (sliderId === 'blockSizeSlider') { input._typing = true; _blockReq = _clampBlockSize(input.value); _blockShown = parseInt(slider.value, 10); }
                 }
                 updateSliderBackground(slider);
                 if (inputId.includes('black') || inputId.includes('dark') || inputId.includes('light')) {
@@ -27913,6 +27971,7 @@ function attachUIListeners() {
             // silently keeping an invalid number.
             input.addEventListener('change', () => {
                 if (sliderId === 'nameLengthSlider') return;   // clamps to the range instead (its own handler)
+                if (sliderId === 'blockSizeSlider') { input._typing = false; _syncBlockSizeDisplay(); return; }   // the box shows the width drawn again
                 const n = Number(input.value);
                 if (input.value === '' || Number.isNaN(n) || n < Number(slider.min) || n > Number(slider.max)) {
                     input.value = slider.value;
@@ -28689,7 +28748,7 @@ function canPatchColumnsInPlace(newWidth, oldWidth) {
     if (grow !== 0 && grow !== 1) return false;
     if (grow === 1) {
         const useBlocks = isDomBlock();   // (span render mode: Block here is the DOM Block)
-        const blockWidth = parseInt(el('blockSizeSlider')?.value, 10);
+        const blockWidth = blockSizeRequested();
         // Block mode: a full last block would need a new block, which only a render can add
         if (useBlocks && (!(blockWidth > 0) || oldWidth % blockWidth === 0)) return false;
     }
