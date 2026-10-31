@@ -5350,9 +5350,29 @@ check('Canvas Block: a typed letter repaints only its cells (no full redraw), pi
     }, { row, col, before });
   }
   await p.evaluate(() => { state.editModeActive = false; state.editCell = null; });
-  const ok = Object.values(out).every(v => v.typed === 'W' && v.full === 0 && v.cells === 1 && v.stale === 0);
+  // 'w' typed stays 'w' (owner 2026-10-31: a typed letter keeps its case; this check expected 'W' before)
+  const ok = Object.values(out).every(v => v.typed === 'w' && v.full === 0 && v.cells === 1 && v.stale === 0);
   return { pass: ok, detail: JSON.stringify(out) };
 }));
+
+// Owner 2026-10-31: in the Aa view (letters as stored) Type mode turned a lower-case key into a capital. A typed
+// letter keeps its case in every view; the aa | Aa | AA switch changes only how it is shown.
+check('Type mode: a typed letter keeps the case it was typed in (Canvas and Full, Aa view)', async (page) => {
+  await loadFasta(page, '>a\nACGTACGTACGTACGTACGT\n>b\nACGTACGTACGTACGTACGT\n');
+  const out = {};
+  for (const mode of ['canvas', 'full']) {
+    await setMode(page, mode);
+    await page.waitForTimeout(400);
+    await page.evaluate(() => { state.residueCase = 'asis'; state.editModeActive = true; state.editTool = 'residue'; state.editCell = { row: 1, pos: 4 }; renderAlignment(); });
+    await page.waitForTimeout(400);
+    await page.evaluate(() => { document.activeElement?.blur(); });
+    for (const k of ['g', 'T', 'c']) { await page.keyboard.press(k); await page.waitForTimeout(150); }
+    out[mode] = await page.evaluate(() => state.seqs[1].seq.slice(4, 7));
+    await page.evaluate(() => { state.seqs[1].seq = 'ACGTACGTACGTACGTACGT'; state.editModeActive = false; state.editCell = null; renderAlignment(); });
+  }
+  const ok = out.canvas === 'gTc' && out.full === 'gTc';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
 
 // Batch 3: the codon check above allows letter-edge differences up to 48 between a frame copy and a full
 // redraw (it found up to 17 in band headers). Their cause: the annotation track was drawn into the main

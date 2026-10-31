@@ -29733,7 +29733,9 @@ function handleGeneDocResidueKey(e) {
     const width = beforeSeq.length;
     const chars = beforeSeq.split('');
     if (pos < 0 || pos >= chars.length) return false;
-    chars[pos] = (e.key === '.' || e.key === '-') ? GENEDOC_FILLER : e.key.toUpperCase();
+    // The letter keeps the case it was typed in (owner 2026-10-31: lower case typed showed as a capital in the
+    // Aa view, which shows the sequence as stored); the aa | Aa | AA switch only changes the display
+    chars[pos] = (e.key === '.' || e.key === '-') ? GENEDOC_FILLER : e.key;
     state.seqs[row].seq = chars.join('');
     // Row-scoped patch, not pushUndo()'s full-alignment JSON clone - see the
     // Backspace/Delete handlers above for why this matters while typing.
