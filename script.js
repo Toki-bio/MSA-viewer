@@ -34920,22 +34920,63 @@ function* _findTandemRepeatsSteps(seq, minLen, maxDivPct, opts = {}) {
                 s = seg[0]; e = seg[1];
             }
             if (s < 0) continue;
-            const L = e - s;
+            let L = e - s;
             if (L < need) {
                 work.push([a, s], [e, b]);
                 continue;
             }
+            // The ends (owner's decision 2026-10-31, "include"): the array is the best-scoring stretch at the divergence
+            // limit d, so a substitution in the first few bases of the first copy (or the last few of the last) left the
+            // agreeing bases before (after) it outside: a 12-bp unit whose first copy differs at its 6th and 9th bases
+            // started after the 9th. Each end is now extended over the best-scoring run beyond it, scored +1 per base
+            // agreeing with the consensus unit (in phase) and -max(7/3, (1 - 2d)/(2d)) per other base, i.e. a run that
+            // agrees at more than max(70 %, 1 - 2d) of its bases; the extension starts and ends on an agreeing base and
+            // the whole array stays within d. The run must hold at least 6 agreeing bases (ACACA after two substitutions
+            // before a (CA)n is chance), and only an array that reached Min array length without it is extended (else 11
+            // chance arrays of 10-18-bp units in 100 kb of random sequence reached 20 bp). Random flank agrees at ~25 %
+            // and is barely taken (measured over 3,000 planted arrays between random flanks; see the regression check).
+            if (d > 0) {
+                const agree = (i) => code[i] >= 0 && code[i] === cons[((i - a) % p + p) % p];
+                const pen2 = Math.max(7 / 3, (1 - 2 * d) / (2 * d));   // at least 70 % agreement, whatever d
+                const drop = 3 * pen2 + 3;
+                const reach = (from, step) => {   // the furthest end of the best-scoring run beyond `from` with 6+ agreeing bases
+                    let cur = 0, best = 0, at = from, agreeing = 0;
+                    for (let i = from + step; i >= 0 && i < n; i += step) {
+                        const ok = agree(i);
+                        if (ok) agreeing++;
+                        cur += ok ? 1 : -pen2;
+                        if (cur > best && agreeing >= 6) { best = cur; at = i; } else if (best - cur > drop) break;
+                    }
+                    return at;
+                };
+                const mmIn = (x, y) => { let m = 0; for (let k = x; k < y; k++) if (!agree(k)) m++; return m; };
+                const ns = reach(s, -1), ne = reach(e - 1, 1) + 1;
+                const within = (x, y) => mmIn(x, y) <= Math.floor((y - x) * d + 1e-9);
+                if (ns < s || ne > e) {
+                    if (within(ns, ne)) { s = ns; e = ne; }
+                    else if (ns < s && within(ns, e)) s = ns;
+                    else if (ne > e && within(s, ne)) e = ne;
+                }
+                L = e - s;
+            }
             K0 = explainedBy(s, e, p);
             if (K0) {
-                work.push([a, Math.min(b, K0.start)], [Math.max(a, K0.end), b]);
+                // the array, extended past [a, b), can be explained by an array lying beyond [a, b): then nothing of
+                // [a, b) is left out by it, and pushing [a, b) again looped for ever
+                for (const [x, y] of [[a, Math.min(b, K0.start)], [Math.max(a, K0.end), b]]) if (y - x < b - a) work.push([x, y]);
                 continue;
             }
             let mism = 0;
-            for (let k = s; k < e; k++) if (!(code[k] >= 0 && code[k] === cons[(k - a) % p])) mism++;
+            for (let k = s; k < e; k++) if (!(code[k] >= 0 && code[k] === cons[((k - a) % p + p) % p])) mism++;
             let unit = '';
-            for (let k = 0; k < p; k++) unit += letter(cons[(s - a + k) % p]);
+            for (let k = 0; k < p; k++) unit += letter(cons[((s - a + k) % p + p) % p]);
+            // a consensus unit that is itself repeated (AAAAA) is its shortest period (A): the same bases agree with it,
+            // so the mismatches are the same (an A-rich tail at 12 % came out as (AAAAA)n once its ends were extended)
+            let q = p;
+            for (let r = 1; r < p; r++) if (p % r === 0 && unit === unit.slice(0, r).repeat(p / r)) { q = r; break; }
+            if (q < p) unit = unit.slice(0, q);
             const idx = kept.length;
-            kept.push({ start: s, end: e, unitLen: p, copies: Math.round(L / p * 10) / 10, length: L, unit,
+            kept.push({ start: s, end: e, unitLen: q, copies: Math.round(L / q * 10) / 10, length: L, unit,
                 divergence: (mism / L * 100).toFixed(1), mismatches: mism });
             for (let k = s; k < e; k++) if (owner[k] < 0) owner[k] = idx;
             work.push([a, s], [e, b]);
@@ -34943,12 +34984,16 @@ function* _findTandemRepeatsSteps(seq, minLen, maxDivPct, opts = {}) {
     }
 
     // a short array wholly inside a longer array of a longer unit is part of that unit
-    const byStart = kept.slice().sort((x, y) => (x.start - y.start) || (y.length - x.length));
+    // Two units can give the very same stretch (since the ends are extended, 2026-10-31: an A-rich tail at 12 % came out
+    // as (AAAAA)n and as a 16-bp unit over the same 41 bp): it is one array, listed with the smaller unit.
+    const byStart = kept.slice().sort((x, y) => (x.start - y.start) || (y.length - x.length) || (x.unitLen - y.unitLen));
     const active = [];
     const listed = [];
     for (const r of byStart) {
         for (let k = active.length - 1; k >= 0; k--) if (active[k].end <= r.start) active.splice(k, 1);
         if (active.some(f => f.end >= r.end && f.unitLen > r.unitLen && f.length > r.length)) continue;
+        // not listed, but still covers what lies inside it as before
+        if (active.some(f => f.start === r.start && f.end === r.end && f.unitLen < r.unitLen)) { active.push(r); continue; }
         listed.push(r);
         active.push(r);
     }

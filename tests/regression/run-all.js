@@ -12138,7 +12138,10 @@ check('Repeat Finder m307: a Min length typed for one file goes back to the mode
 // a 15-bp unit is not listed at 20), which neither the tooltip nor the manual said; and the manual said a substituted
 // FIRST copy stays in the array, while the array is the best-scoring stretch and starts on an agreeing base, so a
 // substitution in the first few bases leaves the bases before it outside (measured below, and what the manual now says).
-check('Repeat Finder m307: tooltip and manual say an array needs two full copies; the manual says a substitution near the start of the first copy is left outside', async (page) => {
+// Owner's decision 2026-10-31 ("include"): the substituted first copy is now part of the array. Expectation changed from
+// rows 'first:36-87' and the manual's "substitution in the first few bases of the first copy" (left outside) to
+// 'first:25-87' (the two flank bases before it, CA, continue the unit in phase) and the manual's "reported whole".
+check('Repeat Finder m307: tooltip and manual say an array needs two full copies; the manual says a substituted first copy is reported whole', async (page) => {
   const L = 'GGTTAGGTCCTAGGATCGTTGAGGTCA', R = 'TTGGAGTCAGGTTCCGAGTGGATCTTG', u = 'ACGTTGCATGCA';
   const m = u.split(''); m[5] = 'A'; m[8] = 'C';
   await loadFasta(page, `>first\n${L + m.join('') + u.repeat(4) + R}\n>u15\n${L + ('ACGTTGCATGCAAGT'.repeat(2)).slice(0, 21) + R}\n`);
@@ -12148,13 +12151,52 @@ check('Repeat Finder m307: tooltip and manual say an array needs two full copies
     const manual = await (await fetch('manual.html')).text();
     return { title: document.getElementById('repeatMinLenLabel').title,
       manualTwo: /two full copies/.test(manual), manualOldClaim: /\(also the first\)/.test(manual),
-      manualStart: /substitution in the first few bases of the first copy/.test(manual) };
+      manualStart: /is reported whole, from its first base/.test(manual) };
   });
   out.rows = f.res.map(x => `${x.seqName}:${x.start}-${x.end}`);
-  // the substituted first copy (bases 27-38, substitutions at 32 and 35) is outside: the array starts at 36
+  // the substituted first copy (bases 27-38, substitutions at 32 and 35) is inside, with the flank's CA before it that
+  // continues the unit in phase (the flank's base before that, T, does not)
   const ok = /two full copies/.test(out.title) && out.manualTwo && !out.manualOldClaim && out.manualStart
-    && out.rows.join() === 'first:36-87';
+    && out.rows.join() === 'first:25-87';
   return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Owner's decision 2026-10-31 ("include, test"): a substitution in the first few bases of the first copy (or the last few
+// of the last) left the agreeing bases before (after) it outside the array: the array was the best-scoring stretch, and
+// fewer than ~6 agreeing bases before a substitution scored below zero at 15 %. Each end is now extended over a run
+// beyond it that agrees with the consensus unit at more than 70 % and holds at least 6 agreeing bases (and the array
+// stays within Max divergence). Random
+// flanks must not be pulled in: over 1,000 planted arrays between random flanks the mean number of flank bases inside the
+// reported array stays under 1 (0.56 before the change, ~0.8 after, at 15 %).
+check('Repeat Finder tandem ends (owner 2026-10-31): substituted first and last copies are reported whole; random flanks stay out', async (page) => {
+  const L = 'GGTTAGGTCCTAGGATCGTTGAGGTTT', R = 'TTGGAGTCAGGTTCCGAGTGGATCTTG', u = 'ACGTTGCATGCA';
+  const first = u.split(''); first[5] = 'A'; first[8] = 'C';          // 6th and 9th bases of the first copy
+  const last = u.split(''); last[3] = 'A'; last[6] = 'G';             // 7th and 4th bases from the end of the last copy
+  await loadFasta(page, `>first\n${L + first.join('') + u.repeat(4) + R}\n>last\n${L + u.repeat(4) + last.join('') + R}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'all', minLen: 20, maxDiv: 15 });
+  const rows = f.res.map(x => `${x.seqName}:${x.start}-${x.end}:${x.unitLen}`).sort();
+  const flank = await page.evaluate(() => {
+    let s = 4242;
+    const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+    const rs = (n) => { let t = ''; for (let i = 0; i < n; i++) t += 'ACGT'[Math.floor(rnd() * 4)]; return t; };
+    let out = 0, found = 0, max = 0;
+    for (let t = 0; t < 1000; t++) {
+      const p = 1 + Math.floor(rnd() * 12), c = 3 + Math.floor(rnd() * 8);
+      const arr = rs(p).repeat(c).split('');
+      const ns = Math.floor(rnd() * 3);
+      for (let j = 0; j < ns; j++) { const k = Math.floor(rnd() * arr.length); arr[k] = 'ACGT'.replace(arr[k], '')[Math.floor(rnd() * 3)]; }
+      const seq = rs(100) + arr.join('') + rs(100), A0 = 100, A1 = 100 + arr.length;
+      const x = _findRepeats(seq, 10, 15, 'tandem').filter(y => y.unitLen === p && y.start < A1 && y.end > A0).sort((a, b) => b.length - a.length)[0];
+      if (!x) continue;
+      const o = Math.max(0, A0 - x.start) + Math.max(0, x.end - A1);
+      out += o; found++; max = Math.max(max, o);
+    }
+    return { mean: +(out / found).toFixed(3), max, found };
+  });
+  const want = ['first:27-87:12', 'last:27-87:12'];
+  const ok = JSON.stringify(rows) === JSON.stringify(want) && flank.mean < 1 && flank.found > 700;
+  return { pass: ok, detail: JSON.stringify({ rows, flank }) };
 });
 
 // Canvas Block prototype 2026-10-30 found it: dragging a Canvas scrollbar marked the view dirty on every step, so each
