@@ -34099,7 +34099,7 @@ function _syncRepeatFinderModeUI() {
     const minInp = document.getElementById('repeatMinLen');
     if (minInp && !minInp.dataset.userSet) minInp.value = mode === 'tandem' ? '20' : '10';
     if (minLabel) minLabel.title = mode === 'tandem'
-        ? 'Shortest tandem array reported: all copies together, units of 1 to 500 residues (fewer in a very long sequence)'
+        ? 'Shortest tandem array reported: all copies together, and at least two full copies of the unit; units of 1 to 500 residues (fewer in a very long sequence)'
         : 'Shortest repeat reported: the length of one copy';
     const divLabel = document.getElementById('repeatMaxDiv')?.closest('label');
     if (divLabel) divLabel.title = mode === 'tandem'
@@ -34168,6 +34168,13 @@ function _repeatFinderCurrentRow() {
 // A new file: the open panel's results, sequence list and units belong to the previous one
 function _resetRepeatFinderForNewFile() {
     _abortRepeatJob();   // a search of the previous file shows nothing afterwards
+    // a Min length typed for the previous file is not this file's: back to the mode's default (a 1000 typed for a 50 kb
+    // file silently found nothing in the next, 200-bp one; GLM m307 #16). Within a file it still survives mode changes.
+    const minInp = document.getElementById('repeatMinLen');
+    if (minInp) {
+        delete minInp.dataset.userSet;
+        minInp.value = (document.querySelector('input[name="repeatMode"]:checked')?.value || 'tandem') === 'tandem' ? '20' : '10';
+    }
     _lastRepeatResults = [];
     _lastRepeatView = null;
     _repeatFinderSeqIndex = 0;
@@ -35547,7 +35554,8 @@ function runRepeatAnalysis() {
         if (e && e.value !== String(v)) e.value = String(v);
         return v;
     };
-    const minLen = num('repeatMinLen', 10);
+    // an empty field is the mode's default (it fell back to 10 in Tandem too, and wrote it into the field; GLM m307 #11)
+    const minLen = num('repeatMinLen', mode === 'tandem' ? 20 : 10);
     const maxDiv = num('repeatMaxDiv', 15);
     const protein = isProteinAlignment();
     const unit = _repeatUnitWord();
@@ -36164,7 +36172,8 @@ function _scrollToColumn(colIndex) {
 
 function _initRepeatFinderEvents() {
     const minLenInput = document.getElementById('repeatMinLen');
-    if (minLenInput) minLenInput.addEventListener('input', () => { minLenInput.dataset.userSet = '1'; });
+    // a typed value is kept across mode changes (v307); an emptied field is not a typed value (GLM m307 #11)
+    if (minLenInput) minLenInput.addEventListener('input', () => { if (minLenInput.value.trim() === '') delete minLenInput.dataset.userSet; else minLenInput.dataset.userSet = '1'; });
     const clearBtn = document.getElementById('repeatClearHighlightsBtn');
     if (clearBtn) clearBtn.addEventListener('click', _clearRepeatHighlights);
     const closeBtn = document.getElementById('repeatFinderCloseBtn');

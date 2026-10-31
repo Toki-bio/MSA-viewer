@@ -12091,6 +12091,72 @@ check('TSD marking owner 2026-10-31: the step-back button is "Undo last marking"
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// ---- GLM audit m307 (frozen v307 merge), still real on v312 ----
+// #11: Tandem with the Min field emptied searched at 10 (the Direct/Inverted default) and wrote 10 into the field, which
+// then stayed (the emptied field counted as typed). An empty field now means the mode's default: 20 for Tandem.
+check('Repeat Finder m307: an emptied Min length field searches at the mode default (Tandem 20, Direct 10) and follows mode changes', async (page) => {
+  const r = rfRng(307);
+  await loadFasta(page, `>t\n${r.seq(400)}\n>o\n${r.seq(400)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const out = {};
+  await page.click('label:has(input[name="repeatMode"][value="tandem"])');
+  await page.fill('#repeatMinLen', '');
+  const ft = await rfFind(page, { maxDiv: 15 });
+  out.tandem = { field: await page.inputValue('#repeatMinLen'), text: ft.text.slice(0, 90) };
+  await page.fill('#repeatMinLen', '');
+  await page.click('label:has(input[name="repeatMode"][value="direct"])');
+  out.switchedToDirect = await page.inputValue('#repeatMinLen');
+  await page.fill('#repeatMinLen', '');
+  const fd = await rfFind(page, { maxDiv: 15 });
+  out.direct = { field: await page.inputValue('#repeatMinLen'), text: fd.text.slice(0, 90) };
+  const ok = out.tandem.field === '20' && /min array length 20 bp/.test(out.tandem.text) && out.switchedToDirect === '10'
+    && out.direct.field === '10';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// #16: a Min length typed for one alignment (e.g. 1000) was kept for every later file: a new 200-bp alignment then
+// found nothing, with no word that the threshold came from the previous file. A typed value still survives mode
+// changes within a file (v307, on purpose); a new file now starts again from the mode's default.
+check('Repeat Finder m307: a Min length typed for one file goes back to the mode default when a new file is loaded', async (page) => {
+  const r = rfRng(316);
+  await loadFasta(page, `>a\n${r.seq(3000)}\n>b\n${r.seq(3000)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  await page.click('label:has(input[name="repeatMode"][value="tandem"])');
+  await page.fill('#repeatMinLen', '1000');
+  await page.click('label:has(input[name="repeatMode"][value="direct"])');
+  const keptAcrossMode = await page.inputValue('#repeatMinLen');
+  await page.click('label:has(input[name="repeatMode"][value="tandem"])');
+  await loadFasta(page, `>n\n${r.seq(80) + 'CA'.repeat(15) + r.seq(80)}\n>m\n${r.seq(190)}\n`);
+  const afterNewFile = await page.inputValue('#repeatMinLen');
+  const f = await rfFind(page, { scope: 'single', maxDiv: 15 });
+  const out = { keptAcrossMode, afterNewFile, rows: f.rows, text: f.text.slice(0, 80) };
+  const ok = keptAcrossMode === '1000' && afterNewFile === '20' && f.rows === 1;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// #8 and #2 (documentation): an array must hold two full copies of its unit as well as reach Min array length (21 bp of
+// a 15-bp unit is not listed at 20), which neither the tooltip nor the manual said; and the manual said a substituted
+// FIRST copy stays in the array, while the array is the best-scoring stretch and starts on an agreeing base, so a
+// substitution in the first few bases leaves the bases before it outside (measured below, and what the manual now says).
+check('Repeat Finder m307: tooltip and manual say an array needs two full copies; the manual says a substitution near the start of the first copy is left outside', async (page) => {
+  const L = 'GGTTAGGTCCTAGGATCGTTGAGGTCA', R = 'TTGGAGTCAGGTTCCGAGTGGATCTTG', u = 'ACGTTGCATGCA';
+  const m = u.split(''); m[5] = 'A'; m[8] = 'C';
+  await loadFasta(page, `>first\n${L + m.join('') + u.repeat(4) + R}\n>u15\n${L + ('ACGTTGCATGCAAGT'.repeat(2)).slice(0, 21) + R}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'all', minLen: 20, maxDiv: 15 });
+  const out = await page.evaluate(async () => {
+    const manual = await (await fetch('manual.html')).text();
+    return { title: document.getElementById('repeatMinLenLabel').title,
+      manualTwo: /two full copies/.test(manual), manualOldClaim: /\(also the first\)/.test(manual),
+      manualStart: /substitution in the first few bases of the first copy/.test(manual) };
+  });
+  out.rows = f.res.map(x => `${x.seqName}:${x.start}-${x.end}`);
+  // the substituted first copy (bases 27-38, substitutions at 32 and 35) is outside: the array starts at 36
+  const ok = /two full copies/.test(out.title) && out.manualTwo && !out.manualOldClaim && out.manualStart
+    && out.rows.join() === 'first:36-87';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 // Canvas Block prototype 2026-10-30 found it: dragging a Canvas scrollbar marked the view dirty on every step, so each
 // step was a full redraw (p95 75-92 ms) instead of the frame copy the wheel uses (p95 ~4 ms).
 check('Canvas: dragging the vertical and horizontal scrollbars moves the picture by frame copy, not full redraws', async (page) => {
