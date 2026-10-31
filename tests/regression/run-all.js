@@ -5611,6 +5611,214 @@ check('Canvas Block: the cluster panel\'s column and sequence jumps go to the ba
   return { pass: ok, detail: JSON.stringify({ geCol, bandMid, geSeq, link }) };
 }));
 
+// ---- Canvas Block batch 4 (2026-10-31): hit tests, tooltip anchors and boxes in every band ----
+// Before batch 4 these still used the strip's coordinates (clientY - rect.top + offsetY, row * rowPitch,
+// nameW + slot * charW - offsetX), so in the Block view they read or drew at band 1's place:
+// the annotation track's hover and click and the 2D block rectangles answered in band 1 only, the
+// rename box and the consensus / codon tooltips sat at the strip's place (over band 1 or off the view),
+// the trim-edge drag and the GeneDoc column drag took the column from the band at the top of the view,
+// the names' resize edge was live over every band's ruler but band 1's, and a right-click on a cell
+// had no "gap here" items (the DOM Block had them on a residue). The pointer positions below are made
+// from first principles: band b starts below the earlier bands, each header + rows (bases + that band's
+// translation lanes) + bottom consensus + the 24 px gap; lanes per band come from the DOM Block.
+const cbGeom = (p) => p.evaluate(() => {
+  const m = _canvasState.metrics, L = _canvasState.layout, dpr = devicePixelRatio, cb = _canvasState.consBand, cs = _canvasState.consensus;
+  const r = _canvasState.canvas.getBoundingClientRect();
+  return { left: r.left, top: r.top, headerH: m.headerH, charH: _canvasState.charH, aaRowH: _canvasState.aaRowH || 0, aaOnly: !!_canvasState.aaOnly, nameW: m.nameW, charW: m.charW, trackH: m.trackH || 0,
+    consOn: !!cs, consBottom: !!(cs && cs.position === 'bottom'), consH: cb ? cb.h : 0, gap: Math.round(24 * dpr) / dpr, bandCols: L.bandCols, nBands: L.nBands, nSeq: state.seqs.length };
+});
+const cbPitch = (g, k) => (g.aaOnly && k > 0 ? 0 : g.charH) + k * g.aaRowH;
+const cbTop = (g, b, lanes = []) => { let t = 0; for (let k = 0; k < b; k++) t += g.headerH + g.nSeq * cbPitch(g, lanes[k] || 0) + (g.consBottom ? g.consH : 0) + g.gap; return t; };
+// the view's offset (clamped by the renderer), after a redraw
+const cbScrollTo = (p, y) => p.evaluate(async (y) => { _canvasState.offsetY = y; _canvasState.scheduleDraw(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return _canvasState.offsetY; }, y);
+// client point of the middle of column col (in band b) at content y cy
+const cbPt = (g, oy, b, col, cy) => ({ x: g.left + g.nameW + (col - b * g.bandCols + 0.5) * g.charW, y: g.top + cy - oy });
+const cbTipLog = (p) => p.evaluate(() => { window.__tipLog = []; const o = showTooltipAt; window.showTooltipAt = (c, t, opt) => { const r = t.getBoundingClientRect(); window.__tipLog.push({ c: String(c), x: r.left, y: r.top, cls: (opt && opt.className) || '' }); return o(c, t, opt); }; });
+const cbLastTip = (p) => p.evaluate(() => window.__tipLog[window.__tipLog.length - 1] || null);
+const near1 = (a, b, tol = 1.5) => Math.abs(a - b) <= tol;
+
+check('Canvas Block: an annotation feature in band 3 (running on into band 4) shows its tooltip on hover and a click selects its columns', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  await p.evaluate(async () => { setAnnotation('s0\t130\t170\tfeatX\t0\t+\n', 'f.bed'); await new Promise(r => setTimeout(r, 700)); });
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, cbTop(g, 1) + 20);   // band 2 partly above the view, bands 3 and 4 below it
+  await cbTipLog(p);
+  const hover = async (b, col) => {
+    // off the feature first (onto the band's rows): the tooltip is shown once per feature until the pointer leaves it
+    const off = cbPt(g, oy, b, col, cbTop(g, b) + g.headerH + 1.5 * g.charH);
+    await p.mouse.move(off.x, off.y); await p.waitForTimeout(150);
+    await p.evaluate(() => { window.__tipLog = []; });
+    const pt = cbPt(g, oy, b, col, cbTop(g, b) + g.charH / 2);   // the track's first lane at the band's top
+    await p.mouse.move(pt.x, pt.y); await p.waitForTimeout(300);
+    return { pt, tip: await cbLastTip(p) };
+  };
+  const h3 = await hover(2, 140), h4 = await hover(3, 160);
+  const pt = h3.pt;
+  await p.mouse.move(pt.x, pt.y); await p.waitForTimeout(100);
+  await p.mouse.click(pt.x, pt.y); await p.waitForTimeout(300);
+  const sel = await p.evaluate(() => { const s = [...state.selectedColumns].sort((a, b) => a - b); return { n: s.length, first: s[0], last: s[s.length - 1] }; });
+  const tipOk = t => !!t.tip && t.tip.cls === 'annot-tip' && t.tip.c.includes('featX');
+  const ok = g.trackH > 0 && tipOk(h3) && tipOk(h4) && sel.n === 40 && sel.first === 130 && sel.last === 169;
+  return { pass: ok, detail: JSON.stringify({ oy, trackH: g.trackH, h3: h3.tip && h3.tip.cls, h4: h4.tip && h4.tip.cls, sel }) };
+}));
+
+check('Canvas Block: a 2D block in band 2 shows its stack tooltip and a click on it stacks its type', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  await p.evaluate(async () => {
+    state.blockMask = { blocks: [{ type: 'CONSERVATIVE', col_start: 60, col_end: 80, rows: [1, 2, 3], sourceRows: [1, 2, 3] }], row_headers: state.seqs.map(q => q.header) };
+    renderBlockMaskOverlay();
+    window.__stacked = []; const o = window.groupRowsByType; window.groupRowsByType = function (rows) { window.__stacked.push(rows.slice()); return o.apply(this, arguments); };
+    await new Promise(r => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), 300));
+  });
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 30);   // band 1 at the top, band 2 below it
+  await cbTipLog(p);
+  const pt = cbPt(g, oy, 1, 70, cbTop(g, 1) + g.headerH + 2.5 * g.charH);   // band 2, column 70, row 2
+  await p.mouse.move(pt.x, pt.y); await p.waitForTimeout(350);
+  const tip = await cbLastTip(p);
+  await p.mouse.click(pt.x, pt.y); await p.waitForTimeout(300);
+  const stacked = await p.evaluate(() => window.__stacked);
+  const ok = !!tip && tip.c.includes('Click to stack this type') && stacked.length === 1 && stacked[0].join(',') === '1,2,3';
+  return { pass: ok, detail: JSON.stringify({ oy, tip: tip && tip.c.slice(0, 40), stacked }) };
+}));
+
+check('Canvas Block: the rename box sits over the name in band 3 (double-click and the context menu\'s Rename); the names\' resize edge is not live over band 3\'s ruler', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, cbTop(g, 1) - 15);   // band 2 at the top, band 3 below it
+  const nameAt = (b, row) => ({ x: g.left + 25, y: g.top + cbTop(g, b) + g.headerH + (row + 0.5) * g.charH - oy, rowTop: g.top + cbTop(g, b) + g.headerH + row * g.charH - oy });
+  const boxAt = () => p.evaluate(() => { const b = document.querySelector('.seq-name-edit'); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.left, y: r.top, h: r.height, v: b.value }; });
+  const n4 = nameAt(2, 4);
+  await p.mouse.dblclick(n4.x, n4.y); await p.waitForTimeout(250);
+  const dbl = await boxAt();
+  await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  const n6 = nameAt(2, 6);
+  await p.mouse.click(n6.x, n6.y, { button: 'right' }); await p.waitForTimeout(200);
+  await p.evaluate(() => [...document.querySelectorAll('.context-menu div')].find(d => d.textContent === 'Rename sequence').click());
+  await p.waitForTimeout(250);
+  const menu = await boxAt();
+  await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  // the names' right edge: live beside band 3's rows, not over band 3's ruler (it is not over band 1's)
+  const edgeX = g.left + g.nameW;
+  const hoverEdge = async (y) => { await p.mouse.move(edgeX - 1, y); await p.waitForTimeout(120); return p.evaluate(() => document.getElementById('alignmentContainer').classList.contains('name-resize-hover')); };
+  const edgeRow = await hoverEdge(n4.y), edgeRuler = await hoverEdge(g.top + cbTop(g, 2) + g.trackH + g.charH / 2 - oy);
+  await p.mouse.move(g.left + 300, n4.y);
+  const boxOk = (bx, n, name) => !!bx && bx.v === name && near1(bx.y, n.rowTop - 1, 2) && near1(bx.x, g.left + 2, 2);
+  const ok = boxOk(dbl, n4, 's4') && boxOk(menu, n6, 's6') && edgeRow && !edgeRuler;
+  return { pass: ok, detail: JSON.stringify({ oy, dbl, want4: n4.rowTop - 1, menu, want6: n6.rowTop - 1, left: g.left + 2, edgeRow, edgeRuler }) };
+}));
+
+check('Canvas Block: the consensus tooltip in band 2 is anchored on band 2\'s consensus cell and is that column\'s', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 25);
+  await cbTipLog(p);
+  const consY = g.trackH + g.charH;   // consensus on top: under the ruler
+  const pt = cbPt(g, oy, 1, 70, cbTop(g, 1) + consY + g.charH / 2);
+  await p.mouse.move(pt.x, pt.y); await p.waitForTimeout(350);
+  const tip = await cbLastTip(p);
+  const want = await p.evaluate(() => _consensusTooltipHtml(70, _canvasConsValues() || []) + _consensusTrimHint(70));
+  const wantX = pt.x, wantY = g.top + cbTop(g, 1) + consY - oy;
+  const ok = g.consOn && !g.consBottom && !!tip && tip.cls === 'consensus-box' && tip.c === want && near1(tip.x, wantX) && near1(tip.y, wantY);
+  return { pass: ok, detail: JSON.stringify({ oy, tip: tip && { x: tip.x, y: tip.y, cls: tip.cls, same: tip.c === want }, wantX, wantY }) };
+}));
+
+check('Canvas Block: a trim-border drag in band 2 (band 1 at the top) moves the border to the column under the pointer', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  await p.evaluate(async () => { state.trimBoundaries = { leftTrimEnd: 55, rightTrimStart: 380 }; renderAlignment(); await new Promise(r => setTimeout(r, 500)); });
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 0);
+  const consY = g.trackH + g.charH;
+  const a = cbPt(g, oy, 1, 52, cbTop(g, 1) + consY + g.charH / 2), z = cbPt(g, oy, 1, 70, cbTop(g, 1) + consY + g.charH / 2);
+  await p.mouse.move(a.x, a.y); await p.mouse.down(); await p.waitForTimeout(80);
+  await p.mouse.move((a.x + z.x) / 2, z.y, { steps: 4 }); await p.mouse.move(z.x, z.y, { steps: 4 }); await p.waitForTimeout(100);
+  const during = await p.evaluate(() => state.trimBoundaries && state.trimBoundaries.leftTrimEnd);
+  await p.mouse.up(); await p.waitForTimeout(400);
+  const after = await p.evaluate(() => state.trimBoundaries && { l: state.trimBoundaries.leftTrimEnd, r: state.trimBoundaries.rightTrimStart });
+  const ok = during === 70 && !!after && after.l === 70 && after.r === 380;
+  return { pass: ok, detail: JSON.stringify({ oy, during, after }) };
+}));
+
+check('Canvas Block: a GeneDoc column drag in band 3 while band 1 is at the top selects the columns under the pointer', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  await p.evaluate(() => { state.editModeActive = true; state.editTool = 'selectColumn'; });
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 0);
+  const rowY = cbTop(g, 2) + g.headerH + 2.5 * g.charH;
+  const a = cbPt(g, oy, 2, 110, rowY), z = cbPt(g, oy, 2, 125, rowY);
+  await p.mouse.move(a.x, a.y); await p.mouse.down(); await p.waitForTimeout(80);
+  await p.mouse.move(z.x, z.y, { steps: 6 }); await p.waitForTimeout(100);
+  await p.mouse.up(); await p.waitForTimeout(300);
+  const sel = await p.evaluate(() => { const s = [...state.selectedColumns].sort((a, b) => a - b); return { n: s.length, first: s[0], last: s[s.length - 1] }; });
+  await p.evaluate(() => { state.editModeActive = false; });
+  const ok = sel.n === 16 && sel.first === 110 && sel.last === 125;
+  return { pass: ok, detail: JSON.stringify({ oy, sel }) };
+}));
+
+check('Canvas Block: a right-click on a band-2 cell opens the menu for that row with the gap items at that column', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 0);
+  const before = await p.evaluate(() => state.seqs[3].seq);
+  const pt = cbPt(g, oy, 1, 70, cbTop(g, 1) + g.headerH + 3.5 * g.charH);   // band 2, row 3, column 70
+  await p.mouse.click(pt.x, pt.y, { button: 'right' }); await p.waitForTimeout(250);
+  const menu = await p.evaluate(() => ({ row: contextMenuHighlightedRow, items: [...document.querySelectorAll('.context-menu div')].map(d => d.textContent) }));
+  const hasGap = menu.items.includes('Insert Single Gap Here');
+  if (hasGap) await p.evaluate(() => [...document.querySelectorAll('.context-menu div')].find(d => d.textContent === 'Insert Single Gap Here').click());
+  await p.waitForTimeout(400);
+  const after = await p.evaluate(() => state.seqs[3].seq);
+  // a name in band 2: the menu of that row; band 2's ruler: no menu (as the DOM's ruler line)
+  const nm = { x: g.left + 25, y: g.top + cbTop(g, 1) + g.headerH + 5.5 * g.charH - oy };
+  await p.mouse.click(nm.x, nm.y, { button: 'right' }); await p.waitForTimeout(200);
+  const nameRow = await p.evaluate(() => document.querySelector('.context-menu') ? contextMenuHighlightedRow : null);
+  await p.evaluate(() => closeContextMenu()); await p.waitForTimeout(150);
+  const ru = cbPt(g, oy, 1, 70, cbTop(g, 1) + g.trackH + g.charH / 2);
+  await p.mouse.click(ru.x, ru.y, { button: 'right' }); await p.waitForTimeout(200);
+  const rulerMenu = await p.evaluate(() => !!document.querySelector('.context-menu'));
+  const ok = menu.row === 3 && hasGap && after[70] === '-' && after.slice(71, 200) === before.slice(70, 199) && after.slice(0, 70) === before.slice(0, 70) && nameRow === 5 && !rulerMenu;
+  return { pass: ok, detail: JSON.stringify({ menuRow: menu.row, hasGap, at70: after[70], nameRow, rulerMenu }) };
+}));
+
+check('Canvas Block: AA only with codon lanes per band: a codon tooltip is anchored on its band\'s row, the rename box sits on a no-gene band\'s name', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  const { fasta, bed } = cbCodonFixture();
+  await loadFasta(p, fasta);
+  await p.waitForTimeout(500);
+  await p.evaluate(async (bed) => {
+    const bs = document.getElementById('blockSizeSlider'); bs.value = '50'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 400));
+    setAnnotation(bed, 'genes.bed');
+    const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 1200));
+  }, bed);
+  const lanes = await p.evaluate(async () => {   // the DOM Block's translation rows per block / rows
+    _domBlockForTests = true; document.getElementById('modeBlocks').checked = true; await onModeChange();
+    await new Promise(r => setTimeout(r, 800));
+    const n = state.seqs.length, l = [...document.querySelectorAll('.block-block')].map(b => b.querySelectorAll('.aa-row').length / n);
+    _domBlockForTests = false; await onModeChange();
+    await new Promise(r => setTimeout(r, 800));
+    return l;
+  });
+  await p.evaluate(async () => { const a = document.getElementById('aaOnly'); a.checked = true; a.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(r => setTimeout(r, 900)); });
+  const g = await cbGeom(p);
+  // band 4 (columns 150-199): gene B only, one lane; band 6 (250-299): no gene, the bases
+  const oy = await cbScrollTo(p, cbTop(g, 3, lanes) - 20);
+  await cbTipLog(p);
+  const row = 3, col = 160, b = 3;
+  const cellTop = cbTop(g, b, lanes) + g.headerH + row * cbPitch(g, lanes[b]);
+  const pt = cbPt(g, oy, b, col, cellTop + g.aaRowH / 2);
+  await p.mouse.move(pt.x, pt.y); await p.waitForTimeout(350);
+  const tip = await cbLastTip(p);
+  const tipOk = !!tip && /geneB/.test(tip.c) && near1(tip.x, pt.x) && near1(tip.y, g.top + cellTop - oy);
+  // rename box over a name in band 6 (no gene: rows are bases, one character high)
+  const oy2 = await cbScrollTo(p, cbTop(g, 5, lanes) - 30);
+  const nTop = g.top + cbTop(g, 5, lanes) + g.headerH + 4 * cbPitch(g, lanes[5]) - oy2;
+  await p.mouse.dblclick(g.left + 25, nTop + g.charH / 2); await p.waitForTimeout(250);
+  const box = await p.evaluate(() => { const b = document.querySelector('.seq-name-edit'); if (!b) return null; const r = b.getBoundingClientRect(); return { y: r.top, v: b.value }; });
+  await p.keyboard.press('Escape');
+  const ok = g.aaOnly && lanes[3] === 1 && lanes[5] === 0 && tipOk && !!box && box.v === 'copy4' && near1(box.y, nTop - 1, 2);
+  return { pass: ok, detail: JSON.stringify({ lanes, aaOnly: g.aaOnly, oy, tip, wantY: g.top + cellTop - oy, wantX: pt.x, box, wantBox: nTop - 1 }) };
+}));
+
 check('Realign all keeps a row that has only gaps (MAFFT and codon/MACSE), as a gap row of the new width', async (page) => {
   const fa = '>a\nATGGCTAAAGGTCTGCAAGAATTCGGTACC\n>empty\n------------------------------\n>b\nATGGCTAAGGGTCTGCAAGAATTCGGAACC\n>c\nATGGCAAAAGGTCTGCAGGAATTCGGTACC\n';
   const out = {};

@@ -5610,6 +5610,26 @@ function _canvasCellClient(row, slot) {
     const b = Math.max(0, Math.min(L.nBands - 1, Math.floor(slot / L.bandCols)));
     return { x: rect.left + m.nameW + (slot - b * L.bandCols) * m.charW, y: rect.top + L.bandTop[b] + (m.headerH || m.charH) + row * L.bandPitch[b] - _canvasState.offsetY };
 }
+// A y in the strip's content coordinates (the rows at the strip's row pitch, as _canvasLocal gives them
+// to the hit tests) as a y in band b (its rows at the band's own pitch): the inverse of _canvasLocal's map
+function _canvasBandY(b, sy) {
+    const L = _canvasState.layout, m = _canvasState.metrics;
+    const p = L.bandPitch[b], P0 = _canvasState.rowPitch, H0 = m.headerH || m.charH;
+    if (p === P0 || sy < H0) return sy;
+    const rel = sy - H0, nS = _canvasState.seqsLen || 0;
+    if (rel < nS * P0) { const r = Math.floor(rel / P0); return H0 + r * p + Math.min(rel - r * P0, p); }
+    return sy - nS * (P0 - p);   // below the rows (the bottom consensus row)
+}
+// Client position of a point given in the strip's content coordinates: the left edge of slot `slot`,
+// and sy (HEADER_H + row * rowPitch for a row's top, the consensus band's y, ...). In the Block view
+// the point is in the band that holds the slot, at that band's row pitch. (The tooltip anchors used
+// the strip's arithmetic, so in Block they sat at band 1's place or off the view.)
+function _canvasStripClient(slot, sy) {
+    const m = _canvasState.metrics, rect = _canvasState.canvas.getBoundingClientRect(), L = _canvasState.layout;
+    if (!L) return { x: rect.left + m.nameW + slot * m.charW - _canvasState.offsetX, y: rect.top + sy - _canvasState.offsetY };
+    const b = Math.max(0, Math.min(L.nBands - 1, Math.floor(slot / L.bandCols)));
+    return { x: rect.left + m.nameW + (slot - b * L.bandCols) * m.charW, y: rect.top + L.bandTop[b] + _canvasBandY(b, sy) - _canvasState.offsetY };
+}
 // The Block layout's bands in a string: equal when a redraw laid them out the same
 function _canvasBandsSig(L) {
     return L ? L.bandCols + ':' + L.nBands + ':' + L.bandTop[L.nBands] + ':' + (_canvasState.metrics?.charW || 0) : '';
@@ -5970,7 +5990,10 @@ function _canvasRowDropTarget(clientY) {
 
 // Rename in Canvas mode: an input laid over the name cell (position: absolute inside the
 // container), the same keys and commit as the DOM view's _startSeqNameEdit.
-function _startSeqNameEditCanvas(index) {
+// clientY: where the rename was asked for (the double-click, the context menu's right-click). The Block
+// view has the name in every band: the box goes over it in the band at clientY, or else in a band
+// where that name is in view (it went to the strip's place: over band 1's row or off the view).
+function _startSeqNameEditCanvas(index, clientY) {
     const m = _canvasState.metrics, canvas = _canvasState.canvas;
     if (!m || !canvas || !state.seqs[index]) return;
     if (alignmentContainer.querySelector('.seq-name-edit')) return;
@@ -5978,8 +6001,22 @@ function _startSeqNameEditCanvas(index) {
     hideTooltip();
     const sticky = !!el('stickyNames')?.checked;
     const pitch = _canvasState.rowPitch || m.charH;
-    const y = (m.headerH || m.charH) + index * pitch - _canvasState.offsetY;
-    const x = sticky ? 0 : -_canvasState.offsetX;
+    let y = (m.headerH || m.charH) + index * pitch - _canvasState.offsetY;
+    let x = sticky ? 0 : -_canvasState.offsetX;
+    const L = _canvasState.layout;
+    if (L) {
+        const oy = _canvasState.offsetY, viewH = _canvasViewH(), H0 = m.headerH || m.charH;
+        const rowY = b => L.bandTop[b] + H0 + index * L.bandPitch[b] - oy;
+        let b = clientY != null ? _canvasLocal(0, clientY).band : -1;
+        if (b < 0 || rowY(b) + m.charH <= 0 || rowY(b) >= viewH) {
+            // the first band in view whose row is in view; none: the band in the middle of the view
+            b = -1;
+            for (let k = L.bandAt(oy); k < L.nBands && L.bandTop[k] < oy + viewH; k++) if (rowY(k) >= 0 && rowY(k) + m.charH <= viewH) { b = k; break; }
+            if (b < 0) b = L.bandAt(oy + viewH / 2);
+        }
+        y = rowY(b);
+        x = 0;   // the Block view's names are fixed
+    }
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'seq-name-edit canvas-name-edit';
@@ -7646,7 +7683,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     canvas.addEventListener('dblclick', (e) => {
         if (isCtrlModifier(e) || isAltModifier(e) || e.shiftKey) return;
         const nameHit = _canvasHitTestName(e.clientX, e.clientY);
-        if (nameHit) { e.preventDefault(); _startSeqNameEditCanvas(nameHit.row); }
+        if (nameHit) { e.preventDefault(); _startSeqNameEditCanvas(nameHit.row, e.clientY); }
     });
     canvas.addEventListener('mouseleave', () => { if (_gapHoverKey) { _gapHoverKey = ''; _canvasState.gapHover = null; _canvasState.scheduleOverlay && _canvasState.scheduleOverlay(); } if (_gapCursorOn) { _gapCursorOn = false; canvas.style.cursor = 'default'; } });
     window.addEventListener('mousemove', _canvasState.mousemoveHandler);
@@ -7688,10 +7725,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         if (consCol >= 0) {
             if (_lastTooltipCell && _lastTooltipCell.cons === consCol) return;
             _lastTooltipCell = { row: -1, col: -1, cons: consCol };
-            const m = _canvasState.metrics, r = canvas.getBoundingClientRect(), b = _canvasState.consBand;
+            const m = _canvasState.metrics, b = _canvasState.consBand;
             const target = _getCanvasTooltipTarget();
-            target.style.left = (r.left + m.nameW + _canvasColToSlot(consCol) * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
-            target.style.top = (r.top + b.y + b.textOff - _canvasState.offsetY) + 'px';
+            const cc = _canvasStripClient(_canvasColToSlot(consCol), b.y + b.textOff);   // Block: the band's consensus row (it took band 1's)
+            target.style.left = (cc.x + m.charW / 2) + 'px';
+            target.style.top = cc.y + 'px';
             showTooltipAt(_consensusTooltipHtml(consCol, _canvasConsValues() || []) + _consensusTrimHint(consCol), target, { html: true, className: 'consensus-box' });
             return;
         }
@@ -7768,10 +7806,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 }
                 if (tipText) {
                     const m = _canvasState.metrics;
-                    const rect = canvas.getBoundingClientRect();
                     const target = _getCanvasTooltipTarget();
-                    target.style.left = (rect.left + m.nameW + _canvasHoverCell.slot * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
-                    target.style.top = (rect.top + (m.headerH || m.charH) + row * (_canvasState.rowPitch || m.charH) - _canvasState.offsetY) + 'px';
+                    const cc = _canvasCellClient(row, _canvasHoverCell.slot);   // any layout (Block: the band's row; it took band 1's)
+                    target.style.left = (cc.x + m.charW / 2) + 'px';
+                    target.style.top = cc.y + 'px';
                     showTooltipAt(tipText, target);
                     return;
                 }
@@ -7783,10 +7821,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             // Fold marker: what is hidden, and that a click shows it
             if (_canvasHoverCell.fold) {
                 const m = _canvasState.metrics;
-                const rect = canvas.getBoundingClientRect();
                 const target = _getCanvasTooltipTarget();
-                target.style.left = (rect.left + m.nameW + _canvasHoverCell.slot * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
-                target.style.top = (rect.top + (m.headerH || m.charH) + row * (_canvasState.rowPitch || m.charH) - _canvasState.offsetY) + 'px';
+                const cc = _canvasCellClient(row, _canvasHoverCell.slot);   // any layout (Block: the band's row; it took band 1's)
+                target.style.left = (cc.x + m.charW / 2) + 'px';
+                target.style.top = cc.y + 'px';
                 showTooltipAt(_canvasHoverCell.fold.map(_foldRangeText).join('; ') + ' \u00b7 click to show', target);
                 return;
             }
@@ -7796,10 +7834,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 if (brkInfo) {
                     const tipText = `${brkInfo.count} column${brkInfo.count > 1 ? 's' : ''} hidden (positions ${brkInfo.start + 1}\u2013${brkInfo.end + 1})`;
                     const m = _canvasState.metrics;
-                    const rect = canvas.getBoundingClientRect();
                     const target = _getCanvasTooltipTarget();
-                    target.style.left = (rect.left + m.nameW + _canvasHoverCell.slot * m.charW - _canvasState.offsetX + m.charW / 2) + 'px';
-                    target.style.top = (rect.top + (m.headerH || m.charH) + row *(_canvasState.rowPitch || m.charH) - _canvasState.offsetY) + 'px';
+                    const cc = _canvasCellClient(row, _canvasHoverCell.slot);   // any layout (Block: the band's row; it took band 1's)
+                    target.style.left = (cc.x + m.charW / 2) + 'px';
+                    target.style.top = cc.y + 'px';
                     showTooltipAt(tipText, target);
                     return;
                 }
@@ -7843,11 +7881,12 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             showContextMenu(e, nameHit.row);
             return;
         }
-        // Right-click on data area → context menu for that row
+        // Right-click on data area → context menu for that row, with the gap items at that column (as a
+        // residue's menu in Full / the DOM Block); in Block the row and column of the band under the pointer
         const hit = _canvasHitTest(e.clientX, e.clientY);
         if (hit) {
             e.preventDefault();
-            showContextMenu(e, hit.row);
+            showContextMenu(e, hit.row, hit.brk ? undefined : hit.col);
             return;
         }
         // Right-click on ruler or outside data area: no context menu
@@ -8983,11 +9022,13 @@ function _canvasHitTestAnnot(clientX, clientY) {
     const canvas = _canvasState.canvas;
     const m = _canvasState.metrics;
     if (!L || !canvas || !m || !m.trackH) return null;
-    const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top + _canvasState.offsetY;
+    // _canvasLocal: in the Block view every band has its own track at its top (it read band 1's)
+    const P = _canvasLocal(clientX, clientY);
+    const x = P.x;
+    const y = P.y + P.oy;
     if (y < 0 || y >= m.trackH || x < m.nameW) return null;
-    const slot = Math.floor((x - m.nameW + _canvasState.offsetX) / m.charW);
+    const slot = Math.floor((x - m.nameW + P.ox) / m.charW);
+    if (slot >= P.s1) return null;   // past the band's last column
     const lane = Math.floor(y / m.charH);
     const d = L.feats.find(q => { if (q.lane !== lane) return false; const sp = _annotSlotSpan(q.cs, q.ce); return !!sp && sp[0] <= slot && sp[1] >= slot; });
     return d ? { d, col: _canvasSlotToCol(slot), lane } : null;
@@ -11873,10 +11914,15 @@ function _canvasBlockMaskRects(charW, rowPitch, nSeqs, posSlot) {
 function _canvasBlockMaskHit(clientX, clientY) {
     const rects = _canvasState.maskRects;
     if (!rects || !rects.length || !_canvasState.canvas) return null;
-    const m = _canvasState.metrics, rect = _canvasState.canvas.getBoundingClientRect();
-    if (el('stickyNames')?.checked !== false && clientX - rect.left < m.nameW) return null;   // under the fixed names: not drawn there
-    const x = clientX - rect.left - m.nameW + _canvasState.offsetX;
-    const y = clientY - rect.top - (m.headerH || m.charH) + _canvasState.offsetY;
+    const m = _canvasState.metrics;
+    // _canvasLocal: in the Block view the band under the point, its rows mapped onto the strip's pitch (the
+    // rectangles' own); it read band 1's rows
+    const P = _canvasLocal(clientX, clientY);
+    const sticky = _canvasState.layout ? true : el('stickyNames')?.checked !== false;
+    if (sticky && P.x < m.nameW) return null;   // under the fixed names: not drawn there
+    const x = P.x - m.nameW + P.ox;
+    if (x >= P.s1 * m.charW) return null;   // past the band's last column
+    const y = P.y - (m.headerH || m.charH) + P.oy;
     for (let i = rects.length - 1; i >= 0; i--) { const r = rects[i]; if (r.typeRows && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return r; }
     return null;
 }
@@ -19743,7 +19789,8 @@ function _onTrimDragMove(e) {
     if (!_trimDragSide || !state.trimBoundaries) return;
     if (e.buttons === 0) { _endTrimDrag(); return; }   // released outside the window
     let pos;
-    if (isCanvasMode()) pos = _canvasColFromClientX(e.clientX);   // no spans: the column under the pointer
+    // no spans: the column under the pointer, in the band under it (Block; without clientY it read the band at the top of the view)
+    if (isCanvasMode()) pos = _canvasColFromClientX(e.clientX, e.clientY);
     else {
         const hit = document.elementFromPoint(e.clientX, e.clientY);
         const span = hit && hit.closest && hit.closest('.seq-data span[data-pos]');
@@ -25770,7 +25817,8 @@ function closeContextMenu() {
     }
 }
 
-function showContextMenu(e, index) {
+// canvasPos: the column of the cell right-clicked in Canvas / Block (no span there to read it from)
+function showContextMenu(e, index, canvasPos) {
     closeContextMenu();
 
     // Highlight the sequence this menu is for
@@ -25916,7 +25964,7 @@ function showContextMenu(e, index) {
             closeContextMenu();
             // the row's name, wherever the menu was opened: e.target may be a residue in the sequence,
             // which the old inline box replaced (the residue vanished and the box sat inside the row)
-            if (isCanvasMode()) { _startSeqNameEditCanvas(index); return; }
+            if (isCanvasMode()) { _startSeqNameEditCanvas(index, e.clientY); return; }   // Block: in the band right-clicked
             const nameEl = document.querySelector(`#alignmentContainer .seq-line[data-seq-index="${index}"] .seq-name`);
             if (nameEl) _startSeqNameEdit(nameEl, index);
         });
@@ -25995,8 +26043,10 @@ function showContextMenu(e, index) {
     contextMenu.appendChild(moveBottomItem);
 
     // ---- Gap tools (on nucleotide click) ----
-    if (e.target.tagName === 'SPAN' && e.target.parentNode.className === 'seq-data') {
-        const pos = parseInt(e.target.dataset.pos);
+    // Canvas / Block: from the cell's column (the DOM Block had these on a residue; Canvas Block, now the Block view, did not)
+    const onSpan = e.target.tagName === 'SPAN' && e.target.parentNode.className === 'seq-data';
+    if (onSpan || Number.isInteger(canvasPos)) {
+        const pos = onSpan ? parseInt(e.target.dataset.pos) : canvasPos;
         const sepGap = document.createElement('div');
         sepGap.style.borderTop = '1px solid #ccc';
         sepGap.style.margin = '4px 0';
@@ -28828,7 +28878,7 @@ function handleGeneDocEditDragMove(e) {
 
     if (drag.type === 'selectColumn') {
         if (isCanvasMode()) {
-            const col = _canvasColFromClientX(e.clientX);
+            const col = _canvasColFromClientX(e.clientX, e.clientY);   // Block: the band under the pointer (it read the band at the top of the view)
             if (col < 0 || col === drag.lastPos) return;
             drag.lastPos = col;
             setGeneDocColumnRange(drag.startPos, col);
@@ -29466,7 +29516,8 @@ window.addEventListener('load', () => {
             const c = _canvasState.canvas, m = _canvasState.metrics;
             if (!c || !m || !m.nameW) return null;
             const r = c.getBoundingClientRect();
-            if (y < r.top + (m.headerH || 0) || y > r.bottom) return null;
+            // not over the header (track, ruler): in the Block view every band has one (only band 1's was left out)
+            if (y < r.top || y > r.bottom || _canvasLocal(x, y).y < (m.headerH || 0)) return null;
             const edge = r.left + (el('stickyNames')?.checked === false ? -_canvasState.offsetX : 0) + m.nameW;
             return Math.abs(x - edge) <= ZONE ? { edge, ch: m.charW } : null;
         }
