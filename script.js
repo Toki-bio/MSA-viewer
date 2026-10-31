@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v315';
+const BUILD_TAG = 'v316';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -5649,9 +5649,12 @@ function _canvasStripClient(slot, sy) {
     const b = Math.max(0, Math.min(L.nBands - 1, Math.floor(slot / L.bandCols)));
     return { x: rect.left + m.nameW + (slot - b * L.bandCols) * m.charW, y: rect.top + L.bandTop[b] + _canvasBandY(b, sy) - _canvasState.offsetY };
 }
-// The Block layout's bands in a string: equal when a redraw laid them out the same
+// The Block layout's bands in a string: equal when a redraw laid them out the same. With codon analysis by
+// gene the bands differ in height by their translation lanes: those are part of it. (It held only the total
+// height: an annotation edit that moved a gene's lane from band 0 to band 2 kept it, and the old raw offset
+// was restored into band 1 twelve rows further down. GLM audit cb34 #5/#6/#25.)
 function _canvasBandsSig(L) {
-    return L ? L.bandCols + ':' + L.nBands + ':' + L.bandTop[L.nBands] + ':' + (_canvasState.metrics?.charW || 0) : '';
+    return L ? L.bandCols + ':' + L.nBands + ':' + L.bandTop[L.nBands] + ':' + (_canvasState.metrics?.charW || 0) + ':' + L.bandLanes.join('') : '';
 }
 // The Canvas drawing area's height in CSS px
 function _canvasViewH() {
@@ -6033,7 +6036,20 @@ function _startSeqNameEditCanvas(index, clientY) {
             for (let k = L.bandAt(oy); k < L.nBands && L.bandTop[k] < oy + viewH; k++) if (rowY(k) >= 0 && rowY(k) + m.charH <= viewH) { b = k; break; }
             if (b < 0) b = L.bandAt(oy + viewH / 2);
         }
-        y = rowY(b);
+        // The box is whole in the view: a row cut by the view's edge, or out of it (the view moved after the menu
+        // opened), is scrolled in first. (The box sat at the row's place: half below the view, or off it and hidden
+        // by the container's overflow, the typing going to an unseen box. GLM audit cb34 #22 #23.)
+        const r0 = rowY(b);
+        if (r0 < 1 || r0 + m.charH + 1 > viewH) {
+            const partly = r0 + m.charH > 0 && r0 < viewH;   // cut by an edge: the least scroll; else the row centred
+            const want = !partly ? oy + r0 + m.charH / 2 - viewH / 2 : r0 < 1 ? oy + r0 - 1 : oy + r0 + m.charH + 1 - viewH;
+            const maxY = Math.max(0, (_canvasState.totalContentH || 0) - viewH);
+            _canvasState.offsetY = Math.max(0, Math.min(maxY, want));
+            _canvasState.scheduleDrawMoved?.();
+            window._syncVerticalScrollbar?.();
+            _canvasState.onOffsetChange?.();
+        }
+        y = rowY(b) + oy - _canvasState.offsetY;
         x = 0;   // the Block view's names are fixed
     }
     const input = document.createElement('input');
@@ -6223,7 +6239,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     if (blockLayout) stickyNames = true;
     // A Block redraw can change the bands (Block size slider, Screen, codon lanes, hidden columns): the
     // old offsetY is then another place. Keep the place by its anchor (band's first column, row), unless
-    // a zoom or mode switch already holds one. (Before batch 3 the raw offsetY was kept.)
+    // a zoom or mode switch already holds one. (Before batch 3 the raw offsetY was kept.) A window resize does
+    // not render: it re-wraps the bands in relayout(), which keeps the place by the same anchor (cb34 #14).
     if (blockLayout && _canvasState.layout && !_canvasState.pendingAnchor && state.seqs?.length) {
         const a = _captureViewAnchor(true);
         // the same bands again (a colour or display change): exactly where it was, not snapped to a row
@@ -6531,7 +6548,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     };
     const clearBand = () => { _bS0 = 0; _bS1 = nSlots; _bScale = null; _bScaleC0 = 0; _bLast = true; rowPitch = basePitch; _bLanes = -1; };
     _canvasState.relayoutMs = 0;
-    // (Re)wrap to the viewport width; keeps the top-left visible slot's band row in view. True when it changed.
+    // (Re)wrap to the viewport width. True when it changed. A render lays the bands out afresh (it nulls the layout
+    // first and keeps its place with the anchor it captured, applied at its end); a window resize re-wraps the
+    // bands it has and keeps the place here, by the same anchor (the band holding the first column, the first row).
+    // (Before: the old in-band pixel offset was put into the new band; where the bands have other translation lanes
+    // that was another row, or the gap below the band. GLM audit cb34 #14.)
     function relayout() {
         if (!blockLayout) return false;
         const t0 = performance.now();
@@ -6542,11 +6563,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const cols = Math.max(1, Math.min(slider, nSlots, fit));
         _syncBlockSizeDisplay(Math.min(slider, fit));   // the band width (a short alignment's one band is narrower still)
         if (cols === bandCols && _canvasState.layout) return false;
-        const hadLayout = !!_canvasState.layout;
-        // where the view is: the band at its top, how far into that band (in its lines), its first slot
-        const oldB = hadLayout ? bandAt(_canvasState.offsetY) : 0;
-        const inBand = _canvasState.offsetY - bandTop[oldB];
-        const firstSlot = oldB * bandCols;
+        const anchor = _canvasState.layout ? _captureViewAnchor(true) : null;   // where the view is, in the old bands
         bandCols = cols;
         nBands = Math.max(1, Math.ceil(nSlots / bandCols));
         bandScale = [];
@@ -6565,10 +6582,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         _canvasState.totalContentW = totalContentW;
         _canvasState.totalContentH = totalContentH;
         _canvasState.offsetX = 0;
-        if (hadLayout) { const nb = Math.min(nBands - 1, Math.floor(firstSlot / bandCols)); _canvasState.offsetY = bandTop[nb] + Math.min(inBand, bandTop[nb + 1] - bandTop[nb] - 1); }
         // bandH / bandBodyH: band 0's (every band's without codon analysis by gene)
         _canvasState.layout = { kind: 'block', bandCols, nBands, bandH: bandTop[1] - bandTop[0], bandBodyH: bandBody[0], nSlots,
             bandTop, bandBody, bandPitch, bandLanes, bandAt };
+        if (anchor) _canvasState.offsetY = _canvasBlockAnchorY(anchor);
         _canvasState.relayoutMs = performance.now() - t0;
         window._syncVerticalScrollbar?.();
         window._syncHorizontalScrollbar?.();
@@ -6829,6 +6846,15 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             else if (dxDev < 0) drawClipped(fixed, 0, colEdgeDev(fixed - dxDev, false), H);
             else if (dyDev > 0) drawClipped(0, rowEdgeDev(H - dyDev, true), W, H);
             else drawClipped(0, 0, W, rowEdgeDev(-dyDev, false));
+            // The copied side's canvas edge: Chrome does not draw text whose ink would reach only the
+            // canvas's last device row (the tip of a '4' at 1.5x), so a full redraw leaves that row
+            // white while the copy brings the tip in from a frame where the text was further inside.
+            // Redraw the lines within 2 CSS px of that edge (a name's descender hangs about a pixel
+            // below its row) as a full redraw draws them.
+            if (dxDev > 0 && !fixed) drawClipped(0, 0, colEdgeDev(1, false), H);
+            else if (dxDev < 0) drawClipped(colEdgeDev(W - 1, true), 0, W, H);
+            else if (dyDev > 0) drawClipped(0, 0, W, rowEdgeDev(Math.ceil(2 * dpr), false));
+            else if (dyDev < 0) drawClipped(0, rowEdgeDev(H - Math.ceil(2 * dpr), true), W, H);
             // When NAME_W * dpr is not whole, the device pixel column the name edge falls into
             // holds both name backing and content: redraw it.
             const edge = Math.floor(NAME_W * dpr);
@@ -6937,8 +6963,21 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         }
         return _selSlots;
     };
+    // The mask's rectangles are kept from one paint to the next (a scroll step made them all again: ~10 ms a frame
+    // with 2000 2D blocks; GLM audit cb34 #28) until the mask, its opacity or the rows (order, names) change. The
+    // columns' slots, the cell size and the row count are this render's.
+    let _maskKey = null;
+    const maskStale = () => {
+        const k = _maskKey, seqs = state.seqs;
+        if (!k || k.mask !== state.blockMask || k.op !== _blockMaskOpacity || k.headers.length !== seqs.length) return true;
+        for (let i = 0; i < seqs.length; i++) if (k.headers[i] !== seqs[i].header) return true;
+        return false;
+    };
     function drawOverlay(ox, oy, w, h) {
-        _maskByPitch = null;
+        if (maskStale()) {
+            _maskByPitch = null;
+            _maskKey = state.blockMask ? { mask: state.blockMask, op: _blockMaskOpacity, headers: state.seqs.map(q => q.header) } : null;
+        }
         _selSlots = null;
         _canvasState.maskRects = maskRectsFor(basePitch);
         if (!blockLayout) return drawOverlayStrip(ox, oy, w, h);
@@ -7153,7 +7192,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             ctx.globalAlpha = alpha;
         };
         const firstRow = Math.max(0, Math.floor((oy - HEADER_H + cy0) / rowPitch));
-        const lastRow = Math.min(nSeqs - 1, Math.floor((oy - HEADER_H + cy1 - 1) / rowPitch));
+        // the last row whose top is above cy1 (it was floor(... + cy1 - 1): a row whose top lay in the
+        // last CSS pixel was left out, so a full redraw left its first device row(s) white)
+        const lastRow = Math.min(nSeqs - 1, Math.ceil((oy - HEADER_H + cy1) / rowPitch) - 1);
         // The name column is at [0, NAME_W) when sticky, else scrolls with the content
         const withNames = stickyNames ? cx0 < NAME_W : cx0 < NAME_W - ox;
 
@@ -8032,7 +8073,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // (matches DOM mode, which returns early for scale-ruler-line)
     });
 
-    // A zoom captured the top-left residue before the cell size changed: put it back there
+    // Put back the anchor held for this render: a zoom's (the top-left residue before the cell size changed),
+    // a mode switch's or a snapshot's, or in the Block view mostly the keep-the-place anchor captured at the
+    // start of this render (the bands may have changed: Block size slider, Screen, codon lanes, hidden columns)
+    // or one _applyViewAnchor deferred because the bands were not laid out yet
     if (_canvasState.pendingAnchor) {
         const a = _canvasState.pendingAnchor;
         _canvasState.pendingAnchor = null;
@@ -12055,7 +12099,8 @@ function _canvasBlockMaskHit(clientX, clientY) {
     if (!rects || !rects.length || !_canvasState.canvas) return null;
     const m = _canvasState.metrics;
     // _canvasLocal: in the Block view the band under the point, its rows mapped onto the strip's pitch (the
-    // rectangles' own); it read band 1's rows
+    // rectangles' own). Before batch 4 it took the point's x as band 1's column and its y over the whole stacked
+    // layout: below band 1 the y was past every rectangle, so the click and tooltip did nothing there (cb34 #29)
     const P = _canvasLocal(clientX, clientY);
     const sticky = _canvasState.layout ? true : el('stickyNames')?.checked !== false;
     if (sticky && P.x < m.nameW) return null;   // under the fixed names: not drawn there
@@ -14891,6 +14936,15 @@ function _captureViewAnchor(fromCanvas = isCanvasMode()) {
     return { row: +row.dataset.seqIndex, col };
 }
 
+// Block view: the content y that puts an anchor { row, col } at the view's top: the band holding the
+// column, the row's line in it (row 0: the band's top, its ruler in view)
+function _canvasBlockAnchorY(a) {
+    const L = _canvasState.layout, m = _canvasState.metrics;
+    const b = _canvasBandOfCol(a.col);
+    const n = _canvasState.seqsLen || state.seqs.length;
+    const row = Math.min(a.row, Math.max(0, n - 1));
+    return L.bandTop[b] + (row > 0 ? (m.headerH || m.charH) + row * L.bandPitch[b] : 0);
+}
 function _applyViewAnchor(a) {
     if (!a) return;
     if (isCanvasMode()) {
@@ -14899,12 +14953,8 @@ function _applyViewAnchor(a) {
         const L = _canvasState.layout;
         if (isBlockLayout() && !L) { _canvasState.pendingAnchor = a; return; }   // the bands are not laid out yet: at the end of the render
         if (L) {
-            // Block view: the band holding the column, the row's line in it at the view's top
-            const b = _canvasBandOfCol(a.col);
-            const n = _canvasState.seqsLen || state.seqs.length;
-            const row = Math.min(a.row, Math.max(0, n - 1));
             _canvasState.offsetX = 0;
-            _canvasState.offsetY = L.bandTop[b] + (row > 0 ? (m.headerH || m.charH) + row * L.bandPitch[b] : 0);
+            _canvasState.offsetY = _canvasBlockAnchorY(a);
             if (a.oy != null && a.bands === _canvasBandsSig(L)) _canvasState.offsetY = a.oy;   // the same bands (a redraw): exactly where it was
         } else {
             const pitch = _canvasState.rowPitch || m.charH;
@@ -17729,6 +17779,9 @@ function _applySnapshotView(view) {
     setBox('codonAnalysis', view.codonAnalysis);
     setBox('aaOnly', view.aaOnly);
 
+    // A snapshot saved in Block: its render puts the saved place in view (it drew its first frames at the top,
+    // then jumped there in the frame after next; GLM audit cb34 #8). The re-apply below stays for other views.
+    if (!view.keepPlace && view.anchor && view.anchor.block && Number.isInteger(view.anchor.row) && Number.isInteger(view.anchor.col) && isCanvasMode()) _canvasState.pendingAnchor = { row: view.anchor.row, col: view.anchor.col };
     renderAlignment();
 
     if (view.keepPlace) return;   // a mirror pane reloading keeps its own place (it restores it itself)
@@ -20391,7 +20444,17 @@ function _onTrimDragMove(e) {
     if (e.buttons === 0) { _endTrimDrag(); return; }   // released outside the window
     let pos;
     // no spans: the column under the pointer, in the band under it (Block; without clientY it read the band at the top of the view)
-    if (isCanvasMode()) pos = _canvasColFromClientX(e.clientX, e.clientY);
+    if (isCanvasMode()) {
+        // Block: only over a band's lines (consensus, rows), as the DOM needs a residue span under the pointer. Over
+        // the gap below a band the border kept following the pointer, and over the next band's ruler it leapt a
+        // band's width (GLM audit cb34 #9 #31); the DOM Block holds it there.
+        if (_canvasState.layout) {
+            const P = _canvasLocal(e.clientX, e.clientY), m = _canvasState.metrics, cb = _canvasState.consBand;
+            const lineTop = cb && cb.y < m.headerH ? cb.y : m.headerH;   // the consensus on top, else the first row
+            if (P.y === 1e9 || P.y < lineTop) return;
+        }
+        pos = _canvasColFromClientX(e.clientX, e.clientY);
+    }
     else {
         const hit = document.elementFromPoint(e.clientX, e.clientY);
         const span = hit && hit.closest && hit.closest('.seq-data span[data-pos]');
@@ -29495,8 +29558,9 @@ function handleGeneDocEditDragMove(e) {
             const col = _canvasColFromClientX(e.clientX, e.clientY);   // Block: the band under the pointer (it read the band at the top of the view)
             if (col < 0 || col === drag.lastPos) return;
             drag.lastPos = col;
+            // its updateColumnSelections redraws the overlay, which holds the column selection; a full redraw here
+            // (scheduleDraw, from before the overlay did) cost ~25 ms per column crossed (GLM audit cb34 #11)
             setGeneDocColumnRange(drag.startPos, col);
-            _canvasState.scheduleDraw?.();
         } else {
             const target = document.elementFromPoint(e.clientX, e.clientY);
             const span = target?.closest?.('.seq-data > span[data-pos]');

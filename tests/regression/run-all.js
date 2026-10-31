@@ -5503,14 +5503,18 @@ check('Canvas Block: with codon lanes and an annotation track, a scrolled frame 
       const steps = [];
       for (const dy of [120, 120, 120, 120, 120, -100, -100, 37, 53]) {
         await p.evaluate(() => { _canvasState.stats.blit = 0; _canvasState.stats.full = 0; });
-        await p.mouse.wheel(0, dy); await p.waitForTimeout(300);
+        // under load the eased step's last frame was still pending at 300 ms (whole-frame diffs, wheelAnimating
+        // still true): wait for the animation and its last frame before reading the pixels
+        await p.mouse.wheel(0, dy); await p.waitForTimeout(300); await settleWheel(p);
+        await p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
         steps.push(await p.evaluate(async () => {
           const c = _canvasState.canvas, g = c.getContext('2d'), a = g.getImageData(0, 0, c.width, c.height).data, st = { blit: _canvasState.stats.blit, full: _canvasState.stats.full, oy: Math.round(_canvasState.offsetY) };
           _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
           const bb = g.getImageData(0, 0, c.width, c.height).data;
           let diff = 0, max = 0;
-          for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - bb[i]), Math.abs(a[i + 1] - bb[i + 1]), Math.abs(a[i + 2] - bb[i + 2])); if (d) { diff++; if (d > max) max = d; } }
-          return { ...st, diff, max };
+          const at = [];   // where (device x, y) and what (copy / full redraw): to find the cause of a failure
+          for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - bb[i]), Math.abs(a[i + 1] - bb[i + 1]), Math.abs(a[i + 2] - bb[i + 2])); if (d) { diff++; if (d > max) max = d; if (at.length < 8) at.push([(i / 4) % c.width, Math.floor(i / 4 / c.width), a[i] + '.' + a[i + 1] + '.' + a[i + 2], bb[i] + '.' + bb[i + 1] + '.' + bb[i + 2]]); } }
+          return diff ? { ...st, diff, max, H: c.height, oyx: _canvasState.offsetY, at } : { ...st, diff, max };
         }));
       }
       out[dsf] = { annot: box.annot, lanes: box.lanes, steps, ok: box.annot && steps.every(s => s.diff === 0) && steps.filter(s => s.blit > 0 && s.full === 0).length >= 6 };
@@ -5520,6 +5524,70 @@ check('Canvas Block: with codon lanes and an annotation track, a scrolled frame 
   const ok = Object.values(out).every(v => v.ok);
   return { pass: ok, detail: JSON.stringify(out) };
 });
+
+// The check above failed now and then (7 pixels, max 218-255, at 1x and at 1.5x): a full redraw
+// left the canvas's bottom device row blank where a frame copy showed ink. Two causes, both in the
+// full redraw, both only when something's top reaches into the last device row:
+// - drawRegion's lastRow left out a row whose top lies in the last CSS pixel (floor(... + cy1 - 1)),
+//   so its first device row(s) stayed white (a whole line of cells, 0.0.0 vs 255);
+// - Chrome does not draw text whose ink reaches only the canvas's last device row (the tip of the
+//   '4' of 'copy4' at 1.5x): drawn on a 1240-row canvas the same pixel row has ink, on 1239 none.
+// A frame copy brings those pixels in from a frame where the row was further up. The check above
+// meets them only when the eased wheel steps happen to stop at such an offset; this one scrolls
+// up one device pixel at a time (the bottom rows are then always the copied side) over 70 CSS px
+// and compares the bottom two device rows with a full redraw at every step.
+check('Canvas Block: scrolling up one device pixel at a time, the bottom edge rows of each frame copy equal a full redraw (1x/1.25x/1.5x)', async (page) => {
+  const origin = new URL(page.url()).origin;
+  const b = await launch({ canvasBlock: true });
+  const out = {};
+  try {
+    for (const dsf of [1, 1.25, 1.5]) {
+      const p = await b.newPage({ viewport: { width: 1000, height: 450 }, deviceScaleFactor: dsf });   // small: a full redraw per step
+      p.setDefaultTimeout(60000);
+      await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+      const { fasta, bed } = cbCodonFixture();
+      await loadFasta(p, fasta);
+      await p.waitForTimeout(500);
+      out[dsf] = await p.evaluate(async (bed) => {
+        const bs = document.getElementById('blockSizeSlider'); bs.value = '50'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 400));
+        setAnnotation(bed, 'genes.bed');
+        const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+        await new Promise(r => setTimeout(r, 1200));
+        const c = _canvasState.canvas, g = c.getContext('2d'), dpr = devicePixelRatio;
+        const frame = () => new Promise(res => requestAnimationFrame(res));   // the draw's frame was requested first: it has run when this one runs
+        const y0 = c.height - 2, rows = () => g.getImageData(0, y0, c.width, 2).data;
+        const L = _canvasState.layout, h = c.height / dpr;
+        _canvasState.offsetY = Math.round((L.bandTop[3] + L.bandBody[3] - h) * dpr) / dpr;   // the bottom edge at band 3's end (rows with 1-2 codon lanes)
+        for (let i = 0; i < 6; i++) { g.getImageData(0, 0, c.width, c.height); _canvasState.scheduleDraw(); await frame(); }   // software canvas for good (see above)
+        const start = _canvasState.offsetY, bad = [];
+        let steps = 0, blits = 0, faint = 0;
+        for (let k = 1; k <= Math.round(70 * dpr); k++) {
+          _canvasState.stats.blit = 0; _canvasState.stats.full = 0;
+          _canvasState.offsetY = start - k / dpr; _canvasState.scheduleDrawMoved(); await frame();
+          if (_canvasState.stats.blit === 1 && _canvasState.stats.full === 0) blits++;
+          const a = rows();
+          _canvasState.scheduleDraw(); await frame();
+          const f = rows();
+          let diff = 0, max = 0;
+          for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - f[i]), Math.abs(a[i + 1] - f[i + 1]), Math.abs(a[i + 2] - f[i + 2])); if (d) { diff++; if (d > max) max = d; } }
+          steps++;
+          // a lost row or text tip differs by 170-255; text redrawn in a strip can differ from the same
+          // text in a full redraw by up to 4 levels of antialiasing (a separate, known effect: see the
+          // report of 2026-10-31), which is not what this check is about
+          if (max > 16 && bad.length < 5) bad.push({ oy: +_canvasState.offsetY.toFixed(2), diff, max });
+          else if (max > 16) bad.push(null);
+          if (diff && max <= 16) faint++;
+          // the full redraw is the next step's previous frame: its bottom rows reach the edge only
+          // in the next copy, from one or two device rows further up
+        }
+        return { start, steps, blits, faint, nBad: bad.length, bad: bad.filter(Boolean) };
+      }, bed);
+      await p.close();
+    }
+  } finally { await b.close().catch(() => {}); }
+  const ok = Object.values(out).every(v => v.steps >= 70 && v.blits === v.steps && v.nBad === 0);
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 240000 });
 
 // ---- Canvas Block navigation (batch 3, 2026-10-31) ----
 // Before batch 3 every "go to" in the Block view did nothing or went to the wrong place: _scrollToColumn
@@ -6371,6 +6439,221 @@ check('Canvas Block: the Sticky names box re-renders the Canvas strip but not Bl
   await p.evaluate(async () => { document.getElementById('modeCanvas').checked = true; await onModeChange(); await new Promise(r => setTimeout(r, 500)); });
   const strip = await renders();
   return { pass: block === 0 && strip >= 2, detail: JSON.stringify({ block, strip }) };
+}));
+
+// ---- Canvas Block: GLM audit cb34 (navigation, view anchors, snapshots, hit tests; 2026-10-31) ----
+// cbCodonFixture with more rows and genes of choice: bands of different heights, taller than the view
+function cbCodonFixtureN(nSeq, len, genes) {
+  let x = 12345;
+  const rnd = () => (x = (x * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const base = Array.from({ length: len }, () => 'ACGT'[Math.floor(rnd() * 4)]).join('');
+  let fasta = `>ref\n${base}\n`;
+  for (let i = 1; i < nSeq; i++) fasta += `>copy${i}\n${base.split('').map((c, j) => (j * 7 + i * 13) % 41 === 0 ? 'ACGT'[('ACGT'.indexOf(c) + i) % 4] : c).join('')}\n`;
+  const bed = genes.map(([g, a, b]) => `ref\t${a}\t${b}\t${g}\t0\t+\t${a}\t${b}\t0\t1\t${b - a}\t0\tCDS: ${g}`).join('\n');
+  return { fasta, bed };
+}
+const cbCodonOn = (p, bed) => p.evaluate(async (bed) => {
+  setAnnotation(bed, 'genes.bed');
+  const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+  await new Promise(r => setTimeout(r, 1200));
+}, bed);
+const cbViewInfo = (p) => p.evaluate(() => {
+  const L = _canvasState.layout, oy = _canvasState.offsetY, b = L.bandAt(oy);
+  return { a: _captureViewAnchor(), bandCols: L.bandCols, lanes: [...L.bandLanes].join(''), oy: Math.round(oy), inGap: oy - L.bandTop[b] >= L.bandBody[b] };
+});
+
+// cb34 #14: a window resize re-wraps the bands without a render (resize -> relayout), and relayout kept the
+// place by putting the old in-band PIXEL offset into the new band. With codon analysis by gene the band can
+// then have other translation lanes: 560 -> 480 px took band 2 from 2 lanes to 1, and row 15 at the top
+// became the gap below band 2 (row 0 of the next band). The zoom and the Block size slider keep the place by
+// the view anchor (the band holding the first column, the first row); a resize must too.
+check('Canvas Block: a window resize keeps the first row and the band of the first column (bands with other translation lanes, no landing in the gap)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const { fasta, bed } = cbCodonFixtureN(20, 300, [['geneA', 60, 150], ['geneB', 120, 210]]);
+  await p.setViewportSize({ width: 560, height: 700 });
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, fasta); await p.waitForTimeout(500);
+  await p.evaluate(async () => { const bs = document.getElementById('blockSizeSlider'); bs.value = '50'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 700)); });
+  await cbCodonOn(p, bed);
+  const out = [];
+  for (const row of [15, 19]) {
+    await p.setViewportSize({ width: 560, height: 700 }); await p.waitForTimeout(600);
+    const v = await cbSetView(p, 2, row);
+    const before = await cbViewInfo(p);
+    await p.setViewportSize({ width: 480, height: 700 }); await p.waitForTimeout(600);
+    const after = await cbViewInfo(p);
+    const cell = await cbCell(p, row, before.a.col);
+    out.push({ row, col0: v.col0, before, after, cell,
+      ok: before.a.row === row && after.bandCols < before.bandCols && after.lanes !== before.lanes && !after.inGap
+        && after.a.row === row && after.a.col <= before.a.col && before.a.col < after.a.col + after.bandCols && cell.inView });
+  }
+  return { pass: out.every(o => o.ok), detail: JSON.stringify(out) };
+}));
+
+// cb34 #5/#6/#25: a Block redraw restores the exact old offset when the bands are "the same" (_canvasBandsSig),
+// but the signature held only bandCols, nBands, the total height and charW. An annotation edit that moved a
+// gene from columns 0-50 to 99-149 moved one translation lane from band 0 to band 2: same total, same
+// signature, and the old raw offset put the view at row 17 of band 1 instead of row 5.
+check('Canvas Block: a redraw after translation lanes move between bands (same total height) keeps the first row', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const { fasta, bed } = cbCodonFixtureN(20, 300, [['geneA', 0, 51]]);
+  const bed2 = cbCodonFixtureN(20, 300, [['geneA', 99, 150]]).bed;
+  await p.setViewportSize({ width: 1400, height: 700 });
+  await cbNavOpen(p, origin, fasta, 50);
+  await cbCodonOn(p, bed);
+  await cbSetView(p, 1, 5);
+  const before = await cbViewInfo(p);
+  await p.evaluate(async (bed) => { setAnnotation(bed, 'genes.bed'); await new Promise(r => setTimeout(r, 1500)); }, bed2);
+  const after = await cbViewInfo(p);
+  const cell = await cbCell(p, 5, 50);
+  const ok = before.a.row === 5 && before.a.col === 50 && before.lanes === '110000' && after.lanes === '011000'
+    && after.a.row === 5 && after.a.col === 50 && cell.inView && cell.y === 0;
+  return { pass: ok, detail: JSON.stringify({ before, after, cell }) };
+}));
+
+// cb34 #9/#31: the trim-border drag in Block took the column at the pointer's x wherever the pointer was. Over
+// the gap below a band it kept moving the border (the DOM needs a residue span under the pointer and holds the
+// border there; DOM Block measured: 60 held), and over the next band's ruler it leapt a band's width (-> 115). Over a band's lines
+// (consensus, rows) the next band's column is right: the DOM Block does the same over the next block's rows.
+check('Canvas Block: a trim-border drag holds the border over the gap and the next band\'s ruler, as the DOM Block does', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  await p.evaluate(async () => { state.trimBoundaries = { leftTrimEnd: 55, rightTrimStart: 380 }; renderAlignment(); await new Promise(r => setTimeout(r, 500)); });
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 0);
+  const consY = g.trackH + g.charH;
+  const left = () => p.evaluate(() => state.trimBoundaries && state.trimBoundaries.leftTrimEnd);
+  const a = cbPt(g, oy, 1, 52, cbTop(g, 1) + consY + g.charH / 2), z = cbPt(g, oy, 1, 60, cbTop(g, 1) + consY + g.charH / 2);
+  await p.mouse.move(a.x, a.y); await p.mouse.down(); await p.waitForTimeout(80);
+  await p.mouse.move(z.x, z.y, { steps: 4 }); await p.waitForTimeout(80);
+  const out = { band1: await left() };
+  // down into the gap below band 1 at column 60's x (over band 1's rows on the way: 60), then along the gap
+  const x65 = cbPt(g, oy, 1, 65, 0).x, gapY = g.top + cbTop(g, 2) - g.gap / 2 - oy;
+  await p.mouse.move(z.x, gapY, { steps: 4 }); await p.mouse.move(x65, gapY, { steps: 4 }); await p.waitForTimeout(80);
+  out.gap = await left();
+  await p.mouse.move(x65, g.top + cbTop(g, 2) + g.trackH + g.charH / 2 - oy, { steps: 2 }); await p.waitForTimeout(80);   // band 2's ruler
+  out.ruler = await left();
+  await p.mouse.move(x65, g.top + cbTop(g, 2) + consY + g.charH / 2 - oy, { steps: 2 }); await p.waitForTimeout(80);   // band 2's consensus line
+  out.band2 = await left();
+  await p.mouse.up(); await p.waitForTimeout(400);
+  const ok = out.band1 === 60 && out.gap === 60 && out.ruler === 60 && out.band2 === 115;
+  return { pass: ok, detail: JSON.stringify({ oy, ...out }) };
+}));
+
+// cb34 #8: a snapshot saved in Block was restored in two steps: its render drew the first frames at the top
+// of the alignment (row 0, column 0) and only two frames later the saved anchor was applied (a visible jump).
+// The saved anchor is now handed to that render, so every frame drawn shows the saved place. (GLM thought the
+// first step showed the previously open file's place; measured, it was the top.)
+check('Canvas Block: restoring a Block snapshot draws no frame at another place before the saved one', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(120, 3000), 150);
+  await cbSetView(p, 5, 9);
+  const payload = await p.evaluate(() => _buildSnapshotPayload());
+  await cbSetView(p, 15, 60);
+  const frames = await p.evaluate(async (pl) => {
+    const log = []; let go = true;
+    const tick = () => { if (!go) return; if (_canvasState.layout) log.push(JSON.stringify(_captureViewAnchor())); requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+    await _loadSnapshotPayload(pl);
+    await new Promise(r => setTimeout(r, 1500)); go = false;
+    return log.filter((x, i) => x !== log[i - 1]);
+  }, payload);
+  const saved = JSON.stringify({ row: 9, col: 750 });
+  const ok = frames.length >= 1 && frames.every(f => f === saved);
+  return { pass: ok, detail: JSON.stringify({ saved, frames }) };
+}));
+
+// cb34 #22/#23: the Block rename box sat where the row's name is, even when that is not in the view: (a) the
+// context menu's Rename after the view moved away (no band in view shows the row) put it off the view, hidden
+// by the container's overflow, and the typing went to an unseen box; (b) a double-click on a name cut by the
+// view's bottom edge put most of the box below the view. The row is now brought fully into view first.
+check('Canvas Block: the rename box is always whole in the view (row scrolled away after the menu opened; name cut by the bottom edge)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(120, 3000), 150);
+  const boxIn = () => p.evaluate(() => {
+    const b = document.querySelector('.seq-name-edit'); if (!b) return null;
+    const r = b.getBoundingClientRect(), c = _canvasState.canvas.getBoundingClientRect(), vh = _canvasViewH();
+    return { v: b.value, top: Math.round(r.top - c.top), bottom: Math.round(r.bottom - c.top), vh, inView: r.top >= c.top - 1.5 && r.bottom <= c.top + vh + 1.5 };
+  });
+  const g = await p.evaluate(() => ({ left: _canvasState.canvas.getBoundingClientRect().left, top: _canvasState.canvas.getBoundingClientRect().top, vh: _canvasViewH(), charH: _canvasState.metrics.charH }));
+  // (a) right-click row 6's name in band 5, then the view moves to row 60 of band 5 before Rename is picked
+  await cbSetView(p, 5, 4);
+  const rowY = (row) => p.evaluate((row) => { const L = _canvasState.layout, m = _canvasState.metrics; return L.bandTop[5] + m.headerH + row * L.bandPitch[5] - _canvasState.offsetY; }, row);
+  const y6 = await rowY(6);
+  await p.mouse.click(g.left + 25, g.top + y6 + g.charH / 2, { button: 'right' }); await p.waitForTimeout(200);
+  await cbSetView(p, 5, 60);
+  await p.evaluate(() => [...document.querySelectorAll('.context-menu div')].find(d => d.textContent === 'Rename sequence').click());
+  await p.waitForTimeout(250);
+  const away = await boxIn();
+  await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  // (b) double-click row 20's name where only its top 4 px are in view (at the bottom edge)
+  await cbSetView(p, 5, 0);
+  const y20 = await rowY(20);
+  await p.evaluate((d) => { _canvasState.offsetY += d; _canvasState.scheduleDraw(); }, y20 - (g.vh - 4));
+  await p.waitForTimeout(150);
+  await p.mouse.dblclick(g.left + 25, g.top + g.vh - 2); await p.waitForTimeout(250);
+  const cut = await boxIn();
+  const cutRowY = await rowY(20);
+  await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  const ok = !!away && away.v === 's6' && away.inView && !!cut && cut.v === 's20' && cut.inView && Math.abs(cut.top - (cutRowY - 1)) <= 1;
+  return { pass: ok, detail: JSON.stringify({ away, cut, cutRowY }) };
+}));
+
+// cb34 #11: every column the GeneDoc column drag crossed asked for a full redraw of the canvas (scheduleDraw marks
+// it dirty), though the column selection is drawn on the overlay alone (updateColumnSelections redraws it). A
+// full Block draw of aln2000x2000 took ~25 ms (headless, median of 20), so the drag ran at under a frame per
+// crossing. The drag must draw the selection on the overlay, with no full redraw while it moves.
+check('Canvas Block: a GeneDoc column drag redraws only the overlay while it moves (no full redraw per column)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  await p.evaluate(() => { state.editModeActive = true; state.editTool = 'selectColumn'; });
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 0);
+  const rowY = cbTop(g, 2) + g.headerH + 2.5 * g.charH;
+  const a = cbPt(g, oy, 2, 110, rowY), z = cbPt(g, oy, 2, 125, rowY);
+  await p.mouse.move(a.x, a.y); await p.mouse.down(); await p.waitForTimeout(150);
+  await p.evaluate(() => { _canvasState.stats.full = 0; });
+  await p.mouse.move(z.x, z.y, { steps: 8 }); await p.waitForTimeout(150);
+  const mid = await p.evaluate((pt) => {
+    const o = _canvasState.overlay, r = o.getBoundingClientRect(), d = devicePixelRatio;
+    const px = o.getContext('2d').getImageData(Math.round((pt.x - r.left) * d), Math.round((pt.y - r.top) * d), 1, 1).data;
+    return { full: _canvasState.stats.full, n: state.selectedColumns.size, tint: px[3] > 0 };
+  }, cbPt(g, oy, 2, 120, rowY));
+  await p.mouse.up(); await p.waitForTimeout(300);
+  await p.evaluate(() => { state.editModeActive = false; });
+  const ok = mid.full === 0 && mid.n === 16 && mid.tint;
+  return { pass: ok, detail: JSON.stringify({ oy, mid }) };
+}));
+
+// cb34 #28: every paint, a frame-copy scroll step included, threw away the 2D mask's rectangles and made them again
+// (_canvasBlockMaskRects walks every block's columns and rows). Measured on aln2000x2000 in Block with 2000 2D blocks
+// (40,000 rectangles): a scroll frame took ~12 ms instead of ~2 ms, ~10 ms of it remaking them. They are now kept
+// until the mask, its opacity or the rows change; the overlay must still show such a change at once.
+check('Canvas Block: scrolling with Show 2D on reuses the 2D mask\'s rectangles; a new mask, opacity or row order remakes them', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  const g = await cbGeom(p);
+  const frame = () => p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const px = (col, row, b) => p.evaluate((pt) => { const o = _canvasState.overlay, r = o.getBoundingClientRect(), d = devicePixelRatio; return [...o.getContext('2d').getImageData(Math.round((pt.x - r.left) * d), Math.round((pt.y - r.top) * d), 1, 1).data]; }, cbPt(g, 0, b, col, cbTop(g, b) + g.headerH + (row + 0.5) * g.charH));
+  await p.evaluate(async () => {
+    state.blockMask = { blocks: [{ type: 'CONSERVATIVE', col_start: 60, col_end: 80, rows: [1, 2, 3], sourceRows: [1, 2, 3] }], row_headers: state.seqs.map(q => q.header) };
+    renderBlockMaskOverlay();
+  });
+  await cbScrollTo(p, 0); await frame();
+  const out = {};
+  out.scrollMade = await p.evaluate(async () => {
+    _canvasState.maskRectsMade = 0;
+    for (let i = 0; i < 6; i++) { _canvasState.offsetY += 9; _canvasState.scheduleDrawMoved(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); }
+    _canvasState.offsetY = 0; _canvasState.scheduleDrawMoved(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return _canvasState.maskRectsMade;
+  });
+  out.on = (await px(70, 2, 1))[3];
+  await p.evaluate(() => setBlockMaskOpacity(0)); await frame();
+  out.opacity0 = (await px(70, 2, 1))[3];
+  await p.evaluate(() => setBlockMaskOpacity(0.45)); await frame();
+  // a new mask on rows 5-6: the old one's row 2 is clear, row 5 painted
+  await p.evaluate(() => { state.blockMask = { blocks: [{ type: 'CONSERVATIVE', col_start: 60, col_end: 80, rows: [5, 6], sourceRows: [5, 6] }], row_headers: state.seqs.map(q => q.header) }; renderBlockMaskOverlay(); });
+  await frame();
+  out.newMask = { row2: (await px(70, 2, 1))[3], row5: (await px(70, 5, 1))[3] };
+  // the rows reordered (s5 to the top) without a new mask: the mask follows s5 by its name
+  await p.evaluate(() => { const s = state.seqs.splice(5, 1)[0]; state.seqs.unshift(s); _canvasState.scheduleDraw(); });
+  await frame();
+  out.reordered = { row0: (await px(70, 0, 1))[3], row5: (await px(70, 5, 1))[3] };
+  const ok = out.scrollMade === 0 && out.on > 0 && out.opacity0 === 0 && out.newMask.row2 === 0 && out.newMask.row5 > 0 && out.reordered.row0 > 0 && out.reordered.row5 === 0;
+  return { pass: ok, detail: JSON.stringify(out) };
 }));
 
 // #37: the vertical bar's range was the content less the canvas' height, but clampOffsets lets the view go
