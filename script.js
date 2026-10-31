@@ -5610,6 +5610,53 @@ function _canvasCellClient(row, slot) {
     const b = Math.max(0, Math.min(L.nBands - 1, Math.floor(slot / L.bandCols)));
     return { x: rect.left + m.nameW + (slot - b * L.bandCols) * m.charW, y: rect.top + L.bandTop[b] + (m.headerH || m.charH) + row * L.bandPitch[b] - _canvasState.offsetY };
 }
+// The Block layout's bands in a string: equal when a redraw laid them out the same
+function _canvasBandsSig(L) {
+    return L ? L.bandCols + ':' + L.nBands + ':' + L.bandTop[L.nBands] + ':' + (_canvasState.metrics?.charW || 0) : '';
+}
+// The Canvas drawing area's height in CSS px
+function _canvasViewH() {
+    const cv = _canvasState.canvas;
+    return (cv && (parseFloat(cv.style.height) || cv.clientHeight)) || alignmentContainer?.clientHeight || 240;
+}
+// The band of the Block layout that holds column col (its shown slot, or the marker of its hidden run)
+function _canvasBandOfCol(col) {
+    const L = _canvasState.layout;
+    if (!L) return 0;
+    const s = col > 0 ? _canvasColToSlotNear(col) : 0;
+    return Math.max(0, Math.min(L.nBands - 1, Math.floor((s >= 0 ? s : col) / L.bandCols)));
+}
+// Block view (Canvas Block) navigation: the Canvas strip pans to a column, the Block view goes to the
+// band that holds it (as the DOM Block scrolled to the block holding it, centred). With a row: that
+// row's line in the band, centred. Without a column: the row in the band now in the middle of the
+// view. Without a row: the band whole and centred when it fits the view and is not all in view
+// already; a band taller than the view is entered at the rows now in view. False when not in Block.
+function _canvasBlockReveal(row, col) {
+    const L = _canvasState.layout, m = _canvasState.metrics;
+    if (!L || !m || !_canvasState.canvas) return false;
+    const viewH = _canvasViewH(), oy = _canvasState.offsetY || 0;
+    const b = Number.isInteger(col) ? _canvasBandOfCol(col) : L.bandAt(oy + viewH / 2);
+    const top = L.bandTop[b], body = L.bandBody[b], H0 = m.headerH || m.charH;
+    const n = _canvasState.seqsLen || state.seqs.length;
+    let y;
+    if (Number.isInteger(row) && row >= 0 && row < n) {
+        const p = L.bandPitch[b];
+        y = top + H0 + row * p + (m.charH || p) / 2 - viewH / 2;
+    } else if (body <= viewH) {
+        if (top >= oy && top + body <= oy + viewH) return true;   // all of it in view: stay
+        y = top - (viewH - body) / 2;
+    } else {
+        const b0 = L.bandAt(oy);
+        y = top + Math.max(0, Math.min(oy - L.bandTop[b0], body - viewH));
+    }
+    const maxY = Math.max(0, (_canvasState.totalContentH || 0) - viewH);
+    _canvasState.offsetX = 0;
+    _canvasState.offsetY = Math.max(0, Math.min(maxY, y));
+    _canvasState.scheduleDraw?.();
+    window._syncVerticalScrollbar?.();
+    _canvasState.onOffsetChange?.();
+    return true;
+}
 // Cancellation token for the Canvas mode's deferred (chunked) conservation/
 // consensus jobs; reassigned + old one cancelled on every render so a
 // superseded background job can't clobber a newer one's results.
@@ -6089,6 +6136,14 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // Block layout (isBlockLayout()): every band shows its names
     const blockLayout = isBlockLayout();
     if (blockLayout) stickyNames = true;
+    // A Block redraw can change the bands (Block size slider, Screen, codon lanes, hidden columns): the
+    // old offsetY is then another place. Keep the place by its anchor (band's first column, row), unless
+    // a zoom or mode switch already holds one. (Before batch 3 the raw offsetY was kept.)
+    if (blockLayout && _canvasState.layout && !_canvasState.pendingAnchor && state.seqs?.length) {
+        const a = _captureViewAnchor(true);
+        // the same bands again (a colour or display change): exactly where it was, not snapped to a row
+        if (a && (a.row > 0 || a.col > 0)) _canvasState.pendingAnchor = { ...a, oy: _canvasState.offsetY, bands: _canvasBandsSig(_canvasState.layout) };
+    }
     _canvasState.layout = null;
     alignmentContainer.innerHTML = '';
     alignmentContainer.style.overflow = 'hidden';
@@ -6991,7 +7046,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // Position scale (10, *, 20, * ...) - only the visible column window, same
         // generateScale() as Full/Block mode; cost is O(visible cols), not alignment length.
         if (TRACK_H > 0 && firstCol <= lastCol) {
-            _canvasDrawAnnotTrack(ctx, { ox, oy, w, NAME_W, CHAR_W, CHAR_H, TRACK_H, firstCol, lastCol, stickyNames, fontSizePx });
+            _canvasDrawAnnotTrack(ctx, { ox, oy, w, NAME_W, CHAR_W, CHAR_H, TRACK_H, firstCol, lastCol, stickyNames, fontSizePx, layer: blockLayout, dpr });
             ctx.font = fontStr;
         }
         // Highlight diffs: the same rule as styles.css body.highlight-diffs - every cell, consensus
@@ -7803,7 +7858,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     if (_canvasState.pendingAnchor) {
         const a = _canvasState.pendingAnchor;
         _canvasState.pendingAnchor = null;
-        if (!blockLayout) _applyViewAnchor(a);   // PROTOTYPE: anchors are strip coordinates
+        _applyViewAnchor(a);   // (the Block view's anchors are band-aware since batch 3)
     }
     scheduleDraw();
 }
@@ -8841,6 +8896,27 @@ function _canvasDrawAnnotTrack(ctx, o) {
     if (!L || TRACK_H <= 0) return;
     const y0 = -oy;
     if (y0 + TRACK_H <= 0) return;
+    if (o.layer) {
+        // Block view: the track is drawn whole into its own canvas and copied at whole device pixels.
+        // A band's track scrolls with the band, so the canvas edge cuts it at a different line in every
+        // frame, and Chrome antialiases a path cut by the canvas edge (the feature arrows' tips) slightly
+        // differently from the same path uncut: the frame copy then kept pixels a full redraw does not
+        // give (measured with a software canvas: 2 pixels, 6 levels). Its labels are drawn there too, away
+        // from the text of the other bands, whose order changed their antialiasing after a read-back.
+        const dpr = o.dpr || 1, W = Math.max(1, Math.ceil(w * dpr)), H = Math.max(1, Math.round(TRACK_H * dpr));
+        const lc = _canvasState._annotLayer || (_canvasState._annotLayer = document.createElement('canvas'));
+        if (lc.width !== W) lc.width = W;
+        if (lc.height !== H) lc.height = H;
+        const lctx = lc.getContext('2d', { alpha: false });
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        _canvasDrawAnnotTrack(lctx, { ...o, oy: 0, layer: false });
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(lc, 0, Math.round(y0 * dpr));
+        ctx.restore();
+        return;
+    }
     ctx.save();
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, y0, w, TRACK_H);
@@ -14526,7 +14602,21 @@ function _captureViewAnchor(fromCanvas = isCanvasMode()) {
     if (fromCanvas) {
         const m = _canvasState.metrics;
         if (!m || !_canvasState.canvas) return null;
-        if (_canvasState.layout) return null;   // Canvas Block: anchors are strip coordinates (later batch)
+        const L = _canvasState.layout;
+        if (L) {
+            // Block view: the band at the view's top and its first row in view (0: the band's top,
+            // its ruler in view, as row 0 is the strip's top); the column is the band's first.
+            // Below a band's rows (its bottom consensus, the gap): the next band's top.
+            const oy = _canvasState.offsetY || 0, H0 = m.headerH || m.charH;
+            const n = _canvasState.seqsLen || state.seqs.length;
+            let b = L.bandAt(oy);
+            let row = Math.max(0, Math.ceil((oy - L.bandTop[b] - H0) / L.bandPitch[b] - 0.01));
+            if (row >= n && b < L.nBands - 1) { b++; row = 0; }
+            const slot = b * L.bandCols;
+            const folds = _canvasSlotFolds(slot);
+            const col = folds ? folds[0][0] : _canvasSlotToCol(slot);
+            return { row: Math.min(row, Math.max(0, n - 1)), col: col >= 0 ? col : slot };
+        }
         const pitch = _canvasState.rowPitch || m.charH;
         const oy = _canvasState.offsetY || 0, ox = _canvasState.offsetX || 0;
         // Canvas is laid out in slots (Variable sites only hides columns): the slot's column
@@ -14567,12 +14657,23 @@ function _applyViewAnchor(a) {
     if (isCanvasMode()) {
         const m = _canvasState.metrics;
         if (!m) return;
-        if (_canvasState.layout) return;   // Canvas Block: anchors are strip coordinates (later batch)
-        const pitch = _canvasState.rowPitch || m.charH;
-        _canvasState.offsetY = a.row > 0 ? (m.headerH || m.charH) + a.row * pitch : 0;
-        const slot = _canvasColToSlotNear(a.col);
-        if (a.col <= 0) _canvasState.offsetX = 0;
-        else if (slot >= 0) _canvasState.offsetX = slot * m.charW;
+        const L = _canvasState.layout;
+        if (isBlockLayout() && !L) { _canvasState.pendingAnchor = a; return; }   // the bands are not laid out yet: at the end of the render
+        if (L) {
+            // Block view: the band holding the column, the row's line in it at the view's top
+            const b = _canvasBandOfCol(a.col);
+            const n = _canvasState.seqsLen || state.seqs.length;
+            const row = Math.min(a.row, Math.max(0, n - 1));
+            _canvasState.offsetX = 0;
+            _canvasState.offsetY = L.bandTop[b] + (row > 0 ? (m.headerH || m.charH) + row * L.bandPitch[b] : 0);
+            if (a.oy != null && a.bands === _canvasBandsSig(L)) _canvasState.offsetY = a.oy;   // the same bands (a redraw): exactly where it was
+        } else {
+            const pitch = _canvasState.rowPitch || m.charH;
+            _canvasState.offsetY = a.row > 0 ? (m.headerH || m.charH) + a.row * pitch : 0;
+            const slot = _canvasColToSlotNear(a.col);
+            if (a.col <= 0) _canvasState.offsetX = 0;
+            else if (slot >= 0) _canvasState.offsetX = slot * m.charW;
+        }
         _canvasState.scheduleDraw?.();
         // Resize the persistent scrollbars to the new content as they take the offset: a bar
         // still sized for the old cells clamped it and wrote the clamped value back (zooming in
@@ -17208,6 +17309,10 @@ function _buildSnapshotPayload(opts = {}) {
             codonCode: el('codonCode')?.value,
             canvasOffsetX: _canvasState.offsetX || 0,
             canvasOffsetY: _canvasState.offsetY || 0,
+            // the place by row and column (any view: the Block view's offsets are its bands', which
+            // another window width or view lays out differently); old snapshots have only the offsets
+            // (block: taken in the Block view, whose raw offsets fit only its own bands)
+            anchor: (() => { try { const a = state.seqs.length ? _captureViewAnchor() : null; return a && { ...a, block: isBlockLayout() }; } catch (e) { return null; } })(),
             diffsPausedByVarSites: !!state._diffsPausedByVarSites,
             hiddenCols: state.hiddenCols && state.hiddenCols.length ? state.hiddenCols.map(r => [r[0], r[1]]) : null
         },
@@ -17360,10 +17465,20 @@ function _applySnapshotView(view) {
     const scrollLeft = Number(view.scrollLeft || 0);
     const scrollTop = Number(view.scrollTop || 0);
     const ox = Number(view.canvasOffsetX || 0), oy = Number(view.canvasOffsetY || 0);
+    const anchor = view.anchor && Number.isInteger(view.anchor.row) && Number.isInteger(view.anchor.col) ? { row: view.anchor.row, col: view.anchor.col } : null;
+    const blockSaved = !!(view.anchor && view.anchor.block);
     if (alignmentContainer) {
         requestAnimationFrame(() => {
             alignmentContainer.scrollLeft = scrollLeft;
             alignmentContainer.scrollTop = scrollTop;
+            // Block, or a snapshot saved in Block: the saved row and column (a snapshot saved in Block at
+            // band 5 opened at band 5's raw offset only while the bands were the same). The Canvas strip
+            // keeps its exact raw offsets (Clone Tab), Full its scroll offsets; a Full view without them
+            // goes to the anchor
+            if (anchor && ((typeof isBlockLayout === 'function' && isBlockLayout()) || blockSaved || (!isCanvasMode() && !scrollLeft && !scrollTop))) {
+                requestAnimationFrame(() => _applyViewAnchor(anchor));
+                return;
+            }
             // the Canvas pans instead of scrolling: its position comes back after its first draw
             if ((ox || oy) && typeof isCanvasMode === 'function' && isCanvasMode()) {
                 requestAnimationFrame(() => {
@@ -20230,7 +20345,9 @@ function _geJumpToCol(pos1) {
         const charW = _canvasState.metrics?.charW || 8;
         const viewW = (el('alignmentContainer') && el('alignmentContainer').clientWidth) || 600;
         const slot0 = _canvasColToSlotNear(pos0);
-        _canvasState.offsetX = Math.max(0, (slot0 >= 0 ? slot0 : pos0) * charW - Math.min(viewW / 3, charW * 10));
+        // Block view: the band holding the column (it panned offsetX, which Block holds at 0)
+        if (!(isBlockLayout() && _canvasBlockReveal(null, pos0)))
+            _canvasState.offsetX = Math.max(0, (slot0 >= 0 ? slot0 : pos0) * charW - Math.min(viewW / 3, charW * 10));
         // flash the column without losing the user's own column selection (it was replaced, then emptied)
         const hadCol = state.selectedColumns.has(pos0);
         state.selectedColumns.add(pos0);
@@ -21159,6 +21276,8 @@ function _geScrollToSeq(header) {
     const idx = state.seqs.findIndex(s => s.header === header);
     if (idx < 0) return false;
     if (typeof isCanvasMode === 'function' && isCanvasMode()) {
+        // Block view: the row in the band now in the middle of the view (row * pitch was band 0's rows)
+        if (isBlockLayout() && _canvasBlockReveal(idx, null)) return true;
         const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
         const viewH = (el('alignmentContainer') && el('alignmentContainer').clientHeight) || 240;
         _canvasState.offsetY = Math.max(0, idx * rowPitch - Math.min(viewH / 3, rowPitch * 4));
@@ -34860,8 +34979,17 @@ function _renderTsdResultsHTML(el, results, tsdMode, params) {
 }
 
 // Scroll the alignment to a row (if it is drawn) and a column, and flash the row name
-function _showRowInAlignment(row, col) {
+// (bandCol: Block view only, when col is not given: the band to show the row in, e.g. the SINE body's
+// first column for a TSD miss; without it the band now in the middle of the view)
+function _showRowInAlignment(row, col, bandCol) {
     const container = document.getElementById('alignmentContainer');
+    // Block view (Canvas Block): the band holding the column, the row's line in it (it set the strip's
+    // offsetY = row * pitch, which is band 0's rows, and panned offsetX, which Block holds at 0)
+    if (isBlockLayout() && _canvasState.layout) {
+        if (Number.isInteger(col)) _foldRevealCol(col);
+        const c = Number.isInteger(col) ? col : (Number.isInteger(bandCol) ? bandCol : null);
+        if (_canvasBlockReveal(row, c)) return;
+    }
     if (document.getElementById('modeCanvas')?.checked && _canvasState.canvas) {
         // Canvas: the row a third of the way down (as _geScrollToSeq), then the column
         const rowPitch = _canvasState.rowPitch || _canvasState.metrics?.charH || 16;
@@ -34895,7 +35023,8 @@ function _wireTsdGoto(el) {
         ev.preventDefault();
         const m = _lastTsdResults?.misses?.[parseInt(a.dataset.mi, 10)];
         const row = m?.obj ? _seqObjResolver()(m.obj) : -1;
-        if (row >= 0) _showRowInAlignment(row, null);
+        // Block view: the band of the SINE body's first column (a miss has no column of its own)
+        if (row >= 0) _showRowInAlignment(row, null, _lastTsdResults?.boundaries?.leftBoundary);
     }));
 }
 function _copyTsdTable() {
@@ -35065,6 +35194,8 @@ function _scrollToColumn(colIndex) {
     if (isCanvasMode() || _foldDomInfo()) _foldRevealCol(colIndex);
     const container = document.getElementById('alignmentContainer');
     if (!container) return;
+    // Block view (Canvas Block): go to the band that holds the column (offsetX is always 0 there)
+    if (isBlockLayout() && _canvasBlockReveal(null, colIndex)) return;
     // Canvas mode: pan the canvas instead of scrolling the container
     if (document.getElementById('modeCanvas')?.checked) {
         const m = _canvasState.metrics;

@@ -5340,6 +5340,277 @@ check('Canvas Block: a typed letter repaints only its cells (no full redraw), pi
   return { pass: ok, detail: JSON.stringify(out) };
 }));
 
+// Batch 3: the codon check above allows letter-edge differences up to 48 between a frame copy and a full
+// redraw (it found up to 17 in band headers). Their cause: the annotation track was drawn into the main
+// canvas. Its labels (Arial) changed how Chrome antialiased the text drawn after them in the frame, so the
+// same band header came out differently when another band's text was drawn before it in that frame (two
+// FULL redraws at offsets 455 and 461 differed by 15 in band 2's header); and a feature arrow cut by the
+// canvas edge is antialiased slightly differently from the same arrow uncut (2 pixels, 6 levels, even
+// with a software canvas). The Block view now draws the track whole into its own canvas and copies it at
+// whole device pixels; this check requires the frame copy to be exact, at 1x, 1.25x and 1.5x.
+check('Canvas Block: with codon lanes and an annotation track, a scrolled frame copy is pixel-identical to a full redraw (exact, 1x/1.25x/1.5x)', async (page) => {
+  const origin = new URL(page.url()).origin;
+  const b = await launch({ canvasBlock: true });
+  const out = {};
+  try {
+    for (const dsf of [1, 1.25, 1.5]) {
+      const p = await b.newPage({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: dsf });
+      p.setDefaultTimeout(30000);
+      await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+      const { fasta, bed } = cbCodonFixture();
+      await loadFasta(p, fasta);
+      await p.waitForTimeout(500);
+      await p.evaluate(async (bed) => {
+        const bs = document.getElementById('blockSizeSlider'); bs.value = '50'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 400));
+        setAnnotation(bed, 'genes.bed');
+        const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+        await new Promise(r => setTimeout(r, 1200));
+        const c = _canvasState.canvas, g = c.getContext('2d');
+        _canvasState.offsetY = 0;
+        for (let i = 0; i < 6; i++) { g.getImageData(0, 0, c.width, c.height); _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res))); }
+      }, bed);
+      const box = await p.evaluate(() => { const r = _canvasState.canvas.getBoundingClientRect(); return { x: r.left + r.width * 0.6, y: r.top + r.height * 0.5, annot: !!state._annotLayout, lanes: [..._canvasState.layout.bandLanes].join('') }; });
+      await p.mouse.move(box.x, box.y);
+      const steps = [];
+      for (const dy of [120, 120, 120, 120, 120, -100, -100, 37, 53]) {
+        await p.evaluate(() => { _canvasState.stats.blit = 0; _canvasState.stats.full = 0; });
+        await p.mouse.wheel(0, dy); await p.waitForTimeout(300);
+        steps.push(await p.evaluate(async () => {
+          const c = _canvasState.canvas, g = c.getContext('2d'), a = g.getImageData(0, 0, c.width, c.height).data, st = { blit: _canvasState.stats.blit, full: _canvasState.stats.full, oy: Math.round(_canvasState.offsetY) };
+          _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+          const bb = g.getImageData(0, 0, c.width, c.height).data;
+          let diff = 0, max = 0;
+          for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - bb[i]), Math.abs(a[i + 1] - bb[i + 1]), Math.abs(a[i + 2] - bb[i + 2])); if (d) { diff++; if (d > max) max = d; } }
+          return { ...st, diff, max };
+        }));
+      }
+      out[dsf] = { annot: box.annot, lanes: box.lanes, steps, ok: box.annot && steps.every(s => s.diff === 0) && steps.filter(s => s.blit > 0 && s.full === 0).length >= 6 };
+      await p.close();
+    }
+  } finally { await b.close().catch(() => {}); }
+  const ok = Object.values(out).every(v => v.ok);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// ---- Canvas Block navigation (batch 3, 2026-10-31) ----
+// Before batch 3 every "go to" in the Block view did nothing or went to the wrong place: _scrollToColumn
+// and the cluster panel set offsetX (Block holds it at 0), _showRowInAlignment set offsetY = row * pitch
+// (band 0's rows), the view anchors returned null in Block (a mode switch, a zoom or the Block size
+// slider kept the raw offsetY, another place once the bands change) and a snapshot kept raw offsets.
+// Deterministic rows of A/C/T with runs put at [row, col, text]
+function cbNavFasta(nSeq, len, hits = []) {
+  let x = 777;
+  const rnd = () => (x = (x * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const rows = [];
+  for (let i = 0; i < nSeq; i++) rows.push(Array.from({ length: len }, () => 'ACT'[Math.floor(rnd() * 3)]));
+  for (const [r, c, m] of hits) for (let k = 0; k < m.length; k++) rows[r][c + k] = m[k];
+  return rows.map((s, i) => `>s${i}\n${s.join('')}`).join('\n') + '\n';
+}
+async function cbNavOpen(p, origin, fasta, blockSize = 60) {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, fasta);
+  await p.waitForTimeout(500);
+  await p.evaluate(async (v) => { const bs = document.getElementById('blockSizeSlider'); bs.value = String(v); bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 700)); }, blockSize);
+}
+// Where the cell (row, col) is: inside the canvas viewport or not, its band
+const cbCell = (p, row, col) => p.evaluate(({ row, col }) => {
+  const r = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics, L = _canvasState.layout;
+  const s = _canvasColToSlotNear(col), c = _canvasCellClient(row, s);
+  const vh = parseFloat(_canvasState.canvas.style.height) || r.height;
+  return { inView: c.y >= r.top - 0.5 && c.y + m.charH <= r.top + vh + 0.5 && c.x >= r.left - 0.5 && c.x + m.charW <= r.right + 0.5,
+    y: Math.round(c.y - r.top), band: L ? Math.floor(s / L.bandCols) : null, oy: Math.round(_canvasState.offsetY) };
+}, { row, col });
+// Put band `band`, row `row` at the view's top
+const cbSetView = (p, band, row) => p.evaluate(async ({ band, row }) => {
+  const L = _canvasState.layout, m = _canvasState.metrics;
+  _canvasState.offsetY = L.bandTop[band] + (row > 0 ? m.headerH + row * L.bandPitch[band] : 0);
+  _canvasState.scheduleDraw(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return { col0: band * L.bandCols, bandCols: L.bandCols };
+}, { band, row });
+
+check('Canvas Block: Go to column brings the band holding the column into view, the row\'s cell in the viewport (short and tall bands)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(12, 3000));
+  const short = [];
+  for (const col of [2500, 1290, 30, 2999]) {
+    await p.evaluate((c) => _scrollToColumn(c), col); await p.waitForTimeout(200);
+    short.push({ col, first: await cbCell(p, 0, col), last: await cbCell(p, 11, col) });
+  }
+  // the Selections panel's go-to of a selected column (its button calls _gotoSelectionItem)
+  await p.evaluate(() => { state.selectedColumns.clear(); state.selectedColumns.add(2010); _gotoCursor.cols = -1; _gotoSelectionItem({ key: 'cols' }); });
+  await p.waitForTimeout(200);
+  const sel = { first: await cbCell(p, 0, 2010), last: await cbCell(p, 11, 2010) };
+  // bands taller than the view: the rows in view stay, the band changes
+  await cbNavOpen(p, origin, cbNavFasta(300, 1200));
+  await cbSetView(p, 0, 100);
+  await p.evaluate(() => _scrollToColumn(900)); await p.waitForTimeout(200);
+  const tall = { cell: await cbCell(p, 101, 900), anchor: await p.evaluate(() => _captureViewAnchor()) };
+  const ok = short.every(s => s.first.inView && s.last.inView) && sel.first.inView && sel.last.inView
+    && tall.cell.inView && tall.cell.band === 15 && !!tall.anchor && Math.abs(tall.anchor.row - 100) <= 1 && tall.anchor.col === 900;
+  return { pass: ok, detail: JSON.stringify({ short, sel, tall }) };
+}));
+
+check('Canvas Block: search next hit shows each hit\'s band and row, also in bands far down', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const hits = [[3, 100, 'GGGGGG'], [7, 1500, 'GGGGGG'], [10, 2800, 'GGGGGG'], [1, 2950, 'GGGGGG']];
+  await cbNavOpen(p, origin, cbNavFasta(12, 3000, hits));
+  await p.evaluate(() => { el('searchInput').value = 'GGGGGG'; el('searchButton').click(); });
+  await p.waitForTimeout(600);
+  const out = [];
+  for (let k = 0; k < 5; k++) {
+    // the Selections panel's go-to of a search (its button calls _gotoSelectionItem -> _gotoNextSearchHit)
+    const cur = await p.evaluate(() => { const e = state.searchHistory[state.searchHistory.length - 1]; _gotoSelectionItem({ entry: e }); return e._cursor; });
+    await p.waitForTimeout(200);
+    out.push({ cur, cell: cur ? await cbCell(p, cur.row, cur.col) : null });
+  }
+  const want = ['1:2950', '3:100', '7:1500', '10:2800', '1:2950'];
+  const ok = out.every((o, i) => o.cur && o.cur.row + ':' + o.cur.col === want[i] && o.cell.inView && o.cell.band === Math.floor(o.cur.col / 60));
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
+check('Canvas Block: Block -> Canvas -> Block and Block -> Full -> Block keep the first column and row in view', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(120, 3000));   // more rows than the view holds: the Canvas strip can put row 12 at the top
+  await p.click('.section-header[data-section="display"]');
+  const v = await cbSetView(p, 7, 12);   // band 7 (columns 420-479), row 12 at the top
+  // the anchor, and (Canvas, Block) the cell of row 12 at the band's / view's first column measured on the canvas: near the top
+  const where = async () => {
+    const r = await p.evaluate(() => ({ radio: document.querySelector('input[name="mode"]:checked').id, a: _captureViewAnchor(), top: _canvasState.metrics ? _canvasState.metrics.headerH + 2 * (_canvasState.rowPitch || _canvasState.metrics.charH) : 0 }));
+    if (r.radio !== 'modeSingle') { r.cell = await cbCell(p, 12, v.col0); r.cellOk = r.cell.inView && r.cell.y <= r.top + 1; } else r.cellOk = true;
+    return r;
+  };
+  const steps = [{ step: 'block', ...(await where()) }];
+  for (const id of ['#modeCanvas', '#modeBlocks', '#modeSingle', '#modeBlocks']) {
+    await p.click(id); await p.waitForTimeout(900);
+    steps.push({ step: id, ...(await where()) });
+  }
+  const ok = steps.every(s => s.a && Math.abs(s.a.row - 12) <= 1 && s.a.col === v.col0 && s.cellOk) && steps[4].radio === 'modeBlocks';
+  return { pass: ok, detail: JSON.stringify({ col0: v.col0, steps }) };
+}));
+
+check('Canvas Block: zoom and the Block size slider keep the place (first row, the band of the first column)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(40, 3000));
+  const v = await cbSetView(p, 9, 20);   // columns 540-599
+  const out = { before: await p.evaluate(() => _captureViewAnchor()) };
+  await p.evaluate(() => adjustZoom(10)); await p.waitForTimeout(1000);
+  // the anchor, and the cell of row 20 at column col0 measured on the canvas: in view, near the top
+  const cellTop = async () => { const c = await cbCell(p, 20, v.col0); const top = await p.evaluate(() => _canvasState.metrics.headerH + 2 * _canvasState.rowPitch); return { ...c, ok: c.inView && c.y <= top + 1 }; };
+  out.zoomIn = await p.evaluate(() => ({ a: _captureViewAnchor(), charW: _canvasState.metrics.charW }));
+  out.zoomIn.cell = await cellTop();
+  await p.evaluate(() => adjustZoom(-20)); await p.waitForTimeout(1000);
+  out.zoomOut = await p.evaluate(() => ({ a: _captureViewAnchor(), charW: _canvasState.metrics.charW }));
+  out.zoomOut.cell = await cellTop();
+  await p.evaluate(async () => { const bs = document.getElementById('blockSizeSlider'); bs.value = '80'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 900)); });
+  out.slider = await p.evaluate(() => ({ a: _captureViewAnchor(), bandCols: _canvasState.layout.bandCols }));
+  out.slider.cell = await cellTop();
+  const inBand = (a, cols) => !!a && a.col <= v.col0 && v.col0 < a.col + cols;
+  const ok = !!out.before && out.before.col === v.col0 && out.before.row === 20
+    && !!out.zoomIn.a && out.zoomIn.a.col === v.col0 && Math.abs(out.zoomIn.a.row - 20) <= 1 && out.zoomIn.cell.ok
+    && !!out.zoomOut.a && out.zoomOut.a.col === v.col0 && Math.abs(out.zoomOut.a.row - 20) <= 1 && out.zoomOut.cell.ok
+    && out.slider.bandCols === 80 && inBand(out.slider.a, 80) && Math.abs(out.slider.a.row - 20) <= 1 && out.slider.cell.ok;
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
+check('Canvas Block: a snapshot saved in Block at band 5 restores at band 5 (other window width, other view); an old one with raw offsets still loads', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(120, 3000), 150);   // 150 columns fit 1400 px, not 900 px; 120 rows: more than the view holds
+  const v = await cbSetView(p, 5, 9);
+  const payload = await p.evaluate(() => _buildSnapshotPayload());
+  const load = async (pl, w) => {
+    if (w) await p.setViewportSize({ width: w, height: 900 });
+    await p.evaluate(async (pl) => { _canvasState.offsetY = 0; _canvasState.scheduleDraw(); await _loadSnapshotPayload(pl); }, pl);
+    await p.waitForTimeout(1200);
+    const r = await p.evaluate(() => ({ radio: document.querySelector('input[name="mode"]:checked').id, a: _captureViewAnchor(), bandCols: _canvasState.layout && _canvasState.layout.bandCols, oy: _canvasState.offsetY }));
+    r.cell = await cbCell(p, 9, v.col0);   // measured on the canvas: the saved row at the saved column in view
+    return r;
+  };
+  const out = { saved: { col0: v.col0, bandCols: v.bandCols } };
+  out.same = await load(payload);
+  out.narrow = await load(payload, 900);   // fewer columns fit: other bands
+  const asCanvas = JSON.parse(JSON.stringify(payload)); asCanvas.view.mode = 'canvas';
+  out.canvas = await load(asCanvas);
+  await p.setViewportSize({ width: 1400, height: 900 });
+  const old = JSON.parse(JSON.stringify(payload)); delete old.view.anchor;
+  out.old = await load(old);
+  const inBand = (r) => !!r.a && r.a.col <= v.col0 && v.col0 < r.a.col + (r.bandCols || 1);
+  const ok = v.bandCols === 150 && out.same.cell.inView && out.narrow.cell.inView && out.canvas.cell.inView
+    && out.same.radio === 'modeBlocks' && !!out.same.a && out.same.a.col === v.col0 && out.same.a.row === 9
+    && out.narrow.radio === 'modeBlocks' && out.narrow.bandCols < 150 && inBand(out.narrow) && Math.abs(out.narrow.a.row - 9) <= 1
+    && out.canvas.radio === 'modeCanvas' && !!out.canvas.a && out.canvas.a.col === v.col0 && Math.abs(out.canvas.a.row - 9) <= 1
+    && out.old.radio === 'modeBlocks' && Math.abs(out.old.oy - payload.view.canvasOffsetY) < 1;
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
+check('Canvas Block: a Repeat Finder result click and a TSD go-to link scroll to the band and row', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  // row 5 has a tandem array at column 2000; row 8 has no bases in the 5' flank of a manual TSD region at 1950-1980
+  const fasta = cbNavFasta(12, 3000, [[5, 2000, 'ACGTTGCA'.repeat(5)], [8, 1940, '-'.repeat(50)]]);
+  await cbNavOpen(p, origin, fasta);
+  await p.evaluate(() => { openRepeatFinder(5, 'tandem'); });
+  await p.waitForTimeout(400);
+  await p.evaluate(() => { document.querySelector('input[name="repeatMode"][value="tandem"]').click(); document.getElementById('repeatRunBtn').click(); });
+  await p.waitForFunction(() => document.querySelectorAll('#repeatResults tr[data-repeat-id]').length > 0, null, { timeout: 10000 }).catch(() => {});
+  const tr = await p.evaluate(() => {
+    const rows = [...document.querySelectorAll('#repeatResults tr[data-repeat-id]')];
+    const r = rows.find(t => { const s = parseInt((t.dataset.segs || '').split(/[^0-9]/)[0], 10); return s >= 1990 && s <= 2010; });
+    if (!r) return null;
+    r.setAttribute('data-test-target', '1');
+    return { segs: r.dataset.segs, row: r.dataset.row };
+  });
+  if (tr) {
+    await p.evaluate(() => { _canvasState.offsetY = 0; _canvasState.scheduleDraw(); }); await p.waitForTimeout(150);
+    await p.click('#repeatResults tr[data-test-target="1"]'); await p.waitForTimeout(400);
+  }
+  const repeat = { tr, cell: await cbCell(p, 5, 2000) };
+  // TSD, manual regions
+  await p.evaluate(() => {
+    document.querySelector('input[name="repeatMode"][value="tsd"]').click();
+    document.querySelector('input[name="tsdMode"][value="manual"]').click();
+    const set = (id, v) => { const e = document.getElementById(id); e.value = String(v); e.dispatchEvent(new Event('change')); };
+    set('tsdUpStart', 1950); set('tsdUpEnd', 1980); set('tsdDownStart', 2100); set('tsdDownEnd', 2130);
+    _canvasState.offsetY = 0; _canvasState.scheduleDraw();
+    document.getElementById('repeatRunBtn').click();
+  });
+  await p.waitForFunction(() => document.querySelectorAll('#repeatResults a.rf-goto').length > 0, null, { timeout: 10000 }).catch(() => {});
+  const link = await p.evaluate(() => {
+    const a = [...document.querySelectorAll('#repeatResults a.rf-goto')].find(x => x.textContent.trim() === 's8');
+    if (!a) return null;
+    a.setAttribute('data-test-target', '1');
+    const d = a.closest('details'); if (d) d.open = true;
+    return true;
+  });
+  if (link) { await p.click('#repeatResults a.rf-goto[data-test-target="1"]'); await p.waitForTimeout(400); }
+  const tsd = { link, left: await p.evaluate(() => _lastTsdResults?.boundaries?.leftBoundary), cell: await cbCell(p, 8, 1980) };
+  const ok = !!tr && repeat.cell.inView && repeat.cell.band === Math.floor(2000 / 60)
+    && !!link && tsd.left === 1980 && tsd.cell.inView && tsd.cell.band === Math.floor(1980 / 60);
+  return { pass: ok, detail: JSON.stringify({ repeat, tsd }) };
+}));
+
+check('Canvas Block: the cluster panel\'s column and sequence jumps go to the band; a linked tab in Block follows the band and row', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const fa = cbNavFasta(120, 3000);
+  await cbNavOpen(p, origin, fa);
+  // cluster panel: position 2001 (1-based) is column 2000; sequence s100
+  await p.evaluate(() => _geJumpToCol(2001)); await p.waitForTimeout(200);
+  const geCol = { top: await cbCell(p, 0, 2000), bottom: await cbCell(p, 119, 2000), flashed: await p.evaluate(() => state.selectedColumns.has(2000)) };
+  const geColOk = (geCol.top.inView || geCol.bottom.inView) && geCol.top.band === 33;
+  const bandMid = await p.evaluate(() => { const L = _canvasState.layout; return L.bandAt(_canvasState.offsetY + (parseFloat(_canvasState.canvas.style.height) || 600) / 2); });
+  await p.evaluate(() => _geScrollToSeq('s100')); await p.waitForTimeout(200);
+  const geSeq = await cbCell(p, 100, bandMid * 60);
+  // linked views: a second tab of the same browser, also in Block, linked by column
+  const [p2] = await Promise.all([p.waitForEvent('popup', { timeout: 15000 }), p.evaluate(() => window.open(location.pathname + '?view=block', '_blank'))]);
+  await p2.waitForLoadState('load');
+  await p2.waitForFunction(() => typeof parseAndRender === 'function', null, { timeout: 15000 });
+  await loadFasta(p2, fa);
+  await p2.waitForTimeout(500);
+  await p2.evaluate(async () => { const bs = document.getElementById('blockSizeSlider'); bs.value = '60'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 700)); });
+  const setLink = (pg) => pg.evaluate(() => { const fire = (id, v) => { const e = el(id); if (e.type === 'checkbox') e.checked = v; else e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); }; fire('linkViewsOn', true); fire('linkColsBy', 'column'); return _link.on; });
+  await setLink(p); await setLink(p2);
+  await p.waitForTimeout(500);
+  // tab 1 goes to band 20, row 40 by the scroll bar's way (offset, then the redraw tells the peers)
+  await cbSetView(p, 20, 40);
+  await p.evaluate(() => _canvasState.onOffsetChange?.());
+  await p.waitForTimeout(900);
+  const link = { p1: await p.evaluate(() => _captureViewAnchor()), p2: await p2.evaluate(() => _captureViewAnchor()), cell2: await cbCell(p2, 40, 1200), radio2: await p2.evaluate(() => document.querySelector('input[name="mode"]:checked').id) };
+  const linkOk = link.radio2 === 'modeBlocks' && !!link.p1 && link.p1.col === 1200 && link.p1.row === 40 && !!link.p2 && link.p2.col === 1200 && Math.abs(link.p2.row - 40) <= 1 && link.cell2.inView;
+  const ok = geColOk && geCol.flashed && geSeq.inView && linkOk;
+  return { pass: ok, detail: JSON.stringify({ geCol, bandMid, geSeq, link }) };
+}));
+
 check('Realign all keeps a row that has only gaps (MAFFT and codon/MACSE), as a gap row of the new width', async (page) => {
   const fa = '>a\nATGGCTAAAGGTCTGCAAGAATTCGGTACC\n>empty\n------------------------------\n>b\nATGGCTAAGGGTCTGCAAGAATTCGGAACC\n>c\nATGGCAAAAGGTCTGCAGGAATTCGGTACC\n';
   const out = {};
