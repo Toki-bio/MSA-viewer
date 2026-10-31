@@ -4048,7 +4048,8 @@ check('Canvas mode: selections and typing do not redraw the cells, and look iden
   if (!out.selections.overlayHasInk) bad.push('no overlay canvas with the selection drawn');
   if (!out.selections.sameAsFull) bad.push('after selections the view differs from a full redraw');
   if (out.typing.fullRedraws !== 0) bad.push(`${out.typing.fullRedraws} full redraws for 7 keystrokes`);
-  if (out.typing.typed !== 'GATTACA' || !out.typing.changed) bad.push(`typing gave "${out.typing.typed}"`);
+  // 'gattaca' typed stays lower case (owner 2026-10-31: a typed letter keeps its case; this check expected 'GATTACA' before)
+  if (out.typing.typed !== 'gattaca' || !out.typing.changed) bad.push(`typing gave "${out.typing.typed}"`);
   if (!out.typing.sameAsFull) bad.push('after typing the view differs from a full redraw');
   if (out.scrollAfterTyping.copies < 1 || !out.scrollAfterTyping.sameAsFull) bad.push(`scroll after typing: ${JSON.stringify(out.scrollAfterTyping)}`);
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
@@ -11093,7 +11094,8 @@ check('Canvas Type tool: a letter typed after a click on empty canvas is drawn a
       return { typed, stale };
     });
   }
-  const bad = Object.entries(out).filter(([, v]) => v.typed !== 'T' || v.stale).map(([k]) => k);
+  // 't' typed stays 't' (owner 2026-10-31: a typed letter keeps its case; this check expected 'T' before)
+  const bad = Object.entries(out).filter(([, v]) => v.typed !== 't' || v.stale).map(([k]) => k);
   return { pass: !bad.length, detail: (bad.length ? 'not drawn: ' + bad.join(', ') + ' | ' : '') + JSON.stringify(out) };
 });
 
