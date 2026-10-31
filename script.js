@@ -14720,21 +14720,47 @@ function _syncBlockSizeControl() {
     _syncBlockSizeDisplay();   // out of Block: the width asked for, no "fits" note
 }
 
+// The quick view switch on the top bar (#quickModeSwitch): a compact segmented control mirroring the
+// Display menu's view radios. One line per view - [Display menu radio, short label, tooltip]; removing a
+// view from the switch is removing its line. Its radios are qm + the radio's name (qmSingle, qmReads...).
+const QUICK_VIEW_OPTIONS = [
+    ['modeSingle', 'F', 'Full view: the alignment as page text, one continuous block'],
+    ['modeBlocks', 'B', 'Block view: the alignment wrapped in blocks (Block Size in the Display menu)'],
+    ['modeCanvas', 'C', 'Canvas view: drawn on a canvas, any size; the default view'],
+    ['modeReads', 'R', 'Reads view: mapped SAM/BAM reads (offered once reads are loaded)'],
+];
+function _ensureQuickModeSwitch() {
+    const sw = document.getElementById('quickModeSwitch');
+    if (!sw || sw.dataset.built) return sw;
+    sw.dataset.built = '1';
+    for (const [target, label, tip] of QUICK_VIEW_OPTIONS) {
+        const id = 'qm' + target.slice(4);
+        const r = document.createElement('input');
+        r.type = 'radio'; r.name = 'quickMode'; r.id = id; r.dataset.target = target;
+        const l = document.createElement('label');
+        l.htmlFor = id; l.id = id + 'Label'; l.textContent = label; l.title = tip; l.setAttribute('aria-label', tip.split(':')[0]);
+        // clicking it drives the real radio + onModeChange; syncQuickModeSwitch() reflects changes made elsewhere
+        r.addEventListener('change', () => {
+            const t = document.getElementById(target);
+            if (t && !t.checked) { t.checked = true; onModeChange(); }
+        });
+        sw.append(r, l);
+    }
+    return sw;
+}
+
 function syncQuickModeSwitch() {
     _syncBlockSizeControl();
-    const map = { modeSingle: 'qmSingle', modeBlocks: 'qmBlocks', modeCanvas: 'qmCanvas', modeReads: 'qmReads' };
-    for (const [canonicalId, quickId] of Object.entries(map)) {
+    _ensureQuickModeSwitch();
+    for (const [canonicalId] of QUICK_VIEW_OPTIONS) {
         const canonical = document.getElementById(canonicalId);
-        const quick = document.getElementById(quickId);
+        const quick = document.getElementById('qm' + canonicalId.slice(4));
         if (canonical && quick) quick.checked = canonical.checked;
     }
 
-    // Only surface this switcher once you've actually left Full/Block (i.e. as
-    // a way back from a "special" mode) - it stays out of the way otherwise.
+    // Shown in every view (owner 2026-10-31); it was shown only in Canvas and Reads, as a way back from them.
     const isReadsMode = document.getElementById('modeReads')?.checked;
     const isCanvasMode = document.getElementById('modeCanvas')?.checked;
-    const switchEl = document.getElementById('quickModeSwitch');
-    if (switchEl) switchEl.style.display = (isCanvasMode || isReadsMode) ? '' : 'none';
 
     // Reads is only a real option once a reads (BAM/SAM) file has actually
     // been loaded - it's not a mode you'd otherwise want to switch into blind.
@@ -28038,19 +28064,7 @@ function attachUIListeners() {
         });
     });
 
-    // Always-visible top-bar mode switcher (mirrors the canonical mode radios
-    // buried in the Display dropdown): clicking it drives the real radio +
-    // onModeChange; syncQuickModeSwitch() keeps it reflecting the real state
-    // whenever that changes from elsewhere (Display dropdown, auto-switch, etc).
-    document.querySelectorAll('#quickModeSwitch input[type="radio"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            const target = document.getElementById(radio.dataset.target);
-            if (target && !target.checked) {
-                target.checked = true;
-                onModeChange();
-            }
-        });
-    });
+    // The top-bar view switch is built and wired by _ensureQuickModeSwitch (from QUICK_VIEW_OPTIONS)
     syncQuickModeSwitch();
     syncCodonModePanel();
     syncSearchControlsAvailability();

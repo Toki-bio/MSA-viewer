@@ -5167,6 +5167,45 @@ check('Canvas Block: the Block size control shows the band width drawn and keeps
   return { pass: ok, detail: JSON.stringify({ okWide150, okNarrow, okSaved, okWidened, okTyped, okScreen, okPreset, okUnder40, out }) };
 }));
 
+// Owner 2026-10-31: the quick view switch on the top bar is shown in every view, compact (one letter per view,
+// tooltips name it), and showing it does not make the toolbar taller. It was shown only in Canvas and Reads.
+check('The top-bar view switch is shown in Full, Block, Canvas and Reads, each option switches the view, and it adds no toolbar height (1366 px)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const path = require('path');
+  await p.setViewportSize({ width: 1366, height: 768 });
+  await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+  await p.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples/synthetic/synth_msa.fa')); await p.waitForTimeout(1500);
+  const look = () => p.evaluate(() => {
+    const sw = document.getElementById('quickModeSwitch');
+    const shown = !!sw && sw.getClientRects().length > 0 && getComputedStyle(sw).display !== 'none';
+    const H = () => Math.round(document.getElementById('controls').getBoundingClientRect().height);
+    const h = H();
+    // the same toolbar without the switch: what it adds
+    let hWithout = h;
+    if (sw) { const d = sw.style.display; sw.style.display = 'none'; syncModeRow(); hWithout = H(); sw.style.display = d; syncModeRow(); }
+    return { mode: document.querySelector('input[name="mode"]:checked').id, shown, checked: document.querySelector('#quickModeSwitch input:checked')?.dataset.target || null, h, hWithout,
+      labels: [...document.querySelectorAll('#quickModeSwitch label')].filter(l => l.getClientRects().length).map(l => l.title.split(':')[0]) };
+  });
+  const out = {};
+  // each option, clicked on the switch, switches the view
+  for (const [qm, want] of [['qmSingle', 'modeSingle'], ['qmBlocks', 'modeBlocks'], ['qmCanvas', 'modeCanvas']]) {
+    const lab = await p.$(`label[for="${qm}"]`);
+    if (lab && await lab.isVisible()) { await lab.click(); await p.waitForTimeout(800); }
+    out[want] = await look();
+  }
+  // Reads: a reference and its reads
+  await p.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples/real/htslib_ce_CHROMOSOME_II.fa')); await p.waitForTimeout(1500);
+  await p.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples/real/htslib_range.bam')); await p.waitForTimeout(2000);
+  out.reads = await look();
+  const lab = await p.$('label[for="qmSingle"]');
+  if (lab && await lab.isVisible()) { await lab.click(); await p.waitForTimeout(800); }
+  out.fromReads = await look();
+  const views = ['modeSingle', 'modeBlocks', 'modeCanvas'];
+  const ok = views.every(v => out[v].mode === v && out[v].shown && out[v].checked === v && out[v].h === out[v].hWithout)
+    && out.reads.mode === 'modeReads' && out.reads.shown && out.reads.checked === 'modeReads' && out.reads.labels.includes('Reads view')
+    && out.fromReads.mode === 'modeSingle';
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
 check('Canvas Block: entering Block on a tall alignment asks nothing; the Screen button fits the bands to the window', async (page) => withCanvasBlockPage(page, async (p, origin) => {
   // The "large alignment" dialog protected the DOM Block; Canvas Block draws only what is in view.
   await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
