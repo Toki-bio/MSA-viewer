@@ -11765,7 +11765,17 @@ check('Repeat Finder owner 2026-10-31: Tandem All on 200 rows of 50 kb never blo
   });
   await page.waitForSelector('#alignLoadProceed', { timeout: 8000 }).then(() => page.click('#alignLoadProceed')).catch(() => {});
   await page.evaluate(() => window.__loadPromise);
-  await page.waitForTimeout(1500);
+  // the app's own work after loading 10 M residues (a ~180-ms task about 1.7 s after the load, with no search) is not
+  // the search: wait until the page has had no long task for 3 s, so what is measured below is the search
+  const settled = await page.evaluate(async () => {
+    let lastLong = performance.now();
+    const o = new PerformanceObserver(l => { if (l.getEntries().length) lastLong = performance.now(); });
+    o.observe({ entryTypes: ['longtask'] });
+    const t0 = performance.now();
+    while (performance.now() - lastLong < 3000 && performance.now() - t0 < 30000) await new Promise(r => setTimeout(r, 200));
+    o.disconnect();
+    return Math.round(performance.now() - t0);
+  });
   await page.evaluate(() => openRepeatFinder(0));
   await page.click('label:has(input[name="repeatMode"][value="tandem"])');
   await page.click('label:has(input[name="repeatScope"][value="all"])');
@@ -11786,6 +11796,7 @@ check('Repeat Finder owner 2026-10-31: Tandem All on 200 rows of 50 kb never blo
   await page.waitForTimeout(300);
   const out = await page.evaluate(() => { window.__gap.on = false; window.__obs.disconnect(); return { longestTaskMs: Math.max(0, ...window.__long), longTasks: window.__long.length, maxGapMs: Math.round(window.__gap.max), stats: typeof _repeatJobStats !== 'undefined' ? _repeatJobStats : null, text: document.getElementById('repeatResults').textContent.slice(0, 200) }; });
   out.wallMs = Date.now() - t0;
+  out.settledMs = settled;
   const ok = out.longestTaskMs < 100 && out.stats && out.stats.maxSliceMs < 60 && !/stopped/.test(out.text) && (/^No tandem repeats found/.test(out.text) || /200 sequences/.test(out.text));
   return { pass: ok, detail: JSON.stringify(out) };
 }, { timeoutMs: 400000 });
