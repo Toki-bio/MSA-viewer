@@ -20329,7 +20329,17 @@ function _onTrimDragMove(e) {
     if (e.buttons === 0) { _endTrimDrag(); return; }   // released outside the window
     let pos;
     // no spans: the column under the pointer, in the band under it (Block; without clientY it read the band at the top of the view)
-    if (isCanvasMode()) pos = _canvasColFromClientX(e.clientX, e.clientY);
+    if (isCanvasMode()) {
+        // Block: only over a band's lines (consensus, rows), as the DOM needs a residue span under the pointer. Over
+        // the gap below a band the border kept following the pointer, and over the next band's ruler it leapt a
+        // band's width (GLM audit cb34 #9 #31); the DOM Block holds it there.
+        if (_canvasState.layout) {
+            const P = _canvasLocal(e.clientX, e.clientY), m = _canvasState.metrics, cb = _canvasState.consBand;
+            const lineTop = cb && cb.y < m.headerH ? cb.y : m.headerH;   // the consensus on top, else the first row
+            if (P.y === 1e9 || P.y < lineTop) return;
+        }
+        pos = _canvasColFromClientX(e.clientX, e.clientY);
+    }
     else {
         const hit = document.elementFromPoint(e.clientX, e.clientY);
         const span = hit && hit.closest && hit.closest('.seq-data span[data-pos]');

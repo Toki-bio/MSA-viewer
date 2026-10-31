@@ -6324,6 +6324,34 @@ check('Canvas Block: a redraw after translation lanes move between bands (same t
   return { pass: ok, detail: JSON.stringify({ before, after, cell }) };
 }));
 
+// cb34 #9/#31: the trim-border drag in Block took the column at the pointer's x wherever the pointer was. Over
+// the gap below a band it kept moving the border (the DOM needs a residue span under the pointer and holds the
+// border there; DOM Block measured: 60 held), and over the next band's ruler it leapt a band's width (-> 115). Over a band's lines
+// (consensus, rows) the next band's column is right: the DOM Block does the same over the next block's rows.
+check('Canvas Block: a trim-border drag holds the border over the gap and the next band\'s ruler, as the DOM Block does', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  await p.evaluate(async () => { state.trimBoundaries = { leftTrimEnd: 55, rightTrimStart: 380 }; renderAlignment(); await new Promise(r => setTimeout(r, 500)); });
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 0);
+  const consY = g.trackH + g.charH;
+  const left = () => p.evaluate(() => state.trimBoundaries && state.trimBoundaries.leftTrimEnd);
+  const a = cbPt(g, oy, 1, 52, cbTop(g, 1) + consY + g.charH / 2), z = cbPt(g, oy, 1, 60, cbTop(g, 1) + consY + g.charH / 2);
+  await p.mouse.move(a.x, a.y); await p.mouse.down(); await p.waitForTimeout(80);
+  await p.mouse.move(z.x, z.y, { steps: 4 }); await p.waitForTimeout(80);
+  const out = { band1: await left() };
+  // down into the gap below band 1 at column 60's x (over band 1's rows on the way: 60), then along the gap
+  const x65 = cbPt(g, oy, 1, 65, 0).x, gapY = g.top + cbTop(g, 2) - g.gap / 2 - oy;
+  await p.mouse.move(z.x, gapY, { steps: 4 }); await p.mouse.move(x65, gapY, { steps: 4 }); await p.waitForTimeout(80);
+  out.gap = await left();
+  await p.mouse.move(x65, g.top + cbTop(g, 2) + g.trackH + g.charH / 2 - oy, { steps: 2 }); await p.waitForTimeout(80);   // band 2's ruler
+  out.ruler = await left();
+  await p.mouse.move(x65, g.top + cbTop(g, 2) + consY + g.charH / 2 - oy, { steps: 2 }); await p.waitForTimeout(80);   // band 2's consensus line
+  out.band2 = await left();
+  await p.mouse.up(); await p.waitForTimeout(400);
+  const ok = out.band1 === 60 && out.gap === 60 && out.ruler === 60 && out.band2 === 115;
+  return { pass: ok, detail: JSON.stringify({ oy, ...out }) };
+}));
+
 // #37: the vertical bar's range was the content less the canvas' height, but clampOffsets lets the view go
 // on by the horizontal bar lying over the canvas' bottom: dragged to its end the thumb stopped about a row
 // short, the last row under the horizontal bar (and the same sideways with the vertical bar over the right edge)
