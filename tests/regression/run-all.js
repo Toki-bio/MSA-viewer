@@ -6304,6 +6304,26 @@ check('Canvas Block: a window resize keeps the first row and the band of the fir
   return { pass: out.every(o => o.ok), detail: JSON.stringify(out) };
 }));
 
+// cb34 #5/#6/#25: a Block redraw restores the exact old offset when the bands are "the same" (_canvasBandsSig),
+// but the signature held only bandCols, nBands, the total height and charW. An annotation edit that moved a
+// gene from columns 0-50 to 99-149 moved one translation lane from band 0 to band 2: same total, same
+// signature, and the old raw offset put the view at row 17 of band 1 instead of row 5.
+check('Canvas Block: a redraw after translation lanes move between bands (same total height) keeps the first row', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const { fasta, bed } = cbCodonFixtureN(20, 300, [['geneA', 0, 51]]);
+  const bed2 = cbCodonFixtureN(20, 300, [['geneA', 99, 150]]).bed;
+  await p.setViewportSize({ width: 1400, height: 700 });
+  await cbNavOpen(p, origin, fasta, 50);
+  await cbCodonOn(p, bed);
+  await cbSetView(p, 1, 5);
+  const before = await cbViewInfo(p);
+  await p.evaluate(async (bed) => { setAnnotation(bed, 'genes.bed'); await new Promise(r => setTimeout(r, 1500)); }, bed2);
+  const after = await cbViewInfo(p);
+  const cell = await cbCell(p, 5, 50);
+  const ok = before.a.row === 5 && before.a.col === 50 && before.lanes === '110000' && after.lanes === '011000'
+    && after.a.row === 5 && after.a.col === 50 && cell.inView && cell.y === 0;
+  return { pass: ok, detail: JSON.stringify({ before, after, cell }) };
+}));
+
 // #37: the vertical bar's range was the content less the canvas' height, but clampOffsets lets the view go
 // on by the horizontal bar lying over the canvas' bottom: dragged to its end the thumb stopped about a row
 // short, the last row under the horizontal bar (and the same sideways with the vertical bar over the right edge)

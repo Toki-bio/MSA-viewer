@@ -5649,9 +5649,12 @@ function _canvasStripClient(slot, sy) {
     const b = Math.max(0, Math.min(L.nBands - 1, Math.floor(slot / L.bandCols)));
     return { x: rect.left + m.nameW + (slot - b * L.bandCols) * m.charW, y: rect.top + L.bandTop[b] + _canvasBandY(b, sy) - _canvasState.offsetY };
 }
-// The Block layout's bands in a string: equal when a redraw laid them out the same
+// The Block layout's bands in a string: equal when a redraw laid them out the same. With codon analysis by
+// gene the bands differ in height by their translation lanes: those are part of it. (It held only the total
+// height: an annotation edit that moved a gene's lane from band 0 to band 2 kept it, and the old raw offset
+// was restored into band 1 twelve rows further down. GLM audit cb34 #5/#6/#25.)
 function _canvasBandsSig(L) {
-    return L ? L.bandCols + ':' + L.nBands + ':' + L.bandTop[L.nBands] + ':' + (_canvasState.metrics?.charW || 0) : '';
+    return L ? L.bandCols + ':' + L.nBands + ':' + L.bandTop[L.nBands] + ':' + (_canvasState.metrics?.charW || 0) + ':' + L.bandLanes.join('') : '';
 }
 // The Canvas drawing area's height in CSS px
 function _canvasViewH() {
