@@ -5397,8 +5397,9 @@ check('Canvas Block: with codon lanes and an annotation track, a scrolled frame 
           _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
           const bb = g.getImageData(0, 0, c.width, c.height).data;
           let diff = 0, max = 0;
-          for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - bb[i]), Math.abs(a[i + 1] - bb[i + 1]), Math.abs(a[i + 2] - bb[i + 2])); if (d) { diff++; if (d > max) max = d; } }
-          return { ...st, diff, max };
+          const at = [];   // where (device x, y) and what (copy / full redraw): to find the cause of a failure
+          for (let i = 0; i < a.length; i += 4) { const d = Math.max(Math.abs(a[i] - bb[i]), Math.abs(a[i + 1] - bb[i + 1]), Math.abs(a[i + 2] - bb[i + 2])); if (d) { diff++; if (d > max) max = d; if (at.length < 8) at.push([(i / 4) % c.width, Math.floor(i / 4 / c.width), a[i] + '.' + a[i + 1] + '.' + a[i + 2], bb[i] + '.' + bb[i + 1] + '.' + bb[i + 2]]); } }
+          return diff ? { ...st, diff, max, H: c.height, oyx: _canvasState.offsetY, at } : { ...st, diff, max };
         }));
       }
       out[dsf] = { annot: box.annot, lanes: box.lanes, steps, ok: box.annot && steps.every(s => s.diff === 0) && steps.filter(s => s.blit > 0 && s.full === 0).length >= 6 };
