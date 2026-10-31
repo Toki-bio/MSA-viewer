@@ -13,7 +13,7 @@
     <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
-    <link rel="stylesheet" href="styles.css?v=186">
+    <link rel="stylesheet" href="styles.css?v=187">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -1328,7 +1328,7 @@ B: -</pre>
 
                 <div id="repeatParamsGeneral" class="rf-row">
                     <span class="rf-label">Settings</span>
-                    <label id="repeatMinLenLabel" title="Shortest tandem array reported: all copies together, any unit length"><span id="repeatMinLenText">Min array length</span> <input type="number" id="repeatMinLen" value="10" min="3" max="1000" class="rf-num"> <span class="rf-unit">bp</span></label>
+                    <label id="repeatMinLenLabel" title="Shortest tandem array reported: all copies together, units of 1 to 500 residues (fewer in a very long sequence)"><span id="repeatMinLenText">Min array length</span> <input type="number" id="repeatMinLen" value="10" min="3" max="1000" class="rf-num"> <span class="rf-unit">bp</span></label>
                     <label title="Maximum mismatch between repeat copies (0 = identical)">Max divergence <input type="number" id="repeatMaxDiv" value="15" min="0" max="50" class="rf-num"> %</label>
                 </div>
 

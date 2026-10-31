@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v307';
+const BUILD_TAG = 'v309';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -2658,6 +2658,8 @@ function showExclusiveModal(id) {
         if (!modal) return;
         // the dot plot's marks and click-through backdrop live with its window (GLM audit, v278)
         if (modalId === 'dotPlotModal' && modal.style.display !== 'none' && typeof _dotClearRegionMarks === 'function') _dotClearRegionMarks();
+        // so does the Repeat Finder's faint TSD preview: it stayed on the rows when another window closed it (GLM db2 #6)
+        if (modalId === 'repeatFinderModal' && modal.style.display !== 'none' && typeof _hideTsdPreviewWithWindow === 'function') _hideTsdPreviewWithWindow();
         modal.style.display = 'none';
     });
     const modal = el(id);
@@ -14089,6 +14091,13 @@ async function parseAndRender(isFromDrop = false) {
     _parseNotice = '';
     const inputText = fastaInput.value.trim().replace(/\r\n?/g, '\n'); // CR-only (classic Mac) files too
     if (!inputText) {
+        // Load with an emptied paste box replaced the view with this prompt but kept the alignment in state (Save, Copy
+        // and the open Repeat Finder still used it; GLM d305 #22): the alignment shown stays, and the message says why
+        if (!isFromDrop && state.seqs?.length) {
+            statusMessage.style.display = 'none';
+            showMessage('The paste box is empty: paste FASTA or MSF first (the alignment shown is kept).', 4000);
+            return;
+        }
         alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';
         statusMessage.style.display = 'none';
         if (isFromDrop) {
@@ -14463,10 +14472,6 @@ async function parseAndRender(isFromDrop = false) {
         _clearFailedLoad();
     }
 }
-// Mirrors the canonical mode radios' checked state onto the always-visible
-// top-bar quick switcher. Called after any change to the real radios,
-// including ones the quick switcher itself didn't trigger (Display dropdown,
-// the auto-switch-to-Canvas heuristic, snapshot/session restore, etc).
 // The "Canvas" chip next to the mode radios duplicated the radio once Canvas became the default
 // view (owner: "two Canvas buttons at the top"); the radio's title carries what the chip said.
 function ensureCanvasModeNotice() {
@@ -31736,8 +31741,10 @@ function _dotRunWorker(file, message) {
         cancel(new Error('cancelled'));
     }
     return new Promise((res, rej) => {
-        const w = file === 'word' ? (_dotWordWorker ||= new Worker('doter-word-worker.js?v=' + BUILD_TAG.replace(/^v/, '')))
-                                  : (_dotPlotWorker ||= new Worker('doter-worker.js?v=' + BUILD_TAG.replace(/^v/, '')));
+        // plain assignments: ||= (ES2021) does not parse in Chrome/Edge 80-84, and the whole script then fails
+        if (file === 'word' && !_dotWordWorker) _dotWordWorker = new Worker('doter-word-worker.js?v=' + BUILD_TAG.replace(/^v/, ''));
+        if (file !== 'word' && !_dotPlotWorker) _dotPlotWorker = new Worker('doter-worker.js?v=' + BUILD_TAG.replace(/^v/, ''));
+        const w = file === 'word' ? _dotWordWorker : _dotPlotWorker;
         const done = () => { w.removeEventListener('message', ok); w.removeEventListener('error', no);
             if (_dotWorkerJobs[file] === no) delete _dotWorkerJobs[file]; };
         const ok = (e) => { done(); if (e.data.error) { rej(new Error(e.data.error)); return; } res(e.data); };
@@ -33214,8 +33221,8 @@ function _initDotPlotEvents() {
         // ANCESTOR before the event ever reaches the overlay, and
         // stopPropagation() during capture halts the entire remaining
         // journey (including the target/bubble phases), so the overlay's
-        // Ctrl+wheel zoom handler was being silently killed before it could
-        // ever run.
+        // wheel zoom handler (Ctrl+wheel when this was written; a plain wheel
+        // since 2026-10-28) was being silently killed before it could ever run.
         [dotModal, dotDialog].forEach((el) => {
             if (!el || el._dotWheelBound) return;
             el._dotWheelBound = true;
@@ -33424,7 +33431,9 @@ let _repeatFinderListObjs = [];   // the sequence of each entry in the list, as 
 let _lastRepeatResults = [];
 let _lastRepeatView = null;   // mode, label and length the results were made with
 let _lastTsdResults = [];
-// What #repeatResults shows: a repeat mode's table, 'tsd', or null (a message). Reopening the panel keeps a table.
+// What #repeatResults shows: a repeat mode's table, 'tsd', or null (a message). Reopening the panel keeps the table
+// when it is of the mode the panel opens in (a table left under another mode's controls by a mode switch is not kept;
+// GLM db2 #15) and, for One sequence, of the sequence it opens on.
 let _repeatResultsShown = null;
 const _repeatColorPalette = ["#ff6b6b","#ffa94d","#ffd43b","#69db7c","#4dabf7","#da77f2","#20c997","#ff8787","#74c0fc","#f783ac","#ffe066","#63e6be","#a9e34b","#e599f7","#66d9e8","#fcc419","#94d82d","#ff922b","#be4bdb","#339af0"];
 
@@ -33443,7 +33452,7 @@ function _syncTsdModeSubUI() {
 function _initTsdColumnDefaults() {
     if (!state.seqs?.length) return;
     const aliLen = _maxOf(state.seqs, s => s.seq.length);
-    const flank = parseInt(document.getElementById('tsdFlankSize')?.value, 10) || 30;
+    const flank = _readTsdParams().flankSize;
     const upEnd = document.getElementById('tsdUpEnd');
     const downStart = document.getElementById('tsdDownStart');
     const downEnd = document.getElementById('tsdDownEnd');
@@ -33455,19 +33464,30 @@ function _initTsdColumnDefaults() {
 
 // Manual opened with the alignment's first and last 30 columns as the flanks, where a TSD is found only by chance
 // ("1 of 20"): the fields start from the SINE body Auto finds, unless the user has typed or filled them.
+// The scan ran again on every panel open and every switch to TSD while Manual was checked (10 s on 1000 rows x
+// 50 kb; GLM d305 #23): its result is kept for the same alignment (rows, length, Search N bp) and written back.
+let _tsdPrefillMemo = null;
 function _prefillTsdManualFromAuto() {
     if (!state.seqs?.length) return false;
     const els = ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id));
     if (els.some(e => !e || e.dataset.userSet === '1')) return false;
     const aliLen = _maxOf(state.seqs, s => s.seq.length);
-    const flankSize = parseInt(document.getElementById('tsdFlankSize')?.value, 10) || 30;
+    const flankSize = _readTsdParams().flankSize;
+    const m = _tsdPrefillMemo, key = [state.seqs.length, aliLen, flankSize].join(',');
+    if (m && m.seqs === state.seqs && m.key === key) {   // _initTsdColumnDefaults has just reset the fields
+        if (m.ok) m.values.forEach((v, i) => { els[i].value = v; });
+        return m.ok;
+    }
     const b = _findSineBoundaryColumns(state.seqs, 'auto', { flankSize }, aliLen);
-    if (!b || b.leftBoundary < 1 || b.rightBoundary > aliLen - 2 || /fallback/.test(b.label)) return false;
-    els[0].value = 1;
-    els[1].value = b.leftBoundary;            // last 5' flank column, 1-based
-    els[2].value = b.rightBoundary + 2;       // first 3' flank column, 1-based
-    els[3].value = aliLen;
-    return true;
+    const ok = !(!b || b.leftBoundary < 1 || b.rightBoundary > aliLen - 2 || /fallback/.test(b.label));
+    if (ok) {
+        els[0].value = 1;
+        els[1].value = b.leftBoundary;            // last 5' flank column, 1-based
+        els[2].value = b.rightBoundary + 2;       // first 3' flank column, 1-based
+        els[3].value = aliLen;
+    }
+    _tsdPrefillMemo = { seqs: state.seqs, key, values: els.map(e => e.value), ok };
+    return ok;
 }
 
 function _readTsdParams() {
@@ -33477,7 +33497,7 @@ function _readTsdParams() {
     return {
         minLen, maxLen,
         maxDiv: Math.max(0, lim('tsdMaxDiv', num('tsdMaxDiv', 20))),   // the field's own 0-50 (it was 0-100)
-        flankSize: Math.max(1, num('tsdFlankSize', 30)),
+        flankSize: lim('tsdFlankSize', num('tsdFlankSize', 30)),   // the field's own 5-200: 0 was used as 1, 1000 as 1000 (GLM db2 #2)
         upStart: parseInt(document.getElementById('tsdUpStart')?.value, 10) || 1,
         upEnd: Math.max(0, num('tsdUpEnd', 30)),
         downStart: parseInt(document.getElementById('tsdDownStart')?.value, 10) || 1,
@@ -33536,7 +33556,7 @@ function _syncRepeatFinderModeUI() {
     const minInp = document.getElementById('repeatMinLen');
     if (minInp && !minInp.dataset.userSet) minInp.value = mode === 'tandem' ? '20' : '10';
     if (minLabel) minLabel.title = mode === 'tandem'
-        ? 'Shortest tandem array reported: all copies together, any unit length'
+        ? 'Shortest tandem array reported: all copies together, units of 1 to 500 residues (fewer in a very long sequence)'
         : 'Shortest repeat reported: the length of one copy';
     const divLabel = document.getElementById('repeatMaxDiv')?.closest('label');
     if (divLabel) divLabel.title = mode === 'tandem'
@@ -33586,7 +33606,9 @@ function _fillRepeatFinderSeqSelect(seqIndex) {
     // whatever row then had that number (or none, reporting "No repeats" for a row that was gone)
     sel.onchange = () => { _repeatFinderSeqIndex = parseInt(sel.value); _repeatFinderSeqObj = _repeatFinderListObjs[_repeatFinderSeqIndex] || null; };
 }
-// Row of the "One sequence" choice now (-1 if it was deleted); the list is rebuilt when rows changed
+// Row of the "One sequence" choice now; the list is rebuilt when rows changed. -1 if it was deleted and no row has its
+// name: _seqObjResolver falls back to a row with the same name (as after an Undo that replaced the row objects), so with
+// two rows of one name, deleting the chosen one moves the choice to the other (GLM db2 #4)
 function _repeatFinderCurrentRow() {
     const obj = _repeatFinderSeqObj;
     let row = obj ? _seqObjResolver()(obj) : (_repeatFinderSeqIndex >= 0 ? _repeatFinderSeqIndex : 0);
@@ -33609,6 +33631,8 @@ function _resetRepeatFinderForNewFile() {
     _repeatUnitWord();
     _lastTsdResults = [];
     _repeatResultsShown = null;
+    _tsdPreviewOnReopen = false;
+    _tsdPrefillMemo = null;
     // the TSD columns typed or filled for the previous file are not this file's: back to the defaults
     ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].forEach(id => { const e = document.getElementById(id); if (e) delete e.dataset.userSet; });
     const upStart = document.getElementById('tsdUpStart');
@@ -33622,6 +33646,8 @@ function _resetRepeatFinderForNewFile() {
 
 function openRepeatFinder(seqIndex, preferredMode = null) {
     if (seqIndex === undefined || seqIndex === null || seqIndex < 0) seqIndex = 0;
+    const reshowPreview = _tsdPreviewOnReopen;
+    _tsdPreviewOnReopen = false;
     _repeatFinderSeqIndex = seqIndex;
     if (preferredMode) {
         const modeRadio = document.querySelector(`input[name="repeatMode"][value="${preferredMode}"]`);
@@ -33640,11 +33666,15 @@ function openRepeatFinder(seqIndex, preferredMode = null) {
     // Reopening the window kept nothing: the table of the last search (and the rows clicked in it) had to be
     // searched again. The table of this mode stays; a repeat table is redrawn so its rows show the highlights now.
     const resultsEl = document.getElementById('repeatResults');
-    if (_repeatResultsShown === mode && resultsEl.querySelector('.rf-summary')) {
+    // ... unless it is a One-sequence table and the window opens on another sequence: the list showed the new pick
+    // under the old sequence's table (GLM db2 #21)
+    const otherSeq = mode !== 'tsd' && _lastRepeatView?.obj && _seqObjResolver()(_lastRepeatView.obj) !== seqIndex;
+    if (_repeatResultsShown === mode && resultsEl.querySelector('.rf-summary') && !otherSeq) {
         if (mode !== 'tsd' && _lastRepeatResults.length && _lastRepeatView?.mode === mode) {
             const v = _lastRepeatView;
             _renderRepeatResultsHTML(resultsEl, _lastRepeatResults, v.mode, v.name || '', v.totalLen, v);
         }
+        if (mode === 'tsd' && reshowPreview) _setTsdPreview(_lastTsdResults);
         return;
     }
     _repeatResultsShown = null;
@@ -33695,6 +33725,14 @@ function _setTsdPreview(results) {
     state.tsdPreview = marks && marks.size ? marks : null;
     document.getElementById('tsdMarkBtn')?.classList.toggle('rf-btn-attention', !!state.tsdPreview);
     syncResidueOverlays();
+}
+// Closing the window hides the faint preview (it belongs to the open window); reopening it on the same TSD table showed
+// the table without it, so the TSDs found could only be seen again by searching again (GLM db2 #20). It comes back
+// unless the TSDs were marked meanwhile (the marks replace the preview).
+let _tsdPreviewOnReopen = false;
+function _hideTsdPreviewWithWindow() {
+    _tsdPreviewOnReopen = !!state.tsdPreview;
+    _clearTsdPreview();
 }
 function _clearTsdPreview() {
     if (!state.tsdPreview && !document.getElementById('tsdMarkBtn')?.classList.contains('rf-btn-attention')) return;
@@ -33820,7 +33858,12 @@ function undoTsdMarking() {
     state.tsdMarkColor = backup.previousColor || '#ffd54f';
     state.tsdMarkUndo = backup.prior || null;
     renderAlignment({ deferConservation: true });
-    showMessage(caseAlreadyBack ? 'The lower-case TSD marking was already undone (main Undo); nothing to change.' : 'TSD marking undone.', caseAlreadyBack ? 2800 : 1600);
+    // the marks of the marking before come back even when the case was already back: "nothing to change" was said while
+    // they reappeared (GLM db2 #11)
+    const restored = caseAlreadyBack && (state.tsdMarks?.size || 0) > 0;
+    showMessage(!caseAlreadyBack ? 'TSD marking undone.'
+        : restored ? 'The lower-case TSD marking was already undone (main Undo or an edit); the marking before it is shown again.'
+        : 'The lower-case TSD marking was already undone (main Undo or an edit); nothing to change.', caseAlreadyBack ? 2800 : 1600);
 }
 
 const _RF_COMP = { A: 'T', C: 'G', G: 'C', T: 'A', U: 'A', N: 'N', R: 'Y', Y: 'R', S: 'S', W: 'W',
@@ -33834,17 +33877,19 @@ function _revComp(seq) {
  * holds an exact run of at least ceil((L - m) / (m + 1)) bases (pigeonhole: m mismatches cut the L - m matches
  * into at most m + 1 runs). The smallest such run over every L >= minLen is the longest seed that still hits every
  * qualifying pair. Seeds are kept between 4 and 10 bases: when the bound is below 4 (short repeats at high
- * divergence) the guarantee no longer holds and such pairs can be missed.
+ * divergence) the guarantee no longer holds and such pairs can be missed; _findRepeats then sets results.seedLimited
+ * and the summary says so. Seeds of 1-3 bases made the search 3-100x slower (5 kb random, Min 6 / 50 %: 57 ms at 4,
+ * 218 ms at 3, 685 ms at 2, 5.6 s at 1). raw: the bound itself, not kept to 4-10.
  */
-function _repeatSeedLength(minLen, maxDiv) {
+function _repeatSeedLength(minLen, maxDiv, raw = false) {
     let k = Infinity;
     for (let L = minLen; L < minLen + 100000; L++) {
         const m = Math.floor(L * maxDiv + 1e-9);
         k = Math.min(k, Math.ceil((L - m) / (m + 1)));
         // (L - Ld) / (Ld + 1) only grows with L: once it reaches k no longer L can lower k
-        if (k <= 4 || (L - L * maxDiv) / (L * maxDiv + 1) >= k) break;
+        if (k <= (raw ? 1 : 4) || (L - L * maxDiv) / (L * maxDiv + 1) >= k) break;
     }
-    return Math.max(4, Math.min(10, k));
+    return raw ? k : Math.max(4, Math.min(10, k));
 }
 
 /**
@@ -33976,7 +34021,10 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
         if (!best) return;
         emit(best.s, best.len, best.mm);
         pick(lo, best.s - 1, match, maxLen, emit);
-        // after a copy cut short to avoid overlap, the rest of the stretch is the same tandem run: do not list it again
+        // after a copy cut short to avoid overlap, the rest of the stretch is the same tandem run and is not listed: in 3
+        // tandem copies the pair copy 2 / copy 3 is not a row (copy 1 / copy 2 and copy 1 / copy 3 are), even when it
+        // differs more than copy 1 / copy 2 does (GLM d305 #9). Listing every pair of copies would give a long array a
+        // row per pair; Tandem lists the array as one row.
         if (!best.truncated) pick(best.s + best.len, hi, match, maxLen, emit);
     };
 
@@ -34042,7 +34090,8 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
         if (key >= 0) { next[x] = head[key]; head[key] = x; }
     }
 
-    // Longest first, then least divergent; drop shifted copies of a pair already listed (>= 70 % of both copies shared)
+    // Longest first, then least divergent; drop shifted copies of a pair already listed: both copies overlap the listed
+    // pair's copies by >= 70 % of the SHORTER of the two pairs' length (a short pair nested in a long one is dropped)
     candidates.sort((a, b) => (b.length - a.length) || (a.mm / a.length - b.mm / b.length) || (a.posA - b.posA));
     const BIN = 64, bins = new Map();
     const maxKept = candidates.length ? candidates[0].length : 0;
@@ -34076,6 +34125,8 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
     }));
     results.total = kept.length;
     if (searchedTo < n) results.searchedTo = searchedTo;
+    // copies sharing no exact run of k bases are not seeded (the seed is never below 4)
+    if (_repeatSeedLength(minLen, maxDiv, true) < k) results.seedLimited = k;
     return results;
 }
 
@@ -34104,6 +34155,8 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
  */
 const TANDEM_MAX_UNIT = 500;
 const TANDEM_WORK_LIMIT = 150000000;
+// for one search of several sequences (All, Selected rows): 5-7 s; 200 rows of 5 kb fit
+const TANDEM_TOTAL_WORK_LIMIT = 4 * TANDEM_WORK_LIMIT;
 function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
     const protein = !!opts.protein;
     const cap = opts.cap || 100;
@@ -34119,7 +34172,8 @@ function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
         if (protein) code[i] = (c >= 'A' && c <= 'Z' && c !== 'X' && c !== 'B' && c !== 'Z' && c !== 'J') ? c.charCodeAt(0) - 65 : -1;
         else code[i] = c in NUC ? NUC[c] : -1;
     }
-    const letter = (c) => c < 0 ? 'N' : (protein ? String.fromCharCode(c + 65) : 'ACGT'[c]);
+    // a unit position with no countable residue in any copy: X in protein (N is asparagine there; GLM dtan #6)
+    const letter = (c) => c < 0 ? (protein ? 'X' : 'N') : (protein ? String.fromCharCode(c + 65) : 'ACGT'[c]);
     const results = [];
     results.total = 0;
     if (n < minL) return results;
@@ -34136,18 +34190,30 @@ function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
     const owner = new Int32Array(n).fill(-1);         // the first (smallest-unit) array covering each base
 
     // the accepted array, of a unit dividing p, that covers at least half of [x, y)
+    // A run of bases with one owner is counted at once, in a typed array (a Map write per base took 0.2 s per
+    // 50 kb poly-A row; GLM dtan #3)
+    let ovCount = new Int32Array(64);
+    const ovTouched = [];
     const explainedBy = (x, y, p) => {
-        const ov = new Map();
-        for (let i = x; i < y; i++) {
-            const o = owner[i];
-            if (o >= 0 && p % kept[o].unitLen === 0) ov.set(o, (ov.get(o) || 0) + 1);
-        }
+        if (ovCount.length < kept.length) ovCount = new Int32Array(kept.length * 2);
         let best = -1, bestOv = 0;
-        for (const [o, c] of ov) if (c > bestOv) { best = o; bestOv = c; }
+        for (let i = x; i < y;) {
+            const o = owner[i];
+            let j = i + 1;
+            while (j < y && owner[j] === o) j++;
+            if (o >= 0 && p % kept[o].unitLen === 0) {
+                if (!ovCount[o]) ovTouched.push(o);
+                ovCount[o] += j - i;
+            }
+            i = j;
+        }
+        for (const o of ovTouched) { if (ovCount[o] > bestOv) { best = o; bestOv = ovCount[o]; } ovCount[o] = 0; }
+        ovTouched.length = 0;
         return bestOv * 2 >= (y - x) ? kept[best] : null;
     };
 
-    // majority residue per unit position over [s, e), positions counted from a; a tie goes to the first copy's residue
+    // majority residue per unit position over [s, e), positions counted from a; a tie goes to the residue that reached
+    // the top count first (A, C, C, A gives C), not to the first copy's (GLM dtan #7)
     const counts = new Int32Array(TANDEM_MAX_UNIT * 26);
     const consensus = (s, e, a, p) => {
         counts.fill(0, 0, p * K);
@@ -34178,7 +34244,8 @@ function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
         const work = [];
         // stretches where base i equals base i + p; [a, e] compared with [a + p, e + p], so the array is [a, e + p + 1)
         const lim = n - p;
-        let i = 0;
+        let i = 0, prev = null;   // prev: the last stretch long enough to be joined to the next
+        const joined = [];
         while (i < lim) {
             if (!(code[i] >= 0 && code[i] === code[i + p])) { i++; continue; }
             let cur = 0, best = 0, bestEnd = i, j = i;
@@ -34187,9 +34254,22 @@ function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
                 if (cur > best) { best = cur; bestEnd = j; }
                 else if (cur <= 0 || cur < best - xdrop) break;
             }
+            // one copy with 3 or more substitutions breaks the neighbour scan (it differs from the copy before and the
+            // copy after): stretches at most one unit apart are refined together, so the consensus decides. The array
+            // was split there, or reported with a doubled unit (AGGCT x 4, ACCGT, AGGCT x 4 came out as a 10-bp unit;
+            // GLM dtan #2)
+            // The stretches themselves are searched as before (the joined one alone lost arrays: its consensus could be
+            // taken over by a neighbouring array of a unit dividing p), and the joined one first. Only stretches of two
+            // copies and half the minimum each are joined (refining every short one made random sequence 3 times slower).
             if (bestEnd - i + 1 >= p && bestEnd + p + 1 - i >= need) work.push([i, bestEnd + p + 1]);
+            if (d > 0 && bestEnd - i + 1 >= p && bestEnd + p + 1 - i >= Math.max(2 * p, need / 2)) {   // at 0 % no copy may differ
+                if (prev && i - prev[1] <= p) { prev[1] = bestEnd + p + 1; prev.joined = true; }
+                else { if (prev?.joined && prev[1] - prev[0] >= need) joined.push(prev); prev = [i, bestEnd + p + 1]; }
+            }
             i = bestEnd + 1;
         }
+        if (prev?.joined && prev[1] - prev[0] >= need) joined.push(prev);
+        work.push(...joined);   // popped first
         while (work.length) {
             const [a, b] = work.pop();
             if (b - a < need) continue;
@@ -34327,7 +34407,8 @@ function _tsdMismatchCount(firstSeq, secondSeq) {
 }
 
 // [lo, hi) of a TSD pair (two equal-length strings) without its weak ends: a mismatch as the last base, and at the
-// start a mismatch within the first 4 bases with only A's before it (the 3' copy starts right after the poly-A
+// start a mismatch within the first 4 bases with nothing or only A's before it (a mismatch as the first base is
+// trimmed like one as the last; the 3' copy starts right after the poly-A
 // tail, so a few tail A's matching A's of the 5' flank are chance). An N is not a match. Scored with them,
 // (1 - div) * sqrt(len) put 17 bp with 1 mismatch (AAAC/AAAA, then the planted 13 bp) above the planted exact 13 bp,
 // and a pair with a mismatch at its end above the same pair without that base. Trimming the start after any
@@ -34363,7 +34444,8 @@ function _tsdGapFraction(seq) {
 function _isTsdReferenceRow(seqObj) {
     if (!seqObj) return false;
     const header = String(seqObj.header || seqObj.fullHeader || '').toLowerCase();   // the name, not a description
-    return /consensus|reference|\bref\b|^ref[_\W]|master|t1_\d|_cons\b|^cons_seq|^grp\d+cons\d+seq/.test(header);
+    // (t1_\d, undocumented, matched gene-like copy names such as Gst1_8 or Cdt1_2: GLM d305 #10)
+    return /consensus|reference|\bref\b|^ref[_\W]|master|_cons\b|^cons_seq|^grp\d+cons\d+seq/.test(header);
 }
 
 // First and last residue of the reference row (the name is kept for the benchmark scripts that extract these
@@ -34412,8 +34494,14 @@ function _boundaryFromReferenceSeq(refSeq, aliLen, flankSize, label) {
 
 function _columnConservationScores(seqs, aliLen, minCoverageFrac = 0.35) {
     const scores = new Array(aliLen).fill(0);
-    // at least 4 bases: 2 of 3 alike (0.67) is chance in a gap-padded flank, and with 8 copies (threshold 0.58)
-    // it put the left edge at column 24 of a 100-column flank block (seen once row 1 was no longer left out)
+    // fewer than 3 rows to score (e.g. a named consensus row and one copy): one row is "100 % conserved" wherever it
+    // has a base, the body covered the whole copy and no TSD was found (GLM d305 #5). No conservation signal then;
+    // the reference row gives the body.
+    if (seqs.length < 3) return scores;
+    // a column scores only when it has at least min(4, rows) bases, and at least 35 % of the rows (so with 3 or 4
+    // rows every row needs a base there): 2 of 3 alike (0.67) is chance in a gap-padded flank, and with 8 copies
+    // (threshold 0.58) it put the left edge at column 24 of a 100-column flank block (seen once row 1 was no longer
+    // left out)
     const minCount = Math.max(Math.min(4, seqs.length), Math.ceil(seqs.length * minCoverageFrac));
     for (let column = 0; column < aliLen; column++) {
         const counts = {};
@@ -34462,10 +34550,11 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
     // flanks and its first-to-last residue is no SINE body ("TSD in 3 of 20" with nothing said): the body then
     // comes from column conservation, as in Auto, and the label says so.
     let noRefNote = '';
+    let fullWidth = false;
     if (mode === 'topseq') {
         // a reference row with residues in the first and the last column (a full reference locus, flanks included)
-        // made the whole alignment the body, and no copy had a flank: the body then comes from conservation too
-        let fullWidth = false;
+        // made the whole alignment the body, and no copy had a flank: the body then comes from conservation too, and
+        // without a conservation signal no body is found (the row is not taken as the body after all)
         if (ref.named) {
             const refBoundary = _boundaryFromReferenceSeq(ref.seq, aliLen, flankSize, `reference: ${ref.label}`);
             fullWidth = !!refBoundary && refBoundary.leftBoundary <= 0 && refBoundary.rightBoundary >= aliLen - 1;
@@ -34526,7 +34615,9 @@ function _findSineBoundaryColumns(seqs, mode, params, aliLen) {
             };
         }
 
-        const refBoundary = _boundaryFromReferenceSeq(ref.seq, aliLen, flankSize, `${noRefNote}reference: ${ref.named ? '' : 'row 1, '}${ref.label} (conservation found no signal)`);
+        // not the full-width reference row set aside above: it came back here as the body, with a note that it was
+        // "row 1" (GLM db2 #1, #12)
+        const refBoundary = fullWidth ? null : _boundaryFromReferenceSeq(ref.seq, aliLen, flankSize, `${noRefNote}reference: ${ref.named ? '' : 'row 1, '}${ref.label} (conservation found no signal)`);
         if (refBoundary) return Object.assign(refBoundary, { note: noRefNote && `${noRefNote}column conservation found no SINE body either, so the body is from row 1 (${ref.label})` });
     }
 
@@ -34568,8 +34659,15 @@ function _findBestTsdInFlanks(upstreamWindow, downstreamWindow, rightBoundary, m
                 const divergence = mismatches / tsdLen;
                 if (divergence > maxDiv) continue;
                 // scored and reported without the mismatches near its ends (_tsdTrimPair)
-                const t = _tsdTrimPair(upstreamSeq, downstreamSeq);
-                if (t.hi - t.lo < minTsdLen) continue;
+                let t = _tsdTrimPair(upstreamSeq, downstreamSeq);
+                // trimmed below the minimum length by its mismatched last base alone: the whole pair, that mismatch included (a
+                // 12-bp TSD whose last base mismatched was dropped at length 12-20; GLM d305 #6). Any other trim keeps it out:
+                // kept whole, pairs trimmed by more added chance calls on the rsi control (176 -> 179), and pairs trimmed at
+                // the start (AATAA/AGTAA) turned 5 rsi misses into 5-6 bp A-rich chance calls.
+                if (t.hi - t.lo < minTsdLen) {
+                    if (t.lo > 0 || t.hi !== tsdLen - 1 || mismatches > 1) continue;   // only the last base trimmed
+                    t = { lo: 0, hi: tsdLen };
+                }
                 const len = t.hi - t.lo, upSeq = upstreamSeq.slice(t.lo, t.hi), downSeq = downstreamSeq.slice(t.lo, t.hi);
                 const mm = len === tsdLen ? mismatches : _tsdMismatchCount(upSeq, downSeq);
                 if (mm / len > maxDiv) continue;
@@ -34629,8 +34727,15 @@ function _findBestTsdWide(upstreamWindow, downstreamWindow, iB, minTsdLen, maxTs
                 // lost to a 10-bp pair reaching 4 bases into the tail with a mismatch (AAGA+TSD / AAAA+TSD)
                 if (ds < iB && _tsdMismatchCount(upstreamSeq.slice(0, iB - ds), downstreamSeq.slice(0, iB - ds)) > 0) continue;
                 // the pair is scored and reported without the mismatches near its ends (_tsdTrimPair)
-                const t = _tsdTrimPair(upstreamSeq, downstreamSeq);
-                if (t.hi - t.lo < minTsdLen) continue;
+                let t = _tsdTrimPair(upstreamSeq, downstreamSeq);
+                // trimmed below the minimum length by its mismatched last base alone: the whole pair, that mismatch included (a
+                // 12-bp TSD whose last base mismatched was dropped at length 12-20; GLM d305 #6). Any other trim keeps it out:
+                // kept whole, pairs trimmed by more added chance calls on the rsi control (176 -> 179), and pairs trimmed at
+                // the start (AATAA/AGTAA) turned 5 rsi misses into 5-6 bp A-rich chance calls.
+                if (t.hi - t.lo < minTsdLen) {
+                    if (t.lo > 0 || t.hi !== tsdLen - 1 || mismatches > 1) continue;   // only the last base trimmed
+                    t = { lo: 0, hi: tsdLen };
+                }
                 const len = t.hi - t.lo, upSeq = upstreamSeq.slice(t.lo, t.hi), downSeq = downstreamSeq.slice(t.lo, t.hi);
                 const mm = len === tsdLen ? mismatches : _tsdMismatchCount(upSeq, downSeq);
                 if (mm / len > maxDiv) continue;
@@ -34708,8 +34813,14 @@ function _findTSD(seqs, mode, params) {
         if (upShort || downShort) {
             // both sides named when both are short (only the 5' side was); a body reaching the alignment's end is said
             // to be the cause (it was blamed on the copy)
+            // each side its own cause: a body from column 1 was said to reach "the end", and a copy's own empty 3' flank
+            // was blamed on the body too (GLM db2 #13)
             const side = upShort && downShort ? '5′ and 3′' : upShort ? '5′' : '3′';
-            const why = (upShort && noUpCols) || (downShort && noDownCols) ? 'the SINE body found reaches the end of the alignment' : 'copy truncated or flank all gaps';
+            const upWhy = noUpCols ? 'the SINE body found reaches the alignment\'s first column' : 'copy truncated or flank all gaps';
+            const downWhy = noDownCols ? 'the SINE body found reaches the alignment\'s last column' : 'copy truncated or flank all gaps';
+            const why = !(upShort && downShort) ? (upShort ? upWhy : downWhy)
+                : noUpCols && noDownCols ? 'the SINE body found reaches the end of the alignment on both sides'
+                : upWhy === downWhy ? upWhy : `5′: ${upWhy}; 3′: ${downWhy}`;
             misses.push({ seqIndex, obj: seqs[seqIndex], seqName: seqs[seqIndex].header, reason: `no ${side} flank bases next to the SINE body (${why})` });
             continue;
         }
@@ -34822,8 +34933,21 @@ function runRepeatAnalysis() {
             let displayName = '';
             let totalLen = 0;
             const notes = [];   // capped lists and stopped searches, said in the summary
+            let tandemWork = 0, searched = 0, stopped = false;
             for (const t of targets) {
                 if (!t.seq) continue;
+                // Tandem costs about length x unit lengths per sequence, all in this one callback: All on 200 rows of
+                // 50 kb held the tab for about 45 s with nothing said (GLM dtan #4). It stops at a total and says so.
+                if (mode === 'tandem') {
+                    const len = t.seq.length, cost = len * Math.min(TANDEM_MAX_UNIT, Math.floor(len / 2), Math.max(1, Math.floor(TANDEM_WORK_LIMIT / Math.max(1, len))));
+                    if (searched > 0 && tandemWork + cost > TANDEM_TOTAL_WORK_LIMIT) {
+                        notes.push(`search stopped after ${searched} of ${targets.length} sequences (work limit; search fewer at a time with Selected rows)`);
+                        stopped = true;
+                        break;
+                    }
+                    tandemWork += cost;
+                }
+                searched++;
                 if (!displayName) displayName = t.name;
                 totalLen += t.seq.length;
                 const gs2al = [];
@@ -34836,6 +34960,7 @@ function runRepeatAnalysis() {
                 if (seqResults.total > seqResults.length) notes.push(`showing the ${seqResults.length} longest of ${seqResults.total}${where}`);
                 if (seqResults.searchedTo != null) notes.push(`search stopped at ${seqResults.searchedTo} of ${t.seq.length} ${unit}${where} (work limit; low-complexity sequence)`);
                 if (seqResults.unitLimited) notes.push(`units up to ${seqResults.maxUnit} ${unit} searched${where} (work limit; long sequence)`);
+                if (seqResults.seedLimited && !notes.some(x => /exact run of/.test(x))) notes.push(`at ${minLen} ${unit} and ${maxDiv}% divergence, copies that share no exact run of ${seqResults.seedLimited} ${unit} can be missed (raise Min length or lower Max divergence)`);
                 const mapped = seqResults.map(r => {
                     r.seqIndex = t.index;
                     r.obj = state.seqs[t.index];
@@ -34879,8 +35004,9 @@ function runRepeatAnalysis() {
                 return;
             }
             _lastRepeatResults = allResults;
-            const name = targets.length === 1 ? displayName : `${targets.length} sequences`;
-            _lastRepeatView = { mode, name, totalLen, unit, note: notes.join('; ') };
+            const name = targets.length === 1 ? displayName : `${stopped ? searched : targets.length} sequences`;
+            // obj: the sequence a One-sequence table is about, so reopening on another sequence does not keep it
+            _lastRepeatView = { mode, name, totalLen, unit, note: notes.join('; '), obj: scope === 'single' && targets.length === 1 ? state.seqs[targets[0].index] : null };
             _renderRepeatResultsHTML(resultsEl, allResults, mode, name, totalLen, _lastRepeatView);
         } catch (e) {
             resultsEl.textContent = `Error: ${e.message}`;
@@ -34894,22 +35020,31 @@ function runTsdAnalysis() {
     const tsdMode = document.querySelector('input[name="tsdMode"]:checked')?.value || 'auto';
     const params = _readTsdParams();
     const aliLen = _maxOf(state.seqs, s => s.seq.length);
+    // a search that stops with a message forgets the previous results: Mark, Copy table and the faint preview still
+    // worked on the last run's TSDs under "Invalid pre-SINE region" (GLM db2 #9)
+    const fail = (msg) => {
+        _lastTsdResults = [];
+        _repeatResultsShown = null;
+        _syncTsdResultTools(true);
+        _clearTsdPreview();
+        resultsEl.textContent = msg;
+    };
 
     if (tsdMode === 'manual') {
         if (params.upStart < 1 || params.upEnd < params.upStart) {
-            resultsEl.textContent = 'Invalid pre-SINE region: check start/end columns.';
+            fail('Invalid pre-SINE region: check start/end columns.');
             return;
         }
         if (params.downStart < 1 || params.downEnd < params.downStart) {
-            resultsEl.textContent = 'Invalid post-SINE region: check start/end columns.';
+            fail('Invalid post-SINE region: check start/end columns.');
             return;
         }
         if (params.upEnd >= params.downStart) {
-            resultsEl.textContent = 'Pre-SINE and post-SINE regions must not overlap (leave room for the SINE body between them).';
+            fail('Pre-SINE and post-SINE regions must not overlap (leave room for the SINE body between them).');
             return;
         }
         if (params.downEnd > aliLen) {
-            resultsEl.textContent = `Post-SINE end column exceeds alignment length (${aliLen}).`;
+            fail(`Post-SINE end column exceeds alignment length (${aliLen}).`);
             return;
         }
     }
@@ -34922,7 +35057,7 @@ function runTsdAnalysis() {
             _renderTsdResultsHTML(resultsEl, results, tsdMode, params);
             _setTsdPreview(results);
         } catch (e) {
-            resultsEl.textContent = `Error: ${e.message}`;
+            fail(`Error: ${e.message}`);
         }
     }, 30);
 }
@@ -34936,7 +35071,9 @@ function _renderTsdResultsHTML(el, results, tsdMode, params) {
     const b = results.boundaries;
     // never silent: rows left out of the search, and a Reference row search that had no reference row
     const skipped = results.skipped || [];
-    const notesHtml = (b?.note ? `<div class="rf-hint rf-note">Reference row: ${esc(b.note)}.</div>` : '') +
+    // every note is about the reference row and names it itself ("Reference row: no row named consensus ..." said
+    // the opposite of what followed; GLM d305 #18, #27)
+    const notesHtml = (b?.note ? `<div class="rf-hint rf-note">Note: ${esc(b.note)}.</div>` : '') +
         (b?.flankNote ? `<div class="rf-hint rf-flanknote">No flanks: ${esc(b.flankNote)}.</div>` : '') +
         (skipped.length ? `<div class="rf-hint rf-skipped">${skipped.map(s => `${esc(s.seqName)}: ${esc(s.reason)}`).join('<br>')}</div>` : '');
     const bodyChip = (b && Number.isInteger(b.leftBoundary) && Number.isInteger(b.rightBoundary) && tsdMode !== 'manual')
@@ -34987,7 +35124,8 @@ function _renderTsdResultsHTML(el, results, tsdMode, params) {
         let a = '', c = '';
         for (let k = 0; k < Math.max(up.length, down.length); k++) {
             const x = up[k] || '', y = down[k] || '';
-            const mm = x.toUpperCase() !== y.toUpperCase();
+            // an N (either copy) counts 0.5 in the Mismatch column, so it is marked here too (N against N was not)
+            const mm = x.toUpperCase() !== y.toUpperCase() || x.toUpperCase() === 'N';
             a += mm ? `<span class="rf-mm">${esc(x)}</span>` : esc(x);
             c += mm ? `<span class="rf-mm">${esc(y)}</span>` : esc(y);
         }
@@ -35273,7 +35411,7 @@ function _initRepeatFinderEvents() {
     if (closeBtn) closeBtn.addEventListener('click', () => {
         // the repeat highlights stay (they are listed in the Selections panel, and Clear highlights removes them):
         // closing the window to look at them took them away. The faint TSD preview belongs to the open window.
-        _clearTsdPreview();
+        _hideTsdPreviewWithWindow();
         const modal = document.getElementById('repeatFinderModal');
         if (modal) modal.style.display = 'none';
     });

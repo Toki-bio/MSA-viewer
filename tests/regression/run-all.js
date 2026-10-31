@@ -11051,6 +11051,291 @@ ${'ACGT'.repeat(100)}
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// GLM audit d305 #4: seeds are at least 4 bases, so at Min length 6 / 50 % divergence copies sharing no exact run of
+// 4 bases were missed and the summary said nothing (seeds of 1-3 bases made the search 3-10x slower: measured
+// 2026-10-31, 5 kb random, Min 6 / 50 %: 57 ms at 4, 218 ms at 3, 685 ms at 2, 5.6 s at 1). The summary now says so.
+check('Repeat Finder d305: Direct/Inverted say when short divergent copies can be missed (seed of 4 bases)', async (page) => {
+  await loadFasta(page, `>t\n${rfRng(31).seq(800)}\n>o\n${rfRng(32).seq(800)}\n`);
+  const lo = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 6, maxDiv: 50 });
+  const hi = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 20, maxDiv: 10 });
+  const out = { lo: lo.text.slice(0, 300), hi: hi.text.slice(0, 300) };
+  const ok = /exact run of 4/.test(lo.text) && !/exact run of/.test(hi.text);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM audit d305 #5, #6, #10, #18/#27: (#5) a named consensus row plus ONE copy left one row to score conservation, so
+// every column of that copy was "100 % conserved", the body covered the alignment and no TSD was found; (#6) a TSD of
+// exactly the minimum length whose last base mismatches was trimmed below the minimum and dropped; (#10) a copy named
+// like a gene (Gst1_8) matched the undocumented pattern t1_\d and was taken for the reference row; (#18/#27) every
+// note was printed after "Reference row: ", also "Reference row: no row named consensus ...".
+check('TSD finder d305: consensus + one copy, a minimum-length TSD with a mismatched last base, gene-like names, the note prefix', async (page) => {
+  const out = {};
+  const one = _tsdAuditAlignment({ seed: 5, n: 1, consensusRow: true, tsdLens: [10] });
+  await loadFasta(page, one.fasta);
+  const r1 = await _tsdAuditFind(page, 'auto');
+  const t1 = one.truth[one.rows[1].header];
+  out.one = { res: r1.res.map(x => x.up + '/' + x.down), truth: t1.tsd, body: r1.body };
+  // 12 copies, a 12-bp TSD whose 3' copy differs in its last base; length 12-20, max mismatch 10 %
+  const g = rfRng(606), body = g.seq(200);
+  let fa = '';
+  for (let i = 0; i < 12; i++) {
+    const t = g.seq(12), t3 = t.slice(0, 11) + rfOther(t[11]);
+    fa += `>copy${i}\n${g.seq(50)}${t}${body}${'A'.repeat(12)}${t3}${g.seq(50)}\n`;
+  }
+  await loadFasta(page, fa);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await page.fill('#tsdMinLen', '12'); await page.fill('#tsdMaxLen', '20'); await page.fill('#tsdMaxDiv', '10');
+  const r6 = await _tsdAuditFind(page, 'auto');
+  out.min12 = { found: r6.res.length, lens: [...new Set(r6.res.map(x => x.up.length))] };
+  await page.fill('#tsdMinLen', '4'); await page.fill('#tsdMaxDiv', '20');
+  // copy 0 renamed like a gene; no row is a reference row, so Reference row says so (without a "Reference row:" prefix)
+  const b = _tsdAuditAlignment(_TSD_AUDIT.B);
+  await loadFasta(page, b.fasta.replace(/^>copy0_/, '>Gst1_8_copy0_'));
+  const rr = await _tsdAuditFind(page, 'topseq');
+  out.gene = { note: rr.note, isRef: await page.evaluate(() => ['Gst1_8', 'Cdt1_2'].map(h => _isTsdReferenceRow({ header: h }))) };
+  const ok = out.one.res.length === 1 && out.one.res[0] === `${t1.tsd}/${t1.tsd}`
+    && out.min12.found >= 11 && out.min12.lens.every(l => l >= 12)
+    && /^Note: no row named consensus/.test(out.gene.note) && !/Reference row: no row/.test(out.gene.note)
+    && out.gene.isRef.every(v => v === false);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM audit d305 #29: an N against an N counts 0.5 in the Mismatch column but was drawn as a plain match
+check('TSD finder d305: an N in a TSD is marked in the pair display, as the Mismatch count counts it', async (page) => {
+  const g = rfRng(707), body = g.seq(200);
+  let fa = '';
+  for (let i = 0; i < 10; i++) {
+    let t = g.seq(14);
+    if (i === 0) t = t.slice(0, 6) + 'N' + t.slice(7);
+    fa += `>copy${i}\n${g.seq(50)}${t}${body}${'A'.repeat(12)}${t}${g.seq(50)}\n`;
+  }
+  await loadFasta(page, fa);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await _tsdAuditFind(page, 'auto');
+  const out = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('#repeatResults tbody tr')].find(tr => tr.querySelector('.rf-name')?.textContent === 'copy0');
+    const r = (_lastTsdResults || []).find(x => x.seqName === 'copy0');
+    return { tsd: r ? r.upTSD + '/' + r.downTSD + ' mm ' + r.mismatches : null,
+      marked: row ? [...row.querySelectorAll('.rf-mm')].map(s => s.textContent).join('') : null };
+  });
+  const ok = !!out.tsd && /N/.test(out.tsd) && /N/.test(out.marked || '');
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM audit d305 #22: Load with an emptied paste box replaced the view with the paste prompt but kept the alignment in
+// state (Save, Copy and the open Repeat Finder still worked on rows no longer shown). The alignment now stays shown.
+check('Load with an empty paste box keeps the alignment shown and says the box is empty', async (page) => {
+  await loadFasta(page, `>a\n${rfRng(8).seq(300)}\n>b\n${rfRng(9).seq(300)}\n`);
+  await _rfMessages(page);
+  await page.evaluate(() => { document.getElementById('fastaInput').value = ''; });
+  await page.evaluate(() => document.getElementById('loadButton').click());   // the paste area is folded after a load
+  await page.waitForTimeout(300);
+  const out = await page.evaluate(() => ({
+    rows: state.seqs.length,
+    prompt: /Paste MSF or FASTA into the box/.test(document.getElementById('alignmentContainer')?.textContent || ''),
+    msgs: window.__msgs.join(' | ') }));
+  const ok = out.rows === 2 && !out.prompt && /empty/i.test(out.msgs);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM audit d305 #23: with Manual checked, every panel open and every switch to TSD reran the Auto SINE-body scan to
+// prefill the fields again (10 s on 1000 rows x 50 kb, measured 2026-10-31). It now runs once per alignment.
+check('TSD finder d305: Manual prefill scans the alignment once, not on every mode switch', async (page) => {
+  const a = _tsdAuditAlignment(_TSD_AUDIT.E);
+  await loadFasta(page, a.fasta);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await page.click('label:has(input[name="repeatMode"][value="tsd"])');
+  await page.click('label:has(input[name="tsdMode"][value="manual"])');
+  const first = await page.evaluate(() => ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id).value).join(','));
+  await page.evaluate(() => { window.__scans = 0; const f = window._findSineBoundaryColumns; window._findSineBoundaryColumns = function () { window.__scans++; return f.apply(this, arguments); }; });
+  for (let k = 0; k < 3; k++) {
+    await page.click('label:has(input[name="repeatMode"][value="direct"])');
+    await page.click('label:has(input[name="repeatMode"][value="tsd"])');
+  }
+  await page.click('#repeatFinderCloseBtn');
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  const out = await page.evaluate(() => ({ scans: window.__scans, fields: ['tsdUpStart', 'tsdUpEnd', 'tsdDownStart', 'tsdDownEnd'].map(id => document.getElementById(id).value).join(',') }));
+  // a new alignment is prefilled again
+  await loadFasta(page, _tsdAuditAlignment({ ..._TSD_AUDIT.E, seed: 9 }).fasta);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  out.newScans = await page.evaluate(() => window.__scans);
+  out.first = first;
+  const ok = out.scans === 0 && out.fields === first && first !== '1,30,451,480' && out.newScans >= 1;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM db2 #1, #12, #13: Reference row mode with a reference row that has residues in the first and last column, and
+// copies too divergent for a conservation signal: the row was set aside as the body, then taken as the body after all,
+// with a note that the body was "from row 1". A body from column 1 was said to reach "the end of the alignment", and a
+// copy's own all-gap 3' flank was blamed on the body too.
+check('TSD finder db2: a full-width reference row without a conservation signal is not the body; each short flank side gets its own reason', async (page) => {
+  const out = {};
+  const r = rfRng(77);
+  let fa = `>reference\n${r.seq(200)}\n`;
+  for (let i = 0; i < 6; i++) fa += `>copy${i}\n${r.seq(200)}\n`;
+  await loadFasta(page, fa);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  const f = await _tsdAuditFind(page, 'topseq');
+  out.note = f.note;
+  out.label = await page.evaluate(() => _lastTsdResults.boundaries?.label || '');
+  const q = rfRng(78), body = q.seq(80);
+  const seqs = [];
+  for (let i = 0; i < 7; i++) seqs.push({ header: `c${i}`, seq: body + q.seq(40) });
+  seqs.push({ header: 'gapped', seq: body + '-'.repeat(40) });
+  out.reasons = await page.evaluate((seqs) => { const res = _findTSD(seqs, 'auto', { minLen: 4, maxLen: 20, maxDiv: 20, flankSize: 30 });
+    return { left: res.boundaries.leftBoundary, misses: res.misses.map(m => m.seqName + ': ' + m.reason) }; }, seqs);
+  const gapped = out.reasons.misses.find(x => /^gapped/.test(x)) || '', copies = out.reasons.misses.filter(x => /^c\d/.test(x));
+  const ok = !/row 1/.test(out.note) && /no SINE body found/.test(out.note) && /fallback/.test(out.label)
+    && out.reasons.left === 0 && out.reasons.misses.every(x => !/end of the alignment/.test(x))
+    && /5′: the SINE body found reaches the alignment's first column; 3′: copy truncated or flank all gaps/.test(gapped)
+    && copies.length >= 1 && copies.every(x => /no 5′ flank bases .*first column/.test(x));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM db2 #2: "Search N bp on each side" was not held to its field's 5-200: 0 was used as 1, and 1000 as 1000 (the 3'
+// copy was then looked for up to 1000 bp past the body).
+check('TSD finder db2: Search N bp on each side is held to its field 5-200', async (page) => {
+  await loadFasta(page, `>a\n${'ACGT'.repeat(30)}\n>b\n${'ACGT'.repeat(30)}\n`);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  const out = {};
+  for (const v of ['0', '1000', '50']) { await page.fill('#tsdFlankSize', v); out[v] = await page.evaluate(() => _readTsdParams().flankSize); }
+  await page.fill('#tsdFlankSize', '30');
+  const ok = out['0'] === 5 && out['1000'] === 200 && out['50'] === 50;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM db2 #9: a Manual search stopped by an invalid region showed only the message, while Mark, Copy table and the faint
+// preview still worked on the previous run's TSDs.
+check('TSD finder db2: a search stopped by an invalid Manual region forgets the last results (no Mark, Copy or preview)', async (page) => {
+  const out = {};
+  await loadFasta(page, _rfTsdPlate(31, 8, 0, 9));
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await _tsdAuditFind(page, 'auto');
+  const st = () => page.evaluate(() => ({ n: _lastTsdResults.length, tools: !document.getElementById('tsdResultTools').hidden, preview: state.tsdPreview ? state.tsdPreview.size : 0,
+    attention: document.getElementById('tsdMarkBtn').classList.contains('rf-btn-attention'), text: document.getElementById('repeatResults').textContent.slice(0, 60) }));
+  out.found = await st();
+  await page.click('label:has(input[name="tsdMode"][value="manual"])');
+  await page.fill('#tsdUpStart', '5'); await page.fill('#tsdUpEnd', '2');
+  await page.click('#repeatRunBtn'); await page.waitForTimeout(200);
+  out.invalid = await st();
+  const ok = out.found.n >= 7 && out.found.tools && out.found.preview > 0
+    && /^Invalid pre-SINE region/.test(out.invalid.text) && out.invalid.n === 0 && !out.invalid.tools && out.invalid.preview === 0 && !out.invalid.attention;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM db2 #6, #20: the faint TSD preview stayed on the rows when another window (Dot plot, Clustering...) closed the
+// Repeat Finder; and reopening the window on the same TSD table did not show it again (only a new search did).
+check('TSD finder db2: the faint preview goes with the window however it closes, and comes back on reopening unless marked', async (page) => {
+  const out = {};
+  await loadFasta(page, _rfTsdPlate(31, 8, 0, 9));
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await _tsdAuditFind(page, 'auto');
+  const pv = () => page.evaluate(() => ({ rows: state.tsdPreview ? state.tsdPreview.size : 0, attention: document.getElementById('tsdMarkBtn').classList.contains('rf-btn-attention') }));
+  out.found = await pv();
+  await page.evaluate(() => showExclusiveModal('infoModal')); await page.waitForTimeout(150);
+  out.otherWindow = await pv();
+  await page.evaluate(() => { document.getElementById('infoModal').style.display = 'none'; openRepeatFinder(0, 'tsd'); }); await page.waitForTimeout(150);
+  out.reopened = await pv();
+  out.table = await page.evaluate(() => /TSD in/.test(document.querySelector('#repeatResults .rf-big')?.textContent || ''));
+  await page.click('#tsdMarkBtn'); await page.waitForTimeout(150);
+  await page.click('#repeatFinderCloseBtn'); await page.waitForTimeout(150);
+  await page.evaluate(() => openRepeatFinder(0, 'tsd')); await page.waitForTimeout(150);
+  out.reopenedMarked = await pv();
+  const ok = out.found.rows >= 7 && out.found.attention && out.otherWindow.rows === 0 && !out.otherWindow.attention
+    && out.table && out.reopened.rows === out.found.rows && out.reopened.attention && out.reopenedMarked.rows === 0 && !out.reopenedMarked.attention;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM db2 #14, #21: every result row had a "Remove this highlight" x, which did nothing on a row not highlighted; the
+// window reopened on another sequence (Find repeats on another row) kept the first sequence's One sequence table under
+// the new choice in the list.
+check('Repeat Finder db2: the x is shown only on highlighted rows; reopening on another sequence does not keep a One sequence table', async (page) => {
+  const r = rfRng(5), u = r.seq(15), v = r.seq(25);
+  await loadFasta(page, `>t\n${r.seq(50) + u + r.seq(60) + u + r.seq(60) + v + r.seq(50) + v + r.seq(40)}\n>o\n${r.seq(375)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const out = {};
+  const f = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 10, maxDiv: 0 });
+  out.rows = f.rows;
+  const vis = () => page.evaluate(() => [...document.querySelectorAll('#repeatResults tbody tr')].map(tr => getComputedStyle(tr.querySelector('.repeat-remove-btn')).visibility).join(','));
+  out.before = await vis();
+  await page.click('#repeatResults tbody tr:nth-child(1)');
+  out.after = await vis();
+  await page.click('#repeatFinderCloseBtn'); await page.waitForTimeout(150);
+  await page.evaluate(() => openRepeatFinder(1)); await page.waitForTimeout(150);
+  out.other = await page.evaluate(() => ({ table: !!document.querySelector('#repeatResults .rf-summary'), text: document.getElementById('repeatResults').textContent.slice(0, 50),
+    pick: document.getElementById('repeatFinderSeqSelect').selectedOptions[0]?.textContent || '' }));
+  const ok = out.rows === 2 && out.before === 'hidden,hidden' && out.after === 'visible,hidden' && !out.other.table && /o$/.test(out.other.pick);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM db2 #11: colour marks, then lower case, then Ctrl+Z (the case is back), then Remove marks: the colour marks came
+// back on screen while the message said "nothing to change".
+check('TSD marking db2: Remove marks after Ctrl+Z says when it brings the marking before back', async (page) => {
+  const out = {};
+  await loadFasta(page, _rfTsdPlate(31, 8, 0, 9));
+  await page.evaluate(() => openRepeatFinder(0, 'tsd'));
+  await _tsdAuditFind(page, 'auto');
+  await page.selectOption('#tsdMarkStyle', 'color');
+  await page.click('#tsdMarkBtn'); await page.waitForTimeout(150);
+  out.colour = await page.evaluate(() => state.tsdMarks.size);
+  await page.selectOption('#tsdMarkStyle', 'lowercase');
+  await page.click('#tsdMarkBtn'); await page.waitForTimeout(150);
+  out.lower = await page.evaluate(() => state.tsdMarks.size);
+  await page.evaluate(() => undoDelete(true)); await page.waitForTimeout(200);
+  await _rfMessages(page);
+  await page.click('#tsdUndoMarkBtn'); await page.waitForTimeout(150);
+  out.back = await page.evaluate(() => state.tsdMarks.size);
+  out.msg = await page.evaluate(() => window.__msgs.join(' | '));
+  const ok = out.colour >= 7 && out.lower === 0 && out.back === out.colour && /already undone/.test(out.msg) && !/nothing to change/.test(out.msg) && /before it is shown again/.test(out.msg);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM dtan #2: a copy with 3 or more substitutions broke the neighbour scan: AGGCT x 4, a 3-substitution copy, AGGCT x 4
+// came out as a 10-bp unit x 4.5, and a 10-bp unit with a 5-substitution copy as two rows of 20- and 30-bp units.
+check('Repeat Finder tandem dtan: a copy with several substitutions keeps the array whole at its own unit', async (page) => {
+  const r = rfRng(9);
+  const mut = (u, k) => { const a = u.split(''); for (let i = 0; i < k; i++) { const j = i * Math.floor(u.length / k); a[j] = a[j] === 'A' ? 'C' : 'A'; } return a.join(''); };
+  const L = r.seq(60), R = r.seq(60);
+  const a5 = L + 'AGGCT'.repeat(4) + mut('AGGCT', 3) + 'AGGCT'.repeat(4) + R;
+  const a10 = L + 'ACGTTGCAAC'.repeat(4) + mut('ACGTTGCAAC', 5) + 'ACGTTGCAAC'.repeat(4) + R;
+  await loadFasta(page, `>u5\n${a5}\n>u10\n${a10}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const out = {};
+  const f5 = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 20, maxDiv: 15 });
+  out.u5 = f5.res.map(x => [x.start, x.end, x.unitLen, x.copies]);
+  await page.click('#repeatFinderCloseBtn');
+  await page.evaluate(() => openRepeatFinder(1));
+  const f10 = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 20, maxDiv: 15 });
+  out.u10 = f10.res.map(x => [x.start, x.end, x.unitLen, x.copies]);
+  const ok = JSON.stringify(out.u5) === JSON.stringify([[60, 105, 5, 9]]) && out.u10.length === 1 && out.u10[0][2] === 10 && out.u10[0][1] - out.u10[0][0] >= 90;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM dtan #4: Tandem on All searched every row in one go: 200 rows of 50 kb held the tab for about 45 s, saying only
+// "Searching...". The search stops at a total amount of work and says after how many sequences.
+check('Repeat Finder tandem dtan: All on many long rows stops at the work limit and says after how many sequences', async (page) => {
+  const r = rfRng(31);
+  let fa = '';
+  for (let i = 0; i < 30; i++) fa += `>r${i}\n${r.seq(50000)}\n`;
+  await loadFasta(page, fa);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'all', minLen: 20, maxDiv: 15 });
+  const ok = /search stopped after 24 of 30 sequences \(work limit/.test(f.text) && f.ms < 15000;
+  return { pass: ok, detail: JSON.stringify({ ms: f.ms, text: f.text.slice(0, 200) }) };
+}, { timeoutMs: 180000 });
+
+// GLM dtan #6, #8: a protein unit position with only X (or B, Z, J) in every copy showed N (asparagine, not in the
+// data); the Min array length tooltip said "any unit length" while units above 500 are never tried.
+check('Repeat Finder tandem dtan: a protein unit position of only X shows X, and the tooltip names the 500 unit limit', async (page) => {
+  await loadFasta(page, `>p1\nMKLV${'AAX'.repeat(8)}PWRT\n>p2\nMKLVQQQEEERRRTTTWWWYYYPWRT\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 12, maxDiv: 50 });
+  const out = { rows: f.rows, units: await page.evaluate(() => (_lastRepeatResults || []).map(x => x.unit)),
+    title: await page.evaluate(() => document.getElementById('repeatMinLenLabel').title) };
+  const ok = out.units.includes('AAX') && !out.units.some(u => /N/.test(u)) && /500/.test(out.title) && !/any unit length/.test(out.title);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 // Canvas Block prototype 2026-10-30 found it: dragging a Canvas scrollbar marked the view dirty on every step, so each
 // step was a full redraw (p95 75-92 ms) instead of the frame copy the wheel uses (p95 ~4 ms).
 check('Canvas: dragging the vertical and horizontal scrollbars moves the picture by frame copy, not full redraws', async (page) => {

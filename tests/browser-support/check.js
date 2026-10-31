@@ -28,6 +28,19 @@ async function main() {
   }
   report('no regex lookbehind in the viewer scripts (Safari < 16.4 cannot parse it)', lookbehind.length === 0, lookbehind.join(', '));
 
+  // GLM audit d305 #2: script.js says "Chrome/Edge 80+", but `||=` (Chrome 85) in _pickDotWorker stopped the whole
+  // script parsing in Chrome/Edge 80-84 (a blank page). Logical assignment is a syntax error there; replaceAll (85)
+  // and .at() (92) throw when called.
+  const es2021 = [];
+  for (const f of APP_JS) {
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    src.split('\n').forEach((line, i) => {
+      if (/^\s*(\/\/|\*)/.test(line)) return;
+      if (/(\|\||&&|\?\?)=|\.replaceAll\(|\.at\(/.test(line)) es2021.push(`${f}:${i + 1}`);
+    });
+  }
+  report('no ||= &&= ??= replaceAll or .at() in the viewer scripts (Chrome/Edge 80-84 are supported)', es2021.length === 0, es2021.join(', '));
+
   const { server, baseUrl } = await start();
   const browser = await launch();
   try {
