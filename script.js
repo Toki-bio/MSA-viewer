@@ -6603,6 +6603,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         }
         // Printing Block: the print stylesheet hides the viewer (#printBlock holds the bands); measured hidden, the
         // canvas fell back to 800 px and re-wrapped the bands at ~79 columns behind the print, then back after it
+        // (_clearPrintBlock lays the view out again for the window as it is then: GLM audit cb5 #4/#5)
         if (document.body.classList.contains('print-block')) return false;
         const hCss = _fitAlignmentViewport();
         // The container's client area, not its border box (2px wider, 1px taller): the canvas
@@ -6679,6 +6680,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     _canvasState.scheduleDraw = () => { _markDirty(); scheduleDraw(); };
     // For callers that only moved the view (a page key): no dirty flag, so the frame copy applies
     _canvasState.scheduleDrawMoved = () => scheduleDraw();
+    // After printing Block: resize() did nothing while body.print-block was set, so a window resized meanwhile (or a
+    // re-render then) left the canvas and the container at their old sizes until the next resize event
+    _canvasState.relayout = () => { if (_isCurrent() && resize(true)) { _markDirty(); scheduleDraw(); } };
 
     resize(true);
     if (_canvasState.resizeHandler) window.removeEventListener('resize', _canvasState.resizeHandler);
@@ -7169,7 +7173,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     }
 
     // Draws the cells, ruler, names and overlays that intersect the CSS-pixel rectangle
-    // [cx0, cx1) x [cy0, cy1) of the viewport (the caller has set the clip).
+    // [cx0, cx1) x [cy0, cy1) of the frame (the viewport, or a region drawToSvg draws). The caller may set no
+    // clip: drawToSvg draws an unscrolled strip or a band's rectangle without one, so every element must keep
+    // itself inside the rectangle (its own row/column range) rather than rely on a clip (GLM audit cb5 #15).
     function drawRegion(ox, oy, w, h, cx0, cy0, cx1, cy1) {
         // firstCol/lastCol are SLOTS (columns without Variable sites only)
         const firstCol = Math.max(_bS0, Math.floor((ox - NAME_W + cx0) / CHAR_W));
@@ -7562,25 +7568,35 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const ox = region.ox ?? _canvasState.offsetX, oy = region.oy ?? _canvasState.offsetY;
         const rec = _makeSvgRecorder(dpr, { idPrefix }), orec = _makeSvgRecorder(dpr, { overlay: true, idPrefix: idPrefix + 'o' });
         const ctx0 = ctx, octx0 = octx;
+        // Pointer state is not part of the picture: a row drag in progress (tinted names, drop bar) and the gap
+        // tool's hovered cell were drawn into the file and into every printed band (GLM audit cb5 #21)
+        const rowDrag0 = _canvasState.rowDrag, gapHover0 = _canvasState.gapHover;
+        _canvasState.rowDrag = null; _canvasState.gapHover = null;
         ctx = rec; octx = orec;
         try {
             clearWhite(ctx, 0, 0, w, h);
-            if (!blockLayout && stickyNames && ox > 0 && w > NAME_W) {
+            if (!blockLayout && stickyNames && ox > 0) {
                 // Canvas strip scrolled sideways: the canvas draws the cells that scrolled under the fixed names and
                 // covers them with the name column; in an SVG they would stay as hidden text. Draw the data area,
                 // then the name column without its cells, each clipped to its part (as draw() clips its strips).
-                ctx.save(); ctx.beginPath(); ctx.rect(NAME_W, 0, w - NAME_W, h); ctx.clip();
-                drawArea(ox, oy, w, h, NAME_W, 0, w, h);
-                ctx.restore();
-                ctx.save(); ctx.beginPath(); ctx.rect(0, 0, NAME_W, h); ctx.clip();
+                // A pane no wider than the name column has no data area (it took the single pass and wrote every
+                // cell under the names into the file: GLM audit cb5 #19).
+                if (w > NAME_W) {
+                    ctx.save(); ctx.beginPath(); ctx.rect(NAME_W, 0, w - NAME_W, h); ctx.clip();
+                    drawArea(ox, oy, w, h, NAME_W, 0, w, h);
+                    ctx.restore();
+                }
+                const nw = Math.min(NAME_W, w);
+                ctx.save(); ctx.beginPath(); ctx.rect(0, 0, nw, h); ctx.clip();
                 rec.skipImages = true;
-                drawArea(ox, oy, w, h, 0, 0, NAME_W, h);
+                drawArea(ox, oy, w, h, 0, 0, nw, h);
                 rec.skipImages = false;
                 ctx.restore();
             } else drawArea(ox, oy, w, h, 0, 0, w, h);
             drawOverlay(ox, oy, w, h);
         } finally {
             ctx = ctx0; octx = octx0;
+            _canvasState.rowDrag = rowDrag0; _canvasState.gapHover = gapHover0;
             clearBand();
         }
         return { width: w, height: h, parts: [rec.finish(), orec.finish()], unknownImages: rec.unknownImages + orec.unknownImages };
@@ -18288,10 +18304,12 @@ function _exportCellClass(base, posData, config) {
 // Block-mode width, or the whole alignment in Full mode for the SVG), each
 // with a position ruler, the consensus row where the screen shows it, and
 // one line per sequence.
-// Block (Canvas Block) wraps the exports where the screen wraps the bands: at the Block size slider, or at
-// fewer columns when the window holds fewer (_canvasState.blockFitCols, the band width you see). Before
-// batch 5 they wrapped at the slider, which Canvas Block can exceed on a narrow window. Every column is
-// exported whatever the view hides (hidden columns, Variable sites only), as from the old DOM Block.
+// Block (Canvas Block) wraps the exports at the band width on screen: the Block size set, or fewer columns
+// when the window holds fewer (_canvasState.blockFitCols). Before batch 5 they wrapped at the width set,
+// which Canvas Block can exceed on a narrow window. Every column is exported whatever the view hides
+// (hidden columns, Variable sites only), as from the old DOM Block: then a band on screen holds that many
+// SHOWN columns and an exported block that many alignment columns, so the blocks break at other columns
+// than the bands on screen (GLM audit cb5 #1).
 function _exportBlockWidth() {
     const slider = blockSizeRequested();
     const fit = isBlockLayout() && _canvasState.layout?.kind === 'block' ? _canvasState.blockFitCols : 0;
@@ -18740,7 +18758,7 @@ function _preparePrintBlock() {
         const note = document.createElement('p');
         note.className = 'print-block-note';
         note.textContent = `${title}: bands ${b0 + 1}-${b1} of ${bands.length} (columns ${bands[b0].c0 + 1}-${bands[b1 - 1].c1} of ${bands[bands.length - 1].c1}). `
-            + 'The whole alignment is too large to print from the page: use Export > Full alignment SVG.';
+            + 'The whole alignment is too large to print from the page: use Full SVG in the Input menu.';
         holder.appendChild(note);
     }
     const headerH = m.headerH || 0;
@@ -18759,7 +18777,14 @@ function _preparePrintBlock() {
                 const rowsTo = Math.floor((y + maxH - headerH) / pitch + 1e-6);
                 h = Math.max(pitch, headerH + Math.max(rowsFrom + 1, rowsTo) * pitch - y);
             }
-            const s = _canvasState.drawToSvg({ ox: 0, oy: r.oy + y, w: r.w, h }, 'p' + (k++) + '_');
+            let s;
+            try { s = _canvasState.drawToSvg({ ox: 0, oy: r.oy + y, w: r.w, h }, 'p' + (k++) + '_'); } catch (e) {
+                // nothing half-made goes to paper: the page prints as it is (the canvas), and the user is told
+                // (an exception here went on to the beforeprint listener unreported; GLM audit cb5 #7)
+                console.error('Printing Block failed:', e);
+                showMessage('Printing the blocks failed (' + (e && e.message ? e.message : e) + '): the print shows the screen only.', 6000);
+                return;
+            }
             parts.push(_svgDocument(s.parts, s.width, s.height, `${title} band ${b + 1}`, { xmlDecl: false }));
             y += h;
         }
@@ -18767,11 +18792,26 @@ function _preparePrintBlock() {
     holder.insertAdjacentHTML('beforeend', parts.join('\n'));
     document.body.appendChild(holder);
     document.body.classList.add('print-block');
+    _printBlockWindowSize = window.innerWidth + 'x' + window.innerHeight;
     _canvasState.printMs = performance.now() - t0;
 }
+let _printBlockWindowSize = null;   // the window's size when the print began (_clearPrintBlock)
 function _clearPrintBlock() {
     document.getElementById('printBlock')?.remove();
+    if (!document.body.classList.contains('print-block')) return;
     document.body.classList.remove('print-block');
+    // the viewer is shown again: lay it out for the window as it is now (a resize while printing was skipped,
+    // and the controls' height, which places the viewer, was measured for the old window; GLM audit cb5 #4/#5)
+    // A window resized meanwhile: the page's own resize listeners (the controls' rows among them) ran on a hidden
+    // page, so they are run again.
+    const size0 = _printBlockWindowSize;
+    _printBlockWindowSize = null;
+    requestAnimationFrame(() => {
+        if (document.body.classList.contains('print-block')) return;
+        if (!size0 || size0 !== window.innerWidth + 'x' + window.innerHeight) window.dispatchEvent(new Event('resize'));
+        updateControlsOffset();
+        if (isCanvasMode()) _canvasState.relayout?.();
+    });
 }
 if (typeof window !== 'undefined') {
     window.addEventListener('beforeprint', _preparePrintBlock);
@@ -18787,7 +18827,14 @@ if (typeof window !== 'undefined') {
 
 // The viewport SVG of Canvas and Block: what the canvas shows now, drawn into an SVG recorder
 function _exportCanvasViewportSvg() {
-    const r = _canvasState.drawToSvg();
+    // drawToSvg puts ctx / octx back itself (finally); an exception while drawing ended here unreported: no
+    // file, no message (GLM audit cb5 #7)
+    let r;
+    try { r = _canvasState.drawToSvg(); } catch (e) {
+        console.error('Viewport SVG export failed:', e);
+        showMessage('SVG export failed: ' + (e && e.message ? e.message : e), 5000);
+        return;
+    }
     const title = (state.currentFilename || 'alignment') + ' viewport export';
     const svg = _svgDocument(r.parts, r.width, r.height, title);
     _downloadBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `${_safeExportBaseName()}_viewport.svg`);

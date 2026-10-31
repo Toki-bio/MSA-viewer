@@ -333,7 +333,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <p>Key capabilities:</p>
   <ul>
-    <li><strong>View</strong> - Four visualisation modes: Full (single-pane, the letters are page text), Block (wrapped in bands as wide as the window holds, drawn on a canvas), Canvas (high-performance for massive alignments), and Reads (IGV-style read packing for SAM/BAM data).</li>
+    <li><strong>View</strong> - Four visualisation modes: Full (single-pane, the letters are page text), Block (wrapped in bands of the Block Size width, narrower when the window holds fewer columns, drawn on a canvas), Canvas (high-performance for massive alignments), and Reads (IGV-style read packing for SAM/BAM data).</li>
     <li><strong>Edit</strong> - GeneDoc-style residue editing, Move/Slide tools, undo/redo</li>
     <li><strong>Analyse</strong> - Statistics (distance and identity matrices you can copy or save), codon analysis, dot plots, repeat/TSD finder, tree builder, restriction site search, k-mer / SNP grouping and 2D rectangles</li>
     <li><strong>Colour</strong> - Monochrome conservation shading plus nucleotide, purine/pyrimidine, ambiguity, and amino-acid colour schemes</li>
@@ -1264,7 +1264,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
     <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block. The view whose letters are page text: the browser's find bar and text selection see them (from about 100,000 residues only the window drawn).</td></tr>
-    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>The alignment wrapped in blocks (bands), drawn on a canvas like Canvas (any size, no wait on large alignments). The Block Size slider (or the number box) sets the width, 40–300 chars. A block is never wider than the window holds (but at least 10 columns): on a narrow window it wraps at what fits, the slider and the box show that width, and a note beside them says e.g. <em>fits (150 set)</em>; when the window is wide enough again the blocks grow back to the width set. <strong>Screen</strong> sets the width to what fits the window. Presets and snapshots keep the width set, not the narrower one shown. Sequence names repeat per block; the view scrolls only up and down. Because the letters are drawn as pixels, the browser's find bar does not see them: <kbd>Ctrl+F</kbd> opens the motif search (§7.1). Printing (<kbd>Ctrl+P</kbd>) prints every block, scaled to the paper's width (§9.10).</td></tr>
+    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>The alignment wrapped in blocks (bands), drawn on a canvas like Canvas (any size, no wait on large alignments). The Block Size slider (or the number box) sets the width, 40–300 chars. A block is never wider than the window holds (but at least 10 columns): on a narrow window it wraps at what fits, the slider and the box show that width, and a note beside them says e.g. <em>fits (150 set)</em>; when the window is wide enough again the blocks grow back to the width set. <strong>Screen</strong> sets the width to what fits the window. Presets and snapshots keep the width set, not the narrower one shown. Sequence names repeat per block; the view scrolls only up and down. Because the letters are drawn as pixels, the browser's find bar does not see them: <kbd>Ctrl+F</kbd> opens the motif search (§7.1). Printing (<kbd>Ctrl+P</kbd>) prints every block, scaled to the paper's width; above 400,000 residues, the blocks from the one in view up to that size (§9.10).</td></tr>
     <tr><td><strong>Canvas</strong></td><td>Any alignment; the default view</td><td>The default view at every size (a note on the first load says so). Choosing Full or Block keeps that view for smaller files for the rest of the session; alignments from 40,000 residues still open in Canvas. A link can choose the view with <code>&amp;view=full</code>, <code>block</code> or <code>canvas</code>. Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name), and so do motif search, Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots. From about 100,000 residues, Full draws a window rather than every cell.</td></tr>
     <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5). A <strong>Show bases</strong> checkbox next to the mode switch draws every base of each read instead of mismatches only. A coverage row (counts per base and strand on hover; click to sort the reads there), read strands in colour, and <strong>Variants</strong> / <strong>Sample &rarr; row</strong> buttons (2.5).</td></tr>
   </table>
@@ -1329,14 +1329,16 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li>
       <strong>%</strong> — a percentage of all sequences, 0-100 in 1% steps.
       <strong>0%</strong> shows every column unfiltered; <strong>≥20%</strong> requires
-      at least a fifth of sequences to differ; <strong>≥100%</strong> requires every
-      sequence to differ. Percentages work consistently across alignments of any size:
+      at least a fifth of sequences to differ; <strong>≥100%</strong> requires all but
+      one sequence to differ (the most that can: one of them is the consensus); every
+      percentage is capped there. Percentages work consistently across alignments of any size:
       for a 5-sequence alignment ≥20% means at least 1 sequence, for a 200-sequence
       alignment it means at least 40.
     </li>
     <li>
       <strong>count</strong> (default, at 1) — an exact absolute number of sequences, 0 up to
-      the total loaded (the slider's range updates automatically). <strong>≥1</strong>, the
+      one less than the total loaded, since at most that many can differ from a column's consensus
+      (the slider's range updates automatically). <strong>≥1</strong>, the
       default, shows a column the instant even a single sequence differs, with no rounding at
       all: fully identical columns are dimmed or hidden, as the two checkboxes promise.
       <strong>0</strong> turns the filter off (every column counts as variable).
@@ -1407,8 +1409,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
      <code>*</code> (stop) is white on black. With Monochrome shading, unknown residues (<code>N</code> in
      nucleotides, <code>X</code> in either) never count as conserved, so masked regions stay unshaded.</p>
   <p>
-    The selected colour scheme is saved in presets and snapshots. Canvas mode
-    keeps its own existing high-performance colouring behaviour.
+    The selected colour scheme is saved in presets and snapshots.
   </p>
   <p><strong>Conservation calculation mode</strong> (the <strong>All</strong>/<strong>Non-Gap</strong>
     radio buttons next to <strong>Shade By</strong> - in the separate <strong>Shade</strong> menu,

@@ -6258,6 +6258,156 @@ check('Canvas Block: printing Block prints every band (each row\'s name and resi
   return { pass: ok, detail: JSON.stringify({ L, bandColsInPrint: r.bandColsInPrint, bandColsAfter, svgs: r.svgs, shown: r.shown, viewer: r.viewer, rowsSeen, bad: bad.slice(0, 4), pdfBytes: pdf.length, removedAfter: !after }) };
 }));
 
+// ---- GLM audit of Canvas Block batch 5 (cb5), 2026-11-01: findings checked on a12084b ----
+// The canvas's size and layout, against its container, and whether the canvas holds a drawing (non-white pixels)
+const cb5Geom = (p) => p.evaluate(() => {
+  const c = _canvasState.canvas, a = document.getElementById('alignmentContainer');
+  const g = c.getContext('2d'), d = g.getImageData(0, 0, c.width, c.height).data;
+  let ink = 0;
+  for (let i = 0; i < d.length; i += 4 * 7) if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) ink++;
+  return { canvasW: parseFloat(c.style.width), boxW: a.clientWidth, canvasH: parseFloat(c.style.height), boxH: a.clientHeight,
+    bandCols: _canvasState.layout?.bandCols, nBands: _canvasState.layout?.nBands, ink };
+});
+// The same view after a window 'resize' event with nothing changed: what the view should already be
+const cb5Reference = async (p) => { await p.evaluate(() => window.dispatchEvent(new Event('resize'))); await p.waitForTimeout(400); return cb5Geom(p); };
+const cb5Fits = (g, ref) => Math.abs(g.canvasW - g.boxW) <= 1 && Math.abs(g.canvasH - g.boxH) <= 1 && g.canvasW === ref.canvasW && g.canvasH === ref.canvasH
+  && g.bandCols === ref.bandCols && g.nBands === ref.nBands && g.ink > 200;
+
+// #4: resize() returns at once while body.print-block is set (so the hidden viewer keeps its bands behind the
+// print), but nothing ran it again when the print ended: a window resized while the print preview was open
+// (or a cancelled print, with the window changed meanwhile) left the canvas at the old size and the bands
+// wrapped for the old window, until the next resize.
+check('Canvas Block: cb5 #4 a window resized while printing leaves the view laid out for the new window when the print ends', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(20, 900));
+  await p.waitForTimeout(500);
+  const before = await cb5Geom(p);
+  await p.emulateMedia({ media: 'print' }); await p.waitForTimeout(300);
+  const printing = await p.evaluate(() => document.body.classList.contains('print-block'));
+  await p.setViewportSize({ width: 900, height: 650 }); await p.waitForTimeout(400);
+  await p.emulateMedia({ media: 'screen' }); await p.waitForTimeout(500);
+  const after = await cb5Geom(p);
+  const ref = await cb5Reference(p);
+  const ok = printing && before.canvasW > ref.canvasW + 100 && cb5Fits(after, ref);
+  return { pass: ok, detail: JSON.stringify({ printing, before, after, ref }) };
+}));
+
+// #5: the same guard returned from resize(true), the first layout of a re-render: a re-render while printing
+// (here: the Block size changed) left the new renderer unsized and undrawn after the print. With emulated print
+// media this passed on a12084b too (the controls' ResizeObserver relaid the view when they reappeared); the
+// print dialog's path, which fails there, is the check after next. Kept as a guard of the emulated path.
+check('Canvas Block: cb5 #5 a re-render while printing is laid out and drawn when the print ends', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(20, 900));
+  await p.waitForTimeout(500);
+  await p.emulateMedia({ media: 'print' }); await p.waitForTimeout(300);
+  await p.evaluate(async () => { const bs = document.getElementById('blockSizeSlider'); bs.value = '60'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 800)); });
+  await p.emulateMedia({ media: 'screen' }); await p.waitForTimeout(500);
+  const after = await cb5Geom(p);
+  const ref = await cb5Reference(p);
+  const ok = ref.bandCols === 60 && cb5Fits(after, ref);
+  return { pass: ok, detail: JSON.stringify({ after, ref }) };
+}));
+
+// #4/#5 through the print dialog's own events: a real print (Ctrl+P) sends beforeprint/afterprint and leaves the
+// screen's layout alone (the print stylesheet applies to the paper only), so nothing on screen changes size to
+// trigger a layout afterwards (with emulated print media the controls' ResizeObserver did, by luck).
+check('Canvas Block: cb5 #4/#5 after a print dialog (beforeprint/afterprint), a resize and a re-render made meanwhile are laid out', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(20, 900));
+  await p.waitForTimeout(500);
+  // a cancelled print with the window resized while the dialog was open
+  await p.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+  const printing = await p.evaluate(() => document.body.classList.contains('print-block'));
+  await p.setViewportSize({ width: 900, height: 650 }); await p.waitForTimeout(400);
+  await p.evaluate(() => window.dispatchEvent(new Event('afterprint'))); await p.waitForTimeout(500);
+  const resized = await cb5Geom(p);
+  const ref1 = await cb5Reference(p);
+  // a re-render (the Block size changed) while the dialog was open
+  await p.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+  await p.evaluate(async () => { const bs = document.getElementById('blockSizeSlider'); bs.value = '60'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 800)); });
+  await p.evaluate(() => window.dispatchEvent(new Event('afterprint'))); await p.waitForTimeout(500);
+  const rerendered = await cb5Geom(p);
+  const ref2 = await cb5Reference(p);
+  const ok = printing && cb5Fits(resized, ref1) && ref2.bandCols === 60 && cb5Fits(rerendered, ref2);
+  return { pass: ok, detail: JSON.stringify({ printing, resized, ref1, rerendered, ref2 }) };
+}));
+
+// #7: drawToSvg puts SVG recorders in place of ctx / octx; its finally put them back, but an exception while
+// drawing (forced here: the recorder's fillText throws) went on to the button's handler or the beforeprint
+// listener: no file, no message, an uncaught error. Now: the screen keeps drawing on its own canvas, the user
+// gets a message, and a failed print preparation leaves no half-filled #printBlock and no body.print-block.
+check('Canvas Block: cb5 #7 an exception while drawing the SVG leaves the screen drawing and says the export failed', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const errors = [];
+  p.on('pageerror', e => errors.push(e.message));
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(20, 900));
+  await p.waitForTimeout(500);
+  await p.evaluate(() => {
+    window.__cb5Orig = _makeSvgRecorder;
+    _makeSvgRecorder = (...a) => { const r = window.__cb5Orig(...a); r.fillText = () => { throw new Error('cb5 forced'); }; return r; };
+  });
+  const file = await cbCaptureFile(p, 'exportVisibleViewportAsSvg').catch(e => ({ threw: e.message }));
+  const msg = await p.evaluate(() => { const s = document.getElementById('statusMessage'); return s && s.style.display !== 'none' ? s.textContent : ''; });
+  await p.emulateMedia({ media: 'print' }); await p.waitForTimeout(300);
+  const print = await p.evaluate(() => ({ holder: !!document.getElementById('printBlock'), cls: document.body.classList.contains('print-block') }));
+  await p.emulateMedia({ media: 'screen' }); await p.waitForTimeout(300);
+  await p.evaluate(() => { _makeSvgRecorder = window.__cb5Orig; });
+  // the screen draws on its own canvas: scroll to the last band, the pixels change and are not blank
+  const shot0 = await p.evaluate(() => _canvasState.canvas.toDataURL());
+  await p.evaluate(async () => { _canvasState.offsetY = _canvasState.layout.bandTop[_canvasState.layout.nBands - 1]; _canvasState.scheduleDraw(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); });
+  const shot1 = await p.evaluate(() => _canvasState.canvas.toDataURL());
+  const g = await cb5Geom(p);
+  const good = await cbCaptureFile(p, 'exportVisibleViewportAsSvg');
+  const ok = !file && /fail/i.test(msg) && !print.holder && !print.cls && errors.length === 0 && shot0 !== shot1 && g.ink > 200 && !!good && /<svg/.test(good.text);
+  return { pass: ok, detail: JSON.stringify({ file: file && (file.threw || file.name), msg, print, errors, moved: shot0 !== shot1, ink: g.ink, goodAfter: !!good }) };
+}));
+
+// #19: the viewport SVG of a scrolled Canvas strip with fixed names draws the data area and the name column
+// apart, so the cells under the names do not stay in the file as hidden text; a pane no wider than the name
+// column took the single-pass branch and wrote every cell under the names into the SVG.
+check('Canvas Block: cb5 #19 a scrolled Canvas pane no wider than the name column exports no cells hidden under the names', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=canvas', { waitUntil: 'networkidle' });
+  const long = i => 'seq' + i + '_' + 'x'.repeat(170);
+  const want = (i) => { let q = ''; for (let j = 0; j < 900; j++) q += 'ACGT'[(i * 7 + j) % 4]; return q; };
+  await loadFasta(p, Array.from({ length: 10 }, (_, i) => '>' + long(i) + '\n' + want(i)).join('\n') + '\n');
+  await p.waitForTimeout(500);
+  const setup = await p.evaluate(async () => {
+    const nl = document.getElementById('nameLengthNoLimit'); if (!nl.checked) nl.click();
+    await new Promise(r => setTimeout(r, 700));
+    _canvasState.offsetX = 200; _canvasState.scheduleDraw();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return { nameW: _canvasState.metrics.nameW, w: parseFloat(_canvasState.canvas.style.width), ox: _canvasState.offsetX, sticky: document.getElementById('stickyNames').checked, block: _canvasState.layout?.kind };
+  });
+  const svg = await cbCaptureFile(p, 'exportVisibleViewportAsSvg');
+  const s = svg ? cbSvgLines(svg.text) : { lines: [] };
+  const cells = s.lines.reduce((n, l) => n + l.seq.length, 0);
+  const names = s.lines.filter(l => /^seq\d/.test(l.name)).length;
+  const ok = !!svg && setup.sticky && setup.block !== 'block' && setup.ox > 0 && setup.w <= setup.nameW && cells === 0 && names >= 8;
+  return { pass: ok, detail: JSON.stringify({ setup, cells, names, sample: s.lines.slice(0, 3).map(l => l.name.slice(0, 8) + ':' + l.seq.slice(0, 10)) }) };
+}));
+
+// #21: a row drag in progress (the tinted names, the blue drop bar) is pointer state, not part of the alignment:
+// it was drawn into the viewport SVG and into every printed band.
+check('Canvas Block: cb5 #21 a row drag in progress is not drawn into the viewport SVG or the print', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 0);
+  const a = { x: g.left + 25, y: g.top + g.headerH + 1.5 * g.charH - oy };
+  await p.mouse.move(a.x, a.y); await p.mouse.down();
+  await p.mouse.move(a.x, a.y + 8, { steps: 3 }); await p.mouse.move(a.x, a.y + 4 * g.charH, { steps: 6 }); await p.waitForTimeout(150);
+  const dragging = await p.evaluate(() => !!(_canvasState.rowDrag && _canvasState.rowDrag.started && _canvasState.rowDrag.target >= 0));
+  const dragInk = /1976d2|25,\s*118,\s*210/i;
+  const svg = await cbCaptureFile(p, 'exportVisibleViewportAsSvg');
+  await p.emulateMedia({ media: 'print' }); await p.waitForTimeout(300);
+  const printHtml = await p.evaluate(() => document.getElementById('printBlock')?.innerHTML || '');
+  await p.emulateMedia({ media: 'screen' }); await p.waitForTimeout(200);
+  const stillDragging = await p.evaluate(() => !!(_canvasState.rowDrag && _canvasState.rowDrag.started));
+  await p.mouse.up(); await p.waitForTimeout(400);
+  const ok = dragging && !!svg && !dragInk.test(svg.text) && printHtml.length > 1000 && !dragInk.test(printHtml) && stillDragging;
+  return { pass: ok, detail: JSON.stringify({ dragging, svgHasDrag: svg ? dragInk.test(svg.text) : null, printBytes: printHtml.length, printHasDrag: dragInk.test(printHtml), stillDragging }) };
+}));
+
 // ---- GLM audit of Canvas Block (cblk), 2026-10-31: findings checked on v311 ----
 
 // #7/#8/#15 said a row dropped over the 24 px gap between two bands went to the END of the alignment and
