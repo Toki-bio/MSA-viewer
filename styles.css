@@ -4094,6 +4094,8 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 .rf-tools[hidden] { display: none; }
 .rf-color { width: 28px; height: 22px; padding: 0; border: 1px solid #c9ced6; }
 .rf-results { flex: 1 1 auto; min-height: 60px; overflow: auto; border: 1px solid #e3e6ea; border-radius: 6px; padding: 8px; background: #fcfcfd; }
+.rf-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rf-progress .rf-progress-bar { width: 160px; height: 10px; }
 .rf-summary { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin-bottom: 6px; }
 .rf-summary .rf-big { font-size: 14px; font-weight: 700; margin-right: 6px; }
 .rf-chip { display: inline-block; padding: 1px 7px; border-radius: 10px; background: #eef2f7; color: #374151; font-size: 11px; white-space: nowrap; }

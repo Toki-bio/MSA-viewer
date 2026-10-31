@@ -2660,6 +2660,8 @@ function showExclusiveModal(id) {
         if (modalId === 'dotPlotModal' && modal.style.display !== 'none' && typeof _dotClearRegionMarks === 'function') _dotClearRegionMarks();
         // so does the Repeat Finder's faint TSD preview: it stayed on the rows when another window closed it (GLM db2 #6)
         if (modalId === 'repeatFinderModal' && modal.style.display !== 'none' && typeof _hideTsdPreviewWithWindow === 'function') _hideTsdPreviewWithWindow();
+        // and a running repeat search: it would paint into a closed window
+        if (modalId === 'repeatFinderModal' && modal.style.display !== 'none' && typeof _abortRepeatJob === 'function') _abortRepeatJob('The search was cancelled when the window closed.');
         modal.style.display = 'none';
     });
     const modal = el(id);
@@ -34073,6 +34075,7 @@ function _repeatFinderCurrentRow() {
 
 // A new file: the open panel's results, sequence list and units belong to the previous one
 function _resetRepeatFinderForNewFile() {
+    _abortRepeatJob();   // a search of the previous file shows nothing afterwards
     _lastRepeatResults = [];
     _lastRepeatView = null;
     _repeatFinderSeqIndex = 0;
@@ -34210,7 +34213,7 @@ function applyTsdMarking() {
     const previousColor = state.tsdMarkColor;
 
     // A marking that changes nothing (Mark pressed again, or lower case on residues already lower case) used to
-    // replace the backup of the real one, so "Remove marks" then did nothing while saying "undone", and lower case on
+    // replace the backup of the real one, so "Remove marks" (now "Undo last marking") then did nothing while saying "undone", and lower case on
     // lower-case input wiped the colour marks while saying "Marked". It now leaves everything as it is and says so.
     if (style === 'lowercase') {
         // the residues whose letter this lowercases, kept as residue anchors for the undo
@@ -34261,7 +34264,7 @@ function applyTsdMarking() {
         state.tsdMarkColor = color;
     }
 
-    // prior: the marking before this one, so Remove marks steps back through them (lower case, then colour: the
+    // prior: the marking before this one, so Undo last marking steps back through them (lower case, then colour: the
     // colour's undo used to drop the lower case's backup)
     state.tsdMarkUndo = { style, previousMarks, previousStyle, previousColor, lowered, prior: state.tsdMarkUndo || null };
     state.tsdPreview = null;   // the marks replace the preview
@@ -34366,14 +34369,30 @@ function _repeatSeedLength(minLen, maxDiv, raw = false) {
  */
 const REPEAT_XDROP_BASE = 6;
 const REPEAT_WORK_LIMIT = 250000000;
+// The search runs as a generator so the Repeat Finder can run it in slices that give the browser back its tab (progress,
+// Pause, Cancel; owner's decision 2026-10-31). It yields a fraction done (0..1) every so often; _findRepeats runs it
+// to the end at once, so both give the same results. opts.stop: an object whose .now set to true stops the search at
+// its next yield and returns what was found so far (results.stoppedByUser). opts.workLimit: a test hook (measuring
+// REPEAT_WORK_LIMIT), else REPEAT_WORK_LIMIT.
+const REPEAT_YIELD_WORK = 400000;    // work units between yields (about 1-2 ms)
+function _drainRepeatSteps(gen) {
+    let r = gen.next();
+    while (!r.done) r = gen.next();
+    return r.value;
+}
 function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
+    return _drainRepeatSteps(_findRepeatsSteps(seq, minLen, maxDivPct, type, opts));
+}
+function* _findRepeatsSteps(seq, minLen, maxDivPct, type, opts = {}) {
     const protein = !!opts.protein;
+    const stop = opts.stop || null;
+    const workLimit = opts.workLimit || REPEAT_WORK_LIMIT;
     const cap = opts.cap || 100;
     const seqU = protein ? seq.toUpperCase() : seq.toUpperCase().replace(/U/g, 'T');
     const n = seqU.length;
     const none = () => { const r = []; r.total = 0; return r; };
     // Tandem: minLen is the length of the whole array (one array, not two copies)
-    if (type === 'tandem') return _findTandemRepeats(seqU, minLen, maxDivPct, { protein, cap });
+    if (type === 'tandem') return yield* _findTandemRepeatsSteps(seqU, minLen, maxDivPct, { protein, cap, stop });
     if (n < minLen * 2) return none();
 
     // reverse complement has no meaning for amino acids
@@ -34427,54 +34446,83 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
     const next = new Int32Array(n).fill(-1);
 
     const candidates = [];
+    // pickOps: the work of pick, counted for the yields only (not for REPEAT_WORK_LIMIT, so where a search stops is as
+    // before): 1,600 picks of ~300-bp stretches with ~50 % mismatches (an (AT)n block against poly-A and (CAG)n) ran
+    // 1.1 s between two yields
+    let pickOps = 0;
     // Report the longest sub-stretches within the divergence limit of an extended stretch: offsets lo..hi along
     // the diagonal, match(t) tells whether offset t pairs. maxLen bounds a direct copy (no overlap).
-    const pick = (lo, hi, match, maxLen, emit) => {
+    // The mismatches of the stretch are listed once and every part of it is searched with them (a stretch cut into many
+    // adjacent pairs listed them again for each pair: 25 kb of (CA)n took 19 s).
+    const pick = (lo0, hi0, match, maxLen, emit) => {
+        let lo = lo0, hi = hi0;
         while (lo <= hi && !match(lo)) lo++;
         while (hi >= lo && !match(hi)) hi--;
         if (hi - lo + 1 < minLen) return;
         const mis = [];
         for (let t = lo; t <= hi; t++) if (!match(t)) mis.push(t);
-        const okMm = (mm, len) => mm <= Math.floor(len * maxDiv + 1e-9);
-        if (hi - lo + 1 <= maxLen && okMm(mis.length, hi - lo + 1)) { emit(lo, hi - lo + 1, mis.length); return; }
-        // windows start right after a mismatch (or at lo) and end right before one (or at hi), never on a mismatch
+        pickOps += hi - lo + 1;
         const nm = mis.length;
-        const mmIn = (s, e) => {   // mismatches in [s, e]
+        const okMm = (mm, len) => mm <= Math.floor(len * maxDiv + 1e-9);
+        const firstAtOrAfter = (v) => {   // index of the first mismatch at or after offset v
             let a = 0, b = nm;
-            while (a < b) { const m = (a + b) >> 1; if (mis[m] < s) a = m + 1; else b = m; }
-            let c = a, d = nm;
-            while (c < d) { const m = (c + d) >> 1; if (mis[m] <= e) c = m + 1; else d = m; }
-            return c - a;
+            while (a < b) { const m = (a + b) >> 1; if (mis[m] < v) a = m + 1; else b = m; }
+            return a;
         };
-        let best = null;
-        for (let q = 0; q <= nm; q++) {
-            const s = q === 0 ? lo : mis[q - 1] + 1;
-            if (s > hi || !match(s)) continue;
-            const limit = Math.min(hi, s + maxLen - 1);
-            // longest end first: the first window within the limit is this start's best
-            const ends = [];
-            if (limit === hi) ends.push(hi);
-            else { let e = limit; while (e > s && !match(e)) e--; ends.push(e); }
-            for (let r = nm - 1; r >= 0; r--) { const e = mis[r] - 1; if (e < limit && e >= s && match(e)) ends.push(e); }
-            for (const e of ends) {
-                const len = e - s + 1;
-                if (len < minLen) break;
-                if (best && len < best.len) break;
-                const mm = mmIn(s, e);
-                if (okMm(mm, len)) {
-                    if (!best || len > best.len || (len === best.len && mm < best.mm)) best = { s, len, mm, truncated: limit < hi && e === ends[0] && limit === s + maxLen - 1 };
-                    break;
+        const mmIn = (s, e) => firstAtOrAfter(e + 1) - firstAtOrAfter(s);   // mismatches in [s, e]
+        const part = (lo, hi) => {
+            for (;;) {
+                while (lo <= hi && !match(lo)) lo++;
+                while (hi >= lo && !match(hi)) hi--;
+                if (hi - lo + 1 < minLen) return;
+                const q0 = firstAtOrAfter(lo), q1 = firstAtOrAfter(hi + 1);   // the mismatches inside: mis[q0 .. q1 - 1]
+                if (hi - lo + 1 <= maxLen && okMm(q1 - q0, hi - lo + 1)) { emit(lo, hi - lo + 1, q1 - q0); return; }
+                // windows start right after a mismatch (or at lo) and end right before one (or at hi), never on a mismatch.
+                // A stretch longer than maxLen (a direct run of copies) is cut from its left: the best window starting
+                // within its first maxLen offsets, then the same from the end of that window (searching every start of a
+                // long stretch for every cut took 1.2 s in one step on 25 kb of mixed low-complexity sequence).
+                const tiling = hi - lo + 1 > maxLen;
+                const sMax = tiling ? lo + maxLen - 1 : hi;
+                let best = null;
+                for (let q = q0 - 1; q < q1; q++) {
+                    const s = q < q0 ? lo : mis[q] + 1;
+                    if (s > sMax) break;
+                    if (s > hi || !match(s)) continue;
+                    const limit = Math.min(hi, s + maxLen - 1);
+                    // longest end first: the first window within the limit is this start's best
+                    const ends = [];
+                    if (limit === hi) ends.push(hi);
+                    else { let e = limit; while (e > s && !match(e)) e--; ends.push(e); }
+                    // the mismatches at s + 1 .. limit, last first (the others give no end inside the window)
+                    for (let r = firstAtOrAfter(limit + 1) - 1; r >= q0 && mis[r] >= s + 1; r--) { const e = mis[r] - 1; if (e < limit && e >= s && match(e)) ends.push(e); }
+                    pickOps += ends.length + 4;
+                    for (const e of ends) {
+                        const len = e - s + 1;
+                        if (len < minLen) break;
+                        if (best && len < best.len) break;
+                        const mm = mmIn(s, e);
+                        if (okMm(mm, len)) {
+                            if (!best || len > best.len || (len === best.len && mm < best.mm)) best = { s, len, mm };
+                            break;
+                        }
+                    }
                 }
+                if (!best) {
+                    if (!tiling) return;
+                    lo = sMax + 1;   // no window starts in this part: go on past it
+                    continue;
+                }
+                emit(best.s, best.len, best.mm);
+                part(lo, best.s - 1);
+                // Adjacent copy pairs are listed (owner's decision 2026-10-31). A stretch longer than the distance d
+                // between its two copies is a run of 3 or more copies d apart: it is cut into consecutive pairs no longer
+                // than d, so copy 1 / copy 2, copy 2 / copy 3, ... are each a row (until v310 the rest after the first cut
+                // was dropped as "the same tandem run", so copy 2 / copy 3 was never listed; GLM d305 #9). Pairs further
+                // apart come from their own distance: copy 1 / copy 3 is the stretch at 2d.
+                lo = best.s + best.len;
             }
-        }
-        if (!best) return;
-        emit(best.s, best.len, best.mm);
-        pick(lo, best.s - 1, match, maxLen, emit);
-        // after a copy cut short to avoid overlap, the rest of the stretch is the same tandem run and is not listed: in 3
-        // tandem copies the pair copy 2 / copy 3 is not a row (copy 1 / copy 2 and copy 1 / copy 3 are), even when it
-        // differs more than copy 1 / copy 2 does (GLM d305 #9). Listing every pair of copies would give a long array a
-        // row per pair; Tandem lists the array as one row.
-        if (!best.truncated) pick(best.s + best.len, hi, match, maxLen, emit);
+        };
+        part(lo, hi);
     };
 
     // furthest extension already made on each diagonal: direct = B position reached on diagonal (x - p);
@@ -34482,13 +34530,26 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
     // X-drop: a cluster of mismatches that drops the score this far below its best ends the extension
     const xdrop = Math.round(REPEAT_XDROP_BASE + 20 * maxDiv);
     const covered = inverted ? new Int32Array(2 * n).fill(n) : new Int32Array(n).fill(-1);
-    let work = 0, searchedTo = n;
+    let work = 0, searchedTo = n, stoppedByUser = false;
+    let yieldAt = REPEAT_YIELD_WORK, tick = 0;
     outer:
     for (let x = 0; x + k <= n; x++) {
+        // a yield every REPEAT_YIELD_WORK work units, or every 4096 positions (ordinary sequence does little work each)
+        if (++tick >= 4096) {
+            tick = 0;
+            yield x / n;
+            if (stop && stop.now) { searchedTo = x; stoppedByUser = true; break outer; }
+        }
         const qKey = inverted ? rcKeys[x] : keys[x];
         if (qKey >= 0) {
             for (let p = head[qKey]; p >= 0; p = next[p]) {
-                if (++work > REPEAT_WORK_LIMIT) { searchedTo = x; break outer; }
+                if (++work > workLimit) { searchedTo = x; break outer; }
+                if (work + pickOps >= yieldAt) {
+                    yieldAt = work + pickOps + REPEAT_YIELD_WORK;
+                    tick = 0;
+                    yield x / n;
+                    if (stop && stop.now) { searchedTo = x; stoppedByUser = true; break outer; }
+                }
                 if (!inverted) {
                     const d = x - p;
                     if (d < minLen || x <= covered[d]) continue;
@@ -34540,20 +34601,28 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
     }
 
     // Longest first, then least divergent; drop shifted copies of a pair already listed: both copies overlap the listed
-    // pair's copies by >= 70 % of the SHORTER of the two pairs' length (a short pair nested in a long one is dropped)
+    // pair's copies by >= 70 % of the SHORTER of the two pairs' length (a short pair nested in a long one is dropped).
+    // Direct: only when the two pairs also line up the same bases, i.e. their copy distances differ by at most 60 % of
+    // the shorter length (two equal pairs shifted within the 70 % rule differ by at most that). In 4 copies d apart,
+    // copy 2 / copy 3 lies inside copies 1-2 / copies 3-4 (distance 2d) but pairs other bases: it is listed (2026-10-31).
     candidates.sort((a, b) => (b.length - a.length) || (a.mm / a.length - b.mm / b.length) || (a.posA - b.posA));
     const BIN = 64, bins = new Map();
     const maxKept = candidates.length ? candidates[0].length : 0;
     const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(a1, b1) + 1);
     const kept = [];
+    let cmp = 0, cmpYield = 300000;   // comparisons between yields (a 25 kb microsatellite lists ~90,000 pairs)
     for (const c of candidates) {
+        if (cmp >= cmpYield) { cmpYield = cmp + 300000; yield 1; }
         const cA2 = c.posA + c.length - 1, cB2 = c.posB + c.length - 1;
         let dup = false;
         for (let b = Math.floor((c.posA - maxKept) / BIN); b <= Math.floor(cA2 / BIN) && !dup; b++) {
             const list = bins.get(b);
+            cmp++;
             if (!list) continue;
+            cmp += list.length;
             for (const r of list) {
                 const denom = Math.max(1, Math.min(c.length, r.length));
+                if (!inverted && Math.abs((c.posB - c.posA) - (r.posB - r.posA)) > 0.6 * denom) continue;
                 if (overlap(c.posA, cA2, r.posA, r.posA + r.length - 1) / denom >= 0.7
                     && overlap(c.posB, cB2, r.posB, r.posB + r.length - 1) / denom >= 0.7) { dup = true; break; }
             }
@@ -34574,6 +34643,7 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
     }));
     results.total = kept.length;
     if (searchedTo < n) results.searchedTo = searchedTo;
+    if (stoppedByUser) results.stoppedByUser = true;
     // copies sharing no exact run of k bases are not seeded (the seed is never below 4)
     if (_repeatSeedLength(minLen, maxDiv, true) < k) results.seedLimited = k;
     return results;
@@ -34604,10 +34674,17 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
  */
 const TANDEM_MAX_UNIT = 500;
 const TANDEM_WORK_LIMIT = 150000000;
-// for one search of several sequences (All, Selected rows): 5-7 s; 200 rows of 5 kb fit
-const TANDEM_TOTAL_WORK_LIMIT = 4 * TANDEM_WORK_LIMIT;
+// (TANDEM_TOTAL_WORK_LIMIT, 4 x this, stopped a search of several sequences after 5-7 s of work so the tab was not held
+// for 45 s. The search now runs in slices with progress, Pause and Cancel, and searches every sequence; 2026-10-31.)
 function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
+    return _drainRepeatSteps(_findTandemRepeatsSteps(seq, minLen, maxDivPct, opts));
+}
+// a generator like _findRepeatsSteps: yields the fraction of unit lengths done; opts.stop stops after the unit length
+// being scanned (results.stoppedByUser, results.maxUnit the longest unit searched)
+const TANDEM_YIELD_WORK = 300000;   // bases scanned between yields
+function* _findTandemRepeatsSteps(seq, minLen, maxDivPct, opts = {}) {
     const protein = !!opts.protein;
+    const stop = opts.stop || null;
     const cap = opts.cap || 100;
     const n = seq.length;
     const d = Math.max(0, maxDivPct) / 100;
@@ -34688,7 +34765,14 @@ function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
         return bs < 0 ? null : [bs, be];
     };
 
+    let scanned = 0, yieldAt = TANDEM_YIELD_WORK, lastUnit = maxUnit, stoppedByUser = false;
     for (let p = 1; p <= maxUnit; p++) {
+        if (scanned >= yieldAt) {
+            yieldAt = scanned + TANDEM_YIELD_WORK;
+            yield (p - 1) / maxUnit;
+            if (stop && stop.now) { lastUnit = p - 1; stoppedByUser = true; break; }
+        }
+        scanned += n;
         const need = Math.max(minL, 2 * p);
         const work = [];
         // stretches where base i equals base i + p; [a, e] compared with [a + p, e + p], so the array is [a, e + p + 1)
@@ -34772,8 +34856,9 @@ function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
     listed.sort((x, y) => (y.length - x.length) || (x.unitLen - y.unitLen) || (x.start - y.start));
     const out = listed.slice(0, cap);
     out.total = listed.length;
-    out.maxUnit = maxUnit;
-    if (maxUnit < fullMax) out.unitLimited = true;
+    out.maxUnit = lastUnit;
+    if (stoppedByUser) out.stoppedByUser = true;
+    else if (maxUnit < fullMax) out.unitLimited = true;
     return out;
 }
 
@@ -35375,92 +35460,226 @@ function runRepeatAnalysis() {
     const protein = isProteinAlignment();
     const unit = _repeatUnitWord();
 
-    resultsEl.textContent = `Searching ${scope} ${mode} repeats in ${targets.length} sequence${targets.length!==1?'s':''}...`;
-    setTimeout(() => {
-        try {
-            let allResults = [];
-            let displayName = '';
-            let totalLen = 0;
-            const notes = [];   // capped lists and stopped searches, said in the summary
-            let tandemWork = 0, searched = 0, stopped = false;
-            for (const t of targets) {
-                if (!t.seq) continue;
-                // Tandem costs about length x unit lengths per sequence, all in this one callback: All on 200 rows of
-                // 50 kb held the tab for about 45 s with nothing said (GLM dtan #4). It stops at a total and says so.
-                if (mode === 'tandem') {
-                    const len = t.seq.length, cost = len * Math.min(TANDEM_MAX_UNIT, Math.floor(len / 2), Math.max(1, Math.floor(TANDEM_WORK_LIMIT / Math.max(1, len))));
-                    if (searched > 0 && tandemWork + cost > TANDEM_TOTAL_WORK_LIMIT) {
-                        notes.push(`search stopped after ${searched} of ${targets.length} sequences (work limit; search fewer at a time with Selected rows)`);
-                        stopped = true;
-                        break;
-                    }
-                    tandemWork += cost;
-                }
-                searched++;
-                if (!displayName) displayName = t.name;
-                totalLen += t.seq.length;
-                const gs2al = [];
-                let gs = 0;
-                for (let c = 0; c < t.fullSeq.length; c++) {
-                    if (!' -.'.includes(t.fullSeq[c])) { gs2al[gs++] = c; }
-                }
-                const seqResults = _findRepeats(t.seq, minLen, maxDiv, mode, { protein });
-                const where = targets.length > 1 ? ` in ${t.name}` : '';
-                if (seqResults.total > seqResults.length) notes.push(`showing the ${seqResults.length} longest of ${seqResults.total}${where}`);
-                if (seqResults.searchedTo != null) notes.push(`search stopped at ${seqResults.searchedTo} of ${t.seq.length} ${unit}${where} (work limit; low-complexity sequence)`);
-                if (seqResults.unitLimited) notes.push(`units up to ${seqResults.maxUnit} ${unit} searched${where} (work limit; long sequence)`);
-                if (seqResults.seedLimited && !notes.some(x => /exact run of/.test(x))) notes.push(`at ${minLen} ${unit} and ${maxDiv}% divergence, copies that share no exact run of ${seqResults.seedLimited} ${unit} can be missed (raise Min length or lower Max divergence)`);
-                const mapped = seqResults.map(r => {
-                    r.seqIndex = t.index;
-                    r.obj = state.seqs[t.index];
-                    r.seqName = t.name;
-                    if (mode === 'tandem') {
-                        const sG = r.start;
-                        r.start = (sG >= 0 && sG < gs2al.length) ? (gs2al[sG] ?? r.start) : r.start;
-                        const eG = r.end - 1;
-                        r.end = (eG >= 0 && eG < gs2al.length && gs2al[eG] !== undefined) ? gs2al[eG] + 1 : r.end;
-                    } else {
-                        const oL = r.length;
-                        const gA = r.posA;
-                        r.posA = (gA >= 0 && gA < gs2al.length) ? (gs2al[gA] ?? r.posA) : r.posA;
-                        const gB = r.posB;
-                        r.posB = (gB >= 0 && gB < gs2al.length) ? (gs2al[gB] ?? r.posB) : r.posB;
-                        let col = r.posA, bases = 0;
-                        while (col < t.fullSeq.length && bases < oL) {
-                            if (!' -.'.includes(t.fullSeq[col])) bases++;
-                            col++;
-                        }
-                        r.alignEnd = col;
-                        // second copy's end column, so both copies can be highlighted
-                        let colB = r.posB, basesB = 0;
-                        while (colB < t.fullSeq.length && basesB < oL) {
-                            if (!' -.'.includes(t.fullSeq[colB])) basesB++;
-                            colB++;
-                        }
-                        r.alignEndB = colB;
-                    }
-                    return r;
-                });
-                allResults = allResults.concat(mapped);
-            }
-            _carryRepeatHighlights(mode, allResults);
-            if (allResults.length === 0) {
-                // forget the previous table, or Clear highlights brings it back
-                _repeatResultsShown = null;
-                _lastRepeatResults = [];
-                _lastRepeatView = null;
-                resultsEl.textContent = `No ${mode} repeats found (min ${mode === 'tandem' ? 'array length ' : ''}${minLen} ${unit}, max ${maxDiv}% divergence)${notes.length ? '; ' + notes.join('; ') : ''}.`;
-                return;
-            }
-            _lastRepeatResults = allResults;
-            const name = targets.length === 1 ? displayName : `${stopped ? searched : targets.length} sequences`;
-            // obj: the sequence a One-sequence table is about, so reopening on another sequence does not keep it
-            _lastRepeatView = { mode, name, totalLen, unit, note: notes.join('; '), obj: scope === 'single' && targets.length === 1 ? state.seqs[targets[0].index] : null };
-            _renderRepeatResultsHTML(resultsEl, allResults, mode, name, totalLen, _lastRepeatView);
-        } catch (e) {
-            resultsEl.textContent = `Error: ${e.message}`;
+    // the rows as they are now: a row moved or deleted while the search runs keeps its results tied to its sequence
+    targets.forEach(t => { t.obj = state.seqs[t.index]; });
+    _startRepeatJob({ resultsEl, mode, scope, targets, minLen, maxDiv, protein, unit });
+}
+
+/*
+ * A Direct, Inverted or Tandem search runs in slices of about REPEAT_SLICE_MS that give the browser back its tab between
+ * them (owner's decision 2026-10-31): "Searching sequence k of M..." with a bar, Pause/Resume and Cancel in the results
+ * area, Find disabled. Until v310 the whole search ran in one callback: a 25 kb low-complexity row held the tab for
+ * 2.6-5.7 s, and Tandem All on 200 rows of 50 kb for about 45 s (then stopped by TANDEM_TOTAL_WORK_LIMIT).
+ * - The searches are generators (_findRepeatsSteps, _findTandemRepeatsSteps) run here a few ms at a time; run at once
+ *   (_findRepeats) they give the same results.
+ * - Cancel keeps what was found: the sequences searched, and the part of the current one searched so far, and says so.
+ * - A new file, closing the window, another window taking its place or another mode abandons the search: nothing of it
+ *   is shown afterwards (_abortRepeatJob).
+ */
+const REPEAT_SLICE_MS = 20;
+let _repeatJob = null;
+let _repeatJobStats = null;   // the last search's slices: { slices, maxSliceMs, ms } (tests and timings)
+const _repeatNextTask = (() => {
+    // a message to itself runs straight after the browser's own work (setTimeout(0) waits at least 4 ms once nested)
+    let ch = null;
+    const queue = [];
+    return (fn) => {
+        if (typeof MessageChannel === 'undefined') { setTimeout(fn, 0); return; }
+        if (!ch) {
+            ch = new MessageChannel();
+            ch.port1.onmessage = () => { const f = queue.shift(); if (f) f(); };
         }
-    }, 50);
+        queue.push(fn);
+        ch.port2.postMessage(0);
+    };
+})();
+
+function _setRepeatRunning(running) {
+    const btn = document.getElementById('repeatRunBtn');
+    if (btn) {
+        btn.disabled = running;
+        btn.title = running ? 'A search is running: pause or cancel it below' : 'Search with the current settings';
+    }
+}
+
+// Abandon a running search without showing anything of it; msg, if given, replaces its progress line
+function _abortRepeatJob(msg) {
+    const job = _repeatJob;
+    if (!job) return false;
+    job.aborted = true;
+    _repeatJob = null;
+    _setRepeatRunning(false);
+    if (msg && job.resultsEl && job.resultsEl.querySelector('.rf-progress')) job.resultsEl.textContent = msg;
+    return true;
+}
+
+function _startRepeatJob(o) {
+    _abortRepeatJob();
+    const { resultsEl, mode, targets } = o;
+    const M = targets.length;
+    const job = { ...o, M, i: 0, gen: null, frac: 0, paused: false, stop: { now: false }, cancelled: false,
+        allResults: [], notes: [], displayName: '', totalLen: 0, done: 0, partial: false,
+        t0: performance.now(), slices: 0, maxSliceMs: 0 };
+    _repeatJob = job;
+    _setRepeatRunning(true);
+    resultsEl.innerHTML = '';
+    const box = document.createElement('div');
+    box.className = 'rf-progress';
+    const text = document.createElement('span');
+    text.className = 'rf-progress-text';
+    const bar = document.createElement('progress');
+    bar.className = 'rf-progress-bar';
+    bar.max = 1; bar.value = 0;
+    const pauseBtn = document.createElement('button');
+    pauseBtn.type = 'button'; pauseBtn.className = 'rf-btn'; pauseBtn.id = 'repeatPauseBtn';
+    pauseBtn.textContent = 'Pause'; pauseBtn.title = 'Pause the search (Resume goes on where it stopped)';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button'; cancelBtn.className = 'rf-btn'; cancelBtn.id = 'repeatCancelBtn';
+    cancelBtn.textContent = 'Cancel'; cancelBtn.title = 'Stop the search and show what was found so far';
+    box.append(text, ' ', bar, ' ', pauseBtn, ' ', cancelBtn);
+    resultsEl.appendChild(box);
+    const progress = () => {
+        const f = Math.min(1, (job.i + (job.gen ? job.frac : 0)) / Math.max(1, M));
+        const pct = Math.floor(f * 100);
+        const k = Math.min(job.i + 1, M);
+        const t = targets[Math.min(job.i, M - 1)];
+        const what = M > 1 ? `sequence ${k} of ${M}` : (t?.name || 'the sequence');
+        text.textContent = job.paused ? `Paused: ${what}, ${pct} % done. ` : `Searching ${what} (${mode})… ${pct} % `;
+        bar.value = f;
+    };
+    job.progress = progress;
+    pauseBtn.addEventListener('click', () => {
+        if (_repeatJob !== job) return;
+        job.paused = !job.paused;
+        pauseBtn.textContent = job.paused ? 'Resume' : 'Pause';
+        pauseBtn.title = job.paused ? 'Go on with the search' : 'Pause the search (Resume goes on where it stopped)';
+        progress();
+        if (!job.paused) _repeatNextTask(() => _repeatJobStep(job));
+    });
+    cancelBtn.addEventListener('click', () => {
+        if (_repeatJob !== job) return;
+        job.stop.now = true;
+        job.cancelled = true;
+        cancelBtn.disabled = true;
+        pauseBtn.disabled = true;
+        text.textContent = 'Stopping… ';
+        if (job.paused) { job.paused = false; _repeatNextTask(() => _repeatJobStep(job)); }
+    });
+    progress();
+    // the progress line is painted before the first slice
+    setTimeout(() => _repeatJobStep(job), 0);
+}
+
+function _repeatJobStep(job) {
+    if (_repeatJob !== job || job.paused) return;
+    const t0 = performance.now();
+    try {
+        while (performance.now() - t0 < REPEAT_SLICE_MS) {
+            if (!job.gen) {
+                while (job.i < job.M && !job.targets[job.i].seq) job.i++;
+                if (job.i >= job.M || job.stop.now) { _finishRepeatJob(job); return; }
+                const t = job.targets[job.i];
+                job.gen = _findRepeatsSteps(t.seq, job.minLen, job.maxDiv, job.mode, { protein: job.protein, stop: job.stop });
+                job.frac = 0;
+            }
+            const r = job.gen.next();
+            if (r.done) {
+                _collectRepeatJobRow(job, job.targets[job.i], r.value);
+                job.gen = null;
+                job.i++;
+            } else job.frac = r.value;
+        }
+    } catch (e) {
+        _repeatJob = null;
+        _setRepeatRunning(false);
+        job.resultsEl.textContent = `Error: ${e.message}`;
+        return;
+    }
+    const dt = performance.now() - t0;
+    job.slices++;
+    if (dt > job.maxSliceMs) job.maxSliceMs = dt;
+    if (!job.stop.now) job.progress();
+    _repeatNextTask(() => _repeatJobStep(job));
+}
+
+// one sequence's results, mapped to alignment columns, and its notes
+function _collectRepeatJobRow(job, t, seqResults) {
+    const { mode, unit, minLen, maxDiv } = job;
+    const where = job.M > 1 ? ` in ${t.name}` : '';
+    if (seqResults.stoppedByUser) job.partial = true; else job.done++;
+    if (!job.displayName) job.displayName = t.name;
+    job.totalLen += t.seq.length;
+    const notes = job.notes;
+    const gs2al = [];
+    let gs = 0;
+    for (let c = 0; c < t.fullSeq.length; c++) {
+        if (!' -.'.includes(t.fullSeq[c])) { gs2al[gs++] = c; }
+    }
+    if (seqResults.total > seqResults.length) notes.push(`showing the ${seqResults.length} longest of ${seqResults.total}${where}`);
+    if (seqResults.stoppedByUser) {
+        if (mode === 'tandem') notes.push(`stopped by you${where}: units up to ${seqResults.maxUnit} ${unit} searched`);
+        else notes.push(`stopped by you${where} at ${seqResults.searchedTo ?? t.seq.length} of ${t.seq.length} ${unit}`);
+    } else if (seqResults.searchedTo != null) notes.push(`search stopped at ${seqResults.searchedTo} of ${t.seq.length} ${unit}${where} (work limit; low-complexity sequence)`);
+    if (seqResults.unitLimited) notes.push(`units up to ${seqResults.maxUnit} ${unit} searched${where} (work limit; long sequence)`);
+    if (seqResults.seedLimited && !notes.some(x => /exact run of/.test(x))) notes.push(`at ${minLen} ${unit} and ${maxDiv}% divergence, copies that share no exact run of ${seqResults.seedLimited} ${unit} can be missed (raise Min length or lower Max divergence)`);
+    const row = state.seqs.indexOf(t.obj);
+    for (const r of seqResults) {
+        r.seqIndex = row >= 0 ? row : t.index;
+        r.obj = t.obj;
+        r.seqName = t.name;
+        if (mode === 'tandem') {
+            const sG = r.start;
+            r.start = (sG >= 0 && sG < gs2al.length) ? (gs2al[sG] ?? r.start) : r.start;
+            const eG = r.end - 1;
+            r.end = (eG >= 0 && eG < gs2al.length && gs2al[eG] !== undefined) ? gs2al[eG] + 1 : r.end;
+        } else {
+            const oL = r.length;
+            const gA = r.posA;
+            r.posA = (gA >= 0 && gA < gs2al.length) ? (gs2al[gA] ?? r.posA) : r.posA;
+            const gB = r.posB;
+            r.posB = (gB >= 0 && gB < gs2al.length) ? (gs2al[gB] ?? r.posB) : r.posB;
+            let col = r.posA, bases = 0;
+            while (col < t.fullSeq.length && bases < oL) {
+                if (!' -.'.includes(t.fullSeq[col])) bases++;
+                col++;
+            }
+            r.alignEnd = col;
+            // second copy's end column, so both copies can be highlighted
+            let colB = r.posB, basesB = 0;
+            while (colB < t.fullSeq.length && basesB < oL) {
+                if (!' -.'.includes(t.fullSeq[colB])) basesB++;
+                colB++;
+            }
+            r.alignEndB = colB;
+        }
+        job.allResults.push(r);
+    }
+}
+
+function _finishRepeatJob(job) {
+    if (_repeatJob !== job) return;
+    _repeatJob = null;
+    _setRepeatRunning(false);
+    _repeatJobStats = { slices: job.slices, maxSliceMs: Math.round(job.maxSliceMs * 10) / 10, ms: Math.round(performance.now() - job.t0) };
+    const { resultsEl, mode, minLen, maxDiv, unit, targets, scope, allResults } = job;
+    const notes = job.notes.slice();
+    const searched = job.done + (job.partial ? 1 : 0);
+    if (job.cancelled && job.M > 1) notes.unshift(`stopped by you after ${job.done} of ${job.M} sequences${job.partial ? ' (and part of the next)' : ''}`);
+    else if (job.cancelled && !job.partial && !job.done) notes.unshift('stopped by you before the search began');
+    _carryRepeatHighlights(mode, allResults);
+    if (allResults.length === 0) {
+        // forget the previous table, or Clear highlights brings it back
+        _repeatResultsShown = null;
+        _lastRepeatResults = [];
+        _lastRepeatView = null;
+        resultsEl.textContent = `No ${mode} repeats found (min ${mode === 'tandem' ? 'array length ' : ''}${minLen} ${unit}, max ${maxDiv}% divergence)${notes.length ? '; ' + notes.join('; ') : ''}.`;
+        return;
+    }
+    _lastRepeatResults = allResults;
+    const name = targets.length === 1 ? job.displayName : `${job.cancelled ? searched : targets.length} sequences`;
+    // obj: the sequence a One-sequence table is about, so reopening on another sequence does not keep it
+    _lastRepeatView = { mode, name, totalLen: job.totalLen, unit, note: notes.join('; '), obj: scope === 'single' && targets.length === 1 ? targets[0].obj : null };
+    _renderRepeatResultsHTML(resultsEl, allResults, mode, name, job.totalLen, _lastRepeatView);
 }
 
 function runTsdAnalysis() {
@@ -35861,6 +36080,7 @@ function _initRepeatFinderEvents() {
         // the repeat highlights stay (they are listed in the Selections panel, and Clear highlights removes them):
         // closing the window to look at them took them away. The faint TSD preview belongs to the open window.
         _hideTsdPreviewWithWindow();
+        _abortRepeatJob('The search was cancelled when the window closed.');   // nothing of it is painted later
         const modal = document.getElementById('repeatFinderModal');
         if (modal) modal.style.display = 'none';
     });
@@ -35878,6 +36098,8 @@ function _initRepeatFinderEvents() {
     });
 
     document.querySelectorAll('input[name="repeatMode"]').forEach(radio => {
+        // another mode abandons a running search: its table would come up under the new mode
+        radio.addEventListener('change', () => { _abortRepeatJob('The search was cancelled: the mode was changed. Press Find to search.'); });
         radio.addEventListener('change', _syncRepeatFinderModeUI);
     });
     document.querySelectorAll('input[name="tsdMode"]').forEach(radio => {
