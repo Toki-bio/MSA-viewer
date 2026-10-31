@@ -248,6 +248,14 @@ function _clearClusterTrimState() {
     state.trimBackup = null;
 }
 
+// The key of a row's chromatogram in state.ab1Traces: the name it was read under (a renamed row keeps
+// it in ab1Name), else its header; null when the row has none
+function _ab1KeyOf(seq) {
+    if (!seq || !state.ab1Traces) return null;
+    if (seq.ab1Name && state.ab1Traces[seq.ab1Name]) return seq.ab1Name;
+    return state.ab1Traces[seq.header] ? seq.header : null;
+}
+
 function _migrateColourMapping(oldName, newName) {
     if (!oldName || !newName || oldName === newName) return;
     if (!colourState?.mappings?.has(oldName)) return;
@@ -3182,8 +3190,10 @@ function toggleStickyNames() {
     }
     // DOM mode picks this up via the CSS class toggle above (no .seq-name
     // elements exist in Canvas mode); Canvas bakes stickyNames into its
-    // render closure instead, so it needs an explicit re-render to take effect.
-    if (isCanvasMode()) debounceRender();
+    // render closure instead, so it needs an explicit re-render to take effect. Block draws its names
+    // fixed whatever the box says: no re-render there (a preset, snapshot or linked-view sync calls this
+    // and paid a second full render in Block for nothing; GLM audit cblk #6).
+    if (isCanvasMode() && !isBlockLayout()) debounceRender();
 }
 function calculateGaplessPositions(sequence) {
     const positions = [];
@@ -5571,8 +5581,13 @@ const _canvasState = { offsetX: 0, offsetY: 0, ctx: null, metrics: null, seqsLen
 //     and the exposed strip is widened to the band's line edges (bandEdges) instead of row edges.
 // Since batch 1 this is the Block view itself (isBlockLayout()). vaCanvasBlock(on): Block (true) or
 // the Canvas strip (false) without the mode-switch bookkeeping, for the measurement scripts.
+// The view asked for here is a choice, as a click on the radio (onModeChange) or ?view=: without it
+// renderAlignment's default-view rule (Canvas for a file the user has not chosen a view for) put a
+// small alignment straight back into the Canvas strip (GLM audit cblk #10).
 window.vaCanvasBlock = (on) => {
     _domBlockForTests = false;
+    _userChoseDomView = !!on;
+    _userDismissedAutoCanvas = !!on;
     const r = document.getElementById(on ? 'modeBlocks' : 'modeCanvas');
     if (r) r.checked = true;
     _lastModeRadioId = r ? r.id : _lastModeRadioId;
@@ -6074,8 +6089,9 @@ function _canvasRowFromClientY(clientY) {
     return row;
 }
 
-// Get the column index from an x coordinate in canvas viewport space.
-// Unlike _canvasHitTestRuler, this works for any y (used during drag).
+// Get the column index from a client point. Unlike _canvasHitTestRuler, this works for any y in the
+// strip (used during drag); in Block the band, and so the column, depends on clientY: pass it (a call
+// with clientX only read the band at the top of the view).
 function _canvasColFromClientX(clientX, clientY) {
     const canvas = _canvasState.canvas;
     if (!canvas) return -1;
@@ -6671,6 +6687,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // the scroll range has to end where they begin, or the last column / row sits under them.
     let _insetR = 0, _insetB = 0, _insetsOk = false;
     _canvasState.invalidateInsets = () => { _insetsOk = false; };
+    // for the scrollbars: their range has to be clampOffsets' (the view less the other bar over it)
+    _canvasState.scrollInsets = () => { scrollbarInsets(); return { r: _insetR, b: _insetB }; };
     function scrollbarInsets() {
         if (_insetsOk) return;
         const cr = canvas.getBoundingClientRect();
@@ -6876,8 +6894,20 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         if (!r) { r = _canvasBlockMaskRects(CHAR_W, p, nSeqs, posSlot); _maskByPitch.set(p, r); _canvasState.maskRectsMade = (_canvasState.maskRectsMade || 0) + 1; }
         return r;
     };
+    // The selected columns' slots: made once per overlay draw (Block drew them again for every band
+    // in view, each pass over every selected column; GLM audit cblk #27)
+    let _selSlots = null;
+    const selSlotsOf = () => {
+        if (!_selSlots) {
+            const slotsSel = new Set(), colOfSlot = new Map();
+            state.selectedColumns.forEach(pos => { const sc = posSlot(pos); if (sc >= 0) { slotsSel.add(sc); colOfSlot.set(sc, pos); } });
+            _selSlots = { sorted: Array.from(slotsSel).sort((a, b) => a - b), colOfSlot };
+        }
+        return _selSlots;
+    };
     function drawOverlay(ox, oy, w, h) {
         _maskByPitch = null;
+        _selSlots = null;
         _canvasState.maskRects = maskRectsFor(basePitch);
         if (!blockLayout) return drawOverlayStrip(ox, oy, w, h);
         octx.clearRect(0, 0, w, h);
@@ -6937,18 +6967,26 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         if (state.selectedColumns.size > 0) {
             const dataTop = Math.max(0, HEADER_H - oy);
             const dataBottom = Math.min(h, HEADER_H + nSeqs * rowPitch - oy);   // rowPitch: translation rows included
-            const slotsSel = new Set(), colOfSlot = new Map();
-            state.selectedColumns.forEach(pos => { const sc = posSlot(pos); if (sc >= 0) { slotsSel.add(sc); colOfSlot.set(sc, pos); } });
+            const { sorted, colOfSlot } = selSlotsOf();
+            // only the slots in view (a band's, in Block): from the first one at x >= -CHAR_W
+            let lo = 0, hi = sorted.length;
+            const sMin = (ox - NAME_W - CHAR_W) / CHAR_W;
+            while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] < sMin) lo = mid + 1; else hi = mid; }
+            const inView = [];
+            for (let i = lo; i < sorted.length; i++) {
+                const sc = sorted[i], x = NAME_W + sc * CHAR_W - ox;
+                if (x > w) break;
+                if (x + CHAR_W >= 0) inView.push(sc);
+            }
             const selC = state.selectedColumns;
             octx.fillStyle = 'rgba(25, 118, 210, 0.28)';
-            slotsSel.forEach(sc => {
+            inView.forEach(sc => {
                 const x = NAME_W + sc * CHAR_W - ox;
-                if (x + CHAR_W < 0 || x > w) return;
                 octx.fillRect(x, dataTop, CHAR_W, dataBottom - dataTop);
             });
             octx.fillStyle = COL_SEL_EDGE;
             const lw = Math.max(1.5, 2 / dpr);
-            slotsSel.forEach(sc => {
+            inView.forEach(sc => {
                 const x = NAME_W + sc * CHAR_W - ox;
                 if (x + CHAR_W < 0 || x > w) return;
                 const pc = colOfSlot.get(sc);   // by column, as Full/Block: a hidden column in between ends the run
@@ -6966,6 +7004,18 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 if (y + rowPitch < 0 || y > h) return;
                 octx.fillRect(0, y, w, rowPitch);
             });
+        }
+        // The row a context menu is open for: Full's .seq-line.context-menu-highlight (gold tint and
+        // outline). Canvas and Block drew nothing, so the menu's row was not marked (GLM audit cblk #13)
+        if (contextMenu && contextMenuHighlightedRow !== null && contextMenuHighlightedRow < nSeqs) {
+            const y = HEADER_H + contextMenuHighlightedRow * rowPitch - oy;
+            if (y + rowPitch >= 0 && y <= h) {
+                octx.fillStyle = 'rgba(255, 215, 0, 0.2)';
+                octx.fillRect(0, y, w, rowPitch);
+                octx.fillStyle = 'rgba(255, 215, 0, 0.5)';   // its upper and lower edge (a band clips the sides)
+                octx.fillRect(0, y, w, 2);
+                octx.fillRect(0, y + rowPitch - 2, w, 2);
+            }
         }
 
         clipData();
@@ -7759,7 +7809,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // Length badges and names: the Full/Block titles (sequence length; the full name)
         const sideTip = _canvasHoverCell ? null : _canvasSideTooltip(e.clientX, e.clientY);
         if (sideTip) {
-            const sideKey = sideTip + '@' + Math.floor(e.clientY / (_canvasState.rowPitch || 1));
+            // one key per row line (and band): the window's y in rowPitch steps was not a row in Block, where
+            // a band's rows can be closer (fewer translation lanes), so the next row's same text (the length
+            // badges) did not move the tooltip (GLM audit cblk #28)
+            const SP = _canvasLocal(e.clientX, e.clientY);
+            const sideKey = sideTip + '@' + SP.band + ':' + Math.floor((SP.y + SP.oy - (_canvasState.metrics.headerH || 0)) / (_canvasState.rowPitch || 1));
             if (_lastTooltipCell && _lastTooltipCell.side === sideKey) return;
             _lastTooltipCell = { row: -1, col: -1, side: sideKey };
             const target = _getCanvasTooltipTarget();
@@ -11748,7 +11802,7 @@ function renderAlignment(options = {}) {
         document.getElementById('statusMessage').textContent = `Consensus: ${consensusPosition} | ${consensus.length} cols`;
     }
 
-    // *** Pre-calculate conservation for ALL columns ONCE (DOM / Compact paths) ***
+    // *** Pre-calculate conservation for ALL columns ONCE (the DOM views: Full, test-only DOM Block) ***
     const conservationData = (options.deferConservation && getDeferredConservationData(len, shadeMode))
         || preCalculateConservation(state.seqs, len, shadeMode);
     if (!options.deferConservation) {
@@ -13170,6 +13224,10 @@ function _commitSeqRename(index, newName) {
     if (!newName || !state.seqs[index] || newName === state.seqs[index].header) return false;
     const oldName = state.seqs[index].header;
     pushUndo('rename');
+    // A chromatogram stays keyed by the name the row was read under: the row remembers it (an undo
+    // snapshot copies the field, so Undo/Redo keep it right). The context menu lost "View
+    // Chromatogram..." after a rename (GLM audit cblk #12).
+    if (state.ab1Traces && !state.seqs[index].ab1Name && state.ab1Traces[oldName]) state.seqs[index].ab1Name = oldName;
     state.seqs[index].header = newName;
     state.seqs[index].fullHeader = newName;
     _migrateColourMapping(oldName, newName);
@@ -14121,6 +14179,12 @@ function _looksLikeLocalPath(text) {
 
 // A load that failed leaves no alignment behind: the view shows the error, so
 // Save, Copy and the analyses must not keep working on the previous file's rows.
+// After parseAndRender for ?url= / ?data=: did it load an alignment? A load replaces state.seqs with
+// the new rows; a failure empties them (_clearFailedLoad) or leaves the old ones (a cancelled load).
+function _autoLoadSucceeded(seqsBefore) {
+    return state.seqs !== seqsBefore && Array.isArray(state.seqs) && state.seqs.length > 0;
+}
+
 function _clearFailedLoad() {
     state.seqs = [];
     state.selectedRows?.clear();
@@ -14606,7 +14670,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }).observe(row, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
 })();
 
+// Keep the Block size row visible but grey it out when not in Block - prevents layout jump. Every
+// change of the view radios reaches syncQuickModeSwitch (onModeChange, the default-view switch to
+// Canvas in renderAlignment, ?view=); only onModeChange did this, so after ?view=canvas|full or the
+// default switch to Canvas the slider looked live where it does nothing (GLM audit cblk #49).
+function _syncBlockSizeControl() {
+    const container = el('blockSizeContainer');
+    const isBlocks = el('modeBlocks')?.checked;
+    if (container) {
+        container.style.opacity = isBlocks ? '1' : '0.4';
+        container.style.pointerEvents = isBlocks ? 'auto' : 'none';
+    }
+}
+
 function syncQuickModeSwitch() {
+    _syncBlockSizeControl();
     const map = { modeSingle: 'qmSingle', modeBlocks: 'qmBlocks', modeCanvas: 'qmCanvas', modeReads: 'qmReads' };
     for (const [canonicalId, quickId] of Object.entries(map)) {
         const canonical = document.getElementById(canonicalId);
@@ -14870,16 +14948,9 @@ async function onModeChange() {
         state.conservationDataCache = null;
         state.consensusCache = null;
     }
-    syncQuickModeSwitch();
+    syncQuickModeSwitch();   // also greys the Block size row out of Block (_syncBlockSizeControl)
     syncCodonModePanel();
     syncSearchControlsAvailability();
-    // Keep block size row visible but gray it out when not in Block mode - prevents layout jump
-    const container = el('blockSizeContainer');
-    const isBlocks = el('modeBlocks')?.checked;
-    if (container) {
-        container.style.opacity = isBlocks ? '1' : '0.4';
-        container.style.pointerEvents = isBlocks ? 'auto' : 'none';
-    }
     // Switching to a view without residue spans: drop edit mode rather than leave a tool
     // panel open over a display its tools cannot touch. Renders below, so no re-render here.
     exitEditModeForUnsupportedView({ rerender: false });
@@ -14997,13 +15068,11 @@ function setBlockSizeToScreen() {
 
     // For large alignments, getBoundingClientRect() forces a synchronous reflow
     // over millions of DOM spans, which can take tens of seconds. Use a
-    // zoom-based estimate instead and skip the re-render. On initial load this
-    // is a harmless no-op re-computation — fitBlockSizeBeforeInitialRender()
-    // already applied the same estimate before the first render happened, so
-    // the displayed content already matches; this only matters for the
-    // manual "Screen" button click on an alignment already on screen, where
-    // skipping the reflow-heavy re-render is the right tradeoff (the user can
-    // already see whether it looks right without a forced measurement).
+    // zoom-based estimate instead of measuring. On initial load this is a
+    // harmless no-op re-computation — fitBlockSizeBeforeInitialRender()
+    // already applied the same estimate before the first render happened.
+    // The re-render below runs only when the estimate changed (the Screen
+    // button after a zoom); it is needed, see there.
     if (_isLargeAlignmentPending()) {
         const chars = _computeLargeAlignmentBlockChars();
         const slider = el('blockSizeSlider');
@@ -16913,7 +16982,9 @@ function _paneUrl(file) {
     payload.sourceTitle = name;
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     _newTabHandoffs.set(id, { fasta: payload.fasta, name, payload });
-    const view = { modeSingle: 'full', modeBlocks: _domBlockForTests ? 'domblock' : 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    // Block is the Canvas Block in every link: the test-only DOM Block (?view=domblock) was handed on to panes and
+    // new tabs, so one such link spread the old renderer through every tab opened from it (GLM audit cblk #30/#32)
+    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
     return { id, name, url: location.pathname + '?handoff=' + id + (view ? '&view=' + view : '') + '&pane=1&link=' + encodeURIComponent(['1', '0', _link.by, _link.anchor].join('|')) };
 }
 function paneOpen(side, file) {
@@ -17152,7 +17223,7 @@ function openViewInNewTab() {
     payload.sourceTitle = name;
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     _newTabHandoffs.set(id, { fasta: payload.fasta, name, payload });
-    const view = { modeSingle: 'full', modeBlocks: _domBlockForTests ? 'domblock' : 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
     const w = window.open(location.pathname + '?handoff=' + id + (view ? '&view=' + view : '') + _linkUrlParam(), '_blank');
     if (!w) {
         _newTabHandoffs.delete(id);
@@ -17175,7 +17246,7 @@ function openSelectedInNewTab() {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     _newTabHandoffs.set(id, { fasta, name: `${base} (${rows.length} selected)` });
     // the new tab opens in the view of this one
-    const view = { modeSingle: 'full', modeBlocks: _domBlockForTests ? 'domblock' : 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
+    const view = { modeSingle: 'full', modeBlocks: 'block', modeCanvas: 'canvas' }[document.querySelector('input[name="mode"]:checked')?.id] || '';
     const w = window.open(location.pathname + '?handoff=' + id + (view ? '&view=' + view : ''), '_blank');
     if (!w) {
         _newTabHandoffs.delete(id);
@@ -26235,6 +26306,7 @@ function closeContextMenu() {
         document.querySelectorAll(`.seq-line[data-seq-index="${contextMenuHighlightedRow}"]`)
             .forEach(line => line.classList.remove('context-menu-highlight'));
         contextMenuHighlightedRow = null;
+        if (isCanvasMode()) _canvasState.scheduleOverlay?.();   // Canvas / Block draw it on the overlay
     }
 }
 
@@ -26249,6 +26321,7 @@ function showContextMenu(e, index, canvasPos) {
 
     contextMenu = document.createElement('div');
     contextMenu.className = 'context-menu';
+    if (isCanvasMode()) _canvasState.scheduleOverlay?.();   // the row's highlight (drawOverlayStrip)
 
     // Temporarily position off-screen to measure height
     contextMenu.style.visibility = 'hidden';
@@ -26337,7 +26410,8 @@ function showContextMenu(e, index, canvasPos) {
     }
 
     // AB1 chromatogram viewer, if this sequence came from an AB1 file
-    if (state.ab1Traces && state.ab1Traces[seqName]) {
+    const ab1Key = _ab1KeyOf(state.seqs[index]);
+    if (ab1Key) {
         const sepAb1 = document.createElement('div');
         sepAb1.style.borderTop = '1px solid #ccc';
         sepAb1.style.margin = '4px 0';
@@ -26346,7 +26420,7 @@ function showContextMenu(e, index, canvasPos) {
         const viewChromatogram = document.createElement('div');
         viewChromatogram.textContent = 'View Chromatogram...';
         viewChromatogram.addEventListener('click', () => {
-            if (typeof ChromatogramViewer !== 'undefined') ChromatogramViewer.open(seqName);
+            if (typeof ChromatogramViewer !== 'undefined') ChromatogramViewer.open(ab1Key);
             closeContextMenu();
         });
         contextMenu.appendChild(viewChromatogram);
@@ -27359,8 +27433,10 @@ function initializeAppUI() {
     //   ?mask=<url>                        - fetch a 2D block-mask JSON and overlay it
     //   ?bed=<url>                         - fetch a BED file and show it as the annotation track
     //   ?reads=<url>                       - fetch a SAM/BAM mapped to a loaded row and open Reads mode
-    //   ?view=full|block|canvas             - open in this view (full/block is remembered as the user's choice)
-    //   ?view=domblock                      - test-only: Block drawn by the old DOM renderer
+    //   ?view=full|block|canvas             - open in this view (full/block is remembered as the user's choice);
+    //                                         also single (= full), blocks and cblock (= block, cblock the prototype's name)
+    //   ?view=domblock                      - test-only: Block drawn by the old DOM renderer (for this tab only:
+    //                                         panes and new tabs opened from it get ?view=block)
     const urlParams = new URLSearchParams(window.location.search);
     {
         const v = (urlParams.get('view') || '').toLowerCase();
@@ -27463,7 +27539,11 @@ function initializeAppUI() {
                 const fastaInputEl = el('fastaInput');
                 if (fastaInputEl) fastaInputEl.value = text;
                 state.currentFilename = autoTitle || autoUrl.split('/').pop() || 'URL';
+                const seqsBefore = state.seqs;
                 return Promise.resolve(parseAndRender(true)).then(() => {
+                    // parseAndRender reports a failed load itself (binary, FASTQ, empty file) and returns
+                    // normally: this message replaced its error (GLM audit cblk #14)
+                    if (!_autoLoadSucceeded(seqsBefore)) return;
                     showMessage('Alignment loaded from URL', 2000);
                     return _loadUrlExtras();
                 });
@@ -27478,9 +27558,14 @@ function initializeAppUI() {
             const fastaInputEl = el('fastaInput');
             if (fastaInputEl) fastaInputEl.value = text;
             state.currentFilename = autoTitle || 'Inline data';
+            const seqsBefore = state.seqs;
             Promise.resolve(parseAndRender(true)).then(() => {
+                if (!_autoLoadSucceeded(seqsBefore)) return;   // its own error stays on screen (as ?url=)
                 showMessage('Alignment loaded from inline data', 2000);
                 return _loadUrlExtras();
+            }).catch(err => {
+                console.error('Inline data load failed:', err);
+                showMessage(`Failed to load data: ${err.message}`, 5000);
             });
         } catch (err) {
             console.error('Inline data decode failed:', err);
@@ -30698,7 +30783,9 @@ function makeBarInputGuard(bar) {
         const scrollable = !isBlockLayout() && contentW > viewW + 1;
         if (bar.style.visibility !== (scrollable ? '' : 'hidden')) _canvasState.invalidateInsets?.();   // Canvas reserves only a shown bar
         bar.style.visibility = scrollable ? '' : 'hidden';
-        thumb.style.width = (scrollable ? contentW - viewW + bar.clientWidth : 0) + 'px';
+        // Canvas: the range clampOffsets allows, the vertical bar over the canvas' right edge included
+        const insR = scrollable && isCanvasMode() ? (_canvasState.scrollInsets?.().r || 0) : 0;
+        thumb.style.width = (scrollable ? contentW - viewW + insR + bar.clientWidth : 0) + 'px';
         bar.scrollLeft = isCanvasMode() ? (_canvasState.offsetX || 0) : alignment.scrollLeft;
         syncing = false;
         grip.update();
@@ -30829,8 +30916,9 @@ function makeBarInputGuard(bar) {
 // Persistent vertical scrollbar for Canvas and scrollable DOM modes
 // ============================================================================
 // alignmentContainer's native bars are hidden in CSS so the viewer can use
-// persistent controls in a consistent position. Canvas pans through
-// _canvasState.offsetY; windowed Full/Block modes use alignment.scrollTop.
+// persistent controls in a consistent position. Canvas and Block (both drawn
+// by the Canvas renderer) pan through _canvasState.offsetY; Full and the
+// test-only DOM Block use alignment.scrollTop.
 // This bar mirrors setupPersistentScrollbar's horizontal logic and selects
 // the appropriate scroll state for the active mode.
 (function setupPersistentVerticalScrollbar() {
@@ -30856,11 +30944,15 @@ function makeBarInputGuard(bar) {
             const canvas = document.getElementById('alignmentCanvas');
             const viewH = (canvas && parseFloat(canvas.style.height)) || alignment.clientHeight;
             const h = _canvasState.totalContentH || viewH;
-            // shown only when the rows do not fit, like the horizontal bar (visibility, so the layout does not jump)
+            // shown only when the content (Canvas: the rows; Block: the stack of bands with their rulers,
+            // consensus rows and gaps) does not fit, like the horizontal bar (visibility, so the layout does not jump)
             const scrollable = h > viewH + 1;
             if (bar.style.visibility !== (scrollable ? '' : 'hidden')) _canvasState.invalidateInsets?.();   // Canvas reserves only a shown bar
             bar.style.visibility = scrollable ? '' : 'hidden';
-            thumb.style.height = (scrollable ? h - viewH + bar.clientHeight : 0) + 'px';
+            // the range clampOffsets allows: the horizontal bar over the canvas' bottom shortens the view, and
+            // without it the thumb stopped that far (a row) short of the end (GLM audit cblk #37)
+            const insB = scrollable ? (_canvasState.scrollInsets?.().b || 0) : 0;
+            thumb.style.height = (scrollable ? h - viewH + insB + bar.clientHeight : 0) + 'px';
             bar.scrollTop = _canvasState.offsetY || 0;
             syncing = false;
         } else if (alignment.scrollHeight > alignment.clientHeight) {

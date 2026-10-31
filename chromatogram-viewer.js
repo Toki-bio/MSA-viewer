@@ -142,7 +142,8 @@
     function applyEdits() {
         if (!current || current.edits.size === 0) { showStatus('No edits to apply.'); return; }
         const seqs = (typeof state !== 'undefined' && state.seqs) || [];
-        const seqObj = seqs.find(s => s.header === current.header);
+        // current.header is the name the trace was read under; a renamed row keeps it in ab1Name
+        const seqObj = seqs.find(s => s.ab1Name === current.header) || seqs.find(s => !s.ab1Name && s.header === current.header);
         if (!seqObj) { showStatus('Sequence not found in current alignment.'); return; }
         // Where is the trace in the row now? The row may have been trimmed or reverse-complemented since
         // the trace was loaded (trace base k is then not the k-th residue); edits applied earlier are part
