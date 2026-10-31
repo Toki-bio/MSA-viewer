@@ -6036,7 +6036,20 @@ function _startSeqNameEditCanvas(index, clientY) {
             for (let k = L.bandAt(oy); k < L.nBands && L.bandTop[k] < oy + viewH; k++) if (rowY(k) >= 0 && rowY(k) + m.charH <= viewH) { b = k; break; }
             if (b < 0) b = L.bandAt(oy + viewH / 2);
         }
-        y = rowY(b);
+        // The box is whole in the view: a row cut by the view's edge, or out of it (the view moved after the menu
+        // opened), is scrolled in first. (The box sat at the row's place: half below the view, or off it and hidden
+        // by the container's overflow, the typing going to an unseen box. GLM audit cb34 #22 #23.)
+        const r0 = rowY(b);
+        if (r0 < 1 || r0 + m.charH + 1 > viewH) {
+            const partly = r0 + m.charH > 0 && r0 < viewH;   // cut by an edge: the least scroll; else the row centred
+            const want = !partly ? oy + r0 + m.charH / 2 - viewH / 2 : r0 < 1 ? oy + r0 - 1 : oy + r0 + m.charH + 1 - viewH;
+            const maxY = Math.max(0, (_canvasState.totalContentH || 0) - viewH);
+            _canvasState.offsetY = Math.max(0, Math.min(maxY, want));
+            _canvasState.scheduleDrawMoved?.();
+            window._syncVerticalScrollbar?.();
+            _canvasState.onOffsetChange?.();
+        }
+        y = rowY(b) + oy - _canvasState.offsetY;
         x = 0;   // the Block view's names are fixed
     }
     const input = document.createElement('input');

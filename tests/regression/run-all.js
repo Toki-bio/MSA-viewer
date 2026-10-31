@@ -6374,6 +6374,41 @@ check('Canvas Block: restoring a Block snapshot draws no frame at another place 
   return { pass: ok, detail: JSON.stringify({ saved, frames }) };
 }));
 
+// cb34 #22/#23: the Block rename box sat where the row's name is, even when that is not in the view: (a) the
+// context menu's Rename after the view moved away (no band in view shows the row) put it off the view, hidden
+// by the container's overflow, and the typing went to an unseen box; (b) a double-click on a name cut by the
+// view's bottom edge put most of the box below the view. The row is now brought fully into view first.
+check('Canvas Block: the rename box is always whole in the view (row scrolled away after the menu opened; name cut by the bottom edge)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(120, 3000), 150);
+  const boxIn = () => p.evaluate(() => {
+    const b = document.querySelector('.seq-name-edit'); if (!b) return null;
+    const r = b.getBoundingClientRect(), c = _canvasState.canvas.getBoundingClientRect(), vh = _canvasViewH();
+    return { v: b.value, top: Math.round(r.top - c.top), bottom: Math.round(r.bottom - c.top), vh, inView: r.top >= c.top - 1.5 && r.bottom <= c.top + vh + 1.5 };
+  });
+  const g = await p.evaluate(() => ({ left: _canvasState.canvas.getBoundingClientRect().left, top: _canvasState.canvas.getBoundingClientRect().top, vh: _canvasViewH(), charH: _canvasState.metrics.charH }));
+  // (a) right-click row 6's name in band 5, then the view moves to row 60 of band 5 before Rename is picked
+  await cbSetView(p, 5, 4);
+  const rowY = (row) => p.evaluate((row) => { const L = _canvasState.layout, m = _canvasState.metrics; return L.bandTop[5] + m.headerH + row * L.bandPitch[5] - _canvasState.offsetY; }, row);
+  const y6 = await rowY(6);
+  await p.mouse.click(g.left + 25, g.top + y6 + g.charH / 2, { button: 'right' }); await p.waitForTimeout(200);
+  await cbSetView(p, 5, 60);
+  await p.evaluate(() => [...document.querySelectorAll('.context-menu div')].find(d => d.textContent === 'Rename sequence').click());
+  await p.waitForTimeout(250);
+  const away = await boxIn();
+  await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  // (b) double-click row 20's name where only its top 4 px are in view (at the bottom edge)
+  await cbSetView(p, 5, 0);
+  const y20 = await rowY(20);
+  await p.evaluate((d) => { _canvasState.offsetY += d; _canvasState.scheduleDraw(); }, y20 - (g.vh - 4));
+  await p.waitForTimeout(150);
+  await p.mouse.dblclick(g.left + 25, g.top + g.vh - 2); await p.waitForTimeout(250);
+  const cut = await boxIn();
+  const cutRowY = await rowY(20);
+  await p.keyboard.press('Escape'); await p.waitForTimeout(200);
+  const ok = !!away && away.v === 's6' && away.inView && !!cut && cut.v === 's20' && cut.inView && Math.abs(cut.top - (cutRowY - 1)) <= 1;
+  return { pass: ok, detail: JSON.stringify({ away, cut, cutRowY }) };
+}));
+
 // #37: the vertical bar's range was the content less the canvas' height, but clampOffsets lets the view go
 // on by the horizontal bar lying over the canvas' bottom: dragged to its end the thumb stopped about a row
 // short, the last row under the horizontal bar (and the same sideways with the vertical bar over the right edge)
