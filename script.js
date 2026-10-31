@@ -6223,7 +6223,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     if (blockLayout) stickyNames = true;
     // A Block redraw can change the bands (Block size slider, Screen, codon lanes, hidden columns): the
     // old offsetY is then another place. Keep the place by its anchor (band's first column, row), unless
-    // a zoom or mode switch already holds one. (Before batch 3 the raw offsetY was kept.)
+    // a zoom or mode switch already holds one. (Before batch 3 the raw offsetY was kept.) A window resize does
+    // not render: it re-wraps the bands in relayout(), which keeps the place by the same anchor (cb34 #14).
     if (blockLayout && _canvasState.layout && !_canvasState.pendingAnchor && state.seqs?.length) {
         const a = _captureViewAnchor(true);
         // the same bands again (a colour or display change): exactly where it was, not snapped to a row
@@ -6531,7 +6532,11 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     };
     const clearBand = () => { _bS0 = 0; _bS1 = nSlots; _bScale = null; _bScaleC0 = 0; _bLast = true; rowPitch = basePitch; _bLanes = -1; };
     _canvasState.relayoutMs = 0;
-    // (Re)wrap to the viewport width; keeps the top-left visible slot's band row in view. True when it changed.
+    // (Re)wrap to the viewport width. True when it changed. A render lays the bands out afresh (it nulls the layout
+    // first and keeps its place with the anchor it captured, applied at its end); a window resize re-wraps the
+    // bands it has and keeps the place here, by the same anchor (the band holding the first column, the first row).
+    // (Before: the old in-band pixel offset was put into the new band; where the bands have other translation lanes
+    // that was another row, or the gap below the band. GLM audit cb34 #14.)
     function relayout() {
         if (!blockLayout) return false;
         const t0 = performance.now();
@@ -6541,11 +6546,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         _canvasState.blockFitCols = fit;   // what fits the window (the Screen button, setBlockSizeToScreen)
         const cols = Math.max(1, Math.min(slider, nSlots, fit));
         if (cols === bandCols && _canvasState.layout) return false;
-        const hadLayout = !!_canvasState.layout;
-        // where the view is: the band at its top, how far into that band (in its lines), its first slot
-        const oldB = hadLayout ? bandAt(_canvasState.offsetY) : 0;
-        const inBand = _canvasState.offsetY - bandTop[oldB];
-        const firstSlot = oldB * bandCols;
+        const anchor = _canvasState.layout ? _captureViewAnchor(true) : null;   // where the view is, in the old bands
         bandCols = cols;
         nBands = Math.max(1, Math.ceil(nSlots / bandCols));
         bandScale = [];
@@ -6564,10 +6565,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         _canvasState.totalContentW = totalContentW;
         _canvasState.totalContentH = totalContentH;
         _canvasState.offsetX = 0;
-        if (hadLayout) { const nb = Math.min(nBands - 1, Math.floor(firstSlot / bandCols)); _canvasState.offsetY = bandTop[nb] + Math.min(inBand, bandTop[nb + 1] - bandTop[nb] - 1); }
         // bandH / bandBodyH: band 0's (every band's without codon analysis by gene)
         _canvasState.layout = { kind: 'block', bandCols, nBands, bandH: bandTop[1] - bandTop[0], bandBodyH: bandBody[0], nSlots,
             bandTop, bandBody, bandPitch, bandLanes, bandAt };
+        if (anchor) _canvasState.offsetY = _canvasBlockAnchorY(anchor);
         _canvasState.relayoutMs = performance.now() - t0;
         window._syncVerticalScrollbar?.();
         window._syncHorizontalScrollbar?.();
@@ -8031,7 +8032,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // (matches DOM mode, which returns early for scale-ruler-line)
     });
 
-    // A zoom captured the top-left residue before the cell size changed: put it back there
+    // Put back the anchor held for this render: a zoom's (the top-left residue before the cell size changed),
+    // a mode switch's or a snapshot's, or in the Block view mostly the keep-the-place anchor captured at the
+    // start of this render (the bands may have changed: Block size slider, Screen, codon lanes, hidden columns)
+    // or one _applyViewAnchor deferred because the bands were not laid out yet
     if (_canvasState.pendingAnchor) {
         const a = _canvasState.pendingAnchor;
         _canvasState.pendingAnchor = null;
@@ -14863,6 +14867,15 @@ function _captureViewAnchor(fromCanvas = isCanvasMode()) {
     return { row: +row.dataset.seqIndex, col };
 }
 
+// Block view: the content y that puts an anchor { row, col } at the view's top: the band holding the
+// column, the row's line in it (row 0: the band's top, its ruler in view)
+function _canvasBlockAnchorY(a) {
+    const L = _canvasState.layout, m = _canvasState.metrics;
+    const b = _canvasBandOfCol(a.col);
+    const n = _canvasState.seqsLen || state.seqs.length;
+    const row = Math.min(a.row, Math.max(0, n - 1));
+    return L.bandTop[b] + (row > 0 ? (m.headerH || m.charH) + row * L.bandPitch[b] : 0);
+}
 function _applyViewAnchor(a) {
     if (!a) return;
     if (isCanvasMode()) {
@@ -14871,12 +14884,8 @@ function _applyViewAnchor(a) {
         const L = _canvasState.layout;
         if (isBlockLayout() && !L) { _canvasState.pendingAnchor = a; return; }   // the bands are not laid out yet: at the end of the render
         if (L) {
-            // Block view: the band holding the column, the row's line in it at the view's top
-            const b = _canvasBandOfCol(a.col);
-            const n = _canvasState.seqsLen || state.seqs.length;
-            const row = Math.min(a.row, Math.max(0, n - 1));
             _canvasState.offsetX = 0;
-            _canvasState.offsetY = L.bandTop[b] + (row > 0 ? (m.headerH || m.charH) + row * L.bandPitch[b] : 0);
+            _canvasState.offsetY = _canvasBlockAnchorY(a);
             if (a.oy != null && a.bands === _canvasBandsSig(L)) _canvasState.offsetY = a.oy;   // the same bands (a redraw): exactly where it was
         } else {
             const pitch = _canvasState.rowPitch || m.charH;

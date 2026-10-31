@@ -6256,6 +6256,54 @@ check('Canvas Block: the Sticky names box re-renders the Canvas strip but not Bl
   return { pass: block === 0 && strip >= 2, detail: JSON.stringify({ block, strip }) };
 }));
 
+// ---- Canvas Block: GLM audit cb34 (navigation, view anchors, snapshots, hit tests; 2026-10-31) ----
+// cbCodonFixture with more rows and genes of choice: bands of different heights, taller than the view
+function cbCodonFixtureN(nSeq, len, genes) {
+  let x = 12345;
+  const rnd = () => (x = (x * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const base = Array.from({ length: len }, () => 'ACGT'[Math.floor(rnd() * 4)]).join('');
+  let fasta = `>ref\n${base}\n`;
+  for (let i = 1; i < nSeq; i++) fasta += `>copy${i}\n${base.split('').map((c, j) => (j * 7 + i * 13) % 41 === 0 ? 'ACGT'[('ACGT'.indexOf(c) + i) % 4] : c).join('')}\n`;
+  const bed = genes.map(([g, a, b]) => `ref\t${a}\t${b}\t${g}\t0\t+\t${a}\t${b}\t0\t1\t${b - a}\t0\tCDS: ${g}`).join('\n');
+  return { fasta, bed };
+}
+const cbCodonOn = (p, bed) => p.evaluate(async (bed) => {
+  setAnnotation(bed, 'genes.bed');
+  const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+  await new Promise(r => setTimeout(r, 1200));
+}, bed);
+const cbViewInfo = (p) => p.evaluate(() => {
+  const L = _canvasState.layout, oy = _canvasState.offsetY, b = L.bandAt(oy);
+  return { a: _captureViewAnchor(), bandCols: L.bandCols, lanes: [...L.bandLanes].join(''), oy: Math.round(oy), inGap: oy - L.bandTop[b] >= L.bandBody[b] };
+});
+
+// cb34 #14: a window resize re-wraps the bands without a render (resize -> relayout), and relayout kept the
+// place by putting the old in-band PIXEL offset into the new band. With codon analysis by gene the band can
+// then have other translation lanes: 560 -> 480 px took band 2 from 2 lanes to 1, and row 15 at the top
+// became the gap below band 2 (row 0 of the next band). The zoom and the Block size slider keep the place by
+// the view anchor (the band holding the first column, the first row); a resize must too.
+check('Canvas Block: a window resize keeps the first row and the band of the first column (bands with other translation lanes, no landing in the gap)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const { fasta, bed } = cbCodonFixtureN(20, 300, [['geneA', 60, 150], ['geneB', 120, 210]]);
+  await p.setViewportSize({ width: 560, height: 700 });
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, fasta); await p.waitForTimeout(500);
+  await p.evaluate(async () => { const bs = document.getElementById('blockSizeSlider'); bs.value = '50'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 700)); });
+  await cbCodonOn(p, bed);
+  const out = [];
+  for (const row of [15, 19]) {
+    await p.setViewportSize({ width: 560, height: 700 }); await p.waitForTimeout(600);
+    const v = await cbSetView(p, 2, row);
+    const before = await cbViewInfo(p);
+    await p.setViewportSize({ width: 480, height: 700 }); await p.waitForTimeout(600);
+    const after = await cbViewInfo(p);
+    const cell = await cbCell(p, row, before.a.col);
+    out.push({ row, col0: v.col0, before, after, cell,
+      ok: before.a.row === row && after.bandCols < before.bandCols && after.lanes !== before.lanes && !after.inGap
+        && after.a.row === row && after.a.col <= before.a.col && before.a.col < after.a.col + after.bandCols && cell.inView });
+  }
+  return { pass: out.every(o => o.ok), detail: JSON.stringify(out) };
+}));
+
 // #37: the vertical bar's range was the content less the canvas' height, but clampOffsets lets the view go
 // on by the horizontal bar lying over the canvas' bottom: dragged to its end the thumb stopped about a row
 // short, the last row under the horizontal bar (and the same sideways with the vertical bar over the right edge)
