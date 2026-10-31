@@ -37,10 +37,10 @@ localStorage-backed panel. Stores metadata + full alignment text (100 KB cap per
 
 ## 🖥️ Visualization & Rendering
 
-### 4 interchangeable view modes
-**Full** (continuous scroll), **Block** (wrapped blocks with repeating labels, drawn by the Canvas renderer; width set by the Block size slider, never wider than the window), **Canvas** (viewport-culled 2D canvas), **Reads** (IGV-style read tracks for mapped SAM/BAM data). Switch modes without reloading or reformatting. Variable Sites Only is a cross-mode overlay (checkbox), not a separate mode.
+### 3 view-switch modes (plus hidden Full)
+**Block** (wrapped blocks with repeating labels, drawn by the Canvas renderer; width set by the Block size slider, never wider than the window), **Canvas** (viewport-culled 2D canvas), **Reads** (IGV-style read tracks for mapped SAM/BAM data). A fourth view, **Full** (continuous scroll), is hidden; open it with `?view=full`. Switch modes without reloading or reformatting. Variable Sites Only is a cross-mode overlay (checkbox), not a separate mode.
 
-**Why novel:** Most viewers offer 1–2 modes. Four modes serve distinct workflows — editing (Full), publication inspection (Block), large alignments (Canvas), and NGS reads (Reads). Variable Sites Only adds variant scanning to any mode.
+**Why novel:** Most viewers offer 1–2 modes. Three modes serve distinct workflows — publication inspection (Block), editing and large alignments (Canvas), and NGS reads (Reads). Variable Sites Only adds variant scanning to any mode.
 
 ### Canvas renderer with automatic activation
 Canvas 2D context with viewport culling. Draws only rows and columns visible in the viewport per frame — no per-residue DOM nodes. Activates automatically when the alignment exceeds 5,000,000 total residues with a status message and user override option. Mouse wheel + click-drag panning.

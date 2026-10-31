@@ -198,9 +198,9 @@
                         <div class="slider-container mode-container" style="flex-direction:column;align-items:flex-start;gap:1px;height:auto;">
                             <div style="display:flex;align-items:center;gap:4px;">
                                 <span style="font-size:10px;font-weight:bold;width:70px;text-align:right;">Mode</span>
-                                <input type="radio" id="modeSingle" name="mode" value="single" title="Full: continuous scrolling alignment for browsing and editing"><label for="modeSingle" style="font-size:10px;margin-right:5px;">Full</label>
+                                <input type="radio" id="modeSingle" name="mode" value="single" hidden title="Full: hidden view, open with ?view=full"><label for="modeSingle" hidden style="font-size:10px;margin-right:5px;">Full</label>
                                 <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Block: fixed-width wrapped blocks with repeating labels, for publication-style layout"><label for="modeBlocks" style="font-size:10px;margin-right:5px;">Block</label>
-                                <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas: draws only the visible region; the default view; everything works here as in Full view"><label for="modeCanvas" style="font-size:10px;margin-right:5px;">Canvas</label>
+                                <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas: draws only the visible region; the default view; everything works here"><label for="modeCanvas" style="font-size:10px;margin-right:5px;">Canvas</label>
                                 <input type="radio" id="modeReads" name="mode" value="reads" title="Reads: IGV-style read tracks for mapped SAM/BAM data against a reference"><label for="modeReads" style="font-size:10px;">Reads</label>
                             </div>
                             <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-left:74px;">
@@ -807,7 +807,7 @@
                  frame, reads), shown only when one is visible: on the menu line when they fit,
                  else on a line of their own (syncModeRow), so they never crowd the menus. -->
             <div class="mode-row" id="modeRow" hidden>
-                <div class="quick-mode-switch view-switch" id="quickModeSwitch" title="View: Full / Block / Canvas / Reads"></div>   <!-- built from QUICK_VIEW_OPTIONS (script.js) -->
+                <div class="quick-mode-switch view-switch" id="quickModeSwitch" title="View: Block / Canvas / Reads"></div>   <!-- built from QUICK_VIEW_OPTIONS (script.js) -->
                 <div class="quick-mode-switch case-switch" id="caseSwitch" title="Letter case of the residues on screen; the sequences themselves are not changed (the consensus row keeps its own case)">
                     <input type="radio" name="caseQuick" id="csLower" value="lower"><label for="csLower" title="Show every residue in lower case">aa</label>
                     <input type="radio" name="caseQuick" id="csAsIs" value="asis" checked><label for="csAsIs" title="Residues as they are in the file">Aa</label>
@@ -1449,7 +1449,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=7"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=371"></script>
+    <script src="script.js?v=372"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>

@@ -13867,6 +13867,84 @@ check('Canvas Block: hover tooltip after a scroll under a still pointer names wh
   return { pass: ok && cbIsCanvasBlock(st), detail: JSON.stringify({ st, r }) };
 }));
 
+// ---- Hide Full (v318): the Full view is out of the visible switch; ?view=full still opens it ----
+// Before this change loadPreset() sent a Canvas preset to Full, the Reads paths forced Full, and a
+// snapshot taken in Reads stored 'single'. All now go to Canvas.
+const hfPath = require('path');
+const hfVisible = async (p, sel) => p.evaluate((s) => [...document.querySelectorAll(s)].some(e => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden'), sel);
+const hfPlain = async (p, origin, q = '') => { await p.goto(origin + '/index.html' + q, { waitUntil: 'networkidle' }); await p.setInputFiles('#fileInput', hfPath.join(__dirname, '..', '..', 'examples/synthetic/synth_msa.fa')); await p.waitForTimeout(1500); };
+const hfReads = async (p, origin) => {
+  await hfPlain(p, origin);
+  await p.setInputFiles('#fileInput', hfPath.join(__dirname, '..', '..', 'examples/real/htslib_ce_CHROMOSOME_II.fa')); await p.waitForTimeout(1500);
+  await p.setInputFiles('#fileInput', hfPath.join(__dirname, '..', '..', 'examples/real/htslib_range.bam')); await p.waitForTimeout(2000);
+};
+
+check('Hide Full: a preset saved in Canvas loads into Canvas (not Full)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await hfPlain(p, origin);
+  const out = await p.evaluate(() => {
+    const r = {};
+    for (const m of ['modeCanvas', 'modeBlocks']) {
+      document.getElementById(m).checked = true; onModeChange();
+      savePreset();
+      document.getElementById(m === 'modeCanvas' ? 'modeBlocks' : 'modeCanvas').checked = true; onModeChange();
+      loadPreset();
+      r[m] = document.querySelector('input[name="mode"]:checked')?.id;
+    }
+    // an old preset (mode 'single') still opens Full; an unknown mode opens Canvas
+    const raw = JSON.parse(localStorage.getItem('msaviewer_preset_v44'));
+    for (const [k, mode] of [['old', 'single'], ['unknown', 'zzz']]) {
+      localStorage.setItem('msaviewer_preset_v44', JSON.stringify({ ...raw, mode })); loadPreset();
+      r[k] = document.querySelector('input[name="mode"]:checked')?.id;
+    }
+    return r;
+  });
+  return { pass: out.modeCanvas === 'modeCanvas' && out.modeBlocks === 'modeBlocks' && out.old === 'modeSingle' && out.unknown === 'modeCanvas', detail: JSON.stringify(out) };
+}));
+
+check('Hide Full: a variant jump from Reads lands in Canvas, not Full', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await hfReads(p, origin);
+  const out = await p.evaluate(() => {
+    const before = document.querySelector('input[name="mode"]:checked')?.id;
+    const pos = bamState.reads[0].pos;
+    document.getElementById('modeReads').checked = true; onModeChange();
+    const inReads = document.querySelector('input[name="mode"]:checked')?.id;
+    variantToAlignment(pos);
+    return { before, inReads, after: document.querySelector('input[name="mode"]:checked')?.id };
+  }).catch(e => ({ err: e.message }));
+  return { pass: out.inReads === 'modeReads' && out.after === 'modeCanvas', detail: JSON.stringify(out) };
+}));
+
+check('Hide Full: a snapshot taken in Reads reopens in Canvas', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await hfReads(p, origin);
+  const out = await p.evaluate(() => {
+    document.getElementById('modeReads').checked = true; onModeChange();
+    const payload = _buildSnapshotPayload();
+    const stored = payload.view && payload.view.mode;
+    document.getElementById('modeBlocks').checked = true; onModeChange();
+    _applySnapshotView(payload.view);
+    return { stored, reopened: document.querySelector('input[name="mode"]:checked')?.id };
+  }).catch(e => ({ err: e.message }));
+  return { pass: out.stored === 'canvas' && out.reopened === 'modeCanvas', detail: JSON.stringify(out) };
+}));
+
+check('Hide Full: no visible Full option in the main or the quick switch', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await hfPlain(p, origin);
+  const out = await p.evaluate(() => ({
+    mainRadio: [...document.querySelectorAll('#modeSingle')].map(e => e.getClientRects().length > 0),
+    mainLabel: [...document.querySelectorAll('label[for="modeSingle"]')].map(e => e.getClientRects().length > 0),
+    quick: !!document.getElementById('qmSingle') || !!document.getElementById('qmSingleLabel'),
+    quickLabels: [...document.querySelectorAll('#quickModeSwitch label')].filter(l => l.getClientRects().length).map(l => l.textContent),
+    inDom: !!document.getElementById('modeSingle'),
+  }));
+  return { pass: out.inDom && out.mainRadio.every(v => !v) && out.mainLabel.every(v => !v) && !out.quick && !out.quickLabels.includes('F') && out.quickLabels.includes('B') && out.quickLabels.includes('C'), detail: JSON.stringify(out) };
+}));
+
+check('Hide Full: ?view=full still opens the Full view', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await hfPlain(p, origin, '?view=full');
+  const out = await p.evaluate(() => ({ radio: document.querySelector('input[name="mode"]:checked')?.id, single: document.getElementById('modeSingle')?.checked, span: typeof isSpanRenderMode === 'function' ? isSpanRenderMode() : null, canvas: !!document.getElementById('alignmentCanvas') }));
+  return { pass: out.radio === 'modeSingle' && out.single === true && out.span === true && !out.canvas, detail: JSON.stringify(out) };
+}));
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

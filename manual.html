@@ -333,7 +333,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <p>Key capabilities:</p>
   <ul>
-    <li><strong>View</strong> - Four visualisation modes: Full (single-pane, the letters are page text), Block (wrapped in bands of the Block Size width, narrower when the window holds fewer columns, drawn on a canvas), Canvas (high-performance for massive alignments), and Reads (IGV-style read packing for SAM/BAM data).</li>
+    <li><strong>View</strong> - Three visualisation modes in the view switch: Block (wrapped in bands of the Block Size width, narrower when the window holds fewer columns, drawn on a canvas), Canvas (high-performance for massive alignments), and Reads (IGV-style read packing for SAM/BAM data). A fourth, Full (the alignment as page text), is hidden; open it with <code>?view=full</code>.</li>
     <li><strong>Edit</strong> - GeneDoc-style residue editing, Move/Slide tools, undo/redo</li>
     <li><strong>Analyse</strong> - Statistics (distance and identity matrices you can copy or save), codon analysis, dot plots, repeat/TSD finder, tree builder, restriction site search, k-mer / SNP grouping and 2D rectangles</li>
     <li><strong>Colour</strong> - Monochrome conservation shading plus nucleotide, purine/pyrimidine, ambiguity, and amino-acid colour schemes</li>
@@ -415,7 +415,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <p>
     The top-right corner shows the current application version and the loaded file name.
-  The top bar also has a small view switch, <strong>F | B | C</strong> (Full, Block, Canvas; <strong>R</strong>
+  The top bar also has a small view switch, <strong>B | C</strong> (Block, Canvas; <strong>R</strong>
   for Reads once reads are loaded), in every view: one click changes the view, the same as the Display
   menu's Mode radios. Hover a letter for the view's name.
   </p>
@@ -473,7 +473,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li><strong>Rows and letters</strong> - rows are two pixels taller and the letters centred in them, so a white letter on a shaded cell is always separated from a white cell above or below it at any browser zoom; Canvas eases each mouse-wheel notch instead of jumping.</li>
     <li><strong>Windowed Full and Block from 100,000 residues</strong> - above that size the two views build only the rows and columns near the window (switching to Full in about a second instead of four to seven); Show 2D draws there too (&sect;5.1).</li>
     <li><strong>Edit mode</strong> - <kbd>Ctrl+Shift+Z</kbd> redoes; a plain click on a name selects that row and a second click unselects it; <kbd>Alt+J</kbd> / <kbd>Alt+C</kbd> copy the selected consensus / sequences (&sect;10).</li>
-    <li><strong>Letter case</strong> - an <strong>aa | Aa | AA</strong> switch next to the Full / Block / Canvas buttons shows residues in lower case, as in the file, or in upper case, in every view including Canvas (which used to ignore the Display-menu setting) (&sect;5.3).</li>
+    <li><strong>Letter case</strong> - an <strong>aa | Aa | AA</strong> switch next to the Block / Canvas buttons shows residues in lower case, as in the file, or in upper case, in every view including Canvas (which used to ignore the Display-menu setting) (&sect;5.3).</li>
     <li><strong>Edit tools</strong> - the gap tools show a haloed crosshair and outline the cell under the pointer in orange; a double-click with a gap tool no longer switches to Type; no residue tooltip while a sequence is being moved; shorter tooltips on the edit panel; <em>Live conservation</em> renamed <em>Shade while dragging</em> (&sect;8).</li>
     <li><strong>Windows</strong> - the Repeat/TSD finder resizes from its edges and corners and maximises like the other windows; every movable window turns semi-transparent while it is being moved.</li>
     <li><strong>TSD results</strong> - the pairs found are shown faintly in the alignment at once and <em>Mark in alignment</em> is highlighted (&sect;9.9).</li>
@@ -654,7 +654,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
       reads; heterozygous below 80%), from bases of quality 13 or more, with N where fewer than 3 reads cover a
       base; indels are called as whole events, left-aligned in repeats.</li>
     <li><strong>Sample &rarr; row</strong> adds the sample under the reference as an ordinary row and switches to
-      the Full view: the base most reads carry, an IUPAC code for two (heterozygous, e.g. R = A/G), a gap where
+      the Canvas view: the base most reads carry, an IUPAC code for two (heterozygous, e.g. R = A/G), a gap where
       most reads carry a deletion, extra columns where most carry an insertion, N under 3 reads.
       Heterozygous indels cannot be shown in one row (they are in the Variants list). Another sample's reads
       file gets its own row, <code>&lt;reference&gt;_&lt;file name&gt;</code>. Undo removes a row again.</li>
@@ -678,8 +678,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>
     Snapshots capture alignment data, zoom, conservation settings, colour scheme, selected
     rows/columns, search highlights, and custom colour assignments. They are stored as JSON
-    files. The Full, Block and Canvas view modes are restored; a snapshot taken in Reads mode
-    reopens in Full/Block.
+    files. The Block and Canvas view modes (and the hidden Full) are restored; a snapshot taken in Reads mode
+    reopens in Canvas. Presets saved in Canvas reopen in Canvas.
   </p>
   <ul>
     <li><strong>Save Preset</strong> (<kbd>Ctrl+Shift+S</kbd>) - saves the current view settings (shading
@@ -1263,9 +1263,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="di-modes">5.1 View Modes</h3>
   <table>
     <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
-    <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block. The view whose letters are page text: the browser's find bar and text selection see them (from about 100,000 residues only the window drawn).</td></tr>
-    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>The alignment wrapped in blocks (bands), drawn on a canvas like Canvas (any size, no wait on large alignments). The Block Size slider (or the number box) sets the width, 40–300 chars. A block is never wider than the window holds (but at least 10 columns): on a narrow window it wraps at what fits, the slider and the box show that width, and a note beside them says e.g. <em>fits (150 set)</em>; when the window is wide enough again the blocks grow back to the width set. <strong>Screen</strong> sets the width to what fits the window. Presets and snapshots keep the width set, not the narrower one shown. Sequence names repeat per block; the view scrolls only up and down. Because the letters are drawn as pixels, the browser's find bar does not see them: <kbd>Ctrl+F</kbd> opens the motif search (§7.1). Printing (<kbd>Ctrl+P</kbd>) prints every block, scaled to the paper's width; above 400,000 residues, the blocks from the one in view up to that size (§9.10).</td></tr>
-    <tr><td><strong>Canvas</strong></td><td>Any alignment; the default view</td><td>The default view at every size (a note on the first load says so). Choosing Full or Block keeps that view for smaller files for the rest of the session; alignments from 40,000 residues still open in Canvas. A link can choose the view with <code>&amp;view=full</code>, <code>block</code> or <code>canvas</code>. Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name), and so do motif search, Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots. From about 100,000 residues, Full draws a window rather than every cell.</td></tr>
+    <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block. Hidden from the view switch; open it with <code>?view=full</code> (Clone Tab can still open it). The letters are page text, so the browser's find bar sees them (from about 100,000 residues only the window drawn). Residues cannot be selected as text with the mouse.</td></tr>
+    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>The alignment wrapped in blocks (bands), drawn on a canvas like Canvas (any size, no wait on large alignments). The Block Size slider (or the number box) sets the width, 40–300 chars. A block is never wider than the window holds (but at least 10 columns): on a narrow window it wraps at what fits, the slider and the box show that width, and a note beside them says e.g. <em>fits (150 set)</em>; when the window is wide enough again the blocks grow back to the width set. <strong>Screen</strong> sets the width to what fits the window. Presets and snapshots keep the width set, not the narrower one shown. Sequence names repeat per block; the view scrolls only up and down. Because the letters are drawn as pixels, the browser's find bar does not see them: <kbd>Ctrl+F</kbd> opens the motif search (§7.1). Printing (<kbd>Ctrl+P</kbd>) prints the whole alignment in blocks, scaled to the paper's width; above 400,000 residues, the blocks from the one in view up to that size (§9.10).</td></tr>
+    <tr><td><strong>Canvas</strong></td><td>Any alignment; the default view</td><td>The default view at every size (a note on the first load says so). Choosing Block keeps that view for smaller files for the rest of the session; alignments from 40,000 residues still open in Canvas. A link can choose the view with <code>&amp;view=canvas</code>, <code>block</code> or <code>full</code> (the hidden Full view). Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name), and so do motif search, Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots. From about 100,000 residues, Full draws a window rather than every cell.</td></tr>
     <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5). A <strong>Show bases</strong> checkbox next to the mode switch draws every base of each read instead of mismatches only. A coverage row (counts per base and strand on hover; click to sort the reads there), read strands in colour, and <strong>Variants</strong> / <strong>Sample &rarr; row</strong> buttons (2.5).</td></tr>
   </table>
   <p>
@@ -1393,7 +1393,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     the default. <strong>Case</strong> shows residues <strong>As in file</strong>, in
     <strong>UPPER</strong> or in <strong>lower</strong> case; it changes only the display,
     not the sequences. The same choice is the <strong>aa | Aa | AA</strong> switch next to
-    the Full / Block / Canvas buttons, in every view (the consensus row keeps its own case).
+    the Block / Canvas buttons, in every view (the consensus row keeps its own case).
   </p>
   <table>
     <tr><th>Scheme</th><th>Use</th></tr>
@@ -2132,7 +2132,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>FASTA</td><td>Downstream tools</td><td>Toolbar <strong>Save</strong> button (full alignment); selected sequences by Copy Sel / New Tab</td></tr>
     <tr><td>RTF</td><td>Microsoft Word</td><td>Input menu <strong>RTF</strong>. Monospace, per-residue shading, scale ruler, consensus line. Blocks of the Block Size width; in Block view, of the width the blocks have on screen (narrower when the window holds fewer columns). Every column, including hidden ones and those Variable sites only hides</td></tr>
     <tr><td>SVG</td><td>Publication figures</td><td>Input menu <strong>SVG</strong> / <strong>Full SVG</strong>. Vector graphics. <em>Viewport</em> saves what is on screen, overlays included, in Full, Block and Canvas (in Block and Canvas it is drawn from what the canvas draws: names, ruler, consensus, residues with their colours and marks, translation rows, annotation track, selections); <em>Full</em> draws every sequence and column from the data in the screen's colours (ruler, names, consensus; search and annotation overlays are not included), in any view mode, wrapped like the blocks on screen in Block view and unwrapped in the others; it holds every column, including hidden ones</td></tr>
-    <tr><td>Print</td><td>Paper, PDF</td><td>The browser's Print (<kbd>Ctrl+P</kbd>). In Block view every block is printed, as vector graphics scaled to the paper's width, in place of the page (a block taller than a page is split between rows); above 400,000 residues the blocks from the one in view are printed up to that size, under a note, and <strong>Full SVG</strong> has the rest. In Canvas view the print is the picture on screen; Full prints the page as it is</td></tr>
+    <tr><td>Print</td><td>Paper, PDF</td><td>The browser's Print (<kbd>Ctrl+P</kbd>). In Block view every block is printed, as vector graphics scaled to the paper's width, in place of the page (a block taller than a page is split between rows); above 400,000 residues the blocks from the one in view are printed up to that size, under a note, and <strong>Full SVG</strong> has the rest. In Canvas view the print is the picture on screen; Full (hidden) prints the page as it is</td></tr>
     <tr><td>Newick (<code>.nwk</code>)</td><td>Phylogenetics tools</td><td>Tree window <strong>Download .nwk</strong>: UPGMA or Neighbor-Joining tree with branch lengths, whichever the Tree window last built</td></tr>
     <tr><td>Standalone HTML</td><td>Sharing</td><td>Input menu <strong>Create</strong>: a JSON snapshot plus a self-contained HTML snapshot page with embedded alignment, and a <code>?snapshot=</code> URL on the clipboard (§2.6)</td></tr>
     <tr><td>New tab</td><td>A sub-alignment</td><td>Selected sequences opened as an alignment in a new ViewAlign tab (<kbd>Alt+T</kbd>)</td></tr>
