@@ -6953,8 +6953,21 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         }
         return _selSlots;
     };
+    // The mask's rectangles are kept from one paint to the next (a scroll step made them all again: ~10 ms a frame
+    // with 2000 2D blocks; GLM audit cb34 #28) until the mask, its opacity or the rows (order, names) change. The
+    // columns' slots, the cell size and the row count are this render's.
+    let _maskKey = null;
+    const maskStale = () => {
+        const k = _maskKey, seqs = state.seqs;
+        if (!k || k.mask !== state.blockMask || k.op !== _blockMaskOpacity || k.headers.length !== seqs.length) return true;
+        for (let i = 0; i < seqs.length; i++) if (k.headers[i] !== seqs[i].header) return true;
+        return false;
+    };
     function drawOverlay(ox, oy, w, h) {
-        _maskByPitch = null;
+        if (maskStale()) {
+            _maskByPitch = null;
+            _maskKey = state.blockMask ? { mask: state.blockMask, op: _blockMaskOpacity, headers: state.seqs.map(q => q.header) } : null;
+        }
         _selSlots = null;
         _canvasState.maskRects = maskRectsFor(basePitch);
         if (!blockLayout) return drawOverlayStrip(ox, oy, w, h);

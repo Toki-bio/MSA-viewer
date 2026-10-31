@@ -6434,6 +6434,43 @@ check('Canvas Block: a GeneDoc column drag redraws only the overlay while it mov
   return { pass: ok, detail: JSON.stringify({ oy, mid }) };
 }));
 
+// cb34 #28: every paint, a frame-copy scroll step included, threw away the 2D mask's rectangles and made them again
+// (_canvasBlockMaskRects walks every block's columns and rows). Measured on aln2000x2000 in Block with 2000 2D blocks
+// (40,000 rectangles): a scroll frame took ~12 ms instead of ~2 ms, ~10 ms of it remaking them. They are now kept
+// until the mask, its opacity or the rows change; the overlay must still show such a change at once.
+check('Canvas Block: scrolling with Show 2D on reuses the 2D mask\'s rectangles; a new mask, opacity or row order remakes them', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  const g = await cbGeom(p);
+  const frame = () => p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const px = (col, row, b) => p.evaluate((pt) => { const o = _canvasState.overlay, r = o.getBoundingClientRect(), d = devicePixelRatio; return [...o.getContext('2d').getImageData(Math.round((pt.x - r.left) * d), Math.round((pt.y - r.top) * d), 1, 1).data]; }, cbPt(g, 0, b, col, cbTop(g, b) + g.headerH + (row + 0.5) * g.charH));
+  await p.evaluate(async () => {
+    state.blockMask = { blocks: [{ type: 'CONSERVATIVE', col_start: 60, col_end: 80, rows: [1, 2, 3], sourceRows: [1, 2, 3] }], row_headers: state.seqs.map(q => q.header) };
+    renderBlockMaskOverlay();
+  });
+  await cbScrollTo(p, 0); await frame();
+  const out = {};
+  out.scrollMade = await p.evaluate(async () => {
+    _canvasState.maskRectsMade = 0;
+    for (let i = 0; i < 6; i++) { _canvasState.offsetY += 9; _canvasState.scheduleDrawMoved(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); }
+    _canvasState.offsetY = 0; _canvasState.scheduleDrawMoved(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return _canvasState.maskRectsMade;
+  });
+  out.on = (await px(70, 2, 1))[3];
+  await p.evaluate(() => setBlockMaskOpacity(0)); await frame();
+  out.opacity0 = (await px(70, 2, 1))[3];
+  await p.evaluate(() => setBlockMaskOpacity(0.45)); await frame();
+  // a new mask on rows 5-6: the old one's row 2 is clear, row 5 painted
+  await p.evaluate(() => { state.blockMask = { blocks: [{ type: 'CONSERVATIVE', col_start: 60, col_end: 80, rows: [5, 6], sourceRows: [5, 6] }], row_headers: state.seqs.map(q => q.header) }; renderBlockMaskOverlay(); });
+  await frame();
+  out.newMask = { row2: (await px(70, 2, 1))[3], row5: (await px(70, 5, 1))[3] };
+  // the rows reordered (s5 to the top) without a new mask: the mask follows s5 by its name
+  await p.evaluate(() => { const s = state.seqs.splice(5, 1)[0]; state.seqs.unshift(s); _canvasState.scheduleDraw(); });
+  await frame();
+  out.reordered = { row0: (await px(70, 0, 1))[3], row5: (await px(70, 5, 1))[3] };
+  const ok = out.scrollMade === 0 && out.on > 0 && out.opacity0 === 0 && out.newMask.row2 === 0 && out.newMask.row5 > 0 && out.reordered.row0 > 0 && out.reordered.row5 === 0;
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
 // #37: the vertical bar's range was the content less the canvas' height, but clampOffsets lets the view go
 // on by the horizontal bar lying over the canvas' bottom: dragged to its end the thumb stopped about a row
 // short, the last row under the horizontal bar (and the same sideways with the vertical bar over the right edge)
