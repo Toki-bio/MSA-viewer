@@ -10494,6 +10494,52 @@ check('TSD marking db2: Remove marks after Ctrl+Z says when it brings the markin
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// GLM dtan #2: a copy with 3 or more substitutions broke the neighbour scan: AGGCT x 4, a 3-substitution copy, AGGCT x 4
+// came out as a 10-bp unit x 4.5, and a 10-bp unit with a 5-substitution copy as two rows of 20- and 30-bp units.
+check('Repeat Finder tandem dtan: a copy with several substitutions keeps the array whole at its own unit', async (page) => {
+  const r = rfRng(9);
+  const mut = (u, k) => { const a = u.split(''); for (let i = 0; i < k; i++) { const j = i * Math.floor(u.length / k); a[j] = a[j] === 'A' ? 'C' : 'A'; } return a.join(''); };
+  const L = r.seq(60), R = r.seq(60);
+  const a5 = L + 'AGGCT'.repeat(4) + mut('AGGCT', 3) + 'AGGCT'.repeat(4) + R;
+  const a10 = L + 'ACGTTGCAAC'.repeat(4) + mut('ACGTTGCAAC', 5) + 'ACGTTGCAAC'.repeat(4) + R;
+  await loadFasta(page, `>u5\n${a5}\n>u10\n${a10}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const out = {};
+  const f5 = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 20, maxDiv: 15 });
+  out.u5 = f5.res.map(x => [x.start, x.end, x.unitLen, x.copies]);
+  await page.click('#repeatFinderCloseBtn');
+  await page.evaluate(() => openRepeatFinder(1));
+  const f10 = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 20, maxDiv: 15 });
+  out.u10 = f10.res.map(x => [x.start, x.end, x.unitLen, x.copies]);
+  const ok = JSON.stringify(out.u5) === JSON.stringify([[60, 105, 5, 9]]) && out.u10.length === 1 && out.u10[0][2] === 10 && out.u10[0][1] - out.u10[0][0] >= 90;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM dtan #4: Tandem on All searched every row in one go: 200 rows of 50 kb held the tab for about 45 s, saying only
+// "Searching...". The search stops at a total amount of work and says after how many sequences.
+check('Repeat Finder tandem dtan: All on many long rows stops at the work limit and says after how many sequences', async (page) => {
+  const r = rfRng(31);
+  let fa = '';
+  for (let i = 0; i < 30; i++) fa += `>r${i}\n${r.seq(50000)}\n`;
+  await loadFasta(page, fa);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'all', minLen: 20, maxDiv: 15 });
+  const ok = /search stopped after 24 of 30 sequences \(work limit/.test(f.text) && f.ms < 15000;
+  return { pass: ok, detail: JSON.stringify({ ms: f.ms, text: f.text.slice(0, 200) }) };
+}, { timeoutMs: 180000 });
+
+// GLM dtan #6, #8: a protein unit position with only X (or B, Z, J) in every copy showed N (asparagine, not in the
+// data); the Min array length tooltip said "any unit length" while units above 500 are never tried.
+check('Repeat Finder tandem dtan: a protein unit position of only X shows X, and the tooltip names the 500 unit limit', async (page) => {
+  await loadFasta(page, `>p1\nMKLV${'AAX'.repeat(8)}PWRT\n>p2\nMKLVQQQEEERRRTTTWWWYYYPWRT\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const f = await rfFind(page, { mode: 'tandem', scope: 'single', minLen: 12, maxDiv: 50 });
+  const out = { rows: f.rows, units: await page.evaluate(() => (_lastRepeatResults || []).map(x => x.unit)),
+    title: await page.evaluate(() => document.getElementById('repeatMinLenLabel').title) };
+  const ok = out.units.includes('AAX') && !out.units.some(u => /N/.test(u)) && /500/.test(out.title) && !/any unit length/.test(out.title);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 // Canvas Block prototype 2026-10-30 found it: dragging a Canvas scrollbar marked the view dirty on every step, so each
 // step was a full redraw (p95 75-92 ms) instead of the frame copy the wheel uses (p95 ~4 ms).
 check('Canvas: dragging the vertical and horizontal scrollbars moves the picture by frame copy, not full redraws', async (page) => {

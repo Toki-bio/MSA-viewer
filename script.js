@@ -33064,7 +33064,7 @@ function _syncRepeatFinderModeUI() {
     const minInp = document.getElementById('repeatMinLen');
     if (minInp && !minInp.dataset.userSet) minInp.value = mode === 'tandem' ? '20' : '10';
     if (minLabel) minLabel.title = mode === 'tandem'
-        ? 'Shortest tandem array reported: all copies together, any unit length'
+        ? 'Shortest tandem array reported: all copies together, units of 1 to 500 residues (fewer in a very long sequence)'
         : 'Shortest repeat reported: the length of one copy';
     const divLabel = document.getElementById('repeatMaxDiv')?.closest('label');
     if (divLabel) divLabel.title = mode === 'tandem'
@@ -33663,6 +33663,8 @@ function _findRepeats(seq, minLen, maxDivPct, type, opts = {}) {
  */
 const TANDEM_MAX_UNIT = 500;
 const TANDEM_WORK_LIMIT = 150000000;
+// for one search of several sequences (All, Selected rows): 5-7 s; 200 rows of 5 kb fit
+const TANDEM_TOTAL_WORK_LIMIT = 4 * TANDEM_WORK_LIMIT;
 function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
     const protein = !!opts.protein;
     const cap = opts.cap || 100;
@@ -33678,7 +33680,8 @@ function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
         if (protein) code[i] = (c >= 'A' && c <= 'Z' && c !== 'X' && c !== 'B' && c !== 'Z' && c !== 'J') ? c.charCodeAt(0) - 65 : -1;
         else code[i] = c in NUC ? NUC[c] : -1;
     }
-    const letter = (c) => c < 0 ? 'N' : (protein ? String.fromCharCode(c + 65) : 'ACGT'[c]);
+    // a unit position with no countable residue in any copy: X in protein (N is asparagine there; GLM dtan #6)
+    const letter = (c) => c < 0 ? (protein ? 'X' : 'N') : (protein ? String.fromCharCode(c + 65) : 'ACGT'[c]);
     const results = [];
     results.total = 0;
     if (n < minL) return results;
@@ -33695,18 +33698,30 @@ function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
     const owner = new Int32Array(n).fill(-1);         // the first (smallest-unit) array covering each base
 
     // the accepted array, of a unit dividing p, that covers at least half of [x, y)
+    // A run of bases with one owner is counted at once, in a typed array (a Map write per base took 0.2 s per
+    // 50 kb poly-A row; GLM dtan #3)
+    let ovCount = new Int32Array(64);
+    const ovTouched = [];
     const explainedBy = (x, y, p) => {
-        const ov = new Map();
-        for (let i = x; i < y; i++) {
-            const o = owner[i];
-            if (o >= 0 && p % kept[o].unitLen === 0) ov.set(o, (ov.get(o) || 0) + 1);
-        }
+        if (ovCount.length < kept.length) ovCount = new Int32Array(kept.length * 2);
         let best = -1, bestOv = 0;
-        for (const [o, c] of ov) if (c > bestOv) { best = o; bestOv = c; }
+        for (let i = x; i < y;) {
+            const o = owner[i];
+            let j = i + 1;
+            while (j < y && owner[j] === o) j++;
+            if (o >= 0 && p % kept[o].unitLen === 0) {
+                if (!ovCount[o]) ovTouched.push(o);
+                ovCount[o] += j - i;
+            }
+            i = j;
+        }
+        for (const o of ovTouched) { if (ovCount[o] > bestOv) { best = o; bestOv = ovCount[o]; } ovCount[o] = 0; }
+        ovTouched.length = 0;
         return bestOv * 2 >= (y - x) ? kept[best] : null;
     };
 
-    // majority residue per unit position over [s, e), positions counted from a; a tie goes to the first copy's residue
+    // majority residue per unit position over [s, e), positions counted from a; a tie goes to the residue that reached
+    // the top count first (A, C, C, A gives C), not to the first copy's (GLM dtan #7)
     const counts = new Int32Array(TANDEM_MAX_UNIT * 26);
     const consensus = (s, e, a, p) => {
         counts.fill(0, 0, p * K);
@@ -33737,7 +33752,8 @@ function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
         const work = [];
         // stretches where base i equals base i + p; [a, e] compared with [a + p, e + p], so the array is [a, e + p + 1)
         const lim = n - p;
-        let i = 0;
+        let i = 0, prev = null;   // prev: the last stretch long enough to be joined to the next
+        const joined = [];
         while (i < lim) {
             if (!(code[i] >= 0 && code[i] === code[i + p])) { i++; continue; }
             let cur = 0, best = 0, bestEnd = i, j = i;
@@ -33746,9 +33762,22 @@ function _findTandemRepeats(seq, minLen, maxDivPct, opts = {}) {
                 if (cur > best) { best = cur; bestEnd = j; }
                 else if (cur <= 0 || cur < best - xdrop) break;
             }
+            // one copy with 3 or more substitutions breaks the neighbour scan (it differs from the copy before and the
+            // copy after): stretches at most one unit apart are refined together, so the consensus decides. The array
+            // was split there, or reported with a doubled unit (AGGCT x 4, ACCGT, AGGCT x 4 came out as a 10-bp unit;
+            // GLM dtan #2)
+            // The stretches themselves are searched as before (the joined one alone lost arrays: its consensus could be
+            // taken over by a neighbouring array of a unit dividing p), and the joined one first. Only stretches of two
+            // copies and half the minimum each are joined (refining every short one made random sequence 3 times slower).
             if (bestEnd - i + 1 >= p && bestEnd + p + 1 - i >= need) work.push([i, bestEnd + p + 1]);
+            if (d > 0 && bestEnd - i + 1 >= p && bestEnd + p + 1 - i >= Math.max(2 * p, need / 2)) {   // at 0 % no copy may differ
+                if (prev && i - prev[1] <= p) { prev[1] = bestEnd + p + 1; prev.joined = true; }
+                else { if (prev?.joined && prev[1] - prev[0] >= need) joined.push(prev); prev = [i, bestEnd + p + 1]; }
+            }
             i = bestEnd + 1;
         }
+        if (prev?.joined && prev[1] - prev[0] >= need) joined.push(prev);
+        work.push(...joined);   // popped first
         while (work.length) {
             const [a, b] = work.pop();
             if (b - a < need) continue;
@@ -34412,8 +34441,21 @@ function runRepeatAnalysis() {
             let displayName = '';
             let totalLen = 0;
             const notes = [];   // capped lists and stopped searches, said in the summary
+            let tandemWork = 0, searched = 0, stopped = false;
             for (const t of targets) {
                 if (!t.seq) continue;
+                // Tandem costs about length x unit lengths per sequence, all in this one callback: All on 200 rows of
+                // 50 kb held the tab for about 45 s with nothing said (GLM dtan #4). It stops at a total and says so.
+                if (mode === 'tandem') {
+                    const len = t.seq.length, cost = len * Math.min(TANDEM_MAX_UNIT, Math.floor(len / 2), Math.max(1, Math.floor(TANDEM_WORK_LIMIT / Math.max(1, len))));
+                    if (searched > 0 && tandemWork + cost > TANDEM_TOTAL_WORK_LIMIT) {
+                        notes.push(`search stopped after ${searched} of ${targets.length} sequences (work limit; search fewer at a time with Selected rows)`);
+                        stopped = true;
+                        break;
+                    }
+                    tandemWork += cost;
+                }
+                searched++;
                 if (!displayName) displayName = t.name;
                 totalLen += t.seq.length;
                 const gs2al = [];
@@ -34470,7 +34512,7 @@ function runRepeatAnalysis() {
                 return;
             }
             _lastRepeatResults = allResults;
-            const name = targets.length === 1 ? displayName : `${targets.length} sequences`;
+            const name = targets.length === 1 ? displayName : `${stopped ? searched : targets.length} sequences`;
             // obj: the sequence a One-sequence table is about, so reopening on another sequence does not keep it
             _lastRepeatView = { mode, name, totalLen, unit, note: notes.join('; '), obj: scope === 'single' && targets.length === 1 ? state.seqs[targets[0].index] : null };
             _renderRepeatResultsHTML(resultsEl, allResults, mode, name, totalLen, _lastRepeatView);
