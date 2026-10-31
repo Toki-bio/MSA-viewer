@@ -6206,7 +6206,8 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     overlay.id = 'alignmentCanvasOverlay';
     overlay.style.cssText = 'display:block;position:absolute;top:0;left:0;pointer-events:none';
     alignmentContainer.appendChild(overlay);
-    const octx = overlay.getContext('2d');
+    // let, as ctx below: _canvasState.drawToSvg draws the same frame into SVG recorders in their place
+    let octx = overlay.getContext('2d');
     _canvasState.overlay = overlay;
 
     // Opaque: Chrome gives text on an opaque canvas the same subpixel (ClearType) antialiasing
@@ -6214,7 +6215,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // text of the page reads as blurred (owner: "canvas loads sequences in low resolution").
     // The glyph canvases and the scroll scratch copy are opaque for the same reason, and
     // every clear below is a white fill.
-    const ctx = canvas.getContext('2d', { alpha: false });
+    let ctx = canvas.getContext('2d', { alpha: false });
     const dpr = window.devicePixelRatio || 1;
     const clearWhite = (c, x, y, cw, ch) => { c.fillStyle = '#fff'; c.fillRect(x, y, cw, ch); };
     // Match the current zoom level so Canvas mode's text size tracks Normal
@@ -6299,6 +6300,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             c2.fillStyle = '#fff';
             if (l) c2.fillRect(0, 0, CSS1, AA_BOX_H);
             if (r) c2.fillRect(CHAR_W - CSS1, 0, CSS1, AA_BOX_H);
+            g._svg = { box: true, bg, side };   // what it holds, for the SVG recorder (_makeSvgRecorder)
             _boxEndCache.set(k, g);
         }
         return g;
@@ -6323,6 +6325,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             const base = _canvasTextBaseline(CHAR_H);                            // the font box centred in the row, as the DOM's half-leading does
             if (sans) { c2.textAlign = 'center'; c2.fillText(ch, CHAR_W / 2, base); }
             else c2.fillText(ch, 0, base);
+            g._svg = { ch, bg, fg, font: c2.font, base, h: CHAR_H, sans };   // what it holds, for the SVG recorder (_makeSvgRecorder)
             _glyphCache.set(k, g);
         }
         return g;
@@ -7085,7 +7088,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // Position scale (10, *, 20, * ...) - only the visible column window, same
         // generateScale() as Full/Block mode; cost is O(visible cols), not alignment length.
         if (TRACK_H > 0 && firstCol <= lastCol) {
-            _canvasDrawAnnotTrack(ctx, { ox, oy, w, NAME_W, CHAR_W, CHAR_H, TRACK_H, firstCol, lastCol, stickyNames, fontSizePx, layer: blockLayout, dpr });
+            _canvasDrawAnnotTrack(ctx, { ox, oy, w, NAME_W, CHAR_W, CHAR_H, TRACK_H, firstCol, lastCol, stickyNames, fontSizePx, layer: blockLayout && !ctx._svgRecorder, dpr });
             ctx.font = fontStr;
         }
         // Highlight diffs: the same rule as styles.css body.highlight-diffs - every cell, consensus
@@ -7423,6 +7426,47 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
 
         // (No line between the names and the sequences: Full and Block have none, and the owner did not want it.)
     }
+    // The frame as SVG: the viewport SVG export (Canvas and Block) and printing Block draw the same frame
+    // with the same code into SVG recorders put in place of ctx / octx (_makeSvgRecorder). region: a
+    // rectangle of the content { ox, oy, w, h } (CSS px), by default the viewport as it is now; idPrefix
+    // keeps the clip ids of several SVGs in one page apart. Returns { width, height, parts, unknownImages }:
+    // parts are the cells layer, then the overlay layer (selections), for _svgDocument.
+    _canvasState.drawToSvg = (region = {}, idPrefix = 'v') => {
+        const w = region.w ?? _cssW(), h = region.h ?? _cssH();
+        const ox = region.ox ?? _canvasState.offsetX, oy = region.oy ?? _canvasState.offsetY;
+        const rec = _makeSvgRecorder(dpr, { idPrefix }), orec = _makeSvgRecorder(dpr, { overlay: true, idPrefix: idPrefix + 'o' });
+        const ctx0 = ctx, octx0 = octx;
+        ctx = rec; octx = orec;
+        try {
+            clearWhite(ctx, 0, 0, w, h);
+            if (!blockLayout && stickyNames && ox > 0 && w > NAME_W) {
+                // Canvas strip scrolled sideways: the canvas draws the cells that scrolled under the fixed names and
+                // covers them with the name column; in an SVG they would stay as hidden text. Draw the data area,
+                // then the name column without its cells, each clipped to its part (as draw() clips its strips).
+                ctx.save(); ctx.beginPath(); ctx.rect(NAME_W, 0, w - NAME_W, h); ctx.clip();
+                drawArea(ox, oy, w, h, NAME_W, 0, w, h);
+                ctx.restore();
+                ctx.save(); ctx.beginPath(); ctx.rect(0, 0, NAME_W, h); ctx.clip();
+                rec.skipImages = true;
+                drawArea(ox, oy, w, h, 0, 0, NAME_W, h);
+                rec.skipImages = false;
+                ctx.restore();
+            } else drawArea(ox, oy, w, h, 0, 0, w, h);
+            drawOverlay(ox, oy, w, h);
+        } finally {
+            ctx = ctx0; octx = octx0;
+            clearBand();
+        }
+        return { width: w, height: h, parts: [rec.finish(), orec.finish()], unknownImages: rec.unknownImages + orec.unknownImages };
+    };
+    // Block: each band's rectangle of the content, for printing every band ({ oy, h, w, c0, c1 }: c0..c1 the
+    // band's columns, 0-based, end exclusive). null in the Canvas strip.
+    _canvasState.svgBandRegions = () => {
+        if (!blockLayout) return null;
+        let wMax = 0;
+        for (let b = 0; b < nBands; b++) wMax = Math.max(wMax, bandRight(b));
+        return Array.from({ length: nBands }, (_, b) => { const [c0, c1] = bandColRange(b); return { ox: 0, oy: bandTop[b], h: bandBody[b], w: Math.ceil(wMax + 2), c0, c1 }; });
+    };
     resize(true);
     draw();
 
@@ -18016,11 +18060,19 @@ function _exportCellClass(base, posData, config) {
 // Block-mode width, or the whole alignment in Full mode for the SVG), each
 // with a position ruler, the consensus row where the screen shows it, and
 // one line per sequence.
+// Block (Canvas Block) wraps the exports where the screen wraps the bands: at the Block size slider, or at
+// fewer columns when the window holds fewer (_canvasState.blockFitCols, the band width you see). Before
+// batch 5 they wrapped at the slider, which Canvas Block can exceed on a narrow window. Every column is
+// exported whatever the view hides (hidden columns, Variable sites only), as from the old DOM Block.
+function _exportBlockWidth() {
+    const slider = parseInt(el('blockSizeSlider')?.value, 10) || 60;
+    const fit = isBlockLayout() && _canvasState.layout?.kind === 'block' ? _canvasState.blockFitCols : 0;
+    return fit > 0 ? Math.min(slider, fit) : slider;
+}
 function _exportLayout({ wrapAlways = false } = {}) {
     const len = _maxOf(state.seqs, q => q.seq.length);
-    const blockSlider = parseInt(el('blockSizeSlider')?.value, 10) || 60;
     const blockMode = !!el('modeBlocks')?.checked;
-    const blockWidth = Math.max(1, (blockMode || wrapAlways) ? blockSlider : len);
+    const blockWidth = Math.max(1, (blockMode || wrapAlways) ? _exportBlockWidth() : len);
     const config = getSequenceRenderConfig();
     const conservation = preCalculateConservation(state.seqs, len, config.shadeMode);
     const showConsensus = !!el('showConsensus')?.checked;
@@ -18046,6 +18098,279 @@ function _exportRuns(text, start, end, styleAt) {
     return runs;
 }
 
+// ---- SVG of what the Canvas renderer draws (viewport SVG export, printing Block) ----
+// Canvas and Canvas Block draw through a 2D context, so there are no cells to walk for an SVG (the
+// viewport export refused in Canvas, and with Block drawn by the canvas it would have refused there
+// too). For an SVG the renderer draws the frame again into this recorder (_canvasState.drawToSvg): it
+// has the part of the CanvasRenderingContext2D API the renderer uses and writes each call as SVG.
+// The SVG so holds what the canvas shows, from the same state and the same drawing code: names, ruler,
+// consensus, residues with their colours and overlays, translation lanes, annotation track, length
+// badges, selections. A residue cell is a cached glyph image (_makeGlyph); the renderer tags each glyph
+// and codon-box end with what it holds (._svg), and the recorder writes the letter and its background.
+// Runs of cells in one line with one look become one <rect> per background run and one <text> with an
+// x per letter. Colours are composed over white as the opaque canvas composes them (a translucent tint,
+// a dimmed column under Highlight diffs), so cells need no transparency.
+// idPrefix keeps the clip-path ids of several SVGs in one page apart (printing).
+function _makeSvgRecorder(dpr, { overlay = false, idPrefix = 'c' } = {}) {
+    const mc = document.createElement('canvas').getContext('2d');   // colour parsing, text metrics
+    const out = [];
+    const clipDefs = new Map();   // clip rect key -> { id, r }
+    const colourCache = new Map(), fontCache = new Map(), baseCache = new Map();
+    const n2 = v => String(Math.round(v * 100) / 100);
+    const hex = c => '#' + [c[0], c[1], c[2]].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+    const WHITE = [255, 255, 255, 1];
+    // a canvas colour -> [r, g, b, a]
+    const rgba = c => {
+        let v = colourCache.get(c);
+        if (!v) {
+            mc.fillStyle = '#000';
+            mc.fillStyle = c;
+            const s = String(mc.fillStyle);
+            if (s[0] === '#') v = [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16), 1];
+            else { const mm = s.match(/[\d.]+/g) || [0, 0, 0]; v = [+mm[0], +mm[1], +mm[2], mm[3] === undefined ? 1 : +mm[3]]; }
+            colourCache.set(c, v);
+        }
+        return v;
+    };
+    // top (with its alpha) over an opaque colour
+    const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
+    // an opaque colour drawn at globalAlpha a over the white canvas
+    const fade = (c, a) => a >= 1 ? c : over([c[0], c[1], c[2], a], WHITE);
+    const fontAttrs = f => {
+        let v = fontCache.get(f);
+        if (v === undefined) {
+            const mm = String(f).match(/^\s*((?:\S+\s+)*?)([\d.]+)px\s+(.+)$/);
+            const pre = mm ? mm[1] : '', size = mm ? +mm[2] : 10, fam = mm ? mm[3].trim() : 'sans-serif';
+            v = ` font-family="${_escapeXmlText(fam.replace(/"/g, '\''))}" font-size="${n2(size)}px"`
+                + (/\bbold\b/.test(pre) ? ' font-weight="bold"' : '') + (/\bitalic\b/.test(pre) ? ' font-style="italic"' : '');
+            fontCache.set(f, v);
+        }
+        return v;
+    };
+    // how far the alphabetic baseline (SVG's) lies below a canvas textBaseline position
+    const baseOff = (font, tb) => {
+        if (tb === 'alphabetic' || !tb) return 0;
+        const k = font + '|' + tb;
+        let v = baseCache.get(k);
+        if (v === undefined) {
+            mc.font = font; mc.textBaseline = tb;
+            const tm = mc.measureText('M');
+            const size = parseFloat((String(font).match(/([\d.]+)px/) || [0, 10])[1]);
+            v = typeof tm.alphabeticBaseline === 'number' ? -tm.alphabeticBaseline
+                : (tb === 'top' || tb === 'hanging' ? size * 0.76 : tb === 'middle' ? size * 0.26 : tb === 'bottom' ? -size * 0.24 : 0);
+            mc.textBaseline = 'alphabetic';
+            baseCache.set(k, v);
+        }
+        return v;
+    };
+    const rec = {
+        _svgRecorder: true,
+        fillStyle: '#000', strokeStyle: '#000', font: '10px sans-serif', textAlign: 'start', textBaseline: 'alphabetic',
+        globalAlpha: 1, lineWidth: 1, imageSmoothingEnabled: true,
+        skipImages: false,  // drawImage writes nothing (the name-column pass of a scrolled Canvas strip, drawToSvg)
+        unknownImages: 0,  // images the recorder cannot write (none in the renderer's own drawing)
+    };
+    let m = [1, 1, 0, 0];   // x scale, y scale, x shift, y shift: user units -> CSS px
+    let clip = null;        // [x0, y0, x1, y1] CSS px
+    let dash = [];
+    let path = [], cur = null;
+    const stack = [];
+    const X = x => x * m[0] + m[2], Y = y => y * m[1] + m[3];
+    // '' when the box is inside the clip, null when it is outside, else a clip-path attribute
+    const clipAttr = (x0, y0, x1, y1) => {
+        if (!clip) return '';
+        if (x1 <= clip[0] || x0 >= clip[2] || y1 <= clip[1] || y0 >= clip[3]) return null;
+        if (x0 >= clip[0] - 0.01 && x1 <= clip[2] + 0.01 && y0 >= clip[1] - 0.01 && y1 <= clip[3] + 0.01) return '';
+        const k = clip.map(n2).join(',');
+        let d = clipDefs.get(k);
+        if (!d) { d = { id: idPrefix + 'clip' + (clipDefs.size + 1), r: clip.slice() }; clipDefs.set(k, d); }
+        return ` clip-path="url(#${d.id})"`;
+    };
+    const rectOut = (x0, y0, x1, y1, c) => {   // c: [r, g, b, a]; clipped by geometry
+        if (clip) { x0 = Math.max(x0, clip[0]); y0 = Math.max(y0, clip[1]); x1 = Math.min(x1, clip[2]); y1 = Math.min(y1, clip[3]); }
+        if (x1 - x0 < 0.005 || y1 - y0 < 0.005) return;
+        const a = c[3];
+        if (a <= 0) return;
+        out.push(`<rect x="${n2(x0)}" y="${n2(y0)}" width="${n2(x1 - x0)}" height="${n2(y1 - y0)}" fill="${hex(c)}"${a < 1 ? ` fill-opacity="${n2(a)}"` : ''}/>`);
+    };
+    const paint = (style) => { const c = rgba(style); return [c[0], c[1], c[2], c[3] * rec.globalAlpha]; };
+
+    // A run of glyph cells: one line, adjacent, one text colour and font
+    let run = null;
+    const flush = () => {
+        if (!run) return;
+        for (const s of run.bgs) out.push(`<rect x="${n2(s[0])}" y="${n2(run.y0)}" width="${n2(s[1] - s[0])}" height="${n2(run.y1 - run.y0)}" fill="${s[2]}"/>`);
+        out.push(`<text x="${run.xs.map(n2).join(' ')}" y="${n2(run.base)}" fill="${run.fg}"${run.font}${run.sans ? ' text-anchor="middle"' : ''} xml:space="preserve">${_escapeXmlText(run.text)}</text>`);
+        run = null;
+    };
+    const glyph = (g, x0, y0, x1, y1) => {
+        const ca = clipAttr(x0, y0, x1, y1);
+        if (ca === null) return;
+        const a = rec.globalAlpha;
+        const bgC = g.bg ? over(rgba(g.bg), WHITE) : WHITE;   // the glyph is white under its tint
+        const bgHex = hex(fade(bgC, a));
+        const fgHex = hex(fade(over(rgba(g.fg), bgC), a));
+        const font = fontAttrs(g.font);
+        const base = y0 + g.base * (y1 - y0) / g.h;
+        const tx = g.sans ? (x0 + x1) / 2 : x0;
+        if (ca) {   // cut by the clip: on its own
+            flush();
+            if (bgHex !== '#ffffff') rectOut(x0, y0, x1, y1, rgba(bgHex));
+            out.push(`<text x="${n2(tx)}" y="${n2(base)}" fill="${fgHex}"${font}${g.sans ? ' text-anchor="middle"' : ''}${ca} xml:space="preserve">${_escapeXmlText(g.ch)}</text>`);
+            return;
+        }
+        const key = n2(y0) + '|' + n2(y1) + '|' + fgHex + '|' + font + '|' + g.sans;
+        if (!run || run.key !== key || Math.abs(run.x1 - x0) > 0.01) {
+            flush();
+            run = { key, y0, y1, base, fg: fgHex, font, sans: g.sans, xs: [], text: '', bgs: [], x1: x0 };
+        }
+        run.xs.push(tx);
+        run.text += g.ch;
+        run.x1 = x1;
+        if (bgHex !== '#ffffff') {
+            const last = run.bgs[run.bgs.length - 1];
+            if (last && last[2] === bgHex && Math.abs(last[1] - x0) < 0.01) last[1] = x1;
+            else run.bgs.push([x0, x1, bgHex]);
+        }
+    };
+    // A codon box end (_boxEnd): the box colour with rounded outer corners, a white seam at the outer edge
+    const boxEnd = (g, x0, y0, x1, y1) => {
+        const ca = clipAttr(x0, y0, x1, y1);
+        if (ca === null) return;
+        const seam = Math.max(1 / dpr, Math.round(dpr) / dpr);
+        const l = g.side.includes('l'), r = g.side.includes('r');
+        const a = l ? x0 + seam : x0, b = r ? x1 - seam : x1, rad = 3;
+        const rl = l ? rad : 0, rr = r ? rad : 0;
+        const d = `M${n2(a + rl)} ${n2(y0)}H${n2(b - rr)}` + (rr ? `Q${n2(b)} ${n2(y0)} ${n2(b)} ${n2(y0 + rr)}` : '')
+            + `V${n2(y1 - rr)}` + (rr ? `Q${n2(b)} ${n2(y1)} ${n2(b - rr)} ${n2(y1)}` : '')
+            + `H${n2(a + rl)}` + (rl ? `Q${n2(a)} ${n2(y1)} ${n2(a)} ${n2(y1 - rl)}` : '')
+            + `V${n2(y0 + rl)}` + (rl ? `Q${n2(a)} ${n2(y0)} ${n2(a + rl)} ${n2(y0)}` : '') + 'Z';
+        out.push(`<rect x="${n2(x0)}" y="${n2(y0)}" width="${n2(x1 - x0)}" height="${n2(y1 - y0)}" fill="#ffffff"${ca}/>`);
+        out.push(`<path d="${d}" fill="${hex(fade(over(rgba(g.bg), WHITE), rec.globalAlpha))}"${ca}/>`);
+    };
+
+    rec.save = () => {
+        stack.push({ fillStyle: rec.fillStyle, strokeStyle: rec.strokeStyle, font: rec.font, textAlign: rec.textAlign,
+            textBaseline: rec.textBaseline, globalAlpha: rec.globalAlpha, lineWidth: rec.lineWidth, m: m.slice(), clip: clip && clip.slice(), dash: dash.slice() });
+    };
+    rec.restore = () => {
+        const s = stack.pop();
+        if (!s) return;
+        flush();
+        m = s.m; clip = s.clip; dash = s.dash;
+        for (const k of ['fillStyle', 'strokeStyle', 'font', 'textAlign', 'textBaseline', 'globalAlpha', 'lineWidth']) rec[k] = s[k];
+    };
+    rec.setTransform = (a, b, c, d, e, f) => { m = [a / dpr, d / dpr, e / dpr, f / dpr]; };
+    rec.translate = (x, y) => { m[2] += x * m[0]; m[3] += y * m[1]; };
+    rec.scale = (x, y) => { m[0] *= x; m[1] *= y; };
+    rec.setLineDash = d => { dash = Array.isArray(d) ? d.slice() : []; };
+    rec.getLineDash = () => dash.slice();
+    rec.measureText = t => { mc.font = rec.font; return mc.measureText(t); };
+    rec.beginPath = () => { path = []; cur = null; };
+    rec.moveTo = (x, y) => { cur = [[X(x), Y(y)]]; path.push(cur); };
+    rec.lineTo = (x, y) => { if (!cur) rec.moveTo(x, y); else cur.push([X(x), Y(y)]); };
+    rec.closePath = () => { cur = null; };
+    rec.rect = (x, y, w, h) => { path.push([[X(x), Y(y)], [X(x + w), Y(y)], [X(x + w), Y(y + h)], [X(x), Y(y + h)]]); cur = null; };
+    rec.roundRect = (x, y, w, h) => rec.rect(x, y, w, h);
+    const pathBox = () => {
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const sp of path) for (const [x, y] of sp) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        return [x0, y0, x1, y1];
+    };
+    rec.clip = () => {
+        flush();
+        if (!path.length) return;
+        const b = pathBox();
+        clip = clip ? [Math.max(clip[0], b[0]), Math.max(clip[1], b[1]), Math.min(clip[2], b[2]), Math.min(clip[3], b[3])] : b;
+    };
+    const pathD = (closed) => path.map(sp => 'M' + sp.map(([x, y]) => n2(x) + ' ' + n2(y)).join('L') + (closed ? 'Z' : '')).join('');
+    rec.fill = () => {
+        flush();
+        if (!path.length) return;
+        const ca = clipAttr(...pathBox());
+        if (ca === null) return;
+        const c = paint(rec.fillStyle);
+        if (c[3] <= 0) return;
+        out.push(`<path d="${pathD(true)}" fill="${hex(c)}"${c[3] < 1 ? ` fill-opacity="${n2(c[3])}"` : ''}${ca}/>`);
+    };
+    const strokeAttrs = () => {
+        const c = paint(rec.strokeStyle);
+        return ` fill="none" stroke="${hex(c)}"${c[3] < 1 ? ` stroke-opacity="${n2(c[3])}"` : ''} stroke-width="${n2(rec.lineWidth * Math.abs(m[0]))}"`
+            + (dash.length ? ` stroke-dasharray="${dash.map(n2).join(' ')}"` : '');
+    };
+    rec.stroke = () => {
+        flush();
+        if (!path.length) return;
+        const b = pathBox(), lw = rec.lineWidth;
+        const ca = clipAttr(b[0] - lw, b[1] - lw, b[2] + lw, b[3] + lw);
+        if (ca === null) return;
+        out.push(`<path d="${pathD(false)}"${strokeAttrs()}${ca}/>`);
+    };
+    rec.fillRect = (x, y, w, h) => {
+        flush();
+        rectOut(Math.min(X(x), X(x + w)), Math.min(Y(y), Y(y + h)), Math.max(X(x), X(x + w)), Math.max(Y(y), Y(y + h)), paint(rec.fillStyle));
+    };
+    // the overlay layer is transparent: a clear removes nothing that was recorded
+    rec.clearRect = (x, y, w, h) => { flush(); if (!overlay) rectOut(X(x), Y(y), X(x + w), Y(y + h), WHITE); };
+    rec.strokeRect = (x, y, w, h) => {
+        flush();
+        const x0 = X(x), y0 = Y(y), x1 = X(x + w), y1 = Y(y + h), lw = rec.lineWidth;
+        const ca = clipAttr(x0 - lw, y0 - lw, x1 + lw, y1 + lw);
+        if (ca === null) return;
+        out.push(`<rect x="${n2(x0)}" y="${n2(y0)}" width="${n2(x1 - x0)}" height="${n2(y1 - y0)}"${strokeAttrs()}${ca}/>`);
+    };
+    rec.fillText = (text, x, y) => {
+        flush();
+        text = String(text);
+        if (!text) return;
+        const font = rec.font;
+        const size = parseFloat((String(font).match(/([\d.]+)px/) || [0, 10])[1]);
+        const tx = X(x), ty = Y(y) + baseOff(font, rec.textBaseline) * m[1];
+        const tw = rec.measureText(text).width * m[0];
+        const al = rec.textAlign;
+        const anchor = al === 'center' ? 'middle' : (al === 'right' || al === 'end') ? 'end' : 'start';
+        const bx0 = anchor === 'middle' ? tx - tw / 2 : anchor === 'end' ? tx - tw : tx;
+        const ca = clipAttr(bx0, ty - size * 0.8, bx0 + tw, ty + size * 0.25);
+        if (ca === null) return;
+        const c = paint(rec.fillStyle);
+        if (c[3] <= 0) return;
+        out.push(`<text x="${n2(tx)}" y="${n2(ty)}" fill="${hex(c)}"${c[3] < 1 ? ` fill-opacity="${n2(c[3])}"` : ''}${fontAttrs(font)}${anchor !== 'start' ? ` text-anchor="${anchor}"` : ''}${ca} xml:space="preserve">${_escapeXmlText(text)}</text>`);
+    };
+    rec.drawImage = (img, ...a) => {
+        if (rec.skipImages) return;
+        const g = img && img._svg;
+        if (!g) { flush(); rec.unknownImages++; return; }
+        let x, y, w, h;
+        if (a.length >= 8) [, , , , x, y, w, h] = a;
+        else if (a.length >= 4) [x, y, w, h] = a;
+        else { [x, y] = a; w = img.width / dpr; h = img.height / dpr; }
+        const x0 = X(x), y0 = Y(y), x1 = X(x + w), y1 = Y(y + h);
+        if (g.box) { flush(); boxEnd(g, x0, y0, x1, y1); }
+        else glyph(g, x0, y0, x1, y1);
+    };
+    rec.finish = () => {
+        flush();
+        const defs = [...clipDefs.values()].map(d => `<clipPath id="${d.id}"><rect x="${n2(d.r[0])}" y="${n2(d.r[1])}" width="${n2(Math.max(0, d.r[2] - d.r[0]))}" height="${n2(Math.max(0, d.r[3] - d.r[1]))}"/></clipPath>`);
+        return { body: out.join('\n'), defs: defs.join('\n') };
+    };
+    return rec;
+}
+
+// One SVG document from recorded parts ({ body, defs }, in paint order)
+function _svgDocument(parts, width, height, title, { xmlDecl = true } = {}) {
+    const W = String(Math.max(1, Math.ceil(width))), H = String(Math.max(1, Math.ceil(height)));
+    const defs = parts.map(p => p.defs).filter(Boolean).join('\n');
+    return [
+        xmlDecl ? '<?xml version="1.0" encoding="UTF-8"?>' : '',
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`,
+        `<title>${_escapeXmlText(title)}</title>`,
+        defs ? `<defs>\n${defs}\n</defs>` : '',
+        `<rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff"/>`,
+        ...parts.map(p => p.body).filter(Boolean),
+        '</svg>'
+    ].filter(Boolean).join('\n');
+}
+
 function _exportAlignmentAsSvg(mode = 'viewport') {
     if (!alignmentContainer) {
         showMessage('Alignment container not found.', 3000);
@@ -18058,11 +18383,17 @@ function _exportAlignmentAsSvg(mode = 'viewport') {
     // The whole alignment is drawn from the data: in windowed views most rows
     // and columns are not in the DOM, so walking the cells exported a fraction
     if (mode === 'full') { _exportFullAlignmentSvgFromData(); return; }
-    // This walks the rendered residue spans, which Canvas and Reads never create. Without
-    // this guard the export silently produced an empty file - and Canvas engages by itself
-    // above 150,000 residues, so it failed exactly on the alignments most worth exporting.
+    // Canvas and Block (Canvas Block) draw on a canvas: the frame is drawn again into an SVG recorder
+    // (_canvasState.drawToSvg). Before batch 5 this walked DOM spans only and refused there, which with
+    // Block drawn by the canvas would have taken the viewport SVG away from Block.
+    if (isCanvasMode() && _canvasState.drawToSvg && _canvasState.canvas && _canvasState.canvas.isConnected) {
+        _exportCanvasViewportSvg();
+        return;
+    }
+    // This walks the rendered residue spans, which Reads never creates. Without
+    // this guard the export silently produced an empty file.
     if (!alignmentContainer.querySelector('.seq-data span[data-pos]')) {
-        showMessage('SVG export needs Block or Full view - the current view draws no per-residue cells.', 4500);
+        showMessage('SVG export needs Full, Block or Canvas view - the current view draws no per-residue cells.', 4500);
         return;
     }
 
@@ -18143,6 +18474,96 @@ function _exportAlignmentAsSvg(mode = 'viewport') {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(dlUrl), 2000);
     showMessage(fullMode ? 'Full alignment exported as SVG.' : 'Visible viewport exported as SVG.', 2500);
+}
+
+// ---- Printing Block ----
+// Block is drawn on a canvas that holds only the bands in view, so a print gave that one screen as a
+// bitmap (measured 2026-10-31: 1 page, the viewport). The old DOM Block printed its blocks as page text,
+// each cut at the page's right edge, and above ALIGN_WINDOWED_DOM_THRESHOLD only the rows and blocks in
+// its window. Now, before printing, every band is drawn as SVG (_canvasState.drawToSvg) into #printBlock,
+// which the print stylesheet shows in place of the page; it is scaled to the paper's width, so every
+// column of a band is on paper. A band taller than a page is cut between rows into page-sized pieces.
+// Above PRINT_BLOCK_MAX_CELLS the bands from the one in view on are printed, up to the limit, under a
+// note naming them (the full-alignment SVG export has the rest).
+const PRINT_BLOCK_MAX_CELLS = 400_000;
+function _preparePrintBlock() {
+    _clearPrintBlock();
+    if (!isBlockLayout() || !_canvasState.drawToSvg || !_canvasState.svgBandRegions || !state.seqs?.length) return;
+    const bands = _canvasState.svgBandRegions();
+    if (!bands || !bands.length) return;
+    const t0 = performance.now();
+    const nSeqs = state.seqs.length;
+    const m = _canvasState.metrics || {};
+    const L = _canvasState.layout;
+    // the bands to print: all, or from the band in view while the cells stay under the limit
+    let b0 = 0, b1 = bands.length;
+    const cellsOf = b => nSeqs * (bands[b].c1 - bands[b].c0);
+    let total = 0;
+    for (let b = 0; b < bands.length; b++) total += cellsOf(b);
+    if (total > PRINT_BLOCK_MAX_CELLS) {
+        b0 = L && L.bandAt ? L.bandAt(_canvasState.offsetY) : 0;
+        let cells = 0;
+        for (b1 = b0; b1 < bands.length && (b1 === b0 || cells + cellsOf(b1) <= PRINT_BLOCK_MAX_CELLS); b1++) cells += cellsOf(b1);
+    }
+    const holder = document.createElement('div');
+    holder.id = 'printBlock';
+    const title = state.currentFilename || 'alignment';
+    if (b0 > 0 || b1 < bands.length) {
+        const note = document.createElement('p');
+        note.className = 'print-block-note';
+        note.textContent = `${title}: bands ${b0 + 1}-${b1} of ${bands.length} (columns ${bands[b0].c0 + 1}-${bands[b1 - 1].c1} of ${bands[bands.length - 1].c1}). `
+            + 'The whole alignment is too large to print from the page: use Export > Full alignment SVG.';
+        holder.appendChild(note);
+    }
+    const headerH = m.headerH || 0;
+    const parts = [];
+    let k = 0;
+    for (let b = b0; b < b1; b++) {
+        const r = bands[b];
+        // pieces of at most about a page (the SVG is scaled to the paper's width), cut between rows
+        const maxH = Math.max(r.w * 1.3, headerH + 3 * (L?.bandPitch?.[b] || 15));
+        const pitch = L?.bandPitch?.[b] || ((r.h - headerH) / Math.max(1, nSeqs));
+        let y = 0;
+        while (y < r.h - 0.5) {
+            let h = r.h - y;
+            if (h > maxH) {
+                const rowsFrom = Math.max(0, Math.ceil((y - headerH) / pitch - 1e-6));
+                const rowsTo = Math.floor((y + maxH - headerH) / pitch + 1e-6);
+                h = Math.max(pitch, headerH + Math.max(rowsFrom + 1, rowsTo) * pitch - y);
+            }
+            const s = _canvasState.drawToSvg({ ox: 0, oy: r.oy + y, w: r.w, h }, 'p' + (k++) + '_');
+            parts.push(_svgDocument(s.parts, s.width, s.height, `${title} band ${b + 1}`, { xmlDecl: false }));
+            y += h;
+        }
+    }
+    holder.insertAdjacentHTML('beforeend', parts.join('\n'));
+    document.body.appendChild(holder);
+    document.body.classList.add('print-block');
+    _canvasState.printMs = performance.now() - t0;
+}
+function _clearPrintBlock() {
+    document.getElementById('printBlock')?.remove();
+    document.body.classList.remove('print-block');
+}
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeprint', _preparePrintBlock);
+    window.addEventListener('afterprint', _clearPrintBlock);
+    // print preview emulation (DevTools, tests) changes the media without the print events
+    try {
+        window.matchMedia('print').addEventListener('change', e => {
+            if (e.matches) { if (!document.getElementById('printBlock')) _preparePrintBlock(); }
+            else _clearPrintBlock();
+        });
+    } catch (_) { /* no matchMedia listeners: the print events alone */ }
+}
+
+// The viewport SVG of Canvas and Block: what the canvas shows now, drawn into an SVG recorder
+function _exportCanvasViewportSvg() {
+    const r = _canvasState.drawToSvg();
+    const title = (state.currentFilename || 'alignment') + ' viewport export';
+    const svg = _svgDocument(r.parts, r.width, r.height, title);
+    _downloadBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `${_safeExportBaseName()}_viewport.svg`);
+    showMessage('Visible viewport exported as SVG.', 2500);
 }
 
 // Full-alignment SVG built from the data with the screen's colours (see

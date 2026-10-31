@@ -333,7 +333,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <p>Key capabilities:</p>
   <ul>
-    <li><strong>View</strong> - Four visualisation modes: Full (single-pane), Block (fixed-width), Canvas (high-performance for massive alignments), and Reads (IGV-style read packing for SAM/BAM data).</li>
+    <li><strong>View</strong> - Four visualisation modes: Full (single-pane, the letters are page text), Block (wrapped in bands as wide as the window holds, drawn on a canvas), Canvas (high-performance for massive alignments), and Reads (IGV-style read packing for SAM/BAM data).</li>
     <li><strong>Edit</strong> - GeneDoc-style residue editing, Move/Slide tools, undo/redo</li>
     <li><strong>Analyse</strong> - Statistics (distance and identity matrices you can copy or save), codon analysis, dot plots, repeat/TSD finder, tree builder, restriction site search, k-mer / SNP grouping and 2D rectangles</li>
     <li><strong>Colour</strong> - Monochrome conservation shading plus nucleotide, purine/pyrimidine, ambiguity, and amino-acid colour schemes</li>
@@ -1146,7 +1146,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <strong>Show 2D</strong> draws translucent rectangles over stretches where a
     subset of rows share a local pattern. This is a separate overlay from name
     and letter colours. It does not change row order. It works in Full, Block and Canvas
-    views, including the windowed Full/Block display used above about 100,000 residues.
+    views, including the windowed Full display used above about 100,000 residues.
   </p>
   <p>
     If SNP or k-mer groups already exist, each rectangle is tagged against them:
@@ -1245,8 +1245,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     fine ones. Squint knobs expose the eight parameters behind the presets;
     releasing any slider recomputes the mask. A row-split rectangle with a
     <strong>dashed red outline</strong> means that group’s members are scattered
-    in the current order rather than sitting together. Full and Block modes
-    only. The same overlay still loads from
+    in the current order rather than sitting together. Full, Block and Canvas
+    views. The same overlay still loads from
     <code>?mask=&lt;url&gt;</code> alongside <code>?url=</code>.
   </p>
 </section>
@@ -1262,14 +1262,14 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="di-modes">5.1 View Modes</h3>
   <table>
     <tr><th>Mode</th><th>Best For</th><th>Description</th></tr>
-    <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block.</td></tr>
-    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>Fixed-width blocks, drawn like Canvas (any size, no wait on large alignments; adjustable via Block Size slider, 40–300 chars, never wider than the window; <strong>Screen</strong> fits the block to the window width). Sequence names repeat per block; the view scrolls only up and down.</td></tr>
+    <tr><td><strong>Full</strong></td><td>General browsing, small alignments</td><td>Continuous single-pane view. All sequences in one scrolling block. The view whose letters are page text: the browser's find bar and text selection see them (from about 100,000 residues only the window drawn).</td></tr>
+    <tr><td><strong>Block</strong></td><td>Publication viewing, wide alignments</td><td>The alignment wrapped in blocks (bands), drawn on a canvas like Canvas (any size, no wait on large alignments). The Block Size slider sets the width, 40–300 chars, but a block is never wider than the window holds: on a narrow window it wraps at what fits; <strong>Screen</strong> fits the block to the window width. Sequence names repeat per block; the view scrolls only up and down. Because the letters are drawn as pixels, the browser's find bar does not see them: <kbd>Ctrl+F</kbd> opens the motif search (§7.1). Printing (<kbd>Ctrl+P</kbd>) prints every block, scaled to the paper's width (§9.10).</td></tr>
     <tr><td><strong>Canvas</strong></td><td>Any alignment; the default view</td><td>The default view at every size (a note on the first load says so). Choosing Full or Block keeps that view for smaller files for the rest of the session; alignments from 40,000 residues still open in Canvas. A link can choose the view with <code>&amp;view=full</code>, <code>block</code> or <code>canvas</code>. Scrolls by moving the drawn pixels, so wheel and scrollbar steps cost a few milliseconds whatever the size. Shows the consensus row (top or bottom) and the conservation shading. Editing works as in Full view (edit tools, typing, undo, selections, rename by double-click, row drag by the name), and so do motif search, Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots. From about 100,000 residues, Full draws a window rather than every cell.</td></tr>
     <tr><td><strong>Reads</strong></td><td>SAM/BAM read data</td><td>IGV-style read packing view. Displays reads as horizontal bars with CIGAR-expanded match/mismatch/indel colouring. Activated automatically when SAM or BAM reads are opened onto a loaded reference (2.5). A <strong>Show bases</strong> checkbox next to the mode switch draws every base of each read instead of mismatches only. A coverage row (counts per base and strand on hover; click to sort the reads there), read strands in colour, and <strong>Variants</strong> / <strong>Sample &rarr; row</strong> buttons (2.5).</td></tr>
   </table>
   <p>
     Mode switching is instant - no re-render delay. The Block Size slider adjusts
-    characters per block in Block mode and is greyed out in other modes.
+    characters per block in Block mode (up to what fits the window) and is greyed out in other modes.
   </p>
 
   <h3 id="di-checks">5.2 Highlight Diffs &amp; Variable Sites</h3>
@@ -1297,7 +1297,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li>
       <strong>Variable sites only</strong> - hides conserved columns entirely,
       showing only positions with variation. Useful for scanning SNP-dense regions.
-      Works in Full, Block and Canvas (in Canvas the hidden runs collapse to the same
+      Works in Full, Block and Canvas (in Canvas and Block the hidden runs collapse to the same
       marker cells, and the ruler, consensus row, selections and editing follow the shown columns).
     </li>
   </ul>
@@ -1385,8 +1385,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="di-colors">5.3 Alignment Colour Schemes</h3>
   <p>
     The <strong>Letters</strong> row of the Display menu sets how residues are drawn.
-    <strong>Colours</strong> controls residue colouring in the main Full and Block alignment
-    renderers; the conservation-based black/grey/white display is <strong>Monochrome</strong>,
+    <strong>Colours</strong> controls residue colouring in the Full, Block and Canvas
+    views; the conservation-based black/grey/white display is <strong>Monochrome</strong>,
     the default. <strong>Case</strong> shows residues <strong>As in file</strong>, in
     <strong>UPPER</strong> or in <strong>lower</strong> case; it changes only the display,
     not the sequences. The same choice is the <strong>aa | Aa | AA</strong> switch next to
@@ -1811,7 +1811,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <div class="note">
     <strong>Editing works in Full, Block and Canvas views.</strong> Reads view draws no per-residue
     cells for the tools to act on, so Edit Mode is unavailable there and says so. In Canvas
-    (the default view) the tools, typing, undo, rename and row drag behave as
+    and Block (both drawn on a canvas) the tools, typing, undo, rename and row drag behave as
     in Full view, and so do motif search, Highlight diffs, Variable sites only, codon analysis, Show 2D and snapshots.
   </div>
 
@@ -2123,8 +2123,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Format</th><th>Use</th><th>Notes</th></tr>
     <tr><td>FASTA</td><td>Downstream tools</td><td>Toolbar <strong>Save</strong> button (full alignment); selected sequences by Copy Sel / New Tab</td></tr>
-    <tr><td>RTF</td><td>Microsoft Word</td><td>Input menu <strong>RTF</strong>. Monospace, per-residue shading, scale ruler, consensus line</td></tr>
-    <tr><td>SVG</td><td>Publication figures</td><td>Input menu <strong>SVG</strong> / <strong>Full SVG</strong>. Vector graphics. <em>Viewport</em> saves what is on screen, overlays included; <em>Full</em> draws every sequence and column from the data in the screen's colours (ruler, names, consensus; search and annotation overlays are not included), in any view mode</td></tr>
+    <tr><td>RTF</td><td>Microsoft Word</td><td>Input menu <strong>RTF</strong>. Monospace, per-residue shading, scale ruler, consensus line. Blocks of the Block Size width; in Block view, of the width the blocks have on screen (narrower when the window holds fewer columns). Every column, including hidden ones and those Variable sites only hides</td></tr>
+    <tr><td>SVG</td><td>Publication figures</td><td>Input menu <strong>SVG</strong> / <strong>Full SVG</strong>. Vector graphics. <em>Viewport</em> saves what is on screen, overlays included, in Full, Block and Canvas (in Block and Canvas it is drawn from what the canvas draws: names, ruler, consensus, residues with their colours and marks, translation rows, annotation track, selections); <em>Full</em> draws every sequence and column from the data in the screen's colours (ruler, names, consensus; search and annotation overlays are not included), in any view mode, wrapped like the blocks on screen in Block view and unwrapped in the others; it holds every column, including hidden ones</td></tr>
+    <tr><td>Print</td><td>Paper, PDF</td><td>The browser's Print (<kbd>Ctrl+P</kbd>). In Block view every block is printed, as vector graphics scaled to the paper's width, in place of the page (a block taller than a page is split between rows); above 400,000 residues the blocks from the one in view are printed up to that size, under a note, and <strong>Full SVG</strong> has the rest. In Canvas view the print is the picture on screen; Full prints the page as it is</td></tr>
     <tr><td>Newick (<code>.nwk</code>)</td><td>Phylogenetics tools</td><td>Tree window <strong>Download .nwk</strong>: UPGMA or Neighbor-Joining tree with branch lengths, whichever the Tree window last built</td></tr>
     <tr><td>Standalone HTML</td><td>Sharing</td><td>Input menu <strong>Create</strong>: a JSON snapshot plus a self-contained HTML snapshot page with embedded alignment, and a <code>?snapshot=</code> URL on the clipboard (§2.6)</td></tr>
     <tr><td>New tab</td><td>A sub-alignment</td><td>Selected sequences opened as an alignment in a new ViewAlign tab (<kbd>Alt+T</kbd>)</td></tr>
@@ -2282,7 +2283,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><th>Action</th><th>Result</th></tr>
     <tr><td>Click sequence name</td><td>Select that row only (replaces the row selection; clicking the only selected row again unselects it). Double-click renames</td></tr>
     <tr><td>Ctrl+Click name</td><td>Toggle row selection. Shift+Click selects the range from the last clicked row; Shift+Click on a row that is already selected deselects that range. Ctrl+drag over names selects the rows passed, or deselects them when the drag starts on a selected row</td></tr>
-    <tr><td>Hover</td><td>The same in every view: a residue shows its row and position (and the mark it is in: TSD, repeat, dot-plot stretch, SNP letter); a name its full text, length and colour or group; a length box the gapless length; the consensus its column's coverage and bases, with the trim or soft-trim note. In the Canvas view the trim borders are dragged on the consensus row as in Full/Block</td></tr>
+    <tr><td>Hover</td><td>The same in every view: a residue shows its row and position (and the mark it is in: TSD, repeat, dot-plot stretch, SNP letter); a name its full text, length and colour or group; a length box the gapless length; the consensus its column's coverage and bases, with the trim or soft-trim note. In the Canvas and Block views the trim borders are dragged on the consensus row as in Full</td></tr>
     <tr><td>Right-click with residues selected</td><td>The menu starts with <em>Copy selected bases: plain text</em> (one line per row, as <kbd>Ctrl+C</kbd>) and <em>Copy selected bases: FASTA</em> (each row as <code>&gt;name:first-last</code>, residue numbers of the ungapped row)</td></tr>
     <tr><td>Click / Ctrl+Click residue</td><td>Select residues (bases) in that row; a second click in the same row extends to a range, or drag. A drag across rows, or a second click in another row, selects the rectangle of rows &times; columns between the two cells (Realign Block then realigns that block, &sect;3.2.1). In Edit mode, Ctrl is required (a plain click is for the edit tools)</td></tr>
     <tr><td>Ctrl+Alt+Click residue</td><td>Select column; Ctrl+Alt+drag selects a column range (§8.2)</td></tr>

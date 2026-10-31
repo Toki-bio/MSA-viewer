@@ -5819,6 +5819,243 @@ check('Canvas Block: AA only with codon lanes per band: a codon tooltip is ancho
   return { pass: ok, detail: JSON.stringify({ lanes, aaOnly: g.aaOnly, oy, tip, wantY: g.top + cellTop - oy, wantX: pt.x, box, wantBox: nTop - 1 }) };
 }));
 
+// ---- Canvas Block: exports and printing (batch 5, 2026-10-31) ----
+// Runs an export function in the page and returns the file it would download (text), or null. Both
+// download paths are caught: _downloadBlob and the DOM viewport export's own object URL + link click.
+const cbCaptureFile = (p, fnName, arg) => p.evaluate(async ({ fnName, arg }) => {
+  let file = null;
+  const o = window._downloadBlob, ou = URL.createObjectURL, oc = HTMLAnchorElement.prototype.click;
+  window._downloadBlob = async (blob, name) => { file = { name, text: await blob.text() }; };
+  let blob = null;
+  URL.createObjectURL = (x) => { blob = x; return 'blob:x'; };
+  HTMLAnchorElement.prototype.click = function () {};
+  try { await window[fnName](arg); } finally { window._downloadBlob = o; URL.createObjectURL = ou; HTMLAnchorElement.prototype.click = oc; }
+  for (let i = 0; i < 100 && !file && !blob; i++) await new Promise(r => setTimeout(r, 20));
+  if (!file && blob) file = { name: '', text: await blob.text() };
+  return file;
+}, { fnName, arg });
+// An SVG export as lines of text, top to bottom: each line's name (the text at the left), its cells
+// (one letter each, with the letter colour and the background under it) and its other texts (length
+// badges). Works on both the old DOM Block export (a <text> per span) and the canvas one (runs of
+// cells as one <text> with an x per letter).
+function cbSvgLines(svg) {
+  const hexc = c => { const m = String(c).match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); return m ? '#' + [m[1], m[2], m[3]].map(v => (+v).toString(16).padStart(2, '0')).join('') : String(c).toLowerCase(); };
+  const unesc = t => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, '\'').replace(/&amp;/g, '&');
+  const H = +((svg.match(/<svg[^>]* height="([\d.]+)"/) || [0, 0])[1]);
+  const buckets = new Map();   // rects by 4 px rows of y
+  for (const m of svg.matchAll(/<rect x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" height="([\d.]+)" fill="([^"]+)"/g)) {
+    const r = { x: +m[1], y: +m[2], w: +m[3], h: +m[4], fill: hexc(m[5]), i: m.index };
+    if (r.fill === '#ffffff') continue;
+    for (let k = Math.floor(r.y / 4); k <= Math.floor((r.y + r.h) / 4); k++) { if (!buckets.has(k)) buckets.set(k, []); buckets.get(k).push(r); }
+  }
+  const bgAt = (x, y) => {
+    let best = null;
+    for (const r of buckets.get(Math.floor(y / 4)) || []) if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h && (!best || r.i > best.i)) best = r;
+    return best ? best.fill : '#ffffff';
+  };
+  const byY = new Map();
+  for (const m of svg.matchAll(/<text x="([^"]+)" y="([-\d.]+)" fill="([^"]+)"[^>]*>([^<]*)<\/text>/g)) {
+    const xs = m[1].trim().split(/\s+/).map(Number), y = +m[2], fg = hexc(m[3]), t = unesc(m[4]);
+    const key = Math.round(y * 2) / 2;
+    if (!byY.has(key)) byY.set(key, { y, name: '', cells: [], other: [] });
+    const line = byY.get(key);
+    if (xs.length > 1 || (t.length === 1 && xs[0] > 30)) {
+      for (let i = 0; i < t.length; i++) line.cells.push({ x: xs[Math.min(i, xs.length - 1)], ch: t[i], fg, bg: bgAt(xs[Math.min(i, xs.length - 1)] + 1.5, y - 3) });
+    } else if (xs[0] < 30) line.name = t;
+    else line.other.push(t);
+  }
+  return { height: H, lines: [...byY.values()].sort((a, b) => a.y - b.y).map(l => {
+    l.cells.sort((a, b) => a.x - b.x);
+    return { y: l.y, name: l.name, seq: l.cells.map(c => c.ch).join(''), fg: l.cells.map(c => c.fg).join(','), bg: l.cells.map(c => c.bg).join(','), other: l.other.join(' ') };
+  }) };
+}
+
+// Before batch 5 the viewport SVG export walked DOM spans and refused when there were none ("SVG export
+// needs Block or Full view"): with Block drawn on the canvas it refused in Block itself. It now draws the
+// frame again into an SVG recorder. Oracle: the old DOM Block's viewport SVG of the same alignment, window
+// and block width (?view=domblock renderer, switched in the same page): every line of the canvas SVG fully
+// in view (names, residues, length badges) has the same text, letter colours and backgrounds as that DOM
+// line, and the consensus line the same letters. Known differences: the DOM export has no ruler and no
+// 'Consensus' label (they are not spans it walks); the consensus row's colours differ on screen already
+// (the DOM rows colour it by the scheme, the Canvas renderer draws it #555 at 0.9 opacity on white, i.e.
+// #666666, in Canvas and Canvas Block alike), so the canvas SVG must have what the canvas draws.
+check('Canvas Block: the viewport SVG export draws the bands in view (names, ruler, consensus, residues, colours) as the DOM Block viewport SVG does', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const fasta = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'examples', 'svk_k4.fa'), 'utf8');
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, fasta);
+  await p.waitForTimeout(500);
+  await p.evaluate(async () => {
+    const s = document.getElementById('colorSchemeSelect'); s.value = 'nucleotide'; s.dispatchEvent(new Event('change', { bubbles: true }));
+    const c = document.getElementById('showConsensus'); if (!c.checked) c.click();
+    const bs = document.getElementById('blockSizeSlider'); bs.value = '60'; bs.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 900));
+  });
+  // band 2 a few rows down at the top of the view: the view shows the end of band 2 and band 3's start
+  const view = await p.evaluate(async () => {
+    const L = _canvasState.layout;
+    _canvasState.offsetY = L.bandTop[1] + 200; _canvasState.scheduleDraw();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return { bandCols: L.bandCols, nBands: L.nBands, oy: _canvasState.offsetY, b0: L.bandAt(_canvasState.offsetY), b1: L.bandAt(_canvasState.offsetY + _canvasState.canvas.height / (window.devicePixelRatio || 1) - 1) };
+  });
+  const cv = await cbCaptureFile(p, '_exportAlignmentAsSvg', 'viewport');
+  const dom = await p.evaluate(async () => {
+    _domBlockForTests = true; document.getElementById('modeBlocks').checked = true; await onModeChange();
+    await new Promise(r => setTimeout(r, 900));
+    return { blocks: document.querySelectorAll('.block-block').length };
+  });
+  const dv = await cbCaptureFile(p, '_exportAlignmentAsSvg', 'viewport');
+  if (!cv || !dv) return { pass: false, detail: JSON.stringify({ canvasFile: !!cv, domFile: !!dv, view, dom }) };
+  const c = cbSvgLines(cv.text), d = cbSvgLines(dv.text);
+  const rulerLines = c.lines.filter(l => !l.name && /^[\d* ]+$/.test(l.seq) && /^(#666666,?)+$/.test(l.fg));
+  const cl = c.lines.filter(l => !rulerLines.includes(l) && l.y + 4 <= c.height && l.y > 12);
+  const cons = l => l.name === 'Consensus';
+  // the first canvas row line (a sequence) and where it is in the DOM SVG
+  const first = cl.findIndex(l => l.name && !cons(l));
+  const anchor = cl[first];
+  const di = d.lines.findIndex(l => l.name === anchor.name && l.seq === anchor.seq);
+  const diffs = [];
+  let compared = 0, consCompared = 0;
+  if (di < 0) diffs.push('first canvas row not in the DOM SVG: ' + anchor.name);
+  else {
+    for (let k = first; k < cl.length; k++) {
+      const a = cl[k], b = d.lines[di + (k - first)];
+      if (!b) { diffs.push('no DOM line for ' + a.name); break; }
+      if (cons(a)) {
+        consCompared++;
+        if (b.name !== '' || a.seq !== b.seq || !/^(#666666,?)+$/.test(a.fg) || !/^(#ffffff,?)+$/.test(a.bg)) diffs.push(`consensus line ${k}: ${a.seq.slice(0, 20)} / ${b.seq.slice(0, 20)} name ${b.name} fg ${a.fg.slice(0, 40)} / ${b.fg.slice(0, 40)} bg ${a.bg.slice(0, 40)} / ${b.bg.slice(0, 40)}`);
+      } else {
+        compared++;
+        for (const f of ['name', 'seq', 'fg', 'bg', 'other']) if (a[f] !== b[f]) { diffs.push(`line ${k} ${a.name} ${f}: ${String(a[f]).slice(0, 60)} | ${String(b[f]).slice(0, 60)}`); break; }
+      }
+    }
+  }
+  const colourful = new Set(cl.flatMap(l => l.bg.split(','))).size;
+  const ok = view.b1 > view.b0 && compared >= 30 && consCompared >= 1 && diffs.length === 0 && rulerLines.length === view.b1 - view.b0 && colourful >= 4
+    && cl.every(l => cons(l) || !l.name || l.seq.length === view.bandCols || l.seq.length > 0);
+  return { pass: ok, detail: JSON.stringify({ view, dom, compared, consCompared, rulerLines: rulerLines.length, colourful, diffs: diffs.slice(0, 5) }) };
+}));
+
+// The Canvas strip gets the viewport SVG too (it refused there before batch 5): the names and residues
+// of the rows in view, at the columns in view.
+check('Canvas Block: the viewport SVG export also works in the Canvas strip (rows and columns in view)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=canvas', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(60, 900));
+  await p.waitForTimeout(600);
+  const v = await p.evaluate(async () => {
+    _canvasState.offsetX = 8 * 100; _canvasState.offsetY = 15 * 10; _canvasState.scheduleDraw();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const m = _canvasState.metrics;
+    return { ox: _canvasState.offsetX, oy: _canvasState.offsetY, charW: m.charW, nameW: m.nameW, headerH: m.headerH, pitch: _canvasState.rowPitch };
+  });
+  const f = await cbCaptureFile(p, '_exportAlignmentAsSvg', 'viewport');
+  if (!f) return { pass: false, detail: 'no file' };
+  const s = cbSvgLines(f.text);
+  const want = (i) => { let q = ''; for (let j = 0; j < 900; j++) q += 'ACGT'[(i * 7 + j) % 4]; return q; };
+  const rows = s.lines.filter(l => /^seq\d+$/.test(l.name) && l.y + 4 <= s.height);
+  const s0 = Math.floor(v.ox / v.charW + 1e-6);   // the first column in view (at the names' edge)
+  const bad = rows.filter(l => l.seq.length < 100 || l.seq !== want(+l.name.slice(3)).slice(s0, s0 + l.seq.length));
+  const firstRow = rows.length ? +rows[0].name.slice(3) : -1;
+  const ok = rows.length >= 30 && bad.length === 0 && Math.abs(firstRow - (v.oy - v.headerH) / v.pitch) <= 1.5;
+  return { pass: ok, detail: JSON.stringify({ v, s0, rows: rows.length, firstRow, bad: bad.slice(0, 3).map(l => l.name + ':' + l.seq.slice(0, 20)) }) };
+}));
+
+// Item 1: the full-alignment SVG and the RTF from Block wrap where the screen wraps the bands. Before
+// batch 5 they wrapped at the Block size slider, which a narrow window cuts down (band width =
+// min(slider, what fits)): on a 760 px window with the slider at 150 the bands hold ~70 columns and the
+// export had 150-column blocks.
+check('Canvas Block: the full-alignment SVG and the RTF from Block wrap at the band width shown (narrow window)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.setViewportSize({ width: 760, height: 800 });
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(6, 700));
+  await p.waitForTimeout(500);
+  await p.evaluate(async () => { const bs = document.getElementById('blockSizeSlider'); bs.value = '150'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 800)); });
+  const L = await p.evaluate(() => ({ bandCols: _canvasState.layout.bandCols, nBands: _canvasState.layout.nBands, slider: +document.getElementById('blockSizeSlider').value }));
+  const svg = await cbCaptureFile(p, 'exportFullAlignmentAsSvg');
+  const rtf = await cbCaptureFile(p, 'exportAlignmentAsRtf');
+  // seq0's lines: their residue counts are the block widths
+  const svgRuns = [];
+  if (svg) {   // the residue texts (an x per letter) on the baseline of each of seq0's names
+    const ys = [...svg.text.matchAll(/<text x="2" y="([\d.]+)"[^>]*>seq0<\/text>/g)].map(m => m[1]);
+    const cells = [...svg.text.matchAll(/<text x="([^"]+)" y="([\d.]+)"[^>]*>([^<]*)<\/text>/g)].filter(c => c[1] !== '2').map(c => [c[0], c[2], c[3]]);
+    for (const y of ys) svgRuns.push(cells.filter(c => c[1] === y).map(c => c[2]).join('').length);
+  }
+  const rtfRuns = [];
+  if (rtf) for (const line of rtf.text.split('\\line')) { const t = line.replace(/\n/g, '').replace(/\\[a-z]+-?\d* ?/g, '').replace(/[{}]/g, ''); const mm = t.match(/^seq0\s+(\S+)$/); if (mm) rtfRuns.push(mm[1].length); }
+  const want = Array.from({ length: L.nBands }, (_, b) => Math.min(L.bandCols, 700 - b * L.bandCols));
+  const ok = L.bandCols < L.slider && JSON.stringify(svgRuns) === JSON.stringify(want) && JSON.stringify(rtfRuns) === JSON.stringify(want);
+  return { pass: ok, detail: JSON.stringify({ L, svgRuns, rtfRuns, want }) };
+}));
+
+// Item 1, hidden columns and Variable sites only: the full-alignment SVG and the RTF hold every column,
+// as the old DOM Block's did (they are built from the data); from Canvas Block they are the same files as
+// from the DOM Block when the window holds the slider's width (no regression of that behaviour).
+check('Canvas Block: with hidden columns and Variable sites only the full SVG and RTF hold every column, as from the DOM Block', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  const fasta = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'examples', 'svk_k4.fa'), 'utf8');
+  await loadFasta(p, fasta);
+  await p.waitForTimeout(500);
+  const setup = await p.evaluate(async () => {
+    const bs = document.getElementById('blockSizeSlider'); bs.value = '60'; bs.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 500));
+    _foldApply([[20, 39], [100, 109]]);
+    await new Promise(r => setTimeout(r, 600));
+    const v = document.getElementById('varSitesOnly') || document.getElementById('variableSitesOnly');
+    if (v && !v.checked) v.click();
+    await new Promise(r => setTimeout(r, 900));
+    return { folds: JSON.stringify(state.hiddenCols), varOnly: document.body.classList.contains('var-sites-only'), nSlots: _canvasState.nSlots, len: state.seqs[0].seq.length, bandCols: _canvasState.layout?.bandCols };
+  });
+  const cSvg = await cbCaptureFile(p, 'exportFullAlignmentAsSvg');
+  const cRtf = await cbCaptureFile(p, 'exportAlignmentAsRtf');
+  await p.evaluate(async () => { _domBlockForTests = true; document.getElementById('modeBlocks').checked = true; await onModeChange(); await new Promise(r => setTimeout(r, 900)); });
+  const dSvg = await cbCaptureFile(p, 'exportFullAlignmentAsSvg');
+  const dRtf = await cbCaptureFile(p, 'exportAlignmentAsRtf');
+  let residues = 0;
+  if (cSvg) for (const m of cSvg.text.matchAll(/<text x="([^"]+)"[^>]*fill="(#[0-9a-f]{6})"[^>]*>([^<]*)<\/text>/g)) { if (m[1] === '2' || m[2] === '#666666') continue; residues += m[3].length; }
+  const nSeq = 40, cons = await p.evaluate(() => document.getElementById('showConsensus').checked);
+  const ok = !!cSvg && !!dSvg && !!cRtf && !!dRtf && setup.folds !== 'null' && setup.nSlots < setup.len
+    && cSvg.text === dSvg.text && cRtf.text === dRtf.text && residues === (nSeq + (cons ? 1 : 0)) * setup.len;
+  return { pass: ok, detail: JSON.stringify({ setup, residues, want: (nSeq + (cons ? 1 : 0)) * setup.len, svgSame: cSvg && dSvg && cSvg.text === dSvg.text, rtfSame: cRtf && dRtf && cRtf.text === dRtf.text }) };
+}));
+
+// Item 3: printing Block. Before batch 5 the print of Canvas Block was the canvas bitmap of the bands in
+// view (one screen). Under print media every band is drawn as SVG into #printBlock, the rest of the page
+// hidden: every band, every row name and every row's residues of that band (checked in the print media
+// emulation), and the PDF has every row's text.
+check('Canvas Block: printing Block prints every band (each row\'s name and residues) as SVG in place of the page', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(20, 900));
+  await p.waitForTimeout(500);
+  await p.evaluate(async () => { const bs = document.getElementById('blockSizeSlider'); bs.value = '100'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 800)); });
+  const L = await p.evaluate(() => ({ bandCols: _canvasState.layout.bandCols, nBands: _canvasState.layout.nBands }));
+  await p.emulateMedia({ media: 'print' });
+  await p.waitForTimeout(400);
+  const r = await p.evaluate(() => {
+    const holder = document.getElementById('printBlock');
+    const svgs = holder ? [...holder.querySelectorAll('svg')] : [];
+    const shown = holder ? getComputedStyle(holder).display : 'none';
+    const viewer = getComputedStyle(document.getElementById('viewer-container')).display;
+    return { svgs: svgs.length, shown, viewer, texts: svgs.map(s => s.outerHTML) };
+  });
+  const want = (i) => { let q = ''; for (let j = 0; j < 900; j++) q += 'ACGT'[(i * 7 + j) % 4]; return q; };
+  const bad = [];
+  let rowsSeen = 0;
+  r.texts.forEach((svg, b) => {
+    const s = cbSvgLines(svg);
+    for (let i = 0; i < 20; i++) {
+      const line = s.lines.find(l => l.name === 'seq' + i);
+      const exp = want(i).slice(b * L.bandCols, (b + 1) * L.bandCols);
+      if (!line || line.seq !== exp) bad.push(`band ${b + 1} seq${i}: ${line ? line.seq.slice(0, 12) : 'missing'}`);
+      else rowsSeen++;
+    }
+  });
+  const pdf = await p.pdf({ format: 'A4', printBackground: true });
+  await p.emulateMedia({ media: 'screen' });
+  await p.waitForTimeout(300);
+  const after = await p.evaluate(() => !!document.getElementById('printBlock'));
+  const ok = r.svgs === L.nBands && r.shown === 'block' && r.viewer === 'none' && bad.length === 0 && rowsSeen === 20 * L.nBands && !after && pdf.length > 20000;
+  return { pass: ok, detail: JSON.stringify({ L, svgs: r.svgs, shown: r.shown, viewer: r.viewer, rowsSeen, bad: bad.slice(0, 4), pdfBytes: pdf.length, removedAfter: !after }) };
+}));
+
 check('Realign all keeps a row that has only gaps (MAFFT and codon/MACSE), as a gap row of the new width', async (page) => {
   const fa = '>a\nATGGCTAAAGGTCTGCAAGAATTCGGTACC\n>empty\n------------------------------\n>b\nATGGCTAAGGGTCTGCAAGAATTCGGAACC\n>c\nATGGCAAAAGGTCTGCAGGAATTCGGTACC\n';
   const out = {};

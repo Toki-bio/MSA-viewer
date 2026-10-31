@@ -38,7 +38,7 @@ localStorage-backed panel. Stores metadata + full alignment text (100 KB cap per
 ## 🖥️ Visualization & Rendering
 
 ### 4 interchangeable view modes
-**Full** (continuous scroll), **Block** (configurable-width wrapped blocks with repeating labels), **Canvas** (viewport-culled 2D canvas), **Reads** (IGV-style read tracks for mapped SAM/BAM data). Switch modes without reloading or reformatting. Variable Sites Only is a cross-mode overlay (checkbox), not a separate mode.
+**Full** (continuous scroll), **Block** (wrapped blocks with repeating labels, drawn by the Canvas renderer; width set by the Block size slider, never wider than the window), **Canvas** (viewport-culled 2D canvas), **Reads** (IGV-style read tracks for mapped SAM/BAM data). Switch modes without reloading or reformatting. Variable Sites Only is a cross-mode overlay (checkbox), not a separate mode.
 
 **Why novel:** Most viewers offer 1–2 modes. Four modes serve distinct workflows — editing (Full), publication inspection (Block), large alignments (Canvas), and NGS reads (Reads). Variable Sites Only adds variant scanning to any mode.
 
@@ -269,7 +269,7 @@ Word-compatible document. Courier New 9pt monospace. Each residue's background c
 **Why novel:** GeneDoc-style publication-quality alignment figures from a browser. No desktop software needed for the final figure.
 
 ### Two-mode SVG export
-**Export view as SVG:** exactly what's visible on screen. **Export full alignment as SVG:** all columns as a single vector graphic. Both preserve colours, shading, and labels.
+**Export view as SVG:** exactly what's visible on screen, in Full, Block and Canvas (in Block and Canvas the frame is drawn again into an SVG recorder, so the file holds what the canvas draws). **Export full alignment as SVG:** all columns as a single vector graphic, wrapped at the on-screen block width in Block. Both preserve colours, shading, and labels. Printing Block prints every block as SVG scaled to the paper's width.
 
 ### Snapshot system with URL loading
 Save complete viewer state as JSON: alignment data, colour assignments, search highlight history, column selections, view mode, zoom level, custom colours. Load via file picker or URL parameter (`?snapshotFile=`). Two download formats: `.json` (reloadable) and `.html` (standalone printable view).

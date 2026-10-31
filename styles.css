@@ -4466,7 +4466,13 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
     }
+    /* Block: every band as SVG (#printBlock, made before printing by _preparePrintBlock) in place of the page */
+    body.print-block > *:not(#printBlock) { display: none !important; }
+    body.print-block #printBlock { display: block; }
+    #printBlock svg { display: block; max-width: 100%; height: auto; break-inside: avoid; page-break-inside: avoid; margin: 0 0 10px; }
+    #printBlock .print-block-note { font: 11px sans-serif; color: #555; margin: 0 0 8px; }
 }
+#printBlock { display: none; }
 
 /* The boundary between names and sequences: drag it to set the name column's width */
 #alignmentContainer.name-resize-hover, #alignmentContainer.name-resize-hover *,
