@@ -5228,15 +5228,15 @@ check('Canvas Block: codon analysis by gene gives each band the DOM block\'s tra
       const c = _canvasState.canvas, g = c.getContext('2d'), a = g.getImageData(0, 0, c.width, c.height).data, st = { blit: _canvasState.stats.blit, full: _canvasState.stats.full, oy: _canvasState.offsetY };
       _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
       const b = g.getImageData(0, 0, c.width, c.height).data;
-      // diff: pixels that differ by more than text antialiasing does (Chrome's GPU and software canvas
-      // drawing give letters fringes up to ~17 apart, and it may move this canvas from one to the
-      // other at any read-back); a misplaced or missing cell, letter or line differs by far more
-      let diff = 0, aa = 0;
+      // diff: every pixel that differs. Batch 3 found why letter edges used to differ (the annotation
+      // track's text drawn into the same canvas changed Chrome's antialiasing of later text; it now has
+      // its own canvas), so the frame copy must equal a full redraw exactly
+      let diff = 0, maxd = 0;
       for (let i = 0; i < a.length; i += 4) {
         const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2]));
-        if (d > 48) diff++; else if (d) aa++;
+        if (d) { diff++; if (d > maxd) maxd = d; }
       }
-      return { ...st, diff, aa };
+      return { ...st, diff, maxd };
     }));
   }
   const scrollOk = scroll.every(r => r.diff === 0) && scroll.filter(r => r.blit > 0 && r.full === 0).length >= 5;
