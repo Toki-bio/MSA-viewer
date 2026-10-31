@@ -207,7 +207,7 @@
                                 <label style="font-size:10px;white-space:nowrap;flex:0 0 auto;" title="Dim fully-conserved columns so columns that differ from the consensus stand out"><input type="checkbox" id="highlightDiffs" title="Dim fully-conserved columns so columns that differ from the consensus stand out"> Highlight diffs</label>
                                 <label style="font-size:10px;white-space:nowrap;flex:0 0 auto;" title="Hide fully-conserved columns entirely, showing only columns that differ"><input type="checkbox" id="varSitesOnly" title="Hide fully-conserved columns entirely, showing only columns that differ"> Variable sites only</label>
                                 <span id="varSitesControls" style="display:none;align-items:center;gap:4px;flex:0 0 auto;">
-                                    <select id="varThresholdMode" style="font-size:10px;height:20px;flex:0 0 auto;" title="Whether the number below is a percentage of all sequences, or an absolute sequence count. Percentage rounds up to a whole sequence count (Math.ceil), which on small alignments can jump by more than 1 sequence between adjacent percentages; absolute count has no rounding, so any value from 1 to the full sequence count is reachable exactly - including 1, which shows a column the instant even a single sequence differs.">
+                                    <select id="varThresholdMode" style="font-size:10px;height:20px;flex:0 0 auto;" title="Whether the number below is a percentage of all sequences, or an absolute sequence count. Percentage rounds up to a whole sequence count (Math.ceil), which on small alignments can jump by more than 1 sequence between adjacent percentages; absolute count has no rounding, so any value from 1 to one less than the sequence count (at most that many can differ) is reachable exactly - including 1, which shows a column the instant even a single sequence differs.">
                                         <option value="pct">%</option>
                                         <option value="count" selected>count</option>
                                     </select>
@@ -1449,7 +1449,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=7"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=370"></script>
+    <script src="script.js?v=371"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>
