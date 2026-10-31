@@ -5112,6 +5112,100 @@ check('Canvas Block: a preset and a snapshot saved in Block restore Block (Canva
   return { pass: ok, detail: JSON.stringify({ saved, inCanvas, preset, snap }) };
 }));
 
+// Owner 2026-10-31 (GLM cblk #46): the Block size slider and box show the band width DRAWN. On a window that
+// holds fewer columns than were asked for they showed the width asked for (the slider at least 40) while
+// the bands were narrower. The width asked for is kept: a note says "fits (150 set)", the bands grow back
+// when the window widens, and presets and snapshots store the width asked for. Typing and Screen set it.
+check('Canvas Block: the Block size control shows the band width drawn and keeps the width asked for (narrow window, widening, typing, Screen, preset, under 40)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(6, 1000));
+  await p.waitForTimeout(500);
+  const st = () => p.evaluate(() => {
+    const note = document.getElementById('blockSizeSetNote');
+    return { slider: +document.getElementById('blockSizeSlider').value, input: +document.getElementById('blockSizeInput').value, bandCols: _canvasState.layout && _canvasState.layout.bandCols,
+      fit: _canvasState.blockFitCols, note: note && note.style.display !== 'none' ? note.textContent : '' };
+  });
+  const width = async (w) => { await p.setViewportSize({ width: w, height: 800 }); await p.waitForTimeout(900); };
+  const out = {};
+  await p.evaluate(async () => { const bs = document.getElementById('blockSizeSlider'); bs.value = '150'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 800)); });
+  out.wide150 = await st();
+  await width(760);
+  out.narrow = await st();
+  // a preset and a snapshot saved on the narrow window hold the width asked for
+  out.saved = await p.evaluate(() => { savePreset(); return { preset: JSON.parse(localStorage.getItem('msaviewer_preset_v44')).blockSize, snapshot: _buildSnapshotPayload().view.blockSize }; });
+  await width(1400);
+  out.widened = await st();
+  // typing a width on the narrow window: kept for when it is wide again
+  await width(760);
+  const menuOpen = await p.evaluate(() => document.querySelector('.section-header[data-section="display"]').closest('.menu-section').classList.contains('menu-open'));
+  if (!menuOpen) await p.click('.section-header[data-section="display"]');
+  await p.click('#blockSizeInput', { clickCount: 3 }); await p.keyboard.type('120'); await p.keyboard.press('Enter');
+  await p.waitForTimeout(900);
+  out.typedNarrow = await st();
+  await width(1400);
+  out.typedWide = await st();
+  // Screen: what fits is the width asked for
+  await p.click('#blockSizeScreenBtn'); await p.waitForTimeout(900);
+  out.screen = await st();
+  // the preset (150) loads back as 150 asked for
+  await p.evaluate(async () => { loadPreset(); await new Promise(r => setTimeout(r, 900)); });
+  out.preset = await st();
+  // fewer than 40 columns fit: the control goes below its 40 (down to the 10-column floor)
+  await width(430);
+  out.under40 = await st();
+  await width(1400);
+  const okWide150 = out.wide150.bandCols === 150 && out.wide150.slider === 150 && out.wide150.input === 150 && out.wide150.note === '';
+  const okNarrow = out.narrow.bandCols < 150 && out.narrow.bandCols === out.narrow.fit && out.narrow.slider === out.narrow.bandCols && out.narrow.input === out.narrow.bandCols && /150 set/.test(out.narrow.note);
+  const okSaved = String(out.saved.preset) === '150' && String(out.saved.snapshot) === '150';
+  const okWidened = out.widened.bandCols === 150 && out.widened.slider === 150 && out.widened.note === '';
+  const okTyped = out.typedNarrow.bandCols === out.typedNarrow.fit && out.typedNarrow.bandCols < 120 && out.typedNarrow.slider === out.typedNarrow.bandCols && out.typedNarrow.input === out.typedNarrow.bandCols && /120 set/.test(out.typedNarrow.note)
+    && out.typedWide.bandCols === 120 && out.typedWide.slider === 120 && out.typedWide.input === 120 && out.typedWide.note === '';
+  const okScreen = out.screen.bandCols === out.screen.fit && out.screen.slider === out.screen.bandCols && out.screen.input === out.screen.bandCols && out.screen.note === '';
+  const okPreset = out.preset.bandCols === 150 && out.preset.slider === 150 && out.preset.input === 150;
+  const okUnder40 = out.under40.bandCols < 40 && out.under40.bandCols >= 10 && out.under40.slider === out.under40.bandCols && out.under40.input === out.under40.bandCols && /150 set/.test(out.under40.note);
+  const ok = okWide150 && okNarrow && okSaved && okWidened && okTyped && okScreen && okPreset && okUnder40;
+  return { pass: ok, detail: JSON.stringify({ okWide150, okNarrow, okSaved, okWidened, okTyped, okScreen, okPreset, okUnder40, out }) };
+}));
+
+// Owner 2026-10-31: the quick view switch on the top bar is shown in every view, compact (one letter per view,
+// tooltips name it), and showing it does not make the toolbar taller. It was shown only in Canvas and Reads.
+check('The top-bar view switch is shown in Full, Block, Canvas and Reads, each option switches the view, and it adds no toolbar height (1366 px)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const path = require('path');
+  await p.setViewportSize({ width: 1366, height: 768 });
+  await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+  await p.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples/synthetic/synth_msa.fa')); await p.waitForTimeout(1500);
+  const look = () => p.evaluate(() => {
+    const sw = document.getElementById('quickModeSwitch');
+    const shown = !!sw && sw.getClientRects().length > 0 && getComputedStyle(sw).display !== 'none';
+    const H = () => Math.round(document.getElementById('controls').getBoundingClientRect().height);
+    const h = H();
+    // the same toolbar without the switch: what it adds
+    let hWithout = h;
+    if (sw) { const d = sw.style.display; sw.style.display = 'none'; syncModeRow(); hWithout = H(); sw.style.display = d; syncModeRow(); }
+    return { mode: document.querySelector('input[name="mode"]:checked').id, shown, checked: document.querySelector('#quickModeSwitch input:checked')?.dataset.target || null, h, hWithout,
+      labels: [...document.querySelectorAll('#quickModeSwitch label')].filter(l => l.getClientRects().length).map(l => l.title.split(':')[0]) };
+  });
+  const out = {};
+  // each option, clicked on the switch, switches the view
+  for (const [qm, want] of [['qmSingle', 'modeSingle'], ['qmBlocks', 'modeBlocks'], ['qmCanvas', 'modeCanvas']]) {
+    const lab = await p.$(`label[for="${qm}"]`);
+    if (lab && await lab.isVisible()) { await lab.click(); await p.waitForTimeout(800); }
+    out[want] = await look();
+  }
+  // Reads: a reference and its reads
+  await p.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples/real/htslib_ce_CHROMOSOME_II.fa')); await p.waitForTimeout(1500);
+  await p.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples/real/htslib_range.bam')); await p.waitForTimeout(2000);
+  out.reads = await look();
+  const lab = await p.$('label[for="qmSingle"]');
+  if (lab && await lab.isVisible()) { await lab.click(); await p.waitForTimeout(800); }
+  out.fromReads = await look();
+  const views = ['modeSingle', 'modeBlocks', 'modeCanvas'];
+  const ok = views.every(v => out[v].mode === v && out[v].shown && out[v].checked === v && out[v].h === out[v].hWithout)
+    && out.reads.mode === 'modeReads' && out.reads.shown && out.reads.checked === 'modeReads' && out.reads.labels.includes('Reads view')
+    && out.fromReads.mode === 'modeSingle';
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
 check('Canvas Block: entering Block on a tall alignment asks nothing; the Screen button fits the bands to the window', async (page) => withCanvasBlockPage(page, async (p, origin) => {
   // The "large alignment" dialog protected the DOM Block; Canvas Block draws only what is in view.
   await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
@@ -5983,7 +6077,9 @@ check('Canvas Block: the full-alignment SVG and the RTF from Block wrap at the b
   await loadFasta(p, makeFasta(6, 700));
   await p.waitForTimeout(500);
   await p.evaluate(async () => { const bs = document.getElementById('blockSizeSlider'); bs.value = '150'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 800)); });
-  const L = await p.evaluate(() => ({ bandCols: _canvasState.layout.bandCols, nBands: _canvasState.layout.nBands, slider: +document.getElementById('blockSizeSlider').value }));
+  // slider: the width asked for (150). Since the owner's 2026-10-31 decision the slider shows the width drawn,
+  // so the width asked for is read from blockSizeRequested(); the check still needs bands narrower than it.
+  const L = await p.evaluate(() => ({ bandCols: _canvasState.layout.bandCols, nBands: _canvasState.layout.nBands, slider: blockSizeRequested() }));
   const svg = await cbCaptureFile(p, 'exportFullAlignmentAsSvg');
   const rtf = await cbCaptureFile(p, 'exportAlignmentAsRtf');
   // seq0's lines: their residue counts are the block widths

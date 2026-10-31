@@ -2111,6 +2111,7 @@ body.row-reorder-active .seq-name.drag-source:hover {
 .residue-case-upper .annot-track-data,
 .residue-case-lower .annot-track-data { text-transform: none; }   /* feature names are not residues (Canvas draws them as written) */   /* the consensus row's case says whether the column is above the threshold */
 .case-switch { margin-left: 4px; }
+#quickModeSwitch label { padding: 0 3px; min-width: 7px; }   /* the compact view switch (the rule below, later, set 6px) */
 .case-switch label { font-family: 'Courier New', monospace; font-size: 10px; padding: 0 3px; letter-spacing: -0.5px; }
 
 .seq-length {
@@ -2239,6 +2240,11 @@ body.row-reorder-active .seq-name.drag-source:hover {
 }
 #sourceInfo.measure-natural .source-file-label {
     flex-shrink: 0;
+}
+/* measured unconstrained: on a full menu line (the view switch on it until placeModeRow moves it) the panel
+   was narrow and the measure came out short, so the file name stayed cut once the line had room */
+#sourceInfo.measure-natural {
+    max-width: none;
 }
 
 #sourceInfo {
@@ -2832,8 +2838,8 @@ span.column-highlighted::after {
     color: #1a73e8;
 }
 /* Quick display-mode switcher in the top bar (mirrors the Full/Block/Canvas/
-   Reads radios in the Display dropdown). Shown only in Canvas or Reads mode,
-   as a way back; syncQuickModeSwitch() hides it in Full and Block. */
+   Reads radios in the Display dropdown). Shown in every view (owner 2026-10-31);
+   the view switch (.view-switch) is compact: one-letter labels, tooltips name the view. */
 .quick-mode-switch {
     display: inline-flex;
     align-items: stretch;
