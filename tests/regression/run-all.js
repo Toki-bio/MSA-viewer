@@ -6073,6 +6073,270 @@ check('Canvas Block: printing Block prints every band (each row\'s name and resi
   return { pass: ok, detail: JSON.stringify({ L, bandColsInPrint: r.bandColsInPrint, bandColsAfter, svgs: r.svgs, shown: r.shown, viewer: r.viewer, rowsSeen, bad: bad.slice(0, 4), pdfBytes: pdf.length, removedAfter: !after }) };
 }));
 
+// ---- GLM audit of Canvas Block (cblk), 2026-10-31: findings checked on v311 ----
+
+// #7/#8/#15 said a row dropped over the 24 px gap between two bands went to the END of the alignment and
+// called that wrong. Every band holds every row, so the gap lies below the band's LAST row: the DOM Block
+// (handleDrop: the nearest .seq-line) drops it there too. Kept as a guard that both agree.
+check('Canvas Block: a row dropped over the gap between two bands lands below the band\'s last row, as in the DOM Block', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 0);
+  const a = { x: g.left + 25, y: g.top + g.headerH + 1.5 * g.charH - oy };   // s1's name, band 1
+  const z = { x: a.x, y: g.top + cbTop(g, 1) - g.gap / 2 - oy };              // the middle of the gap under band 1
+  const names0 = await p.evaluate(() => state.seqs.map(q => q.header));
+  await p.mouse.move(a.x, a.y); await p.mouse.down();
+  await p.mouse.move(a.x, a.y + 8, { steps: 3 }); await p.mouse.move(z.x, z.y, { steps: 6 }); await p.waitForTimeout(100);
+  await p.mouse.up(); await p.waitForTimeout(500);
+  const canvasOrder = await p.evaluate(() => state.seqs.map(q => q.header));
+  // the DOM Block's own drop for a pointer in the gap between its blocks 1 and 2
+  const domOrder = await p.evaluate(async (names0) => {
+    state.seqs.sort((x, y) => names0.indexOf(x.header) - names0.indexOf(y.header));
+    _domBlockForTests = true; await onModeChange(); await new Promise(r => setTimeout(r, 600));
+    const blocks = [...document.querySelectorAll('.block-block')];
+    const y = (blocks[0].getBoundingClientRect().bottom + blocks[1].getBoundingClientRect().top) / 2;
+    _draggedSeqIndex = 1;
+    const ev = { clientY: y, preventDefault() {}, stopPropagation() {}, target: document.getElementById('alignmentContainer') };
+    _showDragInsertPreview(ev, document.getElementById('alignmentContainer'));
+    handleDrop(ev);
+    await new Promise(r => setTimeout(r, 300));
+    const out = state.seqs.map(q => q.header);
+    _domBlockForTests = false; await onModeChange();
+    return out;
+  }, names0);
+  const want = ['s0', 's2', 's3', 's4', 's5', 's6', 's7', 's1'];
+  const ok = canvasOrder.join() === want.join() && domOrder.join() === want.join();
+  return { pass: ok, detail: JSON.stringify({ canvasOrder, domOrder }) };
+}));
+
+// #10: vaCanvasBlock(true) (the measurement scripts' way into Block) on a small file the app had opened in
+// Canvas went straight back to the Canvas strip: renderAlignment's default-view rule saw no view chosen.
+check('Canvas Block: vaCanvasBlock(true) on a small file opened in Canvas stays in Block', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(10, 300));
+  await p.waitForTimeout(400);
+  const before = await p.evaluate(CB_STATE);
+  await p.evaluate(async () => { await vaCanvasBlock(true); await new Promise(r => setTimeout(r, 600)); });
+  const after = await p.evaluate(CB_STATE);
+  return { pass: before.radio === 'modeCanvas' && cbIsCanvasBlock(after), detail: JSON.stringify({ before, after }) };
+}));
+
+// #13: the row a context menu is for is tinted gold in Full (.seq-line.context-menu-highlight); Canvas and
+// Block, drawn on a canvas, marked nothing.
+check('Canvas Block: the row a context menu is open for is tinted gold (Full\'s highlight) until the menu closes', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 0);
+  const rowMid = cbTop(g, 1) + g.headerH + 3.5 * g.charH;
+  const pt = cbPt(g, oy, 1, 70, rowMid);
+  const px = (x, y) => p.evaluate(({ x, y }) => {
+    const o = _canvasState.overlay, r = o.getBoundingClientRect();
+    const d = o.getContext('2d').getImageData(Math.round((x - r.left) * o.width / r.width), Math.round((y - r.top) * o.height / r.height), 1, 1).data;
+    return [d[0], d[1], d[2], d[3]];
+  }, { x, y });
+  const at = { x: g.left + g.nameW / 2, y: pt.y }, other = { x: at.x, y: pt.y + 2 * g.charH };
+  await p.mouse.click(pt.x, pt.y, { button: 'right' }); await p.waitForTimeout(300);
+  const open = { row: await px(at.x, at.y), other: await px(other.x, other.y), cell: await px(pt.x, pt.y), menuRow: await p.evaluate(() => contextMenuHighlightedRow) };
+  await p.mouse.click(g.left + 300, g.top + 5); await p.waitForTimeout(300);
+  const closed = await px(at.x, at.y);
+  const gold = c => c[3] > 20 && c[0] > 200 && c[1] > 150 && c[2] < 60;
+  const ok = open.menuRow === 3 && gold(open.row) && gold(open.cell) && open.other[3] === 0 && closed[3] === 0;
+  return { pass: ok, detail: JSON.stringify({ open, closed }) };
+}));
+
+// #27: the overlay redrew the selected-column index (posSlot over every selected column) once per band in view
+check('Canvas Block: the selected columns are indexed once per overlay draw, not once per band in view', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(4, 2000), 40);
+  const r = await p.evaluate(async () => {
+    class CountingSet extends Set { forEach(...a) { window.__selForEach = (window.__selForEach || 0) + 1; return super.forEach(...a); } }
+    state.selectedColumns = new CountingSet(Array.from({ length: 2000 }, (_, i) => i));
+    window.__selForEach = 0;
+    _canvasState.scheduleOverlay();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const L = _canvasState.layout, vh = parseFloat(_canvasState.canvas.style.height);
+    const inView = L.bandAt(_canvasState.offsetY + vh - 1) - L.bandAt(_canvasState.offsetY) + 1;
+    // a selected column in the third band still shows its tint
+    const m = _canvasState.metrics, o = _canvasState.overlay, rr = o.getBoundingClientRect(), c = _canvasCellClient(1, 2 * L.bandCols + 5);
+    const d = o.getContext('2d').getImageData(Math.round((c.x + m.charW / 2 - rr.left) * o.width / rr.width), Math.round((c.y + 2 - rr.top) * o.height / rr.height), 1, 1).data;
+    return { forEach: window.__selForEach, inView, tint: [d[0], d[1], d[2], d[3]] };
+  });
+  const ok = r.inView >= 4 && r.forEach === 1 && r.tint[3] > 0 && r.tint[2] > r.tint[0];
+  return { pass: ok, detail: JSON.stringify(r) };
+}));
+
+// #28: the length-badge tooltip is keyed per row so it follows the pointer; the key was the window's y in
+// rowPitch steps, and in a band whose rows are closer (no translation lanes) the next row's badge, with the
+// same text, did not move or re-show the tooltip.
+check('Canvas Block: in a band without translation lanes the length-badge tooltip follows the pointer to the next row', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  const { fasta, bed } = cbCodonFixture();
+  await loadFasta(p, fasta);
+  await p.waitForTimeout(500);
+  await p.evaluate(async (bed) => {
+    const bs = document.getElementById('blockSizeSlider'); bs.value = '50'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 400));
+    setAnnotation(bed, 'genes.bed');
+    const cb = document.getElementById('codonAnalysis'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 1200));
+  }, bed);
+  const pts = await p.evaluate(async () => {
+    const L = _canvasState.layout, m = _canvasState.metrics, last = L.nBands - 1;
+    _canvasState.offsetY = L.bandTop[last] - 20; _canvasState.scheduleDraw();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const rect = _canvasState.canvas.getBoundingClientRect(), P0 = _canvasState.rowPitch;
+    const x = rect.left + _canvasState.badgeX - last * L.bandCols * m.charW + 3;
+    const ys = []; for (let r = 0; r < 6; r++) ys.push(_canvasCellClient(r, last * L.bandCols).y + L.bandPitch[last] / 2);
+    // two neighbouring rows the old key (window y / rowPitch) put in one bucket
+    let r0 = -1; for (let r = 0; r < 5; r++) if (Math.floor(ys[r] / P0) === Math.floor(ys[r + 1] / P0)) { r0 = r; break; }
+    return { x, ys, r0, pitch: L.bandPitch[last], P0, tips: [_canvasSideTooltip(x, ys[0]), _canvasSideTooltip(x, ys[1])] };
+  });
+  await cbTipLog(p);
+  if (pts.r0 < 0) return { pass: false, detail: 'no two rows in one old bucket: ' + JSON.stringify(pts) };
+  await p.mouse.move(pts.x, pts.ys[pts.r0]); await p.waitForTimeout(150);
+  await p.mouse.move(pts.x, pts.ys[pts.r0 + 1]); await p.waitForTimeout(150);
+  const log = await p.evaluate(() => window.__tipLog.filter(t => t.c.startsWith('Sequence length')));
+  const ok = pts.pitch < pts.P0 && pts.tips[0] === pts.tips[1] && log.length === 2 && log[1].y > log[0].y + pts.pitch / 2;
+  return { pass: ok, detail: JSON.stringify({ pts, log }) };
+}));
+
+// #30/#32: the test-only DOM Block (?view=domblock) was handed on as &view=domblock by Open view in a new
+// tab, Open selected in a new tab and a pane, so one such link spread the old renderer to every tab from it.
+check('Canvas Block: new tabs and panes opened from a ?view=domblock tab get ?view=block (the DOM Block is not handed on)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=domblock&url=' + encodeURIComponent(origin + '/examples/svk_k4.fa'), { waitUntil: 'networkidle' });
+  await p.waitForFunction(() => typeof state !== 'undefined' && state.seqs && state.seqs.length > 0, null, { timeout: 15000 });
+  await p.waitForTimeout(500);
+  const r = await p.evaluate(() => {
+    const opened = []; window.open = (u) => { opened.push(String(u)); return {}; };
+    const domBlock = _domBlockForTests && document.getElementById('modeBlocks').checked;
+    openViewInNewTab();
+    state.selectedRows.add(0); openSelectedInNewTab();
+    const pane = _paneUrl().url;
+    return { domBlock, urls: [...opened, pane] };
+  });
+  const ok = r.domBlock && r.urls.length === 3 && r.urls.every(u => /[?&]view=block(&|$)/.test(u) && !/domblock/.test(u));
+  return { pass: ok, detail: JSON.stringify(r) };
+}));
+
+// #49: ?view=canvas / ?view=full and the default switch of a new file to Canvas left the Block size row
+// live (only a click on a view radio, onModeChange, greyed it out), a slider that does nothing there.
+check('The Block size row is greyed out in Canvas and Full whichever way the view was reached (?view=, a new file\'s Canvas default)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const row = () => p.evaluate(() => { const c = document.getElementById('blockSizeContainer'); return { mode: document.querySelector('input[name="mode"]:checked').id, pe: c.style.pointerEvents, op: c.style.opacity }; });
+  const out = {};
+  for (const v of ['canvas', 'full', 'block']) {
+    await p.goto(origin + '/index.html?view=' + v + '&url=' + encodeURIComponent(origin + '/examples/svk_k4.fa'), { waitUntil: 'networkidle' });
+    await p.waitForFunction(() => typeof state !== 'undefined' && state.seqs && state.seqs.length > 0, null, { timeout: 15000 });
+    await p.waitForTimeout(500);
+    out[v] = await row();
+  }
+  await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(10, 300));
+  await p.waitForTimeout(400);
+  out.newFile = await row();
+  const off = s => s.pe === 'none' && s.op === '0.4';
+  const ok = out.canvas.mode === 'modeCanvas' && off(out.canvas) && out.full.mode === 'modeSingle' && off(out.full)
+    && out.block.mode === 'modeBlocks' && out.block.pe !== 'none' && out.newFile.mode === 'modeCanvas' && off(out.newFile);
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
+// #6: Sticky names re-rendered the Canvas on every call (a preset, a snapshot, a linked-view sync, the box);
+// Block draws its names fixed whatever the box says, so there it was a second full render for nothing.
+check('Canvas Block: the Sticky names box re-renders the Canvas strip but not Block (Block names are always fixed)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  const renders = () => p.evaluate(async () => {
+    window.__rwn = 0;
+    if (!window.__rwnWrapped) { const o = window.renderWithNotice; window.renderWithNotice = (...a) => { window.__rwn++; return o(...a); }; window.__rwnWrapped = true; }
+    document.getElementById('stickyNames').click();
+    await new Promise(r => setTimeout(r, 400));
+    document.getElementById('stickyNames').click();
+    await new Promise(r => setTimeout(r, 400));
+    return window.__rwn;
+  });
+  const block = await renders();
+  await p.evaluate(async () => { document.getElementById('modeCanvas').checked = true; await onModeChange(); await new Promise(r => setTimeout(r, 500)); });
+  const strip = await renders();
+  return { pass: block === 0 && strip >= 2, detail: JSON.stringify({ block, strip }) };
+}));
+
+// #37: the vertical bar's range was the content less the canvas' height, but clampOffsets lets the view go
+// on by the horizontal bar lying over the canvas' bottom: dragged to its end the thumb stopped about a row
+// short, the last row under the horizontal bar (and the same sideways with the vertical bar over the right edge)
+check('Canvas: the scrollbars reach the alignment\'s last row and column (their range is the view\'s, the other bar included)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=canvas', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(120, 3000));
+  await p.waitForTimeout(600);
+  const max = await p.evaluate(async () => {
+    _canvasState.offsetX = 1e9; _canvasState.offsetY = 1e9; _canvasState.scheduleDraw();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const out = { x: _canvasState.offsetX, y: _canvasState.offsetY };
+    _canvasState.offsetX = 0; _canvasState.offsetY = 0; _canvasState.scheduleDraw();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return out;
+  });
+  const barRect = (sel) => p.evaluate((sel) => { const e = document.querySelector(sel), r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, vis: getComputedStyle(e).visibility }; }, sel);
+  const vb = await barRect('.vertical-scrollbar'), hb = await barRect('.horizontal-scrollbar');
+  await p.mouse.move(vb.x, vb.y);
+  for (let i = 0; i < 6; i++) { await p.mouse.wheel(0, 100000); await p.waitForTimeout(120); }
+  await p.mouse.move(hb.x, hb.y);
+  for (let i = 0; i < 6; i++) { await p.mouse.wheel(100000, 0); await p.waitForTimeout(120); }
+  await p.waitForTimeout(300);
+  const bar = await p.evaluate(() => ({ x: _canvasState.offsetX, y: _canvasState.offsetY }));
+  const ok = vb.vis !== 'hidden' && hb.vis !== 'hidden' && max.y > 0 && max.x > 0 && Math.abs(bar.y - max.y) <= 1 && Math.abs(bar.x - max.x) <= 1;
+  return { pass: ok, detail: JSON.stringify({ max, bar, vb, hb }) };
+}));
+
+// #14: ?data= (and ?url=) said "Alignment loaded" after parseAndRender had refused the file (binary, FASTQ,
+// empty): parseAndRender reports the failure itself and returns normally, and the success message replaced it.
+check('?data= and ?url= of a FASTQ keep the FASTQ error on screen (not "Alignment loaded")', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const b64 = Buffer.from('@r1\nACGTACGT\n+\nIIIIIIII\n').toString('base64');
+  const out = {};
+  for (const [k, q] of [['data', 'data=' + encodeURIComponent(b64)], ['url', 'url=' + encodeURIComponent('data:text/plain;base64,' + b64)]]) {
+    await p.goto(origin + '/index.html?' + q, { waitUntil: 'networkidle' });
+    await p.waitForTimeout(1200);
+    out[k] = await p.evaluate(() => ({ msg: document.getElementById('statusMessage').innerText, n: state.seqs.length }));
+  }
+  const ok = ['data', 'url'].every(k => /FASTQ/.test(out[k].msg) && !/loaded/i.test(out[k].msg) && out[k].n === 0);
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
+// #12: a chromatogram is kept under the name its row was read with; after a rename the row's context menu lost
+// "View Chromatogram..." (the trace was still loaded, but nothing could open it)
+check('A renamed row keeps its chromatogram: the context menu still opens it, also after Undo and Redo', async (page) => {
+  await loadFasta(page, '>t1\nACGTACGTACGTACGTACGT\n>t2\nACGTACGTACGTACGTACGA\n');
+  await setMode(page, 'full');
+  await page.evaluate(() => {
+    const n = 20, numSamples = n * 12 + 12, tr = () => Array.from({ length: numSamples }, (_, i) => 50 + 40 * Math.sin(i));
+    state.ab1Traces = { t1: { sequence: 'ACGTACGTACGTACGTACGT', quality: Array(n).fill(40), numSamples, peakLocations: Array.from({ length: n }, (_, i) => 6 + i * 12), traces: { A: tr(), C: tr(), G: tr(), T: tr() } } };
+  });
+  const name0 = '.seq-line[data-seq-index="0"]:not(.consensus-line) .seq-name';
+  const menu = async () => {
+    await page.click(name0, { button: 'right' }); await page.waitForTimeout(200);
+    return page.evaluate(() => [...document.querySelectorAll('.context-menu div')].map(d => d.textContent));
+  };
+  const out = {};
+  out.before = (await menu()).includes('View Chromatogram...');
+  await page.evaluate(() => [...document.querySelectorAll('.context-menu div')].find(d => d.textContent === 'Rename sequence').click());
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Control+a'); await page.keyboard.type('renamed'); await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+  out.header = await page.evaluate(() => state.seqs[0].header);
+  out.afterRename = (await menu()).includes('View Chromatogram...');
+  if (out.afterRename) {
+    await page.evaluate(() => [...document.querySelectorAll('.context-menu div')].find(d => d.textContent === 'View Chromatogram...').click());
+    await page.waitForTimeout(300);
+    out.opened = await page.evaluate(() => { const m = document.getElementById('chromatogramModal'); const r = !!m && getComputedStyle(m).display !== 'none'; ChromatogramViewer.close(); return r; });
+  }
+  await page.evaluate(() => closeContextMenu());
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  out.undoHeader = await page.evaluate(() => state.seqs[0].header);
+  out.afterUndo = (await menu()).includes('View Chromatogram...');
+  await page.evaluate(() => closeContextMenu());
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(400);
+  out.redoHeader = await page.evaluate(() => state.seqs[0].header);
+  out.afterRedo = (await menu()).includes('View Chromatogram...');
+  await page.evaluate(() => { closeContextMenu(); state.ab1Traces = {}; });
+  const ok = out.before && out.header === 'renamed' && out.afterRename && out.opened && out.undoHeader === 't1' && out.afterUndo && out.redoHeader === 'renamed' && out.afterRedo;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 check('Realign all keeps a row that has only gaps (MAFFT and codon/MACSE), as a gap row of the new width', async (page) => {
   const fa = '>a\nATGGCTAAAGGTCTGCAAGAATTCGGTACC\n>empty\n------------------------------\n>b\nATGGCTAAGGGTCTGCAAGAATTCGGAACC\n>c\nATGGCAAAAGGTCTGCAGGAATTCGGTACC\n';
   const out = {};
