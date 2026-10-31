@@ -12087,7 +12087,8 @@ function _canvasBlockMaskHit(clientX, clientY) {
     if (!rects || !rects.length || !_canvasState.canvas) return null;
     const m = _canvasState.metrics;
     // _canvasLocal: in the Block view the band under the point, its rows mapped onto the strip's pitch (the
-    // rectangles' own); it read band 1's rows
+    // rectangles' own). Before batch 4 it took the point's x as band 1's column and its y over the whole stacked
+    // layout: below band 1 the y was past every rectangle, so the click and tooltip did nothing there (cb34 #29)
     const P = _canvasLocal(clientX, clientY);
     const sticky = _canvasState.layout ? true : el('stickyNames')?.checked !== false;
     if (sticky && P.x < m.nameW) return null;   // under the fixed names: not drawn there
