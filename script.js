@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v310';
+const BUILD_TAG = 'v311';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -15611,20 +15611,6 @@ function handleKeyDown(e) {
                 redoAction();
                 e.preventDefault();
                 break;
-            case 'f':
-                // Canvas draws the letters as pixels, so the browser's find bar finds nothing in the
-                // alignment: Ctrl+F opens ViewAlign's motif search (all rows, gaps skipped) instead
-                if (isCanvasMode() && !e.shiftKey && !e.altKey) {
-                    const inp = el('searchInput');
-                    const sec = inp?.closest('.menu-section');
-                    if (inp) {
-                        if (sec) openMenuSection(sec);
-                        inp.focus();
-                        inp.select();
-                        e.preventDefault();
-                    }
-                }
-                break;
             case 'b':
                 insertGroupConsensus();
                 e.preventDefault();
@@ -15673,7 +15659,13 @@ function handleKeyDown(e) {
                 } else if (e.altKey) {
                     clearAllSearches();
                 } else {
-                    searchMotif();
+                    // Ctrl+F opens the Search box (Canvas and Block draw letters as pixels, so the
+                    // browser's find bar cannot see them) and runs the search when it holds a motif
+                    const inp = el('searchInput');
+                    const sec = inp?.closest('.menu-section');
+                    if (sec) openMenuSection(sec);
+                    if (inp && inp.value.trim()) searchMotif();
+                    if (inp) { inp.focus(); inp.select(); }
                 }
                 e.preventDefault();
                 break;

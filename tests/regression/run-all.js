@@ -11612,30 +11612,43 @@ ${'ACGTTGCAAC'.repeat(60)}
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
-// Owner 2026-10-31: Canvas letters are pixels, so the browser's find bar finds nothing there; Ctrl+F opens the motif
-// search box instead. Full keeps the browser's find bar (its letters are page text).
-check('Canvas: Ctrl+F opens the motif search box; Full leaves Ctrl+F to the browser', async (page) => {
+// Owner 2026-10-31: Canvas letters are pixels, so the browser's find bar finds nothing there; Ctrl+F opens the Search
+// box. v310 added that as a second `case 'f'` placed before the original one, which shadowed it: Ctrl+Shift+F (Clear
+// Last) and Ctrl+Alt+F (Clear All) did nothing in any view, and Ctrl+F no longer searched in Full (GLM audit cblk #1/#2).
+// In every view: Ctrl+F opens and focuses the box, and searches when the box holds a motif; Shift/Alt clear searches.
+check('Ctrl+F opens the Search box and searches its motif; Ctrl+Shift+F clears the last search, Ctrl+Alt+F all (Canvas and Full)', async (page) => {
   await loadFasta(page, '>a\nACGTACGTGGTTCGAACGT\n>b\nACGTACGTGGTTCGAACGT\n');
-  const press = async (mode) => {
+  const key = (opts) => page.evaluate((opts) => {
+    const ev = new KeyboardEvent('keydown', Object.assign({ key: 'f', code: 'KeyF', ctrlKey: true, bubbles: true, cancelable: true }, opts));
+    document.body.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  }, opts || {});
+  const out = {};
+  for (const mode of ['canvas', 'full']) {
     await setMode(page, mode);
     await page.waitForTimeout(400);
-    await page.evaluate(() => { document.activeElement?.blur(); document.querySelectorAll('.menu-open').forEach(s => s.classList.remove('menu-open')); });
+    await page.evaluate(() => { clearAllSearches(); el('searchInput').value = ''; document.activeElement?.blur(); document.querySelectorAll('.menu-open').forEach(s => s.classList.remove('menu-open')); });
     await page.mouse.click(5, 5);
-    const prevented = await page.evaluate(() => {
-      const ev = new KeyboardEvent('keydown', { key: 'f', code: 'KeyF', ctrlKey: true, bubbles: true, cancelable: true });
-      document.body.dispatchEvent(ev);
-      return ev.defaultPrevented;
-    });
-    return page.evaluate((prevented) => {
-      const inp = document.getElementById('searchInput');
-      const r = inp.getBoundingClientRect();
-      return { prevented, focused: document.activeElement === inp, visible: r.width > 0 && r.height > 0 && getComputedStyle(inp).visibility !== 'hidden' };
-    }, prevented);
-  };
-  const canvas = await press('canvas');
-  const full = await press('full');
-  const ok = canvas.prevented && canvas.focused && canvas.visible && !full.prevented && !full.focused;
-  return { pass: ok, detail: JSON.stringify({ canvas, full }) };
+    const r = {};
+    // 1. empty box: Ctrl+F opens and focuses it, no search
+    r.prevented = await key();
+    r.open = await page.evaluate(() => { const inp = el('searchInput'), b = inp.getBoundingClientRect(); return document.activeElement === inp && b.width > 0 && b.height > 0 && getComputedStyle(inp).visibility !== 'hidden'; });
+    r.n0 = await page.evaluate(() => state.searchHistory.length);
+    // 2. two motifs searched with Ctrl+F from outside the box
+    for (const m of ['GGTTC', 'ACGTA']) {
+      await page.evaluate((m) => { el('searchInput').value = m; document.activeElement?.blur(); }, m);
+      await key();
+    }
+    r.n2 = await page.evaluate(() => state.searchHistory.length);
+    await page.evaluate(() => document.activeElement?.blur());
+    r.shiftPrevented = await key({ shiftKey: true });
+    r.n1 = await page.evaluate(() => state.searchHistory.length);
+    await key({ altKey: true });
+    r.nAll = await page.evaluate(() => state.searchHistory.length);
+    out[mode] = r;
+  }
+  const ok = Object.values(out).every(r => r.prevented && r.open && r.n0 === 0 && r.n2 === 2 && r.shiftPrevented && r.n1 === 1 && r.nAll === 0);
+  return { pass: ok, detail: JSON.stringify(out) };
 });
 
 // Owner 2026-10-28: what else did Full/Block have that Canvas lacked? Per-span titles and listeners: the titles of search
