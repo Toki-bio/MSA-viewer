@@ -17667,6 +17667,9 @@ function _applySnapshotView(view) {
     setBox('codonAnalysis', view.codonAnalysis);
     setBox('aaOnly', view.aaOnly);
 
+    // A snapshot saved in Block: its render puts the saved place in view (it drew its first frames at the top,
+    // then jumped there in the frame after next; GLM audit cb34 #8). The re-apply below stays for other views.
+    if (!view.keepPlace && view.anchor && view.anchor.block && Number.isInteger(view.anchor.row) && Number.isInteger(view.anchor.col) && isCanvasMode()) _canvasState.pendingAnchor = { row: view.anchor.row, col: view.anchor.col };
     renderAlignment();
 
     if (view.keepPlace) return;   // a mirror pane reloading keeps its own place (it restores it itself)

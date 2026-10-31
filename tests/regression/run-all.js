@@ -6352,6 +6352,28 @@ check('Canvas Block: a trim-border drag holds the border over the gap and the ne
   return { pass: ok, detail: JSON.stringify({ oy, ...out }) };
 }));
 
+// cb34 #8: a snapshot saved in Block was restored in two steps: its render drew the first frames at the top
+// of the alignment (row 0, column 0) and only two frames later the saved anchor was applied (a visible jump).
+// The saved anchor is now handed to that render, so every frame drawn shows the saved place. (GLM thought the
+// first step showed the previously open file's place; measured, it was the top.)
+check('Canvas Block: restoring a Block snapshot draws no frame at another place before the saved one', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(120, 3000), 150);
+  await cbSetView(p, 5, 9);
+  const payload = await p.evaluate(() => _buildSnapshotPayload());
+  await cbSetView(p, 15, 60);
+  const frames = await p.evaluate(async (pl) => {
+    const log = []; let go = true;
+    const tick = () => { if (!go) return; if (_canvasState.layout) log.push(JSON.stringify(_captureViewAnchor())); requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+    await _loadSnapshotPayload(pl);
+    await new Promise(r => setTimeout(r, 1500)); go = false;
+    return log.filter((x, i) => x !== log[i - 1]);
+  }, payload);
+  const saved = JSON.stringify({ row: 9, col: 750 });
+  const ok = frames.length >= 1 && frames.every(f => f === saved);
+  return { pass: ok, detail: JSON.stringify({ saved, frames }) };
+}));
+
 // #37: the vertical bar's range was the content less the canvas' height, but clampOffsets lets the view go
 // on by the horizontal bar lying over the canvas' bottom: dragged to its end the thumb stopped about a row
 // short, the last row under the horizontal bar (and the same sideways with the vertical bar over the right edge)
