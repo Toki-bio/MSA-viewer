@@ -11552,15 +11552,18 @@ check('Repeat Finder tandem dtan: a copy with several substitutions keeps the ar
 });
 
 // GLM dtan #4: Tandem on All searched every row in one go: 200 rows of 50 kb held the tab for about 45 s, saying only
-// "Searching...". The search stops at a total amount of work and says after how many sequences.
-check('Repeat Finder tandem dtan: All on many long rows stops at the work limit and says after how many sequences', async (page) => {
+// "Searching...". v310 stopped it at a total amount of work (TANDEM_TOTAL_WORK_LIMIT) and said after how many sequences.
+// Owner's decision 4 (2026-10-31): the search runs in slices with progress, Pause and Cancel, the total limit is gone and
+// every row is searched. Expectation changed from "search stopped after 24 of 30 sequences (work limit" to: all 30 rows
+// searched, no stop note, still within the same 15 s.
+check('Repeat Finder tandem dtan: All on many long rows searches every row (sliced, no total work limit) within 15 s', async (page) => {
   const r = rfRng(31);
   let fa = '';
   for (let i = 0; i < 30; i++) fa += `>r${i}\n${r.seq(50000)}\n`;
   await loadFasta(page, fa);
   await page.evaluate(() => openRepeatFinder(0));
   const f = await rfFind(page, { mode: 'tandem', scope: 'all', minLen: 20, maxDiv: 15 });
-  const ok = /search stopped after 24 of 30 sequences \(work limit/.test(f.text) && f.ms < 15000;
+  const ok = !/stopped/.test(f.text) && (/^No tandem repeats found/.test(f.text) || /30 sequences/.test(f.text)) && f.ms < 15000;
   return { pass: ok, detail: JSON.stringify({ ms: f.ms, text: f.text.slice(0, 200) }) };
 }, { timeoutMs: 180000 });
 
@@ -11573,6 +11576,229 @@ check('Repeat Finder tandem dtan: a protein unit position of only X shows X, and
   const out = { rows: f.rows, units: await page.evaluate(() => (_lastRepeatResults || []).map(x => x.unit)),
     title: await page.evaluate(() => document.getElementById('repeatMinLenLabel').title) };
   const ok = out.units.includes('AAX') && !out.units.some(u => /N/.test(u)) && /500/.test(out.title) && !/any unit length/.test(out.title);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// ---- Repeat Finder, owner's decisions 2026-10-31 ----
+// Decision 1: in a run of 3 or more copies, Direct listed copy 1 / copy 2 and copy 1 / copy 3 but never copy 2 / copy 3
+// (the rest of a stretch cut at the copy distance was dropped as "the same tandem run", GLM d305 #9). Adjacent pairs are
+// now listed: a stretch at distance d is cut into consecutive pairs no longer than d.
+check('Repeat Finder owner 2026-10-31: Direct lists every adjacent copy pair of a run of 3 and 4 copies, and a long run says it is capped', async (page) => {
+  const r = rfRng(1031), u = r.seq(20), out = {};
+  for (const k of [3, 4]) {
+    const s = (r.seq(100) + u.repeat(k) + r.seq(100)).split('');
+    // the bases just outside the run must not extend a pair by chance: base 99 pairs with u[19], the base after with u[0]
+    s[99] = rfOther(u[19]); s[100 + 20 * k] = rfOther(u[0]);
+    await loadFasta(page, `>run${k}\n${s.join('')}\n>o\n${r.seq(s.length)}\n`);
+    const f = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 15, maxDiv: 0 });
+    out['x' + k] = f.res.map(h => `${h.posA}/${h.posB}/${h.length}`).sort();
+  }
+  // 60 copies: hundreds of pairs, the list stays at 100 and says of how many
+  const long = r.seq(100) + u.repeat(60) + r.seq(100);
+  await loadFasta(page, `>run60\n${long}\n>o\n${r.seq(long.length)}\n`);
+  const f60 = await rfFind(page, { mode: 'direct', scope: 'single', minLen: 15, maxDiv: 0 });
+  out.x60 = { rows: f60.rows, text: f60.text.slice(0, 120) };
+  const want3 = ['100/120/20', '100/140/20', '120/140/20'];
+  const want4 = ['100/120/20', '100/140/40', '100/160/20', '120/140/20', '140/160/20'];
+  const ok = JSON.stringify(out.x3) === JSON.stringify(want3) && JSON.stringify(out.x4) === JSON.stringify(want4)
+    && out.x60.rows === 100 && /showing the 100 longest of \d{3,}/.test(out.x60.text);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Decision 4: a long search held the tab with only "Searching..." (25 kb poly-AT Direct: 2.6-5.7 s; Tandem All on 200
+// rows of 50 kb: ~45 s, then stopped by a total work limit). It now runs in slices with a progress line, Pause/Resume
+// and Cancel; Cancel keeps what was found and says so; Find is disabled while it runs.
+async function rfStartLong(page, o) {
+  if (o.mode) await page.click(`label:has(input[name="repeatMode"][value="${o.mode}"])`);
+  if (o.scope) await page.click(`label:has(input[name="repeatScope"][value="${o.scope}"])`);
+  if (o.minLen !== undefined) await page.fill('#repeatMinLen', String(o.minLen));
+  if (o.maxDiv !== undefined) await page.fill('#repeatMaxDiv', String(o.maxDiv));
+  await page.click('#repeatRunBtn');
+  await page.waitForSelector('#repeatResults .rf-progress', { timeout: 5000 });
+}
+const rfProgress = (page) => page.evaluate(() => {
+  const bar = document.querySelector('#repeatResults .rf-progress progress');
+  return { value: bar ? bar.value : null, text: document.getElementById('repeatResults').textContent.slice(0, 160),
+    findDisabled: document.getElementById('repeatRunBtn').disabled, pause: document.getElementById('repeatPauseBtn')?.textContent };
+});
+check('Repeat Finder owner 2026-10-31: a long search shows progress, Pause stops it, Resume goes on, Cancel keeps what was found and says so', async (page) => {
+  await loadFasta(page, `>polyAT\n${'AT'.repeat(12500)}\n>o\n${'ACGT'.repeat(6250)}\n`);
+  await page.evaluate(() => openRepeatFinder(0));
+  const out = {};
+  await rfStartLong(page, { mode: 'direct', scope: 'single', minLen: 10, maxDiv: 15 });
+  await page.waitForTimeout(400);
+  out.p1 = await rfProgress(page);
+  await page.waitForTimeout(500);
+  out.p2 = await rfProgress(page);
+  await page.click('#repeatPauseBtn');
+  await page.waitForTimeout(100);
+  out.p3 = await rfProgress(page);
+  await page.waitForTimeout(800);
+  out.p4 = await rfProgress(page);
+  await page.click('#repeatPauseBtn');   // now Resume
+  await page.waitForTimeout(500);
+  out.p5 = await rfProgress(page);
+  await page.click('#repeatCancelBtn');
+  await page.waitForFunction(() => !document.querySelector('#repeatResults .rf-progress'), null, { timeout: 15000 });
+  out.end = await page.evaluate(() => ({ text: document.getElementById('repeatResults').textContent.slice(0, 300),
+    rows: document.querySelectorAll('#repeatResults tbody tr').length, results: _lastRepeatResults.length,
+    findDisabled: document.getElementById('repeatRunBtn').disabled }));
+  // several sequences: Cancel says after how many of them, and keeps the results of those searched
+  const r = rfRng(77);
+  let fa = '';
+  for (let i = 0; i < 40; i++) fa += `>m${i}\n${r.seq(20000) + 'CA'.repeat(15) + r.seq(20000)}\n`;
+  await loadFasta(page, fa);
+  await page.evaluate(() => openRepeatFinder(0));
+  await rfStartLong(page, { mode: 'tandem', scope: 'all', minLen: 20, maxDiv: 15 });
+  await page.waitForFunction(() => /sequence ([3-9]|\d\d) of 40/.test(document.getElementById('repeatResults').textContent), null, { timeout: 30000 });
+  await page.click('#repeatCancelBtn');
+  await page.waitForFunction(() => !document.querySelector('#repeatResults .rf-progress'), null, { timeout: 15000 });
+  out.multi = await page.evaluate(() => ({ text: document.getElementById('repeatResults').textContent.slice(0, 300),
+    names: [...new Set(_lastRepeatResults.map(x => x.seqName))], units: [...new Set(_lastRepeatResults.map(x => x.unit))] }));
+  const m = /stopped by you after (\d+) of 40 sequences/.exec(out.multi.text);
+  const k = m ? +m[1] : -1;
+  const ok = /^Searching/.test(out.p1.text) && out.p1.findDisabled && out.p2.value > out.p1.value
+    && /^Paused/.test(out.p3.text) && out.p3.pause === 'Resume' && out.p4.value === out.p3.value
+    && out.p5.value > out.p4.value && /^Searching/.test(out.p5.text)
+    && /stopped by you at \d+ of 25000 bp/.test(out.end.text) && out.end.rows > 0 && out.end.results > 0 && !out.end.findDisabled
+    && k >= 2 && k < 40 && out.multi.names.length >= k && out.multi.names.length <= k + 1 && out.multi.units.includes('CA')
+    && /\d+ sequences/.test(out.multi.text);
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 180000 });
+
+check('Repeat Finder owner 2026-10-31: a new file, closing the window or another mode during a search leaves no results of it', async (page) => {
+  const out = {};
+  const start = async () => {
+    await loadFasta(page, `>polyAT\n${'AT'.repeat(12500)}\n>o\n${'ACGT'.repeat(6250)}\n`);
+    await page.evaluate(() => openRepeatFinder(0));
+    await rfStartLong(page, { mode: 'direct', scope: 'single', minLen: 10, maxDiv: 15 });
+    await page.waitForTimeout(300);
+  };
+  const state1 = () => page.evaluate(() => ({ text: document.getElementById('repeatResults').textContent.slice(0, 120),
+    rows: document.querySelectorAll('#repeatResults tbody tr').length, results: _lastRepeatResults.length,
+    highlights: state.repeatHighlights ? state.repeatHighlights.size : 0, findDisabled: document.getElementById('repeatRunBtn').disabled }));
+  // a new file while searching
+  await start();
+  const r = rfRng(5);
+  await loadFasta(page, `>new0\n${r.seq(300)}\n>new1\n${r.seq(300)}\n`);
+  await page.waitForTimeout(7000);   // longer than the whole search takes
+  out.newFile = await state1();
+  // closing the window, then reopening it
+  await start();
+  await page.click('#repeatFinderCloseBtn');
+  await page.waitForTimeout(7000);
+  await page.evaluate(() => openRepeatFinder(0));
+  out.closed = await state1();
+  // another mode
+  await start();
+  await page.click('label:has(input[name="repeatMode"][value="inverted"])');
+  await page.waitForTimeout(7000);
+  out.mode = await state1();
+  const clean = (x) => x.rows === 0 && x.results === 0 && !/longest|stopped/.test(x.text) && !x.findDisabled;
+  const ok = clean(out.newFile) && /New alignment loaded/.test(out.newFile.text) && clean(out.closed) && clean(out.mode)
+    && /mode was changed/.test(out.mode.text);
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
+// The sliced search gives exactly what the search run at once gives (same rows, same order, same notes), here on
+// several inputs: random with planted pairs, low-complexity (many slices, the work limit), gapped rows, protein.
+check('Repeat Finder owner 2026-10-31: the search run in slices gives the same results as run at once', async (page) => {
+  const r = rfRng(4040), out = {};
+  const plant = (L) => { const s = r.seq(L).split(''), u = r.seq(40), v = r.seq(30);
+    const put = (p, str) => { for (let i = 0; i < str.length; i++) s[p + i] = str[i]; };
+    put(200, u); put(1500, u); put(800, v); put(2600, rfRevcomp(v)); put(2000, 'AGGCT'.repeat(8)); return s.join(''); };
+  const gapped = plant(3000).replace(/(.{97})/g, '$1--');
+  const cases = [
+    ['random', `>a\n${plant(3000)}\n>b\n${plant(3000)}\n`, ['direct', 'inverted', 'tandem'], 'all'],
+    ['lowcx', `>lc\n${'AT'.repeat(5000) + r.seq(4000) + 'CAG'.repeat(2000)}\n>o\n${r.seq(20000)}\n`, ['direct', 'inverted', 'tandem'], 'single'],
+    ['gapped', `>g1\n${gapped}\n>g2\n${gapped}\n`, ['direct', 'tandem'], 'all'],
+    ['protein', `>p1\nMKLV${'QEEL'.repeat(10)}PWRTMKLVAAYYGHWRTPMKLVAAYYGHW\n>p2\nMKLVQQQEEERRRTTTWWWYYYPWRTMKLVAAYYGHWRTPMKLVAAYYGHWKK\n`, ['direct', 'tandem'], 'all'],
+  ];
+  let allSame = true, sliced = 0;
+  for (const [name, fa, modes, scope] of cases) {
+    await loadFasta(page, fa);
+    await page.evaluate(() => openRepeatFinder(0));
+    for (const mode of modes) {
+      const minLen = mode === 'tandem' ? 20 : 10;
+      const f = await rfFind(page, { mode, scope, minLen, maxDiv: 15 });
+      const cmp = await page.evaluate(({ mode, scope, minLen }) => {
+        const rows = scope === 'all' ? state.seqs.map((s, i) => i) : [0];
+        const protein = isProteinAlignment();
+        const key = (x) => mode === 'tandem' ? [x.start, x.end, x.unitLen, x.copies, x.unit, x.divergence].join('/') : [x.posA, x.posB, x.length, x.divergence, x.seqA, x.seqB].join('/');
+        const once = [];
+        let totals = [];
+        for (const i of rows) {
+          const ung = state.seqs[i].seq.replace(/[-. ]/g, '');
+          const res = _findRepeats(ung, minLen, 15, mode, { protein });
+          totals.push(res.total);
+          // ungapped positions to columns, as the panel does
+          const cols = [];
+          for (let c = 0; c < state.seqs[i].seq.length; c++) if (!' -.'.includes(state.seqs[i].seq[c])) cols.push(c);
+          for (const x of res) {
+            if (mode === 'tandem') once.push(key({ ...x, start: cols[x.start], end: cols[x.end - 1] + 1 }));
+            else once.push(key({ ...x, posA: cols[x.posA], posB: cols[x.posB] }));
+          }
+        }
+        const panel = _lastRepeatResults.map(key);
+        return { same: JSON.stringify(once) === JSON.stringify(panel), n: panel.length, totals, slices: typeof _repeatJobStats !== 'undefined' && _repeatJobStats ? _repeatJobStats.slices : 0 };
+      }, { mode, scope, minLen });
+      out[`${name}/${mode}`] = { ...cmp, note: (f.text.match(/showing[^;.]*|search stopped[^;.]*/g) || []).join('|') };
+      if (!cmp.same) allSame = false;
+      sliced = Math.max(sliced, cmp.slices);
+    }
+  }
+  const ok = allSame && sliced > 10;
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 180000 });
+
+// The tab stays responsive: the longest time the page could not run anything else during a Tandem All search of
+// 200 rows of 50 kb (until v310: ~6 s in one block, then stopped after 24 rows by the total work limit; that limit is
+// gone with the sliced search, so all 200 rows are searched).
+check('Repeat Finder owner 2026-10-31: Tandem All on 200 rows of 50 kb never blocks the page for 100 ms and searches every row', async (page) => {
+  await page.evaluate(() => {
+    let s = 2024;
+    const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s >>> 30; };
+    const parts = [];
+    for (let i = 0; i < 200; i++) { const a = new Array(50000); for (let j = 0; j < 50000; j++) a[j] = 'ACGT'[rnd()]; parts.push(`>r${i}\n${a.join('')}\n`); }
+    document.getElementById('fastaInput').value = parts.join('');
+    window.__loadPromise = parseAndRender(false);
+  });
+  await page.waitForSelector('#alignLoadProceed', { timeout: 8000 }).then(() => page.click('#alignLoadProceed')).catch(() => {});
+  await page.evaluate(() => window.__loadPromise);
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => openRepeatFinder(0));
+  await page.click('label:has(input[name="repeatMode"][value="tandem"])');
+  await page.click('label:has(input[name="repeatScope"][value="all"])');
+  await page.fill('#repeatMinLen', '20'); await page.fill('#repeatMaxDiv', '15');
+  // the browser's own record of main-thread tasks over 50 ms (Long Tasks API): the longest is the longest the page was
+  // blocked; a 5-ms ticker's longest gap is reported too (it also counts slices run back to back before a timer)
+  await page.evaluate(() => {
+    window.__long = [];
+    window.__obs = new PerformanceObserver(l => { for (const e of l.getEntries()) window.__long.push(Math.round(e.duration)); });
+    window.__obs.observe({ entryTypes: ['longtask'] });
+    window.__gap = { last: performance.now(), max: 0, on: true };
+    const tick = () => { const t = performance.now(); window.__gap.max = Math.max(window.__gap.max, t - window.__gap.last); window.__gap.last = t; if (window.__gap.on) setTimeout(tick, 5); };
+    setTimeout(tick, 5);
+  });
+  const t0 = Date.now();
+  await page.click('#repeatRunBtn');
+  await page.waitForFunction(() => !document.querySelector('#repeatResults .rf-progress') && !/^Searching/.test(document.getElementById('repeatResults').textContent), null, { timeout: 300000, polling: 500 });
+  await page.waitForTimeout(300);
+  const out = await page.evaluate(() => { window.__gap.on = false; window.__obs.disconnect(); return { longestTaskMs: Math.max(0, ...window.__long), longTasks: window.__long.length, maxGapMs: Math.round(window.__gap.max), stats: typeof _repeatJobStats !== 'undefined' ? _repeatJobStats : null, text: document.getElementById('repeatResults').textContent.slice(0, 200) }; });
+  out.wallMs = Date.now() - t0;
+  const ok = out.longestTaskMs < 100 && out.stats && out.stats.maxSliceMs < 60 && !/stopped/.test(out.text) && (/^No tandem repeats found/.test(out.text) || /200 sequences/.test(out.text));
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 400000 });
+
+// Decision 5: the button that steps back to the previous TSD marking was called "Remove marks", which it is not
+// (pressed after two markings it brings the first back). Renamed; the manual names it the same.
+check('TSD marking owner 2026-10-31: the step-back button is "Undo last marking", in the panel and the manual', async (page) => {
+  const out = await page.evaluate(async () => {
+    const b = document.getElementById('tsdUndoMarkBtn');
+    const manual = await (await fetch('manual.html')).text();
+    return { label: b.textContent.trim(), title: b.title, manualNew: (manual.match(/Undo last marking/g) || []).length, manualOld: /Remove marks/.test(manual) };
+  });
+  const ok = out.label === 'Undo last marking' && /before the last marking/.test(out.title) && out.manualNew >= 2 && !out.manualOld;
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
