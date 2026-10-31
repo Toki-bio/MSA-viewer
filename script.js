@@ -29460,8 +29460,9 @@ function handleGeneDocEditDragMove(e) {
             const col = _canvasColFromClientX(e.clientX, e.clientY);   // Block: the band under the pointer (it read the band at the top of the view)
             if (col < 0 || col === drag.lastPos) return;
             drag.lastPos = col;
+            // its updateColumnSelections redraws the overlay, which holds the column selection; a full redraw here
+            // (scheduleDraw, from before the overlay did) cost ~25 ms per column crossed (GLM audit cb34 #11)
             setGeneDocColumnRange(drag.startPos, col);
-            _canvasState.scheduleDraw?.();
         } else {
             const target = document.elementFromPoint(e.clientX, e.clientY);
             const span = target?.closest?.('.seq-data > span[data-pos]');

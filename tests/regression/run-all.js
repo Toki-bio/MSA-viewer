@@ -6409,6 +6409,31 @@ check('Canvas Block: the rename box is always whole in the view (row scrolled aw
   return { pass: ok, detail: JSON.stringify({ away, cut, cutRowY }) };
 }));
 
+// cb34 #11: every column the GeneDoc column drag crossed asked for a full redraw of the canvas (scheduleDraw marks
+// it dirty), though the column selection is drawn on the overlay alone (updateColumnSelections redraws it). A
+// full Block draw of aln2000x2000 took ~25 ms (headless, median of 20), so the drag ran at under a frame per
+// crossing. The drag must draw the selection on the overlay, with no full redraw while it moves.
+check('Canvas Block: a GeneDoc column drag redraws only the overlay while it moves (no full redraw per column)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await cbNavOpen(p, origin, cbNavFasta(8, 400), 50);
+  await p.evaluate(() => { state.editModeActive = true; state.editTool = 'selectColumn'; });
+  const g = await cbGeom(p);
+  const oy = await cbScrollTo(p, 0);
+  const rowY = cbTop(g, 2) + g.headerH + 2.5 * g.charH;
+  const a = cbPt(g, oy, 2, 110, rowY), z = cbPt(g, oy, 2, 125, rowY);
+  await p.mouse.move(a.x, a.y); await p.mouse.down(); await p.waitForTimeout(150);
+  await p.evaluate(() => { _canvasState.stats.full = 0; });
+  await p.mouse.move(z.x, z.y, { steps: 8 }); await p.waitForTimeout(150);
+  const mid = await p.evaluate((pt) => {
+    const o = _canvasState.overlay, r = o.getBoundingClientRect(), d = devicePixelRatio;
+    const px = o.getContext('2d').getImageData(Math.round((pt.x - r.left) * d), Math.round((pt.y - r.top) * d), 1, 1).data;
+    return { full: _canvasState.stats.full, n: state.selectedColumns.size, tint: px[3] > 0 };
+  }, cbPt(g, oy, 2, 120, rowY));
+  await p.mouse.up(); await p.waitForTimeout(300);
+  await p.evaluate(() => { state.editModeActive = false; });
+  const ok = mid.full === 0 && mid.n === 16 && mid.tint;
+  return { pass: ok, detail: JSON.stringify({ oy, mid }) };
+}));
+
 // #37: the vertical bar's range was the content less the canvas' height, but clampOffsets lets the view go
 // on by the horizontal bar lying over the canvas' bottom: dragged to its end the thumb stopped about a row
 // short, the last row under the horizontal bar (and the same sideways with the vertical bar over the right edge)
