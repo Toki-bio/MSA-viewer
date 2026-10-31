@@ -5194,9 +5194,18 @@ check('Canvas Block: codon analysis by gene gives each band the DOM block\'s tra
   // band tops from the DOM lane counts: header + rows (bases + lanes) + bottom consensus + 24 px gap
   const nSeq = 6, pitch = k => cv.charH + k * cv.aaRowH;
   const top = b => { let t = 0; for (let k = 0; k < b; k++) t += cv.headerH + nSeq * pitch(dom.lanes[k]) + cv.cons + cv.gap; return t; };
+  // The probe scrolls by writing offsetY. For the last band top(b) - 10 is past the end of the scroll
+  // range, and the app clamps it only in its next frame (draw -> clampOffsets). The check used to wait
+  // a fixed 250 ms and then read offsetY to place the clicks: on a loaded machine that frame came later
+  // (measured: 4 of ~1,000 probes under 6x CPU throttling; once in a 29-check "canvas block" run), so
+  // the hit test and hover used the unclamped 1515 while the click landed after the clamp to 857,
+  // 658 px off the name, in the gap: rows [] although hit and tooltip were right. Wait for the app's
+  // frame instead (its draw was requested first, so it runs before these callbacks however late it is).
+  const settleFrame = () => p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
   const probe = async (row, col) => {
     const b = Math.floor(col / cv.bandCols);
     await p.evaluate((y) => { _canvasState.offsetY = y; _canvasState.scheduleDrawMoved(); }, Math.max(0, top(b) - 10));
+    await settleFrame();
     await p.waitForTimeout(250);
     const pt = await p.evaluate(({ y, x }) => { const r = _canvasState.canvas.getBoundingClientRect(); return { x: r.left + x, y: r.top + y - _canvasState.offsetY, nx: r.left + 30 }; },
       { x: cv.nameW + (col - b * cv.bandCols + 0.5) * cv.charW, y: top(b) + cv.headerH + row * pitch(dom.lanes[b]) + cv.charH / 2 });
@@ -5206,9 +5215,11 @@ check('Canvas Block: codon analysis by gene gives each band the DOM block\'s tra
     const tip = await p.evaluate(() => window.__tips[window.__tips.length - 1] || '');
     await p.mouse.move(pt.nx, pt.y); await p.mouse.click(pt.nx, pt.y); await p.waitForTimeout(250);
     const rows = await p.evaluate(() => [...state.selectedRows]);
-    await p.evaluate(() => { state.selectedRows.clear(); _canvasState.scheduleOverlay?.(); });
+    // clear the selection as a user does (Esc with nothing open), not behind the app's back
+    await p.keyboard.press('Escape'); await settleFrame();
+    const cleared = await p.evaluate(() => state.selectedRows.size === 0);
     const name = ['ref', 'copy1', 'copy2', 'copy3', 'copy4', 'copy5'][row];
-    return { band: b, hit, tipOk: tip.startsWith(name + ':') && tip.includes(String(col + 1)), tip: tip.slice(0, 40), rows, ok: !!hit && hit.row === row && hit.col === col && rows.length === 1 && rows[0] === row };
+    return { band: b, hit, tipOk: tip.startsWith(name + ':') && tip.includes(String(col + 1)), tip: tip.slice(0, 40), rows, cleared, ok: !!hit && hit.row === row && hit.col === col && rows.length === 1 && rows[0] === row && cleared };
   };
   const probes = [await probe(4, 175), await probe(2, 270), await probe(5, 130)];
   // wheel scrolling over bands of different heights: the frame copy (exposed strip widened to the
@@ -5223,7 +5234,10 @@ check('Canvas Block: codon analysis by gene gives each band the DOM block\'s tra
   const scroll = [];
   for (const dy of [120, 120, 120, 120, 120, -100, -100]) {
     await p.evaluate(() => { _canvasState.stats.blit = 0; _canvasState.stats.full = 0; });
-    await p.mouse.wheel(0, dy); await p.waitForTimeout(250);
+    // the eased wheel step ends by setting the last offset and requesting its frame; under load that
+    // frame was still pending at 250 ms, so the read-back below held the previous frame (diff > 0 at
+    // a whole-step oy, seen under CPU throttling). Wait for the animation and its last frame.
+    await p.mouse.wheel(0, dy); await p.waitForTimeout(250); await settleWheel(p); await settleFrame();
     scroll.push(await p.evaluate(async () => {
       const c = _canvasState.canvas, g = c.getContext('2d'), a = g.getImageData(0, 0, c.width, c.height).data, st = { blit: _canvasState.stats.blit, full: _canvasState.stats.full, oy: _canvasState.offsetY };
       _canvasState.scheduleDraw(); await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
