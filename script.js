@@ -6537,6 +6537,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             if (!_canvasState._dprRerender) { _canvasState._dprRerender = true; setTimeout(() => { _canvasState._dprRerender = false; if (isCanvasMode()) renderAlignment(); }, 0); }
             return false;
         }
+        // Printing Block: the print stylesheet hides the viewer (#printBlock holds the bands); measured hidden, the
+        // canvas fell back to 800 px and re-wrapped the bands at ~79 columns behind the print, then back after it
+        if (document.body.classList.contains('print-block')) return false;
         const hCss = _fitAlignmentViewport();
         // The container's client area, not its border box (2px wider, 1px taller): the canvas
         // overflowed it, its edge was cut, and a scrollTop/scrollLeft write nudged the alignment.

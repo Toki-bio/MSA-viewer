@@ -6034,7 +6034,7 @@ check('Canvas Block: printing Block prints every band (each row\'s name and resi
     const svgs = holder ? [...holder.querySelectorAll('svg')] : [];
     const shown = holder ? getComputedStyle(holder).display : 'none';
     const viewer = getComputedStyle(document.getElementById('viewer-container')).display;
-    return { svgs: svgs.length, shown, viewer, texts: svgs.map(s => s.outerHTML) };
+    return { svgs: svgs.length, shown, viewer, texts: svgs.map(s => s.outerHTML), bandColsInPrint: _canvasState.layout.bandCols };
   });
   const want = (i) => { let q = ''; for (let j = 0; j < 900; j++) q += 'ACGT'[(i * 7 + j) % 4]; return q; };
   const bad = [];
@@ -6052,8 +6052,11 @@ check('Canvas Block: printing Block prints every band (each row\'s name and resi
   await p.emulateMedia({ media: 'screen' });
   await p.waitForTimeout(300);
   const after = await p.evaluate(() => !!document.getElementById('printBlock'));
-  const ok = r.svgs === L.nBands && r.shown === 'block' && r.viewer === 'none' && bad.length === 0 && rowsSeen === 20 * L.nBands && !after && pdf.length > 20000;
-  return { pass: ok, detail: JSON.stringify({ L, svgs: r.svgs, shown: r.shown, viewer: r.viewer, rowsSeen, bad: bad.slice(0, 4), pdfBytes: pdf.length, removedAfter: !after }) };
+  // the hidden viewer must keep its bands: measured hidden, the canvas re-wrapped them at ~79 columns behind the print
+  const bandColsAfter = await p.evaluate(() => _canvasState.layout.bandCols);
+  const ok = r.svgs === L.nBands && r.shown === 'block' && r.viewer === 'none' && bad.length === 0 && rowsSeen === 20 * L.nBands && !after && pdf.length > 20000
+    && r.bandColsInPrint === L.bandCols && bandColsAfter === L.bandCols;
+  return { pass: ok, detail: JSON.stringify({ L, bandColsInPrint: r.bandColsInPrint, bandColsAfter, svgs: r.svgs, shown: r.shown, viewer: r.viewer, rowsSeen, bad: bad.slice(0, 4), pdfBytes: pdf.length, removedAfter: !after }) };
 }));
 
 check('Realign all keeps a row that has only gaps (MAFFT and codon/MACSE), as a gap row of the new width', async (page) => {
