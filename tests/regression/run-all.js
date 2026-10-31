@@ -5197,7 +5197,7 @@ check('Canvas Block: codon analysis by gene gives each band the DOM block\'s tra
   // The probe scrolls by writing offsetY. For the last band top(b) - 10 is past the end of the scroll
   // range, and the app clamps it only in its next frame (draw -> clampOffsets). The check used to wait
   // a fixed 250 ms and then read offsetY to place the clicks: on a loaded machine that frame came later
-  // (measured: 4 of ~1,000 probes under 6x CPU throttling; once in a 29-check "canvas block" run), so
+  // (measured: 3 of 2,400 probes under 6-8x CPU throttling; once in a 29-check "canvas block" run), so
   // the hit test and hover used the unclamped 1515 while the click landed after the clamp to 857,
   // 658 px off the name, in the gap: rows [] although hit and tooltip were right. Wait for the app's
   // frame instead (its draw was requested first, so it runs before these callbacks however late it is).
