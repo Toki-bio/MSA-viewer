@@ -14864,6 +14864,29 @@ check('GLM fix2: legacy \'single\' preset/snapshot opens in Canvas (Full only wh
   return { pass: plain.preset === 'modeCanvas' && plain.snapshot === 'modeCanvas' && full.preset === 'modeSingle' && full.snapshot === 'modeSingle', detail: JSON.stringify({ plain, full }) };
 }));
 
+// owner 2026-11-02: the search colour box opens a palette on hover, without a click.
+check('Search colour: hovering the colour box shows a palette; a chip sets the colour used by Find', async (page) => {
+  await loadFasta(page, makeFasta(6, 120));
+  await page.keyboard.press('Control+f'); await page.waitForTimeout(400);   // opens the search controls, as a user would
+  const popHidden = () => page.evaluate(() => { const p = document.getElementById('searchColourPop'); return !p || p.hidden; });
+  await page.hover('#searchColor', { timeout: 5000 }); await page.waitForTimeout(300);
+  const chips = await page.evaluate(() => document.querySelectorAll('#searchColourPop .search-colour-chip').length);
+  const shown = !(await popHidden());
+  await page.hover('#searchInput', { timeout: 5000 }); await page.waitForTimeout(600);   // pointer leaves: the palette closes
+  const leaves = await popHidden();
+  await page.hover('#searchColor', { timeout: 5000 }); await page.waitForTimeout(300);
+  const chip = page.locator('#searchColourPop .search-colour-chip[data-colour="#45B7D1"]');
+  await chip.hover({ timeout: 5000 }); await page.waitForTimeout(400);
+  const stillShown = !(await popHidden());
+  await chip.click({ timeout: 5000 }); await page.waitForTimeout(200);
+  const after = { value: await page.evaluate(() => el('searchColor').value.toLowerCase()), hidden: await popHidden() };
+  await page.evaluate(() => { el('searchInput').value = 'ACG'; el('searchButton').click(); }); await page.waitForTimeout(800);
+  const used = await page.evaluate(() => ((state.searchHistory || []).slice(-1)[0] || {}).color || null);
+  const out = { chips, shown, leaves, stillShown, after, used };
+  const ok = chips >= 12 && shown && leaves && stillShown && after.value === '#45b7d1' && after.hidden && String(used).toLowerCase() === '#45b7d1';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

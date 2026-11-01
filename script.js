@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v322';
+const BUILD_TAG = 'v323';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -37506,3 +37506,56 @@ function _initRepeatFinderEvents() {
     });
     _syncRepeatFinderModeUI();
 }
+
+// Search highlight colour: hovering the colour box opens a small palette (a native colour
+// dialog cannot open without a click); a click on the box still opens the full picker.
+const SEARCH_HOVER_COLOURS = ['#FFFF00', '#FFA500', '#FF6B6B', '#FF69B4', '#BB8FCE', '#45B7D1',
+    '#4ECDC4', '#7CFC00', '#98D8C8', '#F8B88B', '#A0A0A0', '#00BFFF'];
+function _initSearchColourHover() {
+    const input = document.getElementById('searchColor');
+    if (!input || input.dataset.hoverPalette) return;
+    input.dataset.hoverPalette = '1';
+    const pop = document.createElement('div');
+    pop.id = 'searchColourPop';
+    pop.className = 'search-colour-pop';
+    pop.hidden = true;
+    for (const c of SEARCH_HOVER_COLOURS) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'search-colour-chip'; b.style.background = c; b.title = c; b.dataset.colour = c;
+        b.addEventListener('click', () => {
+            input.value = c;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            hide(0);
+        });
+        pop.appendChild(b);
+    }
+    const more = document.createElement('button');
+    more.type = 'button'; more.className = 'search-colour-more'; more.textContent = 'More…';
+    more.title = 'Open the full colour picker';
+    more.addEventListener('click', () => { hide(0); input.click(); });
+    pop.appendChild(more);
+    document.body.appendChild(pop);
+    let timer = null;
+    const mark = () => pop.querySelectorAll('.search-colour-chip').forEach(b =>
+        b.classList.toggle('current', b.dataset.colour.toLowerCase() === input.value.toLowerCase()));
+    const show = () => {
+        clearTimeout(timer);
+        if (!pop.hidden) return;
+        const r = input.getBoundingClientRect();
+        pop.hidden = false; mark();
+        const w = pop.offsetWidth;
+        pop.style.left = Math.max(4, Math.min(window.innerWidth - w - 4, r.left)) + 'px';
+        pop.style.top = (r.bottom + 2) + 'px';
+    };
+    function hide(delay = 250) { clearTimeout(timer); timer = setTimeout(() => { pop.hidden = true; }, delay); }
+    input.addEventListener('mouseenter', show);
+    input.addEventListener('mouseleave', () => hide());
+    pop.addEventListener('mouseenter', () => clearTimeout(timer));
+    pop.addEventListener('mouseleave', () => hide());
+    input.addEventListener('click', () => hide(0));
+    input.addEventListener('focus', show);
+    input.addEventListener('blur', () => hide());
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !pop.hidden) hide(0); });
+}
+document.addEventListener('DOMContentLoaded', _initSearchColourHover);
