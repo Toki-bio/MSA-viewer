@@ -207,7 +207,7 @@ check('Default view by size: below ALIGN_CANVAS_DEFAULT_RESIDUES a DOM mode, at/
   if (out.below.canvasEl || out.below.domRows === 0) bad.push(`${out.below.residues} residues (below the limit) did not open in a DOM mode`);
   if (!out.atOrAbove.canvasEl || !out.atOrAbove.canvasRadio) bad.push(`${out.atOrAbove.residues} residues (above the limit) did not open in Canvas`);
   // v249: the switch is announced (10 s note); v254: nothing needs Full or Block any more, the note names them as the DOM views
-  // // Full hidden from the switch (owner 2026-11-01): the note now names Block, no longer Full (regex was /Full or Block/).
+  // Full hidden from the switch (owner 2026-11-01): the note now names Block, no longer Full (regex was /Full or Block/).
   if (!/Canvas view.*Block/.test(out.atOrAbove.note)) bad.push(`no limitation note after the switch (status: "${out.atOrAbove.note.slice(0, 80)}")`);
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
 });
@@ -5190,12 +5190,15 @@ check('The top-bar view switch is shown in Full, Block, Canvas and Reads, each o
   });
   const out = {};
   // each option, clicked on the switch, switches the view
-  // // Full hidden from the switch (owner 2026-11-01): no F option on the switch any more; each remaining option is clicked, Full only through setMode.
+  // Full hidden from the switch (owner 2026-11-01): no F option on the switch any more; each remaining option is clicked, Full only through setMode.
   for (const [qm, want] of [['qmBlocks', 'modeBlocks'], ['qmCanvas', 'modeCanvas']]) {
     const lab = await p.$(`label[for="${qm}"]`);
     if (lab && await lab.isVisible()) { await lab.click(); await p.waitForTimeout(800); }
     out[want] = await look();
   }
+  // Full is reached through setMode (it is not on the switch); the switch stays shown and adds no height there.
+  await setMode(p, 'full'); await p.waitForTimeout(800);
+  out.modeSingle = await look();
   // Reads: a reference and its reads
   await p.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples/real/htslib_ce_CHROMOSOME_II.fa')); await p.waitForTimeout(1500);
   await p.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples/real/htslib_range.bam')); await p.waitForTimeout(2000);
@@ -5205,7 +5208,9 @@ check('The top-bar view switch is shown in Full, Block, Canvas and Reads, each o
   if (lab && await lab.isVisible()) { await lab.click(); await p.waitForTimeout(800); }
   out.fromReads = await look();
   const views = ['modeBlocks', 'modeCanvas'];
-  const ok = views.every(v => out[v].mode === v && out[v].shown && out[v].checked === v && out[v].h === out[v].hWithout)
+  // Full: same assertions as before except `checked` (no Full option on the switch to be checked: owner 2026-11-01)
+  const fullOk = out.modeSingle.mode === 'modeSingle' && out.modeSingle.shown && out.modeSingle.checked === null && out.modeSingle.h === out.modeSingle.hWithout;
+  const ok = fullOk && views.every(v => out[v].mode === v && out[v].shown && out[v].checked === v && out[v].h === out[v].hWithout)
     && out.reads.mode === 'modeReads' && out.reads.shown && out.reads.checked === 'modeReads' && out.reads.labels.includes('Reads view')
     && out.noFullOption && out.fromReads.mode === 'modeCanvas';
   return { pass: ok, detail: JSON.stringify(out) };
@@ -5679,7 +5684,7 @@ check('Canvas Block: Block -> Canvas -> Block and Block -> Full -> Block keep th
   };
   const steps = [{ step: 'block', ...(await where()) }];
   for (const id of ['#modeCanvas', '#modeBlocks', '#modeSingle', '#modeBlocks']) {
-    if (id === '#modeSingle') await setMode(p, 'full'); else await p.click(id);   // // Full hidden from the switch (owner 2026-11-01): Full is reached through setMode
+    if (id === '#modeSingle') await setMode(p, 'full'); else await p.click(id);   // Full hidden from the switch (owner 2026-11-01): Full is reached through setMode
     await p.waitForTimeout(900);
     steps.push({ step: id, ...(await where()) });
   }
@@ -8835,7 +8840,7 @@ check('MAFFT worker that cannot load: the error says why, not "undefined"', asyn
 // for that dialog near ALIGN_CRAZY_VOLUME, so on a tall or long alignment the switch could
 // still be pending when a check read the view).
 async function auditClickMode(page, mode) {
-  // // Full hidden from the switch (owner 2026-11-01): the Full label cannot be clicked; Full is reached through setMode.
+  // Full hidden from the switch (owner 2026-11-01): the Full label cannot be clicked; Full is reached through setMode.
   if (mode === 'full') { await setMode(page, 'full'); await page.waitForTimeout(700); await r2Settle(page); return; }
   const id = { full: 'modeSingle', block: 'modeBlocks', canvas: 'modeCanvas' }[mode];
   const open = await page.evaluate(() => document.querySelector('.section-header[data-section="display"]').closest('.menu-section').classList.contains('menu-open'));
@@ -9348,7 +9353,7 @@ check('Round 2: 400 x 1,245 loads and switches to Full quickly (no full-DOM clif
   const load = Date.now() - t0;
   await auditOpenSection(page, 'display');
   const t1 = Date.now();
-  await setMode(page, 'full');   // // Full hidden from the switch (owner 2026-11-01): the Full radio is hidden
+  await setMode(page, 'full');   // Full hidden from the switch (owner 2026-11-01): the Full radio is hidden
   await r2Settle(page);
   const full = Date.now() - t1;
   await page.click('.section-header[data-section="display"]');
