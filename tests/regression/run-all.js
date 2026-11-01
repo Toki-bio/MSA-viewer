@@ -1109,6 +1109,8 @@ check('Codon analysis: translation tooltips number codons as the reference does 
   await page.waitForTimeout(1500);
   await page.evaluate(() => { const w = document.getElementById('variantsWindow'); if (w) w.style.display = 'none'; const c = document.getElementById('codonAnalysis'); if (!c.checked) { c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); } });
   await page.waitForTimeout(1500);
+  // Full hidden from the switch (owner 2026-11-01): Sample -> row now lands in Canvas; the tooltip spans are Full's, so reach Full through setMode.
+  await setMode(page, 'full'); await page.waitForTimeout(1000);
   const r = await page.evaluate(() => {
     const d = state._codonData, at = (row, col) => d.aaSeq[row].find(e => e.cols.includes(col));
     const a0 = at(0, 918), a1 = at(1, 918), b1 = at(1, 2048);
