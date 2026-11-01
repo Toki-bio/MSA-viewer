@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v317';
+const BUILD_TAG = 'v318';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -9970,8 +9970,8 @@ async function handleBamFile(event) {
         });
         bamState.nTracks = assignReadTracks(bamState.reads);
 
-        // Switch to Full display mode and Reads view
-        const singleRadio = document.getElementById('modeSingle');
+        // Reads view (Full is hidden; the rows go to Canvas when the user leaves Reads)
+        const singleRadio = document.getElementById('modeCanvas');
         if (singleRadio) singleRadio.checked = true;
         const readsRadio = document.getElementById('modeReads');
         if (readsRadio) readsRadio.checked = true;
@@ -10297,7 +10297,7 @@ function addSampleRowFromReads() {
     if (existing >= 0) {
         state.selectedRows = new Set([existing]);
         state.lastSelectedIndex = existing;
-        const full0 = document.getElementById('modeSingle');
+        const full0 = document.getElementById('modeCanvas');
         if (full0 && document.getElementById('modeReads')?.checked) full0.checked = true;
         renderAlignment();
         showMessage(`${name} is already row ${existing + 1} (selected). Another sample: open its reads file, then Sample → row.`, 5000);
@@ -10329,8 +10329,8 @@ function addSampleRowFromReads() {
         gaplessPositions: calculateGaplessPositions(seq),
         _fromReads: fromFile
     });
-    // to Full view: the rows are what codon analysis and MACSE work on (the reads stay loaded for the Reads view)
-    const full = document.getElementById('modeSingle');
+    // to Canvas view: the rows are what codon analysis and MACSE work on (the reads stay loaded for the Reads view)
+    const full = document.getElementById('modeCanvas');
     if (full) full.checked = true;
     renderAlignment();
     updateBamButtonVisibility();
@@ -10842,7 +10842,7 @@ function variantToAlignment(p) {
     let col = -1;
     for (let c = 0, k = 0; c < seq.length; c++) { if (seq[c] === '-' || seq[c] === '.') continue; if (k === p) { col = c; break; } k++; }
     if (col < 0) return;
-    const full = document.getElementById('modeSingle');
+    const full = document.getElementById('modeCanvas');
     if (full && document.getElementById('modeReads')?.checked) full.checked = true;
     state.selectedColumns.clear();
     state.selectedColumns.add(col);
@@ -11741,8 +11741,8 @@ function renderAlignment(options = {}) {
         _lastModeRadioId = 'modeCanvas'; // bypasses onModeChange, so sync explicitly
         syncQuickModeSwitch();
         syncCodonModePanel(); // this bypasses onModeChange, so sync explicitly
-        const note = `Canvas view: everything works here as in Full view; `
-            + `Full or Block (mode switch at the top): Full gives the DOM view, Block wraps the rows.`;
+        const note = `Canvas view: everything works here, and it is fast on any size; `
+            + `Block (mode switch at the top) wraps the rows into blocks.`;
         if (!_canvasNoteShown) {                        // once per session: Canvas is simply the default view
             _canvasNoteShown = true;
             showMessage(note, 10000);
@@ -13976,7 +13976,7 @@ const ALIGN_CRAZY_VOLUME = 5_000_000;
 // -> 0.4-0.6 s, residue click 0.17-0.53 s -> 0.05-0.13 s; the full regression suite passes).
 const ALIGN_WINDOWED_DOM_THRESHOLD = 100_000;
 // At or above this many residues a freshly loaded alignment opens in Canvas mode (the user
-// can still pick Full/Block). Measured 2026-10-16 at 600 x 600 (360k residues, Radeon 780M):
+// can still pick Block). Measured 2026-10-16 at 600 x 600 (360k residues, Radeon 780M):
 // the full-DOM view scrolls at 110-160 ms a frame because every row entering the viewport is
 // laid out and the whole layer repainted (content-visibility: auto), and turning that rule
 // off makes mode switches and Highlight diffs 2-3x slower (5-10 s) while Canvas scrolls at
@@ -14133,8 +14133,7 @@ function showLargeAlignmentDialog(stats, classification, context = 'load') {
                several seconds on an alignment this size. Canvas mode stays instant, and editing
                works there too.`
             : `Loading may be slow or briefly freeze the browser because ${reasonText}.
-               Canvas mode is recommended (scrolling and editing stay instant); switch to Block/Full
-               only for Show 2D.`;
+               Canvas mode is recommended (scrolling and editing stay instant); Show 2D works in Canvas too.`;
 
         content.innerHTML = `
             <p style="margin:0 0 10px;">
@@ -14785,7 +14784,6 @@ function _syncBlockSizeControl() {
 // Display menu's view radios. One line per view - [Display menu radio, short label, tooltip]; removing a
 // view from the switch is removing its line. Its radios are qm + the radio's name (qmSingle, qmReads...).
 const QUICK_VIEW_OPTIONS = [
-    ['modeSingle', 'F', 'Full view: the alignment as page text, one continuous block'],
     ['modeBlocks', 'B', 'Block view: the alignment wrapped in blocks (Block Size in the Display menu)'],
     ['modeCanvas', 'C', 'Canvas view: drawn on a canvas, any size; the default view'],
     ['modeReads', 'R', 'Reads view: mapped SAM/BAM reads (offered once reads are loaded)'],
@@ -17450,7 +17448,7 @@ function savePreset() {
         light: el('lightSlider').value,
         zoom: el('zoomSlider').value,
         zoomFormat: 'logSlider',
-        mode: el('modeCanvas')?.checked ? 'canvas' : (el('modeBlocks').checked ? 'blocks' : 'single'),
+        mode: (el('modeCanvas')?.checked || el('modeReads')?.checked) ? 'canvas' : (el('modeBlocks').checked ? 'blocks' : 'single'),
         blockSize: String(blockSizeRequested()),   // the width asked for, not the narrower one a small window drew
         nameLen: el('nameLengthSlider').value,
         consensusThreshold: el('consensusThreshold').value,
@@ -17536,8 +17534,11 @@ function loadPreset() {
         }
     });
     setZoom(_sliderToZoom(_readZoomSliderRaw()));
-    el('modeBlocks').checked = p.mode === 'blocks';
-    el('modeSingle').checked = p.mode !== 'blocks';
+    // canvas -> Canvas, blocks -> Block, single (old presets) -> Full, anything else -> Canvas
+    const _pm = p.mode === 'blocks' ? 'blocks' : (p.mode === 'single' ? 'single' : 'canvas');
+    el('modeBlocks').checked = _pm === 'blocks';
+    el('modeSingle').checked = _pm === 'single';
+    if (el('modeCanvas')) el('modeCanvas').checked = _pm === 'canvas';
     el('stickyNames').checked = p.stickyNames !== undefined ? p.stickyNames : true;
     _applyNameLenNoLimit(!!p.nameLenNoLimit);
     onModeChange();
@@ -17610,7 +17611,7 @@ function _buildSnapshotPayload(opts = {}) {
             lightColor: el('lightColorPicker')?.value,
             zoom: el('zoomSlider')?.value,
             zoomFormat: 'logSlider',
-            mode: el('modeCanvas')?.checked ? 'canvas' : (el('modeBlocks')?.checked ? 'blocks' : 'single'),
+            mode: (el('modeCanvas')?.checked || el('modeReads')?.checked) ? 'canvas' : (el('modeBlocks')?.checked ? 'blocks' : 'single'),
             residueCase: state.residueCase || 'asis',
             blockSize: String(blockSizeRequested()),   // the width asked for (the slider shows the one drawn)
             nameLen: el('nameLengthSlider')?.value,
