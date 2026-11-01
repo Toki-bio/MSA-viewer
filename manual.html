@@ -2056,7 +2056,13 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   is plotted, otherwise a note says they belong to another pair.</p>
   <p>The strip under the plot (the two sequences around the pointer) has a ruler above A and below B: numbers every 10
   and ticks every 5 (every 50 and 10 on a very long line), in each sequence's own residue numbers without gaps; with
-  RevComp B the numbers of B run down, as in the row. <strong>Expand</strong> (or <strong>Strip lines</strong>, up to 12)
+  RevComp B the numbers of B run down, as in the row. <strong>One rule for every number:</strong> a B number anywhere in
+  the window (axis ticks, hover and crosshair labels, the frozen message, the strip and its ruler, the sliders and their
+  number boxes, the title, Top Regions, the stretch menu, the collection and its TSV, and the names in Copy region
+  FASTA) is the B row's own residue number (1-based, without gaps, ends included), whatever RevComp and the part say;
+  with RevComp B the numbers simply run downwards along the axis, and a stretch reads first residue to last, for example
+  <code>B300-251</code>. A FASTA name is the clean name, <code>_rc</code> for the reverse-complemented B, and that
+  first-last, with no spaces. <strong>Expand</strong> (or <strong>Strip lines</strong>, up to 12)
   wraps a longer stretch into several lines fitted to the window width, each block with its own ruler, so a few
   hundred bases can be read without scrolling. As in Staden's SIP, the <strong>A</strong> and <strong>B</strong> sliders
   (with number boxes) move the position in each sequence independently: A down the plot, B across it. The plot shows the
@@ -2068,13 +2074,17 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   (or of the two selected rows, or the rows the residue range covers) inside those columns. A selection of separate
   columns is plotted as the whole span from its first to its last column, and the window says so. With a rectangle
   (a residue selection over several rows) <strong>Dot-plot of rectangle</strong> plots its rows over its columns: two rows
-  against each other, one row against itself, and for more rows a small chooser asks which two. In the window, the
-  <strong>A from-to</strong> and <strong>B from-to</strong> boxes (residue numbers of the whole ungapped sequence, 1-based,
-  both ends included) with <strong>Re-plot</strong> do the same by typing; numbers outside the sequence are clamped to it with
-  a message, a <em>from</em> after a <em>to</em> is refused, and <strong>Whole</strong> returns to both full sequences. The
-  title shows the part plotted (for example <code>[41-415 of 470]</code>). Whatever the part, every number stays the
-  residue's real position in the whole sequence: axis, ruler, sliders, the Top Regions list, the collection, and the
-  tint and scrolling in the alignment, so a stretch is marked where it really is. With RevComp B the part is cut first and then
+  against each other, one row against itself, and for more rows a small chooser asks which two. The same chooser asks
+  for <strong>Dot-plot of selected columns</strong> when a residue selection that is not one rectangle covers three or more rows.
+  The <strong>A from-to</strong> and <strong>B from-to</strong> boxes and <strong>Compare with pasted&hellip;</strong> are
+  behind the <strong>Parts</strong> button in the window. The boxes (residue numbers of the whole ungapped sequence, 1-based,
+  both ends included) with <strong>Re-plot</strong> do the same by typing; numbers above the length are clamped to it with
+  a message, a <em>from</em> after a <em>to</em> and a number below 1 are refused, and <strong>Whole</strong> returns to both full sequences. The
+  title shows the part plotted (for example <code>[41-415 of 470]</code>; with RevComp B the B part reads downwards,
+  <code>[415-41 of 470]</code>). Whatever the part, every number stays the
+  residue's real position in the whole sequence (for B, in the row, see the rule above): axis, ruler, sliders, the Top Regions list, the collection, and the
+  tint and scrolling in the alignment, so a stretch is marked where it really is. A collection entry also keeps the
+  residues it was made on; if the sequence was edited or trimmed since, using the entry says so and marks nothing. With RevComp B the part is cut first and then
   reverse-complemented.</p>
   <p><strong>A pasted sequence.</strong> <strong>Compare with pasted&hellip;</strong> in the window (or <strong>Dot-plot vs
   pasted sequence&hellip;</strong> in a row's right-click menu) opens a box for raw or FASTA text: only the first record is
