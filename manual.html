@@ -2023,8 +2023,9 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   upper half (the lower half is its mirror image). Positions are in sequence coordinates;
   click an entry to centre it in the plot. The &#8674; button of an entry shows the stretch in the
   alignment: both copies are tinted blue, the alignment scrolls to the first copy, and the dot plot
-  window stays open with the alignment behind it usable (move or shrink the window as needed);
-  <strong>Clear marks</strong>, a recalculation or closing the window removes the tint. The &#9734; button
+  window folds into a small bar in the lower right corner so that it does not hide the stretch (the &#9662; button in the
+  title bar, or the bar's &#9652;, brings the window back; the tint stays while the window is open);
+  <strong>Clear marks</strong> or closing the window removes the tint. The &#9734; button
   adds the stretch to the <strong>Collection</strong> under the list: entries you want to keep, with both
   copies' sequences, the pair of sequences and the method. The collection stays across files and reloads
   (browser storage) and is saved in snapshots. Click an entry to centre it in the plot (another pair's entry
@@ -2042,6 +2043,24 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   fits the whole plot in the window again. Each diagonal run of dots is drawn as one smooth line
   through the matching positions (an isolated match as a round dot); very dense plots fall back
   to a pixel image in which, when zoomed out, a pixel shows a dot if any position under it has one.</p>
+  <p><strong>Highlight all in alignment</strong> tints every stretch listed in Top Regions (those that pass the
+  current settings) on both rows, in Canvas, Block and Full; the tint survives scrolling and switching views until
+  <strong>Clear marks</strong> (also in the docked bar) or closing the window. <strong>Dots, Background, Stretch,
+  Marker</strong> and <strong>Alignment tint</strong> are colour pickers that apply live; <strong>Reset colours</strong>
+  restores the defaults. <strong>Presets</strong> (name, Save, Load, Delete; kept in browser storage like the
+  other presets) store the settings (method, word or window, identity, context, RevComp B, live update, the lower half,
+  strip lines), the colours and the stretches shown in the alignment with the slider position. Loading recalculates
+  the plot with the saved settings and restores the colours; the stretches come back when the same pair of sequences
+  is plotted, otherwise a note says they belong to another pair.</p>
+  <p>The strip under the plot (the two sequences around the pointer) has a ruler above A and below B: numbers every 10
+  and ticks every 5 (every 50 and 10 on a very long line), in each sequence's own residue numbers without gaps; with
+  RevComp B the numbers of B run down, as in the row. <strong>Expand</strong> (or <strong>Strip lines</strong>, up to 12)
+  wraps a longer stretch into several lines fitted to the window width, each block with its own ruler, so a few
+  hundred bases can be read without scrolling. As in Staden's SIP, the <strong>A</strong> and <strong>B</strong> sliders
+  (with number boxes) move the position in each sequence independently: A down the plot, B across it. The plot shows the
+  position as a dashed marker that moves while the slider is dragged, the arrow keys step a focused slider by 1, a
+  click on the plot moves both sliders to that point, and so does dragging the marker (or Shift+drag anywhere).
+  The strip shows the sliders' position when the pointer is off the plot.</p>
   <p><strong>Export PNG</strong> saves the whole plot (at least about 1,600 pixels across).
   <strong>Export SVG</strong> saves a vector file in which each diagonal run is one line
   (Dotter runs shaded by their mean identity). Plots are limited to 100 million cells

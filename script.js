@@ -510,7 +510,7 @@ function residueOverlay(ctx, pos, base) {
     }
     if (o.deco.length && ctx.trim && (pos <= ctx.trim.leftTrimEnd || pos >= ctx.trim.rightTrimStart)) o.deco.push('line-through');
     // Same marks -> same look: the class list is computed once per combination
-    o.key = (hit ? hit.className : '') + '|' + (tsd ? state.tsdMarkStyle + _tsdColour() : '') + (tsdPrev ? 'P' + _tsdColour() : '') + (dotReg ? 'D' : '') + '|' + (rep || '')
+    o.key = (hit ? hit.className : '') + '|' + (tsd ? state.tsdMarkStyle + _tsdColour() : '') + (tsdPrev ? 'P' + _tsdColour() : '') + (dotReg ? 'D' + DOT_REGION_TINT : '') + '|' + (rep || '')
         + '|' + (snp ? snp.bg + snp.fg + snp.color : '') + '|' + o.deco.join(',');
     return o;
 }
@@ -32740,6 +32740,7 @@ function _dotUpdateHoverInfo(row, col, options = {}) {
             'A ' + String(aLabel).padStart(5) + '  ' + aLine + '\n' +
             ' '.repeat(9) + guide + '\n' +
             'B ' + String(bLabel).padStart(5) + '  ' + bLine;
+        _dotStripExtras(panelEl, row, col, ctx);
 
         // the pair the panel shows: A[row+k] above B[col+k], only where both exist (cutting A and B
         // independently gave two records of different length, not aligned to each other)
@@ -32766,6 +32767,292 @@ function _dotDiagonalSlices(seqA, seqB, row, col, ctx) {
     return { a: seqA.substring(row + kLo, row + kHi + 1), b: seqB.substring(col + kLo, col + kHi + 1), aStart: row + kLo, bStart: col + kLo };
 }
 
+// ---- The strip under the plot: ruler, wrapping, position sliders (owner, 2026-11-01) --------------------------------
+// The strip shows A[row+k] above B[col+k] (see _dotUpdateHoverInfo). It gets a ruler above A and below B in each
+// sequence's own residue numbers (ungapped; with RevComp B the numbers of the row, so they run down), a "Strip lines"
+// setting that wraps a longer stretch into several lines, and, as in Staden's SIP, one slider per sequence: A moves
+// the position down the plot, B across it, the plot shows the position as a marker and a click on the plot (or a drag
+// on the marker, or Shift+drag) moves both sliders there.
+function _dotNumAt(which, idx) {   // the number a plotted position carries in its own sequence, 0 = none
+    const S = _dotPlotState;
+    if (which === 'A') return (idx >= 0 && idx < S.rows) ? idx + 1 : 0;
+    return (idx >= 0 && idx < S.cols) ? (_dotPlotRevB() ? S.cols - idx : idx + 1) : 0;
+}
+// Numbers every 10 and ticks every 5 (every 50 and 10 on a line longer than 300 characters)
+function _dotRulerRows(which, start, n) {
+    const nums = new Array(n).fill(' '), ticks = new Array(n).fill(' ');
+    const step = n > 300 ? 50 : 10, tick = step === 10 ? 5 : 10;
+    let lastEnd = -1;
+    for (let k = 0; k < n; k++) {
+        const num = _dotNumAt(which, start + k);
+        if (!num) continue;
+        if (num % step === 0) ticks[k] = '|'; else if (num % tick === 0) ticks[k] = ':';
+        if (num % step === 0) {
+            const t = String(num);
+            if (k > lastEnd && k + t.length <= n) { for (let i = 0; i < t.length; i++) nums[k + i] = t[i]; lastEnd = k + t.length; }
+        }
+    }
+    return { nums: nums.join(''), ticks: ticks.join('') };
+}
+function _dotStripLines() { return Math.min(12, Math.max(1, parseInt(document.getElementById('dotPlotStripLines')?.value, 10) || 1)); }
+function _dotCharW(elm) {
+    const c = _dotCharW._c || (_dotCharW._c = document.createElement('canvas').getContext('2d'));
+    c.font = getComputedStyle(elm).font;
+    return c.measureText('M'.repeat(20)).width / 20 || 7.2;
+}
+// The ruler lines (one-line strip) or the whole wrapped text (several lines); called after the strip text is set
+function _dotStripExtras(panelEl, row, col, ctx) {
+    const S = _dotPlotState, L = _dotStripLines();
+    S._stripRow = row; S._stripCol = col;
+    const rA = document.getElementById('dotPlotRulerA'), rB = document.getElementById('dotPlotRulerB');
+    const pad = ' '.repeat(9);
+    if (L <= 1) {
+        const n = 2 * ctx + 1;
+        const a = _dotRulerRows('A', row - ctx, n), b = _dotRulerRows('B', col - ctx, n);
+        if (rA) { rA.hidden = false; rA.textContent = pad + a.nums + '\n' + pad + a.ticks; rA.scrollLeft = panelEl.scrollLeft; }
+        if (rB) { rB.hidden = false; rB.textContent = pad + b.ticks + '\n' + pad + b.nums; rB.scrollLeft = panelEl.scrollLeft; }
+        return;
+    }
+    if (rA) rA.hidden = true;
+    if (rB) rB.hidden = true;
+    const W = Math.max(20, Math.floor((panelEl.clientWidth - 18) / _dotCharW(panelEl)) - 9);
+    const k0 = -Math.floor(L * W / 2), out = [];
+    const lbl = (which, idx) => String(_dotNumAt(which, idx) || '').padStart(5);
+    for (let b = 0; b < L; b++) {
+        const ks = k0 + b * W;
+        let aLine = '', bLine = '', guide = '';
+        for (let k = ks; k < ks + W; k++) {
+            const ar = row + k, br = col + k;
+            const aCh = (ar >= 0 && ar < S.seqA.length) ? S.seqA[ar] : ' ';
+            const bCh = (br >= 0 && br < S.seqB.length) ? S.seqB[br] : ' ';
+            aLine += aCh; bLine += bCh;
+            guide += k === 0 ? '^' : (_dotSame(aCh, bCh) ? '|' : ' ');
+        }
+        const a = _dotRulerRows('A', row + ks, W), bb = _dotRulerRows('B', col + ks, W);
+        out.push(pad + a.nums, pad + a.ticks, 'A ' + lbl('A', row + ks) + '  ' + aLine, pad + guide, 'B ' + lbl('B', col + ks) + '  ' + bLine, pad + bb.ticks, pad + bb.nums, '');
+    }
+    panelEl.textContent = out.join('\n').replace(/\n+$/, '');
+}
+function _dotRenderStrip() {
+    const S = _dotPlotState;
+    if (S._stripRow >= 0 && S._stripCol >= 0 && (S.scores || S.matchMap)) _dotUpdateHoverInfo(S._stripRow, S._stripCol, { force: true });
+}
+function _dotClearStripExtras() {
+    const S = _dotPlotState;
+    S._stripRow = S._stripCol = -1;
+    ['dotPlotRulerA', 'dotPlotRulerB'].forEach(id => { const r = document.getElementById(id); if (r) { r.textContent = ''; r.hidden = _dotStripLines() > 1; } });
+}
+function _dotDrawSlideMarker(oCtx, vw, vh) {
+    const S = _dotPlotState;
+    if (!(S.slideRow >= 0 && S.slideCol >= 0 && S.slideRow < S.rows && S.slideCol < S.cols)) return;
+    const P = DOT_AXIS_PAD, z = S.zoom, { x, y } = _dotCellToScreen(S.slideRow, S.slideCol);
+    const colour = S.colours?.marker || DOT_MARKER_DEFAULT;
+    oCtx.save();
+    oCtx.beginPath(); oCtx.rect(P, P, vw - P, vh - P); oCtx.clip();
+    oCtx.strokeStyle = colour; oCtx.fillStyle = colour; oCtx.lineWidth = 1.5;
+    oCtx.setLineDash([5, 3]);
+    oCtx.beginPath(); oCtx.moveTo(P, y); oCtx.lineTo(vw, y); oCtx.moveTo(x, P); oCtx.lineTo(x, vh); oCtx.stroke();
+    oCtx.setLineDash([]);
+    oCtx.beginPath(); oCtx.arc(x, y, Math.max(4, z / 2 + 2), 0, Math.PI * 2); oCtx.globalAlpha = 0.35; oCtx.fill(); oCtx.globalAlpha = 1; oCtx.stroke();
+    oCtx.restore();
+}
+function _dotRedrawOverlay() {
+    const S = _dotPlotState;
+    if (S.lastRow >= 0) _dotDrawOverlay(S.lastRow, S.lastCol);
+    else if (S.pinnedRow >= 0) _dotDrawOverlay(S.pinnedRow, S.pinnedCol);
+    else _dotClearOverlay();
+}
+function _dotSyncSlideRanges() {
+    const S = _dotPlotState;
+    [['A', S.rows, S.slideRow], ['B', S.cols, S.slideCol]].forEach(([w, n, pos]) => {
+        const r = document.getElementById('dotPlotPos' + w), t = document.getElementById('dotPlotPos' + w + 'Num');
+        [r, t].forEach(i => { if (i) { i.min = 1; i.max = Math.max(1, n); i.disabled = !n; } });
+        const v = pos >= 0 ? pos + 1 : 1;
+        if (r) r.value = v;
+        if (t && document.activeElement !== t) t.value = v;
+    });
+}
+// Moves the position to 0-based (row, col) (A down, B across): sliders, marker, strip; the plot scrolls to show it
+function _dotSetSlide(row, col, opts = {}) {
+    const S = _dotPlotState;
+    if (!(S.rows > 0 && S.cols > 0)) return;
+    S.slideRow = Math.min(S.rows - 1, Math.max(0, Math.round(row)));
+    S.slideCol = Math.min(S.cols - 1, Math.max(0, Math.round(col)));
+    _dotSyncSlideRanges();
+    if (!opts.noScroll) _dotRevealCell(S.slideRow, S.slideCol);
+    _dotRedrawOverlay();
+    _dotUpdateHoverInfo(S.slideRow, S.slideCol, { force: true });
+}
+function _dotRevealCell(row, col) {
+    const { vp, vw, vh } = _dotViewport();
+    if (!vp) return;
+    const P = DOT_AXIS_PAD, { x, y } = _dotCellToScreen(row, col);
+    if (x < P + 4 || x > vw - 4) vp.scrollLeft += x - (vw + P) / 2;
+    if (y < P + 4 || y > vh - 4) vp.scrollTop += y - (vh + P) / 2;
+}
+function _dotInitStripEvents() {
+    const g = id => document.getElementById(id);
+    const fromInputs = () => {
+        const A = parseInt(g('dotPlotPosA')?.value, 10), B = parseInt(g('dotPlotPosB')?.value, 10);
+        _dotSetSlide((Number.isFinite(A) ? A : 1) - 1, (Number.isFinite(B) ? B : 1) - 1);
+    };
+    ['A', 'B'].forEach(w => {
+        const r = g('dotPlotPos' + w), t = g('dotPlotPos' + w + 'Num');
+        r?.addEventListener('input', () => { if (t) t.value = r.value; fromInputs(); });
+        t?.addEventListener('input', () => { const v = parseInt(t.value, 10); if (!Number.isFinite(v)) return; if (r) r.value = v; fromInputs(); });
+    });
+    g('dotPlotStripLines')?.addEventListener('input', () => { const e = g('dotPlotStripExpand'); if (e) e.textContent = _dotStripLines() > 1 ? 'Collapse' : 'Expand'; _dotRenderStrip(); });
+    g('dotPlotStripExpand')?.addEventListener('click', () => {
+        const i = g('dotPlotStripLines'); if (!i) return;
+        i.value = _dotStripLines() > 1 ? 1 : 4;
+        g('dotPlotStripExpand').textContent = _dotStripLines() > 1 ? 'Collapse' : 'Expand';
+        _dotRenderStrip();
+    });
+    const panel = g('dotPlotAlignPanel');
+    if (panel) {
+        panel.addEventListener('scroll', () => { ['dotPlotRulerA', 'dotPlotRulerB'].forEach(id => { const r = g(id); if (r) r.scrollLeft = panel.scrollLeft; }); }, { passive: true });
+        if (typeof ResizeObserver === 'function') {
+            let w0 = 0;
+            new ResizeObserver(() => { const w = panel.clientWidth; if (w !== w0) { w0 = w; if (_dotStripLines() > 1) _dotRenderStrip(); } }).observe(panel);
+        }
+    }
+}
+
+// ---- Presets (owner, 2026-11-01): the settings, the colours and the selected stretches under a name ------------------
+const DOT_PRESETS_KEY = 'msaviewer_dotPresets';
+function _dotPresets() {
+    const p = safeLocalGet(DOT_PRESETS_KEY, {});
+    const out = Object.create(null);   // a preset named __proto__ is a key like any other
+    if (p && typeof p === 'object' && !Array.isArray(p)) Object.keys(p).forEach(k => { out[k] = p[k]; });
+    return out;
+}
+function _dotPresetCapture() {
+    const S = _dotPlotState, g = id => document.getElementById(id);
+    const num = (id, d) => { const v = parseInt(g(id)?.value, 10); return Number.isFinite(v) ? v : d; };
+    return {
+        savedAt: new Date().toISOString(),
+        settings: {
+            mode: document.querySelector('input[name="dotPlotMode"]:checked')?.value || 'spin',
+            window: num('dotPlotWindow', 6), threshold: num('dotPlotThreshold', 55), context: num('dotPlotContextRadius', 30),
+            revComp: !!g('dotPlotRevComp')?.checked, live: g('dotPlotLive')?.checked !== false, split: !!g('dotPlotSplit')?.checked,
+            lowerMode: document.querySelector('input[name="dotPlotModeLower"]:checked')?.value || 'doter',
+            lowerWindow: num('dotPlotWindowLower', 11), lowerThreshold: num('dotPlotThresholdLower', 55), stripLines: _dotStripLines()
+        },
+        colours: Object.assign({}, S.colours || {}),
+        stretches: {
+            pair: { nameA: S.nameA, nameB: _dotPlotNameB(), lenA: S.sourceSeqA.length, lenB: S.sourceSeqB.length, revB: _dotPlotRevB() },
+            list: (S._markList || []).map(r => ({ aStart: r.aStart, aEnd: r.aEnd, bStart: r.bStart, bEnd: r.bEnd })),
+            slide: S.slideRow >= 0 ? { row: S.slideRow, col: S.slideCol } : null
+        }
+    };
+}
+function _dotPresetList(selectName) {
+    const sel = document.getElementById('dotPresetSelect'); if (!sel) return;
+    const names = Object.keys(_dotPresets()).sort((a, b) => a.localeCompare(b));
+    const keep = selectName || sel.value;
+    sel.innerHTML = names.map(n => `<option value="${_escapeHtml(n)}">${_escapeHtml(n)}</option>`).join('');
+    if (keep && names.includes(keep)) sel.value = keep;
+    ['dotPresetLoad', 'dotPresetDelete'].forEach(id => document.getElementById(id)?.toggleAttribute('disabled', !names.length));
+}
+function _dotPresetSave() {
+    const inp = document.getElementById('dotPresetName');
+    const name = (inp?.value || '').trim().slice(0, 60);
+    if (!name) { showMessage('Type a name for the preset first.', 2500); return; }
+    const presets = _dotPresets(), replaced = !!presets[name];
+    presets[name] = _dotPresetCapture();
+    if (!safeLocalSet(DOT_PRESETS_KEY, JSON.stringify(presets), 'the dot plot preset')) return;
+    if (inp) inp.value = '';
+    _dotPresetList(name);
+    const n = presets[name].stretches.list.length;
+    showMessage(`Dot plot preset "${name}" ${replaced ? 'replaced' : 'saved'} (${n} stretch${n === 1 ? '' : 'es'}).`, 2500);
+}
+function _dotPresetDelete() {
+    const name = document.getElementById('dotPresetSelect')?.value;
+    const presets = _dotPresets();
+    if (!name || !presets[name]) { showMessage('Choose a saved preset first.', 2500); return; }
+    delete presets[name];
+    if (!safeLocalSet(DOT_PRESETS_KEY, JSON.stringify(presets), 'the dot plot presets')) return;
+    _dotPresetList();
+    showMessage(`Dot plot preset "${name}" removed.`, 2000);
+}
+async function _dotPresetLoad() {
+    const S = _dotPlotState, g = id => document.getElementById(id);
+    const name = g('dotPresetSelect')?.value;
+    const p = name ? _dotPresets()[name] : null;
+    const note = g('dotPresetNote');
+    if (note) note.textContent = '';
+    if (!p || typeof p !== 'object' || !p.settings) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!(S.sourceSeqA && S.sourceSeqB)) return;
+    const st = p.settings, clampInt = (v, lo, hi, d) => { v = parseInt(v, 10); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+    // 1. settings
+    const modeRadio = document.querySelector(`input[name="dotPlotMode"][value="${st.mode === 'doter' ? 'doter' : 'spin'}"]`);
+    if (modeRadio) modeRadio.checked = true;
+    _dotOnModeChange();
+    const set = (id, v) => { const i = g(id); if (i) i.value = v; };
+    const spin = st.mode !== 'doter';
+    set('dotPlotWindow', clampInt(st.window, ...(spin ? DOT_WORD_RANGE : DOT_WINDOW_RANGE), spin ? 6 : 11));
+    set('dotPlotThreshold', clampInt(st.threshold, 0, 100, 55));
+    set('dotPlotContextRadius', clampInt(st.context, 5, 500, 30));
+    const chk = (id, v) => { const i = g(id); if (i && typeof v === 'boolean') i.checked = v; };
+    chk('dotPlotRevComp', st.revComp); chk('dotPlotLive', st.live); chk('dotPlotSplit', st.split);
+    const lowRadio = document.querySelector(`input[name="dotPlotModeLower"][value="${st.lowerMode === 'spin' ? 'spin' : 'doter'}"]`);
+    if (lowRadio) lowRadio.checked = true;
+    _dotOnLowerModeChange();
+    set('dotPlotWindowLower', clampInt(st.lowerWindow, ...(st.lowerMode === 'spin' ? DOT_WORD_RANGE : DOT_WINDOW_RANGE), 11));
+    set('dotPlotThresholdLower', clampInt(st.lowerThreshold, 0, 100, 55));
+    set('dotPlotStripLines', clampInt(st.stripLines, 1, 12, 1));
+    const ex = g('dotPlotStripExpand'); if (ex) ex.textContent = _dotStripLines() > 1 ? 'Collapse' : 'Expand';
+    const out = (id, txt) => { const o = g(id); if (o) o.textContent = txt; };
+    out('dotPlotWindowVal', g('dotPlotWindow').value); out('dotPlotThreshVal', g('dotPlotThreshold').value + '%');
+    out('dotPlotWindowValLower', g('dotPlotWindowLower').value); out('dotPlotThreshValLower', g('dotPlotThresholdLower').value + '%');
+    // 2. colours
+    const cols = {};
+    DOT_COLOUR_KEYS.forEach(k => { if (p.colours && /^#[0-9a-f]{6}$/i.test(p.colours[k] || '')) cols[k] = p.colours[k].toLowerCase(); });
+    S.colours = Object.keys(cols).length ? cols : null;
+    // 3. recalculate with the settings (the plot is built with the colours), then the stretches
+    clearTimeout(_dotLiveTimer);
+    for (let i = 0; i < 400 && S.computing; i++) await new Promise(r => setTimeout(r, 50));
+    _dotMarkDirty(false);
+    await openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA.replace(/ \(RevComp\)$/, ''), S.nameB.replace(/ \(RevComp\)$/, ''), S.meta);
+    _dotSyncColourInputs();
+    _dotApplyColours();
+    const pr = p.stretches && p.stretches.pair, list = p.stretches && Array.isArray(p.stretches.list) ? p.stretches.list : [];
+    const same = !!pr && pr.nameA === S.nameA && pr.nameB === _dotPlotNameB() && pr.lenA === S.sourceSeqA.length && pr.lenB === S.sourceSeqB.length && !!pr.revB === _dotPlotRevB();
+    let msg = `Preset "${name}": settings and colours loaded.`;
+    if (same) {
+        const rowA = S.meta?.rowIndexA, rowB = S.meta?.rowIndexB;
+        const ok = list.filter(r => r && [r.aStart, r.aEnd, r.bStart, r.bEnd].every(Number.isInteger) && r.aEnd > r.aStart && r.bEnd > r.bStart && r.aEnd <= S.rows && r.bEnd <= S.cols);
+        _dotClearRegionMarks(true);
+        if (ok.length && Number.isInteger(rowA) && state.seqs[rowA]) {
+            _dotMarkStretches(rowA, Number.isInteger(rowB) && state.seqs[rowB] ? rowB : -1, ok, _dotPlotRevB(), { dock: false });
+            msg += ` ${ok.length} stretch${ok.length === 1 ? '' : 'es'} restored.`;
+        } else if (ok.length) msg += ' The stretches could not be shown: this dot plot was not opened from alignment rows.';
+        const sl = p.stretches.slide;
+        if (sl && Number.isInteger(sl.row) && Number.isInteger(sl.col)) _dotSetSlide(sl.row, sl.col);
+    } else if (list.length || p.stretches?.slide) {
+        const other = pr ? `${pr.nameA} vs ${pr.nameB}${pr.revB ? ' (RevComp)' : ''}` : 'another pair';
+        msg += ' The stretches belong to another pair (' + other + '): not restored.';
+        if (note) note.textContent = 'Stretches belong to another pair (' + other + ')';
+    }
+    showMessage(msg, 4000);
+}
+function _dotInitLookEvents() {
+    const g = id => document.getElementById(id);
+    g('dotPlotHighlightAll')?.addEventListener('click', _dotHighlightAll);
+    ['dotPlotClearMarks2', 'dotPlotDockClear'].forEach(id => g(id)?.addEventListener('click', () => _dotClearRegionMarks(true)));
+    g('dotPlotDockBtn')?.addEventListener('click', () => _dotDock(!g('dotPlotDialog')?.classList.contains('dot-docked')));
+    g('dotPlotTitleBar')?.addEventListener('dblclick', (e) => { if (g('dotPlotDialog')?.classList.contains('dot-docked')) { e.stopImmediatePropagation(); _dotDock(false); } }, true);
+    const ids = _dotColourInputs();
+    DOT_COLOUR_KEYS.forEach(k => g(ids[k])?.addEventListener('input', (e) => _dotSetColour(k, e.target.value)));
+    g('dotColReset')?.addEventListener('click', _dotResetColours);
+    g('dotPresetSave')?.addEventListener('click', _dotPresetSave);
+    g('dotPresetLoad')?.addEventListener('click', _dotPresetLoad);
+    g('dotPresetDelete')?.addEventListener('click', _dotPresetDelete);
+    g('dotPresetName')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') _dotPresetSave(); });
+    _dotPresetList();
+    _dotSyncColourInputs();
+}
+
 function _dotClearHoverInfo() {
     const S = _dotPlotState;
     if (S._frozen) return;
@@ -32774,7 +33061,9 @@ function _dotClearHoverInfo() {
     const panelEl = document.getElementById('dotPlotAlignPanel');
     if (hoverEl) hoverEl.textContent = '';
     if (metaEl) metaEl.textContent = '';
+    if (S.slideRow >= 0 && S.slideCol >= 0 && S.rows) { _dotUpdateHoverInfo(S.slideRow, S.slideCol, { force: true }); return; }   // the strip rests at the slider position
     if (panelEl) panelEl.textContent = 'A: -\n   \nB: -';
+    _dotClearStripExtras();
     S._copyRegion = null;   // Copy region then uses the pin, like the panel
 }
 
@@ -32874,18 +33163,66 @@ function _dotPaintRuns(ctx, z, sl, st, vw, vh, c0, c1, r0, r1) {
     ctx.lineCap = 'round';
     pathSets.forEach(paths => {
         if (paths.length === 1) {
-            ctx.strokeStyle = '#fff';
+            ctx.strokeStyle = _dotInk(true);
             ctx.stroke(paths[0]);
         } else {
             paths.forEach((path, b) => {
                 const g = Math.min(255, b * 16);
-                ctx.strokeStyle = `rgb(${g},${g},${g})`;
+                ctx.strokeStyle = _dotDotterStroke(g);
                 ctx.stroke(path);
             });
         }
     });
     return true;
 }
+
+// ---- Custom dot plot colours (owner, 2026-11-01). S.colours: { dot, bg, stretch, marker, tint } as '#rrggbb', a missing
+// key = the default. The default ink and paper depend on the method (SPIN: white dots on black; Dotter: dark dots on
+// white), so a custom colour replaces the ink / paper of both and a grey level becomes a blend of the two.
+const DOT_COLOUR_KEYS = ['dot', 'bg', 'stretch', 'marker', 'tint'];
+const DOT_MARKER_DEFAULT = '#ff8c00', DOT_STRETCH_DEFAULT = '#64e6a0', DOT_TINT_DEFAULT = '#4a9eff';
+function _dotCustomColours() { const c = _dotPlotState.colours; return !!(c && (c.dot || c.bg)); }
+function _dotInk(spin) { return _dotPlotState.colours?.dot || (spin ? '#ffffff' : '#000000'); }
+function _dotPaper(spin) { return _dotPlotState.colours?.bg || (spin ? '#000000' : '#ffffff'); }
+function _dotHexRgb(h) { const m = /^#([0-9a-f]{6})$/i.exec(h || ''); const n = m ? parseInt(m[1], 16) : 0; return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function _dotBlend(spin, strength) {   // strength 0 = paper, 1 = ink
+    const a = _dotHexRgb(_dotPaper(spin)), b = _dotHexRgb(_dotInk(spin));
+    return a.map((v, i) => Math.round(v + (b[i] - v) * strength));
+}
+function _dotPutPixel(d, j, v, spin) {
+    if (!_dotCustomColours()) d[j] = d[j + 1] = d[j + 2] = v;
+    else { const c = _dotBlend(spin, spin ? v / 255 : 1 - v / 255); d[j] = c[0]; d[j + 1] = c[1]; d[j + 2] = c[2]; }
+    d[j + 3] = 255;
+}
+function _dotDotterStroke(g) {
+    if (!_dotCustomColours()) return `rgb(${g},${g},${g})`;
+    const c = _dotBlend(false, 1 - g / 255); return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+function _dotColourInputs() { return { dot: 'dotColDot', bg: 'dotColBg', stretch: 'dotColStretch', marker: 'dotColMarker', tint: 'dotColTint' }; }
+// Put the colour inputs in line with S.colours (an unset colour shows the default)
+function _dotSyncColourInputs() {
+    const S = _dotPlotState, c = S.colours || {}, ids = _dotColourInputs();
+    const def = { dot: _dotInk(S.spinMode), bg: _dotPaper(S.spinMode), stretch: DOT_STRETCH_DEFAULT, marker: DOT_MARKER_DEFAULT, tint: DOT_TINT_DEFAULT };
+    DOT_COLOUR_KEYS.forEach(k => { const i = document.getElementById(ids[k]); if (i) i.value = c[k] || def[k]; });
+}
+// Apply S.colours everywhere: the plot is rebuilt (the overview image holds the dot colours), the overlay is redrawn and
+// the alignment tint is changed (marks repaint)
+function _dotApplyColours() {
+    const S = _dotPlotState, c = S.colours || {};
+    DOT_REGION_TINT = c.tint || DOT_TINT_DEFAULT;
+    if (S.overview) { S.overview = _dotPooledCanvas(S.overviewBin); S._pool = null; _dotRender(); }
+    if (S.lastRow >= 0) _dotDrawOverlay(S.lastRow, S.lastCol);
+    else if (S.pinnedRow >= 0) _dotDrawOverlay(S.pinnedRow, S.pinnedCol);
+    else _dotClearOverlay();
+    if (state.dotRegionMarks) { bumpSearchLayer?.(); syncResidueOverlays(); }
+}
+function _dotSetColour(key, hex) {
+    const S = _dotPlotState;
+    if (!DOT_COLOUR_KEYS.includes(key) || !/^#[0-9a-f]{6}$/i.test(hex || '')) return;
+    S.colours = Object.assign({}, S.colours || {}, { [key]: hex.toLowerCase() });
+    _dotApplyColours();
+}
+function _dotResetColours() { _dotPlotState.colours = null; _dotSyncColourInputs(); _dotApplyColours(); }
 
 function _dotBuildImage() {
     const S = _dotPlotState;
@@ -32917,7 +33254,7 @@ function _dotPooledCanvas(bin) {
                 }
             }
             const j = (by * w + bx) * 4;
-            d[j] = d[j + 1] = d[j + 2] = best; d[j + 3] = 255;
+            _dotPutPixel(d, j, best, spin);
         }
     }
     const cv = document.createElement('canvas');
@@ -32972,7 +33309,8 @@ function _dotPaint(ctx, z, sl, st, vw, vh) {
         const upperSpin = S.spinMode && !!S.matchMap;
         const lower = S.lower && S.lower.ready ? S.lower : null;
         const lowerSpin = lower ? (lower.spinMode && !!lower.matchMap) : upperSpin;
-        ctx.fillStyle = '#000';
+        if (S.colours?.bg) { ctx.fillStyle = S.colours.bg; ctx.fillRect(x0, y0, plotW, plotH); }   // custom background: under both halves
+        ctx.fillStyle = _dotPaper(true);
         if (upperSpin && lowerSpin) ctx.fillRect(x0, y0, plotW, plotH);
         else if (upperSpin || lowerSpin) {
             ctx.beginPath();
@@ -32991,11 +33329,12 @@ function _dotPaint(ctx, z, sl, st, vw, vh) {
             const w = c1 - c0, h = r1 - r0;
             const img = new ImageData(w, h);
             const d = img.data;
+            const custom = _dotCustomColours();
             for (let r = 0; r < h; r++) {
                 for (let c = 0; c < w; c++) {
                     const v = _dotCellValue((r0 + r) * S.cols + c0 + c);
                     const j = (r * w + c) * 4;
-                    d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255;
+                    if (custom) { const Hc = _dotHalf(r0 + r, c0 + c); _dotPutPixel(d, j, v, Hc.spinMode && !!Hc.matchMap); } else { d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255; }
                 }
             }
             const tmp = document.createElement('canvas');
@@ -33222,7 +33561,7 @@ function _dotRenderRegionList() {
 // region's aStart..aEnd are residue numbers of row A), the alignment scrolls to the first copy, the list entry
 // is highlighted, and the window's backdrop lets the pointer through to the alignment. The marks live with the
 // window: a recalculation (new regions), Clear marks, closing the window or a new file remove them.
-const DOT_REGION_TINT = '#4a9eff';
+let DOT_REGION_TINT = '#4a9eff';   // the alignment tint of a shown stretch (a custom dot plot colour changes it)
 function _dotShowRegionInAlignment(idx) {
     const S = _dotPlotState, r = S.regions?.[idx], meta = S.meta;
     if (!r) return;
@@ -33234,7 +33573,14 @@ function _dotShowRegionInAlignment(idx) {
 // Tints residues aStart..aEnd of row A and bStart..bEnd of row B (plot coordinates: residue numbers of the
 // gapless rows; with RevComp B the plotted B runs backwards, residue n of the plot being residue len-1-n of
 // the row), scrolls to the first copy, and lets the pointer through the window's backdrop.
-function _dotShowStretch(rowA, rowB, aStart, aEnd, bStart, bEnd, revB) {
+function _dotShowStretch(rowA, rowB, aStart, aEnd, bStart, bEnd, revB, dock = true) {
+    _dotMarkStretches(rowA, rowB, [{ aStart, aEnd, bStart, bEnd }], revB, { dock });
+}
+// The marks for a list of stretches (plot coordinates, see above): one for "show in alignment", every listed
+// stretch for "Highlight all". The alignment goes to the first copy of the first stretch; the window docks to a bar
+// (owner, 2026-11-01: it used to stay over the alignment and hide the stretch it had just been asked to show).
+function _dotMarkStretches(rowA, rowB, list, revB, opts = {}) {
+    const S = _dotPlotState;
     const marks = new ResidueMarks();
     const add = (row, from, to) => {
         const obj = state.seqs[row]; if (!obj) return;
@@ -33242,20 +33588,48 @@ function _dotShowStretch(rowA, rowB, aStart, aEnd, bStart, bEnd, revB) {
         for (let n = from; n < to; n++) set.add(n);
         if (set.size) marks.bySeq.set(obj, set);
     };
-    add(rowA, aStart, aEnd);
-    if (rowB >= 0 && state.seqs[rowB]) {
-        const lenB = state.seqs[rowB].seq.replace(/[-. ]/g, '').length;
-        if (revB) add(rowB, lenB - bEnd, lenB - bStart); else add(rowB, bStart, bEnd);
-    }
+    list.forEach(r => {
+        add(rowA, r.aStart, r.aEnd);
+        if (rowB >= 0 && state.seqs[rowB]) {
+            const lenB = state.seqs[rowB].seq.replace(/[-. ]/g, '').length;
+            if (revB) add(rowB, lenB - r.bEnd, lenB - r.bStart); else add(rowB, r.bStart, r.bEnd);
+        }
+    });
     state.dotRegionMarks = marks;
+    S._markList = list.map(r => ({ aStart: r.aStart, aEnd: r.aEnd, bStart: r.bStart, bEnd: r.bEnd }));
+    S._markRevB = !!revB;
     syncResidueOverlays();
-    const map = _buildUngappedToAlignMap(state.seqs[rowA].seq);
-    const colA = map ? map[aStart] : null;   // 1-based column of the first residue
-    _dotPeek(true);
-    _showRowInAlignment(rowA, Number.isInteger(colA) ? colA - 1 : undefined);
-    const btn = document.getElementById('dotPlotClearMarksBtn');
-    if (btn) btn.hidden = false;
+    if (list.length) {
+        const map = _buildUngappedToAlignMap(state.seqs[rowA].seq);
+        const colA = map ? map[list[0].aStart] : null;   // 1-based column of the first residue
+        _dotPeek(true);
+        if (opts.dock !== false) _dotDock(true);
+        _showRowInAlignment(rowA, Number.isInteger(colA) ? colA - 1 : undefined);
+    }
+    _dotShowClearButtons(list.length > 0);
     _dotRenderRegionList();
+}
+function _dotShowClearButtons(on) {
+    ['dotPlotClearMarksBtn', 'dotPlotClearMarks2', 'dotPlotDockClear'].forEach(id => { const b = document.getElementById(id); if (b) b.hidden = !on; });
+}
+// Every stretch the plot lists now (those that pass the current settings), marked on both rows
+function _dotHighlightAll() {
+    const S = _dotPlotState, meta = S.meta;
+    const rowA = meta?.rowIndexA, rowB = meta?.rowIndexB;
+    if (!Number.isInteger(rowA) || !state.seqs[rowA]) { showMessage('This dot plot was not opened from alignment rows, so there is nothing to show.', 3000); return; }
+    if (!S.regions || !S.regions.length) { showMessage('No stretches to highlight at the current settings.', 2500); return; }
+    S._shownRegion = -1;
+    _dotMarkStretches(rowA, Number.isInteger(rowB) && state.seqs[rowB] ? rowB : -1, S.regions, _dotPlotRevB());
+    showMessage(`Highlighted ${S.regions.length} stretch${S.regions.length === 1 ? '' : 'es'} in the alignment.`, 2500);
+}
+// The window as a small bar in the corner (marks stay), or back as the full window
+function _dotDock(on) {
+    const dlg = document.getElementById('dotPlotDialog');
+    if (!dlg) return;
+    dlg.classList.toggle('dot-docked', !!on);
+    const b = document.getElementById('dotPlotDockBtn');
+    if (b) { b.innerHTML = on ? '&#9652;' : '&#9662;'; b.title = on ? 'Bring the dot plot window back' : 'Move the window out of the way to a small bar (the alignment behind it shows fully); click again to bring it back'; }
+    if (!on) setTimeout(() => { try { _dotRender(); _dotRenderStrip(); } catch (e) { /* window closed */ } }, 0);
 }
 
 // ---- The collection (owner, 2026-10-23): stretches starred in Top Regions, kept across files and reloads
@@ -33320,7 +33694,7 @@ function _dotStretchMenu(e, r) {
     const rowA = S.meta?.rowIndexA, rowB = S.meta?.rowIndexB;
     const canShow = Number.isInteger(rowA) && !!state.seqs[rowA];
     item(`Show this stretch in the alignment (A ${r.aStart + 1}-${r.aEnd}, B ${r.bStart + 1}-${r.bEnd}, ${len} bp)`,
-        () => _dotShowStretch(rowA, Number.isInteger(rowB) && state.seqs[rowB] ? rowB : -1, r.aStart, r.aEnd, r.bStart, r.bEnd, /\(RevComp\)$/.test(S.nameB || '')),
+        () => _dotShowStretch(rowA, Number.isInteger(rowB) && state.seqs[rowB] ? rowB : -1, r.aStart, r.aEnd, r.bStart, r.bEnd, /\(RevComp\)$/.test(S.nameB || ''), false),   // from the plot's own menu the window stays: the plot is being used
         canShow ? '' : 'This dot plot was not opened from alignment rows');
     item('Add to the collection', () => _dotBookmarkStretch(r));
     item('Copy both stretches as FASTA', () => {
@@ -33427,7 +33801,7 @@ function _dotShowBookmarkInAlignment(id) {
     const rows = _dotBookmarkRows(b);
     if (!rows) { showMessage(`${b.nameA}${b.nameA === b.nameB ? '' : ' / ' + b.nameB} is not in this alignment: use the search button to look for the stretch.`, 3500); return; }
     _dotPlotState._shownRegion = -1;
-    _dotShowStretch(rows.rowA, rows.rowB, b.aStart, b.aEnd, b.bStart, b.bEnd, b.revB);
+    _dotShowStretch(rows.rowA, rows.rowB, b.aStart, b.aEnd, b.bStart, b.bEnd, b.revB, false);   // the Collection list stays in reach, so the window stays
 }
 function _dotBookmarkToSearch(id) {
     const b = _dotBookmarkById(id); if (!b) return;
@@ -33451,9 +33825,9 @@ function _dotClearRegionMarks(keepPeek) {
     const S = _dotPlotState;
     if (state.dotRegionMarks) { state.dotRegionMarks = null; syncResidueOverlays(); }
     S._shownRegion = -1;
-    const btn = document.getElementById('dotPlotClearMarksBtn');
-    if (btn) btn.hidden = true;
-    if (!keepPeek) _dotPeek(false);
+    S._markList = null;
+    _dotShowClearButtons(false);
+    if (!keepPeek) { _dotPeek(false); _dotDock(false); }
     document.querySelectorAll('#dotPlotRegionItems .dot-region-active').forEach(el => el.classList.remove('dot-region-active'));
 }
 
@@ -33506,6 +33880,7 @@ function _dotDrawOverlay(row, col) {
     if (!overlay) return;
     const oCtx = _dotSizeToViewport(overlay, vw, vh);
     oCtx.clearRect(0, 0, vw, vh);
+    _dotDrawSlideMarker(oCtx, vw, vh);
     if (row < 0 || col < 0 || row >= S.rows || col >= S.cols) return;
     const z = S.zoom, P = DOT_AXIS_PAD;
     const { x: cx, y: cy } = _dotCellToScreen(row, col);
@@ -33524,7 +33899,7 @@ function _dotDrawOverlay(row, col) {
     while (rB + 1 < S.rows && cB + 1 < S.cols && _dotIsDot(rB + 1, cB + 1)) { rB++; cB++; }
     if (_dotIsDot(row, col)) {
         const a = _dotCellToScreen(rA, cA), b = _dotCellToScreen(rB, cB);
-        oCtx.strokeStyle = 'rgba(100,230,160,0.9)';
+        oCtx.strokeStyle = S.colours?.stretch || 'rgba(100,230,160,0.9)';
         oCtx.lineWidth = Math.max(z * 0.9 + 1, 2);
         oCtx.lineCap = 'round';
         oCtx.beginPath(); oCtx.moveTo(a.x, a.y); oCtx.lineTo(b.x, b.y); oCtx.stroke();
@@ -33563,7 +33938,7 @@ function _dotDrawOverlay(row, col) {
 function _dotClearOverlay() {
     const overlay = document.getElementById('dotPlotOverlay');
     const { vw, vh } = _dotViewport();
-    if (overlay) _dotSizeToViewport(overlay, vw, vh).clearRect(0, 0, vw, vh);
+    if (overlay) { const c = _dotSizeToViewport(overlay, vw, vh); c.clearRect(0, 0, vw, vh); _dotDrawSlideMarker(c, vw, vh); }
 }
 
 const _DOT_COMPLEMENT = {
@@ -33596,6 +33971,8 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S.threshold = (Number.isFinite(tRaw) ? tRaw : 55) / 100;
     S.pinnedRow = S.pinnedCol = -1;
     S.lastRow = S.lastCol = -1;
+    const pairKey = nameA + '|' + nameB + '|' + seqA.length + '|' + seqB.length;
+    if (S._pairKey !== pairKey) { S.slideRow = S.slideCol = -1; S._pairKey = pairKey; }   // a recalculation keeps the sliders' position, another pair does not
     S._frozen = false;
     S._frozenRow = S._frozenCol = -1;
     S._copyRegion = null;
@@ -33688,6 +34065,9 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     _dotFitView();
     _dotClearOverlay();
     _dotDetectRegions();
+    _dotSyncSlideRanges();
+    if (S.slideRow >= 0) _dotSetSlide(S.slideRow, S.slideCol, { noScroll: true });
+    else _dotRedrawOverlay();
     const halfDesc = H => H.spinMode ? `SPIN word ${H.windowSize}` : `Dotter window ${H.windowSize}, ${Math.round(H.threshold * 100)}%`;
     if (statusEl) statusEl.textContent = `${S.seqA.length} x ${S.seqB.length} in ${ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s'}.` +
         (S.lower ? `  Upper half: ${halfDesc(S)}; lower half: ${halfDesc(S.lower)}.` : '');
@@ -33869,12 +34249,31 @@ function _initDotPlotEvents() {
         });
         // Drag to pan the plot (the wheel zooms); a press that moved more than a few pixels is not a click
         let pan = null, panned = false;
+        let markerDrag = false;
         overlay.addEventListener('mousedown', (e) => {
             if (e.button !== 0 || !viewport) return;
+            const S = _dotPlotState;
+            if (S.slideRow >= 0 && (S.scores || S.matchMap)) {
+                const r = overlay.getBoundingClientRect(), m = _dotCellToScreen(S.slideRow, S.slideCol);
+                if (e.shiftKey || Math.hypot(e.clientX - r.left - m.x, e.clientY - r.top - m.y) <= 10) {
+                    markerDrag = true; e.preventDefault();   // drags the position marker, not the plot
+                    const cell = _dotEventToCell(e); if (cell) _dotSetSlide(cell.row, cell.col, { noScroll: true });
+                    return;
+                }
+            } else if (e.shiftKey && (S.scores || S.matchMap)) {
+                markerDrag = true; e.preventDefault();
+                const cell = _dotEventToCell(e); if (cell) _dotSetSlide(cell.row, cell.col, { noScroll: true });
+                return;
+            }
             pan = { x: e.clientX, y: e.clientY, sl: viewport.scrollLeft, st: viewport.scrollTop, moved: false };
             panned = false;
         });
         window.addEventListener('mousemove', (e) => {
+            if (markerDrag) {
+                if (!(e.buttons & 1)) { markerDrag = false; return; }
+                const cell = _dotEventToCell(e); if (cell) _dotSetSlide(cell.row, cell.col, { noScroll: true });
+                return;
+            }
             if (!pan) return;
             if (!(e.buttons & 1)) { pan = null; overlay.style.cursor = ''; return; }   // released outside the window
             const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
@@ -33885,6 +34284,7 @@ function _initDotPlotEvents() {
             viewport.scrollTop = pan.st - dy;
         });
         window.addEventListener('mouseup', () => {
+            if (markerDrag) { markerDrag = false; panned = true; return; }   // the click that ends a marker drag is not a pin
             if (!pan) return;
             panned = pan.moved;
             pan = null;
@@ -33908,6 +34308,7 @@ function _initDotPlotEvents() {
             const cell = _dotEventToCell(e);
             if (!cell) return;
             S.pinnedRow = cell.row; S.pinnedCol = cell.col;
+            _dotSetSlide(cell.row, cell.col, { noScroll: true });   // the sliders follow a click (Staden-style)
             _dotDrawOverlay(cell.row, cell.col);
             _dotUpdateHoverInfo(cell.row, cell.col);
             showMessage(`Pinned: A${cell.row + 1} / B${cell.col + 1}. Click "Copy Region" to copy FASTA.`, 2500);
@@ -34117,9 +34518,11 @@ function _initDotPlotEvents() {
             if (modal) modal.style.display = 'none';
             clearTimeout(_dotLiveTimer);
             _dotClearRegionMarks();
+            _dotDock(false);
         });
     }
     document.getElementById('dotPlotClearMarksBtn')?.addEventListener('click', () => _dotClearRegionMarks(true));
+    _dotInitStripEvents(); _dotInitLookEvents();
     _dotLoadBookmarks(); _dotRenderBookmarks();
     document.getElementById('dotPlotBookmarkClearBtn')?.addEventListener('click', _dotClearBookmarks);
     document.getElementById('dotPlotBookmarkTsvBtn')?.addEventListener('click', () => {
