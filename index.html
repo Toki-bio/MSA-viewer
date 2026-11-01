@@ -1227,7 +1227,7 @@
                 <button type="button" id="dotPlotClearMarks2" class="dot-mini-btn" title="Remove the stretch marks from the alignment" hidden>Clear marks</button>
                 <span class="dot-sep"></span>
                 <label title="Colour of the dots">Dots <input type="color" id="dotColDot" value="#ffffff"></label>
-                <label title="Colour of the plot background">Background <input type="color" id="dotColBg" value="#000000"></label>
+                <label title="Colour of the plot background. It covers the plot area only: the axis strips and the text around it stay white">Background <input type="color" id="dotColBg" value="#000000"></label>
                 <label title="Colour of the stretch under the pointer">Stretch <input type="color" id="dotColStretch" value="#64e6a0"></label>
                 <label title="Colour of the position marker (sliders / click)">Marker <input type="color" id="dotColMarker" value="#ff8c00"></label>
                 <label title="Tint of the stretches shown in the alignment">Alignment tint <input type="color" id="dotColTint" value="#4a9eff"></label>
@@ -1286,7 +1286,7 @@
             <div id="dotPlotAlignMeta" style="font-size:11px;color:#666;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;margin-top:2px;"></div>
             <div id="dotPlotStripBar" class="dot-ctl-row dot-strip-bar">
                 <label title="Position in sequence A (down the plot). Arrow keys step by 1"><b>A</b> <input type="range" id="dotPlotPosA" min="1" max="1" step="1" value="1"><input type="number" id="dotPlotPosANum" min="1" max="1" value="1" style="width:64px;"></label>
-                <label title="Position in sequence B (across the plot; with RevComp B, in the plotted reverse-complement order). Arrow keys step by 1"><b>B</b> <input type="range" id="dotPlotPosB" min="1" max="1" step="1" value="1"><input type="number" id="dotPlotPosBNum" min="1" max="1" value="1" style="width:64px;"></label>
+                <label title="Position in sequence B (across the plot; with RevComp B the number runs down as the slider moves forward, as on the ruler). Arrow keys step by 1"><b>B</b> <input type="range" id="dotPlotPosB" min="1" max="1" step="1" value="1"><input type="number" id="dotPlotPosBNum" min="1" max="1" value="1" style="width:64px;"></label>
                 <span class="dot-sep"></span>
                 <label title="Lines of the strip under the plot: with more than one the stretch around the position wraps into several lines (the Context box then applies to one line only)">Strip lines <input type="number" id="dotPlotStripLines" min="1" max="12" value="1" style="width:44px;"></label>
                 <button type="button" id="dotPlotStripExpand" title="Show a longer stretch in the strip (several lines); click again for one line">Expand</button>
@@ -1488,7 +1488,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=7"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=375"></script>
+    <script src="script.js?v=376"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>

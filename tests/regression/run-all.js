@@ -10609,6 +10609,203 @@ check('Dot plot: sliders move the plot marker live (arrow keys step by 1), a cli
 });
 
 
+// ---- Dot plot fixes after the GLM audit of v319/v321 (2026-11-01) ----------------------------------------------------------
+// Each check below failed on v321 and says what used to go wrong.
+async function dotFixOpenPair(p, a, b) {
+  await p.evaluate(([a, b]) => { const x = state.seqs[a], y = state.seqs[b]; return openDotPlot(x.seq.replace(/[-. ]/g, ''), y.seq.replace(/[-. ]/g, ''), x.header, y.header, { rowIndexA: a, rowIndexB: b, alignedSeqA: x.seq, alignedSeqB: y.seq }); }, [a, b]);
+  await p.waitForFunction(() => !_dotPlotState.computing, null, { timeout: 20000 });
+  await p.waitForTimeout(200);
+}
+
+// The collection stores identity as a fraction (the region list gives 0..1) but the plot's right-click menu stored a percent
+// (0..100): the TSV multiplies by 100 and printed 10000% for a stretch added from the menu.
+check('Dot plot fix: the TSV identity of a stretch added from the plot right-click menu is a percent, not 100 times too high', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await page.evaluate(() => { try { localStorage.removeItem('msaviewer_dotBookmarks'); } catch (e) {} state.dotBookmarks = []; });
+  await dotOpenRow100(page);
+  await page.evaluate(() => { const { vw, vh } = _dotViewport(); _dotApplyZoom(10, vw / 2, vh / 2); }); await page.waitForTimeout(200);   // a pixel is then a cell, not a few
+  await page.click('#dotPlotRegionItems .dot-region'); await page.waitForTimeout(300);   // centres the first stretch in the plot
+  const pos = await page.evaluate(() => {
+    const S = _dotPlotState, r = S.regions[0];
+    const row = r.row, col = r.col;   // a dot of the stretch (what the list entry itself points the plot at)
+    const b = document.getElementById('dotPlotOverlay').getBoundingClientRect(), c = _dotCellToScreen(row, col);
+    return { x: b.left + c.x, y: b.top + c.y, row, col, dot: _dotIsDot(row, col), r: [r.row, r.col, r.aStart, r.aEnd, r.bStart, r.bEnd, S.zoom] };
+  });
+  await page.mouse.move(pos.x, pos.y); await page.waitForTimeout(200);
+  await page.mouse.click(pos.x, pos.y, { button: 'right' }); await page.waitForTimeout(250);
+  const menu = await page.evaluate(() => { const d = [...document.querySelectorAll('.dot-context-menu div')].find(d => d.textContent.startsWith('Add to the collection')); if (d) d.click(); return !!d; });
+  await page.waitForTimeout(250);
+  const out = await page.evaluate(() => { const b = state.dotBookmarks[0], rows = _dotBookmarksTsv().split('\n'); return { n: state.dotBookmarks.length, tsv: rows[1] ? rows[1].split('\t')[12] : null, ident: b && b.identity }; });
+  out.menu = menu; out.pos = pos;
+  await page.evaluate(() => { state.dotBookmarks = []; _dotSaveBookmarks(); try { localStorage.removeItem('msaviewer_dotBookmarks'); } catch (e) {} });
+  const pct = out.tsv ? parseInt(out.tsv, 10) : -1;
+  return { pass: out.menu && out.n === 1 && /^\d+%$/.test(out.tsv || '') && pct >= 50 && pct <= 100, detail: JSON.stringify(out) };
+});
+
+// Every 'input' event of a colour picker rebuilt the whole plot and the pooled overview at once: a drag (dozens of events a
+// second) froze a big plot. Now the colours are stored at once and the plot is rebuilt once per frame.
+check('Dot plot fix: a burst of 20 colour-picker input events rebuilds the plot at most a few times, and the last colour wins', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotOpenRow100(page);
+  const out = await page.evaluate(async () => {
+    let n = 0; const orig = _dotPooledCanvas; _dotPooledCanvas = function (bin) { n++; return orig.call(this, bin); };
+    const i = document.getElementById('dotColDot');
+    for (let k = 0; k < 20; k++) { i.value = '#' + (0x100000 + k * 0x0a0000).toString(16).padStart(6, '0'); i.dispatchEvent(new Event('input', { bubbles: true })); }
+    await new Promise(r => setTimeout(r, 400));
+    _dotPooledCanvas = orig;
+    return { rebuilds: n, last: _dotPlotState.colours && _dotPlotState.colours.dot, want: i.value };
+  });
+  return { pass: out.rebuilds >= 1 && out.rebuilds <= 3 && out.last === out.want, detail: JSON.stringify(out) };
+});
+
+// "Too large to plot" left the sliders on the previous pair's ranges (live, with a marker position that no longer existed).
+// The worker-error path left the previous pair's crosshair and dashed marker on the overlay.
+check('Dot plot fix: "too large to plot" disables the sliders and a worker error clears the overlay', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotOpenRow100(page);
+  const lit = () => page.evaluate(() => { const o = document.getElementById('dotPlotOverlay'), d = o.getContext('2d').getImageData(0, 0, o.width, o.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++; return n; });
+  await page.evaluate(() => _dotSetSlide(100, 100)); await page.waitForTimeout(200);
+  const out = { litBefore: await lit() };
+  await page.evaluate(() => { const big = 'ACGT'.repeat(2600); return openDotPlot(big, big, 'bigA', 'bigB', {}); });   // 10400 x 10400 > the cell limit
+  await page.waitForTimeout(300);
+  out.big = await page.evaluate(() => ({ status: document.getElementById('dotPlotStatus').textContent.slice(0, 20), dis: ['dotPlotPosA', 'dotPlotPosB', 'dotPlotPosANum', 'dotPlotPosBNum'].map(id => document.getElementById(id).disabled), slide: _dotPlotState.slideRow }));
+  await dotOpenRow100(page); await page.evaluate(() => _dotSetSlide(100, 100)); await page.waitForTimeout(200);
+  out.litBefore2 = await lit();
+  await page.evaluate(() => { window.__runW = _dotRunWorker; _dotRunWorker = () => Promise.reject(new Error('boom')); const s = state.seqs[3], t = state.seqs[4]; return openDotPlot(s.seq.replace(/[-. ]/g, ''), t.seq.replace(/[-. ]/g, ''), s.header, t.header, {}); });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { _dotRunWorker = window.__runW; });
+  out.err = { status: await page.evaluate(() => document.getElementById('dotPlotStatus').textContent.slice(0, 10)), lit: await lit() };
+  const ok = out.litBefore > 50 && /^Too large/.test(out.big.status) && out.big.dis.every(Boolean) && out.litBefore2 > 50 && /^Error/.test(out.err.status) && out.err.lit === 0;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// RevComp B: the ruler and strip show the row's own residue numbers (which run down along the plot) but the B slider and
+// number box showed the raw plotted column. And the slider position survived a RevComp recalculation as a column, so it
+// pointed at the mirrored residue.
+check('Dot plot fix: with RevComp B the slider and number box carry the same residue numbers as the ruler, and a RevComp recalculation keeps the residue', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  const open = async rc => { await page.evaluate((rc) => { document.getElementById('dotPlotRevComp').checked = rc; _dotRecalculate(); }, rc); await page.waitForTimeout(100); await page.waitForFunction(() => !_dotPlotState.computing, null, { timeout: 20000 }); await page.waitForTimeout(200); };
+  await dotFixOpenPair(page, 1, 2);
+  await page.evaluate(() => _dotSetSlide(10, 20)); await page.waitForTimeout(200);
+  const out = { fwd: await page.evaluate(() => ({ b: document.getElementById('dotPlotPosB').value, n: document.getElementById('dotPlotPosBNum').value, ruler: _dotNumAt('B', 20) })) };
+  await open(true);
+  out.rc = await page.evaluate(() => { const S = _dotPlotState; return { col: S.slideCol, b: document.getElementById('dotPlotPosB').value, n: document.getElementById('dotPlotPosBNum').value, ruler: _dotNumAt('B', S.slideCol), cols: S.cols, dir: getComputedStyle(document.getElementById('dotPlotPosB')).direction, rev: _dotPlotRevB() }; });
+  // typing a residue number goes to the column that carries it
+  await page.fill('#dotPlotPosBNum', '100'); await page.waitForTimeout(200);
+  out.typed = await page.evaluate(() => ({ col: _dotPlotState.slideCol, ruler: _dotNumAt('B', _dotPlotState.slideCol) }));
+  await open(false);
+  out.back = await page.evaluate(() => { const S = _dotPlotState; return { col: S.slideCol, n: document.getElementById('dotPlotPosBNum').value, ruler: _dotNumAt('B', S.slideCol), cols: S.cols, dir: getComputedStyle(document.getElementById('dotPlotPosB')).direction }; });
+  const ok = out.fwd.b === '21' && out.fwd.ruler === 21
+    && out.rc.rev && out.rc.b === String(out.rc.ruler) && out.rc.n === String(out.rc.ruler) && out.rc.dir === 'rtl' && out.rc.ruler === out.rc.cols - out.rc.col
+    && out.rc.ruler === 21 && out.typed.ruler === 100
+    && out.back.dir === 'ltr' && out.back.n === String(out.back.ruler) && out.back.ruler === 100;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Highlight all / the arrow mark residues of the pair that was plotted. Plotting a different pair left those marks on the
+// rows (and the window docked) while the plot showed something else. Rule: another pair clears the marks and brings the
+// window back; a recalculation, a range, RevComp or a preset of the SAME pair keeps them.
+check('Dot plot fix: plotting a different pair clears the marks of the first pair; recalculating the same pair keeps them', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotOpenRow100(page);
+  await page.click('#dotPlotHighlightAll'); await page.waitForTimeout(500);
+  const st = () => page.evaluate(() => ({ marks: !!state.dotRegionMarks, docked: document.getElementById('dotPlotDialog').classList.contains('dot-docked'), peek: document.getElementById('dotPlotModal').classList.contains('dot-peek'), btn: !document.getElementById('dotPlotDockClear').hidden }));
+  const out = { marked: await st() };
+  await page.evaluate(() => { _dotRecalculate(); }); await page.waitForTimeout(300);
+  await page.waitForFunction(() => !_dotPlotState.computing, null, { timeout: 20000 });
+  out.sameKept = await st();
+  await dotFixOpenPair(page, 1, 2);
+  out.other = await st();
+  const ok = out.marked.marks && out.marked.docked && out.sameKept.marks && !out.other.marks && !out.other.docked && !out.other.peek && !out.other.btn;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// Small fixes from the same audit, one check each where it is cheap.
+check('Dot plot fix: a corrupt stored preset says it is unreadable, not "choose a preset first"', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotOpenRow100(page);
+  await page.evaluate(() => { localStorage.setItem('msaviewer_dotPresets', JSON.stringify({ broken: 5, empty: {} })); _dotPresetList('broken'); window.__msgs = []; const f = showMessage; window.__showMessage = f; showMessage = (m, d) => { window.__msgs.push(String(m)); return f(m, d); }; });
+  await page.selectOption('#dotPresetSelect', 'broken'); await page.click('#dotPresetLoad'); await page.waitForTimeout(150);
+  await page.selectOption('#dotPresetSelect', 'empty'); await page.click('#dotPresetLoad'); await page.waitForTimeout(150);
+  const msgs = await page.evaluate(() => { showMessage = window.__showMessage; localStorage.removeItem('msaviewer_dotPresets'); return window.__msgs; });
+  return { pass: msgs.length === 2 && msgs.every(m => /unreadable/i.test(m)), detail: JSON.stringify(msgs) };
+});
+
+check('Dot plot fix: the expanded strip labels a block that starts outside the sequence with the nearest real number', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotFixOpenPair(page, 1, 2);
+  await page.evaluate(() => { const i = document.getElementById('dotPlotStripLines'); i.value = 4; _dotUpdateHoverInfo(3, 3, { force: true }); });
+  const lines = await page.evaluate(() => document.getElementById('dotPlotAlignPanel').textContent.split('\n').filter(l => /^[AB] /.test(l)).map(l => l.slice(0, 9)));
+  return { pass: lines.length === 8 && lines.every(l => /^[AB] +\d+\s*$/.test(l)), detail: JSON.stringify(lines) };
+});
+
+check('Dot plot fix: colour defaults follow the method, and equal dot and background colours never draw invisible dots', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotOpenRow100(page);
+  const out = {};
+  out.spin = await page.evaluate(() => ({ dot: document.getElementById('dotColDot').value, bg: document.getElementById('dotColBg').value }));
+  await page.evaluate(() => { document.querySelector('input[name="dotPlotMode"][value="doter"]').click(); });
+  await page.waitForTimeout(800);
+  out.doter = await page.evaluate(() => ({ dot: document.getElementById('dotColDot').value, bg: document.getElementById('dotColBg').value }));
+  await page.evaluate(() => { document.querySelector('input[name="dotPlotMode"][value="spin"]').click(); });
+  await page.waitForTimeout(800);
+  await page.evaluate(() => { const i = document.getElementById('dotColBg'); i.value = '#ffffff'; i.dispatchEvent(new Event('input', { bubbles: true })); });   // SPIN's default dots are white
+  await page.waitForTimeout(300);
+  out.equal = await page.evaluate(() => ({ ink: _dotInk(true), paper: _dotPaper(true) }));
+  const ok = out.spin.dot === '#ffffff' && out.spin.bg === '#000000' && out.doter.dot === '#000000' && out.doter.bg === '#ffffff' && out.equal.paper === '#ffffff' && out.equal.ink !== out.equal.paper;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+check('Dot plot fix: the Background colour says it covers the plot area only', async (page) => {
+  const t = await page.evaluate(() => { const i = document.getElementById('dotColBg'); return (i.title || '') + '|' + (i.parentElement.title || ''); });
+  return { pass: /plot area|axis/i.test(t), detail: t };
+});
+
+check('Dot plot fix: a repeat keeps its overline colour on a residue a dot-plot stretch also marks', async (page) => {
+  const r = await page.evaluate(() => {
+    const ctx = { any: true, hits: new Map([[5, { color: '#ffcc00', className: 'search-hit-x', strand: '' }]]), tsd: null, tsdPrev: null, dotReg: new Set([5]), rep: new Map([[5, '#ff0000']]), snp: false, trim: null, header: 'x' };
+    const o = residueOverlay(ctx, 5, 'A'); return { colour: o && o.decoColor, deco: o && o.deco.join(','), tint: DOT_REGION_TINT };
+  });
+  return { pass: r.colour === '#ff0000', detail: JSON.stringify(r) };
+});
+
+check('Dot plot fix: dragging the tint colour does not grow the overlay class table with every intermediate colour', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'full'); await page.waitForTimeout(400);
+  await dotOpenRow100(page);
+  await page.click('#dotPlotHighlightAll'); await page.waitForTimeout(600);
+  const out = await page.evaluate(async () => {
+    const n0 = _ovClassByDecl.size, r0 = document.getElementById('residueOverlayStyles').sheet.cssRules.length, i = document.getElementById('dotColTint');
+    for (let k = 0; k < 30; k++) { i.value = '#' + (0x2040a0 + k * 0x030201).toString(16).padStart(6, '0'); i.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 60)); }
+    await new Promise(r => setTimeout(r, 300));
+    return { classes: _ovClassByDecl.size - n0, rules: document.getElementById('residueOverlayStyles').sheet.cssRules.length - r0, tinted: document.querySelectorAll('.seq-line[data-seq-index="100"] .seq-data > span[class*="ov-"]').length, sample: [...document.getElementById('residueOverlayStyles').sheet.cssRules].slice(-2).map(r => r.cssText.slice(0, 150)) };
+  });
+  return { pass: out.classes <= 6 && out.rules <= 6 && out.tinted > 50, detail: JSON.stringify(out) };
+});
+
+check('Dot plot fix: the strip character width does not depend on getComputedStyle(...).font (empty in Firefox)', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotFixOpenPair(page, 1, 2);
+  const r = await page.evaluate(() => {
+    const panel = document.getElementById('dotPlotAlignPanel');
+    _dotCharW._c = null; const real = _dotCharW(panel);
+    const gcs = window.getComputedStyle; _dotCharW._c = null;
+    window.getComputedStyle = (e, p) => new Proxy(gcs.call(window, e, p), { get: (t, k) => k === 'font' ? '' : (typeof t[k] === 'function' ? t[k].bind(t) : t[k]) });
+    const empty = _dotCharW(panel); window.getComputedStyle = gcs;
+    return { real, empty };
+  });
+  return { pass: Math.abs(r.real - r.empty) < 0.05 && r.real > 3, detail: JSON.stringify(r) };
+});
+
 // The toolbar's height must not change when a selection appears or goes: the Selections tab used to be
 // display:none while empty, so at widths where the menu line is nearly full its appearance wrapped the
 // toolbar and the alignment jumped down a line (the case switch of v278 used up the slack: a click on a

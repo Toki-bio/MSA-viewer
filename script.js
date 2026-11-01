@@ -501,7 +501,11 @@ function residueOverlay(ctx, pos, base) {
     if (dotReg) {
         o.titles.push('dot-plot stretch');
         if (!o.bg) { o.bg = DOT_REGION_TINT + '55'; o.fg = '#111'; }
-        else { o.deco.push('overline'); o.decoColor = DOT_REGION_TINT; o.covered.push('dot'); }
+        else {   // a repeat on the same residue keeps its overline colour (the line is drawn once)
+            if (!o.deco.includes('overline')) o.deco.push('overline');
+            if (!o.decoColor) o.decoColor = DOT_REGION_TINT;
+            o.covered.push('dot');
+        }
     }
     if (snp) {
         o.titles.push(snp.title);
@@ -536,13 +540,13 @@ function overlayCss(o) {
 // The selector outranks the colour-scheme rules (#alignmentContainer.color-scheme-x ...),
 // the shading classes and the trim tint, which all use !important too.
 const _ovClassByDecl = new Map();
-let _ovSheet = null;
+let _ovSheet = null, _ovClassSeq = 0;
 function _overlayStyleClass(o) {
     const decl = overlayCss(o);
     if (!decl) return '';
     let cls = _ovClassByDecl.get(decl);
     if (!cls) {
-        cls = 'ov-' + _ovClassByDecl.size;
+        cls = 'ov-' + (_ovClassSeq++);   // a counter, not the table size: looks can be forgotten (below)
         if (!_ovSheet) {
             const st = document.createElement('style');
             st.id = 'residueOverlayStyles';
@@ -553,6 +557,23 @@ function _overlayStyleClass(o) {
         _ovClassByDecl.set(decl, cls);
     }
     return cls;
+}
+
+// Drops every generated look that uses the colour `hex` (rule and table entry), for a colour that is about to stop being
+// used: the dot plot's tint changes continuously while a colour picker is dragged and each intermediate colour used to
+// leave a rule and a table entry behind for good. The caller repaints the overlays afterwards (a span that still names a
+// dropped class is given the new one then).
+function _overlayForgetColour(hex) {
+    if (!hex) return;
+    const h = String(hex).toLowerCase(), gone = new Set();
+    for (const [decl, cls] of _ovClassByDecl) if (decl.toLowerCase().includes(h)) { gone.add(cls); _ovClassByDecl.delete(decl); }
+    if (_ovSheet && gone.size) {
+        for (let i = _ovSheet.cssRules.length - 1; i >= 0; i--) {
+            const m = /\.(ov-\d+)\./.exec(_ovSheet.cssRules[i].selectorText || '');
+            if (m && gone.has(m[1])) _ovSheet.deleteRule(i);
+        }
+    }
+    if (gone.size) _ovClassListMemo.clear();
 }
 
 // Classes the overlay adds: its look, plus the ones tests and CSS use to find marks
@@ -32560,6 +32581,7 @@ function _dotOnModeChange() {
     const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
     S.spinMode = spinRadio ? spinRadio.checked : true;
     _dotSyncSliderRow(S.spinMode, 'dotPlotWindow', 'dotPlotWindowLabel', 'dotPlotWindowVal', 'dotPlotThreshWrap', 'dotPlotThreshold', 'dotPlotThreshVal');
+    _dotSyncColourInputs();   // an unset dot / background colour shows this method's default (white on black for SPIN, black on white for Dotter)
 }
 // One wide slider for the word (SPIN) or window (Dotter) length: its range, label and title follow the mode;
 // the identity-threshold slider is shown in Dotter mode only (it used to sit greyed out as "N/A").
@@ -33143,7 +33165,8 @@ function _dotRulerRows(which, start, n) {
 function _dotStripLines() { return Math.min(12, Math.max(1, parseInt(document.getElementById('dotPlotStripLines')?.value, 10) || 1)); }
 function _dotCharW(elm) {
     const c = _dotCharW._c || (_dotCharW._c = document.createElement('canvas').getContext('2d'));
-    c.font = getComputedStyle(elm).font;
+    const cs = getComputedStyle(elm);   // the font shorthand reads empty in Firefox: build it from its parts
+    c.font = `${cs.fontStyle || ''} ${cs.fontWeight || ''} ${cs.fontSize || '12px'} ${cs.fontFamily || 'monospace'}`;
     return c.measureText('M'.repeat(20)).width / 20 || 7.2;
 }
 // The ruler lines (one-line strip) or the whole wrapped text (several lines); called after the strip text is set
@@ -33163,7 +33186,8 @@ function _dotStripExtras(panelEl, row, col, ctx) {
     if (rB) rB.hidden = true;
     const W = Math.max(20, Math.floor((panelEl.clientWidth - 18) / _dotCharW(panelEl)) - 9);
     const k0 = -Math.floor(L * W / 2), out = [];
-    const lbl = (which, idx) => String(_dotNumAt(which, idx) || '').padStart(5);
+    // a block that starts before the first / after the last residue shows the nearest real number (it was blank)
+    const lbl = (which, idx) => { const n = which === 'A' ? S.rows : S.cols; return String(n ? _dotNumAt(which, Math.min(n - 1, Math.max(0, idx))) : '').padStart(5); };
     for (let b = 0; b < L; b++) {
         const ks = k0 + b * W;
         let aLine = '', bLine = '', guide = '';
@@ -33210,10 +33234,13 @@ function _dotRedrawOverlay() {
 }
 function _dotSyncSlideRanges() {
     const S = _dotPlotState;
-    [['A', S.rows, S.slideRow, S.offA], ['B', S.cols, S.slideCol, S.dispOffB]].forEach(([w, n, pos, off]) => {
+    // The numbers are the ones the ruler shows (the sequence's own residue numbers, a range keeps the real ones). With RevComp B
+    // the number runs DOWN along the plot, so the B slider is drawn right to left: moving it forward lowers the number.
+    [['A', S.rows, S.slideRow, S.offA], ['B', S.cols, S.slideCol, S.offB]].forEach(([w, n, pos, off]) => {
         const r = document.getElementById('dotPlotPos' + w), t = document.getElementById('dotPlotPos' + w + 'Num');
-        [r, t].forEach(i => { if (i) { i.min = off + 1; i.max = off + Math.max(1, n); i.disabled = !n; } });   // a range keeps the real numbers
-        const v = off + (pos >= 0 ? pos + 1 : 1);
+        [r, t].forEach(i => { if (i) { i.min = off + 1; i.max = off + Math.max(1, n); i.disabled = !n; } });
+        if (r) r.style.direction = (w === 'B' && _dotPlotRevB()) ? 'rtl' : '';
+        const v = n ? _dotNumAt(w, pos >= 0 ? pos : 0) : off + 1;
         if (r) r.value = v;
         if (t && document.activeElement !== t) t.value = v;
     });
@@ -33241,7 +33268,7 @@ function _dotInitStripEvents() {
     const fromInputs = () => {
         const S = _dotPlotState;
         const A = parseInt(g('dotPlotPosA')?.value, 10), B = parseInt(g('dotPlotPosB')?.value, 10);
-        _dotSetSlide((Number.isFinite(A) ? A : S.offA + 1) - 1 - S.offA, (Number.isFinite(B) ? B : S.dispOffB + 1) - 1 - S.dispOffB);
+        _dotSetSlide(Number.isFinite(A) ? A - 1 - S.offA : 0, Number.isFinite(B) ? (_dotPlotRevB() ? S.offB + S.cols - B : B - 1 - S.offB) : 0);   // B is a residue number: with RevComp it counts down the plot
     };
     ['A', 'B'].forEach(w => {
         const r = g('dotPlotPos' + w), t = g('dotPlotPos' + w + 'Num');
@@ -33323,7 +33350,8 @@ function _dotPresetSave() {
 function _dotPresetDelete() {
     const name = document.getElementById('dotPresetSelect')?.value;
     const presets = _dotPresets();
-    if (!name || !presets[name]) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!name) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!(name in presets)) { showMessage(`Preset "${name}" is no longer stored.`, 2500); _dotPresetList(); return; }
     delete presets[name];
     if (!safeLocalSet(DOT_PRESETS_KEY, JSON.stringify(presets), 'the dot plot presets')) return;
     _dotPresetList();
@@ -33335,7 +33363,8 @@ async function _dotPresetLoad() {
     const p = name ? _dotPresets()[name] : null;
     const note = g('dotPresetNote');
     if (note) note.textContent = '';
-    if (!p || typeof p !== 'object' || !p.settings) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!name) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!p || typeof p !== 'object' || !p.settings || typeof p.settings !== 'object') { showMessage(`Preset "${name}" is unreadable (its stored data is damaged): delete it and save it again.`, 4000); return; }
     if (!(S.sourceSeqA && S.sourceSeqB)) return;
     const st = p.settings, clampInt = (v, lo, hi, d) => { v = parseInt(v, 10); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
     // 1. settings
@@ -33546,16 +33575,37 @@ function _dotPaintRuns(ctx, z, sl, st, vw, vh, c0, c1, r0, r1) {
 const DOT_COLOUR_KEYS = ['dot', 'bg', 'stretch', 'marker', 'tint'];
 const DOT_MARKER_DEFAULT = '#ff8c00', DOT_STRETCH_DEFAULT = '#64e6a0', DOT_TINT_DEFAULT = '#4a9eff';
 function _dotCustomColours() { const c = _dotPlotState.colours; return !!(c && (c.dot || c.bg)); }
-function _dotInk(spin) { return _dotPlotState.colours?.dot || (spin ? '#ffffff' : '#000000'); }
-function _dotPaper(spin) { return _dotPlotState.colours?.bg || (spin ? '#000000' : '#ffffff'); }
 function _dotHexRgb(h) { const m = /^#([0-9a-f]{6})$/i.exec(h || ''); const n = m ? parseInt(m[1], 16) : 0; return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+// The dot (ink) and background (paper) colours of a method, as [ink, paper] hex, with their RGB, worked out once per
+// S.colours object (every change makes a new one): the raster loops below run per cell and used to parse the hex strings
+// and allocate arrays each time. Ink equal to paper (white dots chosen on SPIN's white-default background, or the colours
+// kept across a switch of method) would draw nothing, so the ink then turns to whichever of black / white contrasts.
+function _dotInkPaper(spin) {
+    const c = _dotPlotState.colours;
+    let m = _dotInkPaper._m;
+    if (!m || m.c !== c) m = _dotInkPaper._m = { c, spin: null, doter: null };
+    const k = spin ? 'spin' : 'doter';
+    if (!m[k]) {
+        let ink = c?.dot || (spin ? '#ffffff' : '#000000');
+        const paper = c?.bg || (spin ? '#000000' : '#ffffff');
+        const pr = _dotHexRgb(paper);
+        if (ink.toLowerCase() === paper.toLowerCase()) ink = (0.299 * pr[0] + 0.587 * pr[1] + 0.114 * pr[2]) > 127 ? '#000000' : '#ffffff';
+        m[k] = { ink, paper, ir: _dotHexRgb(ink), pr };
+    }
+    return m[k];
+}
+function _dotInk(spin) { return _dotInkPaper(spin).ink; }
+function _dotPaper(spin) { return _dotInkPaper(spin).paper; }
 function _dotBlend(spin, strength) {   // strength 0 = paper, 1 = ink
-    const a = _dotHexRgb(_dotPaper(spin)), b = _dotHexRgb(_dotInk(spin));
-    return a.map((v, i) => Math.round(v + (b[i] - v) * strength));
+    const k = _dotInkPaper(spin), a = k.pr, b = k.ir;
+    return [Math.round(a[0] + (b[0] - a[0]) * strength), Math.round(a[1] + (b[1] - a[1]) * strength), Math.round(a[2] + (b[2] - a[2]) * strength)];
 }
 function _dotPutPixel(d, j, v, spin) {
     if (!_dotCustomColours()) d[j] = d[j + 1] = d[j + 2] = v;
-    else { const c = _dotBlend(spin, spin ? v / 255 : 1 - v / 255); d[j] = c[0]; d[j + 1] = c[1]; d[j + 2] = c[2]; }
+    else {
+        const k = _dotInkPaper(spin), a = k.pr, b = k.ir, t = spin ? v / 255 : 1 - v / 255;
+        d[j] = Math.round(a[0] + (b[0] - a[0]) * t); d[j + 1] = Math.round(a[1] + (b[1] - a[1]) * t); d[j + 2] = Math.round(a[2] + (b[2] - a[2]) * t);
+    }
     d[j + 3] = 255;
 }
 function _dotDotterStroke(g) {
@@ -33573,20 +33623,31 @@ function _dotSyncColourInputs() {
 // the alignment tint is changed (marks repaint)
 function _dotApplyColours() {
     const S = _dotPlotState, c = S.colours || {};
+    const oldTint = DOT_REGION_TINT;
     DOT_REGION_TINT = c.tint || DOT_TINT_DEFAULT;
-    if (S.overview) { S.overview = _dotPooledCanvas(S.overviewBin); S._pool = null; _dotRender(); }
+    if (oldTint !== DOT_REGION_TINT) _overlayForgetColour(oldTint);
+    // the pixels of the plot only depend on the dot and background colours: a marker, stretch or tint colour needs no rebuild
+    const key = (c.dot || '') + '|' + (c.bg || '');
+    if (S.overview && S._ovKey !== key) { S.overview = _dotPooledCanvas(S.overviewBin); S._pool = null; S._ovKey = key; _dotRender(); }
     if (S.lastRow >= 0) _dotDrawOverlay(S.lastRow, S.lastCol);
     else if (S.pinnedRow >= 0) _dotDrawOverlay(S.pinnedRow, S.pinnedCol);
     else _dotClearOverlay();
     if (state.dotRegionMarks) { bumpSearchLayer?.(); syncResidueOverlays(); }
 }
+// A colour picker fires 'input' dozens of times a second while it is dragged: the colour is stored at once and the plot
+// (and the alignment's tint) is rebuilt once per frame, with the last colour.
+let _dotColourPending = 0;
 function _dotSetColour(key, hex) {
     const S = _dotPlotState;
     if (!DOT_COLOUR_KEYS.includes(key) || !/^#[0-9a-f]{6}$/i.test(hex || '')) return;
     S.colours = Object.assign({}, S.colours || {}, { [key]: hex.toLowerCase() });
-    _dotApplyColours();
+    if (_dotColourPending) return;
+    const run = () => { if (!_dotColourPending) return; _dotColourPending = 0; _dotApplyColours(); };
+    _dotColourPending = 1;
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+    setTimeout(run, 100);   // a hidden tab pauses animation frames
 }
-function _dotResetColours() { _dotPlotState.colours = null; _dotSyncColourInputs(); _dotApplyColours(); }
+function _dotResetColours() { _dotColourPending = 0; _dotPlotState.colours = null; _dotSyncColourInputs(); _dotApplyColours(); }
 
 function _dotBuildImage() {
     const S = _dotPlotState;
@@ -33595,6 +33656,7 @@ function _dotBuildImage() {
     const bin = Math.max(1, Math.ceil(Math.max(S.rows, S.cols) / DOT_OVERVIEW_MAX));
     S.overview = _dotPooledCanvas(bin);
     S.overviewBin = bin;
+    S._ovKey = (S.colours?.dot || '') + '|' + (S.colours?.bg || '');
     S._pool = null;
 }
 
@@ -33918,7 +33980,7 @@ function _dotRenderRegionList() {
             onclick="_dotGoToRegion(${i})"
             title="${tip}. Runs broken by mismatches or small indels are counted as one stretch. Click: centre it in the plot.">
             <button type="button" class="dot-star" title="${_dotRegionBookmarked(r) ? 'In the collection' : 'Add this stretch to the collection (the list below)'}" onclick="event.stopPropagation(); _dotBookmarkRegion(${i})">${_dotRegionBookmarked(r) ? '&#9733;' : '&#9734;'}</button>
-            ${canShow ? `<button type="button" class="dot-goto" title="Show this stretch in the alignment and go there: both copies are tinted, the alignment scrolls to the first; the dot plot window stays open and the alignment behind it can be used" onclick="event.stopPropagation(); _dotShowRegionInAlignment(${i})">&#8674;</button>` : ''}
+            ${canShow ? `<button type="button" class="dot-goto" title="Show this stretch in the alignment and go there: both copies are tinted, the alignment scrolls to the first; the dot plot window folds into a small bar in the corner so that it does not hide them (the bar's arrow brings it back)" onclick="event.stopPropagation(); _dotShowRegionInAlignment(${i})">&#8674;</button>` : ''}
             <b>#${i + 1}</b> ${len}bp${spin ? '' : ' ' + pct + '%'}
             <span style="color:#888;font-size:10px;">A${_dotShownA(r.aStart)}-${S.offA + r.aEnd} / B${_dotShownB(r.bStart)}-${S.dispOffB + r.bEnd}</span>
           </div>`;
@@ -33935,7 +33997,8 @@ function _dotHasRows() { const r = _dotRows(); return r.rowA >= 0 || r.rowB >= 0
 // Both copies are tinted (residue-anchored marks: the plotted sequences are the rows without gaps, so a
 // region's aStart..aEnd are residue numbers of row A), the alignment scrolls to the first copy, the list entry
 // is highlighted, and the window's backdrop lets the pointer through to the alignment. The marks live with the
-// window: a recalculation (new regions), Clear marks, closing the window or a new file remove them.
+// window: Clear marks, closing the window, plotting a different pair or a new file remove them. A recalculation, a range,
+// RevComp or a preset of the same pair keeps them (the marks are anchored to residues, not to the plot).
 let DOT_REGION_TINT = '#4a9eff';   // the alignment tint of a shown stretch (a custom dot plot colour changes it)
 function _dotShowRegionInAlignment(idx) {
     const S = _dotPlotState, r = S.regions?.[idx];
@@ -34053,7 +34116,7 @@ function _dotStretchAt(row, col) {
     while (rB + 1 < S.rows && cB + 1 < S.cols && _dotIsDot(rB + 1, cB + 1)) { rB++; cB++; }
     let same = 0;
     for (let i = 0; i <= rB - rA; i++) if (S.seqA[rA + i] === S.seqB[cA + i]) same++;
-    return { row, col, aStart: rA, aEnd: rB + 1, bStart: cA, bEnd: cB + 1, avgScore: Math.round(100 * same / (rB - rA + 1)) };
+    return { row, col, aStart: rA, aEnd: rB + 1, bStart: cA, bEnd: cB + 1, avgScore: same / (rB - rA + 1) };   // a fraction, like the region list's (the collection and its TSV multiply by 100)
 }
 function _dotStretchMenu(e, r) {
     const S = _dotPlotState;
@@ -34366,8 +34429,12 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S.threshold = (Number.isFinite(tRaw) ? tRaw : 55) / 100;
     S.pinnedRow = S.pinnedCol = -1;
     S.lastRow = S.lastCol = -1;
-    const pairKey = nameA + '|' + nameB + '|' + seqA.length + '|' + seqB.length + '|' + S.offA + '|' + S.seqA.length + '|' + S.offB + '|' + S.seqB.length;
-    if (S._pairKey !== pairKey) { S.slideRow = S.slideCol = -1; S._pairKey = pairKey; }   // a recalculation keeps the sliders' position, another pair does not
+    // Another pair (the sequences, not their range or strand) clears the stretches marked in the alignment for the one before
+    // and brings the window back; a recalculation, a range, RevComp or a preset of the same pair keeps them
+    const pairId = nameA + '|' + nameB + '|' + seqA.length + '|' + seqB.length;
+    if (S._pairId !== pairId && state.dotRegionMarks) _dotClearRegionMarks();
+    S._pairId = pairId;
+    const pairKey = pairId + '|' + S.offA + '|' + S.seqA.length + '|' + S.offB + '|' + S.seqB.length;
     S._frozen = false;
     S._frozenRow = S._frozenCol = -1;
     S._copyRegion = null;
@@ -34375,6 +34442,11 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S._shownRegion = -1;   // the marks stay (residue-anchored); the new list has no shown entry
 
     const revComp = document.getElementById('dotPlotRevComp')?.checked;
+    // the slider position is kept by a recalculation of the same plot and dropped for another one; when only the strand of B
+    // changed the position is mirrored (the same residue, not the same column)
+    if (S._pairKey !== pairKey) { S.slideRow = S.slideCol = -1; S._pairKey = pairKey; }
+    else if (!!S._pairRev !== !!revComp && S.slideCol >= 0) S.slideCol = S.seqB.length - 1 - S.slideCol;
+    S._pairRev = !!revComp;
     if (revComp) {
         S.seqB = [...S.seqB].reverse().map(b => _DOT_COMPLEMENT[b] ?? 'N').join('');
         S.nameB = nameB + ' (RevComp)';
@@ -34395,6 +34467,8 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     if (cells > DOT_MAX_CELLS) {
         S.matchMap = S.scores = S.overview = null;
         S.rows = S.cols = 0;
+        S.slideRow = S.slideCol = -1;
+        _dotSyncSlideRanges();   // nothing to slide over: the sliders go grey instead of keeping the last pair's ranges
         _dotClearOverlay();
         const c = document.getElementById('dotPlotCanvas');
         if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
@@ -34425,6 +34499,11 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
         if (gen !== S.gen) return;
         S.matchMap = S.scores = S.overview = null;
         S.rows = S.cols = 0;
+        S.slideRow = S.slideCol = -1;
+        _dotSyncSlideRanges();
+        _dotClearOverlay();   // the previous pair's crosshair and marker
+        const ec = document.getElementById('dotPlotCanvas');
+        if (ec) ec.getContext('2d').clearRect(0, 0, ec.width, ec.height);
         if (statusEl) statusEl.textContent = `Error: ${err.message}`;
         _dotRenderRegionList();   // S.regions was emptied for this pair; the list still showed the previous one
         S.computing = false; return;
