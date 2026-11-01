@@ -207,7 +207,8 @@ check('Default view by size: below ALIGN_CANVAS_DEFAULT_RESIDUES a DOM mode, at/
   if (out.below.canvasEl || out.below.domRows === 0) bad.push(`${out.below.residues} residues (below the limit) did not open in a DOM mode`);
   if (!out.atOrAbove.canvasEl || !out.atOrAbove.canvasRadio) bad.push(`${out.atOrAbove.residues} residues (above the limit) did not open in Canvas`);
   // v249: the switch is announced (10 s note); v254: nothing needs Full or Block any more, the note names them as the DOM views
-  if (!/Full or Block/.test(out.atOrAbove.note)) bad.push(`no limitation note after the switch (status: "${out.atOrAbove.note.slice(0, 80)}")`);
+  // // Full hidden from the switch (owner 2026-11-01): the note now names Block, no longer Full (regex was /Full or Block/).
+  if (!/Canvas view.*Block/.test(out.atOrAbove.note)) bad.push(`no limitation note after the switch (status: "${out.atOrAbove.note.slice(0, 80)}")`);
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') : JSON.stringify(out) };
 });
 
@@ -604,6 +605,7 @@ check('BAM Reads view: reference bases, ruler and reads line up base for base', 
 });
 
 // Reads could only be looked at: codon analysis and MACSE work on rows, and in Full view the reads were gone.
+// Full hidden from the switch (owner 2026-11-01): Sample -> row now lands in Canvas (view 'canvas', was 'full').
 // "Sample -> row" puts the sample under the reference; codon analysis must then classify each planted change of
 // tests/fixtures/reads (make_gene_reads.js) against the reference, heterozygous ones (IUPAC) included.
 check('Reads: Sample -> row puts the sample under the reference and codon analysis classes its changes', async (page) => {
@@ -624,7 +626,7 @@ check('Reads: Sample -> row puts the sample under the reference and codon analys
     const at = col => d && d.synNonSyn[i][col];
     const stopAt = col => !!d && d.stops[i].includes(col);
     return {
-      rows: state.seqs.map(s => s.header), view: document.getElementById('modeSingle').checked ? 'full' : 'other', frame: d && d.frameOffset,
+      rows: state.seqs.map(s => s.header), view: document.getElementById('modeCanvas').checked ? 'canvas' : 'other', frame: d && d.frameOffset,
       syn: at(m.syn_hom.pos), missense: at(m.missense_het.pos), missenseBase: state.seqs[1].seq[m.missense_het.pos],
       stopHom: stopAt(m.stop_hom.pos), stopHet: stopAt(m.stop_het.pos), stopHetMark: at(m.stop_het.pos),
       frameshift: !!d && d.frameShifts[i].some(f => Math.abs(f.pos - m.del1_hom.pos) <= 3), refFrameshifts: d && d.frameShifts[0].length,
@@ -636,7 +638,7 @@ check('Reads: Sample -> row puts the sample under the reference and codon analys
   await page.click('#undoButton');
   await page.waitForTimeout(800);
   r.afterUndo = await page.evaluate(() => state.seqs.map(s => s.seq.length + ':' + s.header).join(','));
-  const ok = r.rows.join() === 'gene,gene_sample' && r.view === 'full' && r.frame === 0
+  const ok = r.rows.join() === 'gene,gene_sample' && r.view === 'canvas' && r.frame === 0
     && r.syn === 'syn' && r.missense === 'nonsyn' && r.missenseBase === 'R' && r.stopHom && r.stopHet && r.stopHetMark === 'nonsyn'
     && r.frameshift && r.refFrameshifts === 0 && !r.refStopAtMut && r.insCols === '---' && r.insSample === m.ins3_hom.ins && r.afterUndo === '963:gene';
   return { pass: ok, detail: JSON.stringify(r) };
@@ -5188,7 +5190,8 @@ check('The top-bar view switch is shown in Full, Block, Canvas and Reads, each o
   });
   const out = {};
   // each option, clicked on the switch, switches the view
-  for (const [qm, want] of [['qmSingle', 'modeSingle'], ['qmBlocks', 'modeBlocks'], ['qmCanvas', 'modeCanvas']]) {
+  // // Full hidden from the switch (owner 2026-11-01): no F option on the switch any more; each remaining option is clicked, Full only through setMode.
+  for (const [qm, want] of [['qmBlocks', 'modeBlocks'], ['qmCanvas', 'modeCanvas']]) {
     const lab = await p.$(`label[for="${qm}"]`);
     if (lab && await lab.isVisible()) { await lab.click(); await p.waitForTimeout(800); }
     out[want] = await look();
@@ -5197,13 +5200,14 @@ check('The top-bar view switch is shown in Full, Block, Canvas and Reads, each o
   await p.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples/real/htslib_ce_CHROMOSOME_II.fa')); await p.waitForTimeout(1500);
   await p.setInputFiles('#fileInput', path.join(__dirname, '..', '..', 'examples/real/htslib_range.bam')); await p.waitForTimeout(2000);
   out.reads = await look();
-  const lab = await p.$('label[for="qmSingle"]');
+  out.noFullOption = await p.evaluate(() => !document.getElementById('qmSingle') && !document.getElementById('qmSingleLabel'));
+  const lab = await p.$('label[for="qmCanvas"]');   // from Reads, back to Canvas
   if (lab && await lab.isVisible()) { await lab.click(); await p.waitForTimeout(800); }
   out.fromReads = await look();
-  const views = ['modeSingle', 'modeBlocks', 'modeCanvas'];
+  const views = ['modeBlocks', 'modeCanvas'];
   const ok = views.every(v => out[v].mode === v && out[v].shown && out[v].checked === v && out[v].h === out[v].hWithout)
     && out.reads.mode === 'modeReads' && out.reads.shown && out.reads.checked === 'modeReads' && out.reads.labels.includes('Reads view')
-    && out.fromReads.mode === 'modeSingle';
+    && out.noFullOption && out.fromReads.mode === 'modeCanvas';
   return { pass: ok, detail: JSON.stringify(out) };
 }));
 
@@ -5675,7 +5679,8 @@ check('Canvas Block: Block -> Canvas -> Block and Block -> Full -> Block keep th
   };
   const steps = [{ step: 'block', ...(await where()) }];
   for (const id of ['#modeCanvas', '#modeBlocks', '#modeSingle', '#modeBlocks']) {
-    await p.click(id); await p.waitForTimeout(900);
+    if (id === '#modeSingle') await setMode(p, 'full'); else await p.click(id);   // // Full hidden from the switch (owner 2026-11-01): Full is reached through setMode
+    await p.waitForTimeout(900);
     steps.push({ step: id, ...(await where()) });
   }
   const ok = steps.every(s => s.a && Math.abs(s.a.row - 12) <= 1 && s.a.col === v.col0 && s.cellOk) && steps[4].radio === 'modeBlocks';
@@ -8830,6 +8835,8 @@ check('MAFFT worker that cannot load: the error says why, not "undefined"', asyn
 // for that dialog near ALIGN_CRAZY_VOLUME, so on a tall or long alignment the switch could
 // still be pending when a check read the view).
 async function auditClickMode(page, mode) {
+  // // Full hidden from the switch (owner 2026-11-01): the Full label cannot be clicked; Full is reached through setMode.
+  if (mode === 'full') { await setMode(page, 'full'); await page.waitForTimeout(700); await r2Settle(page); return; }
   const id = { full: 'modeSingle', block: 'modeBlocks', canvas: 'modeCanvas' }[mode];
   const open = await page.evaluate(() => document.querySelector('.section-header[data-section="display"]').closest('.menu-section').classList.contains('menu-open'));
   if (!open) await page.click('.section-header[data-section="display"]');
@@ -9341,7 +9348,7 @@ check('Round 2: 400 x 1,245 loads and switches to Full quickly (no full-DOM clif
   const load = Date.now() - t0;
   await auditOpenSection(page, 'display');
   const t1 = Date.now();
-  await page.click('#modeSingle');
+  await setMode(page, 'full');   // // Full hidden from the switch (owner 2026-11-01): the Full radio is hidden
   await r2Settle(page);
   const full = Date.now() - t1;
   await page.click('.section-header[data-section="display"]');
