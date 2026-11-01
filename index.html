@@ -13,7 +13,7 @@
     <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
-    <link rel="stylesheet" href="styles.css?v=191">
+    <link rel="stylesheet" href="styles.css?v=192">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -1187,6 +1187,8 @@
             <div class="win-titlebar" id="dotPlotTitleBar" style="--win-pad:16px;cursor:move;" title="Drag to move; drag the lower-right corner to resize">
                 <h3 id="dotPlotTitle" style="pointer-events:none;">Dot Plot</h3>
                 <span class="win-btns">
+                    <button type="button" id="dotPlotDockClear" class="dot-mini-btn" title="Remove the stretch marks from the alignment" hidden>Clear marks</button>
+                    <button type="button" id="dotPlotDockBtn" class="win-close" title="Move the window out of the way to a small bar (the alignment behind it shows fully); click again to bring it back" aria-label="Dock">&#9662;</button>
                     <button type="button" id="dotPlotMaxBtn" class="win-close win-maxbtn" title="Maximize (or double-click the title bar)" aria-label="Maximize">&#9633;</button>
                     <button type="button" id="dotPlotCloseBtn" class="win-close" title="Close">×</button>
                 </span>
@@ -1218,6 +1220,24 @@
                 <span class="dot-grow"></span>
                 <button id="dotPlotCopyRegion" title="Copy the aligned region around the pinned or hovered point as FASTA">Copy region</button>
                 <button id="dotPlotHelpBtn" class="dot-help-btn" title="Show / hide help for the dot plot" aria-label="Help">?</button>
+            </div>
+            <div id="dotPlotLookRow" class="dot-ctl-row">
+                <button type="button" id="dotPlotHighlightAll" title="Tint every stretch listed in Top Regions (those that pass the current settings) in the alignment, on both rows. Stays until cleared (Clear marks) or the window is closed">Highlight all in alignment</button>
+                <button type="button" id="dotPlotClearMarks2" class="dot-mini-btn" title="Remove the stretch marks from the alignment" hidden>Clear marks</button>
+                <span class="dot-sep"></span>
+                <label title="Colour of the dots">Dots <input type="color" id="dotColDot" value="#ffffff"></label>
+                <label title="Colour of the plot background">Background <input type="color" id="dotColBg" value="#000000"></label>
+                <label title="Colour of the stretch under the pointer">Stretch <input type="color" id="dotColStretch" value="#64e6a0"></label>
+                <label title="Colour of the position marker (sliders / click)">Marker <input type="color" id="dotColMarker" value="#ff8c00"></label>
+                <label title="Tint of the stretches shown in the alignment">Alignment tint <input type="color" id="dotColTint" value="#4a9eff"></label>
+                <button type="button" id="dotColReset" title="Back to the default colours">Reset colours</button>
+                <span class="dot-sep"></span>
+                <select id="dotPresetSelect" title="Saved dot plot presets: settings, colours and selected stretches"></select>
+                <input type="text" id="dotPresetName" placeholder="Preset name" maxlength="60" size="12" title="Name to save the current settings, colours and stretches under">
+                <button type="button" id="dotPresetSave" title="Save the settings, colours and the stretches marked in the alignment under this name">Save</button>
+                <button type="button" id="dotPresetLoad" title="Load the chosen preset: settings (the plot is recalculated), colours and stretches (when the same pair is plotted)">Load</button>
+                <button type="button" id="dotPresetDelete" title="Delete the chosen preset">Delete</button>
+                <span id="dotPresetNote" class="dot-preset-note"></span>
             </div>
             <div id="dotPlotSplitRow" class="dot-split-row dot-ctl-row">
                 <label title="A sequence plotted against itself is symmetric, so each half can show the same comparison with its own method and settings: the controls above then apply above the diagonal, these below it. Only for a sequence against itself, without RevComp B."><input type="checkbox" id="dotPlotSplit" checked> Different settings below the diagonal</label>
@@ -1254,9 +1274,18 @@
             <div id="dotPlotStatus" style="font-size:11px;color:#666;margin-top:4px;"></div>
             <div id="dotPlotHover" style="font-size:11px;color:#555;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;"></div>
             <div id="dotPlotAlignMeta" style="font-size:11px;color:#666;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;margin-top:2px;"></div>
-            <pre id="dotPlotAlignPanel" style="margin:4px 0 0;padding:8px;border-radius:6px;border:1px solid #d8d8d8;background:#f7f7f7;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;white-space:pre;overflow-x:auto;">A: -
+            <div id="dotPlotStripBar" class="dot-ctl-row dot-strip-bar">
+                <label title="Position in sequence A (down the plot). Arrow keys step by 1"><b>A</b> <input type="range" id="dotPlotPosA" min="1" max="1" step="1" value="1"><input type="number" id="dotPlotPosANum" min="1" max="1" value="1" style="width:64px;"></label>
+                <label title="Position in sequence B (across the plot; with RevComp B, in the plotted reverse-complement order). Arrow keys step by 1"><b>B</b> <input type="range" id="dotPlotPosB" min="1" max="1" step="1" value="1"><input type="number" id="dotPlotPosBNum" min="1" max="1" value="1" style="width:64px;"></label>
+                <span class="dot-sep"></span>
+                <label title="Lines of the strip under the plot: with more than one the stretch around the position wraps into several lines (the Context box then applies to one line only)">Strip lines <input type="number" id="dotPlotStripLines" min="1" max="12" value="1" style="width:44px;"></label>
+                <button type="button" id="dotPlotStripExpand" title="Show a longer stretch in the strip (several lines); click again for one line">Expand</button>
+            </div>
+            <pre id="dotPlotRulerA" class="dot-ruler dot-ruler-a"></pre>
+            <pre id="dotPlotAlignPanel" style="margin:0;padding:8px;border-radius:6px;border:1px solid #d8d8d8;background:#f7f7f7;font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;white-space:pre;overflow-x:auto;">A: -
    
 B: -</pre>
+            <pre id="dotPlotRulerB" class="dot-ruler dot-ruler-b"></pre>
             <div id="dotPlotSpinScroll" style="visibility:hidden;font-size:11px;line-height:14px;height:14px;color:#4a9eff;font-weight:bold;margin-top:3px;">Frozen - double-click to unfreeze</div>
             <div id="dotPlotHelp" style="display:none;margin-top:8px;border:1px solid #ddd;padding:10px;background:#fafafa;max-height:36vh;overflow:auto;font-size:11px;line-height:1.35;">
                 <div style="font-weight:bold;margin-bottom:6px;">Dot Plot Help (local)</div>
@@ -1449,7 +1478,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=7"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=372"></script>
+    <script src="script.js?v=373"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>

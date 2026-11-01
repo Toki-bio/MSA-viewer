@@ -10073,6 +10073,301 @@ check('Dot plot regions: "show in alignment" tints both copies, goes there (Full
 });
 
 
+// ---- Dot plot: show in alignment, Highlight all, colours, presets, ruler, expanded strip, sliders (owner, 2026-11-01) ----
+// Owner: "in dot plot, then i press arrow to show in the alignment, it disappears and never reappears in the alignment".
+// What went wrong: the window stayed at full size over the alignment (only its backdrop let the pointer through), so the
+// stretch the arrow had just scrolled to sat behind the window; closing the window removes the marks, so the stretch
+// "never reappeared". The arrow now docks the window to a small bar in the corner (the marks stay, the bar brings the
+// window back) and the alignment behind is fully visible.
+function dotAlignFasta() {
+  let sd = 11; const rnd = () => (sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
+  const rs = n => Array.from({ length: n }, () => 'ACGT'[rnd() * 4 | 0]).join('');
+  const u1 = rs(60), u2 = rs(50), lines = [];
+  for (let i = 0; i < 120; i++) {
+    let s = i === 100 ? rs(40) + u1 + rs(60) + u1 + rs(60) + u2 + rs(50) + u2 + rs(40) : rs(490);
+    s = s.slice(0, 50) + '----' + s.slice(50, 150) + '--' + s.slice(150);   // gaps: residue numbers differ from columns
+    lines.push('>s' + i + '\n' + s);
+  }
+  return lines.join('\n') + '\n';
+}
+async function dotOpenRow100(p) {
+  await p.evaluate(() => { const s = state.seqs[100]; openDotPlot(s.seq.replace(/[-. ]/g, ''), s.seq.replace(/[-. ]/g, ''), s.header, s.header, { rowIndexA: 100, rowIndexB: 100, alignedSeqA: s.seq, alignedSeqB: s.seq }); });
+  await p.waitForSelector('#dotPlotRegionItems .dot-goto', { timeout: 20000 });
+  await p.waitForFunction(() => !_dotPlotState.computing, null, { timeout: 20000 });
+}
+// bluish (tinted) pixels of the alignment canvas outside the dot plot window
+const dotTintPx = () => {
+  const cv = document.getElementById('alignmentCanvas'); if (!cv) return -1;
+  const r = cv.getBoundingClientRect(), dpr = cv.width / r.width, d = document.getElementById('dotPlotDialog').getBoundingClientRect();
+  const img = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+  let n = 0;
+  for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+    const cx = r.left + x / dpr, cy = r.top + y / dpr;
+    if (cx >= d.left && cx <= d.right && cy >= d.top && cy <= d.bottom) continue;
+    const i = (y * cv.width + x) * 4, R = img[i], G = img[i + 1], B = img[i + 2];
+    if (B > R + 25 && B > G + 8) n++;
+  }
+  return n;
+};
+
+check('Dot plot: the arrow shows the stretch in the alignment (Canvas, Block and Full), not hidden behind the window; the window can be brought back', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const out = {};
+  for (const mode of ['canvas', 'block', 'full']) {
+    await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+    await loadFasta(p, dotAlignFasta());
+    await setMode(p, mode);   // Full is hidden from the view switch but setMode still reaches it
+    await p.waitForTimeout(400);
+    await dotOpenRow100(p);
+    const before = mode === 'full' ? 0 : await p.evaluate(dotTintPx);
+    const exp = await p.evaluate(() => { const g = _dotPlotState.regions[0], set = new Set(); for (let n = g.aStart; n < g.aEnd; n++) set.add(n); for (let n = g.bStart; n < g.bEnd; n++) set.add(n); return set.size; });
+    await p.click('#dotPlotRegionItems .dot-goto'); await p.waitForTimeout(800);
+    const r = await p.evaluate((mode) => {
+      const dlg = document.getElementById('dotPlotDialog').getBoundingClientRect();
+      const o = { layout: (typeof _canvasState !== 'undefined' && _canvasState.layout) ? _canvasState.layout.kind : null, marks: state.dotRegionMarks?.get(100)?.size || 0, dlgH: Math.round(dlg.height), modalShown: getComputedStyle(document.getElementById('dotPlotModal')).display !== 'none' };
+      if (mode === 'full') {
+        const g = _dotPlotState.regions[0];
+        const seq = state.seqs[100].seq; let n = 0, col = -1;
+        for (let c = 0; c < seq.length; c++) { if (seq[c] === '-') continue; if (n === g.aStart + 30) { col = c; break; } n++; }   // a column in the middle of the stretch
+        const cell = document.querySelector('.seq-line[data-seq-index="100"] .seq-data > span[data-pos="' + col + '"]');
+        const cr = cell && cell.getBoundingClientRect();
+        o.tinted = [...document.querySelectorAll('.seq-line[data-seq-index="100"] .seq-data > span')].filter(s => /rgba\(74, 158, 255/.test(getComputedStyle(s).backgroundColor)).length;
+        o.visible = !!cr && cr.top >= 0 && cr.bottom <= innerHeight && cr.left >= 0 && cr.right <= innerWidth;
+        const top = cr && document.elementFromPoint(cr.left + cr.width / 2, cr.top + cr.height / 2);
+        o.covered = !!(top && top.closest('#dotPlotDialog'));
+      }
+      return o;
+    }, mode);
+    if (mode !== 'full') r.tintPx = (await p.evaluate(dotTintPx)) - before;
+    // bring the window back with the dock button: marks stay, the window is full size again
+    if (await p.$('#dotPlotDockBtn')) { await p.click('#dotPlotDockBtn'); await p.waitForTimeout(300); }
+    r.back = await p.evaluate(() => ({ h: Math.round(document.getElementById('dotPlotDialog').getBoundingClientRect().height), marks: !!state.dotRegionMarks, docked: document.getElementById('dotPlotDialog').classList.contains('dot-docked') }));
+    r.exp = exp; out[mode] = r;
+  }
+  const ok = ['canvas', 'block'].every(m => out[m].marks === out[m].exp && out[m].dlgH < 80 && out[m].tintPx > 2000 && out[m].modalShown && out[m].back.h > 300 && out[m].back.marks && !out[m].back.docked)
+    && out.block.layout === 'block' && out.canvas.layout === null
+    && out.full.marks === out.full.exp && out.full.tinted === out.full.exp && out.full.visible && !out.full.covered && out.full.dlgH < 80 && out.full.back.h > 300;
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
+check('Dot plot: Highlight all marks every shown stretch on both rows, survives scrolling and a view switch, Clear marks removes it (Canvas, Block, Full)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+  await loadFasta(p, dotAlignFasta());
+  await setMode(p, 'canvas'); await p.waitForTimeout(400);
+  await dotOpenRow100(p);
+  const out = {};
+  out.expected = await p.evaluate(() => { const set = new Set(); _dotPlotState.regions.forEach(g => { for (let n = g.aStart; n < g.aEnd; n++) set.add(n); for (let n = g.bStart; n < g.bEnd; n++) set.add(n); }); return { regions: _dotPlotState.regions.length, residues: set.size }; });
+  out.base = await p.evaluate(dotTintPx);
+  await p.click('#dotPlotHighlightAll'); await p.waitForTimeout(800);
+  out.marks = await p.evaluate(() => state.dotRegionMarks?.get(100)?.size || 0);
+  out.canvasPx = (await p.evaluate(dotTintPx)) - out.base;
+  // scroll the alignment: marks stay
+  await p.evaluate(() => { _canvasState.offsetY = 0; _canvasState.scheduleDraw?.(); _canvasState.onOffsetChange?.(); }); await p.waitForTimeout(300);
+  out.afterScroll = await p.evaluate(() => state.dotRegionMarks?.get(100)?.size || 0);
+  // view switches: Block, then Full
+  await setMode(p, 'block'); await p.waitForTimeout(500);
+  out.block = await p.evaluate(() => ({ kind: _canvasState.layout?.kind, marks: state.dotRegionMarks?.get(100)?.size || 0 }));
+  out.blockPx = (await p.evaluate(dotTintPx));
+  await setMode(p, 'full'); await p.waitForTimeout(600);
+  out.full = await p.evaluate(() => [...document.querySelectorAll('.seq-line[data-seq-index="100"] .seq-data > span')].filter(s => /rgba\(74, 158, 255/.test(getComputedStyle(s).backgroundColor)).length);
+  // clear (the button of the docked bar)
+  await p.click('#dotPlotDockClear'); await p.waitForTimeout(400);
+  out.cleared = await p.evaluate(() => ({ marks: !!state.dotRegionMarks, tinted: [...document.querySelectorAll('.seq-line[data-seq-index="100"] .seq-data > span')].filter(s => /rgba\(74, 158, 255/.test(getComputedStyle(s).backgroundColor)).length, btn: document.getElementById('dotPlotDockClear').hidden }));
+  const ok = out.expected.regions >= 2 && out.marks === out.expected.residues && out.canvasPx > 3000 && out.afterScroll === out.marks
+    && out.block.kind === 'block' && out.block.marks === out.marks && out.blockPx > out.base + 3000 && out.full === out.marks
+    && !out.cleared.marks && out.cleared.tinted === 0 && out.cleared.btn;
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
+check('Dot plot: custom colours change the drawn pixels live (dots, background, marker, alignment tint) and Reset colours restores them', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotOpenRow100(page);
+  const count = (fn) => page.evaluate(fn);
+  const px = () => page.evaluate(() => {
+    const cv = document.getElementById('dotPlotCanvas'), d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let red = 0, blue = 0, black = 0, white = 0;
+    for (let i = 0; i < d.length; i += 4) { const r = d[i], g = d[i + 1], b = d[i + 2]; if (r > 200 && g < 60 && b < 60) red++; else if (r < 60 && g < 60 && b > 200) blue++; else if (r < 20 && g < 20 && b < 20) black++; else if (r > 235 && g > 235 && b > 235) white++; }
+    return { red, blue, black, white };
+  });
+  const setCol = (id, v) => page.evaluate(([id, v]) => { const i = document.getElementById(id); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); }, [id, v]);
+  const out = {};
+  out.before = await px();
+  await setCol('dotColDot', '#ff0000'); await page.waitForTimeout(200);
+  out.dots = await px();
+  await setCol('dotColBg', '#0000ff'); await page.waitForTimeout(200);
+  out.bg = await px();
+  await page.evaluate(() => _dotShowRegionInAlignment(0)); await page.waitForTimeout(300);
+  await setCol('dotColTint', '#ff0000');
+  out.tint = await page.evaluate(() => DOT_REGION_TINT);
+  await page.evaluate(() => _dotDock(false)); await page.waitForTimeout(300);
+  await setCol('dotColMarker', '#00ff00');
+  await page.evaluate(() => _dotSetSlide(100, 100)); await page.waitForTimeout(200);
+  out.marker = await page.evaluate(() => { const o = document.getElementById('dotPlotOverlay'), d = o.getContext('2d').getImageData(0, 0, o.width, o.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 1] > 200 && d[i] < 60 && d[i + 2] < 60 && d[i + 3] > 200) n++; return n; });
+  await page.click('#dotColReset'); await page.waitForTimeout(300);
+  out.reset = await px();
+  out.resetState = await page.evaluate(() => ({ colours: _dotPlotState.colours, tint: DOT_REGION_TINT, input: document.getElementById('dotColDot').value }));
+  const ok = out.before.red === 0 && out.before.blue === 0 && out.before.black > 1000
+    && out.dots.red > 100 && out.bg.blue > 1000 && out.bg.black < out.before.black / 4
+    && out.tint === '#ff0000' && out.marker > 20
+    && out.reset.red === 0 && out.reset.blue === 0 && out.reset.black > out.before.black * 0.8
+    && out.resetState.colours === null && out.resetState.tint === '#4a9eff' && out.resetState.input === '#ffffff';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+check('Dot plot: a preset round trip restores the settings, the colours and the selected stretches; another pair gets settings and colours and a note', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotOpenRow100(page);
+  const set = (id, v) => page.evaluate(([id, v]) => { const i = document.getElementById(id); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); }, [id, v]);
+  const waitPlot = () => page.waitForFunction(() => !_dotPlotState.computing && !document.getElementById('dotPlotRecalc').classList.contains('dot-dirty'), null, { timeout: 30000 });
+  const readState = () => page.evaluate(() => ({
+    mode: document.querySelector('input[name="dotPlotMode"]:checked').value, win: document.getElementById('dotPlotWindow').value,
+    thr: document.getElementById('dotPlotThreshold').value, ctx: document.getElementById('dotPlotContextRadius').value, lines: document.getElementById('dotPlotStripLines').value,
+    colours: _dotPlotState.colours, marks: state.dotRegionMarks?.get(100)?.size || 0, list: (_dotPlotState._markList || []).map(r => [r.aStart, r.aEnd, r.bStart, r.bEnd].join('-')).join(','),
+    slide: [_dotPlotState.slideRow, _dotPlotState.slideCol]
+  }));
+  // set up: Dotter 15 / 70 %, context 20, 3 strip lines, colours, highlighted stretches, a slider position
+  await page.evaluate(() => { document.querySelector('input[name="dotPlotMode"][value="doter"]').click(); });
+  await set('dotPlotWindow', 15); await set('dotPlotThreshold', 70); await set('dotPlotContextRadius', 20); await set('dotPlotStripLines', 3);
+  await page.waitForTimeout(600); await waitPlot();
+  await set('dotColDot', '#aa0000'); await set('dotColBg', '#001122'); await set('dotColMarker', '#00aa00');
+  await page.evaluate(() => _dotSetSlide(123, 321));
+  await page.waitForFunction(() => _dotPlotState.regions.length > 0, null, { timeout: 10000 });
+  await page.click('#dotPlotHighlightAll'); await page.waitForTimeout(400);
+  await page.click('#dotPlotDockBtn'); await page.waitForTimeout(300);   // the window comes back (Highlight all docks it)
+  const saved = await readState();
+  await page.fill('#dotPresetName', 'round trip'); await page.click('#dotPresetSave');
+  const stored = await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('msaviewer_dotPresets') || '{}')));
+  // change everything
+  await page.evaluate(() => { _dotClearRegionMarks(); document.querySelector('input[name="dotPlotMode"][value="spin"]').click(); });
+  await set('dotPlotWindow', 8); await set('dotPlotThreshold', 40); await set('dotPlotContextRadius', 50); await set('dotPlotStripLines', 1);
+  await page.click('#dotColReset'); await page.evaluate(() => _dotSetSlide(5, 6));
+  await page.waitForTimeout(600); await waitPlot();
+  const changed = await readState();
+  await page.selectOption('#dotPresetSelect', 'round trip'); await page.click('#dotPresetLoad');
+  await page.waitForFunction(() => !_dotPlotState.computing && (_dotPlotState._markList || []).length > 0, null, { timeout: 30000 });
+  await page.waitForTimeout(300);
+  const loaded = await readState();
+  // another pair: rows 1 and 2
+  await page.evaluate(() => { _dotClearRegionMarks(); const a = state.seqs[1], c = state.seqs[2]; openDotPlot(a.seq.replace(/[-. ]/g, ''), c.seq.replace(/[-. ]/g, ''), a.header, c.header, { rowIndexA: 1, rowIndexB: 2 }); });
+  await page.waitForFunction(() => !_dotPlotState.computing, null, { timeout: 20000 }); await page.waitForTimeout(300);
+  await page.selectOption('#dotPresetSelect', 'round trip'); await page.click('#dotPresetLoad');
+  await page.waitForFunction(() => !_dotPlotState.computing, null, { timeout: 30000 }); await page.waitForTimeout(500);
+  const other = await readState();
+  other.note = await page.evaluate(() => document.getElementById('dotPresetNote').textContent);
+  const same = (a, b) => a.mode === b.mode && a.win === b.win && a.thr === b.thr && a.ctx === b.ctx && a.lines === b.lines && JSON.stringify(a.colours) === JSON.stringify(b.colours);
+  const ok = stored.includes('round trip') && saved.mode === 'doter' && saved.marks > 0 && saved.list.length > 0 && saved.colours && saved.colours.dot === '#aa0000'
+    && changed.mode === 'spin' && changed.colours === null && changed.marks === 0
+    && same(saved, loaded) && loaded.marks === saved.marks && loaded.list === saved.list && loaded.slide.join() === '123,321'
+    && same(saved, other) && other.marks === 0 && /another pair/.test(other.note);
+  return { pass: ok, detail: JSON.stringify({ stored, saved, changed, loaded, other }) };
+});
+
+check('Dot plot: ruler under the plot has numbers every 10 and ticks every 5, in each sequence\'s own (ungapped) coordinates, also for RevComp B', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  const out = {};
+  for (const rc of [false, true]) {
+    await page.evaluate((rc) => {
+      document.getElementById('dotPlotRevComp') && (document.getElementById('dotPlotRevComp').checked = rc);
+      const a = state.seqs[1], c = state.seqs[2];
+      openDotPlot(a.seq.replace(/[-. ]/g, ''), c.seq.replace(/[-. ]/g, ''), a.header, c.header, { rowIndexA: 1, rowIndexB: 2, alignedSeqA: a.seq, alignedSeqB: c.seq });
+    }, rc);
+    await page.waitForFunction(() => !_dotPlotState.computing, null, { timeout: 20000 });
+    out[rc ? 'rc' : 'fwd'] = await page.evaluate(() => {
+      _dotUpdateHoverInfo(200, 207, { force: true });
+      const S = _dotPlotState, ctx = parseInt(document.getElementById('dotPlotContextRadius').value, 10);
+      const ra = document.getElementById('dotPlotRulerA'), rb = document.getElementById('dotPlotRulerB');
+      if (!ra || !rb) return { missing: true };
+      const rev = /\(RevComp\)$/.test(S.nameB);
+      const check = (txt, which, centre) => {   // txt: numbers line, ticks line; column i of the strip is index centre + (i - ctx)
+        const [nl, tl] = which === 'A' ? txt.split('\n') : [txt.split('\n')[1], txt.split('\n')[0]];
+        const numAt = (idx) => which === 'A' ? idx + 1 : (rev ? S.cols - idx : idx + 1);
+        let good = 0, bad = 0, tens = 0, fives = 0;
+        for (const m of nl.matchAll(/\d+/g)) { const i = m.index - 9, n = numAt(centre + (i - ctx)); if (+m[0] === n && n % 10 === 0) good++; else bad++; }
+        for (let i = 0; i < 2 * ctx + 1; i++) { const n = numAt(centre + (i - ctx)), ch = tl[9 + i] || ' '; if (centre + (i - ctx) < 0) continue; if (n % 10 === 0 && ch === '|') tens++; else if (n % 10 !== 0 && n % 5 === 0 && ch === ':') fives++; else if ((n % 5 === 0) !== (ch !== ' ')) bad++; }
+        return { good, bad, tens, fives };
+      };
+      return { rev, ctx, A: check(ra.textContent, 'A', 200), B: check(rb.textContent, 'B', 207), panel: document.getElementById('dotPlotAlignPanel').textContent.split('\n')[0].slice(0, 40) };
+    });
+  }
+  const good = r => !r.missing && r.A.bad === 0 && r.B.bad === 0 && r.A.good >= 5 && r.B.good >= 5 && r.A.tens >= 5 && r.A.fives >= 5 && r.B.tens >= 5 && r.B.fives >= 5;
+  return { pass: good(out.fwd) && good(out.rc) && out.rc.rev === true && out.fwd.rev === false, detail: JSON.stringify(out) };
+});
+
+check('Dot plot: expanded strip wraps a longer stretch into several lines, fitted to the window, with the ruler in each block', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotOpenRow100(page);
+  const out = {};
+  const snap = () => page.evaluate(() => {
+    _dotUpdateHoverInfo(200, 220, { force: true });
+    const S = _dotPlotState, panel = document.getElementById('dotPlotAlignPanel'), lines = panel.textContent.split('\n');
+    const aLines = lines.filter(l => /^A /.test(l)), bLines = lines.filter(l => /^B /.test(l));
+    const aText = aLines.map(l => l.slice(9)).join('');
+    const W = aLines[0] ? aLines[0].length - 9 : 0;
+    const k0 = -Math.floor(aLines.length * W / 2);
+    const want = Array.from({ length: aLines.length * W }, (_, i) => { const r = 200 + k0 + i; return r >= 0 && r < S.seqA.length ? S.seqA[r] : ' '; }).join('');
+    return { nA: aLines.length, nB: bLines.length, W, chars: aText.length, matchesSeq: aText === want, hscroll: panel.scrollWidth > panel.clientWidth + 1, rulerA: !document.getElementById('dotPlotRulerA').hidden, numbersLines: lines.filter(l => /^ {9}.*\d/.test(l)).length, panelW: panel.clientWidth };
+  });
+  out.one = await snap();
+  await page.click('#dotPlotStripExpand'); await page.waitForTimeout(200);
+  out.exp = await snap();
+  await page.evaluate(() => { document.getElementById('dotPlotDialog').style.width = '640px'; }); await page.waitForTimeout(500);
+  out.narrow = await snap();
+  await page.fill('#dotPlotStripLines', '6'); await page.waitForTimeout(200);
+  out.six = await snap();
+  await page.click('#dotPlotStripExpand'); await page.waitForTimeout(200);
+  out.back = await snap();
+  const ok = out.one.nA === 1 && out.one.chars <= 61 && out.exp.nA === 4 && out.exp.nB === 4 && out.exp.chars >= 150 && out.exp.matchesSeq && !out.exp.hscroll && !out.exp.rulerA
+    && out.exp.numbersLines >= 8 && out.narrow.W < out.exp.W && out.narrow.matchesSeq && !out.narrow.hscroll && out.six.nA === 6 && out.six.chars > out.narrow.chars && out.six.matchesSeq
+    && out.back.nA === 1 && out.back.rulerA;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+check('Dot plot: sliders move the plot marker live (arrow keys step by 1), a click or a marker drag on the plot moves both sliders, numbers shown', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotOpenRow100(page);
+  const out = {};
+  const state_ = () => page.evaluate(() => {
+    const S = _dotPlotState, o = document.getElementById('dotPlotOverlay');
+    const g = id => document.getElementById(id);
+    let orange = 0;
+    if (S.slideRow >= 0) { const d = o.getContext('2d').getImageData(0, 0, o.width, o.height).data; for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] > 90 && d[i + 1] < 190 && d[i + 2] < 60 && d[i + 3] > 150) orange++; }
+    const m = S.slideRow >= 0 ? _dotCellToScreen(S.slideRow, S.slideCol) : null, r = o.getBoundingClientRect();
+    return { row: S.slideRow, col: S.slideCol, a: g('dotPlotPosA')?.value, b: g('dotPlotPosB')?.value, an: g('dotPlotPosANum')?.value, bn: g('dotPlotPosBNum')?.value, orange,
+      mx: m ? r.left + m.x : null, my: m ? r.top + m.y : null, panel: g('dotPlotAlignPanel').textContent.split('\n')[0].slice(0, 12), zoom: S.zoom };
+  });
+  out.start = await state_();
+  await page.focus('#dotPlotPosA');
+  await page.fill('#dotPlotPosANum', '120');
+  await page.focus('#dotPlotPosA');
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
+  out.keyA = await state_();
+  await page.fill('#dotPlotPosBNum', '50');
+  await page.focus('#dotPlotPosB');
+  await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowLeft');
+  out.keyB = await state_();
+  // a click on the plot moves both sliders there
+  const box = await page.evaluate(() => { const r = document.getElementById('dotPlotOverlay').getBoundingClientRect(); return { l: r.left, t: r.top }; });
+  const P = 50, z = out.keyB.zoom;
+  const cellXY = (row, col) => [box.l + P + (col + 0.5) * z, box.t + P + (row + 0.5) * z];
+  const [cx, cy] = cellXY(40, 60);
+  await page.mouse.click(cx, cy); await page.waitForTimeout(200);
+  out.click = await state_();
+  // a drag of the marker moves it
+  const [dx, dy] = cellXY(90, 30);
+  await page.mouse.move(out.click.mx, out.click.my); await page.mouse.down(); await page.mouse.move(dx, dy, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(200);
+  out.drag = await state_();
+  const ok = out.start.row === -1 && out.keyA.row === 122 && out.keyA.a === '123' && out.keyA.an === '123' && out.keyA.orange > 20
+    && out.keyB.col === 48 && out.keyB.row === 122 && out.keyB.b === String(out.keyB.col + 1)
+    && Math.abs(out.click.row - 40) <= 1 && Math.abs(out.click.col - 60) <= 1 && out.click.a === String(out.click.row + 1) && out.click.b === String(out.click.col + 1)
+    && Math.abs(out.drag.row - 90) <= 1 && Math.abs(out.drag.col - 30) <= 1 && out.drag.a === String(out.drag.row + 1) && out.drag.b === String(out.drag.col + 1) && out.drag.orange > 20;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+
 // The toolbar's height must not change when a selection appears or goes: the Selections tab used to be
 // display:none while empty, so at widths where the menu line is nearly full its appearance wrapped the
 // toolbar and the alignment jumped down a line (the case switch of v278 used up the slack: a click on a
