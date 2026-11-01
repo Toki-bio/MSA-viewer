@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v320';
+const BUILD_TAG = 'v322';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -501,7 +501,11 @@ function residueOverlay(ctx, pos, base) {
     if (dotReg) {
         o.titles.push('dot-plot stretch');
         if (!o.bg) { o.bg = DOT_REGION_TINT + '55'; o.fg = '#111'; }
-        else { o.deco.push('overline'); o.decoColor = DOT_REGION_TINT; o.covered.push('dot'); }
+        else {   // a repeat on the same residue keeps its overline colour (the line is drawn once)
+            if (!o.deco.includes('overline')) o.deco.push('overline');
+            if (!o.decoColor) o.decoColor = DOT_REGION_TINT;
+            o.covered.push('dot');
+        }
     }
     if (snp) {
         o.titles.push(snp.title);
@@ -536,13 +540,13 @@ function overlayCss(o) {
 // The selector outranks the colour-scheme rules (#alignmentContainer.color-scheme-x ...),
 // the shading classes and the trim tint, which all use !important too.
 const _ovClassByDecl = new Map();
-let _ovSheet = null;
+let _ovSheet = null, _ovClassSeq = 0;
 function _overlayStyleClass(o) {
     const decl = overlayCss(o);
     if (!decl) return '';
     let cls = _ovClassByDecl.get(decl);
     if (!cls) {
-        cls = 'ov-' + _ovClassByDecl.size;
+        cls = 'ov-' + (_ovClassSeq++);   // a counter, not the table size: looks can be forgotten (below)
         if (!_ovSheet) {
             const st = document.createElement('style');
             st.id = 'residueOverlayStyles';
@@ -553,6 +557,23 @@ function _overlayStyleClass(o) {
         _ovClassByDecl.set(decl, cls);
     }
     return cls;
+}
+
+// Drops every generated look that uses the colour `hex` (rule and table entry), for a colour that is about to stop being
+// used: the dot plot's tint changes continuously while a colour picker is dragged and each intermediate colour used to
+// leave a rule and a table entry behind for good. The caller repaints the overlays afterwards (a span that still names a
+// dropped class is given the new one then).
+function _overlayForgetColour(hex) {
+    if (!hex) return;
+    const h = String(hex).toLowerCase(), gone = new Set();
+    for (const [decl, cls] of _ovClassByDecl) if (decl.toLowerCase().includes(h)) { gone.add(cls); _ovClassByDecl.delete(decl); }
+    if (_ovSheet && gone.size) {
+        for (let i = _ovSheet.cssRules.length - 1; i >= 0; i--) {
+            const m = /\.(ov-\d+)\./.exec(_ovSheet.cssRules[i].selectorText || '');
+            if (m && gone.has(m[1])) _ovSheet.deleteRule(i);
+        }
+    }
+    if (gone.size) _ovClassListMemo.clear();
 }
 
 // Classes the overlay adds: its look, plus the ones tests and CSS use to find marks
@@ -26923,6 +26944,9 @@ function showContextMenu(e, index, canvasPos) {
         contextMenu.appendChild(dotPairItem);
     }
 
+    // Dot-plot of the selected columns / rectangle / a pasted sequence (ranges keep the real residue numbers)
+    _dotAddSelectionMenuItems(contextMenu, index);
+
     document.body.appendChild(contextMenu);
 
     // Adjust position if menu would overflow viewport
@@ -32448,6 +32472,10 @@ let _dotPlotState = {
     alignMapB: null,
     rowIndexA: -1,
     rowIndexB: -1,
+    // A typed / selected range: the plot holds residues offA..offA+rows-1 of the full ungapped sequence A (0-based) and
+    // offB.. of B; dispOffB is B's offset in the PLOTTED orientation (with RevComp B the plot runs backwards from the
+    // other end of the range). fullLenA/B are the full lengths. All numbers shown to the user are index + offset.
+    offA: 0, offB: 0, dispOffB: 0, fullLenA: 0, fullLenB: 0,
     regions: [],
     _copyRegion: null,
     _frozen: false,
@@ -32553,6 +32581,7 @@ function _dotOnModeChange() {
     const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
     S.spinMode = spinRadio ? spinRadio.checked : true;
     _dotSyncSliderRow(S.spinMode, 'dotPlotWindow', 'dotPlotWindowLabel', 'dotPlotWindowVal', 'dotPlotThreshWrap', 'dotPlotThreshold', 'dotPlotThreshVal');
+    _dotSyncColourInputs();   // an unset dot / background colour shows this method's default (white on black for SPIN, black on white for Dotter)
 }
 // One wide slider for the word (SPIN) or window (Dotter) length: its range, label and title follow the mode;
 // the identity-threshold slider is shown in Dotter mode only (it used to sit greyed out as "N/A").
@@ -32739,7 +32768,7 @@ function _dotUpdateHoverInfo(row, col, options = {}) {
         const frozenRow = S._frozenRow >= 0 ? S._frozenRow : S.pinnedRow;
         const frozenCol = S._frozenCol >= 0 ? S._frozenCol : S.pinnedCol;
         if (hoverEl && frozenRow >= 0 && frozenCol >= 0) {
-            hoverEl.textContent = `Frozen at A:${frozenRow + 1}/${S.rows}  B:${frozenCol + 1}/${S.cols}`;
+            hoverEl.textContent = `Frozen at A:${_dotShownA(frozenRow)}/${S.fullLenA}  B:${_dotShownB(frozenCol)}/${S.fullLenB}`;
         }
         if (panelEl) {
             panelEl.style.boxShadow = 'inset 0 0 0 1px #4a9eff'; panelEl.style.borderColor = '#4a9eff';
@@ -32776,9 +32805,9 @@ function _dotUpdateHoverInfo(row, col, options = {}) {
     }
 
     if (hoverEl) {
-        hoverEl.textContent = 'A:' + (row + 1) + '/' + S.rows + '  B:' + (col + 1) + '/' + S.cols + '  ' +
+        hoverEl.textContent = 'A:' + _dotShownA(row) + '/' + S.fullLenA + '  B:' + _dotShownB(col) + '/' + S.fullLenB + '  ' +
             (_dotHalf(row, col).spinMode ? 'match=' + norm : 'identity=' + Math.round(norm * 100) + '%') + '  ' + chA + ' vs ' + chB +
-            '  A[' + (aStart + 1) + '-' + aEnd + '] B[' + (bStart + 1) + '-' + bEnd + ']';
+            '  A[' + _dotShownA(aStart) + '-' + (S.offA + aEnd) + '] B[' + _dotShownB(bStart) + '-' + (S.dispOffB + bEnd) + ']';
     }
     // Where this point sits in the loaded alignment
     if (metaEl) {
@@ -32794,8 +32823,8 @@ function _dotUpdateHoverInfo(row, col, options = {}) {
         panelEl.style.boxShadow = S._frozen ? 'inset 0 0 0 1px #4a9eff' : 'none';
         panelEl.style.background = S._frozen ? '#f0f8ff' : '#f7f7f7';
 
-        var aLabel = Math.max(1, row - ctx + 1);
-        var bLabel = Math.max(1, col - ctx + 1);
+        var aLabel = S.offA + Math.max(1, row - ctx + 1);
+        var bLabel = S.dispOffB + Math.max(1, col - ctx + 1);
         panelEl.textContent =
             'A ' + String(aLabel).padStart(5) + '  ' + aLine + '\n' +
             ' '.repeat(9) + guide + '\n' +
@@ -32833,10 +32862,289 @@ function _dotDiagonalSlices(seqA, seqB, row, col, ctx) {
 // setting that wraps a longer stretch into several lines, and, as in Staden's SIP, one slider per sequence: A moves
 // the position down the plot, B across it, the plot shows the position as a marker and a click on the plot (or a drag
 // on the marker, or Shift+drag) moves both sliders there.
-function _dotNumAt(which, idx) {   // the number a plotted position carries in its own sequence, 0 = none
+function _dotNumAt(which, idx) {   // the number a plotted position carries in its own sequence, 0 = none (a range keeps the real numbers)
     const S = _dotPlotState;
-    if (which === 'A') return (idx >= 0 && idx < S.rows) ? idx + 1 : 0;
-    return (idx >= 0 && idx < S.cols) ? (_dotPlotRevB() ? S.cols - idx : idx + 1) : 0;
+    if (which === 'A') return (idx >= 0 && idx < S.rows) ? S.offA + idx + 1 : 0;
+    return (idx >= 0 && idx < S.cols) ? (_dotPlotRevB() ? S.offB + S.cols - idx : S.offB + idx + 1) : 0;
+}
+// ---- Ranges (owner, 2026-11-01): the plot may hold only part of a sequence ----------------------------------------
+// 1-based inclusive [from, to] clamped to 1..len, or null for "all" (null, empty, or the whole length)
+function _dotClampRange(r, len) {
+    if (!Array.isArray(r) || r.length !== 2 || !len) return null;
+    let f = Math.round(+r[0]), t = Math.round(+r[1]);
+    if (!Number.isFinite(f) || !Number.isFinite(t)) return null;
+    f = Math.min(len, Math.max(1, f)); t = Math.min(len, Math.max(1, t));
+    if (f > t) [f, t] = [t, f];
+    return (f === 1 && t === len) ? null : [f, t];
+}
+function _dotRangeText(which) {   // ' [100-300 of 500]' when only part of the sequence is plotted, else ''
+    const S = _dotPlotState, a = which === 'A';
+    const n = a ? S.seqA.length : S.seqB.length, off = a ? S.offA : S.offB, full = a ? S.fullLenA : S.fullLenB;
+    return (n && n < full) ? ` [${off + 1}-${off + n} of ${full}]` : '';
+}
+// plot index -> the number shown in the plotted order (B with RevComp counts along the plotted reverse complement)
+function _dotShownA(i) { return _dotPlotState.offA + i + 1; }
+function _dotShownB(i) { return _dotPlotState.dispOffB + i + 1; }
+// the same stretch in the whole sequences' coordinates (what the alignment marks and the collection use)
+function _dotRealStretch(r) {
+    const S = _dotPlotState;
+    return { aStart: r.aStart + S.offA, aEnd: r.aEnd + S.offA, bStart: r.bStart + S.dispOffB, bEnd: r.bEnd + S.dispOffB };
+}
+function _dotSyncRangeInputs() {
+    const S = _dotPlotState, g = id => document.getElementById(id);
+    const set = (id, v) => { const i = g(id); if (i && document.activeElement !== i) i.value = v; };
+    set('dotPlotRangeAFrom', S.fullLenA ? S.offA + 1 : ''); set('dotPlotRangeATo', S.fullLenA ? S.offA + S.seqA.length : '');
+    set('dotPlotRangeBFrom', S.fullLenB ? S.offB + 1 : ''); set('dotPlotRangeBTo', S.fullLenB ? S.offB + S.seqB.length : '');
+    const rowEl = g('dotPlotRangeRow');   // hidden until asked for (it would shrink the plot), but shown while a part or a pasted sequence is plotted
+    if (rowEl) rowEl.hidden = !(S._rangeOpen || S.ext || (S.fullLenA && S.seqA.length < S.fullLenA) || (S.fullLenB && S.seqB.length < S.fullLenB) || S.rangeNote);
+    const note = g('dotPlotRangeNote');
+    if (note && !S._rangeNoteKeep) {
+        note.textContent = (S.ext ? `${S.ext.side === 'AB' ? 'Both sides' : 'Side ' + S.ext.side} is the pasted sequence "${S.ext.name}" (no alignment map: the arrow and Highlight all mark only the row side). ` : '') +
+            (S.rangeNote || '');
+    }
+    S._rangeNoteKeep = false;
+}
+
+// ---- Typed ranges, selected columns, rectangle and a pasted sequence (owner, 2026-11-01) ---------------------------
+// The owner wants the comparison limited to chosen parts. Ranges are residue numbers of the WHOLE ungapped sequence
+// (1-based, inclusive); the plot holds only that slice but every number it shows stays real (offA / dispOffB above).
+// Replots the typed ranges. Empty fields mean "all"; numbers outside the sequence are clamped to it, with a message.
+async function _dotRangeReplot() {
+    const S = _dotPlotState, g = id => document.getElementById(id);
+    if (!(S.sourceSeqA && S.sourceSeqB)) return;
+    const notes = [], out = {};
+    for (const side of ['A', 'B']) {
+        const len = side === 'A' ? S.sourceSeqA.length : S.sourceSeqB.length;
+        const fv = (g('dotPlotRange' + side + 'From')?.value ?? '').trim(), tv = (g('dotPlotRange' + side + 'To')?.value ?? '').trim();
+        if (fv === '' && tv === '') { out[side] = null; continue; }
+        const f = fv === '' ? 1 : Number(fv), t = tv === '' ? len : Number(tv);
+        if (!Number.isInteger(f) || !Number.isInteger(t)) { const m = `${side}: type whole numbers for from and to.`; S.rangeNote = m; _dotSyncRangeInputs(); showMessage(m, 3500); return; }
+        if (f > t && f >= 1 && t >= 1) { const m = `${side}: "from" (${f}) is after "to" (${t}).`; S.rangeNote = m; _dotSyncRangeInputs(); showMessage(m, 3500); return; }
+        const cf = Math.min(len, Math.max(1, f)), ct = Math.min(len, Math.max(1, t));
+        if (cf !== f || ct !== t) notes.push(`${side} range clamped to ${cf}-${ct} (the sequence has ${len} residues)`);
+        out[side] = (cf === 1 && ct === len) ? null : [cf, ct];
+    }
+    S._pendingRangeNote = notes.join('; ');
+    if (notes.length) showMessage(notes.join('; '), 4000);
+    await _dotReopen({ rangeA: out.A, rangeB: out.B, note: '' });
+}
+async function _dotRangeWhole() { await _dotReopen({ rangeA: null, rangeB: null, note: '' }); }
+// plots the same sequences again with changed meta (ranges)
+function _dotReopen(patch) {
+    const S = _dotPlotState;
+    if (!(S.sourceSeqA && S.sourceSeqB)) return Promise.resolve();
+    clearTimeout(_dotLiveTimer);
+    _dotMarkDirty(false);
+    const meta = Object.assign({}, S.meta || {}, patch);
+    return openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA.replace(/ \(RevComp\)$/, ''), S.nameB.replace(/ \(RevComp\)$/, ''), meta);
+}
+
+// Alignment columns c0..c1 (0-based, inclusive) of a gapped row -> [from, to] residue numbers (1-based, ungapped), or null
+function _dotColsToRange(alignedSeq, c0, c1) {
+    let before = 0, inside = 0;
+    for (let i = 0; i < alignedSeq.length && i <= c1; i++) {
+        const ch = alignedSeq[i];
+        if (ch === '-' || ch === '.' || ch === ' ') continue;
+        if (i < c0) before++; else inside++;
+    }
+    return inside ? [before + 1, before + inside] : null;
+}
+// Two rows (or one row against itself) over alignment columns c0..c1, or whole when cols is null
+function _dotOpenRows(rowA, rowB, cols, note) {
+    const sA = state.seqs[rowA], sB = state.seqs[rowB];
+    if (!sA || !sB) return Promise.resolve();
+    const ung = s => s.seq.replace(/[-. ]/g, '');
+    let rangeA = null, rangeB = null;
+    if (cols) {
+        rangeA = _dotColsToRange(sA.seq, cols.c0, cols.c1); rangeB = _dotColsToRange(sB.seq, cols.c0, cols.c1);
+        const none = !rangeA ? sA.header : (!rangeB ? sB.header : '');
+        if (none) { showMessage(`${none} has no residues in columns ${cols.c0 + 1}-${cols.c1 + 1}: nothing to plot.`, 3500); return Promise.resolve(); }
+    }
+    return openDotPlot(ung(sA), ung(sB), sA.header, sB.header, {
+        rowIndexA: rowA, rowIndexB: rowB, alignedSeqA: sA.seq, alignedSeqB: sB.seq, rangeA, rangeB,
+        note: note || '', cols: cols ? [cols.c0 + 1, cols.c1 + 1] : null
+    });
+}
+// The selected alignment columns as a span (selected columns, or a residue selection that is not one rectangle)
+function _dotSelectedColumns() {
+    let cols = state.selectedColumns;
+    if (!cols || !cols.size) {
+        if (!state.selectedNucs || !state.selectedNucs.size || _dotRectSelection()) return null;
+        cols = new Set(); state.selectedNucs.forEach(set => set.forEach(c => cols.add(c)));
+        if (!cols.size) return null;
+    }
+    let c0 = Infinity, c1 = -Infinity;
+    cols.forEach(c => { if (c < c0) c0 = c; if (c > c1) c1 = c; });
+    return { c0, c1, count: cols.size, contiguous: cols.size === c1 - c0 + 1 };
+}
+// The rows a column-based plot uses: the two selected rows, the rows a residue selection covers (1 or 2), else the clicked row
+function _dotSelectionRows(index) {
+    if (state.selectedRows.size === 2) return Array.from(state.selectedRows).sort((a, b) => a - b);
+    if (!(state.selectedColumns && state.selectedColumns.size) && state.selectedNucs && state.selectedNucs.size) {
+        const rows = [...state.selectedNucs.keys()].filter(r => state.seqs[r]).sort((a, b) => a - b);
+        if (rows.length === 1 || rows.length === 2) return rows;
+    }
+    return [index];
+}
+// The residue selection as one rectangle: { rows, c0, c1 } (one row is a range of one row), or null
+function _dotRectSelection() {
+    const r = typeof _nucSelectionRectangle === 'function' ? _nucSelectionRectangle() : null;
+    if (r) return { rows: r.rows, c0: r.c0, c1: r.c1 };
+    if (state.selectedNucs && state.selectedNucs.size === 1) {
+        const [[row, set]] = [...state.selectedNucs.entries()];
+        if (!state.seqs[row] || !set || !set.size) return null;
+        let lo = Infinity, hi = -Infinity; set.forEach(c => { if (c < lo) lo = c; if (c > hi) hi = c; });
+        if (set.size === hi - lo + 1) return { rows: [row], c0: lo, c1: hi };
+    }
+    return null;
+}
+function _dotColsText(c) { return `columns ${c.c0 + 1}-${c.c1 + 1}`; }
+// The context-menu entries (the row menu calls this once)
+function _dotAddSelectionMenuItems(menu, index) {
+    const add = (text, fn) => { const d = document.createElement('div'); d.textContent = text; d.addEventListener('click', () => { closeContextMenu(); fn(); }); menu.appendChild(d); };
+    const sel = _dotSelectedColumns();
+    if (sel) {
+        const rows = _dotSelectionRows(index), h = i => state.seqs[i].header;
+        add(rows.length === 2 ? `Dot-plot of selected columns (${h(rows[0])} vs ${h(rows[1])})` : 'Dot-plot of selected columns (self)', () => {
+            const note = sel.contiguous ? `${_dotColsText(sel)}.` : `Non-contiguous selection (${sel.count} columns): the whole span ${_dotColsText(sel)} is plotted, including the columns between the selected ones.`;
+            if (!sel.contiguous) showMessage(note, 5000);
+            _dotOpenRows(rows[0], rows.length === 2 ? rows[1] : rows[0], sel, note);
+        });
+    }
+    const rect = _dotRectSelection();
+    if (rect) {
+        add('Dot-plot of rectangle', () => {
+            const note = `Rectangle: ${rect.rows.length} row${rect.rows.length === 1 ? '' : 's'} x ${_dotColsText(rect)}.`;
+            if (rect.rows.length <= 2) _dotOpenRows(rect.rows[0], rect.rows.length === 2 ? rect.rows[1] : rect.rows[0], rect, note);
+            else _dotChooseTwoRows(rect.rows, (a, b) => _dotOpenRows(a, b, rect, note + ` Rows ${state.seqs[a].header} and ${state.seqs[b].header}.`));
+        });
+    }
+    add('Dot-plot vs pasted sequence…', () => {
+        const s = state.seqs[index];
+        _dotAskPasted({
+            sides: [{ value: 'A', label: `${s.header} down, pasted across` }, { value: 'B', label: `pasted down, ${s.header} across` }],
+            onOk: (parsed, choice) => _dotOpenPasted(parsed, choice, { seq: s.seq.replace(/[-. ]/g, ''), name: s.header, row: index, range: null })
+        });
+    });
+}
+
+// ---- Small windows (no prompt(): the viewer refuses it) ------------------------------------------------------------
+function _dotMiniBox(id, title) {
+    document.getElementById(id)?.remove();
+    const box = document.createElement('div');
+    box.id = id; box.setAttribute('role', 'dialog');
+    box.style.cssText = 'position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:10030;background:#fff;color:#222;border:1px solid #888;border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,0.35);padding:12px 14px;max-width:min(560px,94vw);font-size:12px;';
+    const h = document.createElement('div'); h.textContent = title; h.style.cssText = 'font-weight:bold;margin-bottom:8px;font-size:13px;';
+    box.appendChild(h);
+    // typing here must not reach the alignment's keyboard shortcuts
+    ['keydown', 'keyup', 'keypress'].forEach(t => box.addEventListener(t, e => { e.stopPropagation(); if (t === 'keydown' && e.key === 'Escape') box.remove(); }));
+    document.body.appendChild(box);
+    return box;
+}
+function _dotMiniButtons(box, okText, onOk) {
+    const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:10px;';
+    const ok = document.createElement('button'); ok.type = 'button'; ok.textContent = okText; ok.id = box.id + 'Ok';
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel'; cancel.id = box.id + 'Cancel';
+    cancel.addEventListener('click', () => box.remove());
+    ok.addEventListener('click', onOk);
+    row.appendChild(cancel); row.appendChild(ok); box.appendChild(row);
+    return { ok, cancel };
+}
+// A rectangle of more than two rows: which two to plot
+function _dotChooseTwoRows(rows, cb) {
+    const box = _dotMiniBox('dotRectChooser', `The rectangle holds ${rows.length} rows: which two should be plotted?`);
+    const mk = (label, sel) => {
+        const l = document.createElement('label'); l.style.cssText = 'display:flex;gap:8px;align-items:center;margin:4px 0;';
+        l.appendChild(document.createTextNode(label));
+        const s = document.createElement('select'); s.style.maxWidth = '380px';
+        rows.forEach((r, i) => { const o = document.createElement('option'); o.value = String(r); o.textContent = `${i + 1}. ${state.seqs[r].header}`; s.appendChild(o); });
+        s.selectedIndex = sel; l.appendChild(s); box.appendChild(l); return s;
+    };
+    const sa = mk('A (down)', 0), sb = mk('B (across)', 1);
+    sa.id = 'dotRectRowA'; sb.id = 'dotRectRowB';
+    _dotMiniButtons(box, 'Plot', () => { const a = +sa.value, b = +sb.value; box.remove(); cb(a, b); });
+}
+// Raw or FASTA text -> { seq, name, bad: {letter: count}, badCount }; the first record only; whitespace, digits and gap
+// marks are dropped, U becomes T; any letter other than A, C, G, T, N stays (and is reported)
+function _dotParsePasted(text) {
+    const lines = String(text || '').replace(/\r/g, '').split('\n');
+    let name = 'pasted sequence', seen = false;
+    const body = [];
+    for (const ln of lines) {
+        const t = ln.trim();
+        if (t.startsWith('>')) { if (seen || body.join('').trim()) break; seen = true; const h = t.slice(1).trim(); if (h) name = h.slice(0, 60); continue; }
+        body.push(ln);
+    }
+    const seq = body.join('').replace(/\s+/g, '').replace(/[0-9]/g, '').replace(/[-.]/g, '').toUpperCase().replace(/U/g, 'T');
+    const bad = {}; let badCount = 0;
+    for (const ch of seq) if (!/[ACGTN]/.test(ch)) { bad[ch] = (bad[ch] || 0) + 1; badCount++; }
+    return { seq, name, bad, badCount };
+}
+function _dotBadText(p) {
+    return Object.keys(p.bad).sort().map(k => `${k}×${p.bad[k]}`).join(', ');
+}
+// The "Compare with pasted" box. opts.sides: [{ value, label }] radio choices; opts.onOk(parsed, choice)
+function _dotAskPasted(opts) {
+    const box = _dotMiniBox('dotPasteBox', 'Compare with a pasted sequence');
+    const ta = document.createElement('textarea'); ta.id = 'dotPasteText'; ta.rows = 8; ta.style.cssText = 'width:min(520px,86vw);font:11px ui-monospace,Menlo,monospace;';
+    ta.placeholder = 'Paste raw sequence or FASTA (first record only). Whitespace and digits are ignored, U is read as T.';
+    box.appendChild(ta);
+    let radios = [];
+    (opts.sides || []).forEach((s, i) => {
+        const l = document.createElement('label'); l.style.cssText = 'display:flex;gap:6px;align-items:center;margin-top:4px;';
+        const r = document.createElement('input'); r.type = 'radio'; r.name = 'dotPasteSide'; r.value = s.value; r.checked = i === 0;
+        l.appendChild(r); l.appendChild(document.createTextNode(s.label)); box.appendChild(l); radios.push(r);
+    });
+    const msg = document.createElement('div'); msg.id = 'dotPasteMsg'; msg.style.cssText = 'color:#a33;margin-top:6px;min-height:1.2em;'; box.appendChild(msg);
+    _dotMiniButtons(box, 'Plot', () => {
+        const parsed = _dotParsePasted(ta.value);
+        if (!parsed.seq) { msg.textContent = 'No sequence found in the text.'; return; }
+        const choice = (radios.find(r => r.checked) || {}).value || 'self';
+        box.remove();
+        opts.onOk(parsed, choice);
+    });
+    ta.focus();
+    return box;
+}
+// Plots a pasted sequence. choice 'A': the kept row down, pasted across; 'B': pasted down, the kept row across; 'self': the
+// pasted sequence against itself. keep = { seq, name, row, range } (row -1 = no alignment row behind it)
+async function _dotOpenPasted(parsed, choice, keep) {
+    const pn = `${parsed.name} (pasted)`, S = _dotPlotState;
+    const rowOk = !!keep && Number.isInteger(keep.row) && keep.row >= 0 && !!state.seqs[keep.row];
+    const warn = parsed.badCount ? `The pasted sequence has ${parsed.badCount} letter${parsed.badCount === 1 ? '' : 's'} other than A, C, G, T, N (${_dotBadText(parsed)}); they are plotted as the letters they are.` : '';
+    S._pendingRangeNote = warn;
+    if (warn) showMessage(warn, 6000);
+    if (choice === 'self' || !keep) return openDotPlot(parsed.seq, parsed.seq, pn, pn, { ext: { side: 'AB', name: parsed.name }, note: '' });
+    const rowMeta = (k) => rowOk ? { ['rowIndex' + k]: keep.row, ['alignedSeq' + k]: state.seqs[keep.row].seq } : {};
+    if (choice === 'A') {
+        return openDotPlot(keep.seq, parsed.seq, keep.name, pn, Object.assign({ rangeA: keep.range || null, ext: { side: rowOk ? 'B' : 'AB', name: parsed.name }, note: '' }, rowMeta('A')));
+    }
+    return openDotPlot(parsed.seq, keep.seq, pn, keep.name, Object.assign({ rangeB: keep.range || null, ext: { side: rowOk ? 'A' : 'AB', name: parsed.name }, note: '' }, rowMeta('B')));
+}
+// "Compare with pasted..." in the dot plot window
+function _dotPasteFromWindow() {
+    const S = _dotPlotState;
+    if (!(S.sourceSeqA && S.sourceSeqB)) return;
+    const { rowA, rowB } = _dotRows(), nA = S.nameA, nB = _dotPlotNameB();
+    _dotAskPasted({
+        sides: [{ value: 'A', label: `${nA} (A) down, pasted across` }, { value: 'B', label: `pasted down, ${nB} (B) across` }, { value: 'self', label: 'The pasted sequence against itself' }],
+        onOk: (parsed, choice) => {
+            const keep = choice === 'A' ? { seq: S.sourceSeqA, name: nA, row: rowA, range: S.meta?.rangeA || null }
+                : choice === 'B' ? { seq: S.sourceSeqB, name: nB, row: rowB, range: S.meta?.rangeB || null } : null;
+            _dotOpenPasted(parsed, choice, keep);
+        }
+    });
+}
+function _dotInitRangeEvents() {
+    const g = id => document.getElementById(id);
+    g('dotPlotRangeReplot')?.addEventListener('click', _dotRangeReplot);
+    g('dotPlotRangeWhole')?.addEventListener('click', _dotRangeWhole);
+    g('dotPlotRangeBtn')?.addEventListener('click', () => { const S = _dotPlotState, r = g('dotPlotRangeRow'); S._rangeOpen = !!r?.hidden; S.rangeNote = S._rangeOpen ? S.rangeNote : ''; _dotSyncRangeInputs(); if (S._rangeOpen) g('dotPlotRangeAFrom')?.focus(); else if (r) r.hidden = true; });
+    g('dotPlotPasteBtn')?.addEventListener('click', _dotPasteFromWindow);
+    ['dotPlotRangeAFrom', 'dotPlotRangeATo', 'dotPlotRangeBFrom', 'dotPlotRangeBTo'].forEach(id => g(id)?.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); _dotRangeReplot(); }
+    }));
 }
 // Numbers every 10 and ticks every 5 (every 50 and 10 on a line longer than 300 characters)
 function _dotRulerRows(which, start, n) {
@@ -32857,7 +33165,8 @@ function _dotRulerRows(which, start, n) {
 function _dotStripLines() { return Math.min(12, Math.max(1, parseInt(document.getElementById('dotPlotStripLines')?.value, 10) || 1)); }
 function _dotCharW(elm) {
     const c = _dotCharW._c || (_dotCharW._c = document.createElement('canvas').getContext('2d'));
-    c.font = getComputedStyle(elm).font;
+    const cs = getComputedStyle(elm);   // the font shorthand reads empty in Firefox: build it from its parts
+    c.font = `${cs.fontStyle || ''} ${cs.fontWeight || ''} ${cs.fontSize || '12px'} ${cs.fontFamily || 'monospace'}`;
     return c.measureText('M'.repeat(20)).width / 20 || 7.2;
 }
 // The ruler lines (one-line strip) or the whole wrapped text (several lines); called after the strip text is set
@@ -32877,7 +33186,8 @@ function _dotStripExtras(panelEl, row, col, ctx) {
     if (rB) rB.hidden = true;
     const W = Math.max(20, Math.floor((panelEl.clientWidth - 18) / _dotCharW(panelEl)) - 9);
     const k0 = -Math.floor(L * W / 2), out = [];
-    const lbl = (which, idx) => String(_dotNumAt(which, idx) || '').padStart(5);
+    // a block that starts before the first / after the last residue shows the nearest real number (it was blank)
+    const lbl = (which, idx) => { const n = which === 'A' ? S.rows : S.cols; return String(n ? _dotNumAt(which, Math.min(n - 1, Math.max(0, idx))) : '').padStart(5); };
     for (let b = 0; b < L; b++) {
         const ks = k0 + b * W;
         let aLine = '', bLine = '', guide = '';
@@ -32924,10 +33234,13 @@ function _dotRedrawOverlay() {
 }
 function _dotSyncSlideRanges() {
     const S = _dotPlotState;
-    [['A', S.rows, S.slideRow], ['B', S.cols, S.slideCol]].forEach(([w, n, pos]) => {
+    // The numbers are the ones the ruler shows (the sequence's own residue numbers, a range keeps the real ones). With RevComp B
+    // the number runs DOWN along the plot, so the B slider is drawn right to left: moving it forward lowers the number.
+    [['A', S.rows, S.slideRow, S.offA], ['B', S.cols, S.slideCol, S.offB]].forEach(([w, n, pos, off]) => {
         const r = document.getElementById('dotPlotPos' + w), t = document.getElementById('dotPlotPos' + w + 'Num');
-        [r, t].forEach(i => { if (i) { i.min = 1; i.max = Math.max(1, n); i.disabled = !n; } });
-        const v = pos >= 0 ? pos + 1 : 1;
+        [r, t].forEach(i => { if (i) { i.min = off + 1; i.max = off + Math.max(1, n); i.disabled = !n; } });
+        if (r) r.style.direction = (w === 'B' && _dotPlotRevB()) ? 'rtl' : '';
+        const v = n ? _dotNumAt(w, pos >= 0 ? pos : 0) : off + 1;
         if (r) r.value = v;
         if (t && document.activeElement !== t) t.value = v;
     });
@@ -32953,8 +33266,9 @@ function _dotRevealCell(row, col) {
 function _dotInitStripEvents() {
     const g = id => document.getElementById(id);
     const fromInputs = () => {
+        const S = _dotPlotState;
         const A = parseInt(g('dotPlotPosA')?.value, 10), B = parseInt(g('dotPlotPosB')?.value, 10);
-        _dotSetSlide((Number.isFinite(A) ? A : 1) - 1, (Number.isFinite(B) ? B : 1) - 1);
+        _dotSetSlide(Number.isFinite(A) ? A - 1 - S.offA : 0, Number.isFinite(B) ? (_dotPlotRevB() ? S.offB + S.cols - B : B - 1 - S.offB) : 0);   // B is a residue number: with RevComp it counts down the plot
     };
     ['A', 'B'].forEach(w => {
         const r = g('dotPlotPos' + w), t = g('dotPlotPos' + w + 'Num');
@@ -33001,9 +33315,16 @@ function _dotPresetCapture() {
         colours: Object.assign({}, S.colours || {}),
         stretches: {
             pair: { nameA: S.nameA, nameB: _dotPlotNameB(), lenA: S.sourceSeqA.length, lenB: S.sourceSeqB.length, revB: _dotPlotRevB() },
-            list: (S._markList || []).map(r => ({ aStart: r.aStart, aEnd: r.aEnd, bStart: r.bStart, bEnd: r.bEnd })),
-            slide: S.slideRow >= 0 ? { row: S.slideRow, col: S.slideCol } : null
-        }
+            list: (S._markList || []).map(r => ({ aStart: r.aStart, aEnd: r.aEnd, bStart: r.bStart, bEnd: r.bEnd })),   // the whole sequences' coordinates
+            slide: S.slideRow >= 0 ? { row: S.slideRow + S.offA, col: S.slideCol + S.dispOffB } : null
+        },
+        // the plotted part (1-based, inclusive, in the whole ungapped sequences; null = all), and whether a side was a
+        // pasted sequence: its text is NOT stored, only that it was external
+        range: {
+            a: S.seqA.length < S.fullLenA ? [S.offA + 1, S.offA + S.seqA.length] : null,
+            b: S.seqB.length < S.fullLenB ? [S.offB + 1, S.offB + S.seqB.length] : null
+        },
+        ext: S.ext ? { side: S.ext.side, name: S.ext.name, lenA: S.fullLenA, lenB: S.fullLenB } : null
     };
 }
 function _dotPresetList(selectName) {
@@ -33029,7 +33350,8 @@ function _dotPresetSave() {
 function _dotPresetDelete() {
     const name = document.getElementById('dotPresetSelect')?.value;
     const presets = _dotPresets();
-    if (!name || !presets[name]) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!name) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!(name in presets)) { showMessage(`Preset "${name}" is no longer stored.`, 2500); _dotPresetList(); return; }
     delete presets[name];
     if (!safeLocalSet(DOT_PRESETS_KEY, JSON.stringify(presets), 'the dot plot presets')) return;
     _dotPresetList();
@@ -33041,7 +33363,8 @@ async function _dotPresetLoad() {
     const p = name ? _dotPresets()[name] : null;
     const note = g('dotPresetNote');
     if (note) note.textContent = '';
-    if (!p || typeof p !== 'object' || !p.settings) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!name) { showMessage('Choose a saved preset first.', 2500); return; }
+    if (!p || typeof p !== 'object' || !p.settings || typeof p.settings !== 'object') { showMessage(`Preset "${name}" is unreadable (its stored data is damaged): delete it and save it again.`, 4000); return; }
     if (!(S.sourceSeqA && S.sourceSeqB)) return;
     const st = p.settings, clampInt = (v, lo, hi, d) => { v = parseInt(v, 10); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
     // 1. settings
@@ -33073,22 +33396,32 @@ async function _dotPresetLoad() {
     clearTimeout(_dotLiveTimer);
     for (let i = 0; i < 400 && S.computing; i++) await new Promise(r => setTimeout(r, 50));
     _dotMarkDirty(false);
-    await openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA.replace(/ \(RevComp\)$/, ''), S.nameB.replace(/ \(RevComp\)$/, ''), S.meta);
-    _dotSyncColourInputs();
-    _dotApplyColours();
+    // the range belongs to the pair it was saved on; a preset from before ranges has none (= the whole sequences)
     const pr = p.stretches && p.stretches.pair, list = p.stretches && Array.isArray(p.stretches.list) ? p.stretches.list : [];
     const same = !!pr && pr.nameA === S.nameA && pr.nameB === _dotPlotNameB() && pr.lenA === S.sourceSeqA.length && pr.lenB === S.sourceSeqB.length && !!pr.revB === _dotPlotRevB();
+    const rg = (same && p.range && typeof p.range === 'object') ? p.range : null;
+    const meta2 = !same ? S.meta : Object.assign({}, S.meta || {}, { rangeA: rg && Array.isArray(rg.a) ? rg.a : null, rangeB: rg && Array.isArray(rg.b) ? rg.b : null });   // another pair: the plot keeps its own range
+    await openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA.replace(/ \(RevComp\)$/, ''), S.nameB.replace(/ \(RevComp\)$/, ''), meta2);
+    _dotSyncColourInputs();
+    _dotApplyColours();
     let msg = `Preset "${name}": settings and colours loaded.`;
+    if (rg && (rg.a || rg.b)) msg += ' Range restored (' + [rg.a ? `A ${rg.a[0]}-${rg.a[1]}` : '', rg.b ? `B ${rg.b[0]}-${rg.b[1]}` : ''].filter(Boolean).join(', ') + ').';
+    if (p.ext && typeof p.ext === 'object') {
+        const txt = `This preset was saved with a pasted sequence on side ${p.ext.side} ("${p.ext.name}"). The pasted text is not stored: paste it again with "Compare with pasted..."`;
+        msg += ' ' + txt + '.';
+        if (note) note.textContent = txt;
+    }
     if (same) {
-        const rowA = S.meta?.rowIndexA, rowB = S.meta?.rowIndexB;
-        const ok = list.filter(r => r && [r.aStart, r.aEnd, r.bStart, r.bEnd].every(Number.isInteger) && r.aEnd > r.aStart && r.bEnd > r.bStart && r.aEnd <= S.rows && r.bEnd <= S.cols);
+        const { rowA, rowB } = _dotRows();
+        const ok = list.filter(r => r && [r.aStart, r.aEnd, r.bStart, r.bEnd].every(Number.isInteger) && r.aEnd > r.aStart && r.bEnd > r.bStart
+            && r.aStart >= S.offA && r.aEnd <= S.offA + S.rows && r.bStart >= S.dispOffB && r.bEnd <= S.dispOffB + S.cols);   // inside what is plotted now
         _dotClearRegionMarks(true);
-        if (ok.length && Number.isInteger(rowA) && state.seqs[rowA]) {
-            _dotMarkStretches(rowA, Number.isInteger(rowB) && state.seqs[rowB] ? rowB : -1, ok, _dotPlotRevB(), { dock: false });
+        if (ok.length && (rowA >= 0 || rowB >= 0)) {
+            _dotMarkStretches(rowA, rowB, ok, _dotPlotRevB(), { dock: false });
             msg += ` ${ok.length} stretch${ok.length === 1 ? '' : 'es'} restored.`;
         } else if (ok.length) msg += ' The stretches could not be shown: this dot plot was not opened from alignment rows.';
         const sl = p.stretches.slide;
-        if (sl && Number.isInteger(sl.row) && Number.isInteger(sl.col)) _dotSetSlide(sl.row, sl.col);
+        if (sl && Number.isInteger(sl.row) && Number.isInteger(sl.col)) _dotSetSlide(sl.row - S.offA, sl.col - S.dispOffB);
     } else if (list.length || p.stretches?.slide) {
         const other = pr ? `${pr.nameA} vs ${pr.nameB}${pr.revB ? ' (RevComp)' : ''}` : 'another pair';
         msg += ' The stretches belong to another pair (' + other + '): not restored.';
@@ -33242,16 +33575,37 @@ function _dotPaintRuns(ctx, z, sl, st, vw, vh, c0, c1, r0, r1) {
 const DOT_COLOUR_KEYS = ['dot', 'bg', 'stretch', 'marker', 'tint'];
 const DOT_MARKER_DEFAULT = '#ff8c00', DOT_STRETCH_DEFAULT = '#64e6a0', DOT_TINT_DEFAULT = '#4a9eff';
 function _dotCustomColours() { const c = _dotPlotState.colours; return !!(c && (c.dot || c.bg)); }
-function _dotInk(spin) { return _dotPlotState.colours?.dot || (spin ? '#ffffff' : '#000000'); }
-function _dotPaper(spin) { return _dotPlotState.colours?.bg || (spin ? '#000000' : '#ffffff'); }
 function _dotHexRgb(h) { const m = /^#([0-9a-f]{6})$/i.exec(h || ''); const n = m ? parseInt(m[1], 16) : 0; return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+// The dot (ink) and background (paper) colours of a method, as [ink, paper] hex, with their RGB, worked out once per
+// S.colours object (every change makes a new one): the raster loops below run per cell and used to parse the hex strings
+// and allocate arrays each time. Ink equal to paper (white dots chosen on SPIN's white-default background, or the colours
+// kept across a switch of method) would draw nothing, so the ink then turns to whichever of black / white contrasts.
+function _dotInkPaper(spin) {
+    const c = _dotPlotState.colours;
+    let m = _dotInkPaper._m;
+    if (!m || m.c !== c) m = _dotInkPaper._m = { c, spin: null, doter: null };
+    const k = spin ? 'spin' : 'doter';
+    if (!m[k]) {
+        let ink = c?.dot || (spin ? '#ffffff' : '#000000');
+        const paper = c?.bg || (spin ? '#000000' : '#ffffff');
+        const pr = _dotHexRgb(paper);
+        if (ink.toLowerCase() === paper.toLowerCase()) ink = (0.299 * pr[0] + 0.587 * pr[1] + 0.114 * pr[2]) > 127 ? '#000000' : '#ffffff';
+        m[k] = { ink, paper, ir: _dotHexRgb(ink), pr };
+    }
+    return m[k];
+}
+function _dotInk(spin) { return _dotInkPaper(spin).ink; }
+function _dotPaper(spin) { return _dotInkPaper(spin).paper; }
 function _dotBlend(spin, strength) {   // strength 0 = paper, 1 = ink
-    const a = _dotHexRgb(_dotPaper(spin)), b = _dotHexRgb(_dotInk(spin));
-    return a.map((v, i) => Math.round(v + (b[i] - v) * strength));
+    const k = _dotInkPaper(spin), a = k.pr, b = k.ir;
+    return [Math.round(a[0] + (b[0] - a[0]) * strength), Math.round(a[1] + (b[1] - a[1]) * strength), Math.round(a[2] + (b[2] - a[2]) * strength)];
 }
 function _dotPutPixel(d, j, v, spin) {
     if (!_dotCustomColours()) d[j] = d[j + 1] = d[j + 2] = v;
-    else { const c = _dotBlend(spin, spin ? v / 255 : 1 - v / 255); d[j] = c[0]; d[j + 1] = c[1]; d[j + 2] = c[2]; }
+    else {
+        const k = _dotInkPaper(spin), a = k.pr, b = k.ir, t = spin ? v / 255 : 1 - v / 255;
+        d[j] = Math.round(a[0] + (b[0] - a[0]) * t); d[j + 1] = Math.round(a[1] + (b[1] - a[1]) * t); d[j + 2] = Math.round(a[2] + (b[2] - a[2]) * t);
+    }
     d[j + 3] = 255;
 }
 function _dotDotterStroke(g) {
@@ -33269,20 +33623,31 @@ function _dotSyncColourInputs() {
 // the alignment tint is changed (marks repaint)
 function _dotApplyColours() {
     const S = _dotPlotState, c = S.colours || {};
+    const oldTint = DOT_REGION_TINT;
     DOT_REGION_TINT = c.tint || DOT_TINT_DEFAULT;
-    if (S.overview) { S.overview = _dotPooledCanvas(S.overviewBin); S._pool = null; _dotRender(); }
+    if (oldTint !== DOT_REGION_TINT) _overlayForgetColour(oldTint);
+    // the pixels of the plot only depend on the dot and background colours: a marker, stretch or tint colour needs no rebuild
+    const key = (c.dot || '') + '|' + (c.bg || '');
+    if (S.overview && S._ovKey !== key) { S.overview = _dotPooledCanvas(S.overviewBin); S._pool = null; S._ovKey = key; _dotRender(); }
     if (S.lastRow >= 0) _dotDrawOverlay(S.lastRow, S.lastCol);
     else if (S.pinnedRow >= 0) _dotDrawOverlay(S.pinnedRow, S.pinnedCol);
     else _dotClearOverlay();
     if (state.dotRegionMarks) { bumpSearchLayer?.(); syncResidueOverlays(); }
 }
+// A colour picker fires 'input' dozens of times a second while it is dragged: the colour is stored at once and the plot
+// (and the alignment's tint) is rebuilt once per frame, with the last colour.
+let _dotColourPending = 0;
 function _dotSetColour(key, hex) {
     const S = _dotPlotState;
     if (!DOT_COLOUR_KEYS.includes(key) || !/^#[0-9a-f]{6}$/i.test(hex || '')) return;
     S.colours = Object.assign({}, S.colours || {}, { [key]: hex.toLowerCase() });
-    _dotApplyColours();
+    if (_dotColourPending) return;
+    const run = () => { if (!_dotColourPending) return; _dotColourPending = 0; _dotApplyColours(); };
+    _dotColourPending = 1;
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+    setTimeout(run, 100);   // a hidden tab pauses animation frames
 }
-function _dotResetColours() { _dotPlotState.colours = null; _dotSyncColourInputs(); _dotApplyColours(); }
+function _dotResetColours() { _dotColourPending = 0; _dotPlotState.colours = null; _dotSyncColourInputs(); _dotApplyColours(); }
 
 function _dotBuildImage() {
     const S = _dotPlotState;
@@ -33291,6 +33656,7 @@ function _dotBuildImage() {
     const bin = Math.max(1, Math.ceil(Math.max(S.rows, S.cols) / DOT_OVERVIEW_MAX));
     S.overview = _dotPooledCanvas(bin);
     S.overviewBin = bin;
+    S._ovKey = (S.colours?.dot || '') + '|' + (S.colours?.bg || '');
     S._pool = null;
 }
 
@@ -33419,23 +33785,28 @@ function _dotPaint(ctx, z, sl, st, vw, vh) {
     const stepX = _dotNiceStep(S.cols, Math.max(2, Math.floor(plotW / 50)));
     const stepY = _dotNiceStep(S.rows, Math.max(2, Math.floor(plotH / 40)));
     ctx.fillStyle = '#555'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    for (let pos = stepX * Math.max(1, Math.floor(c0 / stepX)); pos <= Math.min(S.cols, c1 + stepX); pos += stepX) {
+    // ticks at multiples of the step in the sequence's own numbers (a range starts partway in)
+    for (let num = stepX * Math.max(1, Math.floor((c0 + S.dispOffB) / stepX)); num - S.dispOffB <= Math.min(S.cols, c1 + stepX); num += stepX) {
+        const pos = num - S.dispOffB;
+        if (pos < 0) continue;
         const x = P + Math.round(pos * z - sl) + 0.5;
         if (x < P || x > vw) continue;
         ctx.beginPath(); ctx.moveTo(x, P); ctx.lineTo(x, P - 5); ctx.stroke();
-        ctx.fillText(String(pos), x, P - 6);
+        ctx.fillText(String(num), x, P - 6);
     }
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    for (let pos = stepY * Math.max(1, Math.floor(r0 / stepY)); pos <= Math.min(S.rows, r1 + stepY); pos += stepY) {
+    for (let num = stepY * Math.max(1, Math.floor((r0 + S.offA) / stepY)); num - S.offA <= Math.min(S.rows, r1 + stepY); num += stepY) {
+        const pos = num - S.offA;
+        if (pos < 0) continue;
         const y = P + Math.round(pos * z - st) + 0.5;
         if (y < P || y > vh) continue;
         ctx.beginPath(); ctx.moveTo(P, y); ctx.lineTo(P - 5, y); ctx.stroke();
-        ctx.fillText(String(pos), P - 7, y);
+        ctx.fillText(String(num), P - 7, y);
     }
     ctx.fillStyle = '#333'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.font = 'bold 11px system-ui, sans-serif';
-    const nameB = S.nameB.length > 30 ? S.nameB.substring(0, 30) + '...' : S.nameB;
-    const nameA = S.nameA.length > 30 ? S.nameA.substring(0, 30) + '...' : S.nameA;
+    const nameB = (S.nameB.length > 30 ? S.nameB.substring(0, 30) + '...' : S.nameB) + _dotRangeText('B');
+    const nameA = (S.nameA.length > 30 ? S.nameA.substring(0, 30) + '...' : S.nameA) + _dotRangeText('A');
     ctx.fillText(nameB, P + Math.min(plotW, vw - P) / 2, 2);
     ctx.save(); ctx.translate(12, P + Math.min(plotH, vh - P) / 2); ctx.rotate(-Math.PI / 2);
     ctx.fillText(nameA, 0, 0); ctx.restore();
@@ -33493,7 +33864,7 @@ function _dotDetectRegions() {
     if ((!S.scores && !S.matchMap)) { _dotRenderRegionList(); return; }
     const spin = S.spinMode && !!S.matchMap;
     const w = S.windowSize || 1;
-    const isSelf = S.sourceSeqA === S.sourceSeqB && S.rows === S.cols && !/\(RevComp\)$/.test(S.nameB || '');
+    const isSelf = S.seqA === S.seqB && S.offA === S.offB && S.rows === S.cols && !/\(RevComp\)$/.test(S.nameB || '');
     const seedMin = spin ? 2 : 3;               // shorter runs are mostly chance hits
     const minMatched = spin ? Math.max(8, 2 * w)
                             : Math.max(6, Math.min(15, Math.floor(Math.min(S.rows, S.cols) * 0.12)));
@@ -33597,7 +33968,7 @@ function _dotRenderRegionList() {
         return;
     }
     const spin = S.spinMode && !!S.matchMap;
-    const canShow = Number.isInteger(S.meta?.rowIndexA) && !!state.seqs[S.meta.rowIndexA];
+    const canShow = _dotHasRows();
     itemsEl.innerHTML = S.regions.map((r, i) => {
         const pct = Math.round(r.avgScore * 100);
         const len = r.aEnd - r.aStart;
@@ -33609,26 +33980,34 @@ function _dotRenderRegionList() {
             onclick="_dotGoToRegion(${i})"
             title="${tip}. Runs broken by mismatches or small indels are counted as one stretch. Click: centre it in the plot.">
             <button type="button" class="dot-star" title="${_dotRegionBookmarked(r) ? 'In the collection' : 'Add this stretch to the collection (the list below)'}" onclick="event.stopPropagation(); _dotBookmarkRegion(${i})">${_dotRegionBookmarked(r) ? '&#9733;' : '&#9734;'}</button>
-            ${canShow ? `<button type="button" class="dot-goto" title="Show this stretch in the alignment and go there: both copies are tinted, the alignment scrolls to the first; the dot plot window stays open and the alignment behind it can be used" onclick="event.stopPropagation(); _dotShowRegionInAlignment(${i})">&#8674;</button>` : ''}
+            ${canShow ? `<button type="button" class="dot-goto" title="Show this stretch in the alignment and go there: both copies are tinted, the alignment scrolls to the first; the dot plot window folds into a small bar in the corner so that it does not hide them (the bar's arrow brings it back)" onclick="event.stopPropagation(); _dotShowRegionInAlignment(${i})">&#8674;</button>` : ''}
             <b>#${i + 1}</b> ${len}bp${spin ? '' : ' ' + pct + '%'}
-            <span style="color:#888;font-size:10px;">A${r.aStart + 1}-${r.aEnd} / B${r.bStart + 1}-${r.bEnd}</span>
+            <span style="color:#888;font-size:10px;">A${_dotShownA(r.aStart)}-${S.offA + r.aEnd} / B${_dotShownB(r.bStart)}-${S.dispOffB + r.bEnd}</span>
           </div>`;
     }).join('');
 }
+// The alignment rows behind the two sides (-1 for a side with no row: a pasted sequence), and whether there is any
+function _dotRows() {
+    const S = _dotPlotState, ok = i => Number.isInteger(i) && i >= 0 && !!state.seqs[i];
+    return { rowA: ok(S.rowIndexA) ? S.rowIndexA : -1, rowB: ok(S.rowIndexB) ? S.rowIndexB : -1 };
+}
+function _dotHasRows() { const r = _dotRows(); return r.rowA >= 0 || r.rowB >= 0; }
 
 // A region shown in the alignment (owner, 2026-10-23: highlight a specific repeat in the alignment and go to it).
 // Both copies are tinted (residue-anchored marks: the plotted sequences are the rows without gaps, so a
 // region's aStart..aEnd are residue numbers of row A), the alignment scrolls to the first copy, the list entry
 // is highlighted, and the window's backdrop lets the pointer through to the alignment. The marks live with the
-// window: a recalculation (new regions), Clear marks, closing the window or a new file remove them.
+// window: Clear marks, closing the window, plotting a different pair or a new file remove them. A recalculation, a range,
+// RevComp or a preset of the same pair keeps them (the marks are anchored to residues, not to the plot).
 let DOT_REGION_TINT = '#4a9eff';   // the alignment tint of a shown stretch (a custom dot plot colour changes it)
 function _dotShowRegionInAlignment(idx) {
-    const S = _dotPlotState, r = S.regions?.[idx], meta = S.meta;
+    const S = _dotPlotState, r = S.regions?.[idx];
     if (!r) return;
-    const rowA = meta?.rowIndexA, rowB = meta?.rowIndexB;
-    if (!Number.isInteger(rowA) || !state.seqs[rowA]) { showMessage('This dot plot was not opened from alignment rows, so there is nothing to show.', 3000); return; }
+    const { rowA, rowB } = _dotRows();
+    if (rowA < 0 && rowB < 0) { showMessage('This dot plot was not opened from alignment rows, so there is nothing to show.', 3000); return; }
     S._shownRegion = idx;
-    _dotShowStretch(rowA, Number.isInteger(rowB) && state.seqs[rowB] ? rowB : -1, r.aStart, r.aEnd, r.bStart, r.bEnd, /\(RevComp\)$/.test(S.nameB || ''));
+    const g = _dotRealStretch(r);
+    _dotShowStretch(rowA, rowB, g.aStart, g.aEnd, g.bStart, g.bEnd, /\(RevComp\)$/.test(S.nameB || ''));
 }
 // Tints residues aStart..aEnd of row A and bStart..bEnd of row B (plot coordinates: residue numbers of the
 // gapless rows; with RevComp B the plotted B runs backwards, residue n of the plot being residue len-1-n of
@@ -33649,7 +34028,7 @@ function _dotMarkStretches(rowA, rowB, list, revB, opts = {}) {
         if (set.size) marks.bySeq.set(obj, set);
     };
     list.forEach(r => {
-        add(rowA, r.aStart, r.aEnd);
+        if (rowA >= 0) add(rowA, r.aStart, r.aEnd);   // a pasted side has no row (-1): only the row side is marked
         if (rowB >= 0 && state.seqs[rowB]) {
             const lenB = state.seqs[rowB].seq.replace(/[-. ]/g, '').length;
             if (revB) add(rowB, lenB - r.bEnd, lenB - r.bStart); else add(rowB, r.bStart, r.bEnd);
@@ -33660,11 +34039,15 @@ function _dotMarkStretches(rowA, rowB, list, revB, opts = {}) {
     S._markRevB = !!revB;
     syncResidueOverlays();
     if (list.length) {
-        const map = _buildUngappedToAlignMap(state.seqs[rowA].seq);
-        const colA = map ? map[list[0].aStart] : null;   // 1-based column of the first residue
+        // the alignment goes to the first copy on row A, or on row B when A is a pasted sequence
+        const rowGo = (rowA >= 0 && state.seqs[rowA]) ? rowA : rowB;
+        let res = list[0].aStart;
+        if (rowGo !== rowA) res = revB ? (state.seqs[rowB].seq.replace(/[-. ]/g, '').length - list[0].bEnd) : list[0].bStart;
+        const map = state.seqs[rowGo] ? _buildUngappedToAlignMap(state.seqs[rowGo].seq) : null;
+        const colA = map ? map[res] : null;   // 1-based column of the first residue
         _dotPeek(true);
         if (opts.dock !== false) _dotDock(true);
-        _showRowInAlignment(rowA, Number.isInteger(colA) ? colA - 1 : undefined);
+        if (state.seqs[rowGo]) _showRowInAlignment(rowGo, Number.isInteger(colA) ? colA - 1 : undefined);
     }
     _dotShowClearButtons(list.length > 0);
     _dotRenderRegionList();
@@ -33674,12 +34057,12 @@ function _dotShowClearButtons(on) {
 }
 // Every stretch the plot lists now (those that pass the current settings), marked on both rows
 function _dotHighlightAll() {
-    const S = _dotPlotState, meta = S.meta;
-    const rowA = meta?.rowIndexA, rowB = meta?.rowIndexB;
-    if (!Number.isInteger(rowA) || !state.seqs[rowA]) { showMessage('This dot plot was not opened from alignment rows, so there is nothing to show.', 3000); return; }
+    const S = _dotPlotState;
+    const { rowA, rowB } = _dotRows();
+    if (rowA < 0 && rowB < 0) { showMessage('This dot plot was not opened from alignment rows, so there is nothing to show.', 3000); return; }
     if (!S.regions || !S.regions.length) { showMessage('No stretches to highlight at the current settings.', 2500); return; }
     S._shownRegion = -1;
-    _dotMarkStretches(rowA, Number.isInteger(rowB) && state.seqs[rowB] ? rowB : -1, S.regions, _dotPlotRevB());
+    _dotMarkStretches(rowA, rowB, S.regions.map(_dotRealStretch), _dotPlotRevB());
     showMessage(`Highlighted ${S.regions.length} stretch${S.regions.length === 1 ? '' : 'es'} in the alignment.`, 2500);
 }
 // The window as a small bar in the corner (marks stay), or back as the full window
@@ -33721,7 +34104,8 @@ function _dotPlotNameB() { return (_dotPlotState.nameB || '').replace(/ \(RevCom
 function _dotPlotRevB() { return /\(RevComp\)$/.test(_dotPlotState.nameB || ''); }
 function _dotRegionBookmarked(r) {
     const S = _dotPlotState, nameB = _dotPlotNameB(), revB = _dotPlotRevB();
-    return (state.dotBookmarks || []).some(b => b.nameA === S.nameA && b.nameB === nameB && b.revB === revB && b.aStart === r.aStart && b.aEnd === r.aEnd && b.bStart === r.bStart && b.bEnd === r.bEnd);
+    const g = _dotRealStretch(r);
+    return (state.dotBookmarks || []).some(b => b.nameA === S.nameA && b.nameB === nameB && b.revB === revB && b.aStart === g.aStart && b.aEnd === g.aEnd && b.bStart === g.bStart && b.bEnd === g.bEnd);
 }
 // The diagonal run of dots through a cell (what the green line on hover shows), as a region; null off a dot
 function _dotStretchAt(row, col) {
@@ -33732,7 +34116,7 @@ function _dotStretchAt(row, col) {
     while (rB + 1 < S.rows && cB + 1 < S.cols && _dotIsDot(rB + 1, cB + 1)) { rB++; cB++; }
     let same = 0;
     for (let i = 0; i <= rB - rA; i++) if (S.seqA[rA + i] === S.seqB[cA + i]) same++;
-    return { row, col, aStart: rA, aEnd: rB + 1, bStart: cA, bEnd: cB + 1, avgScore: Math.round(100 * same / (rB - rA + 1)) };
+    return { row, col, aStart: rA, aEnd: rB + 1, bStart: cA, bEnd: cB + 1, avgScore: same / (rB - rA + 1) };   // a fraction, like the region list's (the collection and its TSV multiply by 100)
 }
 function _dotStretchMenu(e, r) {
     const S = _dotPlotState;
@@ -33751,14 +34135,14 @@ function _dotStretchMenu(e, r) {
         menu.appendChild(d);
     };
     const len = r.aEnd - r.aStart;
-    const rowA = S.meta?.rowIndexA, rowB = S.meta?.rowIndexB;
-    const canShow = Number.isInteger(rowA) && !!state.seqs[rowA];
-    item(`Show this stretch in the alignment (A ${r.aStart + 1}-${r.aEnd}, B ${r.bStart + 1}-${r.bEnd}, ${len} bp)`,
-        () => _dotShowStretch(rowA, Number.isInteger(rowB) && state.seqs[rowB] ? rowB : -1, r.aStart, r.aEnd, r.bStart, r.bEnd, /\(RevComp\)$/.test(S.nameB || ''), false),   // from the plot's own menu the window stays: the plot is being used
+    const { rowA, rowB } = _dotRows(), g = _dotRealStretch(r);
+    const canShow = rowA >= 0 || rowB >= 0;
+    item(`Show this stretch in the alignment (A ${g.aStart + 1}-${g.aEnd}, B ${g.bStart + 1}-${g.bEnd}, ${len} bp)`,
+        () => _dotShowStretch(rowA, rowB, g.aStart, g.aEnd, g.bStart, g.bEnd, /\(RevComp\)$/.test(S.nameB || ''), false),   // from the plot's own menu the window stays: the plot is being used
         canShow ? '' : 'This dot plot was not opened from alignment rows');
     item('Add to the collection', () => _dotBookmarkStretch(r));
     item('Copy both stretches as FASTA', () => {
-        const fa = `>${S.nameA}:${r.aStart + 1}-${r.aEnd}\n${S.seqA.slice(r.aStart, r.aEnd)}\n>${_dotPlotNameB()}:${r.bStart + 1}-${r.bEnd}\n${S.seqB.slice(r.bStart, r.bEnd)}\n`;
+        const fa = `>${S.nameA}:${g.aStart + 1}-${g.aEnd}\n${S.seqA.slice(r.aStart, r.aEnd)}\n>${_dotPlotNameB()}:${g.bStart + 1}-${g.bEnd}\n${S.seqB.slice(r.bStart, r.bEnd)}\n`;
         navigator.clipboard?.writeText(fa).then(() => showMessage('Copied both stretches as FASTA', 2000), () => showMessage('Could not copy (clipboard refused).', 3000));
     });
     document.body.appendChild(menu);
@@ -33775,10 +34159,10 @@ function _dotBookmarkStretch(r) {
     const S = _dotPlotState;
     if (!r) return;
     if (_dotRegionBookmarked(r)) { showMessage('This stretch is already in the collection.', 2500); return; }
-    const H = _dotHalf(r.row, r.col);
+    const H = _dotHalf(r.row, r.col), g = _dotRealStretch(r);   // the collection keeps the whole sequences' coordinates
     const b = { id: 'bm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-        name: `${S.nameA} ${r.aStart + 1}-${r.aEnd}`, nameA: S.nameA, nameB: _dotPlotNameB(), revB: _dotPlotRevB(),
-        aStart: r.aStart, aEnd: r.aEnd, bStart: r.bStart, bEnd: r.bEnd,
+        name: `${S.nameA} ${g.aStart + 1}-${g.aEnd}`, nameA: S.nameA, nameB: _dotPlotNameB(), revB: _dotPlotRevB(),
+        aStart: g.aStart, aEnd: g.aEnd, bStart: g.bStart, bEnd: g.bEnd,
         mode: H.spinMode ? 'spin' : 'doter', window: H.windowSize || S.windowSize || 0, threshold: H.spinMode ? 0 : (H.threshold || S.threshold || 0),
         seqA: S.seqA.slice(r.aStart, r.aEnd), seqB: S.seqB.slice(r.bStart, r.bEnd), identity: r.avgScore || 0 };
     state.dotBookmarks.push(b);
@@ -33849,10 +34233,12 @@ async function _dotGoToBookmark(id) {
     }
     // centre the stretch in the plot and show its first cell
     const { vp, vw, vh } = _dotViewport(); if (!vp) return;
-    vp.scrollLeft = Math.max(0, (b.bStart + (b.bEnd - b.bStart) / 2) * S.zoom - (vw - DOT_AXIS_PAD) / 2);
-    vp.scrollTop = Math.max(0, (b.aStart + (b.aEnd - b.aStart) / 2) * S.zoom - (vh - DOT_AXIS_PAD) / 2);
+    const pa = b.aStart - S.offA, pb = b.bStart - S.dispOffB;   // plot indices (a range plot may not hold the stretch)
+    if (pa + (b.aEnd - b.aStart) <= 0 || pa >= S.rows || pb + (b.bEnd - b.bStart) <= 0 || pb >= S.cols) { showMessage('This stretch lies outside the plotted range: use Whole to see it.', 3000); return; }
+    vp.scrollLeft = Math.max(0, (pb + (b.bEnd - b.bStart) / 2) * S.zoom - (vw - DOT_AXIS_PAD) / 2);
+    vp.scrollTop = Math.max(0, (pa + (b.aEnd - b.aStart) / 2) * S.zoom - (vh - DOT_AXIS_PAD) / 2);
     _dotRender();
-    const row = Math.min(S.rows - 1, b.aStart), col = Math.min(S.cols - 1, b.bStart);
+    const row = Math.max(0, Math.min(S.rows - 1, pa)), col = Math.max(0, Math.min(S.cols - 1, pb));
     S.lastRow = row; S.lastCol = col;
     _dotDrawOverlay(row, col); _dotUpdateHoverInfo(row, col);
 }
@@ -33986,12 +34372,12 @@ function _dotDrawOverlay(row, col) {
         oCtx.fillStyle = 'rgba(40,120,230,1)'; oCtx.textAlign = align; oCtx.textBaseline = base;
         oCtx.fillText(text, x, y);
     };
-    if (cx >= P) label(String(col + 1), cx, P - 1, 'center', 'bottom');
-    if (cy >= P) label(String(row + 1), P - 2, cy, 'right', 'middle');
+    if (cx >= P) label(String(_dotShownB(col)), cx, P - 1, 'center', 'bottom');
+    if (cy >= P) label(String(_dotShownA(row)), P - 2, cy, 'right', 'middle');
     if (S.pinnedRow >= 0 && S.pinnedCol >= 0) {
         oCtx.fillStyle = 'rgba(220,50,50,0.95)'; oCtx.font = 'bold 10px system-ui';
         oCtx.textAlign = 'left'; oCtx.textBaseline = 'top';
-        oCtx.fillText('PIN: A' + (S.pinnedRow + 1) + ' / B' + (S.pinnedCol + 1), P + 4, 16);
+        oCtx.fillText('PIN: A' + _dotShownA(S.pinnedRow) + ' / B' + _dotShownB(S.pinnedCol), P + 4, 16);
     }
 }
 
@@ -34013,15 +34399,27 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S.lower = null;
     // Uppercase; U and T are the same base
     const norm = s => s.toUpperCase().replace(/U/g, 'T');
-    S.seqA = norm(seqA); S.seqB = norm(seqB);
-    S.sourceSeqA = S.seqA; S.sourceSeqB = S.seqB;
+    // The sources stay the FULL sequences (a recalculation, a typed range and a preset all start from them); the plot
+    // holds the slice meta.rangeA / meta.rangeB ([from, to], 1-based, ungapped, inclusive) selects, or all of it
+    const fullA = norm(seqA), fullB = norm(seqB);
+    S.sourceSeqA = fullA; S.sourceSeqB = fullB;
     S.nameA = nameA; S.nameB = nameB;
     S.meta = meta || S.meta || null;
     const m = S.meta || {};
-    S.rowIndexA = Number.isInteger(m.rowIndexA) ? m.rowIndexA : -1;
-    S.rowIndexB = Number.isInteger(m.rowIndexB) ? m.rowIndexB : -1;
-    S.alignMapA = m.alignMapA || _buildUngappedToAlignMap(m.alignedSeqA);
-    S.alignMapB = m.alignMapB || _buildUngappedToAlignMap(m.alignedSeqB);
+    const rgA = _dotClampRange(m.rangeA, fullA.length), rgB = _dotClampRange(m.rangeB, fullB.length);
+    S.offA = rgA ? rgA[0] - 1 : 0; S.offB = rgB ? rgB[0] - 1 : 0;
+    S.fullLenA = fullA.length; S.fullLenB = fullB.length;
+    S.seqA = rgA ? fullA.slice(rgA[0] - 1, rgA[1]) : fullA;
+    S.seqB = rgB ? fullB.slice(rgB[0] - 1, rgB[1]) : fullB;
+    S.dispOffB = S.offB;
+    S.ext = (m.ext && /^(A|B|AB)$/.test(m.ext.side)) ? { side: m.ext.side, name: String(m.ext.name || 'pasted sequence') } : null;
+    S.rangeNote = S._pendingRangeNote || m.note || ''; S._pendingRangeNote = '';
+    const extA = !!S.ext && S.ext.side.includes('A'), extB = !!S.ext && S.ext.side.includes('B');   // a pasted side has no row, no alignment map
+    S.rowIndexA = Number.isInteger(m.rowIndexA) && !extA ? m.rowIndexA : -1;
+    S.rowIndexB = Number.isInteger(m.rowIndexB) && !extB ? m.rowIndexB : -1;
+    const sliceMap = (map, off, n) => (map && (off || n < map.length)) ? map.slice(off, off + n) : map;
+    S.alignMapA = extA ? null : sliceMap(m.alignMapA || _buildUngappedToAlignMap(m.alignedSeqA), S.offA, S.seqA.length);
+    S.alignMapB = extB ? null : sliceMap(m.alignMapB || _buildUngappedToAlignMap(m.alignedSeqB), S.offB, S.seqB.length);
     const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
     S.spinMode = spinRadio ? spinRadio.checked : true;
     const [lo, hi] = S.spinMode ? DOT_WORD_RANGE : DOT_WINDOW_RANGE;
@@ -34031,8 +34429,12 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S.threshold = (Number.isFinite(tRaw) ? tRaw : 55) / 100;
     S.pinnedRow = S.pinnedCol = -1;
     S.lastRow = S.lastCol = -1;
-    const pairKey = nameA + '|' + nameB + '|' + seqA.length + '|' + seqB.length;
-    if (S._pairKey !== pairKey) { S.slideRow = S.slideCol = -1; S._pairKey = pairKey; }   // a recalculation keeps the sliders' position, another pair does not
+    // Another pair (the sequences, not their range or strand) clears the stretches marked in the alignment for the one before
+    // and brings the window back; a recalculation, a range, RevComp or a preset of the same pair keeps them
+    const pairId = nameA + '|' + nameB + '|' + seqA.length + '|' + seqB.length;
+    if (S._pairId !== pairId && state.dotRegionMarks) _dotClearRegionMarks();
+    S._pairId = pairId;
+    const pairKey = pairId + '|' + S.offA + '|' + S.seqA.length + '|' + S.offB + '|' + S.seqB.length;
     S._frozen = false;
     S._frozenRow = S._frozenCol = -1;
     S._copyRegion = null;
@@ -34040,17 +34442,24 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S._shownRegion = -1;   // the marks stay (residue-anchored); the new list has no shown entry
 
     const revComp = document.getElementById('dotPlotRevComp')?.checked;
+    // the slider position is kept by a recalculation of the same plot and dropped for another one; when only the strand of B
+    // changed the position is mirrored (the same residue, not the same column)
+    if (S._pairKey !== pairKey) { S.slideRow = S.slideCol = -1; S._pairKey = pairKey; }
+    else if (!!S._pairRev !== !!revComp && S.slideCol >= 0) S.slideCol = S.seqB.length - 1 - S.slideCol;
+    S._pairRev = !!revComp;
     if (revComp) {
         S.seqB = [...S.seqB].reverse().map(b => _DOT_COMPLEMENT[b] ?? 'N').join('');
         S.nameB = nameB + ' (RevComp)';
         if (S.alignMapB) S.alignMapB = [...S.alignMapB].reverse();
+        S.dispOffB = S.fullLenB - S.offB - S.seqB.length;   // the plotted B starts this far into the reverse complement of the whole sequence
     }
     S.unknown = _dotUnknownChars(S.seqA, S.seqB);
 
     const modal = document.getElementById('dotPlotModal');
     if (modal) showExclusiveModal('dotPlotModal');
     const titleEl = document.getElementById('dotPlotTitle');
-    if (titleEl) titleEl.textContent = `Dot Plot: ${nameA} vs ${nameB}${revComp ? ' (rc)' : ''}`;
+    if (titleEl) titleEl.textContent = `Dot Plot: ${nameA}${_dotRangeText('A')} vs ${nameB}${_dotRangeText('B')}${revComp ? ' (rc)' : ''}`;
+    _dotSyncRangeInputs();
     const statusEl = document.getElementById('dotPlotStatus');
     _dotClearHoverInfo();
 
@@ -34058,6 +34467,8 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     if (cells > DOT_MAX_CELLS) {
         S.matchMap = S.scores = S.overview = null;
         S.rows = S.cols = 0;
+        S.slideRow = S.slideCol = -1;
+        _dotSyncSlideRanges();   // nothing to slide over: the sliders go grey instead of keeping the last pair's ranges
         _dotClearOverlay();
         const c = document.getElementById('dotPlotCanvas');
         if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
@@ -34088,6 +34499,11 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
         if (gen !== S.gen) return;
         S.matchMap = S.scores = S.overview = null;
         S.rows = S.cols = 0;
+        S.slideRow = S.slideCol = -1;
+        _dotSyncSlideRanges();
+        _dotClearOverlay();   // the previous pair's crosshair and marker
+        const ec = document.getElementById('dotPlotCanvas');
+        if (ec) ec.getContext('2d').clearRect(0, 0, ec.width, ec.height);
         if (statusEl) statusEl.textContent = `Error: ${err.message}`;
         _dotRenderRegionList();   // S.regions was emptied for this pair; the list still showed the previous one
         S.computing = false; return;
@@ -34095,7 +34511,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     if (gen !== S.gen) return;
     // Lower half with its own settings (self-plot only: the halves are mirror images)
     const splitBox = document.getElementById('dotPlotSplit');
-    const selfPlot = S.sourceSeqA === S.sourceSeqB && !revComp;
+    const selfPlot = S.seqA === S.seqB && S.offA === S.offB && !revComp;
     if (splitBox) {
         splitBox.disabled = !selfPlot;
         splitBox.parentElement.style.opacity = selfPlot ? '' : '0.55';
@@ -34544,8 +34960,9 @@ function _initDotPlotEvents() {
             }
             let fasta;
             if (region) {
-                fasta = `>${region.nameA}_${region.aStart + 1}-${region.aStart + region.aSlice.length}\n${region.aSlice}\n` +
-                        `>${region.nameB}_${region.bStart + 1}-${region.bStart + region.bSlice.length}\n${region.bSlice}`;
+                const oA = S.offA, oB = S.dispOffB;
+                fasta = `>${region.nameA}_${oA + region.aStart + 1}-${oA + region.aStart + region.aSlice.length}\n${region.aSlice}\n` +
+                        `>${region.nameB}_${oB + region.bStart + 1}-${oB + region.bStart + region.bSlice.length}\n${region.bSlice}`;
             } else {
                 // Pinned position only: walk the diagonal to the extent of the match
                 let rBack = S.pinnedRow, cBack = S.pinnedCol;
@@ -34561,8 +34978,8 @@ function _initDotPlotEvents() {
                 const sliceLen = Math.min(maxSlice, S.seqA.length - aStart, S.seqB.length - bStart);
                 const aSlice = S.seqA.slice(aStart, aStart + sliceLen);
                 const bSlice = S.seqB.slice(bStart, bStart + sliceLen);
-                fasta = `>${S.nameA}_${aStart + 1}-${aStart + sliceLen}\n${aSlice}\n` +
-                        `>${S.nameB}_${bStart + 1}-${bStart + sliceLen}\n${bSlice}`;
+                fasta = `>${S.nameA}_${S.offA + aStart + 1}-${S.offA + aStart + sliceLen}\n${aSlice}\n` +
+                        `>${S.nameB}_${S.dispOffB + bStart + 1}-${S.dispOffB + bStart + sliceLen}\n${bSlice}`;
             }
             const len = fasta.split('\n')[1]?.length || 0;
             navigator.clipboard.writeText(fasta).then(() => {
@@ -34582,7 +34999,7 @@ function _initDotPlotEvents() {
         });
     }
     document.getElementById('dotPlotClearMarksBtn')?.addEventListener('click', () => _dotClearRegionMarks(true));
-    _dotInitStripEvents(); _dotInitLookEvents();
+    _dotInitStripEvents(); _dotInitLookEvents(); _dotInitRangeEvents();
     _dotLoadBookmarks(); _dotRenderBookmarks();
     document.getElementById('dotPlotBookmarkClearBtn')?.addEventListener('click', _dotClearBookmarks);
     document.getElementById('dotPlotBookmarkTsvBtn')?.addEventListener('click', () => {

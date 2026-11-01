@@ -13,7 +13,7 @@
     <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
-    <link rel="stylesheet" href="styles.css?v=192">
+    <link rel="stylesheet" href="styles.css?v=194">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -1188,6 +1188,7 @@
                 <h3 id="dotPlotTitle" style="pointer-events:none;">Dot Plot</h3>
                 <span class="win-btns">
                     <button type="button" id="dotPlotDockClear" class="dot-mini-btn" title="Remove the stretch marks from the alignment" hidden>Clear marks</button>
+                    <button type="button" id="dotPlotRangeBtn" class="dot-mini-btn" title="Show / hide the boxes that limit the plot to a part of each sequence (A from-to, B from-to) and Compare with pasted">Parts</button>
                     <button type="button" id="dotPlotDockBtn" class="win-close" title="Move the window out of the way to a small bar (the alignment behind it shows fully); click again to bring it back" aria-label="Dock">&#9662;</button>
                     <button type="button" id="dotPlotMaxBtn" class="win-close win-maxbtn" title="Maximize (or double-click the title bar)" aria-label="Maximize">&#9633;</button>
                     <button type="button" id="dotPlotCloseBtn" class="win-close" title="Close">×</button>
@@ -1226,7 +1227,7 @@
                 <button type="button" id="dotPlotClearMarks2" class="dot-mini-btn" title="Remove the stretch marks from the alignment" hidden>Clear marks</button>
                 <span class="dot-sep"></span>
                 <label title="Colour of the dots">Dots <input type="color" id="dotColDot" value="#ffffff"></label>
-                <label title="Colour of the plot background">Background <input type="color" id="dotColBg" value="#000000"></label>
+                <label title="Colour of the plot background. It covers the plot area only: the axis strips and the text around it stay white">Background <input type="color" id="dotColBg" value="#000000"></label>
                 <label title="Colour of the stretch under the pointer">Stretch <input type="color" id="dotColStretch" value="#64e6a0"></label>
                 <label title="Colour of the position marker (sliders / click)">Marker <input type="color" id="dotColMarker" value="#ff8c00"></label>
                 <label title="Tint of the stretches shown in the alignment">Alignment tint <input type="color" id="dotColTint" value="#4a9eff"></label>
@@ -1238,6 +1239,15 @@
                 <button type="button" id="dotPresetLoad" title="Load the chosen preset: settings (the plot is recalculated), colours and stretches (when the same pair is plotted)">Load</button>
                 <button type="button" id="dotPresetDelete" title="Delete the chosen preset">Delete</button>
                 <span id="dotPresetNote" class="dot-preset-note"></span>
+            </div>
+            <div id="dotPlotRangeRow" class="dot-ctl-row" hidden>
+                <label title="Plot only this part of sequence A (down the plot): residue numbers of the whole ungapped sequence, 1-based, both ends included"><b>A</b> from <input type="number" id="dotPlotRangeAFrom" min="1" step="1" style="width:68px;"> to <input type="number" id="dotPlotRangeATo" min="1" step="1" style="width:68px;"></label>
+                <label title="Plot only this part of sequence B (across the plot): residue numbers of the whole ungapped sequence, 1-based, both ends included (with RevComp B, the part is cut first, then reverse-complemented)"><b>B</b> from <input type="number" id="dotPlotRangeBFrom" min="1" step="1" style="width:68px;"> to <input type="number" id="dotPlotRangeBTo" min="1" step="1" style="width:68px;"></label>
+                <button type="button" id="dotPlotRangeReplot" title="Plot the typed parts (numbers outside the sequence are clamped to it)">Re-plot</button>
+                <button type="button" id="dotPlotRangeWhole" title="Back to the whole of both sequences">Whole</button>
+                <span class="dot-sep"></span>
+                <button type="button" id="dotPlotPasteBtn" title="Compare a pasted sequence (raw or FASTA, first record) with row A, row B, or itself">Compare with pasted&hellip;</button>
+                <span id="dotPlotRangeNote" class="dot-preset-note" role="status"></span>
             </div>
             <div id="dotPlotSplitRow" class="dot-split-row dot-ctl-row">
                 <label title="A sequence plotted against itself is symmetric, so each half can show the same comparison with its own method and settings: the controls above then apply above the diagonal, these below it. Only for a sequence against itself, without RevComp B."><input type="checkbox" id="dotPlotSplit" checked> Different settings below the diagonal</label>
@@ -1276,7 +1286,7 @@
             <div id="dotPlotAlignMeta" style="font-size:11px;color:#666;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:16px;margin-top:2px;"></div>
             <div id="dotPlotStripBar" class="dot-ctl-row dot-strip-bar">
                 <label title="Position in sequence A (down the plot). Arrow keys step by 1"><b>A</b> <input type="range" id="dotPlotPosA" min="1" max="1" step="1" value="1"><input type="number" id="dotPlotPosANum" min="1" max="1" value="1" style="width:64px;"></label>
-                <label title="Position in sequence B (across the plot; with RevComp B, in the plotted reverse-complement order). Arrow keys step by 1"><b>B</b> <input type="range" id="dotPlotPosB" min="1" max="1" step="1" value="1"><input type="number" id="dotPlotPosBNum" min="1" max="1" value="1" style="width:64px;"></label>
+                <label title="Position in sequence B (across the plot; with RevComp B the number runs down as the slider moves forward, as on the ruler). Arrow keys step by 1"><b>B</b> <input type="range" id="dotPlotPosB" min="1" max="1" step="1" value="1"><input type="number" id="dotPlotPosBNum" min="1" max="1" value="1" style="width:64px;"></label>
                 <span class="dot-sep"></span>
                 <label title="Lines of the strip under the plot: with more than one the stretch around the position wraps into several lines (the Context box then applies to one line only)">Strip lines <input type="number" id="dotPlotStripLines" min="1" max="12" value="1" style="width:44px;"></label>
                 <button type="button" id="dotPlotStripExpand" title="Show a longer stretch in the strip (several lines); click again for one line">Expand</button>
@@ -1478,7 +1488,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=7"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=374"></script>
+    <script src="script.js?v=376"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>

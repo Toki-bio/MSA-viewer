@@ -4207,7 +4207,7 @@ table.stats-mx.heat td:hover { outline: 2px solid #111; outline-offset: -2px; }
 /* The dot plot's control rows (owner, 2026-10-23: tidy, boxes level with their text, one wide slider) */
 .dot-ctl-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-bottom: 6px; font-size: 12px; }
 .dot-ctl-row label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.dot-ctl-row label[hidden] { display: none; }
+.dot-ctl-row label[hidden], .dot-ctl-row[hidden] { display: none; }
 .dot-ctl-row input[type="checkbox"], .dot-ctl-row input[type="radio"] { margin: 0; }
 .dot-ctl-row input[type="number"] { font-size: 12px; padding: 1px 2px; }
 .dot-ctl-row button { font-size: 11px; padding: 2px 8px; }

@@ -2025,7 +2025,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   alignment: both copies are tinted blue, the alignment scrolls to the first copy, and the dot plot
   window folds into a small bar in the lower right corner so that it does not hide the stretch (the &#9662; button in the
   title bar, or the bar's &#9652;, brings the window back; the tint stays while the window is open);
-  <strong>Clear marks</strong> or closing the window removes the tint. The &#9734; button
+  <strong>Clear marks</strong>, closing the window or plotting a different pair of sequences removes the tint (a recalculation, a range, RevComp B or a preset of the same pair keeps it, because the tint belongs to the residues). The &#9734; button
   adds the stretch to the <strong>Collection</strong> under the list: entries you want to keep, with both
   copies' sequences, the pair of sequences and the method. The collection stays across files and reloads
   (browser storage) and is saved in snapshots. Click an entry to centre it in the plot (another pair's entry
@@ -2061,6 +2061,26 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   position as a dashed marker that moves while the slider is dragged, the arrow keys step a focused slider by 1, a
   click on the plot moves both sliders to that point, and so does dragging the marker (or Shift+drag anywhere).
   The strip shows the sliders' position when the pointer is off the plot.</p>
+  <p><strong>Part of a sequence.</strong> The plot can be limited to the parts you choose. Select alignment columns (or a
+  residue range) and right-click a row: <strong>Dot-plot of selected columns</strong> plots only the residues of that row
+  (or of the two selected rows, or the rows the residue range covers) inside those columns. A selection of separate
+  columns is plotted as the whole span from its first to its last column, and the window says so. With a rectangle
+  (a residue selection over several rows) <strong>Dot-plot of rectangle</strong> plots its rows over its columns: two rows
+  against each other, one row against itself, and for more rows a small chooser asks which two. In the window, the
+  <strong>A from-to</strong> and <strong>B from-to</strong> boxes (residue numbers of the whole ungapped sequence, 1-based,
+  both ends included) with <strong>Re-plot</strong> do the same by typing; numbers outside the sequence are clamped to it with
+  a message, a <em>from</em> after a <em>to</em> is refused, and <strong>Whole</strong> returns to both full sequences. The
+  title shows the part plotted (for example <code>[41-415 of 470]</code>). Whatever the part, every number stays the
+  residue's real position in the whole sequence: axis, ruler, sliders, the Top Regions list, the collection, and the
+  tint and scrolling in the alignment, so a stretch is marked where it really is. With RevComp B the part is cut first and then
+  reverse-complemented.</p>
+  <p><strong>A pasted sequence.</strong> <strong>Compare with pasted&hellip;</strong> in the window (or <strong>Dot-plot vs
+  pasted sequence&hellip;</strong> in a row's right-click menu) opens a box for raw or FASTA text: only the first record is
+  used, whitespace and digits are dropped, U is read as T, and any letter other than A, C, G, T, N is reported in a
+  warning (the sequence is still plotted). It is plotted against row A, row B, or itself. A pasted sequence has no
+  alignment: the arrow and <strong>Highlight all</strong> mark only the row side, and the strip and sliders use the pasted
+  sequence's own numbering. A preset stores the typed or selected parts; it does not store the pasted text, only that a side
+  was a pasted sequence, and says so when it is loaded.</p>
   <p><strong>Export PNG</strong> saves the whole plot (at least about 1,600 pixels across).
   <strong>Export SVG</strong> saves a vector file in which each diagonal run is one line
   (Dotter runs shaded by their mean identity). Plots are limited to 100 million cells
