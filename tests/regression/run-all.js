@@ -10263,6 +10263,247 @@ check('Dot plot: a preset round trip restores the settings, the colours and the 
   return { pass: ok, detail: JSON.stringify({ stored, saved, changed, loaded, other }) };
 });
 
+// ---- Dot plot ranges (owner, 2026-11-01): compare only chosen parts -------------------------------------------------------
+// Owner: "limit the comparison to the parts I choose": selected columns / residue range, typed ranges, a rectangle, a pasted
+// sequence. Before: the plot always held the whole ungapped rows. Residue numbers are of the WHOLE ungapped sequence, so a
+// range plot must still show real numbers (ruler, sliders, axis) and must hand the alignment real residue coordinates (a
+// slice-relative number would tint and scroll to the wrong place). Row 2 below carries two repeats (u1 twice, u2 twice)
+// and gaps at columns 50-53 and 154-155, so alignment column != residue number.
+function dotRangeFasta() {
+  let sd = 23; const rnd = () => (sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
+  const rs = n => Array.from({ length: n }, () => 'ACGT'[rnd() * 4 | 0]).join('');
+  const u1 = rs(60), u2 = rs(50), lines = [];
+  for (let i = 0; i < 6; i++) {
+    let s = i === 2 ? rs(40) + u1 + rs(60) + u1 + rs(60) + u2 + rs(50) + u2 + rs(40) : rs(470);
+    s = s.slice(0, 50) + '----' + s.slice(50, 150) + '--' + s.slice(150);
+    lines.push('>r' + i + '\n' + s);
+  }
+  return lines.join('\n') + '\n';
+}
+const dotColOfRes = r => r + (r >= 50 ? 4 : 0) + (r >= 150 ? 2 : 0);   // row 2: residue index (0-based) -> alignment column (0-based)
+async function dotRangeMenu(p, row, mode, pick) {
+  if (mode === 'full') await p.click(`.seq-line[data-seq-index="${row}"]:not(.consensus-line) .seq-name`, { button: 'right' });
+  else await p.evaluate((row) => showContextMenu({ pageX: 60, pageY: 60, clientX: 60, clientY: 60, target: document.body, preventDefault() {}, stopPropagation() {} }, row), row);
+  await p.waitForTimeout(200);
+  const items = await p.evaluate(() => [...document.querySelectorAll('.context-menu div')].map(d => d.textContent));
+  if (pick) await p.evaluate((pick) => { const d = [...document.querySelectorAll('.context-menu div')].find(d => d.textContent.startsWith(pick)); if (d) d.click(); }, pick);
+  return items;
+}
+const dotRangeWait = async (p, gen0) => { await p.waitForFunction((g) => _dotPlotState.gen > g && !_dotPlotState.computing && _dotPlotState.rows > 0, gen0, { timeout: 30000 }); await p.waitForTimeout(200); };
+const dotGen = p => p.evaluate(() => _dotPlotState.gen || 0);
+const dotRangeOpen = async p => { if (await p.evaluate(() => document.getElementById('dotPlotRangeRow').hidden)) await p.click('#dotPlotRangeBtn'); };   // the row is hidden until asked for: it would shrink the plot
+const dotRangeClose = p => p.evaluate(() => { const m = document.getElementById('dotPlotModal'); if (m && m.style.display !== 'none') document.getElementById('dotPlotCloseBtn').click(); });
+
+check('Dot plot range: selected columns plot only those residues, with real ruler / slider numbers, and the arrow lands on the real alignment column (Full and Canvas menu)', async (page) => {
+  await loadFasta(page, dotRangeFasta());
+  const out = {};
+  for (const mode of ['full', 'canvas']) {
+    await setMode(page, mode); await page.waitForTimeout(300);
+    await page.evaluate(() => { state.selectedRows.clear(); state.selectedNucs.clear(); state.selectedColumns.clear(); for (let c = 40; c <= 420; c++) state.selectedColumns.add(c); updateColumnSelections(); });
+    const g0 = await dotGen(page);
+    const items = await dotRangeMenu(page, 2, mode, 'Dot-plot of selected columns');
+    out[mode + 'Items'] = items.filter(t => /Dot-plot/.test(t));
+    await dotRangeWait(page, g0);
+    const r = await page.evaluate((dotColOfResSrc) => {
+      const S = _dotPlotState, full = state.seqs[2].seq.replace(/-/g, '');
+      const fullMap = _buildUngappedToAlignMap(state.seqs[2].seq);
+      _dotSetSlide(0, 0);
+      const pa = document.getElementById('dotPlotPosANum'), pb = document.getElementById('dotPlotPosBNum');
+      return { rows: S.rows, cols: S.cols, offA: S.offA, offB: S.offB, same: S.seqA === full.slice(40, 415) && S.seqB === full.slice(40, 415),
+        title: document.getElementById('dotPlotTitle').textContent, numFirst: _dotNumAt('A', 0), numLast: _dotNumAt('A', S.rows - 1),
+        sliderMin: pa.min, sliderMax: pa.max, sliderVal: pa.value, sliderBVal: pb.value, mapOk: S.alignMapA.every((c, i) => c === fullMap[40 + i]),
+        ruler: document.getElementById('dotPlotRulerA').textContent, hover: document.getElementById('dotPlotHover').textContent };
+    });
+    out[mode] = r;
+    // the arrow (show in alignment) of the first listed stretch: marks are real residues inside the planted repeats, and the alignment goes to their column
+    await page.waitForSelector('#dotPlotRegionItems .dot-goto', { timeout: 20000 });
+    await page.click('#dotPlotRegionItems .dot-goto'); await page.waitForTimeout(900);
+    const a = await page.evaluate(() => {
+      const S = _dotPlotState, g = S.regions[0], marks = [...(state.dotRegionMarks?.get(2) || [])].sort((x, y) => x - y);
+      const reps = [[40, 100], [160, 220], [280, 330], [380, 430]];
+      const inRep = m => reps.some(([lo, hi]) => m >= lo - 3 && m < hi + 3);
+      const first = g.aStart + S.offA, col = (r) => r + (r >= 50 ? 4 : 0) + (r >= 150 ? 2 : 0);
+      const cell = document.querySelector('.seq-line[data-seq-index="2"] .seq-data > span[data-pos="' + col(first) + '"]');   // Full only; Canvas has no cell elements
+      const cr = cell && cell.getBoundingClientRect();
+      const top = cr && document.elementFromPoint(cr.left + cr.width / 2, cr.top + cr.height / 2);
+      return { n: marks.length, min: marks[0], max: marks[marks.length - 1], inRep: marks.filter(inRep).length, first, col: col(first),
+        visible: !!cr && cr.top >= 0 && cr.bottom <= innerHeight && cr.left >= 0 && cr.right <= innerWidth, covered: !!(top && top.closest('#dotPlotDialog')),
+        tinted: !!cell && /rgba\(74, 158, 255/.test(getComputedStyle(cell).backgroundColor) };
+    });
+    out[mode + 'Arrow'] = a;
+    await page.evaluate(() => { _dotClearRegionMarks(true); }); await dotRangeClose(page);
+    out[mode + 'Ok'] = out[mode + 'Items'].some(t => /^Dot-plot of selected columns \(self\)/.test(t)) && r.rows === 375 && r.cols === 375 && r.offA === 40 && r.offB === 40 && r.same
+      && /\[41-415 of 470\]/.test(r.title) && r.numFirst === 41 && r.numLast === 415 && r.sliderMin === '41' && r.sliderMax === '415' && r.sliderVal === '41' && r.sliderBVal === '41' && r.mapOk
+      && /A:41\/470/.test(r.hover) && /\b50\b/.test(r.ruler) && !/\b10\b/.test(r.ruler.split('\n')[0])
+      && a.n >= 40 && a.inRep >= a.n * 0.9 && a.min >= 37 && a.max <= 418 && (mode !== 'full' || (a.visible && !a.covered && a.tinted));
+  }
+  // two selected rows -> A vs B over the same columns; a non-contiguous selection plots the span and says so
+  await setMode(page, 'full'); await page.waitForTimeout(300);
+  await page.evaluate(() => { state.selectedNucs.clear(); state.selectedColumns.clear(); [60, 61, 62, 200, 201, 250].forEach(c => state.selectedColumns.add(c)); updateColumnSelections(); state.selectedRows.clear(); state.selectedRows.add(1); state.selectedRows.add(2); });
+  const g1 = await dotGen(page);
+  const items2 = await dotRangeMenu(page, 2, 'full', 'Dot-plot of selected columns');
+  await dotRangeWait(page, g1);
+  out.pair = await page.evaluate(() => ({ a: _dotPlotState.rowIndexA, b: _dotPlotState.rowIndexB, rows: _dotPlotState.rows, offA: _dotPlotState.offA, note: document.getElementById('dotPlotRangeNote').textContent }));
+  const spanRes = (row) => { /* residues of the row inside columns 60..250 */ return null; };
+  out.pairOk = items2.some(t => /Dot-plot of selected columns \(r1 vs r2\)/.test(t)) && out.pair.a === 1 && out.pair.b === 2 && /Non-contiguous/.test(out.pair.note) && /columns 61-251/.test(out.pair.note) && out.pair.rows > 100 && out.pair.rows < 200;
+  const ok = out.fullOk && out.canvasOk && out.pairOk;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+check('Dot plot range: typed A / B ranges re-plot only those residues, clamp with a message, reject bad input, and Whole restores both', async (page) => {
+  await loadFasta(page, dotRangeFasta());
+  await setMode(page, 'full'); await page.waitForTimeout(300);
+  const g0 = await dotGen(page);
+  await page.evaluate(() => { const a = state.seqs[1], c = state.seqs[3]; openDotPlot(a.seq.replace(/[-. ]/g, ''), c.seq.replace(/[-. ]/g, ''), a.header, c.header, { rowIndexA: 1, rowIndexB: 3, alignedSeqA: a.seq, alignedSeqB: c.seq }); });
+  await dotRangeWait(page, g0);
+  const read = () => page.evaluate(() => ({ rows: _dotPlotState.rows, cols: _dotPlotState.cols, offA: _dotPlotState.offA, offB: _dotPlotState.offB, title: document.getElementById('dotPlotTitle').textContent,
+    inp: ['dotPlotRangeAFrom', 'dotPlotRangeATo', 'dotPlotRangeBFrom', 'dotPlotRangeBTo'].map(i => document.getElementById(i).value).join(','), note: document.getElementById('dotPlotRangeNote').textContent,
+    seqs: [_dotPlotState.seqA === state.seqs[1].seq.replace(/-/g, '').slice(_dotPlotState.offA, _dotPlotState.offA + _dotPlotState.rows), _dotPlotState.seqB === state.seqs[3].seq.replace(/-/g, '').slice(_dotPlotState.offB, _dotPlotState.offB + _dotPlotState.cols)],
+    num: [_dotNumAt('A', 0), _dotNumAt('B', 0)] }));
+  const out = { start: await read() };
+  await dotRangeOpen(page);
+  const type = async (a1, a2, b1, b2) => { for (const [id, v] of [['dotPlotRangeAFrom', a1], ['dotPlotRangeATo', a2], ['dotPlotRangeBFrom', b1], ['dotPlotRangeBTo', b2]]) await page.fill('#' + id, String(v)); };
+  // 1. a plain range
+  let g = await dotGen(page);
+  await type(50, 150, 20, 120); await page.click('#dotPlotRangeReplot'); await dotRangeWait(page, g); out.range = await read();
+  // 2. clamping: from 0 and to beyond the end
+  g = await dotGen(page);
+  await type(0, 99999, 400, 99999); await page.click('#dotPlotRangeReplot'); await dotRangeWait(page, g); out.clamp = await read();
+  out.clampMsg = await page.evaluate(() => document.getElementById('toast')?.textContent || document.body.innerText.match(/clamped to[^\n]*/)?.[0] || '');
+  // 3. from after to: rejected, plot unchanged, message
+  g = await dotGen(page);
+  await type(200, 100, 20, 120); await page.click('#dotPlotRangeReplot'); await page.waitForTimeout(500);
+  out.bad = await read(); out.badGen = (await dotGen(page)) === g;
+  // 4. Whole
+  g = await dotGen(page);
+  await page.click('#dotPlotRangeWhole'); await dotRangeWait(page, g); out.whole = await read();
+  const L = 470;
+  const ok = out.start.rows === L && out.start.cols === L && out.start.title.indexOf('[') < 0
+    && out.range.rows === 101 && out.range.cols === 101 && out.range.offA === 49 && out.range.offB === 19 && /\[50-150 of 470\]/.test(out.range.title) && /\[20-120 of 470\]/.test(out.range.title)
+    && out.range.seqs[0] && out.range.seqs[1] && out.range.num[0] === 50 && out.range.num[1] === 20 && out.range.inp === '50,150,20,120'
+    && out.clamp.offA === 0 && out.clamp.rows === L && out.clamp.offB === 399 && out.clamp.cols === 71 && out.clamp.inp === '1,470,400,470' && /clamped/.test(out.clamp.note)
+    && out.badGen && out.bad.rows === out.clamp.rows && /after/.test(out.bad.note)
+    && out.whole.rows === L && out.whole.cols === L && out.whole.offA === 0 && out.whole.offB === 0 && out.whole.title.indexOf('[') < 0 && out.whole.inp === '1,470,1,470';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+check('Dot plot range: a rectangle plots its rows over its columns (two rows A vs B, one row self, more rows ask which two)', async (page) => {
+  await loadFasta(page, dotRangeFasta());
+  await setMode(page, 'full'); await page.waitForTimeout(300);
+  const out = {};
+  const exp = (row, c0, c1) => { const s = [...state.seqs[row].seq]; let b = 0, n = 0; s.forEach((ch, i) => { if (ch === '-') return; if (i < c0) b++; else if (i <= c1) n++; }); return [b + 1, b + n]; };
+  const expSrc = exp.toString();
+  const state2 = () => page.evaluate((src) => {
+    const exp = eval('(' + src + ')'), S = _dotPlotState;
+    return { a: S.rowIndexA, b: S.rowIndexB, rows: S.rows, cols: S.cols, offA: S.offA, offB: S.offB, ra: exp(S.rowIndexA, 100, 200), rb: exp(S.rowIndexB, 100, 200), note: document.getElementById('dotPlotRangeNote').textContent };
+  }, expSrc);
+  // 2 rows
+  await page.evaluate(() => { state.selectedColumns.clear(); state.selectedRows.clear(); _setNucRectangle(1, 100, 2, 200); scheduleNucSelectionRefresh(); });
+  let g = await dotGen(page);
+  let items = await dotRangeMenu(page, 1, 'full', 'Dot-plot of rectangle'); await dotRangeWait(page, g);
+  out.two = await state2(); out.twoItem = items.includes('Dot-plot of rectangle'); await dotRangeClose(page);
+  // 1 row
+  await page.evaluate(() => { state.selectedNucs.clear(); state.selectedNucs.set(1, new Set(Array.from({ length: 101 }, (_, i) => 100 + i))); scheduleNucSelectionRefresh(); });
+  g = await dotGen(page);
+  await dotRangeMenu(page, 1, 'full', 'Dot-plot of rectangle'); await dotRangeWait(page, g);
+  out.one = await state2(); await dotRangeClose(page);
+  // 3 rows: a chooser (not a prompt()) asks which two
+  await page.evaluate(() => { state.selectedNucs.clear(); _setNucRectangle(1, 100, 3, 200); scheduleNucSelectionRefresh(); });
+  g = await dotGen(page);
+  await dotRangeMenu(page, 1, 'full', 'Dot-plot of rectangle'); await page.waitForTimeout(300);
+  out.chooser = await page.evaluate(() => ({ box: !!document.getElementById('dotRectChooser'), opts: [...document.querySelectorAll('#dotRectChooser select')].map(s => s.options.length), modalShown: getComputedStyle(document.getElementById('dotPlotModal')).display !== 'none' }));
+  await page.selectOption('#dotRectRowA', '1'); await page.selectOption('#dotRectRowB', '3'); await page.click('#dotRectChooserOk'); await dotRangeWait(page, g);
+  out.three = await state2(); await dotRangeClose(page);
+  const same = (s, a, b) => s.a === a && s.b === b && s.rows === s.ra[1] - s.ra[0] + 1 && s.cols === s.rb[1] - s.rb[0] + 1 && s.offA === s.ra[0] - 1 && s.offB === s.rb[0] - 1;
+  const ok = out.twoItem && same(out.two, 1, 2) && same(out.one, 1, 1) && out.chooser.box && out.chooser.opts.join() === '3,3' && same(out.three, 1, 3) && /Rectangle: 3 rows/.test(out.three.note);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+check('Dot plot range: a pasted sequence (FASTA or raw) is plotted against a row, the arrow marks only the row side, the sliders use its own numbers, bad letters warn', async (page) => {
+  await loadFasta(page, dotRangeFasta());
+  await setMode(page, 'full'); await page.waitForTimeout(300);
+  const out = {};
+  out.parse = await page.evaluate(() => [_dotParsePasted('acg u 12\nt'), _dotParsePasted('>one two\nAC GT\n>second\nGGGG'), _dotParsePasted('ACGTRYK')].map(p => [p.seq, p.name, p.badCount, _dotBadText(p)]));
+  // a FASTA piece of row 2 (residues 40..219, spans both u1 copies) with line breaks, digits and spaces, as a pasted block
+  const piece = await page.evaluate(() => state.seqs[2].seq.replace(/-/g, '').slice(40, 220));
+  const fasta = '>mypiece test\n' + piece.match(/.{1,30}/g).map((l, i) => (i * 30 + 1) + ' ' + l.replace(/(.{10})/g, '$1 ')).join('\n') + '\n';
+  const g0 = await dotGen(page);
+  await page.evaluate(() => { const s = state.seqs[2]; openDotPlot(s.seq.replace(/[-. ]/g, ''), s.seq.replace(/[-. ]/g, ''), s.header, s.header, { rowIndexA: 2, rowIndexB: 2, alignedSeqA: s.seq, alignedSeqB: s.seq }); });
+  await dotRangeWait(page, g0);
+  await dotRangeOpen(page);
+  await page.click('#dotPlotPasteBtn'); await page.fill('#dotPasteText', fasta);
+  out.radios = await page.evaluate(() => [...document.querySelectorAll('#dotPasteBox input[type=radio]')].map(r => r.value));
+  let g = await dotGen(page);
+  await page.click('#dotPasteBoxOk'); await dotRangeWait(page, g);
+  out.fasta = await page.evaluate((piece) => { const S = _dotPlotState; return { seqB: S.seqB === piece, nameB: S.nameB, rowA: S.rowIndexA, rowB: S.rowIndexB, mapA: !!S.alignMapA, mapB: S.alignMapB, rows: S.rows, cols: S.cols, title: document.getElementById('dotPlotTitle').textContent, note: document.getElementById('dotPlotRangeNote').textContent, regions: S.regions.length }; }, piece);
+  // Highlight all marks only the row side
+  await page.click('#dotPlotHighlightAll'); await page.waitForTimeout(500);
+  out.marks = await page.evaluate(() => { const rows = []; for (let i = 0; i < state.seqs.length; i++) if (state.dotRegionMarks?.get(i)?.size) rows.push(i); return { rows, n: state.dotRegionMarks?.get(2)?.size || 0 }; });
+  // sliders / ruler in the pasted sequence's own numbering
+  out.slide = await page.evaluate(() => { _dotSetSlide(10, 20); const S = _dotPlotState; return { a: document.getElementById('dotPlotPosANum').value, b: document.getElementById('dotPlotPosBNum').value, maxB: document.getElementById('dotPlotPosBNum').max, hover: document.getElementById('dotPlotHover').textContent, meta: document.getElementById('dotPlotAlignMeta').textContent }; });
+  await page.evaluate(() => { _dotClearRegionMarks(true); }); await dotRangeClose(page);
+  // raw paste with a bad letter, against itself, from the row context menu
+  g = await dotGen(page);
+  await dotRangeMenu(page, 2, 'full', 'Dot-plot vs pasted sequence');
+  await page.waitForSelector('#dotPasteText');
+  out.menuRadios = await page.evaluate(() => [...document.querySelectorAll('#dotPasteBox input[type=radio]')].map(r => r.value));
+  await page.fill('#dotPasteText', piece.slice(0, 80).toLowerCase() + ' 99 RYK ' + piece.slice(80, 160).replace(/T/g, 'U'));
+  await page.click('#dotPasteBoxOk'); await dotRangeWait(page, g);
+  out.raw = await page.evaluate(() => { const S = _dotPlotState; return { rowA: S.rowIndexA, rowB: S.rowIndexB, cols: S.cols, nameB: S.nameB, note: document.getElementById('dotPlotRangeNote').textContent, hasU: /U/.test(S.seqB) }; });
+  const ok = out.parse[0].join() === 'ACGTT,pasted sequence,0,' && out.parse[1][0] === 'ACGT' && out.parse[1][1] === 'one two' && out.parse[2][2] === 3 && /K×1/.test(out.parse[2][3])
+    && out.radios.join() === 'A,B,self'
+    && out.fasta.seqB && out.fasta.nameB === 'mypiece test (pasted)' && out.fasta.rowA === 2 && out.fasta.rowB === -1 && out.fasta.mapA && out.fasta.mapB === null && out.fasta.rows === 470 && out.fasta.cols === 180 && out.fasta.regions > 0 && /pasted sequence/.test(out.fasta.note)
+    && out.marks.rows.join() === '2' && out.marks.n >= 40
+    && out.slide.a === '11' && out.slide.b === '21' && out.slide.maxB === '180' && /B:21\/180/.test(out.slide.hover) && !/B \d/.test(out.slide.meta)
+    && out.menuRadios.join() === 'A,B' && out.raw.rowA === 2 && out.raw.rowB === -1 && out.raw.cols === 163 && !out.raw.hasU && /other than A, C, G, T, N/.test(out.raw.note) && /K×1/.test(out.raw.note);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+check('Dot plot range: a preset with a range round-trips (settings, range, stretches, slider position), and a pasted-sequence preset says the text was not stored', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotOpenRow100(page);
+  const waitIdle = () => page.waitForFunction(() => !_dotPlotState.computing, null, { timeout: 30000 });
+  const readRange = () => page.evaluate(() => ({ rows: _dotPlotState.rows, cols: _dotPlotState.cols, offA: _dotPlotState.offA, offB: _dotPlotState.offB, slide: [_dotPlotState.slideRow, _dotPlotState.slideCol],
+    list: (_dotPlotState._markList || []).map(r => [r.aStart, r.aEnd, r.bStart, r.bEnd].join('-')).join(','), marks: state.dotRegionMarks?.get(100)?.size || 0, inp: ['dotPlotRangeAFrom', 'dotPlotRangeATo', 'dotPlotRangeBFrom', 'dotPlotRangeBTo'].map(i => document.getElementById(i).value).join(',') }));
+  let g = await dotGen(page);
+  await dotRangeOpen(page);
+  for (const [id, v] of [['dotPlotRangeAFrom', 30], ['dotPlotRangeATo', 400], ['dotPlotRangeBFrom', 30], ['dotPlotRangeBTo', 400]]) await page.fill('#' + id, String(v));
+  await page.click('#dotPlotRangeReplot'); await dotRangeWait(page, g);
+  await page.waitForFunction(() => _dotPlotState.regions.length > 0, null, { timeout: 10000 });
+  await page.evaluate(() => _dotSetSlide(40, 90));
+  await page.click('#dotPlotHighlightAll'); await page.waitForTimeout(400);
+  await page.click('#dotPlotDockBtn'); await page.waitForTimeout(300);
+  const saved = await readRange();
+  await page.fill('#dotPresetName', 'with range'); await page.click('#dotPresetSave');
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('msaviewer_dotPresets') || '{}')['with range']);
+  // change: Whole, no marks, another slider position
+  g = await dotGen(page);
+  await page.evaluate(() => _dotClearRegionMarks()); await page.click('#dotPlotRangeWhole'); await dotRangeWait(page, g);
+  await page.evaluate(() => _dotSetSlide(5, 6));
+  const changed = await readRange();
+  await page.selectOption('#dotPresetSelect', 'with range'); await page.click('#dotPresetLoad');
+  await page.waitForFunction(() => !_dotPlotState.computing && (_dotPlotState._markList || []).length > 0, null, { timeout: 30000 });
+  await page.waitForTimeout(300);
+  const loaded = await readRange();
+  const loadedNote = await page.evaluate(() => document.getElementById('dotPresetNote').textContent);
+  // a preset of a plot with a pasted side: only the fact is stored
+  await page.evaluate(() => _dotClearRegionMarks(true));
+  const piece = await page.evaluate(() => state.seqs[100].seq.replace(/-/g, '').slice(40, 160));
+  g = await dotGen(page);
+  await page.evaluate((piece) => _dotOpenPasted(_dotParsePasted('>pp\n' + piece), 'A', { seq: state.seqs[100].seq.replace(/-/g, ''), name: state.seqs[100].header, row: 100, range: null }), piece);
+  await dotRangeWait(page, g);
+  await page.fill('#dotPresetName', 'with pasted'); await page.click('#dotPresetSave');
+  const stored2 = await page.evaluate(() => localStorage.getItem('msaviewer_dotPresets'));
+  g = await dotGen(page);
+  await page.selectOption('#dotPresetSelect', 'with pasted'); await page.click('#dotPresetLoad'); await waitIdle(); await page.waitForTimeout(500);
+  const note2 = await page.evaluate(() => document.getElementById('dotPresetNote').textContent);
+  const ok = stored.range.a.join() === '30,400' && stored.range.b.join() === '30,400' && stored.ext === null && saved.rows === 371 && saved.offA === 29 && saved.list.length > 0 && saved.marks > 0
+    && changed.rows === 470 && changed.offA === 0 && changed.marks === 0
+    && loaded.rows === 371 && loaded.cols === 371 && loaded.offA === 29 && loaded.offB === 29 && loaded.inp === '30,400,30,400' && loaded.list === saved.list && loaded.marks === saved.marks && loaded.slide.join() === saved.slide.join()
+    && /pasted/.test(stored2) && !stored2.includes(piece.slice(0, 60)) && /pasted sequence on side B/.test(note2) && /not stored/.test(note2);
+  return { pass: ok, detail: JSON.stringify({ stored: stored.range, saved, changed, loaded, loadedNote, note2 }) };
+});
 check('Dot plot: ruler under the plot has numbers every 10 and ticks every 5, in each sequence\'s own (ungapped) coordinates, also for RevComp B', async (page) => {
   await loadFasta(page, dotAlignFasta());
   await setMode(page, 'canvas'); await page.waitForTimeout(300);
