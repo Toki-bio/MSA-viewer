@@ -198,7 +198,7 @@
                         <div class="slider-container mode-container" style="flex-direction:column;align-items:flex-start;gap:1px;height:auto;">
                             <div style="display:flex;align-items:center;gap:4px;">
                                 <span style="font-size:10px;font-weight:bold;width:70px;text-align:right;">Mode</span>
-                                <input type="radio" id="modeSingle" name="mode" value="single" hidden title="Full: hidden view, open with ?view=full"><label for="modeSingle" hidden style="font-size:10px;margin-right:5px;">Full</label>
+                                <input type="radio" id="modeSingle" name="mode" value="single" hidden title="Full: hidden view, open with ?view=full"><label for="modeSingle" hidden style="font-size:10px;margin-right:5px;">Full</label><span id="modeFullChip" hidden title="Full view (opened with ?view=full or an old preset); pick Block or Canvas to leave it" style="font-size:10px;padding:0 5px;margin-right:5px;border:1px solid #888;border-radius:8px;background:#fff3c4;color:#333;">Full</span>
                                 <input type="radio" id="modeBlocks" name="mode" value="blocks" checked title="Block: fixed-width wrapped blocks with repeating labels, for publication-style layout"><label for="modeBlocks" style="font-size:10px;margin-right:5px;">Block</label>
                                 <input type="radio" id="modeCanvas" name="mode" value="canvas" title="Canvas: draws only the visible region; the default view; everything works here"><label for="modeCanvas" style="font-size:10px;margin-right:5px;">Canvas</label>
                                 <input type="radio" id="modeReads" name="mode" value="reads" title="Reads: IGV-style read tracks for mapped SAM/BAM data against a reference"><label for="modeReads" style="font-size:10px;">Reads</label>
@@ -207,7 +207,7 @@
                                 <label style="font-size:10px;white-space:nowrap;flex:0 0 auto;" title="Dim fully-conserved columns so columns that differ from the consensus stand out"><input type="checkbox" id="highlightDiffs" title="Dim fully-conserved columns so columns that differ from the consensus stand out"> Highlight diffs</label>
                                 <label style="font-size:10px;white-space:nowrap;flex:0 0 auto;" title="Hide fully-conserved columns entirely, showing only columns that differ"><input type="checkbox" id="varSitesOnly" title="Hide fully-conserved columns entirely, showing only columns that differ"> Variable sites only</label>
                                 <span id="varSitesControls" style="display:none;align-items:center;gap:4px;flex:0 0 auto;">
-                                    <select id="varThresholdMode" style="font-size:10px;height:20px;flex:0 0 auto;" title="Whether the number below is a percentage of all sequences, or an absolute sequence count. Percentage rounds up to a whole sequence count (Math.ceil), which on small alignments can jump by more than 1 sequence between adjacent percentages; absolute count has no rounding, so any value from 1 to one less than the sequence count (at most that many can differ) is reachable exactly - including 1, which shows a column the instant even a single sequence differs.">
+                                    <select id="varThresholdMode" style="font-size:10px;height:20px;flex:0 0 auto;" title="Whether the number below is a percentage of all sequences, or an absolute sequence count. Percentage rounds up to a whole sequence count (Math.ceil), which on alignments of more than 100 sequences can jump by more than 1 sequence between adjacent percentages (one percent is then more than one sequence); absolute count has no rounding, so any value from 1 to one less than the sequence count (at most that many can differ) is reachable exactly - including 1, which shows a column the instant even a single sequence differs.">
                                         <option value="pct">%</option>
                                         <option value="count" selected>count</option>
                                     </select>
@@ -979,7 +979,7 @@
             <div id="headerInfoPanel">
                 <!-- Static fallback shown before script.js runs; script.js overwrites it
                      from BUILD_TAG. Keep in sync with BUILD_TAG or it silently rots. -->
-                <div id="versionIndicator">version v179</div>
+                <div id="versionIndicator">version v319</div>
                 <div id="sourceInfo">No file loaded</div>
             </div>
         </div>
@@ -1478,7 +1478,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=7"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=373"></script>
+    <script src="script.js?v=374"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>

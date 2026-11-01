@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.33.3';
-const BUILD_TAG = 'v319';
+const BUILD_TAG = 'v320';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -7219,7 +7219,9 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
 
         // Position scale (10, *, 20, * ...) - only the visible column window, same
         // generateScale() as Full/Block mode; cost is O(visible cols), not alignment length.
-        if (TRACK_H > 0 && firstCol <= lastCol) {
+        // (Both the track and the ruler below are skipped when the region drawn - a vertical-scroll strip - lies
+        // clear of them: the strip's clip discarded them after a whole row of digits and features was built.)
+        if (TRACK_H > 0 && firstCol <= lastCol && TRACK_H - oy > cy0 && -oy < cy1) {
             _canvasDrawAnnotTrack(ctx, { ox, oy, w, NAME_W, CHAR_W, CHAR_H, TRACK_H, firstCol, lastCol, stickyNames, fontSizePx, layer: blockLayout && !ctx._svgRecorder, dpr });
             ctx.font = fontStr;
         }
@@ -7227,7 +7229,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         // letter and ruler digit in a conserved column at 40 % opacity, variable columns in bold.
         const hdCols = document.body.classList.contains('highlight-diffs') ? state._diffColumns : null;
         const scaleY = TRACK_H - oy;
-        if (scaleY + SCALE_H > 0 && scaleY < h && firstCol <= lastCol) {
+        if (scaleY + SCALE_H > 0 && scaleY < h && firstCol <= lastCol && scaleY + SCALE_H > cy0 && scaleY < cy1) {
             // Each digit is drawn in its column's slot (a marker slot shows nothing, like the DOM
             // ruler, but keeps the width). With sticky names the digits stop at the name column,
             // as the DOM's sticky name cell covers them.
@@ -9623,9 +9625,6 @@ function handleOpenBamClick() {
 }
 
 /**
- * Load and parse a BAM or SAM file.
- */
-/**
  * What kind of reads file this is: 'bam', 'cram', 'sam' (by extension) or null.
  * BAM and CRAM are also recognised by content, so a renamed file still routes.
  */
@@ -9786,7 +9785,17 @@ async function cramToSamText(file) {
 const _isReadsIndexName = n => /\.(bai|csi|crai)$/i.test(n || '');
 const _BAM_NO_INDEX_MAX = 512 * 1024 * 1024;
 
+// Load and parse a SAM, BAM or CRAM file. The input is emptied on every path out (early returns included), so
+// picking the same file again after a failed load fires 'change' again (GLM audit fix2 B3).
 async function handleBamFile(event) {
+    try {
+        await _handleBamFileInner(event);
+    } finally {
+        try { if (event && event.target && 'value' in event.target) event.target.value = ''; } catch (_) { /* a synthetic event */ }
+    }
+}
+async function _handleBamFileInner(event) {
+    let kindName = 'BAM';   // the type named in the error message once it is known
     const all = Array.from((event.target && event.target.files) || []);
     const file = all.find(f => !_isReadsIndexName(f.name));
     const indexFile = event.indexFile || all.find(f => /\.bai$/i.test(f.name)) || null;
@@ -9801,6 +9810,7 @@ async function handleBamFile(event) {
     try {
         // the SAM/BAM button comes here directly: sniff the content too, not only the name
         const ext = event.readsKind || await _sniffReadsKind(file) || file.name.split('.').pop().toLowerCase();
+        if (/^(sam|bam|cram)$/.test(ext)) kindName = ext.toUpperCase();
         let buf;
 
         let truncated = false;
@@ -9946,7 +9956,7 @@ async function handleBamFile(event) {
         // Store BAM state
         bamState = {
             reads: shown,                     // drawn
-            sampleName: String(file.name || 'sample').replace(/.(bam|sam|cram)$/i, ''),   // the sample row's name
+            sampleName: String(file.name || 'sample').replace(/\.(bam|sam|cram)$/i, ''),   // the sample row's name
             allReads: matchedReads,           // every read that passed the filters: coverage, sample row
             downsampled: dropped,             // [{ start, end, dropped }] windows that lost reads
             skipped,                          // { reason: count } reads not used (flags)
@@ -9974,7 +9984,7 @@ async function handleBamFile(event) {
         const singleRadio = document.getElementById('modeCanvas');
         if (singleRadio) singleRadio.checked = true;
         const readsRadio = document.getElementById('modeReads');
-        if (readsRadio) readsRadio.checked = true;
+        if (readsRadio) { readsRadio.checked = true; _lastModeRadioId = 'modeReads'; }
 
         renderAlignment();
         updateBamButtonVisibility();
@@ -9995,11 +10005,8 @@ async function handleBamFile(event) {
     } catch (err) {
         statusMessage.style.display = 'none';
         console.error('BAM load error:', err);
-        showMessage('Error loading BAM: ' + err.message, 4000);
+        showMessage('Error loading ' + kindName + ': ' + err.message, 4000);
     }
-
-    // Reset file input so the same file can be re-selected
-    event.target.value = '';
 }
 
 /**
@@ -10292,13 +10299,12 @@ function addSampleRowFromReads() {
     let name = `${bamState.refName}_sample`;
     const fromFile = bamState.sampleName || '';
     const taken = state.seqs.find(s => s.header === name);
-    if (taken && taken._fromReads !== fromFile) name = `${bamState.refName}_${fromFile}`.replace(/s+/g, '_');
+    if (taken && taken._fromReads !== fromFile) name = `${bamState.refName}_${fromFile}`.replace(/\s+/g, '_');
     const existing = state.seqs.findIndex(s => s.header === name && s._fromReads === fromFile);
     if (existing >= 0) {
         state.selectedRows = new Set([existing]);
         state.lastSelectedIndex = existing;
-        const full0 = document.getElementById('modeCanvas');
-        if (full0 && document.getElementById('modeReads')?.checked) full0.checked = true;
+        _leaveReadsForCanvas();
         renderAlignment();
         showMessage(`${name} is already row ${existing + 1} (selected). Another sample: open its reads file, then Sample → row.`, 5000);
         openVariantsPanel();
@@ -10330,8 +10336,7 @@ function addSampleRowFromReads() {
         _fromReads: fromFile
     });
     // to Canvas view: the rows are what codon analysis and MACSE work on (the reads stay loaded for the Reads view)
-    const full = document.getElementById('modeCanvas');
-    if (full) full.checked = true;
+    _leaveReadsForCanvas(true);
     renderAlignment();
     updateBamButtonVisibility();
     const v = res.variants;
@@ -10834,7 +10839,7 @@ function _fillVariantsTable() {
     win.querySelector('#variantsTable').innerHTML = '<thead>' + head + '</thead><tbody>' + (body || `<tr><td colspan="${_VARIANT_COLUMNS.length}">No changes against the reference.</td></tr>`) + '</tbody>';
 }
 
-// The column of reference position p (0-based) in the alignment (Full view), selected and scrolled to
+// The column of reference position p (0-based) in the alignment (any view), selected and scrolled to
 function variantToAlignment(p) {
     const ri = _readsRefRowIndex();
     if (ri < 0) return;
@@ -10842,14 +10847,26 @@ function variantToAlignment(p) {
     let col = -1;
     for (let c = 0, k = 0; c < seq.length; c++) { if (seq[c] === '-' || seq[c] === '.') continue; if (k === p) { col = c; break; } k++; }
     if (col < 0) return;
-    const full = document.getElementById('modeCanvas');
-    if (full && document.getElementById('modeReads')?.checked) full.checked = true;
+    _leaveReadsForCanvas();
     state.selectedColumns.clear();
     state.selectedColumns.add(col);
     state.lastSelectedColumn = col;
     renderAlignment();
     _scrollToColumn(col);
     showMessage(`Column ${(col + 1).toLocaleString()} (${bamState.refName}:${p + 1}) selected`, 2500);
+}
+
+// The Reads paths that hand the user the rows (Sample -> row, a variant jump) switch to Canvas by setting the
+// radio, which bypasses onModeChange: the state it keeps (_lastModeRadioId, the quick switch, the codon panel)
+// is brought along here, or the next real switch took its view anchor from Reads (GLM audit fix2 B5).
+function _leaveReadsForCanvas(always) {
+    if (!always && !document.getElementById('modeReads')?.checked) return;
+    const c = document.getElementById('modeCanvas');
+    if (!c) return;
+    c.checked = true;
+    _lastModeRadioId = 'modeCanvas';
+    syncQuickModeSwitch();
+    syncCodonModePanel();
 }
 
 // The sample called from every read (cached until other reads are loaded): the coverage row, the variants
@@ -10859,7 +10876,7 @@ function variantToAlignment(p) {
 // can shift every position, so it is said (reload the reads)
 function _readsSyncRef() {
     if (!bamState.refSeq || !bamState.refName) return;
-    const ri = state.seqs.findIndex(s => String(s.fullHeader || s.header || '').trim().split(/s+/)[0] === bamState.refName);
+    const ri = state.seqs.findIndex(s => String(s.fullHeader || s.header || '').trim().split(/\s+/)[0] === bamState.refName);
     if (ri < 0) return;
     const cur = state.seqs[ri].seq.replace(/[-.]/g, '').toUpperCase();
     if (cur === bamState.refSeq) return;
@@ -11871,7 +11888,7 @@ function renderAlignment(options = {}) {
     }
 
     // Leaving Canvas: its deferred shading/consensus jobs describe a frame no longer shown.
-    // They were only cancelled by the next Canvas render, and after a switch to Full a row
+    // They were only cancelled by the next Canvas render, and after a switch to a DOM view (Block's old DOM renderer, ?view=full) a row
     // delete made the shading job throw ("reading 'seq'" of a spliced-out row).
     if (_canvasDeferredToken) { _canvasDeferredToken.cancelled = true; _canvasDeferredToken = null; }
 
@@ -13968,7 +13985,8 @@ const ALIGN_CRAZY_VOLUME = 5_000_000;
 // statement is slow.  Alignments at or above this count use the existing
 // windowed DOM renderer (renderUnifiedWindowedDom) instead of the classic
 // full-build path, without affecting the crazy-alignment dialog or the
-// Canvas auto-switch (both still gated by ALIGN_CRAZY_VOLUME).
+// Canvas auto-switch (the crazy dialog is gated by ALIGN_CRAZY_VOLUME, the Canvas default by
+// ALIGN_CANVAS_DEFAULT_RESIDUES).
 // Measured 2026-10 at 300 x 1,000: the full build blocks the page 2.3 s on a
 // switch to Full (1.3 s Block, 1.2 s on load); windowed it is 0.4 s with
 // similar scrolling. Show 2D now draws on windowed views too, so the threshold is 100,000 (owner,
@@ -14782,7 +14800,7 @@ function _syncBlockSizeControl() {
 
 // The quick view switch on the top bar (#quickModeSwitch): a compact segmented control mirroring the
 // Display menu's view radios. One line per view - [Display menu radio, short label, tooltip]; removing a
-// view from the switch is removing its line. Its radios are qm + the radio's name (qmSingle, qmReads...).
+// view from the switch is removing its line. Its radios are qm + the radio's name (qmBlocks, qmCanvas, qmReads).
 const QUICK_VIEW_OPTIONS = [
     ['modeBlocks', 'B', 'Block view: the alignment wrapped in blocks (Block Size in the Display menu)'],
     ['modeCanvas', 'C', 'Canvas view: drawn on a canvas, any size; the default view'],
@@ -14808,6 +14826,33 @@ function _ensureQuickModeSwitch() {
     return sw;
 }
 
+// Full is not offered in either switch (v318), but ?view=full and the old presets still open it, and then no
+// button of the switch is lit: a small "Full" chip says which view this is, only while Full is active
+// (GLM audit fix2 B4). It is a span, not a radio or a label: nothing in it picks a view.
+// The page was opened with ?view=full (or its old name single): the one case where a stored 'single' keeps Full
+function _pageOpenedInFull() {
+    try { const v = (new URLSearchParams(window.location.search).get('view') || '').toLowerCase(); return v === 'full' || v === 'single'; } catch (_) { return false; }
+}
+function _syncFullChip() {
+    const on = !!document.getElementById('modeSingle')?.checked;
+    const sw = document.getElementById('quickModeSwitch');
+    if (sw) {
+        let chip = sw.querySelector('.full-chip');
+        if (!chip && on) {
+            chip = document.createElement('span');
+            chip.className = 'full-chip';
+            chip.textContent = 'Full';
+            chip.title = 'Full view (opened with ?view=full or an old preset); pick Block or Canvas to leave it';
+            // hung under the switch, out of the flow: a chip in the row made the toolbar wrap to a second line
+            if (getComputedStyle(sw).position === 'static') sw.style.position = 'relative';
+            chip.style.cssText = 'position:absolute;right:0;top:100%;z-index:20;font-size:10px;line-height:13px;padding:0 5px;border:1px solid #888;border-radius:8px;background:#fff3c4;color:#333;white-space:nowrap;pointer-events:none;';
+            sw.appendChild(chip);
+        }
+        if (chip) chip.hidden = !on;
+    }
+    const main = document.getElementById('modeFullChip');
+    if (main) main.hidden = !on;
+}
 function syncQuickModeSwitch() {
     _syncBlockSizeControl();
     _ensureQuickModeSwitch();
@@ -14817,6 +14862,7 @@ function syncQuickModeSwitch() {
         if (canonical && quick) quick.checked = canonical.checked;
     }
 
+    _syncFullChip();
     // Shown in every view (owner 2026-10-31); it was shown only in Canvas and Reads, as a way back from them.
     const isReadsMode = document.getElementById('modeReads')?.checked;
     const isCanvasMode = document.getElementById('modeCanvas')?.checked;
@@ -17534,8 +17580,9 @@ function loadPreset() {
         }
     });
     setZoom(_sliderToZoom(_readZoomSliderRaw()));
-    // canvas -> Canvas, blocks -> Block, single (old presets) -> Full, anything else -> Canvas
-    const _pm = p.mode === 'blocks' ? 'blocks' : (p.mode === 'single' ? 'single' : 'canvas');
+    // canvas -> Canvas, blocks -> Block, anything else (an old preset's 'single' too) -> Canvas.
+    // owner 2026-11-01: legacy 'single' -> Canvas; a page opened in Full by ?view=full keeps Full
+    const _pm = p.mode === 'blocks' ? 'blocks' : (p.mode === 'single' && _pageOpenedInFull() ? 'single' : 'canvas');
     el('modeBlocks').checked = _pm === 'blocks';
     el('modeSingle').checked = _pm === 'single';
     if (el('modeCanvas')) el('modeCanvas').checked = _pm === 'canvas';
@@ -17716,9 +17763,11 @@ function _applySnapshotView(view) {
     });
 
     if (view.mode === 'single' || view.mode === 'blocks' || view.mode === 'canvas') {
-        el('modeBlocks').checked = view.mode === 'blocks';
-        el('modeSingle').checked = view.mode === 'single';
-        if (el('modeCanvas')) el('modeCanvas').checked = view.mode === 'canvas';
+        // owner 2026-11-01: legacy 'single' -> Canvas (unless the page itself was opened in Full by ?view=full)
+        const vm = view.mode === 'single' && !_pageOpenedInFull() ? 'canvas' : view.mode;
+        el('modeBlocks').checked = vm === 'blocks';
+        el('modeSingle').checked = vm === 'single';
+        if (el('modeCanvas')) el('modeCanvas').checked = vm === 'canvas';
         onModeChange();
     }
 
@@ -18733,8 +18782,25 @@ function _exportAlignmentAsSvg(mode = 'viewport') {
 // Above PRINT_BLOCK_MAX_CELLS the bands from the one in view on are printed, up to the limit, under a
 // note naming them (the full-alignment SVG export has the rest).
 const PRINT_BLOCK_MAX_CELLS = 400_000;
+// A failed preparation is not retried within the same print: beforeprint and the print media query both call it,
+// and the second call undid the "the print shows the screen only" fallback. Reset when the print ends.
+let _printBlockFailed = false;
 function _preparePrintBlock() {
+    if (_printBlockFailed) return;
     _clearPrintBlock();
+    try {
+        _buildPrintBlock();
+    } catch (e) {
+        // nothing half-made goes to paper: the page prints as it is (the canvas), and the user is told. The whole
+        // band build is covered, not only drawToSvg (an error in _svgDocument or the insert escaped unreported)
+        _printBlockFailed = true;
+        document.getElementById('printBlock')?.remove();
+        document.body.classList.remove('print-block');
+        console.error('Printing Block failed:', e);
+        showMessage('Printing the blocks failed (' + (e && e.message ? e.message : e) + '): the print shows the screen only.', 6000);
+    }
+}
+function _buildPrintBlock() {
     if (!isBlockLayout() || !_canvasState.drawToSvg || !_canvasState.svgBandRegions || !state.seqs?.length) return;
     const bands = _canvasState.svgBandRegions();
     if (!bands || !bands.length) return;
@@ -18778,14 +18844,8 @@ function _preparePrintBlock() {
                 const rowsTo = Math.floor((y + maxH - headerH) / pitch + 1e-6);
                 h = Math.max(pitch, headerH + Math.max(rowsFrom + 1, rowsTo) * pitch - y);
             }
-            let s;
-            try { s = _canvasState.drawToSvg({ ox: 0, oy: r.oy + y, w: r.w, h }, 'p' + (k++) + '_'); } catch (e) {
-                // nothing half-made goes to paper: the page prints as it is (the canvas), and the user is told
-                // (an exception here went on to the beforeprint listener unreported; GLM audit cb5 #7)
-                console.error('Printing Block failed:', e);
-                showMessage('Printing the blocks failed (' + (e && e.message ? e.message : e) + '): the print shows the screen only.', 6000);
-                return;
-            }
+            // an exception here (or below) is caught by _preparePrintBlock, which tells the user (GLM audit cb5 #7)
+            const s = _canvasState.drawToSvg({ ox: 0, oy: r.oy + y, w: r.w, h }, 'p' + (k++) + '_');
             parts.push(_svgDocument(s.parts, s.width, s.height, `${title} band ${b + 1}`, { xmlDecl: false }));
             y += h;
         }
@@ -18816,12 +18876,12 @@ function _clearPrintBlock() {
 }
 if (typeof window !== 'undefined') {
     window.addEventListener('beforeprint', _preparePrintBlock);
-    window.addEventListener('afterprint', _clearPrintBlock);
+    window.addEventListener('afterprint', () => { _printBlockFailed = false; _clearPrintBlock(); });
     // print preview emulation (DevTools, tests) changes the media without the print events
     try {
         window.matchMedia('print').addEventListener('change', e => {
             if (e.matches) { if (!document.getElementById('printBlock')) _preparePrintBlock(); }
-            else _clearPrintBlock();
+            else { _printBlockFailed = false; _clearPrintBlock(); }
         });
     } catch (_) { /* no matchMedia listeners: the print events alone */ }
 }
@@ -28595,7 +28655,7 @@ function isEditModeSupported() {
 // instead of opening a tool panel that appears to work.
 function editModeUnavailableMessage() {
     const mode = el('modeReads')?.checked ? 'Reads' : 'this';
-    return `Editing is not available in ${mode} mode. Switch back to Block/Full/Canvas for editing.`;
+    return `Editing is not available in ${mode} mode. Switch to Canvas or Block for editing.`;
 }
 
 // Leaving edit mode on in a view that cannot service it is the same trap, so drop out of

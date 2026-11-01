@@ -333,7 +333,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <p>Key capabilities:</p>
   <ul>
-    <li><strong>View</strong> - Three visualisation modes in the view switch: Block (wrapped in bands of the Block Size width, narrower when the window holds fewer columns, drawn on a canvas), Canvas (high-performance for massive alignments), and Reads (IGV-style read packing for SAM/BAM data). A fourth, Full (the alignment as page text), is hidden; open it with <code>?view=full</code>.</li>
+    <li><strong>View</strong> - Three visualisation modes in the view switch (Reads joins Block and Canvas once SAM/BAM reads are loaded): Block (wrapped in bands of the Block Size width, narrower when the window holds fewer columns and never wider than the alignment, drawn on a canvas), Canvas (high-performance for massive alignments), and Reads (IGV-style read packing for SAM/BAM data). A fourth, Full (the alignment as page text), is hidden; open it with <code>?view=full</code>.</li>
     <li><strong>Edit</strong> - GeneDoc-style residue editing, Move/Slide tools, undo/redo</li>
     <li><strong>Analyse</strong> - Statistics (distance and identity matrices you can copy or save), codon analysis, dot plots, repeat/TSD finder, tree builder, restriction site search, k-mer / SNP grouping and 2D rectangles</li>
     <li><strong>Colour</strong> - Monochrome conservation shading plus nucleotide, purine/pyrimidine, ambiguity, and amino-acid colour schemes</li>
@@ -1393,7 +1393,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     the default. <strong>Case</strong> shows residues <strong>As in file</strong>, in
     <strong>UPPER</strong> or in <strong>lower</strong> case; it changes only the display,
     not the sequences. The same choice is the <strong>aa | Aa | AA</strong> switch next to
-    the Block / Canvas buttons, in every view (the consensus row keeps its own case).
+    the Block / Canvas (and Reads) buttons, in every view (the consensus row keeps its own case).
   </p>
   <table>
     <tr><th>Scheme</th><th>Use</th></tr>
@@ -1439,7 +1439,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     bases go to a second translation row, so its start or stop codon is still shown; the bases keep the
     first gene's codon positions. In Block mode each block has only the translation rows its genes need:
     none in a block without CDS, a second one only where genes overlap. A gene whose last codon is cut to <code>T</code> or <code>TA</code> (a
-    stop completed by polyadenylation of the mRNA, as GenBank notes it) shows a stop over those bases. A BED
+    stop completed by polyadenylation of the mRNA, as GenBank notes it) shows a stop over those bases, but only when the genetic code in use has TAA as a stop. A BED
     feature counts as a CDS when its description column starts with <code>CDS</code>, or, without a
     description, when its name is not a tRNA, rRNA, origin or control-region name. Loading an annotation
     that looks mitochondrial (tRNAs, rRNAs, ND/COX/ATP/CYTB: at least 10 such features, or every feature,
