@@ -14199,7 +14199,7 @@ check('Hide Full: a preset saved in Canvas loads into Canvas (not Full)', async 
       loadPreset();
       r[m] = document.querySelector('input[name="mode"]:checked')?.id;
     }
-    // an old preset (mode 'single') still opens Full; an unknown mode opens Canvas
+    // an old preset (mode 'single') and an unknown mode open Canvas (owner 2026-11-01: legacy 'single' -> Canvas)
     const raw = JSON.parse(localStorage.getItem('msaviewer_preset_v44'));
     for (const [k, mode] of [['old', 'single'], ['unknown', 'zzz']]) {
       localStorage.setItem('msaviewer_preset_v44', JSON.stringify({ ...raw, mode })); loadPreset();
@@ -14207,7 +14207,8 @@ check('Hide Full: a preset saved in Canvas loads into Canvas (not Full)', async 
     }
     return r;
   });
-  return { pass: out.modeCanvas === 'modeCanvas' && out.modeBlocks === 'modeBlocks' && out.old === 'modeSingle' && out.unknown === 'modeCanvas', detail: JSON.stringify(out) };
+  // owner 2026-11-01: legacy 'single' -> Canvas
+  return { pass: out.modeCanvas === 'modeCanvas' && out.modeBlocks === 'modeBlocks' && out.old === 'modeCanvas' && out.unknown === 'modeCanvas', detail: JSON.stringify(out) };
 }));
 
 check('Hide Full: a variant jump from Reads lands in Canvas, not Full', async (page) => withCanvasBlockPage(page, async (p, origin) => {
@@ -14252,6 +14253,177 @@ check('Hide Full: ?view=full still opens the Full view', async (page) => withCan
   await hfPlain(p, origin, '?view=full');
   const out = await p.evaluate(() => ({ radio: document.querySelector('input[name="mode"]:checked')?.id, single: document.getElementById('modeSingle')?.checked, span: typeof isSpanRenderMode === 'function' ? isSpanRenderMode() : null, canvas: !!document.getElementById('alignmentCanvas') }));
   return { pass: out.radio === 'modeSingle' && out.single === true && out.span === true && !out.canvas, detail: JSON.stringify(out) };
+}));
+
+// ---- GLM fix2 (v319 audit): Reads names with 's', repeated file picks, Full chip, print failures ----
+// Region fixture with the reference renamed to one that holds the letter 's' (the audit's `/s+/` typos split and
+// replaced on the LETTER s, not on whitespace).
+const gfRegion = () => {
+  const fs = require('fs'), path = require('path');
+  const D = path.join(__dirname, '..', 'fixtures', 'reads', 'region');
+  const fa = fs.readFileSync(path.join(D, 'region.fa'), 'utf8').split('region1').join('sess1');
+  const sam = fs.readFileSync(path.join(D, 'reads_40x.sam'), 'utf8').split('region1').join('sess1');
+  return { fa, sam };
+};
+const gfLoadReads = async (p, name = 'a.sam') => {
+  const { fa, sam } = gfRegion();
+  await p.setInputFiles('#fileInput', { name: 'sess.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+  await p.waitForTimeout(1200);
+  await p.setInputFiles('#bamFileInput', { name, mimeType: 'text/plain', buffer: Buffer.from(sam) });
+  await p.waitForTimeout(2500);
+};
+
+check('GLM fix2: B1 editing a reference whose name has an s refreshes the reads calls', async (page) => {
+  await gfLoadReads(page);
+  const out = await page.evaluate(() => {
+    const ri = state.seqs.findIndex(s => s.header === 'sess1');
+    _readsCalls();
+    const s = state.seqs[ri], i = s.seq.indexOf('A', 400);
+    s.seq = s.seq.slice(0, i) + 'C' + s.seq.slice(i + 1);
+    _readsCalls();
+    return { ri, refName: bamState.refName, fresh: bamState.refSeq === s.seq.replace(/[-.]/g, '').toUpperCase() };
+  });
+  return { pass: out.ri >= 0 && out.refName === 'sess1' && out.fresh, detail: JSON.stringify(out) };
+});
+
+check('GLM fix2: B2 a second sample row is named <reference>_<file name>, whitespace to _, letters kept', async (page) => {
+  await gfLoadReads(page, 'a.sam');
+  await page.click('#readsSampleRowButton'); await page.waitForTimeout(1200);
+  const { sam } = gfRegion();
+  await page.setInputFiles('#bamFileInput', { name: 'my sample.sam', mimeType: 'text/plain', buffer: Buffer.from(sam) });
+  await page.waitForTimeout(2500);
+  await page.click('#readsSampleRowButton'); await page.waitForTimeout(1200);
+  const heads = await page.evaluate(() => state.seqs.map(s => s.header));
+  return { pass: heads.includes('sess1_my_sample'), detail: JSON.stringify(heads) };
+});
+
+check('GLM fix2: B3 the reads input is reset after an early return, so the same file can be picked again', async (page) => {
+  const { sam } = gfRegion();
+  await page.setInputFiles('#bamFileInput', { name: 'only.bai', mimeType: 'application/octet-stream', buffer: Buffer.from('BAI\x01') });
+  await page.waitForTimeout(600);
+  const v1 = await page.evaluate(() => document.getElementById('bamFileInput').value);
+  // a SAM whose reference is not loaded: also returns early
+  await page.setInputFiles('#bamFileInput', { name: 'x.sam', mimeType: 'text/plain', buffer: Buffer.from(sam) });
+  await page.waitForTimeout(1500);
+  const v2 = await page.evaluate(() => document.getElementById('bamFileInput').value);
+  return { pass: v1 === '' && v2 === '', detail: JSON.stringify({ v1, v2 }) };
+});
+
+check('GLM fix2: B8 a failed load names the file type, not always BAM', async (page) => {
+  await gfLoadReads(page);
+  await page.setInputFiles('#bamFileInput', { name: 'bad.cram', mimeType: 'application/octet-stream', buffer: Buffer.from('this is not a cram file at all') });
+  await page.waitForTimeout(2000);
+  const msg = await page.evaluate(() => document.getElementById('statusMessage').textContent);
+  return { pass: /Error loading CRAM/.test(msg), detail: msg };
+});
+
+check('GLM fix2: B4 Full active shows a Full chip in both switches; none while Block or Canvas', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await hfPlain(p, origin, '?view=full');
+  const chip = () => p.evaluate(() => ({
+    main: [...document.querySelectorAll('#modeFullChip')].some(e => !e.hidden),   // the main switch sits in the Display menu: not laid out while it is closed
+    quick: [...document.querySelectorAll('#quickModeSwitch .full-chip')].some(e => e.getClientRects().length > 0),
+    radio: document.querySelector('input[name="mode"]:checked')?.id,
+    opt: [...document.querySelectorAll('#quickModeSwitch label')].filter(l => l.getClientRects().length).map(l => l.textContent).join(''),
+  }));
+  const inFull = await chip();
+  await setMode(p, 'canvas'); await p.waitForTimeout(400);
+  const inCanvas = await chip();
+  await setMode(p, 'full'); await p.waitForTimeout(400);
+  const backFull = await chip();
+  await setMode(p, 'block'); await p.waitForTimeout(400);
+  const inBlock = await chip();
+  const ok = inFull.radio === 'modeSingle' && inFull.main && inFull.quick && !inCanvas.main && !inCanvas.quick
+    && backFull.main && backFull.quick && !inBlock.main && !inBlock.quick && inFull.opt === 'BC';
+  return { pass: ok, detail: JSON.stringify({ inFull, inCanvas, backFull, inBlock }) };
+}));
+
+check('GLM fix2: B5 leaving Reads for Canvas by a variant jump updates the mode state', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await hfReads(p, origin);
+  const out = await p.evaluate(() => {
+    const r = {};
+    document.getElementById('modeReads').checked = true; onModeChange();
+    r.inReads = _lastModeRadioId;
+    variantToAlignment(bamState.reads[0].pos);
+    r.afterJump = { last: _lastModeRadioId, radio: document.querySelector('input[name="mode"]:checked')?.id, quick: document.getElementById('qmCanvas')?.checked, readsQuick: document.getElementById('qmReads')?.checked };
+    return r;
+  });
+  const ok = out.inReads === 'modeReads' && out.afterJump.last === 'modeCanvas' && out.afterJump.radio === 'modeCanvas' && out.afterJump.quick === true && out.afterJump.readsQuick === false;
+  return { pass: ok, detail: JSON.stringify(out) };
+}));
+
+// B6/B7: only drawToSvg was guarded in _preparePrintBlock, so an error in _svgDocument went on unreported, and the
+// matchMedia('print') listener ran the preparation a second time after beforeprint had failed.
+check('GLM fix2: B6 an error building the Block print (not only drawToSvg) is reported and leaves the screen print', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const errors = [];
+  p.on('pageerror', e => errors.push(e.message));
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(20, 900));
+  await p.waitForTimeout(500);
+  await p.evaluate(() => { window.__gfOrig = _svgDocument; _svgDocument = () => { throw new Error('gf forced'); }; });
+  await p.emulateMedia({ media: 'print' }); await p.waitForTimeout(400);
+  const r = await p.evaluate(() => ({ msg: (() => { const s = document.getElementById('statusMessage'); return s && s.style.display !== 'none' ? s.textContent : ''; })(), holder: !!document.getElementById('printBlock'), cls: document.body.classList.contains('print-block') }));
+  await p.emulateMedia({ media: 'screen' }); await p.waitForTimeout(300);
+  await p.evaluate(() => { _svgDocument = window.__gfOrig; });
+  return { pass: /Printing the blocks failed/.test(r.msg) && !r.holder && !r.cls && errors.length === 0, detail: JSON.stringify({ r, errors }) };
+}));
+
+check('GLM fix2: B7 after a failed Block print the preparation is not retried within the same print', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, makeFasta(20, 900));
+  await p.waitForTimeout(500);
+  await p.evaluate(() => { window.__gfN = 0; window.__gfOrig = _svgDocument; _svgDocument = () => { window.__gfN++; throw new Error('gf forced'); }; });
+  // the real order of a print: beforeprint, then the print media (the matchMedia listener), then afterprint
+  await p.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+  await p.emulateMedia({ media: 'print' });
+  await p.waitForFunction(() => matchMedia('print').matches); await p.waitForTimeout(800);   // the media listener has run before afterprint is sent
+  const n1 = await p.evaluate(() => window.__gfN);
+  await p.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+  await p.emulateMedia({ media: 'screen' }); await p.waitForTimeout(300);
+  // a later print tries again
+  await p.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+  const n2 = await p.evaluate(() => window.__gfN);
+  await p.evaluate(() => { window.dispatchEvent(new Event('afterprint')); _svgDocument = window.__gfOrig; });
+  return { pass: n1 === 1 && n2 === 2, detail: JSON.stringify({ n1, n2 }) };
+}));
+
+// P1: a vertical scroll redraws only the exposed strip: the annotation track (scrolled clear of it) is not built again
+check('GLM fix2: P1 a small vertical scroll in Canvas does not rebuild the annotation track', async (page) => {
+  await loadFasta(page, makeFasta(150, 400));
+  await setMode(page, 'canvas'); await page.waitForTimeout(500);
+  await page.evaluate(() => setAnnotation('seq0\t10\t90\tg1\t0\t+\nseq0\t120\t200\tg2\t0\t-\n', 'two.bed'));
+  await page.waitForTimeout(800);
+  const out = await page.evaluate(async () => {
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    let n = 0; const orig = _canvasDrawAnnotTrack;
+    _canvasDrawAnnotTrack = (...a) => { n++; return orig(...a); };
+    await raf2();
+    const before = n, hasTrack = !!(state._annotLayout && _canvasState.metrics && _canvasState.metrics.trackH);
+    _canvasState.offsetY += 45; _canvasState.scheduleDraw(); await raf2(); await raf2();
+    const afterScroll = n;
+    _canvasDrawAnnotTrack = orig;
+    return { before, afterScroll, hasTrack, offsetY: _canvasState.offsetY };
+  });
+  return { pass: out.afterScroll - out.before === 0 && out.offsetY > 0, detail: JSON.stringify(out) };
+});
+
+// owner 2026-11-01: legacy 'single' -> Canvas
+check('GLM fix2: legacy \'single\' preset/snapshot opens in Canvas (Full only when the page is in Full by ?view=full)', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  const run = () => p.evaluate(() => {
+    const r = {}, cur = () => document.querySelector('input[name="mode"]:checked')?.id;
+    savePreset();
+    const raw = JSON.parse(localStorage.getItem('msaviewer_preset_v44'));
+    localStorage.setItem('msaviewer_preset_v44', JSON.stringify({ ...raw, mode: 'single' }));
+    loadPreset(); r.preset = cur();
+    document.getElementById('modeBlocks').checked = true; onModeChange();
+    const payload = _buildSnapshotPayload();
+    _applySnapshotView({ ...payload.view, mode: 'single' }); r.snapshot = cur();
+    return r;
+  });
+  await hfPlain(p, origin);
+  const plain = await run();
+  await hfPlain(p, origin, '?view=full');
+  const full = await run();
+  return { pass: plain.preset === 'modeCanvas' && plain.snapshot === 'modeCanvas' && full.preset === 'modeSingle' && full.snapshot === 'modeSingle', detail: JSON.stringify({ plain, full }) };
 }));
 
 async function main() {
