@@ -4548,3 +4548,33 @@ body.name-resizing { user-select: none; }
 .dot-ruler[hidden] { display: none; }
 #dotPlotDockClear { display: none; }
 #dotPlotDialog.dot-docked #dotPlotDockClear:not([hidden]) { display: inline-block; }
+
+/* Search colour hover palette */
+.search-colour-pop {
+    position: fixed;
+    z-index: 10050;
+    display: grid;
+    grid-template-columns: repeat(6, 20px);
+    gap: 4px;
+    padding: 6px;
+    background: #fff;
+    border: 1px solid #aaa;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.search-colour-chip {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid #666;
+    border-radius: 3px;
+    cursor: pointer;
+}
+.search-colour-chip:hover { outline: 2px solid #333; }
+.search-colour-chip.current { outline: 2px solid #0066cc; outline-offset: 1px; }
+.search-colour-more {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    padding: 2px 4px;
+    cursor: pointer;
+}
