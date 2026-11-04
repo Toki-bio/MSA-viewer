@@ -2101,13 +2101,14 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   its own positions. It has no row in the alignment, so, like a pasted sequence, the arrow and <strong>Highlight all</strong> mark only the row side, and a preset
   records only that a side was the consensus and says so when it is loaded.</p>
   <p><strong>Rows edited after the plot.</strong> A dot plot is a snapshot of its rows. Nothing is watched while you edit:
-  the plot compares itself with the live rows only when it is used (the arrow, <strong>Highlight all</strong>, the stretch
-  menu, a preset) and when its window comes back into attention (pointer over it, focus, or leaving the docked bar).
+  the plot compares itself with the live rows when it is used (the arrow, <strong>Highlight all</strong>, the stretch
+  menu, a preset, <strong>Compare with pasted</strong>, opening a plot), when you hover over it (a quick check), and when its window comes back into attention (pointer over it, focus, or leaving the docked bar).
   If only the gaps changed (a realignment, gap edits, deleted gap columns) the plot silently takes the new columns and the marks land in
-  the right place. If residues changed, or the row was deleted, a bar says <em>Row changed since this plot</em>, names the row and
-  marks nothing; the plot itself stays readable. <strong>Re-plot</strong> on the bar plots the current row with the same settings and
-  range (a range that no longer fits is clamped, with a message). Undoing the edit clears the bar at the next check. A row that was moved or renamed
-  is found again. Pasted and consensus sides have no row and are never stale. Marks that were already tinted in the alignment before the
+  the right place. If residues changed, a bar says <em>Row changed since this plot</em>, names the row and
+  marks nothing; the plot itself stays readable. If a row cannot be found (deleted, or renamed and edited) the bar says <em>Row deleted or changed since this plot</em>
+  and names each side: what happened to it. <strong>Re-plot</strong> on the bar plots the current rows with the same settings and
+  range (a range that no longer fits is clamped, or the whole row is plotted, with a message) and says which rows it used; it is offered only when both rows are still found. Undoing the edit clears the bar at the next check. A row that was moved or renamed
+  is found again by its residues, and the plot then shows its new name. Pasted and consensus sides have no row and are never stale. Marks that were already tinted in the alignment before the
   edit are not moved or removed: Clear marks removes them.</p>
   <p><strong>Export PNG</strong> saves the whole plot (at least about 1,600 pixels across).
   <strong>Export SVG</strong> saves a vector file in which each diagonal run is one line
