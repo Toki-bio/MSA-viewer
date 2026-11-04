@@ -2,7 +2,7 @@
 // UI/function call path and asserts specific, correct output - not just
 // "didn't crash."
 const { start } = require('../lib/static-server');
-const { launch, makeFasta, loadFasta, loadSyntheticFasta, setMode } = require('../lib/browser');
+const { launch, makeFasta, loadFasta, loadSyntheticFasta, setMode, closeLaunched } = require('../lib/browser');
 
 const CHECKS = [];
 function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
@@ -1163,7 +1163,10 @@ async function main() {
                     outcome = { pass: false, detail: `threw: ${e.message}` };
                 }
                 ms = Date.now() - t0;
-                if (browser) await withTimeout(browser.close(), 20000).catch(() => {});   // a timed-out check may still hold the page
+                if (browser) await withTimeout(browser.close(), 20000).catch(() => console.warn('[WARN] the browser of "' + name + '" did not close within 20 s'));   // a timed-out check may still hold the page
+                // a check that launched its own browser and timed out never closed it (as in the regression runner; audit3 7)
+                const left = await closeLaunched(10000, browser ? [browser] : []);
+                if (left) console.warn('[WARN] ' + left + ' browser(s) left open by "' + name + '" closed by the runner');
                 return outcome;
             };
             const outcome = await retrier.run(name, attempt);   // rerun only if the machine slept during a failed attempt

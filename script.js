@@ -4482,6 +4482,8 @@ function iupacToBases(code) {
 //  - Copy Selected Consensus
 // Options derive from current UI controls so all paths stay identical.
 // Returns full length consensus string (with gaps retained); caller can strip gaps if needed.
+// The consensus settings as one string: a cached consensus is only valid for the settings it was computed with
+function _consensusOptsKey() { return JSON.stringify(_getConsensusOptions()); }
 function _getConsensusOptions() {
     return {
         threshold: clampConsensusPercent(el('consensusThreshold').value) / 100,
@@ -11842,7 +11844,7 @@ function renderAlignment(options = {}) {
             if (!values && TOTAL_RESIDUES <= 2_000_000) {
                 const consStr = computeConsensusForSequences(state.seqs.map(s => s.seq));
                 values = consStr.split('');
-                state.consensusCache = { len, values: values.slice(), fp: _seqsFingerprint() };
+                state.consensusCache = { len, values: values.slice(), fp: _seqsFingerprint(), opts: _consensusOptsKey() };
                 state.consensusSeq = consStr.replace(/-/g, '');
             }
             consInfo = { values, position: _checkedRadioValue('consensusPosition', 'top'), threshold };
@@ -11886,7 +11888,7 @@ function renderAlignment(options = {}) {
                 computeConsensusForSequencesChunked(state.seqs.map(s => s.seq), (consStr) => {
                     if (myToken.cancelled) return;
                     const cons = consStr.split('');
-                    state.consensusCache = { len, values: cons.slice(), fp: _seqsFingerprint() };
+                    state.consensusCache = { len, values: cons.slice(), fp: _seqsFingerprint(), opts: _consensusOptsKey() };
                     state.consensusSeq = consStr.replace(/-/g, '');
                     if (_canvasState.consensus && _canvasState.consensus.len === len) {
                         _canvasState.consensus.values = cons;
@@ -11925,7 +11927,7 @@ function renderAlignment(options = {}) {
         } else {
             // Use unified helper for consensus computation
             consensus = computeConsensusForSequences(state.seqs.map(s => s.seq)).split('');
-            state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint() };
+            state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint(), opts: _consensusOptsKey() };
         }
     }
     state.consensusSeq = consensus.join('').replace(/-/g, '');
@@ -28783,12 +28785,13 @@ function reshadeChangedColumnsInPlace(cols) {
         const opts = _getConsensusOptions();
         const seqArray = state.seqs.map(s => s.seq);
         let consensus = (state.consensusCache?.len === len) ? state.consensusCache.values.slice() : null;
+        const consOpts = consensus ? state.consensusCache.opts : _consensusOptsKey();   // patched from the old cache: it keeps that cache's settings
         if (consensus) {
             cols.forEach(pos => { consensus[pos] = _computeConsensusCharForColumn(seqArray, pos, opts); });
         } else {
             consensus = computeConsensusForSequences(seqArray).split('');
         }
-        state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint() };
+        state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint(), opts: consOpts };
         state.consensusSeq = consensus.join('').replace(/-/g, '');
         const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;
         consRow.forEach((span, pos) => {
@@ -29021,12 +29024,13 @@ function patchColumnsInPlace(fromPos, oldWidth) {
         const opts = _getConsensusOptions();
         const seqArray = state.seqs.map(s => s.seq);
         let consensus = (state.consensusCache?.len === oldWidth) ? state.consensusCache.values.slice(0, from) : null;
+        const consOpts = consensus ? state.consensusCache.opts : _consensusOptsKey();
         if (consensus) {
             for (let pos = from; pos < len; pos++) consensus[pos] = _computeConsensusCharForColumn(seqArray, pos, opts);
         } else {
             consensus = computeConsensusForSequences(seqArray).split('');
         }
-        state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint() };
+        state.consensusCache = { len, values: consensus.slice(), fp: _seqsFingerprint(), opts: consOpts };
         state.consensusSeq = consensus.join('').replace(/-/g, '');
         // Rebuild the consensus line of every block the edit reaches (one row each; their
         // hover tooltips close over the consensus array, so patching would leave them stale)
@@ -33024,17 +33028,19 @@ function _dotConsensusEntries() {
 // The consensus of the rows as they are now, WITH gaps (columns are alignment columns), computed from the current rows at plot time
 // The cached one (the consensus display's cache, else the last one this function computed for the same rows) or null
 let _dotConsPrivate = null;
-function _dotConsensusCached() {
+function _dotConsensusCached(len = _maxOf(state.seqs, q => q.seq.length), fp = _seqsFingerprint()) {   // len and fp may be passed in: the fingerprint walks every residue, so a caller that also stores computes it once
     if (!state.seqs.length) return '';
-    const len = _maxOf(state.seqs, q => q.seq.length), c = state.consensusCache, fp = _seqsFingerprint();
-    if (c && c.len === len && c.fp === fp) return c.values.join('');
-    if (_dotConsPrivate && _dotConsPrivate.len === len && _dotConsPrivate.fp === fp) return _dotConsPrivate.str;
+    const c = state.consensusCache;
+    const ok = _consensusOptsKey();   // threshold, minimum coverage, type, fallback: a consensus from other settings is not the one the alignment line shows now
+    if (c && c.len === len && c.fp === fp && c.opts === ok) return c.values.join('');
+    if (_dotConsPrivate && _dotConsPrivate.len === len && _dotConsPrivate.fp === fp && _dotConsPrivate.opts === ok) return _dotConsPrivate.str;
     return null;
 }
 function _dotConsensusAligned() {
-    const cached = _dotConsensusCached(); if (cached !== null) return cached;
+    const len = _maxOf(state.seqs, q => q.seq.length), fp = _seqsFingerprint();   // once: the lookup and the store below use the same two
+    const cached = _dotConsensusCached(len, fp); if (cached !== null) return cached;
     const str = computeConsensusForSequences(state.seqs.map(q => q.seq));
-    _dotConsPrivate = { len: _maxOf(state.seqs, q => q.seq.length), fp: _seqsFingerprint(), str };
+    _dotConsPrivate = { len, fp, opts: _consensusOptsKey(), str };
     return str;
 }
 // A consensus of a big alignment takes a third of a second or more (measured 2026-11-04: 330 ms for 1500 x 4000, 800 ms for 5000 x 2000)
@@ -33145,6 +33151,9 @@ function _dotChooseTwoRows(rows, cb, what = 'rectangle') {
     // The box does not block the alignment (it is not modal), so rows may be deleted, undone or moved while it is open: the choice is
     // re-validated at Plot against the rows it was opened with (by object, else by header and residues), and what changed is said.
     const snap = new Map(rows.filter(r => r !== -1).map(r => [r, state.seqs[r]]));
+    // what each row was when the box opened: a residue edit changes the row object in place (so `snap` then holds the EDITED row) and an Undo
+    // puts a NEW object with the old residues in its place, so a row edited and undone is found again by its header and these opening residues
+    const opened = new Map([...snap].map(([r, q]) => [r, q ? { header: q.header, seq: q.seq } : null]));
     const names = new Map(rows.map(r => [r, _dotSideName(r)]));
     const msg = document.createElement('div'); msg.id = 'dotRectMsg'; msg.style.cssText = 'color:#a33;margin-top:6px;min-height:1.2em;'; box.appendChild(msg);
     const resolve = r => {   // the row's index now; -1 = the consensus; null = gone
@@ -33152,14 +33161,26 @@ function _dotChooseTwoRows(rows, cb, what = 'rectangle') {
         const q = snap.get(r); if (!q) return null;
         let i = state.seqs.indexOf(q);
         if (i < 0) i = state.seqs.findIndex(x => x.header === q.header && x.seq === q.seq);
+        const o0 = opened.get(r);
+        if (i < 0 && o0) i = state.seqs.findIndex(x => x.header === o0.header && x.seq === o0.seq);   // edited, then undone: the row is still there
         return i < 0 ? null : i;
     };
     _dotMiniButtons(box, 'Plot', () => {
+        if (!sa.options.length || !sb.options.length || sa.value === '' || sb.value === '') {   // every row it offered has gone: say so, never "undefined"
+            msg.textContent = 'None of the rows offered here is in the alignment any more. Cancel, then choose the rows again.';
+            return;
+        }
         const ra = +sa.value, rb = +sb.value, a = resolve(ra), b = resolve(rb);
         const goneRows = [ra, rb].filter((r, k) => (k ? b : a) === null);
         if (goneRows.length) {
-            msg.textContent = [...new Set(goneRows)].map(r => '"' + names.get(r) + '"').join(' and ') + ' is no longer in the alignment (deleted since this box was opened). Choose another row.';
+            const gone = [...new Set(goneRows)];
+            msg.textContent = gone.map(r => '"' + (names.get(r) ?? 'a row') + '"').join(' and ') + (gone.length > 1 ? ' are' : ' is') + ' no longer in the alignment (deleted or replaced since this box was opened). ' +
+                (sa.options.length > gone.length || sb.options.length > gone.length ? 'Choose another row.' : 'No other row is offered: cancel and choose again.');
             for (const s of [sa, sb]) [...s.options].forEach(o => { if (resolve(+o.value) === null) o.remove(); });
+            // a select whose chosen row was removed shows the first row left (the second select the next one, so the two differ when they can)
+            if (sa.options.length && sa.selectedIndex < 0) sa.selectedIndex = 0;
+            if (sb.options.length && sb.selectedIndex < 0) sb.selectedIndex = sb.options.length > 1 && sb.options[0].value === sa.value ? 1 : 0;
+            if (!sa.options.length || !sb.options.length) msg.textContent = 'None of the rows offered here is in the alignment any more. Cancel, then choose the rows again.';
             return;
         }
         if (a === -1 && b === -1) { msg.textContent = 'The consensus against itself is not a comparison: choose a row for one side.'; return; }
@@ -33235,6 +33256,9 @@ function _dotPasteFromWindow() {
     const read = () => {
         _dotCheckEdits();
         const bad = new Set(S._editStale ? S._editStale.sides.map(x => x.side) : []), { rowA: ra, rowB: rb } = _dotRows();
+        // a self plot (one row on both sides) is checked as ONE comparison, so a change to it is recorded for A only: B is that same row
+        const m = S.meta || {};
+        if (bad.has('A') && Number.isInteger(m.rowIndexA) && m.rowIndexA >= 0 && m.rowIndexB === m.rowIndexA && S.sourceSeqA === S.sourceSeqB) bad.add('B');
         return { rowA: bad.has('A') ? -1 : ra, rowB: bad.has('B') ? -1 : rb, nA: S.nameA, nB: _dotPlotNameB(), key: [...bad].join('') };
     };
     const r0 = read();
@@ -34482,9 +34506,10 @@ function _dotBookmarkLenB(b) {
         // the reverse complement at bStart..bEnd, built from that stretch of the row only (not the whole reverse complement)
         const want = b.seqB.toUpperCase().replace(/U/g, 'T'), n = b.bEnd - b.bStart;
         if (want.length > n) continue;   // the stored stretch is longer than the span: it cannot match
+        // a stored stretch SHORTER than the span (kept to 20 kb, or an older entry) is compared as its prefix, as _dotBookmarkStale does
         let got = '';
-        for (let j = b.bStart; j < b.bStart + n; j++) got += _DOT_COMPLEMENT[u[u.length - 1 - j]] ?? 'N';
-        if (got === want.slice(0, n)) return u.length;
+        for (let j = b.bStart; j < b.bStart + want.length; j++) got += _DOT_COMPLEMENT[u[u.length - 1 - j]] ?? 'N';
+        if (got === want) return u.length;
     }
     return 0;
 }
@@ -34827,6 +34852,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
             `Too large to plot: ${S.seqA.length.toLocaleString()} x ${S.seqB.length.toLocaleString()} positions ` +
             `(limit ${DOT_MAX_CELLS.toLocaleString()} cells, about 10,000 x 10,000). Plot shorter sequences.`;
         _dotRenderRegionList();
+        S.computing = false;   // this is the newest open, so no computation of an earlier one may stay marked as running (its result is dropped by the gen check)
         return;
     }
     if (statusEl) statusEl.textContent = `Computing ${S.seqA.length} x ${S.seqB.length}...`;
