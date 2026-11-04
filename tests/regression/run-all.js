@@ -14178,7 +14178,7 @@ check('Rectangle selection by drag and by two clicks (Full, Canvas); Realign Blo
 check('Dot plot collection audit: hostile stored id, other modal clears marks+peek, recalculation keeps marks, rename survives a re-render, duplicate headers, RevComp here-marker', async (page) => {
   const seqA = 'ACGTTGCAAGGCTTAACCGGTTAAGGCCTTAAGACGTTGCAAGGCTTAACCGGTTAAGGCCTTAAGTTTT';
   const fa = '>dup\n' + seqA + '\n>dup\n' + 'TTGCACCGGAATTCCGGAATTCCAAGGTTGCACCGGAATTCCGGAATTCCAAGGTTCCCC' + '\n>other\n' + seqA.split('').reverse().join('') + '\n';
-  await page.evaluate(() => { localStorage.setItem('msaviewer_dotBookmarks', JSON.stringify([{ id: "x');window.__pwned=1;//", name: 'hostile', nameA: 'dup', nameB: 'dup', aStart: 0, aEnd: 10, bStart: 30, bEnd: 40, seqA: 'ACGTTGCAAG', seqB: 'ACGTTGCAAG' }])); });
+  await page.evaluate(() => { localStorage.setItem('msaviewer_dotBookmarks', JSON.stringify([{ id: "x');window.__pwned=1;//", name: 'hostile', nameA: 'dup', nameB: 'dup', aStart: 0, aEnd: 10, bStart: 33, bEnd: 43, seqA: 'ACGTTGCAAG', seqB: 'ACGTTGCAAG' }])); });
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(400);
   await loadFasta(page, fa); await setMode(page, 'full');
   const r = {};
@@ -14900,6 +14900,203 @@ check('Search colour: hovering the colour box shows a palette; a chip sets the c
   const out = { chips, shown, leaves, stillShown, after, used };
   const ok = chips >= 12 && shown && leaves && stillShown && after.value === '#45b7d1' && after.hidden && String(used).toLowerCase() === '#45b7d1';
   return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// ---- Dot plot numbering (owner, 2026-11-02): every B number shown is the B ROW's own forward residue number ------------
+// Used to be two systems at once: the ruler, strip, slider and typed boxes counted the row's residues, but the axis ticks,
+// hover, crosshair label, frozen message, region list, stretch menu, collection, TSV and Copy FASTA counted the plotted
+// reverse complement (and the FASTA header carried " (RevComp)" with a space and no from-to).
+// Rows: A = 300 random nt; B = 140 random + the reverse complement of A[100..160) + 200 random, so under RevComp B the
+// stretch is a diagonal and B's residue 200 (the last of the embedded block) is where it starts along the axis.
+function dotNumFasta() {
+  let sd = 7; const rnd = () => (sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
+  const rs = n => Array.from({ length: n }, () => 'ACGT'[rnd() * 4 | 0]).join('');
+  const comp = { A: 'T', C: 'G', G: 'C', T: 'A' };
+  const rc = s => [...s].reverse().map(c => comp[c]).join('');
+  const a = rs(300); let b = rs(140) + rc(a.slice(100, 160)) + rs(200);
+  const other = (c) => 'ACGT'.replace(c, '')[0];   // the neighbours of the embedded block must not match by chance (the stretch is then exactly A[100..160))
+  b = b.slice(0, 139) + other(comp[a[160]]) + b.slice(140, 200) + other(comp[a[99]]) + b.slice(201);
+  return '>sA\n' + a + '-'.repeat(100) + '\n>sB\n' + b + '\n';
+}
+async function dotNumOpen(page, rangeB, rc) {
+  await loadFasta(page, dotNumFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await page.evaluate(([rangeB, rc]) => {
+    window.__msgs = []; const sm = showMessage; showMessage = (m, d) => { window.__msgs.push(String(m)); return sm(m, d); };
+    window.__clip = []; Object.defineProperty(navigator, 'clipboard', { configurable: true, get: () => ({ writeText: t => { window.__clip.push(t); return Promise.resolve(); } }) });
+    window.__ft = null; const ft = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (t, x, y, ...r) { if (window.__ft) window.__ft.push({ t: String(t), x, y }); return ft.call(this, t, x, y, ...r); };
+    document.getElementById('dotPlotRevComp').checked = rc;
+    state.dotBookmarks = [];
+    const x = state.seqs[0], y = state.seqs[1];
+    return openDotPlot(x.seq.replace(/[-. ]/g, ''), y.seq.replace(/[-. ]/g, ''), x.header, y.header, { rowIndexA: 0, rowIndexB: 1, alignedSeqA: x.seq, alignedSeqB: y.seq, rangeB });
+  }, [rangeB, rc]);
+  await page.waitForFunction(() => !_dotPlotState.computing && _dotPlotState.rows > 0, null, { timeout: 20000 });
+  await page.waitForTimeout(300);
+}
+async function dotNumProbe(page, rangeB) {
+  await dotNumOpen(page, rangeB, true);
+  return page.evaluate(async () => {
+    const S = _dotPlotState, g = id => document.getElementById(id);
+    const r = S.regions.reduce((m, x) => (x.aEnd - x.aStart > m.aEnd - m.aStart ? x : m), S.regions[0]);
+    const row = r.aStart, col = r.bStart;                       // the chosen plotted cell: where the stretch starts along the axis
+    const comp = { A: 'T', C: 'G', G: 'C', T: 'A' };
+    const rowB = state.seqs[1].seq.replace(/[-. ]/g, '').toUpperCase();
+    const n = S.offB + S.cols - col;                            // the row's own position of that plotted cell (from the geometry, not from the code under test)
+    const out = { n, rev: _dotPlotRevB(), off: S.offB, cols: S.cols, region: [r.aStart, r.aEnd, r.bStart, r.bEnd], oracle: comp[rowB[n - 1]] === S.seqB[col] };
+    g('dotPlotContextRadius').value = '10';
+    // axis tick: the label n sits over the cell
+    window.__ft = []; _dotRender(); const ticks = window.__ft.slice(); window.__ft = null;
+    const cell = _dotCellToScreen(row, col);
+    const tk = ticks.filter(t => t.t === String(n) && t.y < DOT_AXIS_PAD);
+    out.tick = tk.length === 1 && Math.abs(tk[0].x - cell.x) <= 1.5;
+    out.tickTexts = ticks.filter(t => t.y < DOT_AXIS_PAD).map(t => t.t).slice(0, 12);
+    // hover + crosshair label
+    _dotUpdateHoverInfo(row, col, { force: true });
+    const hov = g('dotPlotHover').textContent; out.hover = hov;
+    const hm = /B:(\d+)\/(\d+)/.exec(hov); out.hoverOk = !!hm && +hm[1] === n && +hm[2] === S.fullLenB;
+    const sm = /B\[(\d+)-(\d+)\]/.exec(hov); out.stripOk = !!sm && +sm[1] === n + 10 && +sm[2] === n - 10;   // the strip text: ctx 10 either side, running down
+    window.__ft = []; _dotDrawOverlay(row, col); const lab = window.__ft.slice(); window.__ft = null;
+    out.cross = lab.some(t => t.t === String(n));
+    // ruler: the label n is printed at the cell's column of the ruler
+    const rb = g('dotPlotRulerB').textContent.split('\n')[1] || '';
+    out.rulerOk = rb.slice(9 + 10, 9 + 10 + String(n).length) === String(n);
+    out.panelB = /B +(\d+)  /.exec(g('dotPlotAlignPanel').textContent.split('\n').pop()); out.panelOk = !!out.panelB && +out.panelB[1] === n + 10;
+    // slider and number box
+    _dotSetSlide(row, col);
+    out.slider = [g('dotPlotPosB').value, g('dotPlotPosBNum').value]; out.sliderOk = out.slider.every(v => +v === n);
+    // frozen message
+    S._frozen = true; S._frozenRow = row; S._frozenCol = col; _dotUpdateHoverInfo(row, col); const fr = g('dotPlotHover').textContent; S._frozen = false; S._frozenRow = S._frozenCol = -1;
+    out.frozenOk = new RegExp('^Frozen at A:' + (S.offA + row + 1) + '/\\d+  B:' + n + '/').test(fr);
+    _dotUpdateHoverInfo(row, col, { force: true });
+    // region list, stretch menu, collection and TSV
+    const last = S.offB + S.cols - (r.bEnd - 1);
+    out.listOk = g('dotPlotRegionItems').textContent.replace(/\s+/g, '').includes('B' + n + '-' + last);
+    _dotStretchMenu({ clientX: 5, clientY: 5 }, r);
+    const items = [...document.querySelectorAll('.dot-context-menu > div')]; out.menu = items[0].textContent;
+    out.menuOk = items[0].textContent.includes('B ' + n + '-' + last);
+    items[2].click(); await new Promise(res => setTimeout(res, 100));
+    const fa1 = window.__clip.pop() || ''; out.fa1 = fa1.split('\n').filter(l => l[0] === '>');
+    out.fa1Ok = out.fa1.length === 2 && out.fa1[1] === '>sB_rc_' + n + '-' + last && !/\s/.test(out.fa1[1]);
+    _dotBookmarkRegion(S.regions.indexOf(r));
+    const tsv = _dotBookmarksTsv().split('\n'), cols = tsv[1].split('\t'); out.tsv = cols.slice(4, 8);
+    out.tsvOk = +cols[5] === n && +cols[6] === last && cols[4] === 'sB';
+    out.bmOk = g('dotPlotBookmarkItems').textContent.replace(/\s+/g, '').includes('B' + n + '-' + last);
+    // Copy region FASTA (the button): the diagonal context around the cell
+    _dotUpdateHoverInfo(row, col, { force: true });
+    g('dotPlotCopyRegion').click(); await new Promise(res => setTimeout(res, 100));
+    const fa2 = window.__clip.pop() || ''; out.fa2 = fa2.split('\n').filter(l => l[0] === '>');
+    const hm2 = /^>sB_rc_(\d+)-(\d+)$/.exec(out.fa2[1] || ''); out.fa2Ok = !!hm2 && +hm2[1] === n + 10 && +hm2[2] === n - 10 && /^>sA_\d+-\d+$/.test(out.fa2[0]);
+    return out;
+  });
+}
+const dotNumKeys = ['oracle', 'tick', 'hoverOk', 'stripOk', 'cross', 'rulerOk', 'panelOk', 'sliderOk', 'frozenOk', 'listOk', 'menuOk', 'fa1Ok', 'tsvOk', 'bmOk', 'fa2Ok'];
+check('Dot plot numbering: RevComp B with a B range shows one B residue number (the row\'s own) in the axis tick, hover, crosshair, ruler, strip, slider, frozen message, region list, menu, collection, TSV and Copy FASTA', async (page) => {
+  const o = await dotNumProbe(page, [101, 350]);
+  return { pass: o.n === 200 && o.rev && dotNumKeys.every(k => o[k] === true), detail: JSON.stringify({ bad: dotNumKeys.filter(k => o[k] !== true), o }) };
+});
+check('Dot plot numbering: RevComp B without a range shows the same single B residue number in every place', async (page) => {
+  const o = await dotNumProbe(page, null);
+  return { pass: o.n === 200 && o.rev && dotNumKeys.every(k => o[k] === true), detail: JSON.stringify({ bad: dotNumKeys.filter(k => o[k] !== true), o }) };
+});
+check('Dot plot numbering: a typed range with to = 0 (or below) is refused with a message, not swapped into the wrong end', async (page) => {
+  await dotNumOpen(page, null, false);
+  const out = await page.evaluate(async () => {
+    const g = id => document.getElementById(id), S = _dotPlotState, res = [];
+    for (const [f, t] of [['10', '0'], ['40', '-5'], ['0', '0']]) {
+      window.__msgs.length = 0;
+      g('dotPlotRangeBFrom').value = f; g('dotPlotRangeBTo').value = t; g('dotPlotRangeAFrom').value = ''; g('dotPlotRangeATo').value = '';
+      await _dotRangeReplot(); await new Promise(r => setTimeout(r, 300));
+      res.push({ f, t, cols: S.cols, offB: S.offB, msg: window.__msgs.join('|') });
+    }
+    g('dotPlotRangeBFrom').value = '5'; g('dotPlotRangeBTo').value = '40';   // a good range still works
+    await _dotRangeReplot(); await new Promise(r => setTimeout(r, 500));
+    return { res, after: { cols: S.cols, offB: S.offB } };
+  });
+  const ok = out.res.every(x => x.cols === 400 && x.offB === 0 && /1 or more/.test(x.msg)) && out.after.cols === 36 && out.after.offB === 4;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+check('Dot plot numbering: a collection entry used after the sequence was edited says it changed and marks nothing', async (page) => {
+  await dotNumOpen(page, null, true);
+  const out = await page.evaluate(async () => {
+    const S = _dotPlotState, o = {};
+    const r = S.regions.reduce((m, x) => (x.aEnd - x.aStart > m.aEnd - m.aStart ? x : m), S.regions[0]);
+    _dotBookmarkRegion(S.regions.indexOf(r));
+    const id = state.dotBookmarks[0].id;
+    const cnt = i => { const m = state.dotRegionMarks; const set = m && m.bySeq.get(state.seqs[i]); return set ? set.size : 0; };
+    _dotShowBookmarkInAlignment(id); await new Promise(res => setTimeout(res, 200));
+    o.before = [cnt(0), cnt(1)];   // control: an unedited sequence marks both copies (60 residues each)
+    _dotClearRegionMarks(true);
+    const s1 = state.seqs[1]; s1.seq = s1.seq.slice(0, -7);   // a trim of the last 7 residues of row B since the entry was made (RevComp B counts from that end, so the stretch moves)
+    window.__msgs.length = 0; S.lastRow = -2;
+    _dotShowBookmarkInAlignment(id); await new Promise(res => setTimeout(res, 200));
+    o.after = [cnt(0), cnt(1)]; o.msgShow = window.__msgs.join('|');
+    window.__msgs.length = 0; await _dotGoToBookmark(id); await new Promise(res => setTimeout(res, 200));
+    o.msgGo = window.__msgs.join('|'); o.lastRow = S.lastRow;
+    return o;
+  });
+  const ok = out.before[0] === 60 && out.before[1] === 60 && out.after[0] === 0 && out.after[1] === 0 && /sequence changed since this was saved/.test(out.msgShow) && /sequence changed since this was saved/.test(out.msgGo) && out.lastRow === -2;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+check('Dot plot numbering: flipping RevComp B keeps the marker and both sliders on the same residue (with and without a B range), and flipping back returns', async (page) => {
+  await dotNumOpen(page, [101, 350], false);
+  const read = () => page.evaluate(() => { const S = _dotPlotState, g = id => document.getElementById(id); return { a: _dotNumAt('A', S.slideRow), b: _dotNumAt('B', S.slideCol), sa: g('dotPlotPosA').value, sb: g('dotPlotPosB').value, nb: g('dotPlotPosBNum').value, rev: _dotPlotRevB(), sel: g('dotPlotRevComp').checked }; });
+  const settle = async () => { await page.waitForTimeout(300); await page.waitForFunction(() => !_dotPlotState.computing, null, { timeout: 20000 }); await page.waitForTimeout(300); };
+  const out = {};
+  for (const rg of [[101, 350], null]) {
+    await page.evaluate(async (rg) => { const x = state.seqs[0], y = state.seqs[1]; document.getElementById('dotPlotRevComp').checked = false; await openDotPlot(x.seq.replace(/[-. ]/g, ''), y.seq.replace(/[-. ]/g, ''), x.header, y.header, { rowIndexA: 0, rowIndexB: 1, alignedSeqA: x.seq, alignedSeqB: y.seq, rangeB: rg }); }, rg); await settle();
+    await page.evaluate(() => _dotSetSlide(120, 60)); await page.waitForTimeout(150);
+    const k = rg ? 'rg' : 'whole';
+    out[k] = { s0: await read() };
+    await page.click('#dotPlotRevComp'); await settle(); out[k].flip = await read();
+    await page.click('#dotPlotRevComp'); await settle(); out[k].back = await read();
+  }
+  const same = (x, y) => x.a === y.a && x.b === y.b && +x.sa === x.a && +x.sb === x.b && +x.nb === x.b;
+  const ok = ['rg', 'whole'].every(k => out[k].flip.rev && !out[k].back.rev && same(out[k].s0, out[k].flip) && same(out[k].s0, out[k].back));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+check('Dot plot numbering: a preset saved before the version field (RevComp B, a B range, stretches, slider) restores to the same residues', async (page) => {
+  await dotNumOpen(page, null, false);
+  const out = await page.evaluate(async () => {
+    const S = _dotPlotState, o = {};
+    // as the previous release stored it: whole-sequence PLOTTED coordinates (B along the reverse complement of the whole row), no "version"
+    const legacy = { savedAt: '2026-11-01T00:00:00.000Z',
+      settings: { mode: 'spin', window: 6, threshold: 55, context: 30, revComp: true, live: true, split: false, lowerMode: 'doter', lowerWindow: 11, lowerThreshold: 55, stripLines: 1 },
+      colours: {},
+      stretches: { pair: { nameA: 'sA', nameB: 'sB', lenA: 300, lenB: 400, revB: true }, list: [{ aStart: 100, aEnd: 160, bStart: 200, bEnd: 260 }], slide: { row: 100, col: 200 } },
+      range: { a: null, b: [101, 350] }, ext: null };
+    localStorage.setItem('msaviewer_dotPresets', JSON.stringify({ old: legacy }));
+    _dotPresetList('old'); document.getElementById('dotPresetSelect').value = 'old';
+    window.__msgs.length = 0;
+    await _dotPresetLoad(); await new Promise(r => setTimeout(r, 800));
+    for (let i = 0; i < 100 && S.computing; i++) await new Promise(r => setTimeout(r, 100));
+    const marks = i => { const m = state.dotRegionMarks, set = m && m.bySeq.get(state.seqs[i]); return set ? [Math.min(...set), Math.max(...set), set.size] : null; };
+    o.rev = _dotPlotRevB(); o.offB = S.offB; o.cols = S.cols; o.marksA = marks(0); o.marksB = marks(1);
+    o.slide = [S.slideRow, S.slideCol, _dotNumAt('A', S.slideRow), _dotNumAt('B', S.slideCol), document.getElementById('dotPlotPosB').value]; o.msgs = window.__msgs.join('|');
+    // saving again writes the version
+    document.getElementById('dotPresetName').value = 'new'; _dotPresetSave();
+    o.version = JSON.parse(localStorage.getItem('msaviewer_dotPresets')).new.version;
+    return o;
+  });
+  const ok = out.rev && out.offB === 100 && out.cols === 250 && JSON.stringify(out.marksA) === '[100,159,60]' && JSON.stringify(out.marksB) === '[140,199,60]'
+    && out.slide[2] === 101 && out.slide[3] === 200 && out.slide[4] === '200' && out.version === 2;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+check('Dot plot numbering: Dot-plot of selected columns with a residue selection over 3 or more rows (not a rectangle) asks which two rows', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  const out = await page.evaluate(async () => {
+    // an L-shaped residue selection over rows 3, 4 and 5 (not one rectangle)
+    state.selectedRows = new Set(); state.selectedColumns = new Set();
+    state.selectedNucs = new Map([[3, new Set([10, 11, 12, 13])], [4, new Set([10, 11])], [5, new Set([12, 13, 14])]]);
+    const menu = document.createElement('div'); _dotAddSelectionMenuItems(menu, 3);
+    const item = [...menu.children].find(d => /selected columns/.test(d.textContent)); if (!item) return { noItem: [...menu.children].map(d => d.textContent) };
+    const o = { text: item.textContent };
+    item.click(); await new Promise(r => setTimeout(r, 300));
+    o.chooser = !!document.getElementById('dotRectChooser'); o.opts = document.getElementById('dotRectRowA')?.options.length || 0;
+    return o;
+  });
+  return { pass: !out.noItem && out.chooser && out.opts === 3 && /choose two of 3 rows/.test(out.text), detail: JSON.stringify(out) };
 });
 
 async function main() {
