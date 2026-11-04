@@ -9,7 +9,7 @@ const { launch, closeLaunched, makeFasta, loadFasta, loadSyntheticFasta, setMode
 
 const CHECKS = [];
 function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
-const { createRetrier } = require('../lib/retry-on-sleep');   // a failed check is rerun only if the machine slept during it (2026-11-04)
+const { createRetrier, exitNoMatch } = require('../lib/retry-on-sleep');   // a failed check is rerun only if the machine slept during it (2026-11-04)
 const resumeLib = require('../lib/resume');
 const { withTimeout, checkTimeoutMs } = require('../lib/check-timeout');   // a time limit per check (2026-10-23)
 // Canvas eases a mouse-wheel notch over 150 ms (v276): wait until the view has arrived (no-op in Full/Block)
@@ -15111,6 +15111,7 @@ async function main() {
   // (case-insensitive) - useful for isolating one check while iterating.
   const filter = process.env.CHECK_FILTER ? process.env.CHECK_FILTER.toLowerCase() : null;
   const activeChecks = filter ? CHECKS.filter(c => c.name.toLowerCase().includes(filter)) : CHECKS;
+  if (filter && !activeChecks.length) { server.close(); exitNoMatch(process.env.CHECK_FILTER); }   // a filter that matches nothing is not a pass
   try {
     for (const { name, fn, opts } of activeChecks) {
       if (resume.skip.has(name)) { skipped++; console.log(`[SKIP] ${name} - passed earlier on this commit (--resume)`); continue; }
@@ -15123,29 +15124,30 @@ async function main() {
       // and matches how a real user's single-alignment session behaves
       // rather than compounding this test suite's own churn.
       const attempt = async () => {
-        const browser = await launch();
-        const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-        page.setDefaultTimeout(30000);
+        let browser = null;
         let outcome;
         const t0 = Date.now();
         try {
+          browser = await launch();
+          const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+          page.setDefaultTimeout(30000);
           await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
           outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
         } catch (e) {
           outcome = { pass: false, detail: `threw: ${e.message}` };
         }
         ms = Date.now() - t0;
-        await withTimeout(browser.close(), 20000).catch(() => console.warn('[WARN] the browser of "' + name + '" did not close within 20 s'));   // a timed-out check may still hold the page
+        if (browser) await withTimeout(browser.close(), 20000).catch(() => console.warn('[WARN] the browser of "' + name + '" did not close within 20 s'));   // a timed-out check may still hold the page
         // a check that launched its own browser (launch({ scrollbars: true })) and timed out never closed it
-        const left = await closeLaunched(10000, [browser]);
+        const left = await closeLaunched(10000, browser ? [browser] : []);
         if (left) console.warn('[WARN] ' + left + ' browser(s) left open by "' + name + '" closed by the runner');
         return outcome;
       };
-      // a failed check is rerun (fresh browser, at most 2 times) only if the machine slept during it
+      // a failed check is rerun (fresh browser, at most 2 times) only if the machine slept during the attempt
       const outcome = await retrier.run(name, attempt);
-      console.log(`[${outcome.pass ? 'PASS' : 'FAIL'}] (${ms}ms) ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
+      console.log(`[${retrier.label(outcome)}] (${ms}ms) ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
       results.push({ name, ...outcome });
-      if (outcome.pass) resume.record(name);   // written as each check passes, so a kill loses at most the running one
+      resume.recordResult(name, outcome);   // written as each check passes, so a kill loses at most the running one
     }
   } finally {
     server.close();

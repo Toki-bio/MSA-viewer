@@ -57,14 +57,14 @@ function watch(c, extra) { return startSleepWatch({ now: c.now, autoStart: false
     const c = clock(), w = watch(c), lines = [];
     const r = createRetrier({ watch: w, now: c.now, log: s => lines.push(s) });
     let calls = 0; const ns = [];
-    const attempt = async n => { ns.push(n); const i = calls++; c.adv(2000); if (sleepEach[i]) c.adv(sleepEach[i]); return outcomes[Math.min(i, outcomes.length - 1)]; };
+    const attempt = async n => { ns.push(n); const i = calls++; c.adv(2000); w.tick(); if (sleepEach[i]) c.adv(sleepEach[i]); return outcomes[Math.min(i, outcomes.length - 1)]; };   // tick after the 2 s of work, as the 1 s heartbeat would
     return { r, attempt, lines, calls: () => calls, ns: () => ns };
   }
   const P = { pass: true, detail: '' }, F = { pass: false, detail: 'timed out after 180000 ms' };
   await check('fail + sleep gap: rerun once, the passing rerun is the result, [RETRY] line printed, counted', async () => {
     const s = setup([F, P], [300000, 0]);
     const out = await s.r.run('chk A', s.attempt);
-    return out.pass && s.calls() === 2 && JSON.stringify(s.ns()) === '[0,1]' && /^\[RETRY\] chk A: the machine slept 302 s during this check/.test(s.lines[0]) &&
+    return out.pass && s.calls() === 2 && JSON.stringify(s.ns()) === '[0,1]' && /^\[RETRY\] chk A: slept 300 s during this attempt/.test(s.lines[0]) &&
       s.r.retried.length === 1 && /1 check\(s\) retried/.test(s.r.suffix()) || JSON.stringify({ out, c: s.calls(), l: s.lines });
   });
   await check('fail without a gap: not rerun, no retry counted', async () => {
@@ -94,6 +94,42 @@ function watch(c, extra) { return startSleepWatch({ now: c.now, autoStart: false
     let calls = 0;
     const out = await r.run('chk F', async () => { calls++; c.adv(2000); return F; });
     return !out.pass && calls === 1 || calls;
+  });
+  await check('a retried failure keeps its detail and duration in the [RETRY] line, and the final pass is labelled "PASS after retry"', async () => {
+    const s = setup([{ pass: false, detail: 'wrong result 7' }, P], [300000, 0]);
+    const out = await s.r.run('chk G', s.attempt);
+    return out.pass && out.afterRetry && s.r.label(out) === 'PASS after retry' && /took 302000 ms: wrong result 7/.test(s.lines[0]) && s.r.label(P) === 'PASS' && s.r.label(F) === 'FAIL' || JSON.stringify({ l: s.lines, o: out });
+  });
+  await check('an attempt that throws (browser would not launch) is a failed attempt: no gap = FAIL and the run goes on', async () => {
+    const c = clock(), w = watch(c), lines = [];
+    const r = createRetrier({ watch: w, now: c.now, log: s => lines.push(s) });
+    const out = await r.run('chk H', async () => { c.adv(1000); throw new Error('launch failed'); });
+    const out2 = await r.run('chk H2', async () => P);   // the next check still runs
+    return !out.pass && /threw: launch failed/.test(out.detail) && out2.pass && lines.length === 0 || JSON.stringify({ out, lines });
+  });
+  await check('an attempt that throws while the machine slept is rerun, and the rerun can pass', async () => {
+    const c = clock(), w = watch(c), lines = [];
+    const r = createRetrier({ watch: w, now: c.now, log: s => lines.push(s) });
+    let n = 0;
+    const out = await r.run('chk I', async () => { c.adv(1000); w.tick(); if (n++ === 0) { c.adv(200000); throw new Error('Target closed'); } return P; });
+    return out.pass && out.afterRetry && n === 2 && /Target closed/.test(lines[0]) || JSON.stringify({ out, lines, n });
+  });
+  await check('maxRetries null/false/empty means the default 2, not 0; 0 turns retries off', async () => {
+    // no sleep gap here, so use the stored value through a throwing probe: check the cap via a slept setup
+    const capOf = async v => {
+      const c = clock(), w = watch(c), r = createRetrier({ watch: w, now: c.now, maxRetries: v, log: () => {} });
+      let n = 0; await r.run('x', async () => { n++; c.adv(1000); w.tick(); c.adv(100000); return F; }); return n - 1;
+    };
+    return JSON.stringify([await capOf(null), await capOf(false), await capOf(''), await capOf(undefined), await capOf(0), await capOf(1)]) === '[2,2,2,2,0,1]';
+  });
+  await check('SLEEP_WATCH_TEST_GAP: loud [WARN] at start, and the count line is marked synthetic', async () => {
+    const warns = []; const old = console.warn; console.warn = s => warns.push(s);
+    let w;
+    try { w = startSleepWatch({ env: { SLEEP_WATCH_TEST_GAP: '50:30000' } }); } finally { console.warn = old; }
+    const marked = w.synthetic && /FAKE sleep gap/.test(warns.join('')) && /SYNTHETIC SLEEP GAP ACTIVE/.test(createRetrier({ watch: w }).suffix());
+    w.stop();
+    const plain = createRetrier({ watch: watch(clock()) });
+    return marked && !plain.watch.synthetic && plain.suffix() === '' || JSON.stringify(warns);
   });
   process.exit(fail ? 1 : 0);
 })();

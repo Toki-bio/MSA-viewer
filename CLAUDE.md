@@ -34,7 +34,14 @@ selection; the user considers that a bug.)
 - A check that FAILED while the machine slept (a wall-clock gap above 30 s, `SLEEP_GAP_MS`) is rerun in a
   fresh browser, at most 2 times; the rerun must pass by itself. The log shows `[RETRY] <name>: the machine
   slept N s ...` and the final count line says how many were retried. Passes and failures without a sleep
-  gap are never rerun. The suite time limit in `tests/run-all.js` does not count sleep (regression: 2 h).
+  gap are never rerun. The span is the whole attempt (browser launch, page load, check, close): the log says
+  `slept N s during this attempt`, and a check that failed with the browser failing to launch counts as a failed
+  attempt (retried if the machine slept, else FAIL; the run continues). The failed attempt's detail and duration are
+  printed in the `[RETRY]` line, and a pass after a rerun is labelled `[PASS after retry]`. `SLEEP_WATCH_TEST_GAP`
+  injects a FAKE gap (loud `[WARN]`, marked count line, no passes recorded for resume). The suite time limit in `tests/run-all.js` does not count sleep (regression: 2 h).
+- A `CHECK_FILTER` that matches no check is not a pass: the runner prints `no check matched CHECK_FILTER` and exits 1
+  (alone or with `--only`); under a full `tests/run-all.js` the suite shows as `no match` (neither pass nor fail),
+  and if nothing matched in any suite the whole run exits 1.
 - `node tests/run-all.js --resume` continues an interrupted run: suites and regression checks that passed on
   the SAME commit are skipped; failed and unfinished ones run again. A different commit or uncommitted edits
   to tracked files means a fresh start (it says so). The summary says "resumed: N suites, M checks passed

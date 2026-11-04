@@ -70,7 +70,7 @@ function runSuite(args, limitMs, env) {
       }
     }, 1000);
     child.on('exit', code => { clearInterval(timer); if (escalate) clearTimeout(escalate); resolve({ code, timedOut }); });
-    child.on('error', () => { clearInterval(timer); resolve({ code: 1, timedOut }); });
+    child.on('error', () => { clearInterval(timer); if (escalate) clearTimeout(escalate); resolve({ code: 1, timedOut }); });
   });
 }
 
@@ -133,8 +133,12 @@ const SUITES = [
     if (prior.message) console.log(`[RESUME] ${prior.message}`);
     if (!prior.usable) prior = null;
   }
-  if (!prior) resumeLib.startFresh(progressFile, state);
-  const childEnv = { ...process.env, CHECK_RESUME_FILE: progressFile, CHECK_RESUME: prior ? '1' : '' };
+  let recordFile = progressFile;
+  if (!prior && !resumeLib.startFresh(progressFile, state)) recordFile = '';   // unwritable: warned, no recording, no resume
+  const recordGuard = { baseline: state, root: ROOT };
+  // exit code 3 from a suite = "CHECK_FILTER matched none of my checks" (not a pass, not a failure); with --only the suite exits 1 instead
+  const NOMATCH_EXIT = 3;
+  const childEnv = { ...process.env, CHECK_RESUME_FILE: recordFile, CHECK_RESUME: prior ? '1' : '', ...(only === null ? { CHECK_NOMATCH_EXIT: String(NOMATCH_EXIT) } : {}) };
   let resumedSuites = 0;
   const resumedChecks = prior ? [...prior.checks.values()].reduce((n, set) => n + set.size, 0) : 0;
   if (prior) console.log(`[RESUME] same commit ${state.commit.slice(0, 10)}: ${prior.suites.size} suite(s) and ${resumedChecks} check(s) passed earlier are skipped`);
@@ -147,8 +151,9 @@ const SUITES = [
     const r = await runSuite(suite.args, suiteTimeoutMs(suite), childEnv);
     const seconds = ((Date.now() - t0) / 1000).toFixed(0);
     if (r.timedOut) console.log(`[TIMEOUT] ${suite.name}: killed after ${seconds} s (limit ${suiteTimeoutMs(suite)} ms of awake time)`);
-    const status = r.timedOut ? 'TIMEOUT' : r.code === 0 ? 'pass' : 'FAIL';
-    if (status === 'pass' && !process.env.CHECK_FILTER) resumeLib.record(progressFile, { t: 'suite', key: suiteKey(suite) });   // a filtered pass ran only part of the suite
+    const noMatch = !r.timedOut && process.env.CHECK_FILTER && only === null && r.code === NOMATCH_EXIT;
+    const status = r.timedOut ? 'TIMEOUT' : noMatch ? 'no match' : r.code === 0 ? 'pass' : 'FAIL';
+    if (status === 'pass' && !process.env.CHECK_FILTER) resumeLib.record(recordFile, { t: 'suite', key: suiteKey(suite) }, recordGuard);   // a filtered pass ran only part of the suite
     results.push({ ...suite, status, seconds });
   }
 
@@ -156,6 +161,11 @@ const SUITES = [
   for (const r of results) console.log(`${r.status.padEnd(7)} ${r.seconds ? (r.seconds + ' s').padStart(6) : '      '}  ${r.name}`);
   const failed = results.filter(r => r.status === 'FAIL' || r.status === 'TIMEOUT').length;
   if (prior) console.log(`resumed: ${resumedSuites} suites, ${resumedChecks} checks passed earlier (not rerun in this result)`);
-  console.log(failed ? `\n${failed} suite(s) failed` : '\nall suites passed');
-  process.exit(failed ? 1 : 0);
+  const noMatchCount = results.filter(r => r.status === 'no match').length;
+  const ranOk = results.filter(r => r.status === 'pass').length;
+  if (noMatchCount) console.log(`${noMatchCount} suite(s) had no check matching CHECK_FILTER "${process.env.CHECK_FILTER}" (not counted as passed or failed)`);
+  const nothingRan = noMatchCount > 0 && ranOk === 0 && !failed;   // a filter that matched nothing anywhere is not success
+  if (nothingRan) console.log('no check matched CHECK_FILTER in any suite: nothing was verified');
+  console.log(failed ? `\n${failed} suite(s) failed` : nothingRan ? '\nnothing ran' : '\nall suites passed');
+  process.exit(failed || nothingRan ? 1 : 0);
 })();

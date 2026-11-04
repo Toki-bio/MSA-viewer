@@ -40,11 +40,15 @@ check('progress written on a dirty tree is not reused later either', () => {
   const p = loadProgress(seeded({ commit: A.commit, dirty: true }), A);
   return !p.usable && /uncommitted/.test(p.message) || JSON.stringify(p);
 });
-check('only passes are remembered: a check that failed is never in the file, so it runs again', () => {
+check('only passes are remembered: a failed outcome given to the runner path (recordResult) is never written', () => {
   const f = newFile(); startFresh(f, A);
-  record(f, { t: 'check', suite: 'regression', name: 'passed one' });   // the failed one is simply never recorded
+  const keep = process.env.CHECK_RESUME_FILE; process.env.CHECK_RESUME_FILE = f;
+  const s = forSuite('regression', ROOT, () => A);
+  process.env.CHECK_RESUME_FILE = keep === undefined ? '' : keep; if (keep === undefined) delete process.env.CHECK_RESUME_FILE;
+  s.recordResult('failed one', { pass: false, detail: 'x' });
+  s.recordResult('passed one', { pass: true });
   const p = loadProgress(f, A);
-  return p.checks.get('regression').has('passed one') && !p.checks.get('regression').has('failed one');
+  return p.checks.get('regression').has('passed one') && !p.checks.get('regression').has('failed one') && p.checks.get('regression').size === 1 || JSON.stringify([...p.checks.get('regression')]);
 });
 check('a corrupted progress file is ignored with a message, no crash', () => {
   const f = newFile(); fs.writeFileSync(f, 'this is not json\n{{{');
@@ -65,21 +69,56 @@ check('startFresh overwrites an old file', () => {
   const p = loadProgress(f, A);
   return p.usable && p.suites.size === 0 && p.checks.size === 0;
 });
-check('forSuite: skips only when CHECK_RESUME=1, and records passes to the file', () => {
-  const st = gitState(ROOT);
+check('forSuite: skips only when CHECK_RESUME=1, and records passes to the file (fixed clean state, independent of the real tree)', () => {
+  const st = A, gs = () => A;
   const f = seeded(st);
   const keep = { f: process.env.CHECK_RESUME_FILE, r: process.env.CHECK_RESUME };
   process.env.CHECK_RESUME_FILE = f; process.env.CHECK_RESUME = '';
-  const off = forSuite('regression', ROOT);
+  const off = forSuite('regression', ROOT, gs);
   process.env.CHECK_RESUME = '1';
-  const on = forSuite('regression', ROOT);
+  const on = forSuite('regression', ROOT, gs);
   on.record('New pass');
-  const again = forSuite('regression', ROOT);
+  const again = forSuite('regression', ROOT, gs);
   if (keep.f === undefined) delete process.env.CHECK_RESUME_FILE; else process.env.CHECK_RESUME_FILE = keep.f;
   if (keep.r === undefined) delete process.env.CHECK_RESUME; else process.env.CHECK_RESUME = keep.r;
-  // with uncommitted edits to tracked files the progress must not be reused, so nothing is skipped then
-  if (st.dirty) return off.skip.size === 0 && on.skip.size === 0 || 'dirty tree: expected nothing skipped';
   return off.skip.size === 0 && on.skip.has('Dot plot range') && again.skip.has('New pass') || JSON.stringify([...on.skip]);
+});
+check('a partial last line is ended first, so the next pass is not glued onto it and lost', () => {
+  const f = seeded(A); fs.appendFileSync(f, '{"t":"check","suite":"regres');
+  record(f, { t: 'check', suite: 'regression', name: 'After crash' });
+  const p = loadProgress(f, A);
+  return p.checks.get('regression').has('After crash') && p.checks.get('regression').size === 3 || JSON.stringify([...p.checks.get('regression')]);
+});
+check('startFresh on an unwritable path warns and returns false instead of throwing', () => {
+  const warns = []; const old = console.warn; console.warn = s => warns.push(s);
+  let r;
+  try { r = startFresh(dir, A); } finally { console.warn = old; }   // a directory cannot be written as a file
+  return r === false && /could not create the progress file/.test(warns.join('')) || JSON.stringify({ r, warns });
+});
+check('tracked files changing during the run stop recording, with one warning', () => {
+  const f = newFile(); startFresh(f, A);
+  let status = '';
+  const guard = { baseline: { commit: A.commit, dirty: false, status: '' }, root: ROOT, gitState: () => ({ commit: A.commit, dirty: !!status, status }) };
+  const warns = []; const old = console.warn; console.warn = s => warns.push(s);
+  try {
+    record(f, { t: 'check', suite: 'regression', name: 'before edit' }, guard);
+    status = ' M tests/x.js\n';
+    record(f, { t: 'check', suite: 'regression', name: 'after edit 1' }, guard);
+    status = '';   // even if the tree looks clean again, recording stays stopped
+    record(f, { t: 'check', suite: 'regression', name: 'after edit 2' }, guard);
+  } finally { console.warn = old; }
+  const got = loadProgress(f, A).checks.get('regression');
+  return got.size === 1 && got.has('before edit') && warns.length === 1 || JSON.stringify({ got: [...got], warns });
+});
+check('a real run with SLEEP_WATCH_TEST_GAP set records no passes', () => {
+  const f = newFile(); startFresh(f, A);
+  const keep = process.env.SLEEP_WATCH_TEST_GAP; process.env.SLEEP_WATCH_TEST_GAP = '1000:30000';
+  try { record(f, { t: 'suite', key: 'k' }); } finally { if (keep === undefined) delete process.env.SLEEP_WATCH_TEST_GAP; else process.env.SLEEP_WATCH_TEST_GAP = keep; }
+  return loadProgress(f, A).suites.size === 0;
+});
+check('no commit readable (git missing): the message says so, not "uncommitted changes"', () => {
+  const p = loadProgress(seeded(A), { commit: null, dirty: true });
+  return !p.usable && /git could not report/.test(p.message) && !/uncommitted/.test(p.message) || p.message;
 });
 try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* temp dir */ }
 process.exit(fail ? 1 : 0);

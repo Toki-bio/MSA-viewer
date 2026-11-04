@@ -17,7 +17,7 @@ function startSleepWatch(opts) {
   const intervalMs = o.intervalMs > 0 ? o.intervalMs : 1000;
   const gaps = [];
   let last = now();
-  let timer = null, injectTimer = null;
+  let timer = null, injectTimer = null, synthetic = false;
 
   function tick() {
     const t = now();
@@ -40,11 +40,13 @@ function startSleepWatch(opts) {
     if (timer.unref) timer.unref();
     const inj = /^(\d+):(\d+)$/.exec(env.SLEEP_WATCH_TEST_GAP || '');
     if (inj) {
+      synthetic = true;
+      console.warn(`[WARN] SLEEP_WATCH_TEST_GAP=${env.SLEEP_WATCH_TEST_GAP} is set: a FAKE sleep gap will be injected, so failed checks may be rerun although the machine did not sleep. Not a real result; passes are not recorded for --resume. Unset it for a real run.`);
       injectTimer = setTimeout(() => { const t = now(); gaps.push({ start: t - +inj[2], end: t }); }, +inj[1]);
       if (injectTimer.unref) injectTimer.unref();
     }
   }
-  return { tick, sleptBetween, stop, gaps, thresholdMs };
+  return { tick, sleptBetween, stop, gaps, thresholdMs, get synthetic() { return synthetic; } };
 }
 
 module.exports = { startSleepWatch, DEFAULT_GAP_MS };
