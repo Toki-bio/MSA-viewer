@@ -2093,6 +2093,22 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   alignment: the arrow and <strong>Highlight all</strong> mark only the row side, and the strip and sliders use the pasted
   sequence's own numbering. A preset stores the typed or selected parts; it does not store the pasted text, only that a side
   was a pasted sequence, and says so when it is loaded.</p>
+  <p><strong>The consensus.</strong> The consensus line is separate from the sequences everywhere else; in the dot plot only it
+  can be one of the two sides. <strong>Dot-plot vs consensus</strong> in a row's right-click menu plots the row (A, down)
+  against the consensus (B, across). A residue selection that covers the consensus line and one row plots those two over the
+  selected columns; with the consensus and two or more rows the chooser asks which two, and lists <em>Consensus</em>
+  among them. The consensus is computed from the rows as they are when the plot is made, without gaps, and its numbers are
+  its own positions. It has no row in the alignment, so, like a pasted sequence, the arrow and <strong>Highlight all</strong> mark only the row side, and a preset
+  records only that a side was the consensus and says so when it is loaded.</p>
+  <p><strong>Rows edited after the plot.</strong> A dot plot is a snapshot of its rows. Nothing is watched while you edit:
+  the plot compares itself with the live rows only when it is used (the arrow, <strong>Highlight all</strong>, the stretch
+  menu, a preset) and when its window comes back into attention (pointer over it, focus, or leaving the docked bar).
+  If only the gaps changed (a realignment, gap edits, deleted gap columns) the plot silently takes the new columns and the marks land in
+  the right place. If residues changed, or the row was deleted, a bar says <em>Row changed since this plot</em>, names the row and
+  marks nothing; the plot itself stays readable. <strong>Re-plot</strong> on the bar plots the current row with the same settings and
+  range (a range that no longer fits is clamped, with a message). Undoing the edit clears the bar at the next check. A row that was moved or renamed
+  is found again. Pasted and consensus sides have no row and are never stale. Marks that were already tinted in the alignment before the
+  edit are not moved or removed: Clear marks removes them.</p>
   <p><strong>Export PNG</strong> saves the whole plot (at least about 1,600 pixels across).
   <strong>Export SVG</strong> saves a vector file in which each diagonal run is one line
   (Dotter runs shaded by their mean identity). Plots are limited to 100 million cells

@@ -32814,8 +32814,8 @@ function _dotUpdateHoverInfo(row, col, options = {}) {
     }
     // Where this point sits in the loaded alignment
     if (metaEl) {
-        const colA = S.alignMapA && S.alignMapA[row];
-        const colB = S.alignMapB && S.alignMapB[col];
+        const colA = !S._editStale && S.alignMapA && S.alignMapA[row];   // rows edited since the plot: no columns are claimed
+        const colB = !S._editStale && S.alignMapB && S.alignMapB[col];
         metaEl.textContent = (colA || colB)
             ? `Alignment columns: A ${colA || '-'}, B ${colB || '-'}`
             : '';
@@ -32918,7 +32918,7 @@ function _dotSyncRangeInputs() {
     if (rowEl) rowEl.hidden = !(S._rangeOpen || S.ext || (S.fullLenA && S.seqA.length < S.fullLenA) || (S.fullLenB && S.seqB.length < S.fullLenB) || S.rangeNote);
     const note = g('dotPlotRangeNote');
     if (note && !S._rangeNoteKeep) {
-        note.textContent = (S.ext ? `${S.ext.side === 'AB' ? 'Both sides' : 'Side ' + S.ext.side} is the pasted sequence "${S.ext.name}" (no alignment map: the arrow and Highlight all mark only the row side). ` : '') +
+        note.textContent = (S.ext ? `${S.ext.side === 'AB' ? 'Both sides' : 'Side ' + S.ext.side} ${S.ext.cons ? 'is the consensus, computed from the rows when this was plotted' : `is the pasted sequence "${S.ext.name}"`} (no alignment map: the arrow and Highlight all mark only the row side). ` : '') +
             (S.rangeNote || '');
     }
     S._rangeNoteKeep = false;
@@ -32973,8 +32973,14 @@ function _dotColsToRange(alignedSeq, c0, c1) {
 }
 // Two rows (or one row against itself) over alignment columns c0..c1, or whole when cols is null
 function _dotOpenRows(rowA, rowB, cols, note) {
-    const sA = state.seqs[rowA], sB = state.seqs[rowB];
-    if (!sA || !sB) return Promise.resolve();
+    // a side is an alignment row, or -1 = the consensus (computed now, ungapped; no row behind it, so like a pasted side it is
+    // never stale and the arrow marks only the row side)
+    const side = r => {
+        if (r === -1) { const al = _dotConsensusAligned(); return al ? { seq: al, header: 'Consensus', cons: true } : null; }
+        const q = state.seqs[r]; return q ? { seq: q.seq, header: q.header, cons: false } : null;
+    };
+    const sA = side(rowA), sB = side(rowB);
+    if (!sA || !sB) { if (rowA === -1 || rowB === -1) showMessage('There is no consensus to plot.', 2500); return Promise.resolve(); }
     const ung = s => s.seq.replace(/[-. ]/g, '');
     let rangeA = null, rangeB = null;
     if (cols) {
@@ -32982,10 +32988,11 @@ function _dotOpenRows(rowA, rowB, cols, note) {
         const none = !rangeA ? sA.header : (!rangeB ? sB.header : '');
         if (none) { showMessage(`${none} has no residues in columns ${cols.c0 + 1}-${cols.c1 + 1}: nothing to plot.`, 3500); return Promise.resolve(); }
     }
-    return openDotPlot(ung(sA), ung(sB), sA.header, sB.header, {
-        rowIndexA: rowA, rowIndexB: rowB, alignedSeqA: sA.seq, alignedSeqB: sB.seq, rangeA, rangeB,
-        note: note || '', cols: cols ? [cols.c0 + 1, cols.c1 + 1] : null
-    });
+    const meta = { rangeA, rangeB, note: note || '', cols: cols ? [cols.c0 + 1, cols.c1 + 1] : null };
+    if (!sA.cons) { meta.rowIndexA = rowA; meta.alignedSeqA = sA.seq; }
+    if (!sB.cons) { meta.rowIndexB = rowB; meta.alignedSeqB = sB.seq; }
+    if (sA.cons || sB.cons) meta.ext = { side: sA.cons && sB.cons ? 'AB' : sA.cons ? 'A' : 'B', name: 'Consensus', cons: true };
+    return openDotPlot(ung(sA), ung(sB), sA.header, sB.header, meta);
 }
 // The selected alignment columns as a span (selected columns, or a residue selection that is not one rectangle)
 function _dotSelectedColumns() {
@@ -33000,7 +33007,23 @@ function _dotSelectedColumns() {
     return { c0, c1, count: cols.size, contiguous: cols.size === c1 - c0 + 1 };
 }
 // The rows a column-based plot uses: the two selected rows, the rows a residue selection covers (1 or 2), else the clicked row
+// The consensus line is separate from the sequences (index -1 in selectedNucs) and stays so everywhere else; in the dot plot only
+// (owner, 2026-11-04) a residue selection that covers it plus rows makes it a choosable side: [rows..., -1], else null
+function _dotConsensusEntries() {
+    const n = state.selectedNucs;
+    if (!n || !n.size || !n.has(-1) || (state.selectedColumns && state.selectedColumns.size)) return null;
+    const rows = [...n.keys()].filter(r => r >= 0 && state.seqs[r]).sort((a, b) => a - b);
+    return rows.length ? [...rows, -1] : null;
+}
+// The consensus of the rows as they are now, WITH gaps (columns are alignment columns), computed from the current rows at plot time
+function _dotConsensusAligned() {
+    if (!state.seqs.length) return '';
+    const len = _maxOf(state.seqs, q => q.seq.length), c = state.consensusCache;
+    return (c && c.len === len && c.fp === _seqsFingerprint()) ? c.values.join('') : computeConsensusForSequences(state.seqs.map(q => q.seq));
+}
+function _dotSideName(r) { return r === -1 ? 'Consensus' : state.seqs[r].header; }
 function _dotSelectionRows(index) {
+    const ce = _dotConsensusEntries(); if (ce && ce.length === 2) return ce;   // one row and the consensus: A = the row, B = the consensus
     if (state.selectedRows.size === 2) return Array.from(state.selectedRows).sort((a, b) => a - b);
     if (!(state.selectedColumns && state.selectedColumns.size) && state.selectedNucs && state.selectedNucs.size) {
         const rows = [...state.selectedNucs.keys()].filter(r => state.seqs[r]).sort((a, b) => a - b);
@@ -33010,6 +33033,7 @@ function _dotSelectionRows(index) {
 }
 // The residue selection as one rectangle: { rows, c0, c1 } (one row is a range of one row), or null
 function _dotRectSelection() {
+    if (state.selectedNucs && state.selectedNucs.has(-1)) return null;   // a selection that covers the consensus goes the columns way (the consensus is a choosable side there)
     const r = typeof _nucSelectionRectangle === 'function' ? _nucSelectionRectangle() : null;
     if (r) return { rows: r.rows, c0: r.c0, c1: r.c1 };
     if (state.selectedNucs && state.selectedNucs.size === 1) {
@@ -33022,6 +33046,7 @@ function _dotRectSelection() {
 }
 // A residue selection over 3 or more rows that is not one rectangle: the rows it covers, to choose two of (else null)
 function _dotSelectionManyRows() {
+    const ce = _dotConsensusEntries(); if (ce && ce.length >= 3) return ce;   // the consensus is one of the entries to choose two of
     if (state.selectedRows.size === 2) return null;
     if ((state.selectedColumns && state.selectedColumns.size) || !state.selectedNucs || !state.selectedNucs.size) return null;
     const rows = [...state.selectedNucs.keys()].filter(r => state.seqs[r]).sort((a, b) => a - b);
@@ -33033,8 +33058,8 @@ function _dotAddSelectionMenuItems(menu, index) {
     const add = (text, fn) => { const d = document.createElement('div'); d.textContent = text; d.addEventListener('click', () => { closeContextMenu(); fn(); }); menu.appendChild(d); };
     const sel = _dotSelectedColumns();
     if (sel) {
-        const many = _dotSelectionManyRows(), rows = _dotSelectionRows(index), h = i => state.seqs[i].header;
-        add(many ? `Dot-plot of selected columns (choose two of ${many.length} rows)` : rows.length === 2 ? `Dot-plot of selected columns (${h(rows[0])} vs ${h(rows[1])})` : 'Dot-plot of selected columns (self)', () => {
+        const many = _dotSelectionManyRows(), rows = _dotSelectionRows(index), h = _dotSideName;
+        add(many ? (many.includes(-1) ? `Dot-plot of selected columns (choose two of ${many.length - 1} rows and the consensus)` : `Dot-plot of selected columns (choose two of ${many.length} rows)`) : rows.length === 2 ? `Dot-plot of selected columns (${h(rows[0])} vs ${h(rows[1])})` : 'Dot-plot of selected columns (self)', () => {
             const note = sel.contiguous ? `${_dotColsText(sel)}.` : `Non-contiguous selection (${sel.count} columns): the whole span ${_dotColsText(sel)} is plotted, including the columns between the selected ones.`;
             if (!sel.contiguous) showMessage(note, 5000);
             if (many) _dotChooseTwoRows(many, (a, b) => _dotOpenRows(a, b, sel, note + ` Rows ${h(a)} and ${h(b)}.`), 'selection');   // 3 or more rows covered: ask, as for the rectangle
@@ -33046,9 +33071,10 @@ function _dotAddSelectionMenuItems(menu, index) {
         add('Dot-plot of rectangle', () => {
             const note = `Rectangle: ${rect.rows.length} row${rect.rows.length === 1 ? '' : 's'} x ${_dotColsText(rect)}.`;
             if (rect.rows.length <= 2) _dotOpenRows(rect.rows[0], rect.rows.length === 2 ? rect.rows[1] : rect.rows[0], rect, note);
-            else _dotChooseTwoRows(rect.rows, (a, b) => _dotOpenRows(a, b, rect, note + ` Rows ${state.seqs[a].header} and ${state.seqs[b].header}.`));
+            else _dotChooseTwoRows(rect.rows, (a, b) => _dotOpenRows(a, b, rect, note + ` Rows ${_dotSideName(a)} and ${_dotSideName(b)}.`));
         });
     }
+    add('Dot-plot vs consensus', () => _dotOpenRows(index, -1, null, 'Row vs the consensus (computed from the rows now).'));
     add('Dot-plot vs pasted sequence…', () => {
         const s = state.seqs[index];
         _dotAskPasted({
@@ -33082,12 +33108,12 @@ function _dotMiniButtons(box, okText, onOk) {
 }
 // A rectangle of more than two rows: which two to plot
 function _dotChooseTwoRows(rows, cb, what = 'rectangle') {
-    const box = _dotMiniBox('dotRectChooser', `The ${what} holds ${rows.length} rows: which two should be plotted?`);
+    const nc = rows.includes(-1), box = _dotMiniBox('dotRectChooser', `The ${what} holds ${rows.length - (nc ? 1 : 0)} rows${nc ? ' and the consensus' : ''}: which two should be plotted?`);
     const mk = (label, sel) => {
         const l = document.createElement('label'); l.style.cssText = 'display:flex;gap:8px;align-items:center;margin:4px 0;';
         l.appendChild(document.createTextNode(label));
         const s = document.createElement('select'); s.style.maxWidth = '380px';
-        rows.forEach((r, i) => { const o = document.createElement('option'); o.value = String(r); o.textContent = `${i + 1}. ${state.seqs[r].header}`; s.appendChild(o); });
+        rows.forEach((r, i) => { const o = document.createElement('option'); o.value = String(r); o.textContent = `${i + 1}. ${_dotSideName(r)}`; s.appendChild(o); });
         s.selectedIndex = sel; l.appendChild(s); box.appendChild(l); return s;
     };
     const sa = mk('A (down)', 0), sb = mk('B (across)', 1);
@@ -33155,7 +33181,8 @@ async function _dotOpenPasted(parsed, choice, keep) {
 function _dotPasteFromWindow() {
     const S = _dotPlotState;
     if (!(S.sourceSeqA && S.sourceSeqB)) return;
-    const { rowA, rowB } = _dotRows(), nA = S.nameA, nB = _dotPlotNameB();
+    _dotCheckEdits();
+    const stale = !!S._editStale, { rowA: ra, rowB: rb } = _dotRows(), rowA = stale ? -1 : ra, rowB = stale ? -1 : rb, nA = S.nameA, nB = _dotPlotNameB();   // a changed row is kept as plain text, without its alignment row
     _dotAskPasted({
         sides: [{ value: 'A', label: `${nA} (A) down, pasted across` }, { value: 'B', label: `pasted down, ${nB} (B) across` }, { value: 'self', label: 'The pasted sequence against itself' }],
         onOk: (parsed, choice) => {
@@ -33356,7 +33383,7 @@ function _dotPresetCapture() {
             a: S.seqA.length < S.fullLenA ? [S.offA + 1, S.offA + S.seqA.length] : null,
             b: S.seqB.length < S.fullLenB ? [S.offB + 1, S.offB + S.seqB.length] : null
         },
-        ext: S.ext ? { side: S.ext.side, name: S.ext.name, lenA: S.fullLenA, lenB: S.fullLenB } : null
+        ext: S.ext ? { side: S.ext.side, name: S.ext.name, lenA: S.fullLenA, lenB: S.fullLenB, cons: !!S.ext.cons } : null
     };
 }
 function _dotPresetList(selectName) {
@@ -33440,19 +33467,22 @@ async function _dotPresetLoad() {
     let msg = `Preset "${name}": settings and colours loaded.`;
     if (rg && (rg.a || rg.b)) msg += ' Range restored (' + [rg.a ? `A ${rg.a[0]}-${rg.a[1]}` : '', rg.b ? `B ${_dotPlotRevB() ? rg.b[1] + '-' + rg.b[0] : rg.b[0] + '-' + rg.b[1]}` : ''].filter(Boolean).join(', ') + ').';
     if (p.ext && typeof p.ext === 'object') {
-        const txt = `This preset was saved with a pasted sequence on side ${p.ext.side} ("${p.ext.name}"). The pasted text is not stored: paste it again with "Compare with pasted..."`;
+        const txt = p.ext.cons ? `This preset was saved with the consensus on side ${p.ext.side}. The consensus is not stored: it is computed from the rows when plotted, so plot it again with "Dot-plot vs consensus"`
+            : `This preset was saved with a pasted sequence on side ${p.ext.side} ("${p.ext.name}"). The pasted text is not stored: paste it again with "Compare with pasted..."`;
         msg += ' ' + txt + '.';
         if (note) note.textContent = txt;
     }
     if (same) {
+        const fresh = _dotCheckEdits();   // rows edited since the plot was made: nothing is marked from stale coordinates
         const { rowA, rowB } = _dotRows();
-        const ok = list.filter(r => r && [r.aStart, r.aEnd, r.bStart, r.bEnd].every(Number.isInteger) && r.aEnd > r.aStart && r.bEnd > r.bStart
+        const ok = !fresh ? [] : list.filter(r => r && [r.aStart, r.aEnd, r.bStart, r.bEnd].every(Number.isInteger) && r.aEnd > r.aStart && r.bEnd > r.bStart
             && r.aStart >= S.offA && r.aEnd <= S.offA + S.rows && r.bStart >= S.dispOffB && r.bEnd <= S.dispOffB + S.cols);   // inside what is plotted now
         _dotClearRegionMarks(true);
         if (ok.length && (rowA >= 0 || rowB >= 0)) {
             _dotMarkStretches(rowA, rowB, ok, _dotPlotRevB(), { dock: false });
             msg += ` ${ok.length} stretch${ok.length === 1 ? '' : 'es'} restored.`;
-        } else if (ok.length) msg += ' The stretches could not be shown: this dot plot was not opened from alignment rows.';
+        } else if (!fresh && list.length) msg += ' Row changed since this plot: the stretches were not marked. Re-plot, then load the preset again.';
+        else if (ok.length) msg += ' The stretches could not be shown: this dot plot was not opened from alignment rows.';
         const sl = p.stretches.slide;
         if (sl && Number.isInteger(sl.row) && Number.isInteger(sl.col)) _dotSetSlide(sl.row - S.offA, sl.col - S.dispOffB);
     } else if (list.length || p.stretches?.slide) {
@@ -33466,6 +33496,9 @@ function _dotInitLookEvents() {
     const g = id => document.getElementById(id);
     g('dotPlotHighlightAll')?.addEventListener('click', _dotHighlightAll);
     ['dotPlotClearMarks2', 'dotPlotDockClear'].forEach(id => g(id)?.addEventListener('click', () => _dotClearRegionMarks(true)));
+    g('dotPlotEditReplot')?.addEventListener('click', _dotEditReplot);
+    g('dotPlotDialog')?.addEventListener('pointerenter', () => _dotCheckEdits());   // the window regains attention: the only other time the rows are compared
+    window.addEventListener('focus', () => { if (document.getElementById('dotPlotModal')?.style.display !== 'none' && _dotPlotState.sourceSeqA) _dotCheckEdits(); });
     g('dotPlotDockBtn')?.addEventListener('click', () => _dotDock(!g('dotPlotDialog')?.classList.contains('dot-docked')));
     g('dotPlotTitleBar')?.addEventListener('dblclick', (e) => { if (g('dotPlotDialog')?.classList.contains('dot-docked')) { e.stopImmediatePropagation(); _dotDock(false); } }, true);
     const ids = _dotColourInputs();
@@ -34030,10 +34063,123 @@ function _dotRenderRegionList() {
     }).join('');
 }
 // The alignment rows behind the two sides (-1 for a side with no row: a pasted sequence), and whether there is any
+// ---- Rows edited after the plot was made (owner, 2026-11-04) ------------------------------------------------------
+// A dot plot is a snapshot of its rows (the ungapped residues in sourceSeqA/B, the aligned strings in meta.alignedSeqA/B
+// and the maps made from them). An edit afterwards could land the arrow, Highlight all, the stretch menu and presets on the
+// wrong columns (GLM finding 7: RevComp marks mirrored with the row's CURRENT length against coordinates from plot time).
+// Nothing watches edits. _dotCheckEdits runs only WHEN USED (each action that maps plot coordinates to the alignment, the
+// window being entered or focused, the window coming back from its docked bar). Per row side it compares the live row with
+// the plot's: the aligned string with === first (the fast path, no work when nothing changed), then the ungapped residues.
+//   same aligned string          -> nothing
+//   residues same, gaps changed  -> the maps are rebuilt from the live row, silently (realign, gap edits, deleted gap columns)
+//   residues changed / row gone  -> the bar "Row changed since this plot" with Re-plot; nothing is marked until then
+// The row is found again when it moved (rows reordered or deleted above it) or was renamed: its index first, then any row with
+// the identical aligned string, then rows of the same name with the same residues. A pasted or consensus side has no row and is
+// never stale. (_dotBookmarkStale compares stretches at coordinates and tolerates a longer row, so it cannot stand for a whole
+// row; the finder borrows its duplicate-header idea only.)
+function _dotSliceMap(map, off, n) { return (map && (off || n < map.length)) ? map.slice(off, off + n) : map; }
+// one side: { row, same } for a row that still holds the plotted residues (same: identical aligned string), else
+// { row: -1, name, deleted, live } (live: the row that carries the name now, for Re-plot, or -1)
+function _dotFindLiveRow(idx, name, keptAligned, src) {
+    const seqs = state.seqs, cand = seqs[idx];
+    if (keptAligned) {
+        if (cand && cand.seq === keptAligned) return { row: idx, same: true };
+        for (let i = 0; i < seqs.length; i++) if (seqs[i].seq === keptAligned) return { row: i, same: true };
+    }
+    const ung = q => q.seq.replace(/[-. ]/g, '').toUpperCase().replace(/U/g, 'T');
+    const named = [];
+    if (cand && cand.header === name) named.push(idx);
+    for (let i = 0; i < seqs.length; i++) if (i !== idx && seqs[i].header === name) named.push(i);
+    for (const i of named) if (ung(seqs[i]) === src) return { row: i, same: false };
+    return { row: -1, name, deleted: !named.length, live: named.length ? named[0] : -1 };
+}
+function _dotEditBar(stale) {
+    const bar = document.getElementById('dotPlotEditBar'); if (!bar) return;
+    bar.hidden = !stale;
+    if (!stale) return;
+    const names = stale.sides.map(x => `"${x.name}"`).join(' and ');
+    const gone = stale.sides.some(x => x.deleted);
+    document.getElementById('dotPlotEditText').textContent = (gone ? `Row deleted or changed since this plot: ${names}.` : `Row changed since this plot: ${names}.`) +
+        ' Nothing is marked in the alignment from this plot' + (gone ? '.' : ' until it is re-plotted.');
+    const b = document.getElementById('dotPlotEditReplot'); if (b) b.hidden = stale.sides.some(x => x.live < 0);
+}
+// Is the plot still describing the rows it was made from? true = marks can be placed (maps rebuilt if only gaps changed)
+function _dotCheckEdits() {
+    const S = _dotPlotState, m = S.meta || {};
+    if (!(S.sourceSeqA && S.sourceSeqB)) return true;
+    const ia = Number.isInteger(S.rowIndexA) ? S.rowIndexA : -1, ib = Number.isInteger(S.rowIndexB) ? S.rowIndexB : -1;
+    const self = ia >= 0 && ib === ia && m.alignedSeqA === m.alignedSeqB && S.sourceSeqA === S.sourceSeqB;   // a self plot is one comparison
+    const work = [];
+    if (ia >= 0) work.push('A');
+    if (ib >= 0 && !self) work.push('B');
+    const found = {}, bad = [];
+    for (const side of work) {
+        const a = side === 'A';
+        const r = _dotFindLiveRow(a ? ia : ib, a ? S.nameA : _dotPlotNameB(), a ? m.alignedSeqA : m.alignedSeqB, a ? S.sourceSeqA : S.sourceSeqB);
+        found[side] = r;
+        if (r.row < 0) bad.push({ side, name: r.name, deleted: r.deleted, live: r.live });
+    }
+    if (bad.length) {
+        S._editStale = { sides: bad };
+        _dotEditBar(S._editStale);
+        return false;
+    }
+    S._editStale = null; _dotEditBar(null);
+    let rebuild = false;
+    for (const side of work) {
+        const r = found[side];
+        if (side === 'A') S.rowIndexA = r.row; else S.rowIndexB = r.row;
+        if (!r.same) { S.meta = Object.assign({}, S.meta, { ['alignedSeq' + side]: state.seqs[r.row].seq }); rebuild = true; }
+    }
+    if (self) { S.rowIndexB = S.rowIndexA; if (rebuild) S.meta = Object.assign({}, S.meta, { alignedSeqB: S.meta.alignedSeqA }); }
+    if (rebuild) {
+        const mm = S.meta;
+        if (S.rowIndexA >= 0) S.alignMapA = _dotSliceMap(_buildUngappedToAlignMap(mm.alignedSeqA), S.offA, S.seqA.length);
+        if (S.rowIndexB >= 0) { let b = _dotSliceMap(_buildUngappedToAlignMap(mm.alignedSeqB), S.offB, S.seqB.length); if (b && S.revB) b = [...b].reverse(); S.alignMapB = b; }
+    }
+    return true;
+}
+// the guard of an action that maps the plot onto the alignment: false (with a message) when the rows changed
+function _dotEditGuard() {
+    if (_dotCheckEdits()) return true;
+    showMessage('Row changed since this plot. Nothing was marked: use Re-plot in the dot plot window first.', 4500);
+    return false;
+}
+// Re-plot: the live rows with the same settings and range; a range that no longer fits is clamped, with a message
+async function _dotEditReplot() {
+    const S = _dotPlotState;
+    if (_dotCheckEdits()) return;   // nothing changed (an undo may have brought the rows back): the bar is gone
+    const st = S._editStale;
+    if (st.sides.some(x => x.live < 0)) { showMessage('A row of this plot is gone: nothing to re-plot. Plot the rows again from the alignment.', 4000); return; }
+    const m = S.meta || {}, notes = [];
+    const liveOf = (side, idx) => { const b = st.sides.find(x => x.side === side); if (b) return b.live; return idx >= 0 ? idx : -1; };
+    const liveA = liveOf('A', S.rowIndexA);
+    let liveB = liveOf('B', S.rowIndexB);
+    if (S.rowIndexA >= 0 && S.rowIndexB === S.rowIndexA && !st.sides.find(x => x.side === 'B')) liveB = liveA;   // a self plot
+    const rowA = liveA >= 0 ? state.seqs[liveA] : null, rowB = liveB >= 0 ? state.seqs[liveB] : null;
+    const ung = q => q.seq.replace(/[-. ]/g, '');
+    const seqA = rowA ? ung(rowA) : S.sourceSeqA, seqB = rowB ? ung(rowB) : S.sourceSeqB;
+    const clamp = (side, rg, len) => {
+        if (!Array.isArray(rg)) return null;
+        if (rg[0] > len) { notes.push(`${side} range ${rg[0]}-${rg[1]} no longer fits (the row has ${len} residues): the whole row is plotted`); return null; }
+        if (rg[1] > len) { notes.push(`${side} range clamped to ${rg[0]}-${len} (the row has ${len} residues)`); return _dotClampRange([rg[0], len], len); }
+        return _dotClampRange(rg, len);
+    };
+    const rangeA = clamp('A', m.rangeA, seqA.length), rangeB = clamp('B', m.rangeB, seqB.length);
+    const meta = Object.assign({}, m, { rangeA, rangeB, note: '', cols: null });
+    if (rowA) { meta.rowIndexA = liveA; meta.alignedSeqA = rowA.seq; }
+    if (rowB) { meta.rowIndexB = liveB; meta.alignedSeqB = rowB.seq; }
+    S._pendingRangeNote = notes.join('; ');
+    if (notes.length) showMessage(notes.join('; '), 4500);
+    S._editStale = null; _dotEditBar(null);
+    await openDotPlot(seqA, seqB, rowA ? rowA.header : S.nameA, rowB ? rowB.header : _dotPlotNameB(), meta);
+}
+
 function _dotRows() {
     const S = _dotPlotState, ok = i => Number.isInteger(i) && i >= 0 && !!state.seqs[i];
     return { rowA: ok(S.rowIndexA) ? S.rowIndexA : -1, rowB: ok(S.rowIndexB) ? S.rowIndexB : -1 };
 }
+function _dotRowsNow() { const r = _dotRows(); return [r.rowA, r.rowB]; }   // the rows after a check (it may have found a moved row)
 function _dotHasRows() { const r = _dotRows(); return r.rowA >= 0 || r.rowB >= 0; }
 
 // A region shown in the alignment (owner, 2026-10-23: highlight a specific repeat in the alignment and go to it).
@@ -34046,6 +34192,7 @@ let DOT_REGION_TINT = '#4a9eff';   // the alignment tint of a shown stretch (a c
 function _dotShowRegionInAlignment(idx) {
     const S = _dotPlotState, r = S.regions?.[idx];
     if (!r) return;
+    if (!_dotEditGuard()) return;
     const { rowA, rowB } = _dotRows();
     if (rowA < 0 && rowB < 0) { showMessage('This dot plot was not opened from alignment rows, so there is nothing to show.', 3000); return; }
     S._shownRegion = idx;
@@ -34102,6 +34249,7 @@ function _dotShowClearButtons(on) {
 // Every stretch the plot lists now (those that pass the current settings), marked on both rows
 function _dotHighlightAll() {
     const S = _dotPlotState;
+    if (!_dotEditGuard()) return;
     const { rowA, rowB } = _dotRows();
     if (rowA < 0 && rowB < 0) { showMessage('This dot plot was not opened from alignment rows, so there is nothing to show.', 3000); return; }
     if (!S.regions || !S.regions.length) { showMessage('No stretches to highlight at the current settings.', 2500); return; }
@@ -34114,6 +34262,7 @@ function _dotDock(on) {
     const dlg = document.getElementById('dotPlotDialog');
     if (!dlg) return;
     dlg.classList.toggle('dot-docked', !!on);
+    if (!on) _dotCheckEdits();   // the window is back in front: say at once if a row changed while it was a bar
     const b = document.getElementById('dotPlotDockBtn');
     if (b) { b.innerHTML = on ? '&#9652;' : '&#9662;'; b.title = on ? 'Bring the dot plot window back' : 'Move the window out of the way to a small bar (the alignment behind it shows fully); click again to bring it back'; }
     if (!on) setTimeout(() => { try { _dotRender(); _dotRenderStrip(); } catch (e) { /* window closed */ } }, 0);
@@ -34191,7 +34340,7 @@ function _dotStretchMenu(e, r) {
     const { rowA, rowB } = _dotRows(), g = _dotRealStretch(r);
     const canShow = rowA >= 0 || rowB >= 0;
     item(`Show this stretch in the alignment (A ${_dotSpanA(r.aStart, r.aEnd)}, B ${_dotSpanB(r.bStart, r.bEnd)}, ${len} bp)`,
-        () => _dotShowStretch(rowA, rowB, g.aStart, g.aEnd, g.bStart, g.bEnd, _dotPlotRevB(), false),   // from the plot's own menu the window stays: the plot is being used
+        () => { if (_dotEditGuard()) _dotShowStretch(..._dotRowsNow(), g.aStart, g.aEnd, g.bStart, g.bEnd, _dotPlotRevB(), false); },   // from the plot's own menu the window stays: the plot is being used
         canShow ? '' : 'This dot plot was not opened from alignment rows');
     item('Add to the collection', () => _dotBookmarkStretch(r));
     item('Copy both stretches as FASTA', () => {
@@ -34510,12 +34659,12 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S.seqA = rgA ? fullA.slice(rgA[0] - 1, rgA[1]) : fullA;
     S.seqB = rgB ? fullB.slice(rgB[0] - 1, rgB[1]) : fullB;
     S.dispOffB = S.offB;
-    S.ext = (m.ext && /^(A|B|AB)$/.test(m.ext.side)) ? { side: m.ext.side, name: String(m.ext.name || 'pasted sequence') } : null;
+    S.ext = (m.ext && /^(A|B|AB)$/.test(m.ext.side)) ? { side: m.ext.side, name: String(m.ext.name || 'pasted sequence'), cons: !!m.ext.cons } : null;   // cons: the side is the alignment's consensus (computed at plot time), not pasted text
     S.rangeNote = S._pendingRangeNote || m.note || ''; S._pendingRangeNote = '';
     const extA = !!S.ext && S.ext.side.includes('A'), extB = !!S.ext && S.ext.side.includes('B');   // a pasted side has no row, no alignment map
     S.rowIndexA = Number.isInteger(m.rowIndexA) && !extA ? m.rowIndexA : -1;
     S.rowIndexB = Number.isInteger(m.rowIndexB) && !extB ? m.rowIndexB : -1;
-    const sliceMap = (map, off, n) => (map && (off || n < map.length)) ? map.slice(off, off + n) : map;
+    const sliceMap = _dotSliceMap;
     S.alignMapA = extA ? null : sliceMap(m.alignMapA || _buildUngappedToAlignMap(m.alignedSeqA), S.offA, S.seqA.length);
     S.alignMapB = extB ? null : sliceMap(m.alignMapB || _buildUngappedToAlignMap(m.alignedSeqB), S.offB, S.seqB.length);
     const spinRadio = document.querySelector('input[name="dotPlotMode"][value="spin"]');
@@ -34552,6 +34701,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
         S.dispOffB = S.fullLenB - S.offB - S.seqB.length;   // the plotted B starts this far into the reverse complement of the whole sequence
     }
     S.unknown = _dotUnknownChars(S.seqA, S.seqB);
+    _dotCheckEdits();   // a recalculation or range change of a plot whose rows were edited keeps saying so (and a fresh plot costs the fast path)
 
     const modal = document.getElementById('dotPlotModal');
     if (modal) showExclusiveModal('dotPlotModal');

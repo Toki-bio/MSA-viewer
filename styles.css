@@ -4538,6 +4538,8 @@ body.name-resizing { user-select: none; }
 #dotPlotDialog.dot-docked #dotPlotMaxBtn { display: none; }
 #dotPlotDockClear { font-size: 10px; padding: 1px 5px; margin-right: 4px; }
 .dot-preset-note { font-size: 11px; color: #a55; }
+.dot-edit-bar { display: flex; gap: 10px; align-items: center; padding: 4px 10px; margin: 2px 0; background: #fff3cd; color: #664d03; border: 1px solid #e0c36a; border-radius: 4px; font-size: 12px; }
+.dot-edit-bar[hidden] { display: none; }
 .dot-ctl-row input[type="color"] { width: 26px; height: 20px; padding: 0; border: 1px solid #bbb; background: none; }
 .dot-ctl-row select { font-size: 11px; max-width: 150px; }
 .dot-strip-bar input[type="range"] { width: 200px; }
