@@ -29,6 +29,18 @@ selection; the user considers that a bug.)
 - For changes outside small UI fixes, run everything: `node tests/run-all.js --quick`.
 - Push only when they pass. Report failures honestly.
 
+## Laptop sleep and interrupted runs
+
+- A check that FAILED while the machine slept (a wall-clock gap above 30 s, `SLEEP_GAP_MS`) is rerun in a
+  fresh browser, at most 2 times; the rerun must pass by itself. The log shows `[RETRY] <name>: the machine
+  slept N s ...` and the final count line says how many were retried. Passes and failures without a sleep
+  gap are never rerun. The suite time limit in `tests/run-all.js` does not count sleep (regression: 2 h).
+- `node tests/run-all.js --resume` continues an interrupted run: suites and regression checks that passed on
+  the SAME commit are skipped; failed and unfinished ones run again. A different commit or uncommitted edits
+  to tracked files means a fresh start (it says so). The summary says "resumed: N suites, M checks passed
+  earlier". Progress file: `viewalign-test-progress-*.jsonl` in the OS temp dir. Without `--resume` a run
+  starts fresh. Code: `tests/lib/sleep-watch.js`, `retry-on-sleep.js`, `resume.js`.
+
 ## Rewrites
 
 Large alignments use a different renderer (windowed: `renderUnifiedWindowedDom`,
