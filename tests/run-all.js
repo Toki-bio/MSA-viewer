@@ -148,7 +148,7 @@ const SUITES = [
     const seconds = ((Date.now() - t0) / 1000).toFixed(0);
     if (r.timedOut) console.log(`[TIMEOUT] ${suite.name}: killed after ${seconds} s (limit ${suiteTimeoutMs(suite)} ms of awake time)`);
     const status = r.timedOut ? 'TIMEOUT' : r.code === 0 ? 'pass' : 'FAIL';
-    if (status === 'pass') resumeLib.record(progressFile, { t: 'suite', key: suiteKey(suite) });
+    if (status === 'pass' && !process.env.CHECK_FILTER) resumeLib.record(progressFile, { t: 'suite', key: suiteKey(suite) });   // a filtered pass ran only part of the suite
     results.push({ ...suite, status, seconds });
   }
 
