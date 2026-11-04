@@ -34815,7 +34815,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     _dotClearHoverInfo();
 
     const cells = S.seqA.length * S.seqB.length;
-    if (cells > DOT_MAX_CELLS) {
+    if (cells > DOT_MAX_CELLS || !cells) {   // no residues on a side (an empty consensus, an all-gap row): an empty plot would throw in ImageData
         S.matchMap = S.scores = S.overview = null;
         S.rows = S.cols = 0;
         S.slideRow = S.slideCol = -1;
@@ -34823,7 +34823,8 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
         _dotClearOverlay();
         const c = document.getElementById('dotPlotCanvas');
         if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
-        if (statusEl) statusEl.textContent = `Too large to plot: ${S.seqA.length.toLocaleString()} x ${S.seqB.length.toLocaleString()} positions ` +
+        if (statusEl) statusEl.textContent = !cells ? `Nothing to plot: ${S.seqA.length ? nameB : nameA} has no residues here.` :
+            `Too large to plot: ${S.seqA.length.toLocaleString()} x ${S.seqB.length.toLocaleString()} positions ` +
             `(limit ${DOT_MAX_CELLS.toLocaleString()} cells, about 10,000 x 10,000). Plot shorter sequences.`;
         _dotRenderRegionList();
         return;

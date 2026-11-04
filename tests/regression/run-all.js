@@ -15449,6 +15449,21 @@ check('Dot plot consensus: the consensus with two or more rows asks which two, "
     && o.ia === 3 && o.ib === -1 && o.ext && o.ext.cons && o.nameB === 'Consensus';
   return { pass: ok, detail: JSON.stringify({ out, o }) };
 });
+check('Dot plot empty side: a side with no residues says so, with no error', async (page) => {
+  await dotConsOpen(page);
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  const out = await page.evaluate(async () => {
+    const r = {};
+    for (const [k, b] of [['empty', '']]) {
+      try { await openDotPlot('ACGTACGTACGT', b, 'row', k); r[k] = document.getElementById('dotPlotStatus').textContent; }
+      catch (e) { r[k] = 'threw: ' + e.message; }
+    }
+    return r;
+  });
+  await page.waitForTimeout(300);
+  const ok = /no residues/i.test(out.empty) && !errors.length;
+  return { pass: ok, detail: JSON.stringify({ out, errors }) };
+});
 check('Dot plot consensus: the row menu has "Dot-plot vs consensus" (the whole row against the consensus); a preset records that a side was the consensus', async (page) => {
   await dotConsOpen(page);
   const g0 = await dotGen(page);
