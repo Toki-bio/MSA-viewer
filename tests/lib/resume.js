@@ -13,10 +13,16 @@ const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 function gitState(root) {
-  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
-  const st = spawnSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: root, encoding: 'utf8' });
-  if (head.status !== 0 || st.status !== 0) return { commit: null, dirty: true };
-  return { commit: head.stdout.trim(), dirty: st.stdout.trim().length > 0, status: st.stdout };
+  // ONE git call (was two: rev-parse + status, ~108 ms per check measured; this is ~60 ms). porcelain v2 with
+  // --branch prints the commit as "# branch.oid <sha>" and then the tracked changes, if any.
+  const r = spawnSync('git', ['status', '--porcelain=v2', '--branch', '--untracked-files=no'], { cwd: root, encoding: 'utf8' });
+  if (r.status !== 0) return { commit: null, dirty: true };
+  const lines = r.stdout.split('\n');
+  const oid = lines.find(l => l.startsWith('# branch.oid '));
+  const commit = oid ? oid.slice('# branch.oid '.length).trim() : '';
+  if (!/^[0-9a-f]{40,64}$/.test(commit)) return { commit: null, dirty: true };
+  const status = lines.filter(l => l && !l.startsWith('# ')).join('\n');
+  return { commit, dirty: status.length > 0, status };
 }
 
 function defaultProgressFile(root) {
@@ -100,7 +106,7 @@ module.exports = { gitState, defaultProgressFile, startFresh, record, loadProgre
 
 // For a suite's own runner (the child of tests/run-all.js): CHECK_RESUME_FILE says where to record
 // passed checks; CHECK_RESUME=1 (set only when the parent accepted the progress) says to skip those
-// that already passed. Returns { file, skip:Set, record(name) }.
+// that already passed. Returns { file, skip:Set, record(name), recordResult(name, outcome) }; recordResult writes only passes (the runner uses it).
 function forSuite(suiteName, root, gitStateFn) {
   const file = process.env.CHECK_RESUME_FILE || '';
   const skip = new Set();
@@ -111,6 +117,18 @@ function forSuite(suiteName, root, gitStateFn) {
     if (p.usable && p.checks.has(suiteName)) for (const n of p.checks.get(suiteName)) skip.add(n);
   }
   const guard = { baseline, root, gitState: gs };
+  // The child's own start state is no proof: the parent wrote the header for the tree it started on, and the
+  // tree may have been edited (or the commit moved) before this child started. Passes recorded on a tree that
+  // is not the header's tree would be trusted by a later --resume (audit finding 0). So when the file has a
+  // clean header, this child records only if its tree is that same clean commit.
+  if (file) {
+    let header = null;
+    try { header = JSON.parse(fs.readFileSync(file, 'utf8').split('\n')[0]); } catch (e) { /* no file or no header: nothing to compare */ }
+    if (header && header.t === 'header' && !header.dirty && (header.commit !== baseline.commit || baseline.dirty)) {
+      guard.stopped = true;
+      console.warn('[WARN] this run started on a tree that is not the one the progress file was written for (other commit or edited tracked files); no passes are recorded for --resume');
+    }
+  }
   const rec = name => record(file, { t: 'check', suite: suiteName, name }, guard);
   // only a PASS is remembered; a failed check is never written, so it runs again
   return { file, skip, record: rec, recordResult: (name, outcome) => { if (outcome && outcome.pass) rec(name); } };

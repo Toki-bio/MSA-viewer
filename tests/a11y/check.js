@@ -123,12 +123,16 @@ check('axe-core: manual has no serious or critical violations', async (page, bas
 });
 
 async function main() {
+  // CHECK_FILTER=substring runs only the matching checks (as the sibling runners do); a filter that matches nothing is not a pass (audit3 6)
+  const filter = process.env.CHECK_FILTER ? process.env.CHECK_FILTER.toLowerCase() : null;
+  const activeChecks = filter ? CHECKS.filter(c => c.name.toLowerCase().includes(filter)) : CHECKS;
+  if (filter && !activeChecks.length) exitNoMatch(process.env.CHECK_FILTER);
   const { server, baseUrl } = await start();
   let browser = await launch();
   let failed = 0;
   const retrier = createRetrier();
   try {
-    for (const { name, fn, opts } of CHECKS) {
+    for (const { name, fn, opts } of activeChecks) {
       const attempt = async (n) => {
         // a rerun gets a fresh browser; so does a check after a failed relaunch (browser is null or dead)
         if (n > 0 || !browser || !browser.isConnected()) {
@@ -158,7 +162,7 @@ async function main() {
     if (browser) await browser.close().catch(() => {});
     server.close();
   }
-  console.log(`\n${CHECKS.length - failed}/${CHECKS.length} passed${retrier.suffix()}`);
+  console.log(`\n${activeChecks.length - failed}/${activeChecks.length} passed${retrier.suffix()}`);
   process.exit(failed ? 1 : 0);
 }
 main().catch(e => { console.error(e); process.exit(1); });

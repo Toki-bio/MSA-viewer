@@ -120,5 +120,70 @@ check('no commit readable (git missing): the message says so, not "uncommitted c
   const p = loadProgress(seeded(A), { commit: null, dirty: true });
   return !p.usable && /git could not report/.test(p.message) && !/uncommitted/.test(p.message) || p.message;
 });
+// Dot plot audit3: finding 0. The child's own start state is not proof: a header written for a clean commit
+// must not collect passes from a child that started on an edited tree or another commit.
+function forSuiteWith(f, gs) {
+  const keep = { f: process.env.CHECK_RESUME_FILE, r: process.env.CHECK_RESUME };
+  process.env.CHECK_RESUME_FILE = f; process.env.CHECK_RESUME = '';
+  const warns = []; const old = console.warn; console.warn = s => warns.push(s);
+  try { return { s: forSuite('regression', ROOT, gs), warns }; }
+  finally {
+    console.warn = old;
+    if (keep.f === undefined) delete process.env.CHECK_RESUME_FILE; else process.env.CHECK_RESUME_FILE = keep.f;
+    if (keep.r === undefined) delete process.env.CHECK_RESUME; else process.env.CHECK_RESUME = keep.r;
+  }
+}
+check('audit3 0: a child that starts on an edited tree records nothing into a clean-header file, so --resume cannot trust it', () => {
+  const f = newFile(); startFresh(f, A);
+  const { s, warns } = forSuiteWith(f, () => ({ commit: A.commit, dirty: true, status: ' M script.js' }));
+  s.recordResult('edited-tree pass', { pass: true });
+  const p = loadProgress(f, A);
+  return p.usable && !p.checks.has('regression') && warns.length === 1 || JSON.stringify({ c: [...p.checks.keys()], warns });
+});
+check('audit3 0: a child on another commit than the header records nothing', () => {
+  const f = newFile(); startFresh(f, A);
+  const { s } = forSuiteWith(f, () => B);
+  s.recordResult('other-commit pass', { pass: true });
+  return !loadProgress(f, A).checks.has('regression');
+});
+check('audit3 0: a child on the same clean commit as the header still records', () => {
+  const f = newFile(); startFresh(f, A);
+  const { s, warns } = forSuiteWith(f, () => A);
+  s.recordResult('good pass', { pass: true });
+  return loadProgress(f, A).checks.get('regression').has('good pass') && warns.length === 0;
+});
+check('audit3 29: gitState uses one git call and agrees with rev-parse / status', () => {
+  const { spawnSync } = require('child_process');
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
+  const st = spawnSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
+  const g = gitState(ROOT);
+  return g.commit === head && g.dirty === (st.length > 0) || JSON.stringify({ g, head, st });
+});
+// Dot plot audit3: findings 6 and 8. A run in which nothing ran is not "all suites passed".
+function runNode(args, env) {
+  const { spawnSync } = require('child_process');
+  const r = spawnSync(process.execPath, args, { cwd: ROOT, encoding: 'utf8', env: { ...process.env, ...env }, timeout: 120000 });
+  return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
+}
+check('audit3 8: --only that matches no suite does not print "all suites passed" and exits 1', () => {
+  const r = runNode(['tests/run-all.js', '--only', 'zz no such suite zz'], { CHECK_RESUME_FILE: path.join(dir, 'only-none.jsonl') });
+  return r.code === 1 && !/all suites passed/.test(r.out) && /nothing/.test(r.out) || JSON.stringify(r);
+});
+check('audit3 6: the a11y runner honours CHECK_FILTER: a filter matching nothing exits 1 (3 under the parent) and runs no check', () => {
+  try { require.resolve('playwright-core'); } catch (e) { return true; }   // the browser runner cannot even load without it (a --no-browser setup)
+  const a = runNode(['tests/a11y/check.js'], { CHECK_FILTER: 'zz no such check zz' });
+  const b = runNode(['tests/a11y/check.js'], { CHECK_FILTER: 'zz no such check zz', CHECK_NOMATCH_EXIT: '3' });
+  return a.code === 1 && b.code === 3 && /no check matched/.test(a.out) && !/\[PASS\]/.test(a.out) || JSON.stringify({ a, b });
+});
+check('audit3 8: a --resume run where every wanted suite had passed earlier says so plainly and exits 0 (clean tree only)', () => {
+  const g = gitState(ROOT);
+  if (g.dirty) return true;   // resume refuses a dirty tree by design; this check has teeth once the work is committed
+  const f = path.join(dir, 'allresumed.jsonl');
+  startFresh(f, g);
+  const first = runNode(['tests/run-all.js', '--only', 'release version consistency'], { CHECK_RESUME_FILE: f });
+  if (first.code !== 0) return 'first run failed: ' + first.out.slice(-300);
+  const second = runNode(['tests/run-all.js', '--resume', '--only', 'release version consistency'], { CHECK_RESUME_FILE: f });
+  return second.code === 0 && !/all suites passed/.test(second.out) && /nothing was run: all 1 suite\(s\) had already passed/.test(second.out) || JSON.stringify(second);
+});
 try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* temp dir */ }
 process.exit(fail ? 1 : 0);

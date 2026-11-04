@@ -164,8 +164,13 @@ const SUITES = [
   const noMatchCount = results.filter(r => r.status === 'no match').length;
   const ranOk = results.filter(r => r.status === 'pass').length;
   if (noMatchCount) console.log(`${noMatchCount} suite(s) had no check matching CHECK_FILTER "${process.env.CHECK_FILTER}" (not counted as passed or failed)`);
-  const nothingRan = noMatchCount > 0 && ranOk === 0 && !failed;   // a filter that matched nothing anywhere is not success
-  if (nothingRan) console.log('no check matched CHECK_FILTER in any suite: nothing was verified');
-  console.log(failed ? `\n${failed} suite(s) failed` : nothingRan ? '\nnothing ran' : '\nall suites passed');
+  // nothing ran = no suite passed or failed in this run (audit3 6, 8). Two cases, two plain answers:
+  //  - every wanted suite had passed earlier on this commit (--resume): not a failure, exit 0, said plainly;
+  //  - a CHECK_FILTER that matched nothing, or --no-browser/--only leaving nothing to run: nothing was verified, exit 1.
+  const allResumed = ranOk === 0 && !failed && resumedSuites > 0 && noMatchCount === 0;
+  const nothingRan = ranOk === 0 && !failed && !allResumed;
+  if (nothingRan && noMatchCount) console.log('no check matched CHECK_FILTER in any suite: nothing was verified');
+  else if (nothingRan) console.log('no suite was run (all skipped or left out by --only/--no-browser): nothing was verified');
+  console.log(failed ? `\n${failed} suite(s) failed` : allResumed ? `\nnothing was run: all ${resumedSuites} suite(s) had already passed on this commit (--resume)` : nothingRan ? '\nnothing ran' : '\nall suites passed');
   process.exit(failed || nothingRan ? 1 : 0);
 })();
