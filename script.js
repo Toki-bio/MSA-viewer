@@ -32623,7 +32623,7 @@ function _dotRecalculate() {
     const modal = document.getElementById('dotPlotModal');
     if (modal && modal.style.display === 'none') return;                               // closed meanwhile
     if (S.computing) { _dotLiveTimer = setTimeout(_dotRecalculate, 250); return; }   // one run at a time
-    if (S.sourceSeqA && S.sourceSeqB) openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA.replace(/ \(RevComp\)$/, ''), S.nameB.replace(/ \(RevComp\)$/, ''), S.meta);
+    if (S.sourceSeqA && S.sourceSeqB) openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA.replace(/ \(RevComp\)$/, ''), _dotPlotNameB(), S.meta);
 }
 
 // Floating window frame: drag by the title bar, resize from 8 handles (.win-rz with data-dir),
@@ -32958,7 +32958,7 @@ function _dotReopen(patch) {
     clearTimeout(_dotLiveTimer);
     _dotMarkDirty(false);
     const meta = Object.assign({}, S.meta || {}, patch);
-    return openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA.replace(/ \(RevComp\)$/, ''), S.nameB.replace(/ \(RevComp\)$/, ''), meta);
+    return openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA.replace(/ \(RevComp\)$/, ''), _dotPlotNameB(), meta);
 }
 
 // Alignment columns c0..c1 (0-based, inclusive) of a gapped row -> [from, to] residue numbers (1-based, ungapped), or null
@@ -33335,7 +33335,7 @@ function _dotPresetCapture() {
     const num = (id, d) => { const v = parseInt(g(id)?.value, 10); return Number.isFinite(v) ? v : d; };
     return {
         version: 2,   // 2: the stretches and the slide are in whole-sequence PLOTTED coordinates (RevComp B: along the reverse complement of the whole row), as
-                      // before, now with pair.lenB; no version = a preset from before (same coordinates, no lenB). Never printed: numbers shown go through _dotBNum
+                      // before (pair.lenB was already kept); no version = a preset from before the numbering change (same coordinates). Never printed: numbers shown go through _dotBNum
         savedAt: new Date().toISOString(),
         settings: {
             mode: document.querySelector('input[name="dotPlotMode"]:checked')?.value || 'spin',
@@ -33434,7 +33434,7 @@ async function _dotPresetLoad() {
     const same = !!pr && pr.nameA === S.nameA && pr.nameB === _dotPlotNameB() && pr.lenA === S.sourceSeqA.length && pr.lenB === S.sourceSeqB.length && !!pr.revB === revAfter;
     const rg = (same && p.range && typeof p.range === 'object') ? p.range : null;
     const meta2 = !same ? S.meta : Object.assign({}, S.meta || {}, { rangeA: rg && Array.isArray(rg.a) ? rg.a : null, rangeB: rg && Array.isArray(rg.b) ? rg.b : null });   // another pair: the plot keeps its own range
-    await openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA.replace(/ \(RevComp\)$/, ''), S.nameB.replace(/ \(RevComp\)$/, ''), meta2);
+    await openDotPlot(S.sourceSeqA, S.sourceSeqB, S.nameA.replace(/ \(RevComp\)$/, ''), _dotPlotNameB(), meta2);
     _dotSyncColourInputs();
     _dotApplyColours();
     let msg = `Preset "${name}": settings and colours loaded.`;
@@ -33907,7 +33907,7 @@ function _dotDetectRegions() {
     if ((!S.scores && !S.matchMap)) { _dotRenderRegionList(); return; }
     const spin = S.spinMode && !!S.matchMap;
     const w = S.windowSize || 1;
-    const isSelf = S.seqA === S.seqB && S.offA === S.offB && S.rows === S.cols && !/\(RevComp\)$/.test(S.nameB || '');
+    const isSelf = S.seqA === S.seqB && S.offA === S.offB && S.rows === S.cols && !_dotPlotRevB();
     const seedMin = spin ? 2 : 3;               // shorter runs are mostly chance hits
     const minMatched = spin ? Math.max(8, 2 * w)
                             : Math.max(6, Math.min(15, Math.floor(Math.min(S.rows, S.cols) * 0.12)));
@@ -34050,7 +34050,7 @@ function _dotShowRegionInAlignment(idx) {
     if (rowA < 0 && rowB < 0) { showMessage('This dot plot was not opened from alignment rows, so there is nothing to show.', 3000); return; }
     S._shownRegion = idx;
     const g = _dotRealStretch(r);
-    _dotShowStretch(rowA, rowB, g.aStart, g.aEnd, g.bStart, g.bEnd, /\(RevComp\)$/.test(S.nameB || ''));
+    _dotShowStretch(rowA, rowB, g.aStart, g.aEnd, g.bStart, g.bEnd, _dotPlotRevB());
 }
 // Tints residues aStart..aEnd of row A and bStart..bEnd of row B (0-based, end exclusive, in the WHOLE sequences as
 // plotted: with RevComp B the plotted B is the reverse complement of the whole row, residue j of it being residue
@@ -34144,8 +34144,9 @@ function _dotSanitizeBookmarks(arr) {
         seqA: seq(b.seqA), seqB: seq(b.seqB), identity: +b.identity || 0
     })).filter(b => b.aEnd > b.aStart && b.bEnd > b.bStart);
 }
-function _dotPlotNameB() { return (_dotPlotState.nameB || '').replace(/ \(RevComp\)$/, ''); }
-function _dotPlotRevB() { return /\(RevComp\)$/.test(_dotPlotState.nameB || ''); }
+// RevComp B is a flag of the plot (S.revB, set by openDotPlot), NOT read from the name: a row literally named "x (RevComp)" is not a reverse complement
+function _dotPlotNameB() { const S = _dotPlotState, n = S.nameB || ''; return S.revB ? n.replace(/ \(RevComp\)$/, '') : n; }
+function _dotPlotRevB() { return !!_dotPlotState.revB; }
 function _dotRegionBookmarked(r) {
     const S = _dotPlotState, nameB = _dotPlotNameB(), revB = _dotPlotRevB();
     const g = _dotRealStretch(r);
@@ -34190,7 +34191,7 @@ function _dotStretchMenu(e, r) {
     const { rowA, rowB } = _dotRows(), g = _dotRealStretch(r);
     const canShow = rowA >= 0 || rowB >= 0;
     item(`Show this stretch in the alignment (A ${_dotSpanA(r.aStart, r.aEnd)}, B ${_dotSpanB(r.bStart, r.bEnd)}, ${len} bp)`,
-        () => _dotShowStretch(rowA, rowB, g.aStart, g.aEnd, g.bStart, g.bEnd, /\(RevComp\)$/.test(S.nameB || ''), false),   // from the plot's own menu the window stays: the plot is being used
+        () => _dotShowStretch(rowA, rowB, g.aStart, g.aEnd, g.bStart, g.bEnd, _dotPlotRevB(), false),   // from the plot's own menu the window stays: the plot is being used
         canShow ? '' : 'This dot plot was not opened from alignment rows');
     item('Add to the collection', () => _dotBookmarkStretch(r));
     item('Copy both stretches as FASTA', () => {
@@ -34224,8 +34225,17 @@ function _dotBookmarkStretch(r) {
 // B's whole length for a collection entry: its own, else the loaded row of that name (older entries have none)
 function _dotBookmarkLenB(b) {
     if (b.lenB > 0) return b.lenB;
-    const row = (state.seqs || []).find(s => s.header === b.nameB);
-    return row ? row.seq.replace(/[-. ]/g, '').length : 0;
+    // An entry without lenB (made before it was kept) borrows the live row's length only when that row still holds the entry's
+    // residues where the entry says (a trimmed or different row of the same name gave negative or wrong numbers); else 0 = unknown.
+    if (!b.revB) return 0;
+    for (const s of (state.seqs || [])) {
+        if (s.header !== b.nameB) continue;
+        const u = s.seq.replace(/[-. ]/g, '').toUpperCase().replace(/U/g, 'T');
+        if (u.length < b.bEnd) continue;
+        const rc = [...u].reverse().map(c => _DOT_COMPLEMENT[c] ?? 'N').join('');
+        if (!b.seqB || rc.slice(b.bStart, b.bEnd).slice(0, b.seqB.length) === b.seqB.toUpperCase().replace(/U/g, 'T')) return u.length;
+    }
+    return 0;
 }
 // "A<from>-<to> / B<first>-<last>" of an entry: B in the row's own residue numbers (descending with RevComp)
 function _dotBookmarkSpans(b) {
@@ -34304,11 +34314,13 @@ async function _dotGoToBookmark(id) {
         const rows = _dotBookmarkRows(b);
         if (!rows) { showMessage(`${b.nameA}${b.nameA === b.nameB ? '' : ' / ' + b.nameB} is not in this alignment: use the search button to look for the stretch.`, 3500); return; }
         const sA = state.seqs[rows.rowA], sB = state.seqs[rows.rowB];
+        const badFirst = _dotBookmarkStale(b, rows.rowA, rows.rowB);   // refuse BEFORE the open plot is replaced and the RevComp box flipped
+        if (badFirst) { showMessage(_dotBookmarkStaleMessage(badFirst), 4500); return; }
         const rc = document.getElementById('dotPlotRevComp'); if (rc) rc.checked = b.revB;
         await openDotPlot(sA.seq.replace(/[-. ]/g, ''), sB.seq.replace(/[-. ]/g, ''), sA.header, sB.header, { rowIndexA: rows.rowA, rowIndexB: rows.rowB, alignedSeqA: sA.seq, alignedSeqB: sB.seq });
         if (!S.rows) return;
     }
-    {   // the live rows, not the plot's copy: an edit or a trim since the plot was made moves the stretch
+    {   // the live rows when the sides are alignment rows (an edit or a trim since the plot was made moves the stretch); a pasted or deleted side is checked against the plot's own copy
         const { rowA, rowB } = _dotRows(), bad = _dotBookmarkStale(b, rowA, rowB);
         if (bad) { showMessage(_dotBookmarkStaleMessage(bad), 4500); return; }
     }
@@ -34340,14 +34352,15 @@ function _dotBookmarkToSearch(id) {
 }
 function _dotCopyBookmark(id) {
     const b = _dotBookmarkById(id); if (!b) return;
-    const fasta = `>${b.nameA}_${_dotBookmarkSpans(b).a}\n${b.seqA}\n>${b.nameB}${b.revB ? '_rc' : ''}_${_dotBookmarkSpans(b).b}\n${b.seqB}`;
+    const sp = _dotBookmarkSpans(b), unk = / \(plotted\)$/.test(sp.b);   // true B length unknown (old entry): plotted-order numbers marked "plotted", no space in the header
+    const fasta = `>${b.nameA}_${sp.a}\n${b.seqA}\n>${b.nameB}${b.revB ? '_rc' : ''}_${unk ? 'plotted' + sp.b.replace(/ \(plotted\)$/, '') : sp.b}\n${b.seqB}`;
     navigator.clipboard.writeText(fasta).then(() => showMessage('Both copies copied as FASTA.', 2000)).catch(() => showMessage('Could not copy.', 2000));
 }
 function _dotBookmarksTsv() {
     const head = ['name', 'A', 'A_start', 'A_end', 'B', 'B_start', 'B_end', 'B_revcomp', 'length', 'mode', 'window', 'threshold', 'identity', 'seqA', 'seqB'];
     const clean = v => String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ');
     // B_start / B_end: the first and last residue of the stretch in the B row's own numbers (B_start is the larger with B_revcomp = yes)
-    const bNums = b => { const len = _dotBookmarkLenB(b); return (b.revB && !len) ? [b.bStart + 1, b.bEnd] : [_dotBNum(b.bStart, b.revB, len), _dotBNum(b.bEnd - 1, b.revB, len)]; };
+    const bNums = b => { const len = _dotBookmarkLenB(b); return (b.revB && !len) ? ['plotted:' + (b.bStart + 1), 'plotted:' + b.bEnd] : [_dotBNum(b.bStart, b.revB, len), _dotBNum(b.bEnd - 1, b.revB, len)]; };
     const rows = (state.dotBookmarks || []).map(b => [b.name, b.nameA, b.aStart + 1, b.aEnd, b.nameB, ...bNums(b), b.revB ? 'yes' : 'no', b.aEnd - b.aStart, b.mode, b.window, b.threshold, b.identity ? Math.round(b.identity * 100) + '%' : '', b.seqA, b.seqB].map(clean).join('\t'));
     return [head.join('\t'), ...rows].join('\n');
 }
@@ -34488,7 +34501,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     // holds the slice meta.rangeA / meta.rangeB ([from, to], 1-based, ungapped, inclusive) selects, or all of it
     const fullA = norm(seqA), fullB = norm(seqB);
     S.sourceSeqA = fullA; S.sourceSeqB = fullB;
-    S.nameA = nameA; S.nameB = nameB;
+    S.nameA = nameA; S.nameB = nameB; S.revB = false;
     S.meta = meta || S.meta || null;
     const m = S.meta || {};
     const rgA = _dotClampRange(m.rangeA, fullA.length), rgB = _dotClampRange(m.rangeB, fullB.length);
@@ -34534,7 +34547,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
     S._pairRev = !!revComp;
     if (revComp) {
         S.seqB = [...S.seqB].reverse().map(b => _DOT_COMPLEMENT[b] ?? 'N').join('');
-        S.nameB = nameB + ' (RevComp)';
+        S.nameB = nameB + ' (RevComp)'; S.revB = true;
         if (S.alignMapB) S.alignMapB = [...S.alignMapB].reverse();
         S.dispOffB = S.fullLenB - S.offB - S.seqB.length;   // the plotted B starts this far into the reverse complement of the whole sequence
     }
@@ -34746,8 +34759,8 @@ function _dotExportSvg() {
         '</g>',
         `<rect x="${P}" y="${P}" width="${(S.cols * z).toFixed(2)}" height="${(S.rows * z).toFixed(2)}" fill="none" stroke="#333"/>`,
         '<g fill="#555">', ...ticks, '</g>',
-        `<text x="${P + S.cols * z / 2}" y="12" text-anchor="middle" font-weight="bold">${esc(S.nameB)}</text>`,
-        `<text transform="translate(12 ${P + S.rows * z / 2}) rotate(-90)" text-anchor="middle" font-weight="bold">${esc(S.nameA)}</text>`,
+        `<text x="${P + S.cols * z / 2}" y="12" text-anchor="middle" font-weight="bold">${esc(S.nameB + _dotRangeText('B'))}</text>`,
+        `<text transform="translate(12 ${P + S.rows * z / 2}) rotate(-90)" text-anchor="middle" font-weight="bold">${esc(S.nameA + _dotRangeText('A'))}</text>`,
         '</svg>'
     ].join('\n');
     const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
@@ -34872,7 +34885,7 @@ function _initDotPlotEvents() {
             _dotSetSlide(cell.row, cell.col, { noScroll: true });   // the sliders follow a click (Staden-style)
             _dotDrawOverlay(cell.row, cell.col);
             _dotUpdateHoverInfo(cell.row, cell.col);
-            showMessage(`Pinned: A${cell.row + 1} / B${cell.col + 1}. Click "Copy Region" to copy FASTA.`, 2500);
+            showMessage(`Pinned: A${_dotShownA(cell.row)} / B${_dotShownB(cell.col)}. Click "Copy Region" to copy FASTA.`, 2500);
         });
         overlay.addEventListener('dblclick', (e) => {
             const S = _dotPlotState;

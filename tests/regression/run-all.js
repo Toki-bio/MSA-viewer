@@ -15099,6 +15099,98 @@ check('Dot plot numbering: Dot-plot of selected columns with a residue selection
   return { pass: !out.noItem && out.chooser && out.opts === 3 && /choose two of 3 rows/.test(out.text), detail: JSON.stringify(out) };
 });
 
+// ---- Dot plot audit (GLM audit of v325, 2026-11-04) ----
+// The Pin toast printed raw plot indices (A${row+1} / B${col+1}) while every other readout of the same cell used the
+// residue numbers: with RevComp B or a range the toast contradicted the hover panel.
+check('Dot plot audit: the Pin message names the same residue numbers as the hover panel (RevComp B with a range)', async (page) => {
+  await dotNumOpen(page, [101, 350], true);
+  const out = await page.evaluate(async () => {
+    const S = _dotPlotState, ov = document.getElementById('dotPlotOverlay'), { vp } = _dotViewport();
+    const res = [];
+    for (const [row, col] of [[S.rows >> 1, 5], [3, S.cols - 4]]) {
+      const rect = ov.getBoundingClientRect();
+      window.__msgs.length = 0;
+      ov.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: rect.left + DOT_AXIS_PAD + (col + 0.5) * S.zoom - vp.scrollLeft, clientY: rect.top + DOT_AXIS_PAD + (row + 0.5) * S.zoom - vp.scrollTop }));
+      res.push({ row, col, msg: window.__msgs.join('|'), want: `Pinned: A${_dotShownA(S.pinnedRow)} / B${_dotShownB(S.pinnedCol)}.`, raw: `B${S.pinnedCol + 1}.` });
+    }
+    return res;
+  });
+  return { pass: out.every(o => o.msg.startsWith(o.want) && !o.msg.includes(o.raw)), detail: JSON.stringify(out) };
+});
+// An entry from before lenB was stored (no lenB): when the true B length cannot be known there are no negative or invented
+// residue numbers, no space in a FASTA header, and the TSV says its B numbers are plotted-order.
+check('Dot plot audit: legacy RevComp collection entries never print negative or invented B numbers, a clean FASTA header, a labelled TSV', async (page) => {
+  await dotNumOpen(page, null, false);
+  const out = await page.evaluate(async () => {
+    const o = {};
+    window.__clip.length = 0;
+    // (a) the row is shorter than the entry's coordinates: used to print -440--499
+    state.seqs[1].header = 'rowB'; state.seqs[1].seq = 'ACGT'.repeat(50);   // 200 residues
+    state.dotBookmarks = _dotSanitizeBookmarks([{ id: 'bmleg1', name: 'old', nameA: 'seqA', nameB: 'rowB', aStart: 0, aEnd: 60, bStart: 640, bEnd: 700, revB: true, seqA: 'A'.repeat(60), seqB: 'C'.repeat(60) }]);
+    _dotRenderBookmarks();
+    o.listShort = document.querySelector('[data-id="bmleg1"]').textContent;
+    // (b) the row is absent: plotted numbers, labelled, and a header without a space
+    state.dotBookmarks = _dotSanitizeBookmarks([{ id: 'bmleg2', name: 'old2', nameA: 'seqA', nameB: 'nowhere', aStart: 0, aEnd: 10, bStart: 10, bEnd: 20, revB: true, seqA: 'AAAAAAAAAA', seqB: 'CCCCCCCCCC' }]);
+    _dotCopyBookmark('bmleg2'); await new Promise(r => setTimeout(r, 100));
+    o.fasta = (window.__clip.pop() || '').split('\n').filter(l => l[0] === '>');
+    o.tsv = _dotBookmarksTsv().split('\n')[1].split('\t').slice(4, 8);
+    // (c) a row of the same name but another length (a trimmed copy): the entry's residues are not there, so no guessed length
+    const s = state.seqs[1]; s.header = 'rowC'; s.seq = 'A'.repeat(400);
+    state.dotBookmarks = _dotSanitizeBookmarks([{ id: 'bmleg3', name: 'old3', nameA: 'seqA', nameB: 'rowC', aStart: 0, aEnd: 50, bStart: 10, bEnd: 60, revB: true, seqA: 'A'.repeat(50), seqB: 'C'.repeat(50) }]);
+    _dotRenderBookmarks();
+    o.listOther = document.querySelector('[data-id="bmleg3"]').textContent;
+    return o;
+  });
+  const clean = h => !!h && !/\s/.test(h);
+  const ok = !/B-|--/.test(out.listShort) && /plotted/.test(out.listShort) && out.fasta.length === 2 && clean(out.fasta[1]) && /plotted/.test(out.fasta[1]) &&
+    out.tsv.every(v => !/^-/.test(v)) && /plotted/.test(out.tsv[1] + out.tsv[2]) && /plotted/.test(out.listOther) && !/B400-|B399-/.test(out.listOther.replace(/\s/g, ''));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+// The SVG export had bare names for the axis captions; the screen and PNG add the range text ' [101-350 of N]'.
+check('Dot plot audit: the SVG export captions carry the part plotted, like the screen caption', async (page) => {
+  await dotNumOpen(page, [101, 350], true);
+  const out = await page.evaluate(async () => {
+    const dl = _dotDownload; _dotDownload = () => {};
+    const cu = URL.createObjectURL; let blob = null; URL.createObjectURL = b => { blob = b; return cu.call(URL, b); };
+    _dotExportSvg(); URL.createObjectURL = cu; _dotDownload = dl;
+    const svg = blob ? await blob.text() : '';
+    return { svg: svg.split('\n').filter(l => /font-weight="bold"/.test(l)), want: _dotRangeText('B').trim() };
+  });
+  return { pass: !!out.want && out.svg.length === 2 && out.svg[0].includes(out.want), detail: JSON.stringify(out) };
+});
+// RevComp was read from the name suffix: a row literally named "x (RevComp)" plotted with the box unchecked counted B downwards.
+check('Dot plot audit: a row literally named "... (RevComp)" is not taken for a reverse complement, and keeps its name through a recalculation', async (page) => {
+  await loadFasta(page, dotNumFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    state.seqs[1].header = 'seq(RevComp)';
+    document.getElementById('dotPlotRevComp').checked = false;
+    const x = state.seqs[0], y = state.seqs[1];
+    return openDotPlot(x.seq.replace(/[-. ]/g, ''), y.seq.replace(/[-. ]/g, ''), x.header, y.header, { rowIndexA: 0, rowIndexB: 1, alignedSeqA: x.seq, alignedSeqB: y.seq });
+  });
+  await page.waitForFunction(() => !_dotPlotState.computing && _dotPlotState.rows > 0, null, { timeout: 20000 });
+  const out = await page.evaluate(() => ({ rev: _dotPlotRevB(), first: _dotShownB(0), name: _dotPlotNameB() }));
+  const again = await page.evaluate(async () => { document.getElementById('dotPlotRecalc').click(); await new Promise(r => setTimeout(r, 1000)); return { name: _dotPlotNameB(), rev: _dotPlotRevB(), first: _dotShownB(0) }; });
+  return { pass: out.rev === false && out.first === 1 && out.name === 'seq(RevComp)' && again.name === 'seq(RevComp)' && again.rev === false && again.first === 1, detail: JSON.stringify({ out, again }) };
+});
+// Going to a stale entry of another pair opened that pair's plot and flipped the RevComp box first, then refused.
+check('Dot plot audit: a stale collection entry of another pair is refused before the open plot or the RevComp box is touched', async (page) => {
+  await dotNumOpen(page, null, true);
+  const out = await page.evaluate(async () => {
+    const S = _dotPlotState, o = {};
+    _dotBookmarkRegion(0);
+    const b = state.dotBookmarks[0];
+    b.revB = false;                                    // another strand than the open plot (RevComp B): not "here"
+    b.seqA = 'TTTTTTTTTT'.repeat(6);                   // the residues the entry says are not in the row: stale
+    const rc = document.getElementById('dotPlotRevComp'); rc.checked = true;
+    o.nameBefore = S.nameB;
+    window.__msgs.length = 0; await _dotGoToBookmark(b.id); await new Promise(r => setTimeout(r, 300));
+    o.rcAfter = rc.checked; o.nameAfter = S.nameB; o.msg = window.__msgs.join('|');
+    return o;
+  });
+  return { pass: out.rcAfter === true && out.nameAfter === out.nameBefore && /changed since this was saved/.test(out.msg), detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
