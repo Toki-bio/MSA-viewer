@@ -14178,7 +14178,7 @@ check('Rectangle selection by drag and by two clicks (Full, Canvas); Realign Blo
 check('Dot plot collection audit: hostile stored id, other modal clears marks+peek, recalculation keeps marks, rename survives a re-render, duplicate headers, RevComp here-marker', async (page) => {
   const seqA = 'ACGTTGCAAGGCTTAACCGGTTAAGGCCTTAAGACGTTGCAAGGCTTAACCGGTTAAGGCCTTAAGTTTT';
   const fa = '>dup\n' + seqA + '\n>dup\n' + 'TTGCACCGGAATTCCGGAATTCCAAGGTTGCACCGGAATTCCGGAATTCCAAGGTTCCCC' + '\n>other\n' + seqA.split('').reverse().join('') + '\n';
-  await page.evaluate(() => { localStorage.setItem('msaviewer_dotBookmarks', JSON.stringify([{ id: "x');window.__pwned=1;//", name: 'hostile', nameA: 'dup', nameB: 'dup', aStart: 0, aEnd: 10, bStart: 30, bEnd: 40, seqA: 'ACGTTGCAAG', seqB: 'ACGTTGCAAG' }])); });
+  await page.evaluate(() => { localStorage.setItem('msaviewer_dotBookmarks', JSON.stringify([{ id: "x');window.__pwned=1;//", name: 'hostile', nameA: 'dup', nameB: 'dup', aStart: 0, aEnd: 10, bStart: 33, bEnd: 43, seqA: 'ACGTTGCAAG', seqB: 'ACGTTGCAAG' }])); });
   await page.reload({ waitUntil: 'networkidle' }); await page.waitForTimeout(400);
   await loadFasta(page, fa); await setMode(page, 'full');
   const r = {};
