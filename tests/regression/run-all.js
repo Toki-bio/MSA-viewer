@@ -14869,8 +14869,7 @@ check('GLM fix2: legacy \'single\' preset/snapshot opens in Canvas (Full only wh
 // v318 hid the Full radio but its label kept display:block, so "Full" still showed when the Display menu was open.
 check('Display menu: opened, it shows no Full option', async (page) => {
   await loadFasta(page, makeFasta(6, 120));
-  const btn = page.locator('button', { hasText: /^Display$/ }).first();
-  await btn.click({ timeout: 5000 }); await page.waitForTimeout(400);
+  await page.getByText('Display', { exact: true }).first().click({ timeout: 5000 }); await page.waitForTimeout(400);
   const r = await page.evaluate(() => { const l = document.querySelector('label[for="modeSingle"]'), b = document.querySelector('label[for="modeBlocks"]'); const seen = e => !!e && e.getClientRects().length > 0; return { full: seen(l), block: seen(b) }; });
   return { pass: !r.full && r.block, detail: JSON.stringify(r) };
 });
