@@ -16,6 +16,7 @@ function createRetrier(opts) {
   const watch = o.watch || startSleepWatch(o);
   const now = o.now || Date.now;
   const log = o.log || (s => console.log(s));
+  const graceMs = o.graceMs >= 0 ? o.graceMs : 60000;
   const maxRetries = Number.isInteger(o.maxRetries) && o.maxRetries >= 0 ? o.maxRetries : 2;
   const retried = [];
 
@@ -27,7 +28,7 @@ function createRetrier(opts) {
       try { outcome = await attempt(retries); }
       catch (e) { outcome = { pass: false, detail: 'threw: ' + (e && e.message || e) }; }
       if (outcome.pass || retries >= maxRetries) break;
-      const slept = watch.sleptBetween(t0, now());
+      const slept = watch.sleptBetween(retries ? t0 : t0 - graceMs, now());   // first attempt: also a sleep that ended just before it (a check can fail right after wake)
       if (!(slept > 0)) break;
       retries++;
       if (retries === 1) retried.push(name);

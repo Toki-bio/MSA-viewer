@@ -12,7 +12,7 @@
 // process tree and counts it as TIMEOUT. Time the machine spent asleep does not count towards the limit.
 //
 // Laptop sleep (2026-11-04): a 1 s heartbeat (tests/lib/sleep-watch.js) records wall-clock gaps above
-// 30 s (SLEEP_GAP_MS). A check that FAILED while such a gap overlapped it is rerun in a fresh browser,
+// 30 s (SLEEP_GAP_MS). A check that FAILED while such a gap overlapped it, or within 60 s after one, is rerun in a fresh browser,
 // at most 2 times, and the rerun's result is the result (tests/lib/retry-on-sleep.js). The log shows
 // "[RETRY] <name>: the machine slept N s during this check" and the final count line says how many
 // checks were retried. A pass is never rerun and a failure without a sleep gap is never rerun.

@@ -91,9 +91,18 @@ function watch(c, extra) { return startSleepWatch({ now: c.now, autoStart: false
     const c = clock(), w = watch(c), lines = [];
     const r = createRetrier({ watch: w, now: c.now, log: s => lines.push(s) });
     c.adv(500000); w.tick();      // slept before the check started
+    for (let i = 0; i < 61; i++) { c.adv(1000); w.tick(); }   // and woke more than 60 s before it (owner 2026-11-05: up to 60 s counts)
     let calls = 0;
     const out = await r.run('chk F', async () => { calls++; c.adv(2000); return F; });
     return !out.pass && calls === 1 || calls;
+  });
+  await check('a failure within 60 s after waking is rerun once, and the same sleep does not rerun it again', async () => {
+    const c = clock(), w = watch(c), lines = [];
+    const r = createRetrier({ watch: w, now: c.now, log: s => lines.push(s) });
+    c.adv(500000); w.tick();      // woke just before the check
+    let calls = 0;
+    const out = await r.run('chk W', async () => { calls++; c.adv(2000); return F; });
+    return !out.pass && calls === 2 || calls;
   });
   await check('a retried failure keeps its detail and duration in the [RETRY] line, and the final pass is labelled "PASS after retry"', async () => {
     const s = setup([{ pass: false, detail: 'wrong result 7' }, P], [300000, 0]);
