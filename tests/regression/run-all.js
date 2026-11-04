@@ -14865,10 +14865,25 @@ check('GLM fix2: legacy \'single\' preset/snapshot opens in Canvas (Full only wh
 }));
 
 // owner 2026-11-02: the search colour box opens a palette on hover, without a click.
+// A class with its own display beat the hidden attribute: the v323 palette stayed on the page, its top edge in the corner.
+// v318 hid the Full radio but its label kept display:block, so "Full" still showed when the Display menu was open.
+check('Display menu: opened, it shows no Full option', async (page) => {
+  await loadFasta(page, makeFasta(6, 120));
+  await page.getByText('Display', { exact: true }).first().click({ timeout: 5000 }); await page.waitForTimeout(400);
+  const r = await page.evaluate(() => { const l = document.querySelector('label[for="modeSingle"]'), b = document.querySelector('label[for="modeBlocks"]'); const seen = e => !!e && e.getClientRects().length > 0; return { full: seen(l), block: seen(b) }; });
+  return { pass: !r.full && r.block, detail: JSON.stringify(r) };
+});
+
+check('Page load: no element with the hidden attribute is displayed', async (page) => {
+  await loadFasta(page, makeFasta(6, 120));
+  const shown = await page.evaluate(() => [...document.querySelectorAll('[hidden]')].filter(e => getComputedStyle(e).display !== 'none').map(e => e.id || e.className || e.tagName));
+  return { pass: shown.length === 0, detail: JSON.stringify(shown) };
+});
+
 check('Search colour: hovering the colour box shows a palette; a chip sets the colour used by Find', async (page) => {
   await loadFasta(page, makeFasta(6, 120));
   await page.keyboard.press('Control+f'); await page.waitForTimeout(400);   // opens the search controls, as a user would
-  const popHidden = () => page.evaluate(() => { const p = document.getElementById('searchColourPop'); return !p || p.hidden; });
+  const popHidden = () => page.evaluate(() => { const p = document.getElementById('searchColourPop'); return !p || getComputedStyle(p).display === 'none'; });   // what is on screen, not the flag
   await page.hover('#searchColor', { timeout: 5000 }); await page.waitForTimeout(300);
   const chips = await page.evaluate(() => document.querySelectorAll('#searchColourPop .search-colour-chip').length);
   const shown = !(await popHidden());
