@@ -9,6 +9,8 @@ const { launch, closeLaunched, makeFasta, loadFasta, loadSyntheticFasta, setMode
 
 const CHECKS = [];
 function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
+const { createRetrier } = require('../lib/retry-on-sleep');   // a failed check is rerun only if the machine slept during it (2026-11-04)
+const resumeLib = require('../lib/resume');
 const { withTimeout, checkTimeoutMs } = require('../lib/check-timeout');   // a time limit per check (2026-10-23)
 // Canvas eases a mouse-wheel notch over 150 ms (v276): wait until the view has arrived (no-op in Full/Block)
 async function settleWheel(pg) { await pg.waitForFunction(() => typeof _canvasState === 'undefined' || !_canvasState.wheelAnimating, null, { timeout: 2000 }).catch(() => {}); await pg.waitForTimeout(40); }
@@ -15102,44 +15104,55 @@ check('Dot plot numbering: Dot-plot of selected columns with a residue selection
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
+  const retrier = createRetrier();
+  const resume = resumeLib.forSuite('regression', require('path').join(__dirname, '..', '..'));
+  let skipped = 0;
   // Optional: CHECK_FILTER=substring runs only checks whose name includes it
   // (case-insensitive) - useful for isolating one check while iterating.
   const filter = process.env.CHECK_FILTER ? process.env.CHECK_FILTER.toLowerCase() : null;
   const activeChecks = filter ? CHECKS.filter(c => c.name.toLowerCase().includes(filter)) : CHECKS;
   try {
     for (const { name, fn, opts } of activeChecks) {
-      // A fresh browser process per check, not just a fresh page: multiple
+      if (resume.skip.has(name)) { skipped++; console.log(`[SKIP] ${name} - passed earlier on this commit (--resume)`); continue; }
+      let ms = 0;
+      // One attempt = a fresh browser process per check, not just a fresh page: multiple
       // multi-million-residue alignments loaded into the SAME browser
       // process across successive checks was observed to accumulate memory
       // and crash the renderer ("Target crashed") partway through the suite
       // - isolating each check removes that as a confound between checks
       // and matches how a real user's single-alignment session behaves
       // rather than compounding this test suite's own churn.
-      const browser = await launch();
-      const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-      page.setDefaultTimeout(30000);
-      let outcome;
-      const t0 = Date.now();
-      try {
-        await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
-        outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
-      } catch (e) {
-        outcome = { pass: false, detail: `threw: ${e.message}` };
-      }
-      const ms = Date.now() - t0;
+      const attempt = async () => {
+        const browser = await launch();
+        const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+        page.setDefaultTimeout(30000);
+        let outcome;
+        const t0 = Date.now();
+        try {
+          await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
+          outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
+        } catch (e) {
+          outcome = { pass: false, detail: `threw: ${e.message}` };
+        }
+        ms = Date.now() - t0;
+        await withTimeout(browser.close(), 20000).catch(() => console.warn('[WARN] the browser of "' + name + '" did not close within 20 s'));   // a timed-out check may still hold the page
+        // a check that launched its own browser (launch({ scrollbars: true })) and timed out never closed it
+        const left = await closeLaunched(10000, [browser]);
+        if (left) console.warn('[WARN] ' + left + ' browser(s) left open by "' + name + '" closed by the runner');
+        return outcome;
+      };
+      // a failed check is rerun (fresh browser, at most 2 times) only if the machine slept during it
+      const outcome = await retrier.run(name, attempt);
       console.log(`[${outcome.pass ? 'PASS' : 'FAIL'}] (${ms}ms) ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
       results.push({ name, ...outcome });
-      await withTimeout(browser.close(), 20000).catch(() => console.warn('[WARN] the browser of "' + name + '" did not close within 20 s'));   // a timed-out check may still hold the page
-      // a check that launched its own browser (launch({ scrollbars: true })) and timed out never closed it
-      const left = await closeLaunched(10000, [browser]);
-      if (left) console.warn('[WARN] ' + left + ' browser(s) left open by "' + name + '" closed by the runner');
+      if (outcome.pass) resume.record(name);   // written as each check passes, so a kill loses at most the running one
     }
   } finally {
     server.close();
   }
 
   const failCount = results.filter(r => !r.pass).length;
-  console.log(`\n${results.length - failCount}/${results.length} passed`);
+  console.log(`\n${results.length - failCount}/${results.length} passed${retrier.suffix()}${skipped ? `; ${skipped} check(s) skipped, passed earlier (--resume)` : ''}`);
   process.exit(failCount > 0 ? 1 : 0);
 }
 

@@ -4,15 +4,33 @@
 //   node tests/run-all.js --quick    # MACSE subsets only (a few minutes faster)
 //   node tests/run-all.js --no-browser   # skip the suites that need Chromium
 //   node tests/run-all.js --only regression   # only the suites whose name contains the text
+//   node tests/run-all.js --resume   # continue an interrupted run (see below)
 //
 // Time limits (2026-10-23): every browser suite fails a check that runs past CHECK_TIMEOUT_MS
 // (default 180 s; tests/lib/check-timeout.js), and this runner kills a suite that runs past
-// SUITE_TIMEOUT_MS (default 60 min) with its whole process tree and counts it as TIMEOUT.
+// SUITE_TIMEOUT_MS (default 60 min; the regression suite 2 h, it has outgrown 60 min) with its whole
+// process tree and counts it as TIMEOUT. Time the machine spent asleep does not count towards the limit.
+//
+// Laptop sleep (2026-11-04): a 1 s heartbeat (tests/lib/sleep-watch.js) records wall-clock gaps above
+// 30 s (SLEEP_GAP_MS). A check that FAILED while such a gap overlapped it is rerun in a fresh browser,
+// at most 2 times, and the rerun's result is the result (tests/lib/retry-on-sleep.js). The log shows
+// "[RETRY] <name>: the machine slept N s during this check" and the final count line says how many
+// checks were retried. A pass is never rerun and a failure without a sleep gap is never rerun.
+// Retries are in the regression, functional, correctness and a11y runners.
+//
+// Resume (2026-11-04): passes are written as they happen to a progress file in the OS temp dir
+// (tests/lib/resume.js; suites that passed, and passed check names inside the regression suite).
+// `--resume` skips what passed earlier on the SAME commit; failed and unfinished items run again. If the
+// commit differs or tracked files have uncommitted changes it says so and starts fresh. A run without
+// --resume starts fresh and overwrites the file. The summary says "resumed: N suites, M checks passed
+// earlier" so a resumed result is not mistaken for a complete run; exit code is 1 on any failure.
 //
 // Browser suites drive a local Chrome/Chromium through playwright-core (see
 // tests/lib/browser.js; set BROWSER_PATH if it is not found).
 const { spawn, spawnSync } = require('child_process');
 const path = require('path');
+const { startSleepWatch } = require('./lib/sleep-watch');
+const resumeLib = require('./lib/resume');
 
 const ROOT = path.join(__dirname, '..');
 const quick = process.argv.includes('--quick');
@@ -23,17 +41,26 @@ if (only !== null && (!only || only.startsWith('--'))) {   // "--only" with no t
   console.error('usage: node tests/run-all.js --only <text in a suite name>');
   process.exit(2);
 }
-const SUITE_TIMEOUT_MS = +process.env.SUITE_TIMEOUT_MS > 0 ? +process.env.SUITE_TIMEOUT_MS : 3600000;
+const resumeRequested = process.argv.includes('--resume');
+const SUITE_TIMEOUT_ENV = +process.env.SUITE_TIMEOUT_MS > 0 ? +process.env.SUITE_TIMEOUT_MS : 0;
+const DEFAULT_SUITE_TIMEOUT_MS = 3600000;
+const sleepWatch = startSleepWatch();
+const suiteTimeoutMs = suite => SUITE_TIMEOUT_ENV || suite.timeoutMs || DEFAULT_SUITE_TIMEOUT_MS;
+const suiteKey = suite => suite.name + ' | ' + suite.args.join(' ');
 
 // Runs one suite; past SUITE_TIMEOUT_MS it is killed with its process tree (taskkill /T on Windows,
 // where a plain kill would orphan the headless Chrome; SIGTERM elsewhere, which playwright turns into
 // a browser close) and reported as timed out.
-function runSuite(args) {
+function runSuite(args, limitMs, env) {
   return new Promise(resolve => {
-    const child = spawn(process.execPath, args, { cwd: ROOT, stdio: 'inherit' });
+    const child = spawn(process.execPath, args, { cwd: ROOT, stdio: 'inherit', env });
     let timedOut = false;
     let escalate = null;
-    const timer = setTimeout(() => {
+    const started = Date.now();
+    // limit counts awake time only: a laptop that slept for an hour must not time the suite out
+    const timer = setInterval(() => {
+      if (Date.now() - started - sleepWatch.sleptBetween(started, Date.now()) <= limitMs) return;
+      clearInterval(timer);
       if (child.exitCode !== null || child.signalCode !== null) return;   // it just finished: no kill of a dead (or reused) pid
       timedOut = true;
       if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
@@ -41,9 +68,9 @@ function runSuite(args) {
         child.kill('SIGTERM');
         escalate = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, 10000);   // a stalled loop ignores SIGTERM
       }
-    }, SUITE_TIMEOUT_MS);
-    child.on('exit', code => { clearTimeout(timer); if (escalate) clearTimeout(escalate); resolve({ code, timedOut }); });
-    child.on('error', () => { clearTimeout(timer); resolve({ code: 1, timedOut }); });
+    }, 1000);
+    child.on('exit', code => { clearInterval(timer); if (escalate) clearTimeout(escalate); resolve({ code, timedOut }); });
+    child.on('error', () => { clearInterval(timer); resolve({ code: 1, timedOut }); });
   });
 }
 
@@ -79,11 +106,13 @@ const SUITES = [
   { name: 'unit: variant effects on genes', args: ['tests/unit/variant-effect.test.js'] },
   { name: 'unit: indexed BAM reading against samtools', args: ['tests/unit/bam-index.test.js'] },
   { name: 'unit: per-check time limit', args: ['tests/unit/check-timeout.test.js'] },
+  { name: 'unit: sleep detection and retry after sleep', args: ['tests/unit/sleep-watch.test.js'] },
+  { name: 'unit: resume progress file', args: ['tests/unit/resume.test.js'] },
   { name: 'release version consistency', args: ['tests/meta/version.test.js'] },
   { name: 'correctness (consensus, parsers, exports, rendering)', args: ['tests/correctness/run.js'], browser: true },
   { name: 'input compatibility (examples/)', args: ['tests/compat/run.js'], browser: true },
   { name: 'functional', args: ['tests/functional/run-all.js'], browser: true },
-  { name: 'regression', args: ['tests/regression/run-all.js'], browser: true },
+  { name: 'regression', args: ['tests/regression/run-all.js'], browser: true, timeoutMs: 7200000 },
   { name: 'accessibility (keyboard, names, axe-core)', args: ['tests/a11y/check.js'], browser: true },
   { name: 'browser support (fallbacks, file://)', args: ['tests/browser-support/check.js'], browser: true },
   { name: 'layout: no stray scrollbars', args: ['tests/layout/stray-scrollbars.test.js'], browser: true },
@@ -95,20 +124,38 @@ const SUITES = [
 
 (async () => {
   const results = [];
+  // progress file: passes are recorded as they happen; --resume reuses it only for the same clean commit
+  const state = resumeLib.gitState(ROOT);
+  const progressFile = process.env.CHECK_RESUME_FILE || resumeLib.defaultProgressFile(ROOT);
+  let prior = null;
+  if (resumeRequested) {
+    prior = resumeLib.loadProgress(progressFile, state);
+    if (prior.message) console.log(`[RESUME] ${prior.message}`);
+    if (!prior.usable) prior = null;
+  }
+  if (!prior) resumeLib.startFresh(progressFile, state);
+  const childEnv = { ...process.env, CHECK_RESUME_FILE: progressFile, CHECK_RESUME: prior ? '1' : '' };
+  let resumedSuites = 0;
+  const resumedChecks = prior ? [...prior.checks.values()].reduce((n, set) => n + set.size, 0) : 0;
+  if (prior) console.log(`[RESUME] same commit ${state.commit.slice(0, 10)}: ${prior.suites.size} suite(s) and ${resumedChecks} check(s) passed earlier are skipped`);
   for (const suite of SUITES) {
     if (only !== null && !suite.name.toLowerCase().includes(only)) continue;
     if (suite.browser && noBrowser) { results.push({ ...suite, status: 'skipped' }); continue; }
+    if (prior && prior.suites.has(suiteKey(suite))) { resumedSuites++; results.push({ ...suite, status: 'resumed' }); console.log(`\n=== ${suite.name}: passed earlier on this commit, skipped (--resume)`); continue; }
     console.log(`\n=== ${suite.name}: node ${suite.args.join(' ')}`);
     const t0 = Date.now();
-    const r = await runSuite(suite.args);
+    const r = await runSuite(suite.args, suiteTimeoutMs(suite), childEnv);
     const seconds = ((Date.now() - t0) / 1000).toFixed(0);
-    if (r.timedOut) console.log(`[TIMEOUT] ${suite.name}: killed after ${seconds} s (SUITE_TIMEOUT_MS=${SUITE_TIMEOUT_MS})`);
-    results.push({ ...suite, status: r.timedOut ? 'TIMEOUT' : r.code === 0 ? 'pass' : 'FAIL', seconds });
+    if (r.timedOut) console.log(`[TIMEOUT] ${suite.name}: killed after ${seconds} s (limit ${suiteTimeoutMs(suite)} ms of awake time)`);
+    const status = r.timedOut ? 'TIMEOUT' : r.code === 0 ? 'pass' : 'FAIL';
+    if (status === 'pass') resumeLib.record(progressFile, { t: 'suite', key: suiteKey(suite) });
+    results.push({ ...suite, status, seconds });
   }
 
   console.log('\n=== Summary');
   for (const r of results) console.log(`${r.status.padEnd(7)} ${r.seconds ? (r.seconds + ' s').padStart(6) : '      '}  ${r.name}`);
   const failed = results.filter(r => r.status === 'FAIL' || r.status === 'TIMEOUT').length;
+  if (prior) console.log(`resumed: ${resumedSuites} suites, ${resumedChecks} checks passed earlier (not rerun in this result)`);
   console.log(failed ? `\n${failed} suite(s) failed` : '\nall suites passed');
   process.exit(failed ? 1 : 0);
 })();

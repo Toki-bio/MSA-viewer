@@ -6,6 +6,7 @@ const { launch, makeFasta, loadFasta, loadSyntheticFasta, setMode } = require('.
 
 const CHECKS = [];
 function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
+const { createRetrier } = require('../lib/retry-on-sleep');   // a failed check is rerun only if the machine slept during it (2026-11-04)
 const { withTimeout, checkTimeoutMs } = require('../lib/check-timeout');   // a time limit per check (2026-10-23)
 
 check('URL ?reads=: a SAM next to ?url= opens Reads mode with every mapped read', async (page) => {
@@ -1141,32 +1142,38 @@ check('Annotation: a one-gene mitochondrial BED switches the code to Vertebrate 
 async function main() {
     const { server, baseUrl } = await start();
     const results = [];
+    const retrier = createRetrier();
     const filter = process.env.CHECK_FILTER ? process.env.CHECK_FILTER.toLowerCase() : null;
     const activeChecks = filter ? CHECKS.filter(c => c.name.toLowerCase().includes(filter)) : CHECKS;
     try {
         for (const { name, fn, opts } of activeChecks) {
-            const browser = await launch();
-            const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-            page.setDefaultTimeout(30000);
-            let outcome;
-            const t0 = Date.now();
-            try {
-                await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
-                outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
-            } catch (e) {
-                outcome = { pass: false, detail: `threw: ${e.message}` };
-            }
-            const ms = Date.now() - t0;
+            let ms = 0;
+            const attempt = async () => {
+                const browser = await launch();
+                const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+                page.setDefaultTimeout(30000);
+                let outcome;
+                const t0 = Date.now();
+                try {
+                    await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
+                    outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
+                } catch (e) {
+                    outcome = { pass: false, detail: `threw: ${e.message}` };
+                }
+                ms = Date.now() - t0;
+                await withTimeout(browser.close(), 20000).catch(() => {});   // a timed-out check may still hold the page
+                return outcome;
+            };
+            const outcome = await retrier.run(name, attempt);   // rerun only if the machine slept during a failed check
             console.log(`[${outcome.pass ? 'PASS' : 'FAIL'}] (${ms}ms) ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
             results.push({ name, ...outcome });
-            await withTimeout(browser.close(), 20000).catch(() => {});   // a timed-out check may still hold the page
         }
     } finally {
         server.close();
     }
 
     const failCount = results.filter(r => !r.pass).length;
-    console.log(`\n${results.length - failCount}/${results.length} passed`);
+    console.log(`\n${results.length - failCount}/${results.length} passed${retrier.suffix()}`);
     process.exit(failCount > 0 ? 1 : 0);
 }
 

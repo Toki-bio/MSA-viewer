@@ -10,6 +10,7 @@ const { launch, loadFasta } = require('../lib/browser');
 const AXE = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 const CHECKS = [];
 function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
+const { createRetrier } = require('../lib/retry-on-sleep');   // a failed check is rerun only if the machine slept during it (2026-11-04)
 const { withTimeout, checkTimeoutMs } = require('../lib/check-timeout');   // a time limit per check (2026-10-23)
 const active = page => page.evaluate(() => {
   const a = document.activeElement;
@@ -123,29 +124,35 @@ check('axe-core: manual has no serious or critical violations', async (page, bas
 
 async function main() {
   const { server, baseUrl } = await start();
-  const browser = await launch();
+  let browser = await launch();
   let failed = 0;
+  const retrier = createRetrier();
   try {
     for (const { name, fn, opts } of CHECKS) {
-      const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-      const page = await ctx.newPage();
-      const errors = [];
-      page.on('pageerror', e => errors.push(e.message));
-      let outcome;
-      try {
-        await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
-        outcome = await withTimeout(fn(page, baseUrl), checkTimeoutMs(opts));
-        if (outcome.pass && errors.length) outcome = { pass: false, detail: 'page errors: ' + errors.join(' | ') };
-      } catch (e) { outcome = { pass: false, detail: 'threw: ' + e.message }; }
+      const attempt = async (n) => {
+        if (n > 0) { await withTimeout(browser.close(), 20000).catch(() => {}); browser = await launch(); }   // a rerun gets a fresh browser
+        const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+        const page = await ctx.newPage();
+        const errors = [];
+        page.on('pageerror', e => errors.push(e.message));
+        let outcome;
+        try {
+          await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
+          outcome = await withTimeout(fn(page, baseUrl), checkTimeoutMs(opts));
+          if (outcome.pass && errors.length) outcome = { pass: false, detail: 'page errors: ' + errors.join(' | ') };
+        } catch (e) { outcome = { pass: false, detail: 'threw: ' + e.message }; }
+        await withTimeout(ctx.close(), 20000).catch(() => {});
+        return outcome;
+      };
+      const outcome = await retrier.run(name, attempt);   // rerun only if the machine slept during a failed check
       if (!outcome.pass) failed++;
       console.log(`[${outcome.pass ? 'PASS' : 'FAIL'}] ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
-      await withTimeout(ctx.close(), 20000).catch(() => {});
     }
   } finally {
     await browser.close();
     server.close();
   }
-  console.log(`\n${CHECKS.length - failed}/${CHECKS.length} passed`);
+  console.log(`\n${CHECKS.length - failed}/${CHECKS.length} passed${retrier.suffix()}`);
   process.exit(failed ? 1 : 0);
 }
 main().catch(e => { console.error(e); process.exit(1); });
