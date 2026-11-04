@@ -4578,3 +4578,6 @@ body.name-resizing { user-select: none; }
     padding: 2px 4px;
     cursor: pointer;
 }
+
+/* A class or tag rule with its own display must not beat the hidden attribute */
+[hidden] { display: none !important; }
