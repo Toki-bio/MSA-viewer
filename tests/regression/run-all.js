@@ -15802,6 +15802,39 @@ check('Dot plot audit3: the dot plot consensus follows the consensus settings (t
   const ok = o.base && o.steps.every(s => s.follows !== false && s.staleDisplay !== false) && o.steps.some(s => s.differs);
   return { pass: ok, detail: JSON.stringify(o) };
 });
+check('Canvas consensus: the consensus row and Copy Consensus follow the real settings controls (threshold, type, fallback, minimum coverage)', async (page) => {
+  // used to go wrong: Canvas compared only the rows and the length before reusing its consensus, so moving a setting left the old letters
+  // on screen and in Copy Consensus while the rows gave another consensus (found by GLM audit rel326b, reproduced with the real slider)
+  await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAC\n>c\nACGTTTTTTT\n>d\nTTTTTTTT--\n>e\nTTTTTTGG--\n>f\nT-------GG\n');
+  await setMode(page, 'canvas');
+  const o = await page.evaluate(async () => {
+    const wait = () => new Promise(res => setTimeout(res, 700));
+    const cb = el('showConsensus');
+    if (!cb.checked) cb.click();
+    await wait();
+    const shown = () => (_canvasState.consensus?.values || []).join('');
+    const direct = () => computeConsensusForSequences(state.seqs.map(q => q.seq));
+    const fire = (x, type) => x.dispatchEvent(new Event(type, { bubbles: true }));
+    const slide = (id, v) => { const x = el(id); x.value = v; fire(x, 'input'); fire(x, 'change'); };
+    const r = { start: { shown: shown(), want: direct() }, steps: [] };
+    const moves = [
+      ['type', () => document.querySelector('input[name="consensusType"][value="ambiguous"]').click()],
+      ['threshold', () => slide('consensusThreshold', 90)],
+      ['fallback', () => { const x = el('consensusFallback'); x.value = [...x.options].map(q => q.value).find(v => v !== x.value); fire(x, 'change'); }],
+      ['coverage', () => slide('consensusMinCoverage', 100)],
+    ];
+    for (const [name, move] of moves) {
+      const before = direct();
+      move();
+      await wait();
+      r.steps.push({ name, changed: direct() !== before, shown: shown(), copy: getConsensusSequenceGapped(), want: direct() });
+    }
+    return r;
+  });
+  const ok = o.start.want.length === 10 && o.start.shown === o.start.want
+    && o.steps.length === 4 && o.steps.every(q => q.changed && q.shown === q.want && q.copy === q.want);
+  return { pass: ok, detail: JSON.stringify(o) };
+});
 check('Dot plot audit3: an open with nothing to plot never leaves the plot marked as computing (Recalc stays alive)', async (page) => {
   // used to go wrong: a plot still computing was superseded by an open that has no residues (an all-gap row, an empty consensus); the early
   // exit returned without clearing S.computing and the superseded computation dropped its result at the generation check, so

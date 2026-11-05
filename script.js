@@ -11834,7 +11834,7 @@ function renderAlignment(options = {}) {
         _updateCodonAnalysisState(len);
         const fpNow = _seqsFingerprint();
         if (state.conservationDataCache && state.conservationDataCache.fp !== fpNow) state.conservationDataCache = null;
-        if (state.consensusCache && state.consensusCache.fp !== fpNow) state.consensusCache = null;
+        if (state.consensusCache && (state.consensusCache.fp !== fpNow || state.consensusCache.opts !== _consensusOptsKey())) state.consensusCache = null;   // a changed consensus setting needs a new consensus too
         const cachedConservation = (state.conservationDataCache?.len === len
             && state.conservationDataCache?.shadeMode === shadeMode)
             ? state.conservationDataCache.data : null;
