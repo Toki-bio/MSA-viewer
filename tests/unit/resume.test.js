@@ -171,7 +171,7 @@ check('audit3 8: --only that matches no suite does not print "all suites passed"
 });
 check('audit3 6: the a11y runner honours CHECK_FILTER: a filter matching nothing exits 1 (3 under the parent) and runs no check', () => {
   try { require.resolve('playwright-core'); } catch (e) { return true; }   // the browser runner cannot even load without it (a --no-browser setup)
-  const a = runNode(['tests/a11y/check.js'], { CHECK_FILTER: 'zz no such check zz' });
+  const a = runNode(['tests/a11y/check.js'], { CHECK_FILTER: 'zz no such check zz', CHECK_NOMATCH_EXIT: '' });
   const b = runNode(['tests/a11y/check.js'], { CHECK_FILTER: 'zz no such check zz', CHECK_NOMATCH_EXIT: '3' });
   return a.code === 1 && b.code === 3 && /no check matched/.test(a.out) && !/\[PASS\]/.test(a.out) || JSON.stringify({ a, b });
 });
