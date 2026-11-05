@@ -239,25 +239,17 @@ check('Colouring: clusterByName groups identically-prefixed names, applyPatternC
         return { pass: false, detail: `Mouse cluster wrong: ${JSON.stringify(mouseCluster)}` };
     }
 
-    // 3. Test applyPatternColour through the real UI entry point.
-    //    Set the pattern input to "Human" and a specific colour, then call
-    //    applyPatternColour() - the same function the Pattern button triggers.
+    // 3. Test Pattern colouring through the real controls: the real inputs and
+    //    a click on the real Apply button. A missing control is a failure.
     const patternResult = await page.evaluate(() => {
-        // Ensure UI elements exist (they should be in the HTML, but create if missing)
-        let patternInput = document.getElementById('colourPatternInput');
-        if (!patternInput) {
-            patternInput = document.createElement('input');
-            patternInput.id = 'colourPatternInput';
-            patternInput.type = 'text';
-            document.body.appendChild(patternInput);
-        }
-        let colourInput = document.getElementById('colourPatternColor');
-        if (!colourInput) {
-            colourInput = document.createElement('input');
-            colourInput.id = 'colourPatternColor';
-            colourInput.type = 'color';
-            document.body.appendChild(colourInput);
-        }
+        const patternInput = document.getElementById('colourPatternInput');
+        const colourInput = document.getElementById('colourPatternColor');
+        const patternButton = document.getElementById('colourPatternButton');
+        const missing = [];
+        if (!patternInput) missing.push('colourPatternInput');
+        if (!colourInput) missing.push('colourPatternColor');
+        if (!patternButton) missing.push('colourPatternButton');
+        if (missing.length) return { missing };
 
         patternInput.value = 'Human';
         colourInput.value = '#ff0000';
@@ -265,8 +257,7 @@ check('Colouring: clusterByName groups identically-prefixed names, applyPatternC
         // Clear any existing mappings
         colourState.mappings.clear();
 
-        // Call the real function (same as clicking the Pattern button)
-        applyPatternColour();
+        patternButton.click();
 
         // Collect results
         const mappings = {};
@@ -275,6 +266,10 @@ check('Colouring: clusterByName groups identically-prefixed names, applyPatternC
         });
         return { mappings };
     });
+
+    if (patternResult.missing) {
+        return { pass: false, detail: `Pattern controls missing from the page: ${patternResult.missing.join(', ')}` };
+    }
 
     const mappedNames = Object.keys(patternResult.mappings);
     if (mappedNames.length !== 3) {
