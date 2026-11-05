@@ -2,10 +2,11 @@
 // UI/function call path and asserts specific, correct output - not just
 // "didn't crash."
 const { start } = require('../lib/static-server');
-const { launch, makeFasta, loadFasta, loadSyntheticFasta, setMode } = require('../lib/browser');
+const { launch, makeFasta, loadFasta, loadSyntheticFasta, setMode, closeLaunched } = require('../lib/browser');
 
 const CHECKS = [];
 function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
+const { createRetrier, exitNoMatch } = require('../lib/retry-on-sleep');   // a failed check is rerun only if the machine slept during it (2026-11-04)
 const { withTimeout, checkTimeoutMs } = require('../lib/check-timeout');   // a time limit per check (2026-10-23)
 
 check('URL ?reads=: a SAM next to ?url= opens Reads mode with every mapped read', async (page) => {
@@ -238,25 +239,17 @@ check('Colouring: clusterByName groups identically-prefixed names, applyPatternC
         return { pass: false, detail: `Mouse cluster wrong: ${JSON.stringify(mouseCluster)}` };
     }
 
-    // 3. Test applyPatternColour through the real UI entry point.
-    //    Set the pattern input to "Human" and a specific colour, then call
-    //    applyPatternColour() - the same function the Pattern button triggers.
+    // 3. Test Pattern colouring through the real controls: the real inputs and
+    //    a click on the real Apply button. A missing control is a failure.
     const patternResult = await page.evaluate(() => {
-        // Ensure UI elements exist (they should be in the HTML, but create if missing)
-        let patternInput = document.getElementById('colourPatternInput');
-        if (!patternInput) {
-            patternInput = document.createElement('input');
-            patternInput.id = 'colourPatternInput';
-            patternInput.type = 'text';
-            document.body.appendChild(patternInput);
-        }
-        let colourInput = document.getElementById('colourPatternColor');
-        if (!colourInput) {
-            colourInput = document.createElement('input');
-            colourInput.id = 'colourPatternColor';
-            colourInput.type = 'color';
-            document.body.appendChild(colourInput);
-        }
+        const patternInput = document.getElementById('colourPatternInput');
+        const colourInput = document.getElementById('colourPatternColor');
+        const patternButton = document.getElementById('colourPatternButton');
+        const missing = [];
+        if (!patternInput) missing.push('colourPatternInput');
+        if (!colourInput) missing.push('colourPatternColor');
+        if (!patternButton) missing.push('colourPatternButton');
+        if (missing.length) return { missing };
 
         patternInput.value = 'Human';
         colourInput.value = '#ff0000';
@@ -264,8 +257,7 @@ check('Colouring: clusterByName groups identically-prefixed names, applyPatternC
         // Clear any existing mappings
         colourState.mappings.clear();
 
-        // Call the real function (same as clicking the Pattern button)
-        applyPatternColour();
+        patternButton.click();
 
         // Collect results
         const mappings = {};
@@ -274,6 +266,10 @@ check('Colouring: clusterByName groups identically-prefixed names, applyPatternC
         });
         return { mappings };
     });
+
+    if (patternResult.missing) {
+        return { pass: false, detail: `Pattern controls missing from the page: ${patternResult.missing.join(', ')}` };
+    }
 
     const mappedNames = Object.keys(patternResult.mappings);
     if (mappedNames.length !== 3) {
@@ -1141,32 +1137,43 @@ check('Annotation: a one-gene mitochondrial BED switches the code to Vertebrate 
 async function main() {
     const { server, baseUrl } = await start();
     const results = [];
+    const retrier = createRetrier();
     const filter = process.env.CHECK_FILTER ? process.env.CHECK_FILTER.toLowerCase() : null;
     const activeChecks = filter ? CHECKS.filter(c => c.name.toLowerCase().includes(filter)) : CHECKS;
+    if (filter && !activeChecks.length) { server.close(); exitNoMatch(process.env.CHECK_FILTER); }   // a filter that matches nothing is not a pass
     try {
         for (const { name, fn, opts } of activeChecks) {
-            const browser = await launch();
-            const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-            page.setDefaultTimeout(30000);
-            let outcome;
-            const t0 = Date.now();
-            try {
-                await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
-                outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
-            } catch (e) {
-                outcome = { pass: false, detail: `threw: ${e.message}` };
-            }
-            const ms = Date.now() - t0;
-            console.log(`[${outcome.pass ? 'PASS' : 'FAIL'}] (${ms}ms) ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
+            let ms = 0;
+            const attempt = async () => {
+                let browser = null;
+                let outcome;
+                const t0 = Date.now();
+                try {
+                    browser = await launch();
+                    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+                    page.setDefaultTimeout(30000);
+                    await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
+                    outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
+                } catch (e) {
+                    outcome = { pass: false, detail: `threw: ${e.message}` };
+                }
+                ms = Date.now() - t0;
+                if (browser) await withTimeout(browser.close(), 20000).catch(() => console.warn('[WARN] the browser of "' + name + '" did not close within 20 s'));   // a timed-out check may still hold the page
+                // a check that launched its own browser and timed out never closed it (as in the regression runner; audit3 7)
+                const left = await closeLaunched(10000, browser ? [browser] : []);
+                if (left) console.warn('[WARN] ' + left + ' browser(s) left open by "' + name + '" closed by the runner');
+                return outcome;
+            };
+            const outcome = await retrier.run(name, attempt);   // rerun only if the machine slept during a failed attempt
+            console.log(`[${retrier.label(outcome)}] (${ms}ms) ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
             results.push({ name, ...outcome });
-            await withTimeout(browser.close(), 20000).catch(() => {});   // a timed-out check may still hold the page
         }
     } finally {
         server.close();
     }
 
     const failCount = results.filter(r => !r.pass).length;
-    console.log(`\n${results.length - failCount}/${results.length} passed`);
+    console.log(`\n${results.length - failCount}/${results.length} passed${retrier.suffix()}`);
     process.exit(failCount > 0 ? 1 : 0);
 }
 

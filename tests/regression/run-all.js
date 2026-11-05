@@ -9,6 +9,8 @@ const { launch, closeLaunched, makeFasta, loadFasta, loadSyntheticFasta, setMode
 
 const CHECKS = [];
 function check(name, fn, opts) { CHECKS.push({ name, fn, opts }); }   // opts.timeoutMs: this check's own time limit
+const { createRetrier, exitNoMatch } = require('../lib/retry-on-sleep');   // a failed check is rerun only if the machine slept during it (2026-11-04)
+const resumeLib = require('../lib/resume');
 const { withTimeout, checkTimeoutMs } = require('../lib/check-timeout');   // a time limit per check (2026-10-23)
 // Canvas eases a mouse-wheel notch over 150 ms (v276): wait until the view has arrived (no-op in Full/Block)
 async function settleWheel(pg) { await pg.waitForFunction(() => typeof _canvasState === 'undefined' || !_canvasState.wheelAnimating, null, { timeout: 2000 }).catch(() => {}); await pg.waitForTimeout(40); }
@@ -15099,47 +15101,850 @@ check('Dot plot numbering: Dot-plot of selected columns with a residue selection
   return { pass: !out.noItem && out.chooser && out.opts === 3 && /choose two of 3 rows/.test(out.text), detail: JSON.stringify(out) };
 });
 
+// ---- Dot plot audit (GLM audit of v325, 2026-11-04) ----
+// The Pin toast printed raw plot indices (A${row+1} / B${col+1}) while every other readout of the same cell used the
+// residue numbers: with RevComp B or a range the toast contradicted the hover panel.
+check('Dot plot audit: the Pin message names the same residue numbers as the hover panel (RevComp B with a range)', async (page) => {
+  await dotNumOpen(page, [101, 350], true);
+  const out = await page.evaluate(async () => {
+    const S = _dotPlotState, ov = document.getElementById('dotPlotOverlay'), { vp } = _dotViewport();
+    const res = [];
+    for (const [row, col] of [[S.rows >> 1, 5], [3, S.cols - 4]]) {
+      const rect = ov.getBoundingClientRect();
+      window.__msgs.length = 0;
+      ov.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: rect.left + DOT_AXIS_PAD + (col + 0.5) * S.zoom - vp.scrollLeft, clientY: rect.top + DOT_AXIS_PAD + (row + 0.5) * S.zoom - vp.scrollTop }));
+      res.push({ row, col, msg: window.__msgs.join('|'), want: `Pinned: A${_dotShownA(S.pinnedRow)} / B${_dotShownB(S.pinnedCol)}.`, raw: `B${S.pinnedCol + 1}.` });
+    }
+    return res;
+  });
+  return { pass: out.every(o => o.msg.startsWith(o.want) && !o.msg.includes(o.raw)), detail: JSON.stringify(out) };
+});
+// An entry from before lenB was stored (no lenB): when the true B length cannot be known there are no negative or invented
+// residue numbers, no space in a FASTA header, and the TSV says its B numbers are plotted-order.
+check('Dot plot audit: legacy RevComp collection entries never print negative or invented B numbers, a clean FASTA header, a labelled TSV', async (page) => {
+  await dotNumOpen(page, null, false);
+  const out = await page.evaluate(async () => {
+    const o = {};
+    window.__clip.length = 0;
+    // (a) the row is shorter than the entry's coordinates: used to print -440--499
+    state.seqs[1].header = 'rowB'; state.seqs[1].seq = 'ACGT'.repeat(50);   // 200 residues
+    state.dotBookmarks = _dotSanitizeBookmarks([{ id: 'bmleg1', name: 'old', nameA: 'seqA', nameB: 'rowB', aStart: 0, aEnd: 60, bStart: 640, bEnd: 700, revB: true, seqA: 'A'.repeat(60), seqB: 'C'.repeat(60) }]);
+    _dotRenderBookmarks();
+    o.listShort = document.querySelector('[data-id="bmleg1"]').textContent;
+    // (b) the row is absent: plotted numbers, labelled, and a header without a space
+    state.dotBookmarks = _dotSanitizeBookmarks([{ id: 'bmleg2', name: 'old2', nameA: 'seqA', nameB: 'nowhere', aStart: 0, aEnd: 10, bStart: 10, bEnd: 20, revB: true, seqA: 'AAAAAAAAAA', seqB: 'CCCCCCCCCC' }]);
+    _dotCopyBookmark('bmleg2'); await new Promise(r => setTimeout(r, 100));
+    o.fasta = (window.__clip.pop() || '').split('\n').filter(l => l[0] === '>');
+    o.tsv = _dotBookmarksTsv().split('\n')[1].split('\t').slice(4, 8);
+    // (c) a row of the same name but another length (a trimmed copy): the entry's residues are not there, so no guessed length
+    const s = state.seqs[1]; s.header = 'rowC'; s.seq = 'A'.repeat(400);
+    state.dotBookmarks = _dotSanitizeBookmarks([{ id: 'bmleg3', name: 'old3', nameA: 'seqA', nameB: 'rowC', aStart: 0, aEnd: 50, bStart: 10, bEnd: 60, revB: true, seqA: 'A'.repeat(50), seqB: 'C'.repeat(50) }]);
+    _dotRenderBookmarks();
+    o.listOther = document.querySelector('[data-id="bmleg3"]').textContent;
+    return o;
+  });
+  const clean = h => !!h && !/\s/.test(h);
+  const ok = !/B-|--/.test(out.listShort) && /plotted/.test(out.listShort) && out.fasta.length === 2 && clean(out.fasta[1]) && /plotted/.test(out.fasta[1]) &&
+    out.tsv.every(v => !/^-/.test(v)) && /plotted/.test(out.tsv[1] + out.tsv[2]) && /plotted/.test(out.listOther) && !/B400-|B399-/.test(out.listOther.replace(/\s/g, ''));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+// The SVG export had bare names for the axis captions; the screen and PNG add the range text ' [101-350 of N]'.
+check('Dot plot audit: the SVG export captions carry the part plotted, like the screen caption', async (page) => {
+  await dotNumOpen(page, [101, 350], true);
+  const out = await page.evaluate(async () => {
+    const dl = _dotDownload; _dotDownload = () => {};
+    const cu = URL.createObjectURL; let blob = null; URL.createObjectURL = b => { blob = b; return cu.call(URL, b); };
+    _dotExportSvg(); URL.createObjectURL = cu; _dotDownload = dl;
+    const svg = blob ? await blob.text() : '';
+    return { svg: svg.split('\n').filter(l => /font-weight="bold"/.test(l)), want: _dotRangeText('B').trim() };
+  });
+  return { pass: !!out.want && out.svg.length === 2 && out.svg[0].includes(out.want), detail: JSON.stringify(out) };
+});
+// RevComp was read from the name suffix: a row literally named "x (RevComp)" plotted with the box unchecked counted B downwards.
+check('Dot plot audit: a row literally named "... (RevComp)" is not taken for a reverse complement, and keeps its name through a recalculation', async (page) => {
+  await loadFasta(page, dotNumFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    state.seqs[1].header = 'seq(RevComp)';
+    document.getElementById('dotPlotRevComp').checked = false;
+    const x = state.seqs[0], y = state.seqs[1];
+    return openDotPlot(x.seq.replace(/[-. ]/g, ''), y.seq.replace(/[-. ]/g, ''), x.header, y.header, { rowIndexA: 0, rowIndexB: 1, alignedSeqA: x.seq, alignedSeqB: y.seq });
+  });
+  await page.waitForFunction(() => !_dotPlotState.computing && _dotPlotState.rows > 0, null, { timeout: 20000 });
+  const out = await page.evaluate(() => ({ rev: _dotPlotRevB(), first: _dotShownB(0), name: _dotPlotNameB() }));
+  const again = await page.evaluate(async () => { document.getElementById('dotPlotRecalc').click(); await new Promise(r => setTimeout(r, 1000)); return { name: _dotPlotNameB(), rev: _dotPlotRevB(), first: _dotShownB(0) }; });
+  return { pass: out.rev === false && out.first === 1 && out.name === 'seq(RevComp)' && again.name === 'seq(RevComp)' && again.rev === false && again.first === 1, detail: JSON.stringify({ out, again }) };
+});
+// Going to a stale entry of another pair opened that pair's plot and flipped the RevComp box first, then refused.
+check('Dot plot audit: a stale collection entry of another pair is refused before the open plot or the RevComp box is touched', async (page) => {
+  await dotNumOpen(page, null, true);
+  const out = await page.evaluate(async () => {
+    const S = _dotPlotState, o = {};
+    _dotBookmarkRegion(0);
+    const b = state.dotBookmarks[0];
+    b.revB = false;                                    // another strand than the open plot (RevComp B): not "here"
+    b.seqA = 'TTTTTTTTTT'.repeat(6);                   // the residues the entry says are not in the row: stale
+    const rc = document.getElementById('dotPlotRevComp'); rc.checked = true;
+    o.nameBefore = S.nameB;
+    window.__msgs.length = 0; await _dotGoToBookmark(b.id); await new Promise(r => setTimeout(r, 300));
+    o.rcAfter = rc.checked; o.nameAfter = S.nameB; o.msg = window.__msgs.join('|');
+    return o;
+  });
+  return { pass: out.rcAfter === true && out.nameAfter === out.nameBefore && /changed since this was saved/.test(out.msg), detail: JSON.stringify(out) };
+});
+
+// ---- Dot plot edit (owner, 2026-11-04): a plot is a snapshot of its rows; an edit afterwards must not land marks on the wrong columns ----
+// What used to go wrong (GLM finding 7): the arrow, Highlight all, the stretch menu and presets mapped plot-time coordinates onto the row
+// as it is NOW (RevComp marks mirrored with the row's current length), so after a trim or an insertion the tint sat on the wrong residues
+// with no word. The plot now compares itself with the live rows only when used (and when its window regains attention): gap-only edits
+// are absorbed silently, residue edits / a deleted row show a bar and mark nothing until Re-plot. Nothing runs while editing.
+async function dotEditInstall(page) {
+  await page.evaluate(() => {
+    window.__dem = () => {   // residue marks per row index
+      const m = state.dotRegionMarks, o = {};
+      state.seqs.forEach((q, i) => { const set = m && m.bySeq.get(q); if (set && set.size) o[i] = [...set].sort((a, b) => a - b); });
+      return o;
+    };
+    window.__deb = () => {   // the bar
+      const b = document.getElementById('dotPlotEditBar');
+      const rp = document.getElementById('dotPlotEditReplot');
+      return { shown: !!b && !b.hidden && b.offsetParent !== null, text: document.getElementById('dotPlotEditText')?.textContent || '', replot: !!rp && !rp.hidden };
+    };
+  });
+}
+// the real pointer enters the window (the "regains attention" path)
+async function dotEditEnter(page) {
+  const box = await page.evaluate(() => { const r = document.getElementById('dotPlotDialog').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 20 }; });
+  await page.mouse.move(2, 2); await page.mouse.move(box.x, box.y, { steps: 3 }); await page.waitForTimeout(150);
+}
+check('Dot plot edit: a gap-only edit rebuilds the maps silently (hover columns follow the live row), no bar, and the marks land on the same residues', async (page) => {
+  await dotNumOpen(page, null, true); await dotEditInstall(page);
+  const before = await page.evaluate(() => { _dotHighlightAll(); const m = __dem(); _dotClearRegionMarks(true); return m; });
+  await page.evaluate(() => { const s1 = state.seqs[1]; s1.seq = '--' + s1.seq.slice(0, 120) + '---' + s1.seq.slice(120); });   // gaps only: every residue keeps its number, its column moves
+  await dotEditEnter(page);
+  const o = await page.evaluate(() => {
+    const S = _dotPlotState, r = {};
+    const live = _buildUngappedToAlignMap(state.seqs[1].seq);
+    r.mapOk = S.alignMapB.length === live.length && S.alignMapB.every((c, i) => c === live[live.length - 1 - i]);   // RevComp B: reversed
+    _dotUpdateHoverInfo(5, 7);
+    r.hover = ((document.getElementById('dotPlotAlignMeta')?.textContent || '').match(/Alignment columns: A (\S+), B (\S+)/) || []).slice(1);
+    r.colB = S.alignMapB[7];
+    _dotHighlightAll(); r.after = __dem(); r.bar = __deb();
+    return r;
+  });
+  const ok = o.mapOk && String(o.hover[1]) === String(o.colB) && !o.bar.shown && Object.keys(o.after).length === 2 && JSON.stringify(o.after) === JSON.stringify(before);
+  return { pass: ok, detail: JSON.stringify({ o, nBefore: Object.keys(before).length }) };
+});
+check('Dot plot edit: a residue edit shows the bar and marks nothing (arrow and Highlight all), the plot stays readable', async (page) => {
+  await dotNumOpen(page, null, true); await dotEditInstall(page);
+  await page.evaluate(() => { const s1 = state.seqs[1]; s1.seq = s1.seq.slice(0, -7); window.__msgs.length = 0; });   // 7 residues trimmed from row B
+  await dotEditEnter(page);
+  const o = await page.evaluate(() => {
+    const S = _dotPlotState, r = {};
+    r.bar = __deb(); r.rows = S.rows; r.canvas = !!document.getElementById('dotPlotCanvas');
+    _dotHighlightAll(); r.hl = __dem(); r.msgHl = window.__msgs.join('|');
+    _dotShowRegionInAlignment(0); r.arrow = __dem();
+    return r;
+  });
+  const ok = o.bar.shown && /Row changed since this plot/.test(o.bar.text) && /sB/.test(o.bar.text) && o.bar.replot && o.rows > 0 && o.canvas
+    && Object.keys(o.hl).length === 0 && Object.keys(o.arrow).length === 0 && /Row changed since this plot/.test(o.msgHl);
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot edit: RevComp marks do not mirror against a changed length (GLM finding 7: a trim at the FRONT of row B)', async (page) => {
+  await dotNumOpen(page, null, true); await dotEditInstall(page);
+  await page.evaluate(() => { const s1 = state.seqs[1]; s1.seq = s1.seq.slice(25); });   // 25 residues gone from the front: the mirror length is now 375, the plot's coordinates are for 400
+  const o = await page.evaluate(() => { _dotShowRegionInAlignment(0); const a = __dem(); _dotClearRegionMarks(true); _dotHighlightAll(); return { arrow: a, all: __dem(), bar: __deb() }; });
+  const ok = Object.keys(o.arrow).length === 0 && Object.keys(o.all).length === 0 && o.bar.shown;
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot edit: Re-plot plots the live rows with the same settings and clears the bar; the marks are then right (RevComp)', async (page) => {
+  await dotNumOpen(page, null, true); await dotEditInstall(page);
+  await page.evaluate(() => { const s1 = state.seqs[1]; s1.seq = s1.seq.slice(0, 30) + s1.seq.slice(37); });   // 7 residues deleted inside row B
+  await dotEditEnter(page);
+  const g0 = await page.evaluate(() => _dotPlotState.gen);
+  const bar0 = await page.evaluate(() => __deb());
+  await page.click('#dotPlotEditReplot');
+  await page.waitForFunction((g) => _dotPlotState.gen > g && !_dotPlotState.computing && _dotPlotState.rows > 0, g0, { timeout: 20000 });
+  await page.waitForSelector('#dotPlotRegionItems .dot-goto', { timeout: 20000 });
+  const o = await page.evaluate(() => {
+    const S = _dotPlotState, r = {};
+    const liveB = state.seqs[1].seq.replace(/[-. ]/g, '');
+    r.lenB = S.fullLenB; r.liveLen = liveB.length; r.rc = document.getElementById('dotPlotRevComp').checked; r.revB = S.revB;
+    r.bar = __deb();
+    _dotHighlightAll(); const m = __dem();
+    const rc = s => [...s].reverse().map(c => ({ A: 'T', C: 'G', G: 'C', T: 'A' })[c]).join('');
+    // the marked B residues are the reverse complement of the marked A residues of the first stretch
+    const g = _dotRealStretch(S.regions[0]);
+    const a = S.sourceSeqA.slice(g.aStart, g.aEnd), b = state.seqs[1].seq.replace(/[-. ]/g, '').slice(liveB.length - g.bEnd, liveB.length - g.bStart);
+    r.sameStretch = rc(a) === b.toUpperCase(); r.marksB = (m[1] || []).length; r.marksA = (m[0] || []).length;
+    return r;
+  });
+  const ok = bar0.shown && !o.bar.shown && o.lenB === o.liveLen && o.rc && o.revB && o.sameStretch && o.marksA > 0 && o.marksB > 0;
+  return { pass: ok, detail: JSON.stringify({ bar0, o }) };
+});
+check('Dot plot edit: Re-plot keeps the typed range, clamped with a message when the row no longer fits it', async (page) => {
+  await dotNumOpen(page, [150, 350], false); await dotEditInstall(page);
+  await page.evaluate(() => { const s1 = state.seqs[1]; s1.seq = s1.seq.slice(0, 300); window.__msgs.length = 0; });   // row B is now 300 residues: 150-350 does not fit
+  await dotEditEnter(page);
+  const g0 = await page.evaluate(() => _dotPlotState.gen);
+  await page.click('#dotPlotEditReplot');
+  await page.waitForFunction((g) => _dotPlotState.gen > g && !_dotPlotState.computing && _dotPlotState.rows > 0, g0, { timeout: 20000 });
+  const o = await page.evaluate(() => ({ offB: _dotPlotState.offB, nB: _dotPlotState.seqB.length, full: _dotPlotState.fullLenB, msg: window.__msgs.join('|'), bar: __deb() }));
+  const ok = o.offB === 149 && o.nB === 151 && o.full === 300 && /B range clamped to 150-300/.test(o.msg) && !o.bar.shown;
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot edit: undoing the edit clears the bar at the next check (the restored row objects are found by their content)', async (page) => {
+  await dotNumOpen(page, null, true); await dotEditInstall(page);
+  await page.evaluate(() => { pushUndo('t-edit'); const s1 = state.seqs[1]; s1.seq = s1.seq.slice(0, -7); });
+  await dotEditEnter(page);
+  const stale = await page.evaluate(() => __deb());
+  await page.evaluate(() => { undoDelete(true); });
+  await dotEditEnter(page);
+  const o = await page.evaluate(() => { _dotHighlightAll(); return { bar: __deb(), marks: Object.keys(__dem()).length, len: state.seqs[1].seq.replace(/-/g, '').length }; });
+  const ok = stale.shown && !o.bar.shown && o.marks === 2 && o.len === 400;
+  return { pass: ok, detail: JSON.stringify({ stale, o }) };
+});
+check('Dot plot edit: a deleted row says so, hides Re-plot and marks nothing', async (page) => {
+  await dotNumOpen(page, null, true); await dotEditInstall(page);
+  await page.evaluate(() => { state.seqs.splice(1, 1); window.__msgs.length = 0; });
+  const o = await page.evaluate(() => { _dotHighlightAll(); return { marks: Object.keys(__dem()).length, bar: __deb(), msg: window.__msgs.join('|'), stale: !!_dotPlotState._editStale }; });
+  const ok = o.marks === 0 && o.bar.shown && /deleted/.test(o.bar.text) && /sB/.test(o.bar.text) && !o.bar.replot && /Row changed since this plot/.test(o.msg);
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot edit: a moved row is found again (reordered rows), no bar, the marks go to the right rows', async (page) => {
+  await dotNumOpen(page, null, true); await dotEditInstall(page);
+  const before = await page.evaluate(() => { _dotHighlightAll(); const m = __dem(); _dotClearRegionMarks(true); return m; });
+  await page.evaluate(() => { state.seqs.reverse(); });   // sB is row 0 now, sA row 1
+  const o = await page.evaluate(() => { _dotHighlightAll(); const m = __dem(); return { m, bar: __deb(), ia: _dotPlotState.rowIndexA, ib: _dotPlotState.rowIndexB }; });
+  const ok = !o.bar.shown && o.ia === 1 && o.ib === 0 && JSON.stringify(o.m[1]) === JSON.stringify(before[0]) && JSON.stringify(o.m[0]) === JSON.stringify(before[1]);
+  return { pass: ok, detail: JSON.stringify({ before: Object.keys(before), o: { bar: o.bar, ia: o.ia, ib: o.ib, keys: Object.keys(o.m) } }) };
+});
+check('Dot plot edit: a self plot is one comparison; the bar names the row once', async (page) => {
+  await loadFasta(page, dotAlignFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotOpenRow100(page); await dotEditInstall(page);
+  await page.evaluate(() => { const s = state.seqs[100]; s.seq = s.seq.slice(0, 200) + 'A' + s.seq.slice(201); if (s.seq[200] === s.seq[201]) s.seq = s.seq.slice(0, 200) + 'C' + s.seq.slice(201); });   // one residue changed (never the same residue)
+  await dotEditEnter(page);
+  const o = await page.evaluate(() => ({ bar: __deb(), sides: _dotPlotState._editStale ? _dotPlotState._editStale.sides.length : 0 }));
+  const ok = o.bar.shown && (o.bar.text.match(/s100/g) || []).length === 1 && o.sides === 1;
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot edit: a pasted side is never stale (only the row side is compared)', async (page) => {
+  await dotNumOpen(page, null, false); await dotEditInstall(page);
+  const o = await page.evaluate(async () => {
+    const r = {};
+    const pasted = { seq: state.seqs[1].seq.replace(/-/g, '').slice(100, 260), name: 'pp', bad: {}, badCount: 0 };
+    await _dotOpenPasted(pasted, 'A', { seq: state.seqs[0].seq.replace(/[-. ]/g, ''), name: state.seqs[0].header, row: 0, range: null });   // row A down, pasted across
+    r.ext = _dotPlotState.ext && _dotPlotState.ext.side;
+    state.seqs[1].seq = state.seqs[1].seq.slice(0, 50) + state.seqs[1].seq.slice(60);   // another row edited
+    r.other = _dotCheckEdits();
+    state.seqs[0].seq = '---' + state.seqs[0].seq;   // the row side: gaps only
+    r.gaps = _dotCheckEdits();
+    state.seqs[0].seq = state.seqs[0].seq.slice(0, 120) + 'T' + state.seqs[0].seq.slice(121); if (state.seqs[0].seq[120] === state.seqs[0].seq[121]) state.seqs[0].seq = state.seqs[0].seq.slice(0, 120) + 'G' + state.seqs[0].seq.slice(121);
+    r.rowEdit = _dotCheckEdits(); r.names = _dotPlotState._editStale ? _dotPlotState._editStale.sides.map(x => x.side).join('') : '';
+    await _dotOpenPasted(pasted, 'self', null);   // the pasted sequence against itself: no row at all
+    state.seqs[0].seq = state.seqs[0].seq.slice(5); state.seqs.pop();
+    r.self = _dotCheckEdits(); r.bar = __deb();
+    return r;
+  });
+  const ok = o.ext === 'B' && o.other === true && o.gaps === true && o.rowEdit === false && o.names === 'A' && o.self === true && !o.bar.shown;
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot edit: the check on use costs well under a few ms on a 1500 x 4000 alignment (fast path, moved row, gap-only change)', async (page) => {
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    window.__msgs = [];
+    // the synthetic rows repeat every 4th row: give each a unique start so a moved row is told from its twins
+    state.seqs.forEach((q, i) => { let n = i, p = ''; for (let k = 0; k < 8; k++) { p += 'ACGT'[n & 3]; n >>= 2; } q.seq = p + q.seq.slice(8); });
+    const a = state.seqs[1400], b = state.seqs[1401];
+    return openDotPlot(a.seq.replace(/[-. ]/g, ''), b.seq.replace(/[-. ]/g, ''), a.header, b.header, { rowIndexA: 1400, rowIndexB: 1401, alignedSeqA: a.seq, alignedSeqB: b.seq, rangeA: [1, 600], rangeB: [1, 600] });
+  });
+  await page.waitForFunction(() => !_dotPlotState.computing && _dotPlotState.rows > 0, null, { timeout: 60000 });
+  const o = await page.evaluate(() => {
+    const r = {}, N = 300;
+    const time = fn => { const t = performance.now(); for (let i = 0; i < N; i++) fn(); return (performance.now() - t) / N; };
+    r.sameObject = time(() => _dotCheckEdits());
+    const a = state.seqs[1400], b = state.seqs[1401];
+    a.seq = (a.seq + ' ').slice(0, -1); b.seq = (b.seq + ' ').slice(0, -1);   // equal text, new string objects: the === compares the characters
+    r.equalText = time(() => _dotCheckEdits());
+    state.seqs.push(state.seqs.shift());   // every row moved by one: found by scanning the rows
+    r.movedOnce = time(() => { _dotPlotState.rowIndexA = 1400; _dotPlotState.rowIndexB = 1401; return _dotCheckEdits(); });
+    const x = state.seqs[1399], y = state.seqs[1400];   // (rows 1400 and 1401 are 1399 and 1400 now)
+    const t0 = performance.now();
+    x.seq = '--' + x.seq; y.seq = '-' + y.seq;   // gap-only change on both: maps rebuilt
+    const ok = _dotCheckEdits(); r.gapOnlyOnce = performance.now() - t0; r.gapOk = ok;
+    r.bar = !document.getElementById('dotPlotEditBar').hidden;
+    return r;
+  });
+  const ok = o.sameObject < 2 && o.equalText < 3 && o.movedOnce < 10 && o.gapOk && !o.bar && o.gapOnlyOnce < 40;
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+
+// ---- Dot plot consensus (owner, 2026-11-04): in the dot plot ONLY, the consensus line can be one of the two sides ----
+// Used to be: _dotSelectionManyRows dropped the consensus (index -1 in selectedNucs) silently, so consensus + two rows plotted the two rows
+// with no word about the consensus, and consensus + one row plotted the row against itself. The consensus stays a separate line everywhere else.
+function dotConsSel(rows, c0 = 10, c1 = 60) {
+  return [...rows, -1].map(r => [r, Array.from({ length: c1 - c0 + 1 }, (_, i) => c0 + i)]);
+}
+// 40 rows that share one 480-nt sequence with 3% private substitutions (a consensus that exists; the random rows of dotAlignFasta have none), gaps at the same columns
+function dotConsFasta() {
+  let sd = 5; const rnd = () => (sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
+  const base = Array.from({ length: 480 }, () => 'ACGT'[rnd() * 4 | 0]).join(''), lines = [];
+  for (let i = 0; i < 40; i++) {
+    let s = [...base].map(c => (rnd() < 0.03 ? 'ACGT'[rnd() * 4 | 0] : c)).join('');
+    s = s.slice(0, 50) + '----' + s.slice(50, 150) + '--' + s.slice(150);
+    lines.push('>s' + i + '\n' + s);
+  }
+  return lines.join('\n') + '\n';
+}
+async function dotConsOpen(page) {
+  await loadFasta(page, dotConsFasta());
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  await dotEditInstall(page);
+  await page.evaluate(() => { window.__msgs = []; const sm = showMessage; showMessage = (m, d) => { window.__msgs.push(String(m)); return sm(m, d); }; });
+}
+check('Dot plot consensus: a selection of the consensus line and one row plots them (A = the row, B = the consensus) over the selected columns', async (page) => {
+  await dotConsOpen(page);
+  const g0 = await dotGen(page);
+  const out = await page.evaluate(async (sel) => {
+    state.selectedRows = new Set(); state.selectedColumns = new Set();
+    state.selectedNucs = new Map(sel.map(([r, cols]) => [r, new Set(cols)]));
+    const menu = document.createElement('div'); _dotAddSelectionMenuItems(menu, 3);
+    const item = [...menu.children].find(d => /selected columns/.test(d.textContent)); if (!item) return { noItem: [...menu.children].map(d => d.textContent) };
+    const o = { text: item.textContent };
+    item.click(); return o;
+  }, dotConsSel([3]));
+  await dotRangeWait(page, g0);
+  const o = await page.evaluate(() => {
+    const S = _dotPlotState, al = _dotConsensusAligned(), r = {};
+    r.ia = S.rowIndexA; r.ib = S.rowIndexB; r.ext = S.ext; r.nameB = S.nameB; r.nameA = S.nameA;
+    const rg = _dotColsToRange(al, 10, 60), cu = al.replace(/[-. ]/g, '');
+    r.rg = rg; r.seqBok = S.seqB === cu.slice(rg[0] - 1, rg[1]).toUpperCase(); r.full = S.fullLenB === cu.length; r.offB = S.offB === rg[0] - 1;
+    r.note = document.getElementById('dotPlotRangeNote').textContent; r.title = document.getElementById('dotPlotTitle').textContent;
+    r.mapB = S.alignMapB; r.mapA = !!S.alignMapA;
+    r.seqs = state.seqs.length; r.noConsRow = !state.seqs.some(q => q.header === 'Consensus'); r.nucKeep = state.selectedNucs.has(-1);
+    return r;
+  });
+  const ok = !out.noItem && /selected columns \(s3 vs Consensus\)/.test(out.text) && o.ia === 3 && o.ib === -1 && o.ext && o.ext.side === 'B' && o.ext.cons && o.nameB === 'Consensus' && o.nameA === 's3'
+    && o.seqBok && o.full && o.offB && /consensus/i.test(o.note) && /Consensus/.test(o.title) && o.mapB === null && o.mapA && o.seqs === 40 && o.noConsRow && o.nucKeep;
+  return { pass: ok, detail: JSON.stringify({ out, o }) };
+});
+check('Dot plot consensus: the consensus with two or more rows asks which two, "Consensus" is an entry, and choosing it plots the consensus', async (page) => {
+  await dotConsOpen(page);
+  const out = await page.evaluate(async (sel) => {
+    state.selectedRows = new Set(); state.selectedColumns = new Set();
+    state.selectedNucs = new Map(sel.map(([r, cols]) => [r, new Set(cols)]));
+    const menu = document.createElement('div'); _dotAddSelectionMenuItems(menu, 3);
+    const item = [...menu.children].find(d => /selected columns/.test(d.textContent)); if (!item) return { noItem: [...menu.children].map(d => d.textContent) };
+    const o = { text: item.textContent };
+    item.click(); await new Promise(r => setTimeout(r, 300));
+    const sa = document.getElementById('dotRectRowA'), sb = document.getElementById('dotRectRowB');
+    o.chooser = !!document.getElementById('dotRectChooser'); o.opts = sa ? [...sa.options].map(x => x.textContent) : [];
+    return o;
+  }, dotConsSel([3, 4]));
+  const g0 = await dotGen(page);
+  await page.evaluate(() => { const sb = document.getElementById('dotRectRowB'); sb.value = '-1'; document.getElementById('dotRectChooserOk').click(); });
+  await dotRangeWait(page, g0);
+  const o = await page.evaluate(() => ({ ia: _dotPlotState.rowIndexA, ib: _dotPlotState.rowIndexB, ext: _dotPlotState.ext, nameB: _dotPlotState.nameB }));
+  const ok = !out.noItem && out.chooser && out.opts.length === 3 && /Consensus/.test(out.opts[2]) && /choose two of 2 rows and the consensus/.test(out.text)
+    && o.ia === 3 && o.ib === -1 && o.ext && o.ext.cons && o.nameB === 'Consensus';
+  return { pass: ok, detail: JSON.stringify({ out, o }) };
+});
+check('Dot plot empty side: a side with no residues says so, with no error', async (page) => {
+  await dotConsOpen(page);
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  const out = await page.evaluate(async () => {
+    const r = {};
+    for (const [k, b] of [['empty', '']]) {
+      try { await openDotPlot('ACGTACGTACGT', b, 'row', k); r[k] = document.getElementById('dotPlotStatus').textContent; }
+      catch (e) { r[k] = 'threw: ' + e.message; }
+    }
+    return r;
+  });
+  await page.waitForTimeout(300);
+  const ok = /no residues/i.test(out.empty) && !errors.length;
+  return { pass: ok, detail: JSON.stringify({ out, errors }) };
+});
+check('Dot plot consensus: the row menu has "Dot-plot vs consensus" (the whole row against the consensus); a preset records that a side was the consensus', async (page) => {
+  await dotConsOpen(page);
+  const g0 = await dotGen(page);
+  const items = await dotRangeMenu(page, 7, 'canvas', 'Dot-plot vs consensus');
+  await dotRangeWait(page, g0);
+  const o = await page.evaluate(async () => {
+    const S = _dotPlotState, al = _dotConsensusAligned(), cu = al.replace(/[-. ]/g, ''), r = {};
+    r.ia = S.rowIndexA; r.ib = S.rowIndexB; r.cons = S.ext && S.ext.cons; r.side = S.ext && S.ext.side; r.lenB = S.fullLenB === cu.length; r.seqB = S.seqB === cu.toUpperCase();
+    r.lenA = S.fullLenA === state.seqs[7].seq.replace(/-/g, '').length;
+    r.cap = _dotPresetCapture().ext;
+    document.getElementById('dotPresetName').value = 'consp'; _dotPresetSave();
+    window.__msgs.length = 0; document.getElementById('dotPresetSelect').value = 'consp'; await _dotPresetLoad();
+    r.note = document.getElementById('dotPresetNote').textContent;
+    localStorage.removeItem('msaviewer_dotPresets');
+    return r;
+  });
+  const ok = items.includes('Dot-plot vs consensus') && o.ia === 7 && o.ib === -1 && o.cons && o.side === 'B' && o.lenB && o.seqB && o.lenA && o.cap && o.cap.cons === true && /consensus is not stored/.test(o.note);
+  return { pass: ok, detail: JSON.stringify({ items: items.filter(t => /Dot-plot/.test(t)), o }) };
+});
+check('Dot plot consensus: the consensus side is never stale (editing other rows changes the consensus, no bar); the row side still is; everything else about the consensus is unchanged', async (page) => {
+  await dotConsOpen(page);
+  const g0 = await dotGen(page);
+  await dotRangeMenu(page, 7, 'canvas', 'Dot-plot vs consensus'); await dotRangeWait(page, g0);
+  await dotEditEnter(page);
+  const o = await page.evaluate(() => {
+    const r = {};
+    const cons0 = _dotConsensusAligned();
+    for (let i = 10; i < 40; i++) { const q = state.seqs[i]; q.seq = q.seq.slice(0, 100) + 'AAAA' + q.seq.slice(104); }   // other rows edited: the consensus changes
+    r.consChanged = _dotConsensusAligned() !== cons0;
+    r.other = _dotCheckEdits(); r.bar1 = __deb().shown;
+    state.seqs[7].seq = state.seqs[7].seq.slice(0, 200) + (state.seqs[7].seq[200] === 'A' ? 'C' : 'A') + state.seqs[7].seq.slice(201);
+    r.row = _dotCheckEdits(); r.bar2 = __deb();
+    // unchanged elsewhere: the consensus line is not a row; the rectangle ignores it; Delete/clustering/row counts see 40 rows
+    state.selectedRows = new Set(); state.selectedColumns = new Set();
+    state.selectedNucs = new Map([[3, new Set([10, 11, 12])], [4, new Set([10, 11, 12])], [-1, new Set([10, 11, 12])]]);
+    const rect = _nucSelectionRectangle(); r.rectRows = rect ? rect.rows.join(',') : null;
+    r.nSeqs = state.seqs.length; r.manyNoCons = (() => { state.selectedNucs = new Map([[3, new Set([10, 11])], [4, new Set([10, 11])], [5, new Set([12, 13])]]); return _dotSelectionManyRows(); })();
+    r.consEntries = (() => { state.selectedNucs = new Map([[-1, new Set([10, 11])]]); return _dotConsensusEntries(); })();   // the consensus alone: no entries, the old behaviour
+    return r;
+  });
+  const ok = o.consChanged && o.other === true && !o.bar1 && o.row === false && o.bar2.shown && /s7/.test(o.bar2.text) && !/Consensus/.test(o.bar2.text)
+    && o.rectRows === '3,4' && o.nSeqs === 40 && Array.isArray(o.manyNoCons) && o.manyNoCons.join() === '3,4,5' && o.consEntries === null;
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+
+// ---- Dot plot edit audit (GLM audit of the edit check, 2026-11-04) --------------------------------------------------------------------
+// Rows are 40 similar sequences (dotConsFasta). dotAuditOpen plots rows ia (A) and ib (B) the way the row menu does.
+async function dotAuditReopen(page, ia, ib, rc = false) {
+  await page.evaluate(([ia, ib, rc]) => {
+    document.getElementById('dotPlotRevComp').checked = rc;
+    const x = state.seqs[ia], y = state.seqs[ib], ung = q => q.seq.replace(/[-. ]/g, '');
+    return openDotPlot(ung(x), ung(y), x.header, y.header, { rowIndexA: ia, rowIndexB: ib, alignedSeqA: x.seq, alignedSeqB: y.seq });
+  }, [ia, ib, rc]);
+  await page.waitForFunction(() => !_dotPlotState.computing && _dotPlotState.rows > 0, null, { timeout: 30000 });
+  await page.waitForTimeout(200);
+}
+async function dotAuditOpen(page, ia, ib, rc = false) {
+  await dotConsOpen(page);
+  await page.evaluate(() => { window.__dmsg = []; const sm = showMessage; showMessage = (m, d) => { window.__dmsg.push(String(m)); return sm(m, d); }; });
+  await dotAuditReopen(page, ia, ib, rc);
+}
+check('Dot plot edit audit: Re-plot uses the live index of the unchanged side too (a row deleted above, the other side edited)', async (page) => {
+  // used to go wrong: _dotCheckEdits returned before committing the moved index of the good side, so Re-plot plotted the edited B row as side A
+  await dotAuditOpen(page, 1, 2);
+  const o = await page.evaluate(async () => {
+    const S = _dotPlotState, r = {};
+    state.seqs.splice(0, 1);                                   // s1 is row 0 now, s2 row 1
+    state.seqs[1].seq = state.seqs[1].seq.slice(0, -7);        // B edited
+    r.check = _dotCheckEdits(); r.ia = S.rowIndexA;
+    await _dotEditReplot();
+    r.nameA = S.nameA; r.nameB = S.nameB; r.srcA = S.sourceSeqA === state.seqs[0].seq.replace(/[-. ]/g, '').toUpperCase(); r.srcB = S.sourceSeqB === state.seqs[1].seq.replace(/[-. ]/g, '').toUpperCase();
+    return r;
+  });
+  const ok = o.check === false && o.ia === 0 && o.nameA === 's1' && o.nameB === 's2' && o.srcA && o.srcB;
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot edit audit: a row literally named "x (RevComp)" keeps its name as side A (Recalculate, range replot, preset)', async (page) => {
+  // used to go wrong: side A had its " (RevComp)" stripped from the name (RevComp is a flag of B only)
+  await dotConsOpen(page);
+  await page.evaluate(() => { state.seqs[3].header = 'x (RevComp)'; });
+  await dotAuditReopen(page, 3, 4);
+  const o = await page.evaluate(async () => {
+    const S = _dotPlotState, r = {};
+    _dotRecalculate(); await new Promise(res => setTimeout(res, 100));
+    r.recalc = S.nameA;
+    await _dotRangeReplot(); r.range = S.nameA;
+    document.getElementById('dotPresetName').value = 'rcn'; _dotPresetSave();
+    document.getElementById('dotPresetSelect').value = 'rcn'; await _dotPresetLoad();
+    r.preset = S.nameA; localStorage.removeItem('msaviewer_dotPresets');
+    return r;
+  });
+  const ok = o.recalc === 'x (RevComp)' && o.range === 'x (RevComp)' && o.preset === 'x (RevComp)';
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot edit audit: a renamed row (alone, with gaps changed, or moved) is the same row; the plot shows the live name and keeps its marks', async (page) => {
+  // used to go wrong: a rename-only edit kept the old name (fast path), a rename with other gaps was reported as a deleted row
+  await dotAuditOpen(page, 1, 2, true);
+  const o = await page.evaluate(() => {
+    const S = _dotPlotState, r = {};
+    _dotHighlightAll(); r.marks0 = Object.keys(__dem()).length;
+    state.seqs[2].header = 'renB';                                   // rename only
+    r.t1 = _dotCheckEdits(); r.nameB1 = S.nameB; r.plainB1 = _dotPlotNameB(); r.revB = S.revB; r.title = document.getElementById('dotPlotTitle').textContent;
+    state.seqs[1].header = 'renA'; state.seqs[1].seq = '--' + state.seqs[1].seq;   // rename + gaps changed
+    r.t2 = _dotCheckEdits(); r.nameA2 = S.nameA; r.bar2 = __deb().shown;
+    const live = _buildUngappedToAlignMap(state.seqs[1].seq); r.map = S.alignMapA.length === live.length && S.alignMapA.every((c, i) => c === live[i]);
+    state.seqs.reverse(); state.seqs[state.seqs.length - 2].header = 'renA2';   // moved (s1 was row 1, now row 38) and renamed again
+    r.t3 = _dotCheckEdits(); r.nameA3 = S.nameA; r.ia3 = S.rowIndexA; r.bar3 = __deb().shown;
+    r.marksKept = Object.keys(__dem()).length === r.marks0;
+    return r;
+  });
+  const ok = o.marks0 === 2 && o.t1 === true && o.nameB1 === 'renB (RevComp)' && o.plainB1 === 'renB' && o.revB && /renB/.test(o.title)
+    && o.t2 === true && o.nameA2 === 'renA' && !o.bar2 && o.map && o.t3 === true && o.nameA3 === 'renA2' && o.ia3 === 38 && !o.bar3 && o.marksKept;
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot edit audit: the chooser re-validates at Plot (deleted row named, moved row followed), is not modal, and refuses Consensus vs Consensus', async (page) => {
+  // used to go wrong: a row deleted while the chooser was open made Plot do nothing (or say "no consensus"); Consensus could be both sides
+  await dotConsOpen(page);
+  await page.evaluate(() => { window.__dmsg = []; const sm = showMessage; showMessage = (m, d) => { window.__dmsg.push(String(m)); return sm(m, d); }; });
+  const o = await page.evaluate(async () => {
+    const r = {}, calls = [];
+    const pick = (id, v) => { document.getElementById(id).value = String(v); };
+    const box = () => document.getElementById('dotRectChooser');
+    _dotChooseTwoRows([2, 3, 4, -1], (a, b) => calls.push([a, b]), 'selection');
+    state.seqs.splice(0, 1);                                        // every index drops by one: the rows offered as 3 and 4 are at 2 and 3
+    pick('dotRectRowA', 3); pick('dotRectRowB', 4);
+    document.getElementById('dotRectChooserOk').click();
+    r.moved = JSON.stringify(calls); r.movedClosed = !box();
+    _dotChooseTwoRows([2, 3, 4, -1], (a, b) => calls.push([a, b]), 'selection');
+    state.seqs.splice(3, 1);                                        // the row offered as 3 is deleted while the box is open
+    window.__dmsg.length = 0;
+    pick('dotRectRowA', 3); pick('dotRectRowB', 4);
+    const n0 = calls.length; document.getElementById('dotRectChooserOk').click();
+    r.goneCalls = calls.length - n0; r.goneOpen = !!box(); r.goneText = (box() ? box().textContent : '') + '|' + window.__dmsg.join('|');
+    pick('dotRectRowA', -1); pick('dotRectRowB', -1);
+    document.getElementById('dotRectChooserOk').click();
+    r.cc = calls.length - n0; r.ccText = box() ? box().textContent : '';
+    box()?.remove();
+    window.__dmsg.length = 0; await _dotOpenRows(500, -1, null, ''); r.guard = window.__dmsg.join('|');   // a row that is gone is not "no consensus"
+    return r;
+  });
+  const ok = o.moved === '[[2,3]]' && o.movedClosed && o.goneCalls === 0 && o.goneOpen && /no longer|deleted/i.test(o.goneText)
+    && o.cc === 0 && /itself|both/i.test(o.ccText) && !/no consensus/i.test(o.guard) && /no longer|deleted|gone/i.test(o.guard);
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot edit audit: Compare with pasted treats only the changed side as plain text, and re-reads the plot when Plot is pressed', async (page) => {
+  // used to go wrong: one edited row made both sides plain text; and a Re-plot while the box was open left the stale decision in force
+  await dotAuditOpen(page, 1, 2);
+  const o = await page.evaluate(async () => {
+    const S = _dotPlotState, r = {};
+    state.seqs[2].seq = state.seqs[2].seq.slice(0, -7);        // B changed
+    _dotPasteFromWindow();
+    document.getElementById('dotPasteText').value = '>pp\n' + state.seqs[5].seq.replace(/-/g, '').slice(0, 200);
+    document.querySelector('#dotPasteBox input[value="A"]').checked = true;   // A (unchanged) down, pasted across
+    document.getElementById('dotPasteBoxOk').click();
+    await new Promise(res => setTimeout(res, 100));
+    r.sideA = S.ext && S.ext.side; r.rowA = S.rowIndexA;
+    return r;
+  });
+  await page.waitForFunction(() => !_dotPlotState.computing && _dotPlotState.rows > 0, null, { timeout: 30000 });
+  const o2 = await page.evaluate(async () => {
+    const S = _dotPlotState, r = {}, ung = q => q.seq.replace(/[-. ]/g, '');
+    const x = state.seqs[1], y = state.seqs[2];
+    await openDotPlot(ung(x), ung(y), x.header, y.header, { rowIndexA: 1, rowIndexB: 2, alignedSeqA: x.seq, alignedSeqB: y.seq });
+    state.seqs[2].seq = state.seqs[2].seq.slice(0, 30) + state.seqs[2].seq.slice(37);
+    _dotPasteFromWindow();
+    await _dotEditReplot(); await new Promise(res => setTimeout(res, 400));
+    document.getElementById('dotPasteText').value = '>pp\n' + state.seqs[5].seq.replace(/-/g, '').slice(0, 200);
+    document.querySelector('#dotPasteBox input[value="B"]').checked = true;   // pasted down, B (re-plotted, valid) across
+    document.getElementById('dotPasteBoxOk').click();
+    await new Promise(res => setTimeout(res, 100));
+    r.side = S.ext && S.ext.side; r.rowB = S.rowIndexB;
+    return r;
+  });
+  const ok = o.sideA === 'B' && o.rowA === 1 && o2.side === 'A' && o2.rowB === 2;
+  return { pass: ok, detail: JSON.stringify({ o, o2 }) };
+});
+check('Dot plot edit audit: a Collection entry without stored residues never borrows a length (unknown), and the check builds no whole reverse complement', async (page) => {
+  // used to go wrong: an entry with seqB empty took the length of any same-named row long enough; each call rebuilt the whole reverse complement
+  await dotConsOpen(page);
+  const o = await page.evaluate(() => {
+    const r = {}, row = state.seqs[4], u = row.seq.replace(/[-. ]/g, '').toUpperCase(), L = u.length;
+    const comp = { A: 'T', C: 'G', G: 'C', T: 'A' }, rc = [...u].reverse().map(c => comp[c]).join('');
+    const mk = (o) => Object.assign({ nameB: row.header, revB: true, lenB: 0, bStart: 10, bEnd: 40, seqB: '' }, o);
+    r.noSeq = _dotBookmarkLenB(mk({}));                                       // no residues stored: unknown
+    r.right = _dotBookmarkLenB(mk({ seqB: rc.slice(10, 40) }));               // residues stored and they match: the row's length
+    r.wrong = _dotBookmarkLenB(mk({ seqB: rc.slice(10, 40)[0] === 'A' ? 'C'.repeat(30) : 'A'.repeat(30) }));
+    r.L = L;
+    const big = 'ACGT'.repeat(80000);
+    state.seqs.push({ header: 'bigrow', seq: big, name: 'bigrow', oldName: 'bigrow' });
+    const bigRc = [...big].reverse().map(c => comp[c]).join('');
+    const ents = Array.from({ length: 30 }, (_, i) => mk({ nameB: 'bigrow', bStart: 100 + i, bEnd: 160 + i, seqB: bigRc.slice(100 + i, 160 + i) }));
+    const t = performance.now(); let okAll = true; for (const e of ents) okAll = okAll && _dotBookmarkLenB(e) === big.length; r.ms = performance.now() - t; r.okAll = okAll;
+    state.seqs.pop();
+    return r;
+  });
+  const ok = o.noSeq === 0 && o.right === o.L && o.wrong === 0 && o.okAll && o.ms < 150;
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot edit audit: when a row is gone the bar names that side, the toast does not mention a hidden Re-plot, Re-plot needs both rows live; a duplicate header is not silently re-plotted', async (page) => {
+  // used to go wrong: the bar named both sides alike, the toast sent the user to a hidden button, a deleted duplicate was re-plotted from its twin without a word
+  await dotAuditOpen(page, 1, 2);
+  const o = await page.evaluate(() => {
+    const r = {};
+    state.seqs[1].seq = state.seqs[1].seq.slice(0, -7);                  // A changed
+    state.seqs.splice(2, 1);                                             // B deleted
+    window.__dmsg.length = 0; _dotShowRegionInAlignment(0);
+    r.bar = __deb(); r.toast = window.__dmsg.join('|');
+    return r;
+  });
+  await dotAuditOpen(page, 1, 2);
+  const o2 = await page.evaluate(() => {
+    const r = {};
+    state.seqs[2].header = 'zz'; state.seqs[2].seq = state.seqs[2].seq.slice(0, -7);   // renamed AND edited
+    window.__dmsg.length = 0; _dotShowRegionInAlignment(0);
+    r.bar = __deb(); r.toast = window.__dmsg.join('|');
+    return r;
+  });
+  await dotAuditOpen(page, 1, 2);
+  const o3 = await page.evaluate(async () => {
+    const r = {}, S = _dotPlotState;
+    state.seqs[2].header = 'dup'; state.seqs[3].header = 'dup'; S.nameB = 'dup';   // two rows of the same name; the plotted one (row 2) is deleted
+    state.seqs.splice(2, 1);
+    r.chk = _dotCheckEdits(); r.bar = __deb();
+    window.__dmsg.length = 0; await _dotEditReplot(); r.replotMsg = window.__dmsg.join('|');
+    return r;
+  });
+  const ok = o.bar.shown && !o.bar.replot && /"s1" \(changed\)/.test(o.bar.text) && /"s2" \(not found/.test(o.bar.text) && !/Re-plot/.test(o.toast) && /Row changed since this plot/.test(o.toast)
+    && o2.bar.shown && !o2.bar.replot && /"s2"/.test(o2.bar.text) && /not found/.test(o2.bar.text) && !/Re-plot/.test(o2.toast)
+    && o3.chk === false && /Re-plotted from the row now named "dup" \(row 3\)/.test(o3.replotMsg);
+  return { pass: ok, detail: JSON.stringify({ o, o2, o3 }) };
+});
+check('Dot plot edit audit: hover runs the fast check (an edit while the pointer stays in the window claims no columns); an empty source clears the bar', async (page) => {
+  // used to go wrong: hovering after an edit printed alignment columns from the old maps; an empty source left the earlier bar in place
+  await dotAuditOpen(page, 1, 2);
+  await dotEditEnter(page);
+  await page.evaluate(() => { const q = state.seqs[1]; q.seq = q.seq.slice(0, 100) + (q.seq[100] === 'A' ? 'C' : 'A') + q.seq.slice(101); });   // edited while the pointer is inside the window
+  const box = await page.evaluate(() => { const r = document.getElementById('dotPlotOverlay').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.move(box.x, box.y, { steps: 2 }); await page.mouse.move(box.x + 9, box.y + 7, { steps: 2 }); await page.waitForTimeout(200);
+  const o = await page.evaluate(() => ({ meta: document.getElementById('dotPlotAlignMeta')?.textContent || '', bar: __deb(), stale: !!_dotPlotState._editStale }));
+  const o2 = await page.evaluate(() => {
+    const S = _dotPlotState; S.sourceSeqA = ''; S._editStale = { sides: [{ side: 'A', name: 'x', deleted: false, live: 1 }] }; _dotEditBar(S._editStale);
+    _dotCheckEdits(); return __deb();
+  });
+  const ok = !/Alignment columns/.test(o.meta) && o.stale && o.bar.shown && !o2.shown;
+  return { pass: ok, detail: JSON.stringify({ o, o2 }) };
+});
+
+check('Dot plot edit audit: "Dot-plot vs consensus" on a big alignment says it is busy before computing, and reuses the consensus it computed', async (page) => {
+  // used to go wrong: the whole consensus was computed synchronously with no word (330 ms at 1500 x 4000, 800 ms at 5000 x 2000 measured): a frozen tab
+  await loadSyntheticFasta(page, 1500, 4000);
+  await setMode(page, 'canvas'); await page.waitForTimeout(300);
+  const o = await page.evaluate(async () => {
+    const r = {};
+    window.__dmsg = []; const sm = showMessage; showMessage = (m, d) => { window.__dmsg.push(String(m)); return sm(m, d); };
+    let sd = 3; const rnd = () => (sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
+    const base = Array.from({ length: 4000 }, () => 'ACGT'[rnd() * 4 | 0]);
+    state.seqs.forEach(q => { q.seq = base.map(c => (rnd() < 0.02 ? 'ACGT'[rnd() * 4 | 0] : c)).join(''); });   // rows that share a sequence: a consensus that has residues
+    state.consensusCache = null;                                  // the consensus display is off or stale: nothing cached
+    const t0 = performance.now();
+    const p = _dotOpenRows(7, -1, { c0: 0, c1: 599 }, 'Row vs the consensus over 600 columns (computed from the rows now).');   // 600 columns keep the plot small; the consensus is still over all rows
+    r.syncMs = performance.now() - t0;                            // what the call blocks before it yields
+    r.busyFirst = window.__dmsg.some(m => /Computing the consensus/.test(m)); r.plotted0 = _dotPlotState.ext && _dotPlotState.ext.cons;
+    await p;
+    r.plotted = !!(_dotPlotState.ext && _dotPlotState.ext.cons);
+    window.__dmsg.length = 0; state.consensusCache = null;
+    const t1 = performance.now(); _dotConsensusAligned(); r.second = performance.now() - t1;   // the consensus of the first call is reused (same rows)
+    r.noBusyAgain = !window.__dmsg.some(m => /Computing the consensus/.test(m));
+    return r;
+  });
+  const ok = o.busyFirst && !o.plotted0 && o.plotted && o.syncMs < 100 && o.second < 100 && o.noBusyAgain;
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 120000 });
+
+// ---- Dot plot audit3 (GLM audit of v326 candidate, 2026-11-05) ----
+check('Dot plot audit3: a row edited and then undone while the chooser is open is still offered and plots', async (page) => {
+  // used to go wrong: an in-place residue edit then Undo (which puts a NEW row object with the old residues in the row's place) made Plot
+  // call a row that is still there "no longer in the alignment (deleted ...)" and drop it from both selects
+  await dotConsOpen(page);
+  const o = await page.evaluate(async () => {
+    const r = {}, calls = [];
+    const pick = (id, v) => { document.getElementById(id).value = String(v); };
+    _dotChooseTwoRows([2, 3, 4], (a, b) => calls.push([a, b]), 'selection');
+    const q = state.seqs[3], orig = q.seq;
+    q.seq = orig.slice(0, 10) + (orig[10] === 'A' ? 'C' : 'A') + orig.slice(11);   // the residue edit mutates the row object in place
+    state.seqs[3] = { ...q, seq: orig };                                          // Undo: a fresh object holding the old residues
+    pick('dotRectRowA', 3); pick('dotRectRowB', 4);
+    document.getElementById('dotRectChooserOk').click();
+    r.calls = JSON.stringify(calls); r.closed = !document.getElementById('dotRectChooser');
+    return r;
+  });
+  return { pass: o.calls === '[[3,4]]' && o.closed, detail: JSON.stringify(o) };
+});
+check('Dot plot audit3: the chooser says "are" for two gone rows, and an emptied chooser says so plainly, never "undefined"', async (page) => {
+  // used to go wrong: "X and Y is no longer ..."; when every offered row was gone the next Plot read an empty select (NaN) and printed '"undefined" is no longer ...'
+  await dotConsOpen(page);
+  const o = await page.evaluate(async () => {
+    const r = {}, calls = [];
+    const box = () => document.getElementById('dotRectChooser'), plot = () => { document.getElementById('dotRectChooserOk').click(); return box() ? document.getElementById('dotRectMsg').textContent : ''; };
+    _dotChooseTwoRows([2, 3, 4], (a, b) => calls.push([a, b]), 'selection');
+    state.seqs.splice(2, 2);                                      // the rows offered as 2 and 3 are deleted (A and B of the box)
+    r.two = plot();
+    r.opts = document.getElementById('dotRectRowA').options.length + ',' + document.getElementById('dotRectRowB').options.length;
+    r.selA = document.getElementById('dotRectRowA').value;       // the select shows the row left, not nothing
+    state.seqs.splice(2, 1);                                      // the last offered row goes too
+    r.three = plot(); r.four = plot(); r.five = plot();           // pressed again and again: the same plain answer, never "undefined"
+    r.calls = calls.length;
+    box()?.remove();
+    return r;
+  });
+  const ok = / are no longer/.test(o.two) && !/ is no longer/.test(o.two) && o.opts === '1,1' && o.selA === '4'
+    && /none of the rows/i.test(o.three) && o.four === o.three && o.five === o.three && !/undefined|NaN/.test(o.two + o.three + o.four) && o.calls === 0;
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot audit3: the dot plot consensus follows the consensus settings (threshold, fallback), also against a stale cache', async (page) => {
+  // used to go wrong: the consensus kept for the dot plot (and a display cache that is not rebuilt) was keyed by the rows only, so a changed
+  // consensus setting still plotted the consensus of the old setting while the note said it was computed from the rows now
+  await dotConsOpen(page);
+  const o = await page.evaluate(() => {
+    const r = { steps: [] };
+    const direct = () => computeConsensusForSequences(state.seqs.map(q => q.seq));
+    const set = (th, fb) => { el('consensusThreshold').value = th; document.getElementById('consensusFallback').value = fb; };
+    state.consensusCache = null; _dotConsPrivate = null;
+    set(50, 'gap'); const base = _dotConsensusAligned(); r.base = base === direct();
+    const stale = base.split('');
+    for (const [th, fb] of [[100, 'gap'], [100, 'n'], [60, 'gap']]) {
+      set(th, fb);
+      const want = direct(), got = _dotConsensusAligned();
+      r.steps.push({ th, fb, follows: got === want, differs: want !== base });
+      state.consensusCache = { len: stale.length, values: stale.slice(), fp: _seqsFingerprint() };   // a display cache that still holds the old setting's consensus
+      r.steps.push({ th, fb, staleDisplay: _dotConsensusAligned() === want });
+    }
+    return r;
+  });
+  const ok = o.base && o.steps.every(s => s.follows !== false && s.staleDisplay !== false) && o.steps.some(s => s.differs);
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Canvas consensus: the consensus row and Copy Consensus follow the real settings controls (threshold, type, fallback, minimum coverage)', async (page) => {
+  // used to go wrong: Canvas compared only the rows and the length before reusing its consensus, so moving a setting left the old letters
+  // on screen and in Copy Consensus while the rows gave another consensus (found by GLM audit rel326b, reproduced with the real slider)
+  await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAC\n>c\nACGTTTTTTT\n>d\nTTTTTTTT--\n>e\nTTTTTTGG--\n>f\nT-------GG\n');
+  await setMode(page, 'canvas');
+  const o = await page.evaluate(async () => {
+    const wait = () => new Promise(res => setTimeout(res, 700));
+    const cb = el('showConsensus');
+    if (!cb.checked) cb.click();
+    await wait();
+    const shown = () => (_canvasState.consensus?.values || []).join('');
+    const direct = () => computeConsensusForSequences(state.seqs.map(q => q.seq));
+    const fire = (x, type) => x.dispatchEvent(new Event(type, { bubbles: true }));
+    const slide = (id, v) => { const x = el(id); x.value = v; fire(x, 'input'); fire(x, 'change'); };
+    const r = { start: { shown: shown(), want: direct() }, steps: [] };
+    const moves = [
+      ['type', () => document.querySelector('input[name="consensusType"][value="ambiguous"]').click()],
+      ['threshold', () => slide('consensusThreshold', 90)],
+      ['fallback', () => { const x = el('consensusFallback'); x.value = [...x.options].map(q => q.value).find(v => v !== x.value); fire(x, 'change'); }],
+      ['coverage', () => slide('consensusMinCoverage', 100)],
+    ];
+    for (const [name, move] of moves) {
+      const before = direct();
+      move();
+      await wait();
+      r.steps.push({ name, changed: direct() !== before, shown: shown(), copy: getConsensusSequenceGapped(), want: direct() });
+    }
+    return r;
+  });
+  const ok = o.start.want.length === 10 && o.start.shown === o.start.want
+    && o.steps.length === 4 && o.steps.every(q => q.changed && q.shown === q.want && q.copy === q.want);
+  return { pass: ok, detail: JSON.stringify(o) };
+});
+check('Dot plot audit3: an open with nothing to plot never leaves the plot marked as computing (Recalc stays alive)', async (page) => {
+  // used to go wrong: a plot still computing was superseded by an open that has no residues (an all-gap row, an empty consensus); the early
+  // exit returned without clearing S.computing and the superseded computation dropped its result at the generation check, so
+  // S.computing stayed true: Recalc and the live settings then waited for ever
+  await dotConsOpen(page);
+  const o = await page.evaluate(async () => {
+    let sd = 9; const rnd = () => (sd = (Math.imul(sd, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
+    const mk = n => Array.from({ length: n }, () => 'ACGT'[rnd() * 4 | 0]).join('');
+    const S = _dotPlotState, r = {};
+    const p1 = openDotPlot(mk(3000), mk(3000), 'bigA', 'bigB', {});
+    r.computingNow = S.computing;
+    await openDotPlot('', mk(50), 'emptyA', 'smallB', {});         // supersedes the first one before its worker answers
+    await p1;
+    await new Promise(res => setTimeout(res, 100));
+    r.computingAfter = S.computing;
+    return r;
+  });
+  return { pass: o.computingNow === true && o.computingAfter === false, detail: JSON.stringify(o) };
+});
+check('Dot plot audit3: Compare with pasted on a self plot whose row was edited keeps the live row for neither side (B too)', async (page) => {
+  // used to go wrong: a self plot is one comparison, so only side A was marked changed; choosing "pasted down, row (B) across" kept the
+  // live row behind B while plotting its OLD residues
+  await dotAuditOpen(page, 1, 2);
+  const o = await page.evaluate(async () => {
+    const S = _dotPlotState, r = {}, ung = q => q.seq.replace(/[-. ]/g, '');
+    const x = state.seqs[1];
+    await openDotPlot(ung(x), ung(x), x.header, x.header, { rowIndexA: 1, rowIndexB: 1, alignedSeqA: x.seq, alignedSeqB: x.seq });
+    await new Promise(res => setTimeout(res, 300));
+    const oldB = S.sourceSeqB;
+    x.seq = x.seq.slice(0, 30) + x.seq.slice(37);                  // the row changed since the plot
+    _dotPasteFromWindow();
+    document.getElementById('dotPasteText').value = '>pp\n' + state.seqs[5].seq.replace(/-/g, '').slice(0, 200);
+    document.querySelector('#dotPasteBox input[value="B"]').checked = true;
+    document.getElementById('dotPasteBoxOk').click();
+    await new Promise(res => setTimeout(res, 300));
+    r.rowB = S.rowIndexB; r.sideExt = S.ext && S.ext.side; r.oldKept = S.sourceSeqB === oldB;
+    r.liveRowBehindOldResidues = S.rowIndexB >= 0 && S.sourceSeqB !== state.seqs[S.rowIndexB].seq.replace(/[-. ]/g, '').toUpperCase();
+    return r;
+  });
+  return { pass: !o.liveRowBehindOldResidues && o.rowB === -1, detail: JSON.stringify(o) };
+});
+check('Dot plot audit3: a collection entry without lenB whose stored RevComp stretch is shorter than its span still finds its row length', async (page) => {
+  // used to go wrong: _dotBookmarkLenB compared the whole span's reverse complement with the shorter stored stretch (never equal), while
+  // _dotBookmarkStale compared only the stored prefix: the same entry was "verified" by one and "unknown" (plotted) by the other
+  await dotConsOpen(page);
+  const o = await page.evaluate(() => {
+    const q = state.seqs[3], u = q.seq.replace(/[-. ]/g, '').toUpperCase().replace(/U/g, 'T');
+    const bStart = 5, bEnd = 45, stored = 12;
+    let want = ''; for (let j = bStart; j < bStart + stored; j++) want += _DOT_COMPLEMENT[u[u.length - 1 - j]] ?? 'N';
+    const b = { nameB: q.header, revB: true, bStart, bEnd, lenB: 0, seqB: want };
+    const wrongRow = { ...b, seqB: want.split('').reverse().join('') === want ? 'AAAAAAAAAAAA' : want.split('').reverse().join('') };
+    return { len: _dotBookmarkLenB(b), u: u.length, wrong: _dotBookmarkLenB(wrongRow) };
+  });
+  return { pass: o.len === o.u && o.wrong === 0, detail: JSON.stringify(o) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
+  const retrier = createRetrier();
+  const resume = resumeLib.forSuite('regression', require('path').join(__dirname, '..', '..'));
+  let skipped = 0;
   // Optional: CHECK_FILTER=substring runs only checks whose name includes it
   // (case-insensitive) - useful for isolating one check while iterating.
   const filter = process.env.CHECK_FILTER ? process.env.CHECK_FILTER.toLowerCase() : null;
   const activeChecks = filter ? CHECKS.filter(c => c.name.toLowerCase().includes(filter)) : CHECKS;
+  if (filter && !activeChecks.length) { server.close(); exitNoMatch(process.env.CHECK_FILTER); }   // a filter that matches nothing is not a pass
   try {
     for (const { name, fn, opts } of activeChecks) {
-      // A fresh browser process per check, not just a fresh page: multiple
+      if (resume.skip.has(name)) { skipped++; console.log(`[SKIP] ${name} - passed earlier on this commit (--resume)`); continue; }
+      let ms = 0;
+      // One attempt = a fresh browser process per check, not just a fresh page: multiple
       // multi-million-residue alignments loaded into the SAME browser
       // process across successive checks was observed to accumulate memory
       // and crash the renderer ("Target crashed") partway through the suite
       // - isolating each check removes that as a confound between checks
       // and matches how a real user's single-alignment session behaves
       // rather than compounding this test suite's own churn.
-      const browser = await launch();
-      const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-      page.setDefaultTimeout(30000);
-      let outcome;
-      const t0 = Date.now();
-      try {
-        await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
-        outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
-      } catch (e) {
-        outcome = { pass: false, detail: `threw: ${e.message}` };
-      }
-      const ms = Date.now() - t0;
-      console.log(`[${outcome.pass ? 'PASS' : 'FAIL'}] (${ms}ms) ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
+      const attempt = async () => {
+        let browser = null;
+        let outcome;
+        const t0 = Date.now();
+        try {
+          browser = await launch();
+          const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+          page.setDefaultTimeout(30000);
+          await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
+          outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
+        } catch (e) {
+          outcome = { pass: false, detail: `threw: ${e.message}` };
+        }
+        ms = Date.now() - t0;
+        if (browser) await withTimeout(browser.close(), 20000).catch(() => console.warn('[WARN] the browser of "' + name + '" did not close within 20 s'));   // a timed-out check may still hold the page
+        // a check that launched its own browser (launch({ scrollbars: true })) and timed out never closed it
+        const left = await closeLaunched(10000, browser ? [browser] : []);
+        if (left) console.warn('[WARN] ' + left + ' browser(s) left open by "' + name + '" closed by the runner');
+        return outcome;
+      };
+      // a failed check is rerun (fresh browser, at most 2 times) only if the machine slept during the attempt
+      const outcome = await retrier.run(name, attempt);
+      console.log(`[${retrier.label(outcome)}] (${ms}ms) ${name}${outcome.detail ? ' - ' + outcome.detail : ''}`);
       results.push({ name, ...outcome });
-      await withTimeout(browser.close(), 20000).catch(() => console.warn('[WARN] the browser of "' + name + '" did not close within 20 s'));   // a timed-out check may still hold the page
-      // a check that launched its own browser (launch({ scrollbars: true })) and timed out never closed it
-      const left = await closeLaunched(10000, [browser]);
-      if (left) console.warn('[WARN] ' + left + ' browser(s) left open by "' + name + '" closed by the runner');
+      resume.recordResult(name, outcome);   // written as each check passes, so a kill loses at most the running one
     }
   } finally {
     server.close();
   }
 
   const failCount = results.filter(r => !r.pass).length;
-  console.log(`\n${results.length - failCount}/${results.length} passed`);
+  console.log(`\n${results.length - failCount}/${results.length} passed${retrier.suffix()}${skipped ? `; ${skipped} check(s) skipped, passed earlier (--resume)` : ''}`);
   process.exit(failCount > 0 ? 1 : 0);
 }
 

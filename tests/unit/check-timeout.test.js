@@ -46,6 +46,12 @@ async function check(name, fn) {
     const r2 = spawnSync(process.execPath, ['tests/run-all.js', '--only'], { cwd, encoding: 'utf8' });
     return r1.status === 2 && r2.status === 2 && /usage/.test(r1.stderr) || `status ${r1.status}/${r2.status}: ${r1.stderr.slice(0, 80)}`;
   });
+  await check('audit3 7: the functional runner warns when a browser does not close and closes browsers a timed-out check left open, like the regression runner (source-level check)', async () => {
+    const src = f => require('fs').readFileSync(path.join(__dirname, '..', f, 'run-all.js'), 'utf8');
+    const fn = src('functional'), rg = src('regression');
+    const has = t => /closeLaunched\(10000, browser \? \[browser\] : \[\]\)/.test(t) && /did not close within 20 s/.test(t);
+    return has(rg) && has(fn) || JSON.stringify({ regression: has(rg), functional: has(fn) });
+  });
   console.log(fail ? `\n${fail} failed` : '\nall passed');
   process.exit(fail ? 1 : 0);
 })();

@@ -2079,7 +2079,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   The <strong>A from-to</strong> and <strong>B from-to</strong> boxes and <strong>Compare with pasted&hellip;</strong> are
   behind the <strong>Parts</strong> button in the window. The boxes (residue numbers of the whole ungapped sequence, 1-based,
   both ends included) with <strong>Re-plot</strong> do the same by typing; numbers above the length are clamped to it with
-  a message, a <em>from</em> after a <em>to</em> and a number below 1 are refused, and <strong>Whole</strong> returns to both full sequences. The
+  a message, a <em>from</em> below 1 is set to 1 (also with a message), a <em>to</em> below 1 and a <em>from</em> after a <em>to</em> are refused, and <strong>Whole</strong> returns to both full sequences. The
   title shows the part plotted (for example <code>[41-415 of 470]</code>; with RevComp B the B part reads downwards,
   <code>[415-41 of 470]</code>). Whatever the part, every number stays the
   residue's real position in the whole sequence (for B, in the row, see the rule above): axis, ruler, sliders, the Top Regions list, the collection, and the
@@ -2093,6 +2093,23 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   alignment: the arrow and <strong>Highlight all</strong> mark only the row side, and the strip and sliders use the pasted
   sequence's own numbering. A preset stores the typed or selected parts; it does not store the pasted text, only that a side
   was a pasted sequence, and says so when it is loaded.</p>
+  <p><strong>The consensus.</strong> The consensus line is separate from the sequences everywhere else; in the dot plot only it
+  can be one of the two sides. <strong>Dot-plot vs consensus</strong> in a row's right-click menu plots the row (A, down)
+  against the consensus (B, across). A residue selection that covers the consensus line and one row plots those two over the
+  selected columns; with the consensus and two or more rows the chooser asks which two, and lists <em>Consensus</em>
+  among them. The consensus is computed from the rows as they are when the plot is made, without gaps, and its numbers are
+  its own positions. It has no row in the alignment, so, like a pasted sequence, the arrow and <strong>Highlight all</strong> mark only the row side, and a preset
+  records only that a side was the consensus and says so when it is loaded.</p>
+  <p><strong>Rows edited after the plot.</strong> A dot plot is a snapshot of its rows. Nothing is watched while you edit:
+  the plot compares itself with the live rows when it is used (the arrow, <strong>Highlight all</strong>, the stretch
+  menu, a preset, <strong>Compare with pasted</strong>, opening a plot), when you hover over it (a quick check), and when its window comes back into attention (pointer over it, focus, or leaving the docked bar).
+  If only the gaps changed (a realignment, gap edits, deleted gap columns) the plot silently takes the new columns and the marks land in
+  the right place. If residues changed, a bar says <em>Row changed since this plot</em>, names the row and
+  marks nothing; the plot itself stays readable. If a row cannot be found (deleted, or renamed and edited) the bar says <em>Row deleted or changed since this plot</em>
+  and names each side: what happened to it. <strong>Re-plot</strong> on the bar plots the current rows with the same settings and
+  range (a range that no longer fits is clamped, or the whole row is plotted, with a message) and says which rows it used; it is offered only when both rows are still found. Undoing the edit clears the bar at the next check. A row that was moved or renamed
+  is found again by its residues, and the plot then shows its new name. Pasted and consensus sides have no row and are never stale. Marks that were already tinted in the alignment before the
+  edit are not moved or removed: Clear marks removes them.</p>
   <p><strong>Export PNG</strong> saves the whole plot (at least about 1,600 pixels across).
   <strong>Export SVG</strong> saves a vector file in which each diagonal run is one line
   (Dotter runs shaded by their mean identity). Plots are limited to 100 million cells

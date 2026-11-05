@@ -13,7 +13,7 @@
     <meta property="og:image" content="https://toki-bio.github.io/MSA-viewer/img/interface-layout.png">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://toki-bio.github.io/MSA-viewer/">
-    <link rel="stylesheet" href="styles.css?v=196">
+    <link rel="stylesheet" href="styles.css?v=197">
     <!-- MAFFT WASM alignment (runs locally in browser) -->
     <script src="disttbfast.js"></script>
     <script src="mafft-wasm.js"></script>
@@ -1249,6 +1249,11 @@
                 <button type="button" id="dotPlotPasteBtn" title="Compare a pasted sequence (raw or FASTA, first record) with row A, row B, or itself">Compare with pasted&hellip;</button>
                 <span id="dotPlotRangeNote" class="dot-preset-note" role="status"></span>
             </div>
+            <!-- Shown when a row of the plot was changed after the plot was made (checked only when the plot is used or the window regains attention) -->
+            <div id="dotPlotEditBar" class="dot-edit-bar" role="alert" hidden>
+                <span id="dotPlotEditText"></span>
+                <button type="button" id="dotPlotEditReplot" title="Plot the current rows again with the same settings and range (a range that no longer fits is clamped, or the whole row is plotted, with a message)">Re-plot</button>
+            </div>
             <div id="dotPlotSplitRow" class="dot-split-row dot-ctl-row">
                 <label title="A sequence plotted against itself is symmetric, so each half can show the same comparison with its own method and settings: the controls above then apply above the diagonal, these below it. Only for a sequence against itself, without RevComp B."><input type="checkbox" id="dotPlotSplit" checked> Different settings below the diagonal</label>
                 <span id="dotPlotLowerCtl" class="dot-lower-ctl" hidden>
@@ -1488,7 +1493,7 @@ B: -</pre>
     <script src="ab1-parser.js?v=2"></script>
     <script src="chromatogram-viewer.js?v=7"></script>
     <script src="realign-region.js?v=4"></script>
-    <script src="script.js?v=379"></script>
+    <script src="script.js?v=380"></script>
     <script src="a11y.js?v=3"></script>
     <script src="tree-draw.js?v=170"></script>
     <script src="block-mask.js?v=2"></script>
