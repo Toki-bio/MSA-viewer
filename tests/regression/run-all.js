@@ -962,7 +962,7 @@ check('Reads sort, colour, group: rows by MAPQ, colour by MAPQ and tag, groups b
   const before = await page.evaluate(() => { _readsCentre(2500); return Math.round(_readsLeft()); });
   await page.selectOption('#readsGroupBy', 'strand'); await page.waitForTimeout(200);
   o.gStrand = await groups();
-  o.labelInk = await page.evaluate(() => { alignmentContainer.scrollTop = 0; _readsDraw(); return __ink(0, _readsHeadH(), 300, _readsTrackH(), '#ffffff').n; });
+  o.labelInk = await page.evaluate(() => { alignmentContainer.scrollTop = 0; _readsDraw(); return __ink(0, _readsHeadH() + 1, 300, _readsTrackH() - 3, '#ffffff').n; });
   await page.selectOption('#readsGroupBy', 'tag'); await page.waitForTimeout(200);
   o.gTag = await groups();
   // the base at the marked column separates the alleles: group by it, and each part holds one base there
@@ -1052,10 +1052,70 @@ check('Reads pairs and menu: mates on one row, insert size and orientation colou
   const want = await page.evaluate(() => bamState.refSeq.slice(5000, 5100));
   const ok = /Mate/.test(o.tip) && /2,?100/.test(o.tip) && /RG/.test(o.tip)
     && o.pairs.same && o.pairs.line && !o.pairs.fill && o.pairs.deepAllTwo && o.pairs.deepNames >= 10 && o.pairs.other === 1
-    && o.ins.big !== o.ins.normal && o.ori.rr !== o.ori.normal && o.unpaired
+    && o.ins.big !== o.ins.normal && o.ori.rr === '138,159,229' && o.ori.normal === '216,216,216' && o.unpaired
     && o.q.good > 2 * Math.max(1, o.q.poor)
     && o.menu.some(t => /sequence/i.test(t)) && o.menu.some(t => /mate/i.test(t)) && o.menu.some(t => /Sort by base/i.test(t)) && o.menu.some(t => /Group by base/i.test(t))
     && o.copied === want && o.mate.x > 160 && o.mate.x < o.mate.w && !o.mate.menu && o.esc === 'none';
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 120000 });
+
+// IGV moves by dragging and zooms by double click; here it took the scrollbar or the wheel. A variant file is the other
+// half of looking at reads: sites beside them, each sample's genotype, a click opens the reads there.
+check('Reads mouse and VCF: drag moves the view, a click still selects, double click zooms; a VCF shows sites and genotypes on this reference only, gz too, and a click opens the site', async (page) => {
+  const L = 6000, RL = 100, b = 'ACGT'; let seed = 23; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const lines = [`@SQ\tSN:chrV\tLN:9000`];
+  for (let p = 0; p + RL <= L; p += 10) lines.push(`v${p}\t0\tchrV\t${p + 1001}\t60\t${RL}M\t*\t0\t0\t${ref.slice(p, p + RL)}\t*`);
+  await page.setInputFiles('#fileInput', { name: 'v.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrV:1001-7000\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(500);
+  await page.setInputFiles('#bamFileInput', { name: 'v.sam', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\n') + '\n') });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView, null, { timeout: 30000 });
+  await page.evaluate(READS_PX);
+  const o = {};
+  const box = await page.locator('#readsCanvas').boundingBox();
+  await page.evaluate(() => _readsCentre(3000)); await page.waitForTimeout(100);
+  const left = () => page.evaluate(() => _readsLeft());
+  const q = await page.evaluate(() => { alignmentContainer.scrollTop = 0; _readsDraw(); const r = _readsView.drawn.find(x => x.start < 2960 && x.end > 3020); return { x: __colX(3000) + 6, y: __rowY(r) + 8, name: r.name }; });
+  const l0 = await left();
+  await page.mouse.move(box.x + q.x, box.y + q.y); await page.mouse.down(); await page.mouse.move(box.x + q.x - 120, box.y + q.y, { steps: 4 }); await page.mouse.up(); await page.waitForTimeout(120);
+  o.drag = (await left()) - l0;
+  o.selAfterDrag = await page.evaluate(() => _readsView.selected);
+  await page.evaluate(() => _readsCentre(3000)); await page.waitForTimeout(100);
+  await page.mouse.click(box.x + q.x, box.y + q.y); await page.waitForTimeout(100);
+  o.sel = await page.evaluate(() => _readsView.selected && _readsView.selected.name);
+  await page.evaluate(() => { _readsZoomTo(3, 683); _readsCentre(3000); }); await page.waitForTimeout(80);
+  const c0 = await page.evaluate(() => ({ cell: _readsCell(), x: __colX(3000), y: _readsHeadH() + 200 }));
+  await page.mouse.dblclick(box.x + c0.x, box.y + c0.y); await page.waitForTimeout(150);
+  o.dbl = await page.evaluate(() => ({ cell: _readsCell(), x: __colX(3000) }));
+  o.dblCell0 = c0.cell; o.dblX0 = c0.x;
+  // VCF: three sites here, one on another contig, one past the region; two samples
+  const vcf = ['##fileformat=VCFv4.2', '##contig=<ID=chrV>', '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2',
+    'chrV\t4001\trs1\tA\tG\t50\tPASS\tDP=30\tGT:DP\t0/1:15\t1/1:15', 'chrV\t4101\trs2\tAC\tA\t40\tPASS\tDP=30\tGT\t0/0\t0|1', 'chrV\t4201\t.\tC\tT,G\t30\tq10\tDP=9\tGT\t./.\t1/2',
+    'chrOther\t100\tx\tA\tG\t.\t.\t.\tGT\t0/1\t0/1', 'chrV\t8500\tfar\tA\tG\t.\t.\t.\tGT\t0/1\t0/1'].join('\n') + '\n';
+  const head0 = await page.evaluate(() => _readsHeadH());
+  await page.setInputFiles('#bamFileInput', { name: 'v.vcf', mimeType: 'text/plain', buffer: Buffer.from(vcf) }); await page.waitForTimeout(500);
+  o.vcf = await page.evaluate(() => { const v = bamState.vcf; return { n: v.sites.length, pos: v.sites.map(s => s.pos), samples: v.samples, msg: el('statusMessage').textContent, reads: bamState.reads.length, kept: !!_readsView }; });
+  await page.evaluate(() => { _readsFit(2900, 3300); }); await page.waitForTimeout(100);
+  o.paint = await page.evaluate(() => { const y0 = _READS_REF_H + _READS_SCALE_H + _COV_H + _readsView.geneH, x = __colX(3000);
+    return { head: _readsHeadH(), snv: __has(x, y0, Math.max(2, _readsCell()), 10, '#2b6cb0', 30), del: __has(__colX(3100), y0, Math.max(2, _readsCell()), 10, '#dd6b20', 30), gap: __ink(__colX(3050), y0 + 1, 2, 8, '#ffffff').n,
+      het: __has(x, y0 + 12, 3, 6, '#3182ce', 30), hom: __has(x, y0 + 18, 3, 6, '#0ea5e9', 30), x: __colX(3000), y: y0 + 5, tipHtml: _readsVcfTip(bamState.vcf.sites[0]) }; });
+  await page.mouse.move(box.x + o.paint.x + 1, box.y + o.paint.y); await page.waitForTimeout(200);
+  o.tip = await page.evaluate(() => document.querySelector('.tooltip.reads-tooltip')?.textContent || '');
+  await page.mouse.click(box.x + o.paint.x + 1, box.y + o.paint.y); await page.waitForTimeout(200);
+  o.click = await page.evaluate(() => ({ focus: bamState.focusPos, cell: _readsCell() }));
+  // gz, as a real file: gzip of the same text
+  const gz = require('zlib').gzipSync(Buffer.from(vcf));
+  await page.setInputFiles('#bamFileInput', { name: 'v.vcf.gz', mimeType: 'application/gzip', buffer: gz }); await page.waitForTimeout(500);
+  o.gz = await page.evaluate(() => bamState.vcf.sites.length);
+  // nothing on this reference: said, and what was there stays
+  await page.setInputFiles('#bamFileInput', { name: 'w.vcf', mimeType: 'text/plain', buffer: Buffer.from('#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\nchrZ\t5\t.\tA\tG\t.\t.\t.\n') }); await page.waitForTimeout(400);
+  o.none = await page.evaluate(() => ({ n: bamState.vcf.sites.length, msg: el('statusMessage').textContent }));
+  const near = (a, c, t) => Math.abs(a - c) <= t;
+  const ok = near(o.drag, 120, 2) && !o.selAfterDrag && o.sel === q.name && near(o.dbl.cell, o.dblCell0 * 2, 0.01) && near(o.dbl.x, o.dblX0, 7)
+    && o.vcf.n === 3 && o.vcf.pos.join() === '3000,3100,3200' && o.vcf.samples.join() === 'S1,S2' && /2 .*(other|not on)/i.test(o.vcf.msg) && o.vcf.kept
+    && o.paint.head > head0 && o.paint.snv && o.paint.del && o.paint.gap === 0 && o.paint.het && o.paint.hom && /rs1/.test(o.tip) && /S1/.test(o.tip) && /0\/1/.test(o.tip)
+    && o.click.focus === 3000 && o.click.cell === 12 && o.gz === 3 && o.none.n === 3 && /chrZ|no site/i.test(o.none.msg);
   return { pass: ok, detail: JSON.stringify(o) };
 }, { timeoutMs: 120000 });
 

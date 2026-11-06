@@ -9772,6 +9772,7 @@ async function _sniffReadsKind(file) {
  * reference from the reads.
  */
 async function _routeReadsFile(file, indexFile = null) {
+    if (/\.vcf(\.gz)?$/i.test(file.name) && bamState.reads && bamState.reads.length) { await _readsLoadVcf(file); return true; }
     const kind = await _sniffReadsKind(file);
     if (!kind) return false;
     const hasAlignment = !!(state.seqs && state.seqs.length > 0);
@@ -9916,6 +9917,8 @@ async function handleBamFile(event) {
 async function _handleBamFileInner(event) {
     let kindName = 'BAM';   // the type named in the error message once it is known
     const all = Array.from((event.target && event.target.files) || []);
+    const vcfFile = all.find(f => /\.vcf(\.gz)?$/i.test(f.name));
+    if (vcfFile) { await _readsLoadVcf(vcfFile); return; }
     const file = all.find(f => !_isReadsIndexName(f.name));
     const indexFile = event.indexFile || all.find(f => /\.bai$/i.test(f.name)) || null;
     if (!file) {
@@ -10527,7 +10530,8 @@ const _READS_COMPACT_H = 4, _READS_GENE_LANE = 14, _READS_GENE_LANES = 3;
 let _readsCompact = false;
 const _readsTrackH = () => (_readsCompact ? _READS_COMPACT_H : _READS_TRACK_H);
 const _readsGeneH = () => (_readsView ? _readsView.geneH : 0);
-const _readsHeadH = () => _READS_REF_H + _READS_SCALE_H + _COV_H + _readsGeneH() + _READS_STATUS_H;
+const _readsVcfH = () => (_readsView ? _readsView.vcfH : 0);
+const _readsHeadH = () => _READS_REF_H + _READS_SCALE_H + _COV_H + _readsGeneH() + _readsVcfH() + _READS_STATUS_H;
 // Zoom: px per base, from the whole region to _READS_CELL. Letters need _READS_LETTERS px; past _READS_WINDOW bases on
 // screen only coverage is drawn (igv.js: visibilityWindow). The spacer is capped (an element stops growing near 33
 // million px, 2.8 Mb at 12 px per base) and its scroll range mapped onto the pile: _readsLeft / _readsSetLeft.
@@ -10708,6 +10712,76 @@ function _readsResize() {
         _readsSizeSpacer(v);
     }
     _readsDraw();
+}
+// A VCF beside the reads: a row of sites, and a thin row per sample with its genotype (at most _READS_VCF_SAMPLES).
+// Positions as on the ruler: a region row's offset comes off, and sites outside the row are counted, not drawn.
+const _READS_VCF_SITE_H = 12, _READS_VCF_GT_H = 6, _READS_VCF_SAMPLES = 8;
+function _readsVcfHeight() {
+    const v = bamState.vcf;
+    return v && v.sites.length ? _READS_VCF_SITE_H + Math.min(v.samples.length, _READS_VCF_SAMPLES) * _READS_VCF_GT_H + 1 : 0;
+}
+function _readsParseVcf(text) {
+    const sites = [];
+    let samples = [], other = 0, outside = 0, seen = new Set();
+    const off = bamState.offset || 0, n = bamState.refSeq.length;
+    for (const line of text.split(/\r?\n/)) {
+        if (!line) continue;
+        if (line[0] === '#') { if (line.startsWith('#CHROM')) samples = line.split('\t').slice(9); continue; }
+        const f = line.split('\t');
+        if (f.length < 8) continue;
+        seen.add(f[0]);
+        if (f[0] !== bamState.bamRefName && f[0] !== bamState.refName) { other++; continue; }
+        const pos = parseInt(f[1], 10) - 1 - (f[0] === bamState.bamRefName ? off : 0);
+        if (!(pos >= 0 && pos < n)) { outside++; continue; }
+        const keys = (f[8] || '').split(':'), gi = keys.indexOf('GT');
+        const gts = f.slice(9).map(x => (gi >= 0 ? x.split(':')[gi] : ''));
+        sites.push({ pos, id: f[2], ref: f[3], alt: f[4], qual: f[5], filter: f[6], info: f[7], gts });
+    }
+    sites.sort((a, b) => a.pos - b.pos);
+    return { sites, samples, other, outside, seen: [...seen] };
+}
+async function _readsLoadVcf(file) {
+    if (!bamState.reads || !bamState.reads.length) { showMessage('Open the reads first: a VCF is shown beside them.', 6000); return; }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const text = bytes[0] === 0x1f && bytes[1] === 0x8b ? _decodeTextBytes(await BamParser.decompressBAM(new Blob([bytes]))) : _decodeTextBytes(bytes);
+    const v = _readsParseVcf(text);
+    if (!v.sites.length) {
+        showMessage(`No site of ${file.name} is on ${bamState.bamRefName || bamState.refName}. The file has: ${v.seen.slice(0, 5).join(', ') || 'no sites'}.`, 8000);
+        return;
+    }
+    _readsKeepPlace(() => { bamState.vcf = { ...v, name: file.name }; });
+    const left = v.other + v.outside;
+    showMessage(`${v.sites.length.toLocaleString()} site${v.sites.length === 1 ? '' : 's'} from ${file.name}` + (left ? `; ${left.toLocaleString()} not on this reference or outside it` : ''), 5000);
+}
+const _readsVcfType = s => (s.alt.split(',').every(a => a.length === s.ref.length) ? 'snv' : 'indel');
+function _readsVcfTip(s) {
+    const v = bamState.vcf, gts = v.samples.slice(0, _READS_VCF_SAMPLES).map((n, i) => `${_escapeHtml(n)}: ${_escapeHtml(s.gts[i] || '.')}`).join('<br>');
+    return `<b>${_escapeHtml(s.id === '.' ? 'site' : s.id)}</b> ${(s.pos + 1).toLocaleString()}<br>${_escapeHtml(s.ref)} &gt; ${_escapeHtml(s.alt)}<br>QUAL ${_escapeHtml(s.qual)}, ${_escapeHtml(s.filter)}<br>${_escapeHtml(s.info.slice(0, 80))}${gts ? '<br>' + gts : ''}<br><i>click: open the reads here</i>`;
+}
+function _readsVcfFirst(sites, p) {
+    let lo = 0, hi = sites.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (sites[m].pos < p) lo = m + 1; else hi = m; }
+    return lo;
+}
+function _readsDrawVcf(v, a, b, X, top) {
+    const { ctx, w } = v, vcf = bamState.vcf, cell = v.cell, tw = Math.max(2, cell), sl = _readsLeft();
+    const nS = Math.min(vcf.samples.length, _READS_VCF_SAMPLES);
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, top, w, v.vcfH);
+    ctx.fillStyle = '#ddd'; ctx.fillRect(0, top + v.vcfH - 1, w, 1);
+    ctx.fillStyle = '#666'; ctx.font = '9px monospace'; ctx.textAlign = 'right';
+    ctx.fillText('variants', _READS_NAME_W - 4 - sl, top + _READS_VCF_SITE_H / 2);
+    for (let i = 0; i < nS; i++) ctx.fillText(vcf.samples[i].slice(0, 18), _READS_NAME_W - 4 - sl, top + _READS_VCF_SITE_H + i * _READS_VCF_GT_H + 3);
+    ctx.textAlign = 'center';
+    for (let i = _readsVcfFirst(vcf.sites, a); i < vcf.sites.length && vcf.sites[i].pos < b; i++) {
+        const s = vcf.sites[i], x = X(s.pos);
+        ctx.fillStyle = _readsVcfType(s) === 'snv' ? '#2b6cb0' : '#dd6b20';
+        ctx.fillRect(x, top + 1, tw, _READS_VCF_SITE_H - 3);
+        for (let k = 0; k < nS; k++) {
+            const al = String(s.gts[k] || '.').split(/[/|]/), called = al.every(g => g !== '.' && g !== ''), alt = al.filter(g => g !== '0').length;
+            ctx.fillStyle = !called ? '#e2e2e2' : !alt ? '#c8c8c8' : alt < al.length ? '#3182ce' : '#0ea5e9';
+            ctx.fillRect(x, top + _READS_VCF_SITE_H + k * _READS_VCF_GT_H, tw, _READS_VCF_GT_H - 1);
+        }
+    }
 }
 function _readsDefaultStatus() {
     const { reads, nTracks = 0 } = bamState;
@@ -11176,7 +11250,7 @@ function renderReadsAlignment() {
 
     const lanes = _readsGeneLanes();
     const v = _readsView = {
-        genes: lanes.genes, geneH: lanes.h, canvas, spacer, ctx: canvas.getContext('2d'), w: 0, h: 0, dpr: 0, cell: keep ? keep[2] : _READS_CELL, groups, maxClip, covMax: null, mixed: null,
+        genes: lanes.genes, geneH: lanes.h, vcfH: _readsVcfHeight(), canvas, spacer, ctx: canvas.getContext('2d'), w: 0, h: 0, dpr: 0, cell: keep ? keep[2] : _READS_CELL, groups, maxClip, covMax: null, mixed: null,
         selected, status: null, reads, drawn: [], raf: 0, ro: null, onScroll: _readsSchedule,
         fullW: _READS_NAME_W + (refEnd - refStart) * (keep ? keep[2] : _READS_CELL),
         fullH: 0
@@ -11206,19 +11280,47 @@ function _readsWireMouse(v) {
             const gene = v.genes.find(g => g.lane === lane && g.start - slack <= p && p < g.end + slack);
             return gene ? { p, gene } : null;
         }
+        const vcfTop = geneTop + v.geneH;
+        if (y >= vcfTop && y < vcfTop + v.vcfH) {
+            const slack = Math.ceil(3 / v.cell), sites = bamState.vcf.sites;
+            for (let i = _readsVcfFirst(sites, p - slack); i < sites.length && sites[i].pos <= p + slack; i++) return { p, site: sites[i] };
+            return null;
+        }
         if (y < _readsHeadH() || !inPlot || _readsCoverageOnly(v)) return null;
         const read = _readsReadAt(Math.floor((y - _readsHeadH() + alignmentContainer.scrollTop) / _readsTrackH()), p);
         return read ? { p, read } : null;
     };
     const at = e => ({ getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX + 1, top: e.clientY, bottom: e.clientY + 1, width: 1, height: 1 }) });
-    let shown = null;
+    let shown = null, drag = null, moved = false;
+    // Drag moves the view, as in IGV; a press that does not move stays a click
+    canvas.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        drag = { x: e.clientX, y: e.clientY, left: _readsLeft(), top: alignmentContainer.scrollTop };
+        moved = false;
+        const onMove = ev => {
+            if (!moved && Math.abs(ev.clientX - drag.x) + Math.abs(ev.clientY - drag.y) < 4) return;
+            moved = true;
+            canvas.style.cursor = 'grabbing';
+            hideTooltip();
+            _readsSetLeft(drag.left - (ev.clientX - drag.x));
+            alignmentContainer.scrollTop = drag.top - (ev.clientY - drag.y);
+        };
+        const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); drag = null; canvas.style.cursor = ''; };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    });
+    canvas.addEventListener('dblclick', e => {
+        const x = e.clientX - canvas.getBoundingClientRect().left;
+        if (x >= _READS_NAME_W) _readsZoomBy(2, x);
+    });
     canvas.addEventListener('mousemove', e => {
-        const h = hit(e), key = h ? (h.read || h.gene || 'c' + h.p) : null;
+        if (drag) return;
+        const h = hit(e), key = h ? (h.read || h.gene || h.site || 'c' + h.p) : null;
         canvas.style.cursor = h ? 'pointer' : '';
         if (key === shown) return;
         shown = key;
         if (!h) hideTooltip();
-        else showTooltipAt(h.read ? _readsTooltipHtml(h.read) : h.gene ? _readsGeneTip(h.gene) : _readsCountsHtml(h.p), at(e), { html: true, className: 'reads-tooltip' });
+        else showTooltipAt(h.read ? _readsTooltipHtml(h.read) : h.gene ? _readsGeneTip(h.gene) : h.site ? _readsVcfTip(h.site) : _readsCountsHtml(h.p), at(e), { html: true, className: 'reads-tooltip' });
     });
     canvas.addEventListener('mouseleave', () => { shown = null; hideTooltip(); });
     canvas.addEventListener('contextmenu', e => {
@@ -11235,8 +11337,10 @@ function _readsWireMouse(v) {
         _readsZoomBy(e.deltaY < 0 ? _READS_ZOOM_STEP : 1 / _READS_ZOOM_STEP, Math.max(_READS_NAME_W, e.clientX - canvas.getBoundingClientRect().left));
     }, { passive: false });
     canvas.addEventListener('click', e => {
+        if (moved) { moved = false; return; }
         const h = hit(e);
         if (!h) return;
+        if (h.site) { readsGoTo(h.site.pos, { sort: true }); if (_readsView && _readsView.cell < _READS_CELL) { _readsView.cell = _READS_CELL; _readsSizeSpacer(_readsView); _readsCentre(h.site.pos); } return; }
         if (h.cov) { readsGoTo(h.p, { sort: true, scroll: false }); return; }
         if (h.gene) { _readsFit(Math.max(h.gene.start, bamState.refStart), Math.min(h.gene.end, bamState.refEnd) - 1); return; }
         const read = h.read, rev = !!(read.flag & 0x10);
@@ -11349,9 +11453,10 @@ function _readsDraw() {
     _readsDrawCoverage(v, a, b, X);
     const geneTop = _READS_REF_H + _READS_SCALE_H + _COV_H;
     if (v.geneH) _readsDrawGenes(v, a, b, X, geneTop);
+    if (v.vcfH) _readsDrawVcf(v, a, b, X, geneTop + v.geneH);
 
     // -- Status: the selected read, or the counts --
-    const y2 = geneTop + v.geneH;
+    const y2 = geneTop + v.geneH + v.vcfH;
     ctx.fillStyle = '#e8f0fe'; ctx.fillRect(0, y2, w, _READS_STATUS_H - 1);
     ctx.fillStyle = '#c5d8ee'; ctx.fillRect(0, y2 + _READS_STATUS_H - 1, w, 1);
     ctx.fillStyle = '#333'; ctx.font = '11px monospace'; ctx.textAlign = 'left';
