@@ -14,7 +14,7 @@ function reg2bin(beg, end) {   // SAMv1 5.3
   return 0;
 }
 function mulberry(a) { return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-function bamRecord(r, rnd, noisyQual) {
+function bamRecord(r, rnd, noisyQual, ref) {
   const name = Buffer.from(r.name + '\0'), lSeq = r.cigar.reduce((n, [l, o]) => n + ('MIS=X'.includes(o) ? l : 0), 0);
   const span = r.cigar.reduce((n, [l, o]) => n + ('MDN=X'.includes(o) ? l : 0), 0);
   const sb = (lSeq + 1) >> 1, size = 32 + name.length + 4 * r.cigar.length + sb + lSeq, b = Buffer.alloc(4 + size);
@@ -23,7 +23,9 @@ function bamRecord(r, rnd, noisyQual) {
   b.writeInt32LE(lSeq, 20); b.writeInt32LE(-1, 24); b.writeInt32LE(-1, 28); b.writeInt32LE(0, 32);
   let o = 36; name.copy(b, o); o += name.length;
   for (const [l, op] of r.cigar) { b.writeUInt32LE(l * 16 + 'MIDNSHP=X'.indexOf(op), o); o += 4; }
-  for (let i = 0; i < sb; i++) b[o++] = [1, 2, 4, 8][(rnd() * 4) | 0] * 16 + [1, 2, 4, 8][(rnd() * 4) | 0];
+  // ref: bases copied from the reference with 1% errors, as a real read; else random, a mismatch at 3 bases of 4
+  const N = { A: 1, C: 2, G: 4, T: 8 }, base = i => (ref && rnd() >= 0.01 ? N[ref[r.pos + i]] || 1 : [1, 2, 4, 8][(rnd() * 4) | 0]);
+  for (let i = 0; i < sb; i++) b[o++] = base(2 * i) * 16 + base(2 * i + 1);
   if (noisyQual) for (; o < b.length; o++) b[o] = 20 + ((rnd() * 8) | 0) * 3; else b.fill(0xff, o);   // noisy: compresses about as a real BAM does
   return { bytes: b, span };
 }
@@ -42,7 +44,7 @@ function buildBam(refs, reads, merged, opts) {
   const bins = refs.map(() => new Map()), lin = refs.map(() => []);
   const BLOCK = 16000;
   for (const r of reads) {
-    const { bytes, span } = bamRecord(r, rnd, opts && opts.noisyQual);
+    const { bytes, span } = bamRecord(r, rnd, opts && opts.noisyQual, opts && opts.ref);
     const beg = { c: comp, u: pendingLen };
     // a record may run across a block edge, as in a real BAM
     let o = 0;

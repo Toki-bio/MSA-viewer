@@ -299,6 +299,34 @@ check('reads: a chromosome switch and back reads the right reads, nothing of the
   return { pass: b[0] === 'chrB' && b[1] === 200000 && b[2] > 0 && b[3] && a[0] === 'chrA' && a[1] && a[2] > 0, detail: JSON.stringify({ a, b }) };
 });
 
+check('reads: the draw limit goes by the density of the window, not of the chromosome', async (page) => {
+  // a window of under a third of the chromosome: past the limit on the window's own density; on the whole chromosome's it would be below
+  await open(page, allFiles());
+  await page.evaluate(() => { _genome.gateBytes = 1e12; _genome.cache.budget = 1e9; });
+  await jump(page, 'chrA:100,000-400,000');
+  await idle(page);
+  const r = await page.evaluate(() => { const v = _readsView, w = _genome.win; bamState.alignedBases = Math.ceil(1.3 * _READS_MAX_DRAWN * (w.we - w.ws) / ((v.w - _READS_NAME_W) / v.cell)); return { over: _readsCoverageOnly(v), span: w.we - w.ws, chr: bamState.refEnd }; });
+  return { pass: r.over && r.span < r.chr / 2, detail: JSON.stringify(r) };
+});
+
+check('reads: outside the loaded bases a read shows no changes and the reference no letters', async (page) => {
+  await open(page, allFiles());
+  await jump(page, 'chrA:700,000');
+  // the bases cut to nothing under the view, as while they are being read
+  const r = await page.evaluate(() => {
+    const v = _readsView, keep = [bamState.refSeq, bamState.refBase];
+    const red = () => { _readsDraw(); const y = Math.ceil(_readsHeadH() * v.dpr), d = v.ctx.getImageData(0, y, v.canvas.width, v.canvas.height - y).data;   // the tracks only: coverage has red too
+    let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 110 && d[i + 2] < 110) n++; return n; };
+    const withBases = red();
+    bamState.refSeq = 'A'; bamState.refBase = 5;
+    const without = red(), blank = _readsRefChar(700000);
+    const row = v.ctx.getImageData(Math.round(200 * v.dpr), 2, Math.round(600 * v.dpr), Math.round(16 * v.dpr)).data; let ink = 0; for (let i = 0; i < row.length; i += 4) if (row[i] < 220) ink++;
+    bamState.refSeq = keep[0]; bamState.refBase = keep[1];
+    return { withBases, without, blank: blank === undefined, ink };
+  });
+  return { pass: r.without === 0 && r.blank && r.withBases > 0 && r.ink === 0, detail: JSON.stringify(r) };
+});
+
 // ---- step 6: cache, prefetch, cancel ---------------------------------------------------------------------------------------
 check('cache: a walk across the chromosome stays inside the budget', async (page) => {
   await open(page, allFiles());
