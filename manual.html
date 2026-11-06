@@ -619,8 +619,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     Only <code>.bai</code> indexes are read (not <code>.csi</code>, nor CRAM's <code>.crai</code>).
   </p>
   <p>
-    <strong>Which reads count:</strong> unmapped, secondary, supplementary, QC-failed and duplicate reads are
-    left out (the message says how many). Every other read is kept (up to 2,000,000) and counts for the
+    <strong>Which reads count:</strong> unmapped reads are dropped. Secondary, supplementary, QC-failed and duplicate reads are
+    hidden (the message says how many; <strong>Options</strong> shows them) and never count. Every other read is kept (up to 2,000,000) and counts for the
     coverage, the allele counts and the sample row; the view draws at most 50 reads starting in each 100 bp
     (a fixed random sample, as igv.js does), and marks the windows where reads were not drawn.
   </p>
@@ -633,6 +633,31 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     strand and blue on the reverse strand (a change seen on one strand only is a common artefact), faded when
     their mapping quality is 0; mismatching bases are letters, deletions grey, insertions orange ticks (the
     inserted bases are in the read's tooltip). <strong>Show bases</strong> draws every base.
+  </p>
+  <p>
+    <strong>Moving around:</strong> drag the reads to move the view, or use the wheel. Ctrl+wheel, the
+    <strong>&minus;</strong> and <strong>+</strong> buttons or a double click zoom, from single bases to the whole region; the
+    length on screen is beside the buttons. Under 7 pixels per base the letters become ticks, past 30 kb only the
+    coverage is drawn, and mixed sites stay marked in it at any zoom. The box next to it goes to a position
+    (<code>12,345</code>), a range, which then fills the view (<code>12,000-13,000</code>), a gene of the loaded annotation
+    (any case, or the start of its name), or, on a region row like <code>chr7:1001-2000</code>, a position in the file's own
+    coordinates (<code>chr7:1,500</code>). The view runs from the first read to the last.
+  </p>
+  <p>
+    <strong>Rows beside the reads:</strong> with an annotation, a gene row shows exons, the coding part taller, and the strand; click a
+    gene to go to it. Open a <code>.vcf</code> or <code>.vcf.gz</code> with the SAM/BAM button after the reads for a row of sites
+    (blue a substitution, orange an indel) and a thin row per sample (up to 8: grey reference, blue heterozygous, light blue
+    homozygous for the change); hover for the details, click to open the reads there.
+    <strong>Compact</strong> gives rows of 4 pixels for a deep place.
+  </p>
+  <p>
+    <strong>Options:</strong> a minimum MAPQ leaves reads out of the picture, the coverage and the calls; <strong>Reads per 100 bp</strong> sets how many are drawn; the hidden kinds of read
+    can be drawn, but never count. <strong>Sort by</strong> orders the rows by the read at the marked column, or else the middle of
+    the view. <strong>Colour by</strong> shows strand, first-of-pair strand, MAPQ, insert size (red over 3 times the median, blue
+    under a third), pair orientation or a tag. <strong>Group by</strong> splits the pile into labelled parts: by strand, kind of read,
+    a tag such as HP, or the base at a column, which separates the two alleles of a site. <strong>View as pairs</strong> puts mates on
+    one row with a line between them. A change on a poor base is drawn fainter (Phred 5 to 20). Right click a read to copy it or its soft
+    clips, go to its mate, or sort or group by the base there.
   </p>
   <p>
     <strong>Checking a gene for mutations from reads:</strong>

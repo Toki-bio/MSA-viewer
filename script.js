@@ -10796,7 +10796,7 @@ function _readsDefaultStatus() {
 }
 // Which reads are drawn. Flagged reads shown here are still not evidence: SampleCall leaves them out of the coverage
 // and the calls. A MAPQ minimum leaves reads out of those too.
-const _READS_FILTER_DEFAULT = { minMapq: 0, secondary: false, supplementary: false, duplicate: false, qc: false };
+const _READS_FILTER_DEFAULT = { minMapq: 0, perWindow: _READS_PER_WINDOW, secondary: false, supplementary: false, duplicate: false, qc: false };
 const _READS_FLAGGED = [['secondary', 0x100, 'secondary', 'readsShowSecondary'], ['supplementary', 0x800, 'supplementary', 'readsShowSupplementary'],
     ['duplicate', 0x400, 'duplicate', 'readsShowDuplicate'], ['qc', 0x200, 'QC-failed', 'readsShowQc']];
 let _readsFilter = { ..._READS_FILTER_DEFAULT };
@@ -10809,6 +10809,8 @@ function _readsSyncFilterBoxes() {
     const box = document.getElementById('readsMinMapq');
     if (!box) return;
     box.value = String(_readsFilter.minMapq);
+    const pw = document.getElementById('readsPerWindow');
+    if (pw) pw.value = String(_readsFilter.perWindow);
     const set = (id, val) => { const e = document.getElementById(id); if (e) { if (e.type === 'checkbox') e.checked = val; else e.value = val; } };
     set('readsSortBy', _readsOpts.sort); set('readsColorBy', _readsOpts.color); set('readsGroupBy', _readsOpts.group); set('readsPairs', _readsOpts.pairs); set('readsTagName', _readsOpts.tag);
     for (const [key, , , id] of _READS_FLAGGED) { const c = document.getElementById(id); if (c) c.checked = !!_readsFilter[key]; }
@@ -10829,7 +10831,7 @@ function _readsSetFilter(next) {
     }
     _readsKeepPlace(() => {
         _readsFilter = next;
-        const { shown, dropped } = _downsampleReads(kept);
+        const { shown, dropped } = _downsampleReads(kept, next.perWindow);
         let lo = Infinity, hi = 0;
         for (const r of kept) { if (r.start < lo) lo = r.start; if (r.end + 1 > hi) hi = r.end + 1; }
         Object.assign(bamState, { reads: shown, sampled: shown, allReads: kept, downsampled: dropped, calls: null,
@@ -11086,6 +11088,21 @@ function _readsBuildOptions(group) {
     box.addEventListener('change', applyMq);
     mq.appendChild(box);
     panel.appendChild(mq);
+    const wl = document.createElement('label');
+    wl.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:5px;';
+    wl.title = 'At most this many reads are drawn for each 100 bp (igv.js draws 1,000); coverage and calls always use every read';
+    wl.appendChild(document.createTextNode('Reads per 100 bp'));
+    const wb = document.createElement('input');
+    wb.id = 'readsPerWindow'; wb.type = 'number'; wb.min = '1'; wb.max = '10000'; wb.value = String(_READS_PER_WINDOW);
+    wb.style.cssText = 'width:60px;font-size:11px;';
+    const applyWindow = () => {
+        const n = Math.max(1, Math.min(10000, parseInt(wb.value, 10) || _READS_PER_WINDOW));
+        if (n !== _readsFilter.perWindow) _readsSetFilter({ ..._readsFilter, perWindow: n }); else wb.value = String(n);
+    };
+    wb.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); applyWindow(); } });
+    wb.addEventListener('change', applyWindow);
+    wl.appendChild(wb);
+    panel.appendChild(wl);
     const note = document.createElement('div');
     note.textContent = 'Also show (never counted in coverage or calls):'; note.style.cssText = 'margin:6px 0 3px;color:#555;font-size:11px;';
     panel.appendChild(note);

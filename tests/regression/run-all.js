@@ -1119,6 +1119,32 @@ check('Reads mouse and VCF: drag moves the view, a click still selects, double c
   return { pass: ok, detail: JSON.stringify(o) };
 }, { timeoutMs: 120000 });
 
+// The limit of 50 reads per 100 bp was fixed; igv.js draws 1,000. A canvas draws only what is on screen, so it can be set.
+check('Reads per 100 bp can be set in Options: more reads are drawn, coverage stays, and it goes back for a new file', async (page) => {
+  const L = 1000, RL = 100, b = 'ACGT'; let seed = 29; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const lines = [`@SQ\tSN:chrW\tLN:${L}`];
+  for (let i = 0; i < 400; i++) lines.push(`w${i}\t0\tchrW\t${401 + (i % 90)}\t60\t${RL}M\t*\t0\t0\t${ref.slice(400 + (i % 90), 400 + (i % 90) + RL)}\t*`);
+  const text = lines.join('\n') + '\n';
+  await page.setInputFiles('#fileInput', { name: 'w.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrW\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(400);
+  await page.setInputFiles('#bamFileInput', { name: 'w.sam', mimeType: 'text/plain', buffer: Buffer.from(text) });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView, null, { timeout: 30000 });
+  await page.click('#readsOptionsBtn');
+  const look = () => page.evaluate(() => ({ drawn: bamState.reads.length, all: bamState.allReads.length, marks: bamState.downsampled.length, depth: _readsCalls().counts.depth[445 - _readsCalls().counts.lo], box: el('readsPerWindow').value }));
+  const o = { def: await look() };
+  await page.fill('#readsPerWindow', '200'); await page.press('#readsPerWindow', 'Enter'); await page.waitForTimeout(200);
+  o.more = await look();
+  await page.fill('#readsPerWindow', '1000'); await page.press('#readsPerWindow', 'Enter'); await page.waitForTimeout(200);
+  o.all = await look();
+  await page.setInputFiles('#bamFileInput', { name: 'w2.sam', mimeType: 'text/plain', buffer: Buffer.from(text) }); await page.waitForTimeout(700);
+  o.fresh = await look();
+  const ok = o.def.drawn === 50 && o.def.all === 400 && o.def.marks === 1 && o.more.drawn === 200 && o.more.depth === o.def.depth
+    && o.all.drawn === 400 && o.all.marks === 0 && o.fresh.drawn === 50 && o.fresh.box === '50';
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 60000 });
+
 // Reads could only be looked at: codon analysis and MACSE work on rows, and in Full view the reads were gone.
 // Full hidden from the switch (owner 2026-11-01): Sample -> row now lands in Canvas (view 'canvas', was 'full').
 // "Sample -> row" puts the sample under the reference; codon analysis must then classify each planted change of

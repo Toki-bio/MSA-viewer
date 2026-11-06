@@ -64,4 +64,17 @@ for (let t = 0; t < 60; t++) {
   const rs = [r, { ...r }, { ...r }, { ...r }];
   assert.deepStrictEqual(plain(NEW.call(rs, ref)), plain(OLD.call(rs, ref)), 'lower case');
 }
+// reads that start or end exactly at an insertion site do not span it: only such reads show an off-by-one in the span,
+// which random reads almost never reach
+{
+  let ref = ''; for (let i = 0; i < 200; i++) ref += 'ACGT'[(i * 7 + (i >> 2)) & 3];
+  const seg = (a, b) => ref.slice(a, b), M = n => ({ op: 'M', len: n }), ins = ref[59] === 'T' ? 'G' : 'T';   // not the base before: it must not shift left
+  const carrier = n => ({ name: n, flag: 0, pos: 40, mapq: 60, cigar: [M(20), { op: 'I', len: 2 }, M(20)], seq: seg(40, 60) + ins + ins + seg(60, 80), qual: '*' });
+  const rs = [carrier('a'), carrier('b')];
+  for (let i = 0; i < 12; i++) rs.push({ name: 's' + i, flag: 0, pos: 60, mapq: 60, cigar: [M(30)], seq: seg(60, 90), qual: '*' });   // start at the site
+  for (let i = 0; i < 12; i++) rs.push({ name: 'e' + i, flag: 0, pos: 30, mapq: 60, cigar: [M(30)], seq: seg(30, 60), qual: '*' });   // end just before it
+  const a = plain(OLD.call(rs, ref)), b = plain(NEW.call(rs, ref));
+  assert.deepStrictEqual(b, a, 'reads at an insertion site');
+  assert.ok(a.variants.some(v => v.type === 'ins'), 'the insertion is called');
+}
 console.log(`all passed (${runs} random sets, text and BAM)`);

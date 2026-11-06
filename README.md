@@ -12,7 +12,7 @@ No installation, no build step, no framework dependencies.
   GenBank/RefSeq records can also be fetched by accession
 - **Four view modes**: Full, Block, Canvas (viewport-culled; Full and Block window
   the alignment above about 100,000 residues, and Canvas auto-activates above
-  5 million), and Reads (IGV-style tracks for mapped SAM/BAM data). Opening an
+  5 million), and Reads (a read viewer for mapped SAM/BAM/CRAM data: zoom, sort, colour, group, pairs, gene and VCF rows). Opening an
   alignment with more than 500 sequences *and* more than 3,000 columns, or more than
   5 million residues, first asks before loading
 - **GeneDoc-style editing**: residue-level edits, Move NoGaps / Slide KeepGaps, gap column
