@@ -10409,6 +10409,16 @@ function ensureSampleRowButton() {
     zs.id = 'readsZoomSpan';
     zs.title = 'Length of reference on screen';
     zoom.appendChild(zs);
+    const jb = document.createElement('input');
+    jb.id = 'readsJumpBox'; jb.type = 'text'; jb.placeholder = 'position or gene'; jb.spellcheck = false;
+    jb.title = 'Go to a position (12,345), a range (12,000-13,000) or a gene of the annotation, then Enter';
+    jb.setAttribute('aria-label', 'Go to a position, range or gene');
+    jb.style.cssText = 'width:110px;height:16px;font-size:11px;margin-left:5px;padding:0 3px;border:1px solid #999;border-radius:3px;';
+    jb.addEventListener('keydown', e => {
+        e.stopPropagation();   // digits and letters here are not the viewer's shortcuts
+        if (e.key === 'Enter') { e.preventDefault(); readsJump(jb.value); }
+    });
+    zoom.appendChild(jb);
     vb.parentNode.insertBefore(zoom, vb.nextSibling);
     return btn;
 }
@@ -10535,6 +10545,54 @@ function _readsCentre(p) {
     if (!v) return;
     _readsSetLeft(_READS_NAME_W + (p - bamState.refStart) * v.cell - (_READS_NAME_W + (v.w - _READS_NAME_W) / 2));
     _readsDraw();
+}
+// What the jump box takes, as 0-based inclusive { from, to } or { error }: a position or range as on the ruler, the same
+// after a name (the reads file's name counts in the file's coordinates, so on a region row chrJ:1,500 is ruler 500), or
+// a gene of the annotation (any case; the start of a name when only one gene has it).
+function _readsParseJump(text) {
+    const t = String(text || '').trim(), { refStart, refEnd } = bamState;
+    if (!t) return { error: '' };
+    const NUM = /^([\d,\s]+?)(?:\s*(?:-|\u2013|\.\.)\s*([\d,\s]+))?$/;
+    const fmt = n => n.toLocaleString();
+    const inPlot = 'The reads cover ' + fmt(refStart + 1) + ' to ' + fmt(refEnd) + ' here.';
+    const range = (m, shift) => {
+        const n = x => parseInt(String(x).replace(/[,\s]/g, ''), 10);
+        let a = n(m[1]) - 1 - shift, b = m[2] != null ? n(m[2]) - 1 - shift : null;
+        if (b != null && b < a) [a, b] = [b, a];
+        if (a >= refEnd || (b ?? a) < refStart || (b == null && a < refStart)) return { error: `${t} is outside the reads. ${inPlot}` };
+        return b == null ? { from: a, to: a, single: true } : { from: Math.max(a, refStart), to: Math.min(b, refEnd - 1) };
+    };
+    let m = NUM.exec(t);
+    if (m) return range(m, 0);
+    const colon = t.lastIndexOf(':');
+    if (colon > 0 && (m = NUM.exec(t.slice(colon + 1).trim()))) {
+        const name = t.slice(0, colon).trim();
+        if (name === bamState.refName) return range(m, 0);
+        if (name === bamState.bamRefName) return range(m, bamState.offset || 0);
+        return { error: `These reads are on ${bamState.bamRefName || bamState.refName}, not ${name}.` };
+    }
+    const genes = _readsGenes(), lc = t.toLowerCase();
+    let hits = genes.filter(g => String(g.name).toLowerCase() === lc);
+    if (!hits.length) hits = genes.filter(g => String(g.name).toLowerCase().startsWith(lc));
+    if (!hits.length) return { error: `No gene ${t} in the annotation, and it is not a position. Type a position, a range like 1,000-2,000, or a gene.` };
+    const names = [...new Set(hits.map(g => g.name))];
+    if (names.length > 1) return { error: `Several genes match ${t}: ${names.slice(0, 6).join(', ')}${names.length > 6 ? ', ...' : ''}.` };
+    const from = Math.min(...hits.map(g => g.start)), to = Math.max(...hits.map(g => g.end)) - 1;
+    if (to < refStart || from >= refEnd) return { error: `${names[0]} is outside the reads. ${inPlot}` };
+    return { from: Math.max(from, refStart), to: Math.min(to, refEnd - 1) };
+}
+// A position goes to the middle of the view, marked, and to letters if they were too small; a range fills the view
+function readsJump(text) {
+    const v = _readsView, r = _readsParseJump(text);
+    if (!v || r.error === '') return;
+    if (r.error) { showMessage(r.error, 6000); return; }
+    if (r.single) { readsGoTo(r.from, { sort: false }); return; }
+    bamState.focusPos = null;
+    const want = (v.w - _READS_NAME_W) / (r.to - r.from + 1);
+    v.cell = Math.max(_readsMinCell(v), Math.min(_READS_CELL, want));
+    _readsSizeSpacer(v);
+    if (want > _READS_CELL) _readsCentre((r.from + r.to) / 2);
+    else { _readsSetLeft((r.from - bamState.refStart) * v.cell); _readsDraw(); }
 }
 function _readsSpanText(v) {
     const n = Math.min(bamState.refEnd - bamState.refStart, Math.round((v.w - _READS_NAME_W) / v.cell));
@@ -10948,7 +11006,7 @@ function _readsGenes() {
     const ri = _readsRefRowIndex();
     if (ri < 0 || !state.annot || !state.annot.features) return [];
     return state.annot.features.filter(f => _annotResolveChrom(f.chrom) === ri).map(f => ({
-        name: f.name, strand: f.strand || '+', coding: _annotIsCds(f),
+        name: f.name, strand: f.strand || '+', coding: _annotIsCds(f), start: f.start, end: f.end,
         cdsBlocks: f.cdsBlocks && f.cdsBlocks.length ? f.cdsBlocks : [[f.start, f.end]], blocks: f.blocks, codonStart: f.codonStart || 1
     }));
 }

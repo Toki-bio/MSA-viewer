@@ -737,6 +737,59 @@ check('Reads zoom: the end of a 4 Mb reference can be reached and its read is on
   return { pass: ok, detail: JSON.stringify(r) };
 }, { timeoutMs: 120000 });
 
+// A place in the reads could only be reached by scrolling or from the variant list. The box takes what the ruler shows,
+// a range (zoomed to fit), the file's own coordinates for a region row, or a gene from the annotation.
+check('Reads jump box: position, range, file coordinates on a region, gene; a wrong entry says why and moves nothing', async (page) => {
+  const L = 20000, RL = 150, b = 'ACGT'; let seed = 9; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  // the row is chrJ:1001-21000, so file position 1001 is ruler position 1
+  const lines = [`@SQ\tSN:chrJ\tLN:50000`];
+  for (let p = 0; p < L - RL; p += 20) lines.push(`j${p}\t0\tchrJ\t${p + 1001}\t60\t${RL}M\t*\t0\t0\t${ref.slice(p, p + RL)}\t*`);
+  await page.setInputFiles('#fileInput', { name: 'j.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrJ:1001-21000\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(600);
+  await page.setInputFiles('#bamFileInput', { name: 'j.sam', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\n') + '\n') });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView && _readsView.drawn.length > 0, null, { timeout: 30000 });
+  await page.evaluate(() => setAnnotation('chrJ:1001-21000\t5000\t6000\tTMEM114\t0\t+\nchrJ:1001-21000\t7000\t7300\tEPS8L1\t0\t+\nchrJ:1001-21000\t9000\t9300\tEPS8L2\t0\t-\n', 'g.bed'));
+  await page.evaluate(READS_PX);
+  const go = async t => {
+    await page.fill('#readsJumpBox', t); await page.press('#readsJumpBox', 'Enter'); await page.waitForTimeout(120);
+    return page.evaluate(() => { const v = _readsView, c = _readsCell();
+      const first = bamState.refStart + (_readsLeft()) / c;            // base at the plot's left edge
+      return { cell: +c.toFixed(3), first: Math.round(first), last: Math.round(first + (v.w - 160) / c), focus: bamState.focusPos, mode: el('modeReads').checked }; });
+  };
+  const o = {};
+  o.pos = await go('12,345');                 // ruler position 12345: its column in the middle, marked, at letters
+  o.posX = await page.evaluate(() => __colX(12344) - (160 + (_readsView.w - 160) / 2));
+  await page.evaluate(() => _readsZoomTo(1, 500));
+  o.posBack = await go('12345');              // from zoomed out: back to letters
+  o.range = await go('10,000-11,000');
+  o.rev = await go('3000-2000');
+  o.file = await go('chrJ:1,500');            // file coordinate: ruler position 500
+  o.fileRange = await go('chrJ:2001-3000');
+  o.rowName = await go('chrJ:1001-21000:400');
+  o.gene = await go('tmem114');               // any case
+  o.prefix = await go('TMEM');
+  const before = await page.evaluate(() => [_readsCell(), _readsLeft()]);
+  const err = async t => { await page.fill('#readsJumpBox', t); await page.press('#readsJumpBox', 'Enter'); await page.waitForTimeout(100);
+    return page.evaluate(() => el('statusMessage').textContent); };
+  o.eSeveral = await err('EPS8');
+  o.ePast = await err('900000');
+  o.eNone = await err('NOSUCH');
+  o.eOther = await err('chr9:100');
+  const after = await page.evaluate(() => [_readsCell(), _readsLeft()]);
+  // typing in the box must not reach the viewer's own keys
+  o.typed = await page.evaluate(() => el('readsJumpBox').value);
+  const near = (a, b, t) => Math.abs(a - b) <= t;
+  const ok = near(o.posX, 0, 7) && o.pos.focus === 12344 && o.pos.cell === 12 && o.posBack.cell === 12
+    && near(o.range.first, 9999, 2) && near(o.range.last, 11000, 2) && near(o.rev.first, 1999, 2) && near(o.rev.last, 3000, 2)
+    && o.file.focus === 499 && near(o.fileRange.first, 1000, 2) && near(o.fileRange.last, 2000, 2) && o.rowName.focus === 399
+    && near(o.gene.first, 5000, 2) && near(o.gene.last, 6000, 2) && near(o.prefix.first, 5000, 2)
+    && /EPS8L1/.test(o.eSeveral) && /EPS8L2/.test(o.eSeveral) && /20,000|19,9/.test(o.ePast) && /NOSUCH/.test(o.eNone) && /chr9/.test(o.eOther)
+    && before[0] === after[0] && before[1] === after[1];
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 120000 });
+
 // Reads could only be looked at: codon analysis and MACSE work on rows, and in Full view the reads were gone.
 // Full hidden from the switch (owner 2026-11-01): Sample -> row now lands in Canvas (view 'canvas', was 'full').
 // "Sample -> row" puts the sample under the reference; codon analysis must then classify each planted change of
