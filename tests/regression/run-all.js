@@ -15891,6 +15891,108 @@ check('Dot plot audit3: a collection entry without lenB whose stored RevComp str
   return { pass: o.len === o.u && o.wrong === 0, detail: JSON.stringify(o) };
 });
 
+// Large input: above 2 MB the file stays in memory, not in the paste box. Chrome keeps textarea text as a text node
+// plus a <br> per line, so a 100,000-row FASTA cost 1.2 million DOM nodes and 2 s in the value setter (Galaxy
+// benchmark, 2026-11-06). The first patch converted one of the 16 writers: a load by any other path set the box but
+// left the old file in _bigInputText, and the next Load opened the old file.
+function bigFasta(rows = 10000, cols = 300) {
+  const out = []; const b = 'ACGT';
+  for (let i = 0; i < rows; i++) {
+    let s = ''; for (let j = 0; j < cols; j++) s += b[(i * 7 + j * (1 + (j % 3))) & 3];
+    out.push('>big' + i); for (let p = 0; p < cols; p += 80) out.push(s.slice(p, p + 80));
+  }
+  return Buffer.from(out.join('\n') + '\n');
+}
+async function openBig(page) {
+  await page.setInputFiles('#fileInput', { name: 'big.fa', mimeType: 'text/plain', buffer: bigFasta() });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 10000, null, { timeout: 60000 });
+  await page.waitForTimeout(300);
+}
+const rowsNow = page => page.evaluate(() => state.seqs.length);
+check('Large input: a file above 2 MB stays out of the paste box, so its lines cost no DOM nodes', async (page) => {
+  await openBig(page);
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Performance.enable'); await cdp.send('HeapProfiler.collectGarbage');
+  const nodes = (await cdp.send('Performance.getMetrics')).metrics.find(m => m.name === 'Nodes').value;
+  const box = await page.evaluate(() => ({ len: fastaInput.value.length, ph: fastaInput.placeholder }));
+  return { pass: box.len === 0 && /MB loaded/.test(box.ph) && nodes < 30000, detail: JSON.stringify({ nodes, box }) };
+}, { timeoutMs: 120000 });
+check('Large input: every later load replaces the file held in memory (file, typed text, Clear, same file again)', async (page) => {
+  const small = { name: 's.fa', mimeType: 'text/plain', buffer: Buffer.from('>s1\nACGT\n>s2\nACGA\n') };
+  const load = () => page.evaluate(() => el('loadButton').click());
+  const r = {};
+  await openBig(page);
+  await load(); await page.waitForTimeout(1500);
+  r.sameAgain = await rowsNow(page);                       // Load with nothing changed keeps the big file
+  await page.setInputFiles('#fileInput', small); await page.waitForFunction(() => state.seqs.length === 2);
+  await load(); await page.waitForTimeout(800);
+  r.afterFile = await page.evaluate(() => ({ n: state.seqs.length, first: state.seqs[0].header, box: fastaInput.value.startsWith('>s1'), ph: /MB loaded/.test(fastaInput.placeholder) }));
+  await page.setInputFiles('#fileInput', []);              // the same input can open big.fa again
+  await openBig(page);
+  // the box sits in a closed panel, so this is what typing or pasting does to it: new text and an input event
+  await page.evaluate(() => { fastaInput.value = '>t1\nACGT\n>t2\nACGA\n>t3\nACGG\n'; fastaInput.dispatchEvent(new Event('input', { bubbles: true })); });
+  await load(); await page.waitForTimeout(800);
+  r.afterTyped = await page.evaluate(() => state.seqs.map(q => q.header).join(','));
+  await page.setInputFiles('#fileInput', []);
+  await openBig(page);
+  await page.evaluate(() => el('clearButton').click());
+  r.afterClear = await page.evaluate(() => ({ box: fastaInput.value, ph: /MB loaded/.test(fastaInput.placeholder) }));
+  await load(); await page.waitForTimeout(800);
+  r.kept = await page.evaluate(() => typeof _bigInputText === 'undefined' ? 'no-store' : _bigInputText);
+  const ok = r.sameAgain === 10000 && r.afterFile.n === 2 && r.afterFile.first === 's1' && r.afterFile.box && !r.afterFile.ph
+    && r.afterTyped === 't1,t2,t3' && r.afterClear.box === '' && !r.afterClear.ph && r.kept === null;
+  return { pass: ok, detail: JSON.stringify(r) };
+}, { timeoutMs: 180000 });
+check('Large input: no code writes the paste box directly except _setInputText', async (page) => {
+  const src = await page.evaluate(async () => (await fetch('/script.js')).text());
+  const writes = src.split('\n').filter(l => /fastaInput\w*\.value\s*=[^=]/.test(l));
+  return { pass: writes.length === 2 && writes.every(l => /fastaInput\.value = ('';|text == null)/.test(l)), detail: writes.map(l => l.trim().slice(0, 70)).join(' | ') };
+});
+// The first patch converted only ?url=: a big ?url= load followed by a file open re-opened the big file.
+check('Large input: after a big ?url= load, opening another file shows that file', async (page) => {
+  const big = bigFasta();
+  await page.route('**/big-url.fa', r => r.fulfill({ status: 200, contentType: 'text/plain', body: big }));
+  const origin = new URL(page.url()).origin;
+  await page.goto(origin + '/index.html?url=' + encodeURIComponent(origin + '/big-url.fa'), { waitUntil: 'load' });
+  await page.waitForFunction(() => typeof state !== 'undefined' && state.seqs && state.seqs.length === 10000, null, { timeout: 60000 });
+  await page.waitForTimeout(500);
+  await page.setInputFiles('#fileInput', { name: 's.fa', mimeType: 'text/plain', buffer: Buffer.from('>s1\nACGT\n>s2\nACGA\n') });
+  await page.waitForTimeout(2500);
+  const r = await page.evaluate(() => ({ n: state.seqs.length, first: state.seqs[0].header, name: state.currentFilename }));
+  return { pass: r.n === 2 && r.first === 's1', detail: JSON.stringify(r) };
+}, { timeoutMs: 120000 });
+// Counting a column with typed arrays must give what the object counting gave, for every option and odd character.
+check('Large input: consensus and conservation equal the plain counting on odd characters and ragged rows', async (page) => {
+  const res = await page.evaluate(() => {
+    const rows = ['ACGTacgtUuNnXx?~.*-RYSWKMBDHVaa', 'ACGTACGTTTNNXX?~.*-RYSWKMBDHV', 'acgtACGUUUnNxX?~.*-rYsWkMbDhVAA', 'A-G-A-G-T-N-X-?-~-.-*-R-S-K-B-V',
+      'ACGTACG', 'TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT', 'ACGTÄCGTACGTACGTACGTACGTACGTACG', 'MKLVWYFHPQEDCIGSTNARmklvwyfhpqe', '---------------------------------'];
+    const objs = rows.map(s => ({ seq: s })); const len = Math.max(...rows.map(s => s.length));
+    const ser = x => JSON.stringify(x, (k, v) => (v instanceof Set ? [...v] : v));
+    let n = 0; const diffs = [];
+    for (const isProtein of [false, true]) for (const threshold of [0.3, 0.5, 0.7, 1]) for (const coverageMin of [0, 0.3, 0.8])
+      for (const consType of ['normal', 'ambiguous']) for (const fallbackMode of ['gap', 'n', 'iupac']) {
+        const o = { threshold, coverageMin, consType, fallbackMode, isProtein };
+        for (let p = 0; p < len + 2; p++) { n++; const a = _computeConsensusCharForColumn(rows, p, o), b = _computeConsensusCharForColumn_orig(rows, p, o); if (a !== b) diffs.push([p, a, b]); }
+      }
+    for (const m of ['all', 'nongap']) for (const u of [true, false]) for (let p = 0; p < len + 2; p++) {
+      n++; const a = ser(_computeConservationForColumn(objs, objs.length, p, m, u)), b = ser(_computeConservationForColumn_orig(objs, objs.length, p, m, u)); if (a !== b) diffs.push([p, a, b]);
+    }
+    return { n, diffs: diffs.slice(0, 4), count: diffs.length };
+  });
+  return { pass: res.count === 0 && res.n > 5000, detail: JSON.stringify(res) };
+});
+// The Repeat Finder built one <option> per row on every load with the panel closed: 100,000 options for 100,000 rows.
+check('Large input: a closed Repeat Finder builds no sequence list on load, and opening it lists the new file', async (page) => {
+  await loadFasta(page, '>a0\nACGTACGTACGT\n>a1\nACGTACGTACGA\n');
+  await page.evaluate(() => openRepeatFinder(0));
+  await page.click('#repeatFinderCloseBtn');
+  await loadFasta(page, '>b0\nTTGTACGTACGT\n>b1\nTTGTACGTACGA\n>b2\nTTGTACGTACGC\n');
+  const closed = await page.evaluate(() => document.getElementById('repeatFinderSeqSelect').options.length);
+  await page.evaluate(() => openRepeatFinder(0));
+  const open = await page.evaluate(() => [...document.getElementById('repeatFinderSeqSelect').options].map(o => o.textContent).join('|'));
+  return { pass: closed === 0 && /b0/.test(open) && /b2/.test(open) && !/a0/.test(open), detail: JSON.stringify({ closed, open }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

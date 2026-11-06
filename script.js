@@ -1510,7 +1510,7 @@ const _fileHandleStore = {
             }
             const file = await handle.getFile();
             const text = await file.text();
-            fastaInput.value = text;
+            _setInputText(text);
             state.currentFilename = file.name || expectedName;
             state.currentFilePath = '';
             parseAndRender(true);
@@ -1649,7 +1649,7 @@ const _historyManager = {
                     return;
                 }
                 if (entry.text) {
-                    fastaInput.value = entry.text;
+                    _setInputText(entry.text);
                     state.currentFilename = entry.name;
                     state.currentFilePath = entry.source || '';
                     // a paste reopened from Recent is recorded again as that paste (with its text),
@@ -2023,7 +2023,7 @@ async function fetchFileFromServer(filePath, serverKey) {
             throw new Error(data.error || 'SSH fetch returned no content');
         }
         const fastaInputEl = document.getElementById('fastaInput');
-        fastaInputEl.value = data.content;
+        _setInputText(data.content);
         const fname = filePath.split('/').pop() || filePath;
         state.currentFilename = fname;
         state.currentFilePath = filePath;
@@ -2461,6 +2461,24 @@ function confirmIfLarge(operation, residues, threshold, estimate) {
 
 const dropZone = el('dropZone');
 const fastaInput = el('fastaInput');
+// Inputs above this size stay in memory, not in the paste box: Chrome keeps textarea text as a text node plus a
+// <br> per line, so a 100,000-row FASTA cost 1.2 million DOM nodes and 2 s in the value setter. Every writer goes
+// through _setInputText, and parseAndRender is the only reader: a direct `.value =` fires no input event, so it would
+// leave the old file in _bigInputText and the next Load would open that instead.
+const BIG_INPUT_CHARS = 2_000_000;
+const _inputPlaceholder = fastaInput ? fastaInput.placeholder : '';
+let _bigInputText = null;
+function _setInputText(text) {
+    if (text && text.length > BIG_INPUT_CHARS) {
+        _bigInputText = text;
+        fastaInput.value = '';
+        fastaInput.placeholder = `${(text.length / 1e6).toFixed(1)} MB loaded (not shown here, to keep the page fast). Paste new text to replace it.`;
+    } else {
+        _bigInputText = null;
+        fastaInput.value = text == null ? '' : text;
+        fastaInput.placeholder = _inputPlaceholder;
+    }
+}
 const alignmentContainer = el('alignmentContainer');
 const tooltip = el('tooltip');
 const statusMessage = el('statusMessage');
@@ -4512,7 +4530,31 @@ function _proteinAmbiguityCode(residues) {
 //  - Below the threshold the fallback applies: 'gap' gives '-', 'n' gives N
 //    (X for protein) and 'iupac' gives the IUPAC code of the bases present
 //    (B/Z/J or X for protein), when at least two different residues occur.
+// PERF: typed-array column counting. Builds the same `counts` object (same keys, same
+// first-seen order) as the original loop, then hands over to the unchanged decision logic.
+const _colCountBuf = new Int32Array(128);
 function _computeConsensusCharForColumn(seqArray, pos, opts) {
+    const isProtein = !!opts.isProtein;
+    const buf = _colCountBuf; buf.fill(0);
+    const order = [];
+    let rows = 0, nonGap = 0;
+    for (const s of seqArray) {
+        rows++;
+        let c = s.charCodeAt(pos);
+        if (c !== c) continue;                       // past the end: gap
+        if (c >= 128) return _computeConsensusCharForColumn_orig(seqArray, pos, opts);
+        if (c >= 97 && c <= 122) c -= 32;
+        if (c === 45 || c === 46 || c === 126) continue;   // - . ~
+        if (!isProtein && c === 85) c = 84;          // U -> T
+        nonGap++;
+        if (buf[c]++ === 0) order.push(c);
+    }
+    const counts = {};
+    for (const c of order) counts[String.fromCharCode(c)] = buf[c];
+    return _consensusDecide(counts, rows, nonGap, opts);
+}
+
+function _computeConsensusCharForColumn_orig(seqArray, pos, opts) {
     const { threshold, coverageMin, consType, fallbackMode } = opts;
     const isProtein = !!opts.isProtein;
     let rows = 0;
@@ -4526,6 +4568,12 @@ function _computeConsensusCharForColumn(seqArray, pos, opts) {
         nonGap++;
         counts[b] = (counts[b] || 0) + 1;
     }
+    return _consensusDecide(counts, rows, nonGap, opts);
+}
+
+function _consensusDecide(counts, rows, nonGap, opts) {
+    const { threshold, coverageMin, consType, fallbackMode } = opts;
+    const isProtein = !!opts.isProtein;
     if (nonGap === 0) return '-';
     if (nonGap / rows < coverageMin) return '-';
     let maxCount = 0;
@@ -9528,7 +9576,37 @@ function _canvasScaleInterval(charW) {
 
 const CONSERVATION_MIN_COVERAGE = 0.3; // Require at least 30% non-gap sequences for coloring
 
+const _consCountBuf = new Int32Array(128);
 function _computeConservationForColumn(seqs, seqCount, pos, shadeMode, unknownN = !isProteinAlignment()) {
+    // PERF: typed-array counting; same counts/keys/order as _orig, non-ASCII falls back.
+    const buf = _consCountBuf; buf.fill(0);
+    const order = [];
+    let nonGapCount = 0;
+    for (let s = 0; s < seqCount; s++) {
+        let c = seqs[s].seq.charCodeAt(pos);
+        if (c !== c) continue;                       // past the end: gap
+        if (c >= 128) return _computeConservationForColumn_orig(seqs, seqCount, pos, shadeMode, unknownN);
+        if (c >= 97 && c <= 122) c -= 32;
+        if (c === 45 || c === 46) continue;          // - .
+        nonGapCount++;
+        if (c === 88 || c === 63 || (unknownN && c === 78)) continue;   // X ? (N)
+        if (buf[c]++ === 0) order.push(c);
+    }
+    if (nonGapCount === 0) return { hasData: false, hasValidCoverage: false };
+    let maxCount = 0;
+    for (const c of order) if (buf[c] > maxCount) maxCount = buf[c];
+    const consensusBases = new Set();
+    for (const c of order) if (buf[c] === maxCount) consensusBases.add(String.fromCharCode(c));
+    const denominator = shadeMode === 'all' ? seqCount : nonGapCount;
+    return {
+        consensusBases,
+        conservation: maxCount / denominator,
+        hasData: true,
+        hasValidCoverage: nonGapCount / seqCount >= CONSERVATION_MIN_COVERAGE
+    };
+}
+
+function _computeConservationForColumn_orig(seqs, seqCount, pos, shadeMode, unknownN = !isProteinAlignment()) {
     // Count bases directly without creating intermediate arrays. Unknown
     // residues (N/X/? in nucleotides, X/? in proteins) cover the column but are
     // never "conserved": a masked run of N must not shade as identical.
@@ -14237,7 +14315,7 @@ function _restoreLoadedIdentity() {
     state.currentFilename = L ? L.name : '';
     state.currentFilePath = L ? L.path : '';
     state.alignmentIndex = L ? L.index : null;
-    if (L && typeof fastaInput !== 'undefined' && fastaInput) fastaInput.value = L.text;
+    if (L && typeof fastaInput !== 'undefined' && fastaInput) _setInputText(L.text);
 }
 function _fileReadFailed(file, err) {
     console.error('Error reading file:', file && file.name, err);
@@ -14337,7 +14415,8 @@ async function parseAndRender(isFromDrop = false) {
     showMessage("Scanning alignment...", 0);
     _proteinSchemeRemapWarned = false;
     _parseNotice = '';
-    const inputText = fastaInput.value.trim().replace(/\r\n?/g, '\n'); // CR-only (classic Mac) files too
+    let inputText = (_bigInputText ?? fastaInput.value).trim();
+    if (inputText.includes('\r')) inputText = inputText.replace(/\r\n?/g, '\n'); // CR-only (classic Mac) files too
     if (!inputText) {
         // Load with an emptied paste box replaced the view with this prompt but kept the alignment in state (Save, Copy
         // and the open Repeat Finder still used it; GLM d305 #22): the alignment shown stays, and the message says why
@@ -14383,7 +14462,7 @@ async function parseAndRender(isFromDrop = false) {
         try {
             const resp = await fetch(inputText);
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            fastaInput.value = await resp.text();
+            _setInputText(await resp.text());
             state.currentFilename = state.currentFilename || (inputText.split('/').filter(Boolean).pop() || 'url_import');
             return parseAndRender(isFromDrop);
         } catch (err) {
@@ -14396,7 +14475,7 @@ async function parseAndRender(isFromDrop = false) {
     if (accessions) {
         showMessage(`Fetching ${accessions.length === 1 ? accessions[0] : accessions.length + ' records'} from NCBI...`, 0);
         try {
-            fastaInput.value = await _fetchGenBankFromNcbi(accessions);
+            _setInputText(await _fetchGenBankFromNcbi(accessions));
             state.currentFilename = state.currentFilename || (accessions.length === 1 ? accessions[0] : accessions.length + '_accessions');
             return parseAndRender(isFromDrop);
         } catch (err) {
@@ -14422,7 +14501,7 @@ async function parseAndRender(isFromDrop = false) {
                 throw new Error('this feature requires the optional local server (server.js) - it is not available on the static/public deployment');
             }
             if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
-            fastaInput.value = data.content;
+            _setInputText(data.content);
             state.currentFilename = state.currentFilename || (inputText.split(/[\\/]/).filter(Boolean).pop() || 'local_import');
             state.currentFilePath = inputText;
             return parseAndRender(isFromDrop);
@@ -17915,7 +17994,7 @@ function _loadSnapshotPayload(payload) {
     }
 
     const fastaInputEl = el('fastaInput');
-    if (fastaInputEl) fastaInputEl.value = payload.fasta;
+    if (fastaInputEl) _setInputText(payload.fasta);
 
     state.currentFilename = payload.sourceTitle || payload.title || 'Snapshot';
     state.currentFilePath = '';
@@ -27361,7 +27440,7 @@ function initializeAppUI() {
 
             try {
                 const { text } = await readSequenceFile(file);
-                fastaInput.value = text;
+                _setInputText(text);
                 parseAndRender(true);
             } catch (err) {
                 _fileReadFailed(file, err);
@@ -27380,7 +27459,7 @@ function initializeAppUI() {
                     let text;
                     try { text = (await readSequenceFile(file)).text; }
                     catch (readErr) { _fileReadFailed(file, readErr); return; }   // the file, not the picker, failed
-                    fastaInput.value = text;
+                    _setInputText(text);
                     parseAndRender(true);
                 } catch (err) {
                     if (err && err.name === 'AbortError') return; // user cancelled the picker
@@ -27406,7 +27485,7 @@ function initializeAppUI() {
         state.currentFilePath = '';
 
         readSequenceFile(file).then(({ text }) => {
-            fastaInput.value = text;
+            _setInputText(text);
             parseAndRender(true);
         }).catch((err) => _fileReadFailed(file, err));
     });
@@ -27414,6 +27493,8 @@ function initializeAppUI() {
     // Text typed or pasted by the user is not the file loaded before: forget its name
     // (loading a file sets the box from code, which fires no 'input' event)
     fastaInput?.addEventListener('input', () => {
+        _bigInputText = null;   // typed or pasted text replaces a big file held in memory
+        fastaInput.placeholder = _inputPlaceholder;
         state.currentFilename = '';
         state.currentFilePath = '';
     });
@@ -27426,7 +27507,7 @@ function initializeAppUI() {
 
     // Attach listeners to all buttons
     const buttonActions = {
-        'clearButton': () => fastaInput.value = '',
+        'clearButton': () => _setInputText(''),
         'loadButton': () => parseAndRender(false),
         'reverseComplementButton': reverseComplementSelected,
         'reverseComplementAllButton': reverseComplementAll,
@@ -27829,7 +27910,7 @@ function initializeAppUI() {
                     return;
                 }
                 const fastaInputEl = el('fastaInput');
-                if (fastaInputEl) fastaInputEl.value = fasta;
+                if (fastaInputEl) _setInputText(fasta);
                 state.currentFilename = name;
                 return Promise.resolve(parseAndRender(true)).then(() => { if (autoLink) _linkFromUrlParam(autoLink); showMessage(`Opened ${name}`, 2000); });
             })
@@ -27843,7 +27924,7 @@ function initializeAppUI() {
             })
             .then(text => {
                 const fastaInputEl = el('fastaInput');
-                if (fastaInputEl) fastaInputEl.value = text;
+                if (fastaInputEl) _setInputText(text);
                 state.currentFilename = autoTitle || autoUrl.split('/').pop() || 'URL';
                 const seqsBefore = state.seqs;
                 return Promise.resolve(parseAndRender(true)).then(() => {
@@ -27862,7 +27943,7 @@ function initializeAppUI() {
         try {
             const text = _fromBase64Utf8(autoData);
             const fastaInputEl = el('fastaInput');
-            if (fastaInputEl) fastaInputEl.value = text;
+            if (fastaInputEl) _setInputText(text);
             state.currentFilename = autoTitle || 'Inline data';
             const seqsBefore = state.seqs;
             Promise.resolve(parseAndRender(true)).then(() => {
@@ -30298,7 +30379,7 @@ function handleAlignmentPanContextMenu(e) {
             reader.onload = function(event) {
                 const fastaInputElement = el('fastaInput');
                 if (fastaInputElement) {
-                    fastaInputElement.value = event.target.result;
+                    _setInputText(event.target.result);
                     parseAndRender(true);
                 }
             };
@@ -35622,7 +35703,17 @@ function _resetRepeatFinderForNewFile() {
     _lastRepeatResults = [];
     _lastRepeatView = null;
     _repeatFinderSeqIndex = 0;
-    _fillRepeatFinderSeqSelect(0);
+    // PERF: one <option> per sequence was built on every load even with the panel closed
+    // (100,000 options for a 100k-row file). openRepeatFinder fills it when the panel opens.
+    const _rfModal = document.getElementById('repeatFinderModal');
+    if (_rfModal && getComputedStyle(_rfModal).display !== 'none') {
+        _fillRepeatFinderSeqSelect(0);
+    } else {
+        const _rfSel = document.getElementById('repeatFinderSeqSelect');
+        if (_rfSel) _rfSel.innerHTML = '';
+        _repeatFinderListObjs = [];
+        _repeatFinderSeqObj = null;
+    }
     _repeatUnitWord();
     _lastTsdResults = [];
     _repeatResultsShown = null;
