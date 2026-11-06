@@ -1299,7 +1299,7 @@ check('Find a function: right-click functions are all listed, marked, and only s
   const labels = new Set();
   for (const f of ['showContextMenu', '_dotAddSelectionMenuItems', '_dotStretchMenu', '_readsOpenMenu']) {
     const b = body(f);
-    for (const m of b.matchAll(/(?:textContent = |nucItem\(|\bitem\((?:'\w+', )?|\badd\()([`'])(.*?)\1/g)) labels.add(m[2]);
+    for (const m of b.matchAll(/(?:textContent = |nucItem\(|\bitem\((?:'\w+', )?|(?<!classList\.)\badd\()([`'])(.*?)\1/g)) labels.add(m[2]);
     for (const m of b.matchAll(/textContent = [^\n]*\? '([^']*)' : '([^']*)'/g)) { labels.add(m[1]); labels.add(m[2]); }
   }
   const wanted = [...labels].filter(t => !/^(Cancel|Color:|None of the rows)/.test(t) && /[a-z]{3}/i.test(t.replace(/\$\{[^}]*\}/g, '')) && !/^\$\{/.test(t) && !/^ ?Rows /.test(t) && !/down, |across$/.test(t));
