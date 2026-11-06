@@ -18,10 +18,12 @@ const BAM_MAGIC = 0x014D4142; // "BAM\1" as read by getUint32(0, /*littleEndian=
 // Records kept in memory at most (about 0.5 KB each); a file with more is cut there and the message says so.
 // There used to be a 1000-read limit that refused the whole file, taken before the gene's reference was chosen.
 const MAX_READS = 2000000;
-// Reads that are not evidence of the sample (as the sample row's caller and IGV's defaults): unmapped,
-// secondary, QC-failed, duplicate, supplementary. Dropped while parsing, counted for the message.
+// Reads that are not evidence of the sample (as the sample row's caller): unmapped, secondary, QC-failed, duplicate,
+// supplementary. igv.js hides QC-failed and duplicates by default and shows secondary and supplementary; here all four
+// start hidden. With keepFlagged only unmapped reads are dropped: the Reads view keeps the others to show on request.
 const SKIP_FLAGS = [[0x4, 'unmapped'], [0x100, 'secondary'], [0x200, 'QC-failed'], [0x400, 'duplicate'], [0x800, 'supplementary']];
-function skipReason(flag) {
+function skipReason(flag, keepFlagged) {
+    if (keepFlagged) return flag & 0x4 ? 'unmapped' : null;
     for (const [bit, why] of SKIP_FLAGS) if (flag & bit) return why;
     return null;
 }
@@ -310,7 +312,7 @@ function parseBAMRecord(buf, offset) {
  *
  * Returns { records[], exceededLimit: bool, totalReads: number (all records), skipped: { reason: count } }
  */
-function parseBAMRecords(buf, headerEndOffset) {
+function parseBAMRecords(buf, headerEndOffset, keepFlagged) {
     const records = [];
     let offset = headerEndOffset;
     let totalReads = 0;
@@ -322,7 +324,7 @@ function parseBAMRecords(buf, headerEndOffset) {
         if (!result) break;
         offset = result.nextOffset;
         totalReads++;
-        const why = skipReason(result.record.flag);
+        const why = skipReason(result.record.flag, keepFlagged);
         if (why || !result.record.cigar.length) { skipped[why || 'no CIGAR'] = (skipped[why || 'no CIGAR'] || 0) + 1; continue; }
         if (records.length >= MAX_READS) { exceededLimit = true; continue; }
         records.push(result.record);
@@ -608,7 +610,7 @@ async function readBamHeaderFromFile(file) {
  * The reads of one reference overlapping [beg, end) from an indexed BAM, flags filtered as parseBAMRecords does:
  * { records, totalReads (in the chunks read), skipped, chunks, bytesRead }.
  */
-async function readBamRegion(file, index, refId, beg, end) {
+async function readBamRegion(file, index, refId, beg, end, keepFlagged) {
     const records = [], skipped = {};
     let totalReads = 0, bytesRead = 0, fileBytesRead = 0;
     const chunks = baiChunks(index, refId, beg, end);
@@ -627,7 +629,7 @@ async function readBamRegion(file, index, refId, beg, end) {
             for (const c of r.cigar) if ('MDN=X'.includes(c.op)) span += c.len;
             if (r.pos >= end || r.pos + Math.max(1, span) <= beg) continue;
             totalReads++;
-            const why = skipReason(r.flag);
+            const why = skipReason(r.flag, keepFlagged);
             if (why || !r.cigar.length) { skipped[why || 'no CIGAR'] = (skipped[why || 'no CIGAR'] || 0) + 1; continue; }
             if (records.length < MAX_READS) records.push(r);
         }

@@ -9966,7 +9966,7 @@ async function _handleBamFileInner(event) {
             records = []; totalReads = 0; skipped = {}; exceededLimit = false;
             if (m0) {
                 const beg = m0.offset, end = m0.offset + loaded0[m0.loadedIndex].seq.length;
-                const got = await BamParser.readBamRegion(file, index, m0.refID, beg, end);
+                const got = await BamParser.readBamRegion(file, index, m0.refID, beg, end, true);
                 records = got.records; totalReads = got.totalReads; skipped = got.skipped;
                 exceededLimit = got.records.length >= BamParser.MAX_READS;
                 indexedNote = `read through the index: ${header.refNames[m0.refID]}:${(beg + 1).toLocaleString()}-${end.toLocaleString()}, ${(got.fileBytesRead / 1048576).toFixed(2)} MB read of a ${(file.size / 1048576).toFixed(1)} MB file`;
@@ -9980,12 +9980,15 @@ async function _handleBamFileInner(event) {
             skipped = buf._skipped || {};
         } else {
             header = BamParser.parseBAMHeader(buf);
-            const parsed = BamParser.parseBAMRecords(buf, header.headerEndOffset);
+            const parsed = BamParser.parseBAMRecords(buf, header.headerEndOffset, true);
             records = parsed.records;
             exceededLimit = parsed.exceededLimit;
             totalReads = parsed.totalReads;
             skipped = parsed.skipped || {};
         }
+
+        // Flagged reads came along (keepFlagged) and are hidden until asked for; the message still counts them
+        for (const r of records) { const why = BamParser.skipReason(r.flag); if (why) skipped[why] = (skipped[why] || 0) + 1; }
 
         // Check reference match. Sequence records carry header/fullHeader, never `name`,
         // so reading s.name matched undefined against every BAM reference and no BAM or SAM
@@ -9998,7 +10001,7 @@ async function _handleBamFileInner(event) {
             seq: s.seq.replace(/[-.]/g, '')
         }));
         const readsPerRef = [];
-        for (const r of records) readsPerRef[r.refID] = (readsPerRef[r.refID] || 0) + 1;
+        for (const r of records) if (!BamParser.skipReason(r.flag)) readsPerRef[r.refID] = (readsPerRef[r.refID] || 0) + 1;
         // Exact name, a samtools faidx region of it (reads shifted), the same name apart from chr / version /
         // case, or the only loaded sequence at the reference's length (BamParser.matchReference)
         const match = BamParser.matchReference(header.refNames, header.refLengths, loadedSeqs, readsPerRef);
@@ -10033,11 +10036,16 @@ async function _handleBamFileInner(event) {
         // Filter reads to matched reference; on a faidx region they are shifted onto it, and reads outside it go
         const refIdx = match.refID, offset = match.offset;
         const regionLen = loadedSeqs[match.loadedIndex].seq.length;
-        let matchedReads = records.filter(r => r.refID === refIdx);
+        let fileReads = records.filter(r => r.refID === refIdx);
         if (offset) {
-            matchedReads = matchedReads.filter(r => r.pos + computeReadSpan(r.cigar) > offset && r.pos < offset + regionLen);
-            for (const r of matchedReads) r.pos -= offset;
+            fileReads = fileReads.filter(r => r.pos + computeReadSpan(r.cigar) > offset && r.pos < offset + regionLen);
+            for (const r of fileReads) r.pos -= offset;
         }
+        fileReads.sort((a, b) => a.pos - b.pos || a.name.localeCompare(b.name));
+        for (const r of fileReads) { r.start = r.pos; r.end = r.pos + computeReadSpan(r.cigar) - 1; }
+        _readsFilter = { ..._READS_FILTER_DEFAULT };
+        _readsSyncFilterBoxes();
+        const matchedReads = fileReads.filter(_readsPasses);
 
         if (matchedReads.length === 0) {
             statusMessage.style.display = 'none';
@@ -10046,9 +10054,6 @@ async function _handleBamFileInner(event) {
                 : 'No reads map to the matched reference.', truncated ? 0 : 3000);
             return;
         }
-
-        // Sort by position (pileup order)
-        matchedReads.sort((a, b) => a.pos - b.pos || a.name.localeCompare(b.name));
 
         // Get reference sequence
         const refSeqObj = loadedSeqs[match.loadedIndex];
@@ -10076,6 +10081,7 @@ async function _handleBamFileInner(event) {
             reads: shown,                     // drawn
             sampleName: String(file.name || 'sample').replace(/\.(bam|sam|cram)$/i, ''),   // the sample row's name
             allReads: matchedReads,           // every read that passed the filters: coverage, sample row
+            fileReads,                        // every mapped read on this reference, the flagged ones too
             downsampled: dropped,             // [{ start, end, dropped }] windows that lost reads
             skipped,                          // { reason: count } reads not used (flags)
             totalInFile: totalReads,
@@ -10092,10 +10098,6 @@ async function _handleBamFileInner(event) {
         // Phase 1: compute genomic start/end span and assign packed tracks.
         // assignReadTracks sorts reads in place by start (consistent with the
         // pos sort above) and sets read.track on each read.
-        bamState.reads.forEach(read => {
-            read.start = read.pos;
-            read.end = read.pos + computeReadSpan(read.cigar) - 1;
-        });
         bamState.nTracks = assignReadTracks(bamState.reads);
 
         // Reads view (Full is hidden; the rows go to Canvas when the user leaves Reads)
@@ -10217,7 +10219,7 @@ function parseSAMToBuffer(text) {
         if (f.length < 11) continue;
         totalReads++;
         const flag = parseInt(f[1]) || 0;
-        const why = BamParser.skipReason(flag) || (!f[5] || f[5] === '*' || !f[9] || f[9] === '*' ? 'no CIGAR or sequence' : null);
+        const why = BamParser.skipReason(flag, true) || (!f[5] || f[5] === '*' || !f[9] || f[9] === '*' ? 'no CIGAR or sequence' : null);
         if (why) { skipped[why] = (skipped[why] || 0) + 1; continue; }
 
         const rname = f[2];
@@ -10431,6 +10433,7 @@ function ensureSampleRowButton() {
     cl.appendChild(cc);
     cl.appendChild(document.createTextNode('Compact'));
     zoom.appendChild(cl);
+    _readsBuildOptions(zoom);
     vb.parentNode.insertBefore(zoom, vb.nextSibling);
     return btn;
 }
@@ -10701,7 +10704,111 @@ function _readsResize() {
 }
 function _readsDefaultStatus() {
     const { reads, nTracks = 0 } = bamState;
-    return `${reads.length} reads in ${nTracks} track${nTracks !== 1 ? 's' : ''}`;
+    const f = _readsFilter, on = [];
+    if (f.minMapq > 0) on.push(`MAPQ \u2265 ${f.minMapq}`);
+    for (const [key, , label] of _READS_FLAGGED) if (f[key]) on.push('with ' + label);
+    return `${reads.length} reads in ${nTracks} track${nTracks !== 1 ? 's' : ''}${on.length ? '  |  ' + on.join(', ') : ''}`;
+}
+// Which reads are drawn. Flagged reads shown here are still not evidence: SampleCall leaves them out of the coverage
+// and the calls. A MAPQ minimum leaves reads out of those too.
+const _READS_FILTER_DEFAULT = { minMapq: 0, secondary: false, supplementary: false, duplicate: false, qc: false };
+const _READS_FLAGGED = [['secondary', 0x100, 'secondary', 'readsShowSecondary'], ['supplementary', 0x800, 'supplementary', 'readsShowSupplementary'],
+    ['duplicate', 0x400, 'duplicate', 'readsShowDuplicate'], ['qc', 0x200, 'QC-failed', 'readsShowQc']];
+let _readsFilter = { ..._READS_FILTER_DEFAULT };
+function _readsPasses(r, f = _readsFilter) {
+    if ((r.mapq || 0) < f.minMapq) return false;
+    for (const [key, bit] of _READS_FLAGGED) if ((r.flag & bit) && !f[key]) return false;
+    return true;
+}
+function _readsSyncFilterBoxes() {
+    const box = document.getElementById('readsMinMapq');
+    if (!box) return;
+    box.value = String(_readsFilter.minMapq);
+    for (const [key, , , id] of _READS_FLAGGED) { const c = document.getElementById(id); if (c) c.checked = !!_readsFilter[key]; }
+    _readsFillFilterCounts();
+}
+function _readsFillFilterCounts() {
+    const count = {};
+    for (const r of bamState.fileReads || []) for (const [key, bit] of _READS_FLAGGED) if (r.flag & bit) count[key] = (count[key] || 0) + 1;
+    for (const [key, , label, id] of _READS_FLAGGED) { const t = document.getElementById(id + 'Text'); if (t) t.textContent = `${label} (${(count[key] || 0).toLocaleString()})`; }
+}
+// The reads drawn again from all that were read; the same place stays in the middle. Nothing passing is said and undone.
+function _readsSetFilter(next) {
+    const all = bamState.fileReads || [], kept = all.filter(r => _readsPasses(r, next));
+    if (!kept.length) {
+        showMessage(`No read passes that filter (MAPQ \u2265 ${next.minMapq}): it was not applied.`, 5000);
+        _readsSyncFilterBoxes();
+        return;
+    }
+    const v = _readsView, cell = v ? v.cell : _READS_CELL;
+    const middle = v ? bamState.refStart + (_readsLeft() + (v.w - _READS_NAME_W) / 2) / v.cell : null;
+    _readsFilter = next;
+    const { shown, dropped } = _downsampleReads(kept);
+    let lo = Infinity, hi = 0;
+    for (const r of kept) { if (r.start < lo) lo = r.start; if (r.end + 1 > hi) hi = r.end + 1; }
+    Object.assign(bamState, { reads: shown, allReads: kept, downsampled: dropped, calls: null,
+        refStart: Math.max(0, lo - 10), refEnd: Math.min(bamState.refSeq.length, hi + 10) });
+    bamState.nTracks = assignReadTracks(bamState.reads);
+    renderAlignment();
+    if (_readsView && middle != null) {
+        _readsView.cell = Math.max(_readsMinCell(_readsView), cell);
+        _readsSizeSpacer(_readsView);
+        _readsCentre(middle);
+    }
+}
+function _readsToggleOptions() {
+    const panel = document.getElementById('readsOptionsPanel'), btn = document.getElementById('readsOptionsBtn');
+    if (!panel || !btn) return;
+    if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
+    _readsSyncFilterBoxes();
+    const r = btn.getBoundingClientRect();
+    panel.style.left = Math.max(4, Math.min(r.left, window.innerWidth - 240)) + 'px';
+    panel.style.top = (r.bottom + 4) + 'px';
+    panel.style.display = 'block';
+}
+function _readsBuildOptions(group) {
+    const ob = document.createElement('button');
+    ob.id = 'readsOptionsBtn'; ob.type = 'button'; ob.textContent = 'Options';
+    ob.title = 'Which reads are drawn';
+    ob.style.cssText = 'font-size:10px;height:18px;padding:0 8px;margin-left:5px;cursor:pointer;border:1px solid #999;border-radius:3px;background:#f0f0f0;';
+    ob.addEventListener('click', _readsToggleOptions);
+    group.appendChild(ob);
+    const panel = document.createElement('div');
+    panel.id = 'readsOptionsPanel';
+    panel.style.cssText = 'display:none;position:fixed;z-index:1000;width:230px;padding:8px 10px;font-size:12px;background:#fff;border:1px solid #999;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.25);';
+    const head = document.createElement('div');
+    head.textContent = 'Reads drawn'; head.style.cssText = 'font-weight:bold;margin-bottom:5px;';
+    panel.appendChild(head);
+    const mq = document.createElement('label');
+    mq.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:5px;';
+    mq.title = 'Reads under this mapping quality are left out of the picture, the coverage and the calls';
+    mq.appendChild(document.createTextNode('Minimum MAPQ'));
+    const box = document.createElement('input');
+    box.id = 'readsMinMapq'; box.type = 'number'; box.min = '0'; box.max = '255'; box.value = '0';
+    box.style.cssText = 'width:52px;font-size:11px;';
+    const applyMq = () => {
+        const n = Math.max(0, Math.min(255, parseInt(box.value, 10) || 0));
+        if (n !== _readsFilter.minMapq) _readsSetFilter({ ..._readsFilter, minMapq: n }); else box.value = String(n);
+    };
+    box.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); applyMq(); } });
+    box.addEventListener('change', applyMq);
+    mq.appendChild(box);
+    panel.appendChild(mq);
+    const note = document.createElement('div');
+    note.textContent = 'Also show (never counted in coverage or calls):'; note.style.cssText = 'margin:6px 0 3px;color:#555;font-size:11px;';
+    panel.appendChild(note);
+    for (const [key, , label, id] of _READS_FLAGGED) {
+        const l = document.createElement('label');
+        l.style.cssText = 'display:flex;align-items:center;gap:5px;cursor:pointer;';
+        const c = document.createElement('input');
+        c.type = 'checkbox'; c.id = id; c.style.margin = '0';
+        c.addEventListener('change', () => _readsSetFilter({ ..._readsFilter, [key]: c.checked }));
+        const t = document.createElement('span');
+        t.id = id + 'Text'; t.textContent = label;
+        l.appendChild(c); l.appendChild(t);
+        panel.appendChild(l);
+    }
+    document.body.appendChild(panel);
 }
 // Left and right soft-clip lengths: an S before the first reference base is the left one (as _getReadCigarFeatures)
 function _readsClips(read) {
@@ -10731,7 +10838,8 @@ function _readsTooltipHtml(read) {
         + `Pos: ${read.pos + 1}${bamState.offset ? ` (${_escapeHtml(bamState.bamRefName)}:${(read.pos + 1 + bamState.offset).toLocaleString()})` : ''}<br>`
         + `Strand: ${rev ? 'reverse (-)' : 'forward (+)'}<br>`
         + `CIGAR: ${cigarStr}<br>`
-        + `MAPQ: ${read.mapq}${read.flag & 1 ? '<br>Paired' + (read.flag & 0x40 ? ', first' : read.flag & 0x80 ? ', second' : '') + ' in pair' : ''}${insText}`;
+        + `MAPQ: ${read.mapq}${read.flag & 1 ? '<br>Paired' + (read.flag & 0x40 ? ', first' : read.flag & 0x80 ? ', second' : '') + ' in pair' : ''}${insText}`
+        + (_READS_FLAGGED.filter(([, bit]) => read.flag & bit).map(([, , label]) => '<br>' + label.charAt(0).toUpperCase() + label.slice(1) + ': not counted in coverage or calls').join(''));
 }
 // First index in a track's reads (sorted by start, not overlapping) that can reach position p
 function _readsFirstAt(group, p) {
@@ -15176,6 +15284,8 @@ function syncQuickModeSwitch() {
     if (sampleBtn) sampleBtn.style.display = isReadsMode && bamState?.reads?.length ? '' : 'none';
     const zoomGroup = document.getElementById('readsZoomGroup');
     if (zoomGroup) zoomGroup.style.display = isReadsMode && bamState?.reads?.length ? 'inline-flex' : 'none';
+    const optionsPanel = document.getElementById('readsOptionsPanel');
+    if (optionsPanel && !(isReadsMode && bamState?.reads?.length)) optionsPanel.style.display = 'none';
     const varBtn = document.getElementById('readsVariantsButton');
     if (varBtn) varBtn.style.display = isReadsMode && bamState?.reads?.length ? '' : 'none';
     syncModeRow();

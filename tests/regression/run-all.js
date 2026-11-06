@@ -858,6 +858,64 @@ check('Reads: an intron is a thin line, Compact fits a deep pile, the gene row s
   return { pass: ok, detail: JSON.stringify(o) };
 }, { timeoutMs: 120000 });
 
+// What was dropped on reading could not be looked at, and nothing could be left out by MAPQ. Flagged reads now stay in
+// memory, hidden by default. Shown, they are still not evidence: coverage and calls never count them. A MAPQ minimum
+// does leave reads out of coverage and calls. Nothing passing must not empty the view.
+check('Reads filters: MAPQ minimum and showing flagged reads; flagged reads stay out of coverage and calls; the place is kept; a new file starts clean', async (page) => {
+  const L = 3000, RL = 100, b = 'ACGT'; let seed = 13; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const alt = c => (c === 'A' ? 'C' : 'A');
+  const rd = (n, flag, pos, mq, seq) => `${n}\t${flag}\tchrF\t${pos + 1}\t${mq}\t${RL}M\t*\t0\t0\t${seq || ref.slice(pos, pos + RL)}\t*`;
+  const lines = [`@SQ\tSN:chrF\tLN:${L}`];
+  for (let p = 0; p + RL <= L; p += 25) lines.push(rd('good' + p, 0, p, 60));          // 4x everywhere
+  for (let i = 0; i < 6; i++) lines.push(rd('low' + i, 0, 1000, 10));                  // 6 more at 1000-1099, MAPQ 10
+  const fake = ref.slice(2000, 2050) + alt(ref[2050]) + ref.slice(2051, 2100);         // a change at 2051 only on flagged copies
+  for (let i = 0; i < 5; i++) { lines.push(rd('sec' + i, 0x100, 2000, 60, fake)); lines.push(rd('sup' + i, 0x800, 2000, 60, fake)); lines.push(rd('dup' + i, 0x400, 2000, 60, fake)); }
+  for (let i = 0; i < 2; i++) lines.push(rd('qc' + i, 0x200, 2000, 60, fake));
+  lines.push(`un1\t4\t*\t0\t0\t*\t*\t0\t0\t${ref.slice(0, RL)}\t*`);
+  const open = async (name, text) => {
+    await page.setInputFiles('#bamFileInput', { name, mimeType: 'text/plain', buffer: Buffer.from(text) });
+    await page.waitForTimeout(700);
+  };
+  await page.setInputFiles('#fileInput', { name: 'f.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrF\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(500);
+  await open('f.sam', lines.join('\n') + '\n');
+  await page.evaluate(READS_PX);
+  const look = () => page.evaluate(() => { const has = n => bamState.reads.some(r => r.name.startsWith(n)), c = _readsCalls().counts;
+    return { n: bamState.allReads.length, low: has('low'), sec: has('sec'), sup: has('sup'), dup: has('dup'), qc: has('qc'), un: has('un'),
+      depth1050: c.depth[1050 - c.lo], depth2050: c.depth[2050 - c.lo], calls: _readsCalls().variants.length, status: _readsDefaultStatus(), cell: _readsCell() }; });
+  const o = {};
+  o.def = await look();
+  await page.click('#readsOptionsBtn');
+  o.panel = await page.evaluate(() => el('readsOptionsPanel').textContent);
+  await page.evaluate(() => _readsCentre(1500));
+  await page.fill('#readsMinMapq', '30'); await page.press('#readsMinMapq', 'Enter'); await page.waitForTimeout(250);
+  o.mq = await look();
+  o.mqMiddle = await page.evaluate(() => { const v = _readsView; return Math.round((_readsLeft() + (v.w + 160) / 2 - 160) / _readsCell()) + bamState.refStart; });
+  await page.check('#readsShowSecondary'); await page.check('#readsShowSupplementary'); await page.waitForTimeout(250);
+  o.flagged = await look();
+  o.tip = await page.evaluate(() => _readsTooltipHtml(bamState.reads.find(r => r.name === 'sup0')));
+  await page.check('#readsShowDuplicate'); await page.check('#readsShowQc'); await page.waitForTimeout(250);
+  o.all = await look();
+  // nothing passes: said, and left as it was
+  await page.fill('#readsMinMapq', '61'); await page.press('#readsMinMapq', 'Enter'); await page.waitForTimeout(250);
+  o.none = await look();
+  o.noneMsg = await page.evaluate(() => el('statusMessage').textContent);
+  o.noneBox = await page.evaluate(() => el('readsMinMapq').value);
+  await open('f2.sam', lines.join('\n') + '\n');
+  o.fresh = await look();
+  o.freshBox = await page.evaluate(() => [el('readsMinMapq').value, el('readsShowSecondary').checked]);
+  const ok = o.def.n === 123 && !o.def.sec && !o.def.sup && !o.def.dup && !o.def.qc && !o.def.un && o.def.low && o.def.depth1050 === 10 && o.def.depth2050 === 4 && o.def.calls === 0
+    && /secondary[^0-9]*5/.test(o.panel) && /supplementary[^0-9]*5/.test(o.panel) && /duplicate[^0-9]*5/.test(o.panel) && /QC-failed[^0-9]*2/.test(o.panel)
+    && !o.mq.low && o.mq.depth1050 === 4 && /MAPQ/.test(o.mq.status) && Math.abs(o.mqMiddle - 1500) <= 3
+    && o.flagged.sec && o.flagged.sup && !o.flagged.dup && o.flagged.depth2050 === 4 && o.flagged.calls === 0 && /Supplementary/.test(o.tip)
+    && o.all.dup && o.all.qc && !o.all.un && o.all.depth2050 === 4 && o.all.calls === 0
+    && o.none.sec && /61/.test(o.noneMsg) && o.noneBox === '30'
+    && o.fresh.low && !o.fresh.sec && o.fresh.depth1050 === 10 && o.freshBox[0] === '0' && o.freshBox[1] === false;
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 120000 });
+
 // Reads could only be looked at: codon analysis and MACSE work on rows, and in Full view the reads were gone.
 // Full hidden from the switch (owner 2026-11-01): Sample -> row now lands in Canvas (view 'canvas', was 'full').
 // "Sample -> row" puts the sample under the reference; codon analysis must then classify each planted change of
