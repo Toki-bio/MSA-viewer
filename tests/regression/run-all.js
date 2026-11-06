@@ -1219,6 +1219,77 @@ check('Tree: long names are whole, two fingers scroll, a pinch zooms by its size
   return { pass: ok, detail: JSON.stringify(o) };
 }, { timeoutMs: 60000 });
 
+// The menus hold hundreds of controls and a function is hard to find. One bar lists them all, read from the live page; Enter
+// must do what the real control does, and a function that cannot run now must not run.
+check('Find a function: lists every control, finds by name or tooltip, Enter does what the control does', async (page) => {
+  const fa = '>a\nACGTTGCAAC\n>b\nACGTTGCTAC\n>c\nACCTTGCAAC\n';
+  await page.setInputFiles('#fileInput', { name: 'f.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 3); await page.waitForTimeout(400);
+  const o = {};
+  // the list against the page: every control with an id that is not a duplicate of another by name and tooltip
+  o.cover = await page.evaluate(() => {
+    const l = ViewAlignFinder.list(), ids = new Set(l.map(x => x.id));
+    // two controls with the same words and tooltip are one line; a hidden list without a name is plumbing
+    const same = e => [...document.querySelectorAll('#controls [title]')].some(x => x !== e && ids.has(x.id) && x.title === e.title && x.textContent.trim() === e.textContent.trim());
+    const miss = [...document.querySelectorAll('#controls button[id], #controls select[id], #controls input[id]')].filter(e => {
+      if (e.closest('#finderBox') || e.type === 'file' || e.type === 'hidden' || ids.has(e.id)) return false;
+      return !(e.hidden && !e.title) && !same(e);
+    }).map(e => e.id);
+    const blank = l.filter(x => !x.name.trim() || (x.ok && x.name.length < 2)).map(x => x.name + '/' + x.id);
+    return { n: l.length, miss: miss.slice(0, 12), blank };
+  });
+  const find = async q => { await page.keyboard.press('Control+k'); await page.waitForTimeout(60); await page.keyboard.type(q); await page.waitForTimeout(60); };
+  const rows = () => page.evaluate(() => [...document.querySelectorAll('.finder-row')].slice(0, 3).map(r => r.querySelector('.finder-name').textContent));
+  await page.keyboard.press('Control+k'); await page.waitForTimeout(100);
+  o.open = await page.evaluate(() => ({ focus: document.activeElement.id, expanded: el('finderInput').getAttribute('aria-expanded'), rows: document.querySelectorAll('.finder-row').length, heads: document.querySelectorAll('.finder-head').length, top: document.querySelector('.finder-row .finder-name').textContent, firstOff: document.querySelector('.finder-row').classList.contains('finder-off') }));
+  await page.keyboard.press('Escape'); await page.waitForTimeout(60);
+  o.closed = await page.evaluate(() => ({ hidden: el('finderPanel').hidden, value: el('finderInput').value, focus: document.activeElement.id }));
+  // by words of its tooltip, and it runs: the bases reverse-complemented, counted here
+  await find('reverse complement all'); o.rc = await rows();
+  await page.keyboard.press('Enter'); await page.waitForTimeout(400);
+  o.rcSeq = await page.evaluate(() => state.seqs[0].seq);
+  // a switch
+  await find('enable black'); await page.keyboard.press('Enter'); await page.waitForTimeout(150);
+  o.black = await page.evaluate(() => el('enableBlack').checked);
+  await find('enable black'); o.blackNote = await page.evaluate(() => document.querySelector('.finder-row .finder-note').textContent);
+  await page.keyboard.press('Enter'); await page.waitForTimeout(150);
+  o.blackBack = await page.evaluate(() => el('enableBlack').checked);
+  // an option of a list: the program hears it as a change
+  const opt = await page.evaluate(() => { const x = ViewAlignFinder.list().find(i => i.deep && i.ok && /^Speed: /.test(i.name) && !i.name.endsWith(': ' + document.getElementById(i.id).selectedOptions[0].textContent.trim())); window.__chg = 0; document.getElementById(x.id).addEventListener('change', () => window.__chg++); return x; });
+  await find(opt.name); await page.keyboard.press('Enter'); await page.waitForTimeout(200);
+  o.option = await page.evaluate(id => ({ text: document.getElementById(id).selectedOptions[0].textContent.trim(), chg: window.__chg }), opt.id); o.optName = opt.name;
+  // a field: its menu opens with the cursor in it
+  await find('black shading threshold'); await page.keyboard.press('Enter'); await page.waitForTimeout(300);
+  o.field = await page.evaluate(() => { const a = document.activeElement; return { tag: a.tagName, id: a.id, shown: a.getClientRects().length > 0, open: !!a.closest('.menu-open'), modal: [...document.querySelectorAll('body > div')].filter(m => m.id && getComputedStyle(m).position === 'fixed' && getComputedStyle(m).display !== 'none').map(m => m.id).join() }; });
+  await page.mouse.click(700, 500); await page.waitForTimeout(200);
+  // cannot run now: stays, says so, nothing happens
+  const before = await page.evaluate(() => JSON.stringify(state.seqs.map(s => s.seq)));
+  await find('ins gap all'); await page.keyboard.press('Enter'); await page.waitForTimeout(200);
+  o.off = await page.evaluate(b => ({ same: b === JSON.stringify(state.seqs.map(s => s.seq)), open: !el('finderPanel').hidden, cls: document.querySelector('.finder-row').classList.contains('finder-off'), msg: /not available/.test(el('statusMessage').textContent) }), before);
+  await page.keyboard.press('Escape');
+  // a function that has only a key
+  await find('find motif'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter'); await page.waitForTimeout(250);   // the Find button comes first, its key second
+  o.key = await page.evaluate(() => document.activeElement.id);
+  await page.keyboard.press('Escape'); await page.mouse.click(700, 500); await page.waitForTimeout(200);
+  // the mouse, and arrows
+  await find('enable dark'); await page.click('.finder-row'); await page.waitForTimeout(150);
+  o.mouse = await page.evaluate(() => el('enableDark').checked);
+  await find('zoom'); await page.keyboard.press('ArrowDown'); o.arrow = await page.evaluate(() => [...document.querySelectorAll('.finder-row')].findIndex(r => r.classList.contains('on')));
+  await page.keyboard.press('Escape');
+  await find('zzqq'); o.none = await page.evaluate(() => document.querySelector('.finder-none')?.textContent); await page.keyboard.press('Enter'); await page.keyboard.press('Escape');
+  const rc = s => [...s].reverse().map(c => ({ A: 'T', C: 'G', G: 'C', T: 'A' }[c] || c)).join('');
+  const ok = o.cover.n > 300 && !o.cover.miss.length && !o.cover.blank.length
+    && o.open.focus === 'finderInput' && o.open.expanded === 'true' && o.open.rows > 250 && o.open.heads > 8 && !o.open.firstOff
+    && o.closed.hidden && o.closed.value === '' && o.closed.focus !== 'finderInput'
+    && o.rc[0] === 'RevComp All' && o.rcSeq === rc('ACGTTGCAAC')
+    && o.black === false && /off/.test(o.blackNote) && o.blackBack === true
+    && o.optName.endsWith(': ' + o.option.text) && o.option.chg === 1
+    && /^black/.test(o.field.id) && o.field.shown && o.field.open
+    && o.off.same && o.off.open && o.off.cls && o.off.msg
+    && o.key === 'searchInput' && o.mouse === false && o.arrow === 1 && /No function/.test(o.none || '');
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 60000 });
+
 // Reads could only be looked at: codon analysis and MACSE work on rows, and in Full view the reads were gone.
 // Full hidden from the switch (owner 2026-11-01): Sample -> row now lands in Canvas (view 'canvas', was 'full').
 // "Sample -> row" puts the sample under the reference; codon analysis must then classify each planted change of

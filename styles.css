@@ -4584,3 +4584,87 @@ body.name-resizing { user-select: none; }
 
 /* A class or tag rule with its own display must not beat the hidden attribute */
 [hidden] { display: none !important; }
+
+/* Find a function: the bar in the menu row and its list (finder.js) */
+#finderBox {
+    flex: 0 0 auto;
+    margin: 0 3px;
+}
+#finderInput {
+    width: 128px;
+    height: 18px;
+    box-sizing: border-box;
+    padding: 0 5px;
+    font-size: 11px;
+    border: 1px solid #bbb;
+    border-radius: 3px;
+    background: #fff;
+}
+#finderInput:focus {
+    outline: none;
+    border-color: #4a9eff;
+    box-shadow: 0 0 0 1px #4a9eff;
+}
+#finderPanel {
+    position: fixed;
+    z-index: 10060;
+    display: flex;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.22);
+    font-size: 12px;
+}
+#finderPanel[hidden] { display: none; }
+#finderList {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 0 4px;
+}
+.finder-head {
+    position: sticky;
+    top: 0;
+    padding: 4px 9px 2px;
+    background: #f3f5f7;
+    color: #556;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+.finder-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 14px;
+    padding: 3px 9px;
+    cursor: pointer;
+}
+.finder-row.on { background: #e4f0ff; }
+.finder-main {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.finder-desc {
+    margin-left: 8px;
+    color: #667;
+    font-size: 11px;
+}
+.finder-main b { color: #0a5bb5; font-weight: 600; }
+.finder-note {
+    flex: 0 0 auto;
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #667;
+    font-size: 10.5px;
+}
+.finder-off { color: #777; cursor: default; }
+.finder-none { padding: 14px 9px; color: #667; }
+.finder-flash { outline: 2px solid #4a9eff; outline-offset: 1px; }

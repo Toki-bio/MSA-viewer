@@ -261,6 +261,9 @@ It is "local" only in the sense that nothing leaves your machine (browser ↔ yo
 
 ---
 
+### Find a function
+One bar (Ctrl+K) lists every control of the menus, read from the live page, so nothing has to be added to it. Search covers names and tooltips; Enter does what the control does; what cannot run now is dimmed.
+
 ## 📤 Export & Publishing
 
 ### RTF export with per-residue conservation shading
