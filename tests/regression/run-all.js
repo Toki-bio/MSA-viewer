@@ -867,7 +867,8 @@ check('Reads filters: MAPQ minimum and showing flagged reads; flagged reads stay
   const alt = c => (c === 'A' ? 'C' : 'A');
   const rd = (n, flag, pos, mq, seq) => `${n}\t${flag}\tchrF\t${pos + 1}\t${mq}\t${RL}M\t*\t0\t0\t${seq || ref.slice(pos, pos + RL)}\t*`;
   const lines = [`@SQ\tSN:chrF\tLN:${L}`];
-  for (let p = 0; p + RL <= L; p += 25) lines.push(rd('good' + p, 0, p, 60));          // 4x everywhere
+  lines.push(rd('lowstart', 0, 0, 10));                                                // alone at the start: MAPQ 30 moves the view's first base
+  for (let p = 100; p + RL <= L; p += 25) lines.push(rd('good' + p, 0, p, 60));        // 4x everywhere else
   for (let i = 0; i < 6; i++) lines.push(rd('low' + i, 0, 1000, 10));                  // 6 more at 1000-1099, MAPQ 10
   const fake = ref.slice(2000, 2050) + alt(ref[2050]) + ref.slice(2051, 2100);         // a change at 2051 only on flagged copies
   for (let i = 0; i < 5; i++) { lines.push(rd('sec' + i, 0x100, 2000, 60, fake)); lines.push(rd('sup' + i, 0x800, 2000, 60, fake)); lines.push(rd('dup' + i, 0x400, 2000, 60, fake)); }
@@ -906,7 +907,7 @@ check('Reads filters: MAPQ minimum and showing flagged reads; flagged reads stay
   await open('f2.sam', lines.join('\n') + '\n');
   o.fresh = await look();
   o.freshBox = await page.evaluate(() => [el('readsMinMapq').value, el('readsShowSecondary').checked]);
-  const ok = o.def.n === 123 && !o.def.sec && !o.def.sup && !o.def.dup && !o.def.qc && !o.def.un && o.def.low && o.def.depth1050 === 10 && o.def.depth2050 === 4 && o.def.calls === 0
+  const ok = o.def.n === 120 && !o.def.sec && !o.def.sup && !o.def.dup && !o.def.qc && !o.def.un && o.def.low && o.def.depth1050 === 10 && o.def.depth2050 === 4 && o.def.calls === 0
     && /secondary[^0-9]*5/.test(o.panel) && /supplementary[^0-9]*5/.test(o.panel) && /duplicate[^0-9]*5/.test(o.panel) && /QC-failed[^0-9]*2/.test(o.panel)
     && !o.mq.low && o.mq.depth1050 === 4 && /MAPQ/.test(o.mq.status) && Math.abs(o.mqMiddle - 1500) <= 3
     && o.flagged.sec && o.flagged.sup && !o.flagged.dup && o.flagged.depth2050 === 4 && o.flagged.calls === 0 && /Supplementary/.test(o.tip)
