@@ -812,6 +812,8 @@ check('Reads: an intron is a thin line, Compact fits a deep pile, the gene row s
     alignmentContainer.scrollTop = q.track * _readsTrackH(); _readsCentre(6045); const y = __rowY(q);
     const gap = __colX(6040), exon = __colX(6060);
     return { fillInGap: __has(gap, y + 3, 12, 2, '#f3d3d6', 6), line: __has(gap, y + 5, 12, 6, '#96aaaa', 30), fillInExon: __has(exon, y + 3, 12, 2, '#f3d3d6', 6), gx: gap + 6, gy: y + 8 }; });
+  o.firstExon = await page.evaluate(() => { const q = bamState.reads.find(x => x.name === 'spliced'); _readsCentre(5020); return __has(__colX(5020), __rowY(q) + 3, 12, 2, '#f3d3d6', 6); });
+  await page.evaluate(() => _readsCentre(6045));
   await page.mouse.move(box.x + o.intron.gx, box.y + o.intron.gy); await page.waitForTimeout(200);
   o.gapTip = await page.evaluate(() => document.querySelector('.tooltip.reads-tooltip')?.textContent?.slice(0, 8) || '');
   await page.mouse.move(box.x + 5, box.y + 5);
@@ -849,9 +851,9 @@ check('Reads: an intron is a thin line, Compact fits a deep pile, the gene row s
     const j = el('readsJumpBox').getBoundingClientRect();
     return { hit, off: j.right > innerWidth, n: rs.length }; });
   const near = (a, c, t) => Math.abs(a - c) <= t;
-  const ok = !o.intron.fillInGap && o.intron.line && o.intron.fillInExon && o.gapTip.startsWith('spliced')
+  const ok = !o.intron.fillInGap && o.intron.line && o.intron.fillInExon && o.firstExon && o.gapTip.startsWith('spliced')
     && o.before.H === 16 && o.compact.H === 4 && o.compact.h < o.before.h && o.compact.fill && o.compactTip.startsWith(o.compact.want + 'Pos') && o.back === 16
-    && o.gene.head > o.head0 && o.gene.genes.join() === 'GENEA:0,GENEB:1,GENEC:0' && o.gene.exon && o.gene.exonTall > o.gene.intronTall && /GENEA/.test(o.geneTip) && /5,001/.test(o.geneTip)
+    && o.gene.head > o.head0 && o.gene.genes.join() === 'GENEA:0,GENEB:1,GENEC:0' && o.gene.exon && o.gene.exonTall > 6 && o.gene.intronTall <= 2 && /GENEA/.test(o.geneTip) && /5,001/.test(o.geneTip)
     && near(o.click.first, 12000, 2) && near(o.click.last, 12300, 3) && o.overlap.n === 6 && !o.overlap.hit.length && !o.overlap.off;
   return { pass: ok, detail: JSON.stringify(o) };
 }, { timeoutMs: 120000 });
