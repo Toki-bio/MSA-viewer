@@ -559,12 +559,19 @@ function baiChunks(index, refId, beg, end) {
         while (w > 0 && ref.lin[w].c === 0 && ref.lin[w].u === 0) w--;     // empty windows hold 0
         minOff = ref.lin[w];
     }
-    // and the first read starting past the region (htslib's max_off): nothing after it can overlap
+    // and a read known to start past the region: nothing after it can overlap. htslib's max_off: the first chunk of a bin to the
+    // right, going up to the parent at a first child. It was the linear index of the next window, but that is the first read
+    // OVERLAPPING the window, which can start inside the region: it and every read after it were lost at the region's end
     let maxOff = null;
-    for (let w = ((Math.max(beg + 1, end) - 1) >> 14) + 1; w < ref.lin.length; w++) if (ref.lin[w].c || ref.lin[w].u) { maxOff = ref.lin[w]; break; }
+    for (let bin = 4681 + ((Math.max(beg + 1, end) - 1) >> 14) + 1; ; bin++) {
+        while (bin % 8 === 1) bin = (bin - 1) >> 3;
+        if (bin === 0) break;
+        const list = ref.bins.get(bin);
+        if (list && list.length) { maxOff = list.reduce((m, ch) => (_voCmp(ch.beg, m) < 0 ? ch.beg : m), list[0].beg); break; }
+    }
     const chunks = [];
-    // as htslib's query: chunks cut to [minOff, maxOff]. samtools merges the bins of a small file into one parent
-    // bin, whose single chunk then spans the whole reference
+    // as htslib's query: chunks cut to [minOff, maxOff]. samtools merges small bins into a parent bin, whose single chunk can
+    // then span the whole reference with no bin to its right: readBamRegion stops at the first record past the region
     for (const bin of reg2bins(beg, end)) for (const ch of ref.bins.get(bin) || []) {
         if (_voCmp(ch.end, minOff) <= 0 || (maxOff && _voCmp(ch.beg, maxOff) >= 0)) continue;
         chunks.push({ beg: _voCmp(ch.beg, minOff) < 0 ? minOff : ch.beg, end: maxOff && _voCmp(ch.end, maxOff) > 0 ? maxOff : ch.end });
@@ -581,31 +588,33 @@ function baiChunks(index, refId, beg, end) {
     return merged;
 }
 
-/** Uncompressed bytes from virtual offset beg to end: reads only the compressed blocks between them. */
-async function readVirtualRange(file, beg, end) {
-    // the block holding `end` starts at end.c: read up to there plus one whole block (at most 64 KiB)
-    const bytes = new Uint8Array(await file.slice(beg.c, Math.min(file.size, end.c + 65536 + 1024)).arrayBuffer());
+/**
+ * The next piece of a chunk: the whole BGZF blocks in `step` compressed bytes from file offset c, decompressed, the block
+ * holding `end` cut at end.u: { data, next (offset after them), done (the chunk or the file ended) }.
+ */
+async function readBlocks(file, c, end, step) {
+    // the block holding `end` starts at end.c: never past it plus one whole block (at most 64 KiB)
+    const bytes = new Uint8Array(await file.slice(c, Math.min(file.size, c + step, end.c + 65536 + 1024)).arrayBuffer());
     // the blocks first, then all decompressed at once: one at a time made an index slower than reading the whole file
     const blocks = [];
-    let off = 0, total = 0, cut = -1;
+    let off = 0, cut = -1, done = false;
     while (off < bytes.length) {
         const bsize = bgzfBlockSize(bytes, off);
         if (bsize <= 0 || off + bsize > bytes.length) break;
-        const atEnd = beg.c + off === end.c;
+        const atEnd = c + off === end.c;
         blocks.push(bytes.subarray(off, off + bsize));
         if (atEnd) cut = blocks.length - 1;
         off += bsize;
-        if (atEnd || beg.c + off > end.c) break;
+        if (atEnd || c + off > end.c) { done = true; break; }
     }
+    if (!blocks.length || c + off >= file.size) done = true;
     const parts = await Promise.all(blocks.map(gunzipBytes));
     if (cut >= 0) parts[cut] = parts[cut].subarray(0, end.u);
+    let total = 0, p = 0;
     for (const d of parts) total += d.length;
-    const out = new Uint8Array(total);
-    let p = 0;
-    for (const d of parts) { out.set(d, p); p += d.length; }
-    const res = out.subarray(Math.min(beg.u, out.length));
-    res.compressedBytes = off;          // bytes of the file read for this range
-    return res;
+    const data = new Uint8Array(total);
+    for (const d of parts) { data.set(d, p); p += d.length; }
+    return { data, next: c + off, done };
 }
 
 /** The BAM header read from the start of the file, block by block until it is complete. */
@@ -647,26 +656,41 @@ async function readBamRegion(file, index, refId, beg, end, keepFlagged) {
     const records = [], skipped = {};
     let totalReads = 0, bytesRead = 0, fileBytesRead = 0;
     const chunks = baiChunks(index, refId, beg, end);
+    // A chunk is read in growing steps and left at the first record past the region: the file is sorted, so nothing later can
+    // overlap. A chunk merged into a parent bin can span the reference, and baiChunks cannot cut it. A record cut by the end of
+    // a step is carried into the next one.
+    let past = false;
     for (const ch of chunks) {
-        const buf = await readVirtualRange(file, ch.beg, ch.end);
-        bytesRead += buf.length;
-        fileBytesRead += buf.compressedBytes || 0;
-        let off = 0;
-        const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-        while (off + 4 <= buf.length) {
-            const res = parseBAMRecord(buf, off, dv);
-            if (!res) break;
-            off = res.nextOffset;
-            const r = res.record;
-            if (r.refID !== refId) continue;
-            let span = 0;
-            for (const c of r.cigar) if ('MDN=X'.includes(c.op)) span += c.len;
-            if (r.pos >= end || r.pos + Math.max(1, span) <= beg) continue;
-            totalReads++;
-            const why = skipReason(r.flag, keepFlagged);
-            if (why || !r.cigar.length) { skipped[why || 'no CIGAR'] = (skipped[why || 'no CIGAR'] || 0) + 1; continue; }
-            if (records.length < MAX_READS) records.push(r);
+        let c = ch.beg.c, first = ch.beg.u, carry = null, step = 1 << 17, done = false;
+        while (!done && !past) {
+            const got = await readBlocks(file, c, ch.end, step);
+            fileBytesRead += got.next - c;
+            bytesRead += got.data.length;
+            c = got.next; done = got.done;
+            step = Math.min(step * 2, 8 << 20);
+            let buf = got.data.subarray(Math.min(first, got.data.length));
+            first = 0;
+            if (carry) { const joined = new Uint8Array(carry.length + buf.length); joined.set(carry); joined.set(buf, carry.length); buf = joined; }
+            let off = 0;
+            const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+            while (off + 4 <= buf.length) {
+                const res = parseBAMRecord(buf, off, dv);
+                if (!res) break;
+                off = res.nextOffset;
+                const r = res.record;
+                if (r.refID < 0 || r.refID > refId || (r.refID === refId && r.pos >= end)) { past = true; break; }
+                if (r.refID !== refId) continue;
+                let span = 0;
+                for (const c of r.cigar) if ('MDN=X'.includes(c.op)) span += c.len;
+                if (r.pos + Math.max(1, span) <= beg) continue;
+                totalReads++;
+                const why = skipReason(r.flag, keepFlagged);
+                if (why || !r.cigar.length) { skipped[why || 'no CIGAR'] = (skipped[why || 'no CIGAR'] || 0) + 1; continue; }
+                if (records.length < MAX_READS) records.push(r);
+            }
+            carry = off < buf.length ? buf.slice(off) : null;
         }
+        if (past) break;
     }
     return { records, totalReads, skipped, chunks: chunks.length, bytesRead, fileBytesRead };
 }
