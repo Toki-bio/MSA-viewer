@@ -4669,20 +4669,26 @@ body.name-resizing { user-select: none; }
 .finder-right .finder-note { color: #8a5200; }
 .finder-none { padding: 14px 9px; color: #667; }
 .finder-flash { outline: 2px solid #4a9eff; outline-offset: 1px; }
-/* No room for the bar: a magnifier that widens over its neighbours while in use, so the toolbar keeps its lines */
+/* No room for the bar: a magnifier that widens over its neighbours while in use, so the toolbar keeps its lines.
+   The view switch fits the menu line of a 1366 px screen with nothing to spare, so the 22 px the magnifier takes
+   come back from padding around that line: it fits exactly where it did before the magnifier. */
 @media (max-width: 1500px) {
     #finderBox {
         position: relative;
-        width: 24px;
+        width: 20px;
         height: 18px;
+        margin: 0;
     }
+    .mode-row:not(.own-line) { padding: 0; }
+    .case-switch { margin-left: 0; }
+    #headerInfoPanel { padding-left: 4px; }
     #finderInput {
         position: absolute;
         top: 0;
         right: 0;
-        width: 24px;
+        width: 20px;
         padding: 0 3px 0 18px;
-        background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Ccircle cx='5' cy='5' r='3.5' fill='none' stroke='%23556' stroke-width='1.4'/%3E%3Cpath d='M7.7 7.7 11 11' stroke='%23556' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat 5px center;
+        background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Ccircle cx='5' cy='5' r='3.5' fill='none' stroke='%23556' stroke-width='1.4'/%3E%3Cpath d='M7.7 7.7 11 11' stroke='%23556' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat 3px center;
         cursor: pointer;
     }
     #finderInput:not(:focus)::placeholder { color: transparent; }
