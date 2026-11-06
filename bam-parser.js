@@ -610,27 +610,32 @@ async function readVirtualRange(file, beg, end) {
 
 /** The BAM header read from the start of the file, block by block until it is complete. */
 async function readBamHeaderFromFile(file) {
-    let have = new Uint8Array(0), off = 0, step = 1 << 20;
+    // Stops at the block that completes the header: gunzipping all of the first MB took up to 0.75 s. A partial header
+    // always ends in a RangeError from parseBAMHeader. Past 1 MB it tries at doubling sizes, so many contigs do not cost n squared.
     const parts = [];
+    let total = 0, tryAt = 0, off = 0, step = 1 << 17;   // a BGZF block is at most 64 KB
+    const parse = () => {
+        const have = new Uint8Array(total);
+        let q = 0; for (const d of parts) { have.set(d, q); q += d.length; }
+        return parseBAMHeader(have);
+    };
     for (;;) {
         const bytes = new Uint8Array(await file.slice(off, Math.min(file.size, off + step)).arrayBuffer());
         let p = 0;
         while (p < bytes.length) {
             const bsize = bgzfBlockSize(bytes, p);
             if (bsize <= 0 || p + bsize > bytes.length) break;
-            parts.push(await gunzipBytes(bytes.subarray(p, p + bsize)));
-            p += bsize;
+            const d = await gunzipBytes(bytes.subarray(p, p + bsize));
+            parts.push(d); total += d.length; p += bsize;
+            if (total >= tryAt) {
+                try { return parse(); }
+                catch (e) { if (!(e instanceof RangeError)) throw e; if (total > (1 << 20)) tryAt = total * 2; }
+            }
         }
         if (p === 0) throw new Error('not a BGZF-compressed BAM');
         off += p;
-        let total = 0; for (const d of parts) total += d.length;
-        have = new Uint8Array(total);
-        let q = 0; for (const d of parts) { have.set(d, q); q += d.length; }
-        try { return parseBAMHeader(have); }
-        catch (e) {
-            if (!(e instanceof RangeError) || off >= file.size) throw e;
-            step = Math.min(step * 2, 64 << 20);            // a long header (many contigs): read on
-        }
+        if (off >= file.size) return parse();
+        step = Math.min(step * 2, 64 << 20);                // a long header (many contigs): read on
     }
 }
 
