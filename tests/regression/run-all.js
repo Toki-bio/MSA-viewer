@@ -702,7 +702,7 @@ check('Reads zoom: buttons and Ctrl+wheel, the base under the mouse stays, lette
     return { letters: __ink(170, 2, _readsView.w - 180, 16, '#fafafa').n, red: __has(x - 1, __rowY(q) + 3, c + 2, 10, '#e74c3c', 40) };
   });
   // past 30 kb: no reads drawn, coverage stays, the pile's height goes; the mixed site is still marked
-  o.d = await stepTo(c => c * 30000 < 1200, '#readsZoomOut');
+  o.d = await stepTo(c => c * 45000 < 1200, '#readsZoomOut');
   await page.evaluate(() => _readsCentre(60000));
   o.cov = await page.evaluate(() => { const top = _READS_REF_H + _READS_SCALE_H, x = __colX(60000);
     return { drawn: _readsView.drawn.length, ink: __ink(200, top, 600, _COV_H - 6, '#ffffff').n, mixed: __has(x - 2, top, 5, _COV_H - 6, '#4caf50', 40) || __has(x - 2, top, 5, _COV_H - 6, '#2196f3', 40) || __has(x - 2, top, 5, _COV_H - 6, '#ff9800', 40) || __has(x - 2, top, 5, _COV_H - 6, '#f44336', 40),
@@ -1142,6 +1142,35 @@ check('Reads per 100 bp can be set in Options: more reads are drawn, coverage st
   o.fresh = await look();
   const ok = o.def.drawn === 50 && o.def.all === 400 && o.def.marks === 1 && o.more.drawn === 200 && o.more.depth === o.def.depth
     && o.all.drawn === 400 && o.all.marks === 0 && o.fresh.drawn === 50 && o.fresh.box === '50';
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 60000 });
+
+// Real HiFi reads showed three things. 41 long reads over 47 kb were hidden by a limit on the width alone, though they are
+// little to draw. Long soft clips fill rows with boxes (igv.js hides them by default). An index read each block many
+// times, since bins interleave in the same blocks (htslib merges chunks that touch one block).
+check('Reads on real shapes: few long reads show over a wide view, soft clips can be switched off and their rows stay', async (page) => {
+  const L = 60000, b = 'ACGT'; let seed = 31; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const lines = [`@SQ\tSN:chrH\tLN:${L}`];
+  for (let p = 0; p + 15000 <= L; p += 3000) lines.push(`h${p}\t0\tchrH\t${p + 1}\t60\t15000M\t*\t0\t0\t${ref.slice(p, p + 15000)}\t*`);
+  lines.push(`clip\t0\tchrH\t30001\t60\t500S1000M500S\t*\t0\t0\t${'A'.repeat(500) + ref.slice(30000, 31000) + 'A'.repeat(500)}\t*`);
+  await page.setInputFiles('#fileInput', { name: 'h.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrH\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(400);
+  await page.setInputFiles('#bamFileInput', { name: 'h.sam', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\n') + '\n') });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView, null, { timeout: 30000 });
+  await page.evaluate(READS_PX);
+  await page.click('#readsOptionsBtn');
+  const o = {};
+  o.wide = await page.evaluate(() => { _readsFit(bamState.refStart, bamState.refEnd - 1); return { span: _readsSpanText(_readsView), drawn: _readsView.drawn.length, only: _readsCoverageOnly(_readsView) }; });
+  const clip = () => page.evaluate(() => { const q = bamState.reads.find(r => r.name === 'clip'); alignmentContainer.scrollTop = Math.max(0, q.track * _readsTrackH() - 30); _readsFit(29850, 30150); _readsDraw();
+    return { has: __has(__colX(29900), __rowY(q) + 3, 40, 8, '#e8eef5', 3), box: !!_readsBarGeom(q).left }; });
+  o.on = await clip();
+  await page.uncheck('#readsSoftClips'); await page.waitForTimeout(120);
+  o.off = await clip();
+  await page.check('#readsSoftClips'); await page.waitForTimeout(120);
+  o.back = await clip();
+  const ok = o.wide.drawn > 5 && !o.wide.only && o.on.has && !o.off.has && o.back.has;
   return { pass: ok, detail: JSON.stringify(o) };
 }, { timeoutMs: 60000 });
 

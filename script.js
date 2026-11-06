@@ -10532,10 +10532,10 @@ const _readsTrackH = () => (_readsCompact ? _READS_COMPACT_H : _READS_TRACK_H);
 const _readsGeneH = () => (_readsView ? _readsView.geneH : 0);
 const _readsVcfH = () => (_readsView ? _readsView.vcfH : 0);
 const _readsHeadH = () => _READS_REF_H + _READS_SCALE_H + _COV_H + _readsGeneH() + _readsVcfH() + _READS_STATUS_H;
-// Zoom: px per base, from the whole region to _READS_CELL. Letters need _READS_LETTERS px; past _READS_WINDOW bases on
-// screen only coverage is drawn (igv.js: visibilityWindow). The spacer is capped (an element stops growing near 33
+// Zoom: px per base, from the whole region to _READS_CELL. Letters need _READS_LETTERS px; past _READS_MAX_DRAWN aligned
+// bases on screen only coverage is drawn: about 40 kb at 30x, the whole of a few long reads (igv.js: a fixed 30 kb). The spacer is capped (an element stops growing near 33
 // million px, 2.8 Mb at 12 px per base) and its scroll range mapped onto the pile: _readsLeft / _readsSetLeft.
-const _READS_LETTERS = 7, _READS_WINDOW = 30000, _READS_MAX_SPACER = 16000000, _READS_ZOOM_STEP = 1.5;
+const _READS_LETTERS = 7, _READS_MAX_DRAWN = 1200000, _READS_MAX_SPACER = 16000000, _READS_ZOOM_STEP = 1.5;
 const _readsCell = () => (_readsView ? _readsView.cell : _READS_CELL);
 function _readsScrollRatio(v) {
     const spacerW = Math.max(Math.min(v.fullW, _READS_MAX_SPACER), v.w);
@@ -10548,7 +10548,7 @@ function _readsSetLeft(px) {
     // the bar too, at once: it trusts its own place during input (Enter counts) and wrote the old one back a frame later
     window._syncHorizontalScrollbar?.();
 }
-const _readsCoverageOnly = v => (v.w - _READS_NAME_W) / v.cell > _READS_WINDOW;
+const _readsCoverageOnly = v => ((v.w - _READS_NAME_W) / v.cell) * (bamState.alignedBases || 0) / Math.max(1, bamState.refEnd - bamState.refStart) > _READS_MAX_DRAWN;
 function _readsSizeSpacer(v) {
     v.fullW = _READS_NAME_W + (bamState.refEnd - bamState.refStart) * v.cell;
     v.spacer.style.width = Math.max(Math.min(v.fullW, _READS_MAX_SPACER), v.w) + 'px';
@@ -10812,7 +10812,7 @@ function _readsSyncFilterBoxes() {
     const pw = document.getElementById('readsPerWindow');
     if (pw) pw.value = String(_readsFilter.perWindow);
     const set = (id, val) => { const e = document.getElementById(id); if (e) { if (e.type === 'checkbox') e.checked = val; else e.value = val; } };
-    set('readsSortBy', _readsOpts.sort); set('readsColorBy', _readsOpts.color); set('readsGroupBy', _readsOpts.group); set('readsPairs', _readsOpts.pairs); set('readsTagName', _readsOpts.tag);
+    set('readsSortBy', _readsOpts.sort); set('readsColorBy', _readsOpts.color); set('readsGroupBy', _readsOpts.group); set('readsPairs', _readsOpts.pairs); set('readsTagName', _readsOpts.tag); set('readsSoftClips', _readsOpts.clips);
     for (const [key, , , id] of _READS_FLAGGED) { const c = document.getElementById(id); if (c) c.checked = !!_readsFilter[key]; }
     _readsFillFilterCounts();
 }
@@ -10855,7 +10855,7 @@ function _readsKeepPlace(change) {
 
 // How the pile is laid out and coloured. All of it comes through _readsLayout: mates joined, groups split, rows packed,
 // then the sort. groupRanges holds each group's rows, so a sort stays inside its group.
-const _READS_OPTS_DEFAULT = { sort: 'start', sortPos: null, color: 'strand', group: 'none', groupPos: null, tag: '', pairs: false };
+const _READS_OPTS_DEFAULT = { sort: 'start', sortPos: null, color: 'strand', group: 'none', groupPos: null, tag: '', pairs: false, clips: true };
 let _readsOpts = { ..._READS_OPTS_DEFAULT };
 const _READS_SORTS = { start: 'start', base: 'base', strand: 'strand', mapq: 'MAPQ', name: 'read name', length: 'read length', insert: 'insert size' };
 const _READS_COLORS = { strand: 'read strand', none: 'none', first: 'first-of-pair strand', mapq: 'MAPQ', insert: 'insert size', orientation: 'pair orientation', tag: 'tag' };
@@ -10901,6 +10901,9 @@ function _readsLayout() {
         if (extra.length) reads = reads.concat(extra).sort((a, b) => a.start - b.start);
     }
     bamState.reads = reads;
+    let alignedBases = 0;
+    for (const r of reads) alignedBases += r.end - r.start + 1;
+    bamState.alignedBases = alignedBases;
     const units = o.pairs ? _readsJoinMates(reads) : reads.map(r => { r._mate = null; r._mateLeft = false; return { start: r.start, end: r.end, reads: [r] }; });
     const parts = new Map();
     for (const u of units) {
@@ -11166,6 +11169,14 @@ function _readsBuildOptions(group) {
     pc.addEventListener('change', () => _readsSetOpts({ pairs: pc.checked }));
     pr.appendChild(pc); pr.appendChild(document.createTextNode('View as pairs'));
     panel.appendChild(pr);
+    const sc = document.createElement('label');
+    sc.style.cssText = 'display:flex;align-items:center;gap:5px;cursor:pointer;';
+    sc.title = 'The bases of a read that did not align, as dashed boxes at its ends';
+    const scb = document.createElement('input');
+    scb.type = 'checkbox'; scb.id = 'readsSoftClips'; scb.checked = true; scb.style.margin = '0';
+    scb.addEventListener('change', () => { _readsOpts = { ..._readsOpts, clips: scb.checked }; _readsDraw(); });
+    sc.appendChild(scb); sc.appendChild(document.createTextNode('Show soft clips'));
+    panel.appendChild(sc);
     document.body.appendChild(panel);
 }
 // Left and right soft-clip lengths: an S before the first reference base is the left one (as _getReadCigarFeatures)
@@ -11422,7 +11433,7 @@ function _readsDraw() {
     }
     if (covOnly) {
         ctx.fillStyle = '#666'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
-        ctx.fillText(`Zoom in to see the reads: they are drawn up to ${(_READS_WINDOW / 1000)} kb across`, NAME_W, head + 24);
+        ctx.fillText('Too many reads to draw at this width: zoom in to see them', NAME_W, head + 24);
         ctx.textAlign = 'center';
     }
     if (bamState.focusPos != null && bamState.focusPos >= a && bamState.focusPos < b) {
@@ -11488,7 +11499,7 @@ function _readsPaintRead(ctx, read, y, a, b, sl, X, selected, cell) {
     const geom = _readsBarGeom(read), rx = geom.x - sl, rw = geom.w;
     const minX = -cell, maxX = X(b) + cell, [barFill, barEdge] = _readsBarColour(read);
     for (const box of [geom.left, geom.right]) {
-        if (!box || !box.w || !fine) continue;
+        if (!box || !box.w || !fine || !_readsOpts.clips) continue;
         // soft clips: lighter fill, dashed edge
         ctx.fillStyle = '#e8eef5'; ctx.fillRect(box.x - sl, y + pad, box.w, rh);
         ctx.strokeStyle = '#a0b8d0'; ctx.lineWidth = 1; ctx.setLineDash([3, 2]);

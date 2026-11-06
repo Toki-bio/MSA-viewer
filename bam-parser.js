@@ -573,7 +573,9 @@ function baiChunks(index, refId, beg, end) {
     const merged = [];
     for (const ch of chunks) {
         const last = merged[merged.length - 1];
-        if (last && _voCmp(ch.beg, last.end) <= 0) { if (_voCmp(ch.end, last.end) > 0) last.end = ch.end; }
+        // chunks up to one block apart are one read (reads outside the region are filtered after). Bins interleave, so a region
+        // gave a chunk per block, read one after the other (2.3 s for a 3.6 MB BAM)
+        if (last && ch.beg.c - last.end.c <= 65536) { if (_voCmp(ch.end, last.end) > 0) last.end = ch.end; }
         else merged.push({ beg: { ...ch.beg }, end: { ...ch.end } });
     }
     return merged;

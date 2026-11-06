@@ -637,7 +637,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>
     <strong>Moving around:</strong> drag the reads to move the view, or use the wheel. Ctrl+wheel, the
     <strong>&minus;</strong> and <strong>+</strong> buttons or a double click zoom, from single bases to the whole region; the
-    length on screen is beside the buttons. Under 7 pixels per base the letters become ticks, past 30 kb only the
+    length on screen is beside the buttons. Under 7 pixels per base the letters become ticks, past about 1.2 million aligned bases on screen (some 40 kb at 30&times;, all of a few long reads) only the
     coverage is drawn, and mixed sites stay marked in it at any zoom. The box next to it goes to a position
     (<code>12,345</code>), a range, which then fills the view (<code>12,000-13,000</code>), a gene of the loaded annotation
     (any case, or the start of its name), or, on a region row like <code>chr7:1001-2000</code>, a position in the file's own
@@ -656,7 +656,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     the view. <strong>Colour by</strong> shows strand, first-of-pair strand, MAPQ, insert size (red over 3 times the median, blue
     under a third), pair orientation or a tag. <strong>Group by</strong> splits the pile into labelled parts: by strand, kind of read,
     a tag such as HP, or the base at a column, which separates the two alleles of a site. <strong>View as pairs</strong> puts mates on
-    one row with a line between them. A change on a poor base is drawn fainter (Phred 5 to 20). Right click a read to copy it or its soft
+    one row with a line between them. <strong>Show soft clips</strong> turns the dashed boxes off. A change on a poor base is drawn fainter (Phred 5 to 20). Right click a read to copy it or its soft
     clips, go to its mate, or sort or group by the base there.
   </p>
   <p>
