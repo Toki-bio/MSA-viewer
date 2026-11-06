@@ -223,5 +223,71 @@
         return w > 0 ? w * TILE : 0;
     }
 
-    return { TILE, MAX_TILE_READS, CACHE_BYTES, GROUP, spanOf, tileRange, readKey, loadTile, assemble, TileCache, loadedRun, packWindow, createLoader, callsFor, indexBytes, firstRead };
+    /**
+     * What a view of [a, b) wants, for createLoader: tiles on screen, the window (a screen each side), and what to read next, on the
+     * side of travel first. dir: 1 right, -1 left.
+     */
+    function planView({ a, b, dir, chrLen }) {
+        const lastTile = Math.max(0, Math.floor((chrLen - 1) / TILE)), screen = Math.max(1, b - a);
+        const [first, last0] = tileRange(a, b), last = Math.min(last0, lastTile);
+        const keepFirst = Math.max(0, tileRange(a - screen, a)[0]), keepLast = Math.min(lastTile, tileRange(b, b + screen)[1]);
+        const right = [], left = [];
+        for (let t = last + 1; t <= keepLast; t++) right.push(t);
+        for (let t = first - 1; t >= keepFirst; t--) left.push(t);
+        return { first, last, keepFirst, keepLast, ahead: dir < 0 ? left.concat(right) : right.concat(left) };
+    }
+
+    const isGenomeSet = files => Array.from(files || []).some(f => /\.fai$/i.test(f.name));
+
+    /** The picked or dropped files of a genome by kind: { fasta, fai, bam, bai, errors }. */
+    function pickFiles(files) {
+        const all = Array.from(files), errors = [], by = re => all.filter(f => re.test(f.name));
+        const fai = by(/\.fai$/i)[0] || null;
+        const fastas = by(/\.(fa|fasta|fna|fas)$/i);
+        const fasta = (fai && fastas.find(f => f.name + '.fai' === fai.name)) || fastas[0] || null;
+        const bam = by(/\.bam$/i)[0] || null, bai = by(/\.bai$/i)[0] || null;
+        if (by(/\.(fa|fasta|fna|fas)\.b?gz(ip)?$/i).length) errors.push('A compressed FASTA (.gz) cannot be read here yet: open the plain FASTA with its .fai (gunzip, then samtools faidx).');
+        else if (!fasta) errors.push('The reference FASTA is missing: select the .fa together with its .fai.');
+        if (!fai) errors.push('The .fai is missing: make it with samtools faidx, then select it with the FASTA.');
+        if (by(/\.csi$/i).length) errors.push('.csi indexes are not read yet: make a .bai with samtools index.');
+        if (by(/\.(cram|crai)$/i).length) errors.push('CRAM and .crai are not read in the genome view yet: use a BAM with its .bai.');
+        if (bam && !bai) errors.push('The BAM needs its .bai: make it with samtools index, then select both.');
+        if (bai && !bam) errors.push('A .bai came without its BAM: select the BAM too.');
+        return { fasta, fai, bam, bai, errors };
+    }
+
+    // As BamParser.matchReference: the same name apart from case, a 'chr' prefix, a '.version' suffix or M/MT
+    const normName = n => { const s = String(n).toLowerCase().replace(/^chr/, '').replace(/\.\d+$/, ''); return s === 'mt' ? 'm' : s; };
+
+    /** The BAM reference of each .fai sequence: { refId: Map(fai name -> BAM reference index), error }. A chromosome the BAM lacks has no reads. */
+    function matchChromosomes(fai, refNames, refLengths) {
+        const exact = new Map(refNames.map((n, i) => [n, i])), norm = new Map(refNames.map((n, i) => [normName(n), i])), refId = new Map();
+        const differ = [];
+        for (const e of fai) {
+            const i = exact.has(e.name) ? exact.get(e.name) : norm.get(normName(e.name));
+            if (i === undefined) continue;
+            if (refLengths[i] !== e.length) differ.push(e.name + ': FASTA ' + e.length.toLocaleString() + ' bp, BAM ' + refLengths[i].toLocaleString() + ' bp');
+            else refId.set(e.name, i);
+        }
+        if (differ.length) return { refId, error: 'The BAM was mapped to another assembly: ' + differ.slice(0, 3).join('; ') + (differ.length > 3 ? '; and ' + (differ.length - 3) + ' more' : '') + '.' };
+        if (!refId.size) return { refId, error: 'No chromosome of the FASTA is in the BAM. FASTA: ' + fai.slice(0, 3).map(e => e.name).join(', ') + '; BAM: ' + refNames.slice(0, 3).join(', ') + '.' };
+        return { refId, error: null };
+    }
+
+    /** What the jump box says: { name (null: this chromosome), rest (a position or range, or '') } or { error }. */
+    function parseLocus(text, chromosomes) {
+        const t = String(text || '').trim(), find = n => {
+            const e = chromosomes.find(c => c.name === n) || chromosomes.find(c => normName(c.name) === normName(n));
+            return e ? e.name : null;
+        };
+        const whole = find(t);
+        if (whole && !/^[\d,\s]+$/.test(t)) return { name: whole, rest: '' };
+        const colon = t.lastIndexOf(':');
+        if (colon <= 0) return { name: null, rest: t };
+        const name = t.slice(0, colon).trim(), hit = find(name);
+        if (!hit) return { error: 'No chromosome ' + name + ' here.' };
+        return { name: hit, rest: t.slice(colon + 1).trim() };
+    }
+
+    return { TILE, MAX_TILE_READS, CACHE_BYTES, GROUP, spanOf, tileRange, readKey, loadTile, assemble, TileCache, loadedRun, packWindow, createLoader, callsFor, indexBytes, firstRead, planView, isGenomeSet, pickFiles, matchChromosomes, parseLocus };
 });

@@ -181,6 +181,53 @@ async function realIndex() {
   check('first read: a reference with no reads is 0', GW.firstRead({ refs: [{ bins: new Map(), lin: [] }] }, 0) === 0, 'not 0');
 }
 
+function planning() {
+  const T = GW.TILE, p = GW.planView({ a: 5 * T + 100, b: 5 * T + 200, dir: 1, chrLen: 1000 * T });
+  check('plan: on screen is the tile under the view', p.first === 5 && p.last === 5, p.first + '-' + p.last);
+  const w = GW.planView({ a: 10 * T, b: 14 * T, dir: 1, chrLen: 1000 * T });
+  check('plan: the window is a screen each side, in tiles', w.keepFirst === 6 && w.keepLast === 17, w.keepFirst + '-' + w.keepLast);
+  check('plan: moving right, the right side comes first', w.ahead[0] === 14 && w.ahead.indexOf(9) > w.ahead.indexOf(17), w.ahead.join());
+  const l = GW.planView({ a: 10 * T, b: 14 * T, dir: -1, chrLen: 1000 * T });
+  check('plan: moving left, the left side comes first', l.ahead[0] === 9, l.ahead.join());
+  const e = GW.planView({ a: 0, b: 2 * T, dir: -1, chrLen: 3 * T });
+  check('plan: stays on the chromosome', e.keepFirst === 0 && e.keepLast === 2 && e.ahead.every(t => t >= 0 && t <= 2), JSON.stringify(e));
+  check('plan: the last partial tile counts', GW.planView({ a: T, b: T + 50, dir: 1, chrLen: T + 50 }).keepLast === 1, 'past the end');
+}
+function files() {
+  const F = (...n) => n.map(name => ({ name }));
+  check('a set is a genome only with a .fai among the files', GW.isGenomeSet(F('a.fa', 'a.fa.fai')) && !GW.isGenomeSet(F('a.fa')) && !GW.isGenomeSet(F('a.bam', 'a.bam.bai')) && !GW.isGenomeSet([]), 'wrong');
+  const all = GW.pickFiles(F('r.bam.bai', 'g.fa.fai', 'r.bam', 'g.fa'));
+  check('pick: all four sorted by name', all.fasta.name === 'g.fa' && all.fai.name === 'g.fa.fai' && all.bam.name === 'r.bam' && all.bai.name === 'r.bam.bai' && !all.errors.length, JSON.stringify(all.errors));
+  const ref = GW.pickFiles(F('g.fasta', 'g.fasta.fai'));
+  check('pick: FASTA and .fai alone are enough', ref.fasta && !ref.bam && !ref.errors.length, JSON.stringify(ref.errors));
+  check('pick: a BAM without its .bai says how to make it', /samtools index/.test(GW.pickFiles(F('g.fa', 'g.fa.fai', 'r.bam')).errors.join()), 'no message');
+  check('pick: a .bai without a BAM is named', /\.bai/.test(GW.pickFiles(F('g.fa', 'g.fa.fai', 'r.bam.bai')).errors.join()), 'no message');
+  check('pick: a .fai without its FASTA is named', /FASTA/.test(GW.pickFiles(F('g.fa.fai')).errors.join()), 'no message');
+  check('pick: compressed FASTA is refused', /gz/.test(GW.pickFiles(F('g.fa.gz', 'g.fa.gz.fai')).errors.join()), 'no message');
+  check('pick: .csi and .crai are refused', /csi/.test(GW.pickFiles(F('g.fa', 'g.fa.fai', 'r.bam', 'r.bam.csi')).errors.join()) && /crai/.test(GW.pickFiles(F('g.fa', 'g.fa.fai', 'r.cram', 'r.cram.crai')).errors.join()), 'no message');
+  const two = GW.pickFiles(F('x.fa', 'g.fa', 'g.fa.fai'));
+  check('pick: of two FASTA the one the .fai is named after', two.fasta.name === 'g.fa', two.fasta && two.fasta.name);
+}
+function chromosomes() {
+  const fai = [{ name: 'chr1', length: 100 }, { name: 'chr2', length: 50 }, { name: 'chrM', length: 16 }];
+  const same = GW.matchChromosomes(fai, ['chr1', 'chr2'], [100, 50]);
+  check('names: exact', same.refId.get('chr1') === 0 && same.refId.get('chr2') === 1 && !same.refId.has('chrM') && !same.error, JSON.stringify(same.error));
+  const alias = GW.matchChromosomes(fai, ['1', '2', 'MT'], [100, 50, 16]);
+  check('names: chr and MT aliases', alias.refId.get('chr1') === 0 && alias.refId.get('chrM') === 2 && !alias.error, JSON.stringify(alias.error));
+  check('names: a different length is another assembly, refused', /chr2/.test(GW.matchChromosomes(fai, ['chr1', 'chr2'], [100, 51]).error || ''), 'no error');
+  check('names: nothing in common is refused', /no chromosome/i.test(GW.matchChromosomes(fai, ['x'], [5]).error || ''), 'no error');
+}
+function locus() {
+  const names = [{ name: 'chr7', length: 200 }, { name: 'chrUn:odd', length: 9 }];
+  const L = t => GW.parseLocus(t, names);
+  check('locus: chr7:1,000,000', L('chr7:1,000,000').name === 'chr7' && L('chr7:1,000,000').rest === '1,000,000', JSON.stringify(L('chr7:1,000,000')));
+  check('locus: a position alone stays on this chromosome', L('12,000').name === null && L('12,000').rest === '12,000', JSON.stringify(L('12,000')));
+  check('locus: a name alone goes to the chromosome', L('chr7').name === 'chr7' && L('chr7').rest === '', JSON.stringify(L('chr7')));
+  check('locus: 7:100-200, the name without chr', L('7:100-200').name === 'chr7', JSON.stringify(L('7:100-200')));
+  check('locus: a name with a colon in it', L('chrUn:odd').name === 'chrUn:odd', JSON.stringify(L('chrUn:odd')));
+  check('locus: an unknown name is an error', /chr9/.test(L('chr9:5').error || ''), JSON.stringify(L('chr9:5')));
+}
+
 (async () => {
   const s = await loadSet();
   await readerOptions(s);
@@ -190,6 +237,10 @@ async function realIndex() {
   await loader();
   await calls(s);
   await realIndex();
+  planning();
+  files();
+  chromosomes();
+  locus();
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })();
