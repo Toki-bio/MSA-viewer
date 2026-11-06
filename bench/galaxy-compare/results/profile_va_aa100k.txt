@@ -1,0 +1,47 @@
+== self time
+  5791 (anon) @-:1
+  3614 (program) @-:0
+  2952 _computeConservationForColumn @script.js:9531
+  2902 _computeConsensusCharForColumn @script.js:4515
+  2394 (garbage collector) @-:0
+  2120 (anon) @script.js:27844
+  1200 _canvasConsensusUpper @script.js:13619
+   552 (anon) @-:5717
+   508 calculateGaplessPositions @script.js:3221
+   460 scanFastaIndex @script.js:14029
+   323 drawRegion @script.js:7202
+   306 _seqsFingerprint @script.js:11632
+   261 (anon) @script.js:35584
+   243 _fitHeaderInfoPanel @script.js:12725
+   230 step @script.js:4579
+   228 parseAndRender @script.js:14336
+   208 step @script.js:9593
+   174 (anon) @script.js:19295
+== inclusive (script.js)
+  4065 step @script.js:9593
+  3929 parseAndRender @script.js:14336
+  3209 step @script.js:4579
+  2952 _computeConservationForColumn @script.js:9531
+  2902 _computeConsensusCharForColumn @script.js:4515
+  2647 (anon) @script.js:27844
+  1614 draw @script.js:6802
+  1612 drawArea @script.js:6958
+  1609 drawRegion @script.js:7202
+  1335 _resetRepeatFinderForNewFile @script.js:35613
+  1333 _fillRepeatFinderSeqSelect @script.js:35578
+  1323 (anon) @script.js:35584
+  1200 _canvasConsensusUpper @script.js:13619
+  1140 renderAlignment @script.js:11643
+   901 (anon) @script.js:11868
+   833 (anon) @script.js:6686
+   833 _renderCanvasAlignment @script.js:6258
+   802 parseFasta @script.js:8579
+   629 updateSourceInfo @script.js:12738
+   617 _pushParsedFastaSequence @script.js:8474
+   516 runAlignmentPreflight @script.js:14251
+   512 scanAlignmentText @script.js:14085
+   508 calculateGaplessPositions @script.js:3221
+   460 scanFastaIndex @script.js:14029
+   306 _seqsFingerprint @script.js:11632
+== DOM {"tot":101574,"big":[["OPTION.",100076],["LABEL.",175],["INPUT.",173],["BUTTON.",152],["SPAN.",143],["DIV.",122],["STRONG.",65],["INPUT.re-cb",50]],"holders":[["repeatFinderModal",100091],["repeatFinderModalInner",100090],["repeatScopeRow",100009],["repeatFinderSeqSelect",100000],["controls",851],["menuRow",829],["dotPlotModal",184],["dotPlotDialog",183]],"mode":"modeCanvas","heapMB":314}
+== state arrays {"seqs":"Array(100000)","selectedRows":"Set","selectedColumns":"Set","selectedNucs":"Map","spanCache":"Map","domSelectedNucs":"Map","deletedHistory":"Array(0)","redoHistory":"Array(0)","searchHistory":"Array(0)","_tsdMarks":"ResidueMarks","dotBookmarks":"Array(0)","repeatHighlights":"Map","hiddenCols":"Array(0)","_statsHits":"Array(0)","_statsSelCols":"Set","manuallyColoured":"Set","_brkBeforePos":"Set"}
