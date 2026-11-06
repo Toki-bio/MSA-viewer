@@ -11555,9 +11555,12 @@ function _readsDrawCoverage(v, a, b, X) {
     ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
     ctx.fillText('coverage', _READS_NAME_W - 4 - sl, top + _COV_H / 2);
     ctx.textAlign = 'center';
-    const calls = _readsCalls();
-    if (!calls) return;
-    const cs = calls.counts, refStart = bamState.refStart, refEnd = bamState.refEnd;
+    // the reads go on screen first: counting every read takes most of a second on a large file, then the bars come
+    if (!bamState.calls) {
+        if (!v.callsQueued) { v.callsQueued = true; requestAnimationFrame(() => setTimeout(() => { if (_readsView === v) { _readsCalls(); _readsDraw(); } }, 0)); }
+        return;
+    }
+    const cs = bamState.calls.counts, refStart = bamState.refStart, refEnd = bamState.refEnd;
     if (v.covMax == null) {
         let max = 1;
         for (let p = Math.max(refStart, cs.lo); p < Math.min(refEnd, cs.hi); p++) max = Math.max(max, cs.depth[p - cs.lo]);
@@ -11805,6 +11808,7 @@ function _readsCountsHtml(p) {
 // then the other bases, deletions, the reference base, and rows without a read there last. Only the order of
 // the packed tracks changes (each track holds non-overlapping reads, so at most one covers p).
 function _readBaseAt(read, p) {
+    if (read.start != null && (p < read.start || p > read.end)) return null;   // and the read stays packed
     let q = read.pos, rp = 0;
     for (const { op, len } of read.cigar) {
         if (op === 'M' || op === '=' || op === 'X') { if (p >= q && p < q + len) return (read.seq[rp + p - q] || 'N').toUpperCase(); q += len; rp += len; }

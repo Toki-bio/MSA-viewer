@@ -103,6 +103,7 @@ const SUITES = [
   { name: 'sequence search: Plus/Minus hits in query coordinates', args: ['tests/search/minus-strand.test.js'] },
   { name: 'unit: low-severity audit fixes', args: ['tests/unit/audit-low.test.js'] },
   { name: 'unit: sample row called from reads', args: ['tests/unit/sample-call.test.js'] },
+  { name: 'unit: fast caller equals the reference caller', args: ['tests/unit/sample-call-fast.test.js'] },
   { name: 'unit: variant effects on genes', args: ['tests/unit/variant-effect.test.js'] },
   { name: 'unit: indexed BAM reading against samtools', args: ['tests/unit/bam-index.test.js'] },
   { name: 'unit: per-check time limit', args: ['tests/unit/check-timeout.test.js'] },

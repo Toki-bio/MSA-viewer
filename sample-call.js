@@ -32,7 +32,13 @@
     const BASES = ['A', 'C', 'G', 'T', 'N'];
     const BIDX = { A: 0, C: 1, G: 2, T: 3 };
 
-    function usable(r) { return !((r.flag || 0) & SKIP_FLAGS) && r.cigar && r.cigar.length && r.seq; }
+    // r._b: a read still packed in the BAM (bam-parser.js BamRecord): asking for r.seq here would decode every read
+    function usable(r) { return !((r.flag || 0) & SKIP_FLAGS) && r.cigar && r.cigar.length && (r._b ? r._n > 0 : r.seq); }
+    // base code to A C G T = 0..3, anything else 4: by character, and by the BAM's 4-bit code ('=ACMGRSVTWYHKDBN')
+    const CHAR_IDX = new Uint8Array(256).fill(4);
+    for (const [c, k] of [['A', 0], ['C', 1], ['G', 2], ['T', 3], ['a', 0], ['c', 1], ['g', 2], ['t', 3]]) CHAR_IDX[c.charCodeAt(0)] = k;
+    const NIB_IDX = new Uint8Array(16).fill(4);
+    NIB_IDX[1] = 0; NIB_IDX[2] = 1; NIB_IDX[4] = 2; NIB_IDX[8] = 3;
 
     function call(reads, refSeq, opts) {
         const o = Object.assign({}, DEFAULTS, opts || {});
@@ -65,15 +71,29 @@
             let rp = 0, p = r.pos, first = -1, last = -1;
             for (const { op, len } of r.cigar) {
                 if (op === 'M' || op === '=' || op === 'X') {
-                    for (let i = 0; i < len; i++) {
-                        const q = p + i;
-                        if (q < lo || q >= hi) continue;
-                        if (first < 0) first = q;
-                        last = q;
-                        depth[q - lo]++;
-                        const b = (r.seq[rp + i] || 'N').toUpperCase();
-                        const bq = baseQ(r.qual, rp + i);
-                        if (bq === 255 || bq >= o.minBaseQ) S[b in BIDX ? BIDX[b] : 4][q - lo]++;
+                    // this 30-million-base loop made a string per base: 3.9 s for 200,000 reads
+                    const s0 = Math.max(p, lo), e0 = Math.min(p + len, hi);
+                    if (e0 > s0) {
+                        if (first < 0) first = s0;
+                        last = e0 - 1;
+                        const off = rp - p, minQ = o.minBaseQ;
+                        if (r._b) {
+                            const B = r._b, so = r._so, hq = r._hq, qo = so + ((r._n + 1) >> 1);
+                            for (let q = s0; q < e0; q++) {
+                                depth[q - lo]++;
+                                const j = q + off;
+                                if (hq) { const bq = B[qo + j]; if (bq !== 255 && bq < minQ) continue; }
+                                S[j < r._n ? NIB_IDX[(B[so + (j >> 1)] >> ((~j & 1) << 2)) & 15] : 4][q - lo]++;
+                            }
+                        } else {
+                            const seq = r.seq, qual = r.qual, sq = typeof qual === 'string' && qual.length > 0 && qual !== '*';
+                            for (let q = s0; q < e0; q++) {
+                                depth[q - lo]++;
+                                const j = q + off;
+                                const bq = sq ? qual.charCodeAt(j) - 33 : baseQ(qual, j);
+                                if (bq === 255 || bq >= minQ) { const c = seq.charCodeAt(j); S[c < 256 ? CHAR_IDX[c] : 4][q - lo]++; }
+                            }
+                        }
                     }
                     rp += len; p += len;
                 } else if (op === 'D') {
@@ -106,9 +126,11 @@
                     p += len;                       // an intron: no evidence either way
                 }
             }
-            if (first >= 0) for (let q = first + 1; q <= last; q++) span[q - lo]++;
+            // as differences, summed once below: a loop per read over its whole span cost as much as the bases
+            if (first >= 0 && last > first) { span[first + 1 - lo]++; if (last + 1 - lo <= W) span[last + 1 - lo]--; }
         }
 
+        for (let i = 1; i <= W; i++) span[i] += span[i - 1];
         const cnt = (q, k) => fwd[k][q - lo] + rev[k][q - lo];
         const bases = new Array(L).fill('');
         const variants = [];

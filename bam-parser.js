@@ -28,6 +28,7 @@ function skipReason(flag, keepFlagged) {
     return null;
 }
 const SEQ_DECODE = '=ACMGRSVTWYHKDBN'; // 4-bit → IUPAC base (0==, 1=A, 2=C, 4=G, 8=T...)
+const SEQ_CODES = Uint8Array.from({ length: 16 }, (_, i) => (SEQ_DECODE[i] || 'N').charCodeAt(0));
 const CIGAR_OPS = 'MIDNSHP=X';
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -175,61 +176,47 @@ function parseBAMHeader(buf) {
  *   next_refID, next_pos, tlen
  *   read_name, cigar, seq, qual, tags
  */
-function parseBAMRecord(buf, offset) {
-    if (offset + 4 > buf.length) return null;
-
-    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-    const blockSize = dv.getUint32(offset, true);
-    if (blockSize === 0 || offset + 4 + blockSize > buf.length) return null;
-
-    let pos = offset + 4;
-    const refID   = dv.getInt32(pos, true);  pos += 4;
-    const rpos    = dv.getInt32(pos, true);  pos += 4;
-    const lName   = dv.getUint8(pos);        pos += 1;
-    const mapq    = dv.getUint8(pos);        pos += 1;
-    const bin     = dv.getUint16(pos, true); pos += 2; // eslint-disable-line
-    const nCigar  = dv.getUint16(pos, true); pos += 2;
-    const flag    = dv.getUint16(pos, true); pos += 2;
-    const lSeq    = dv.getUint32(pos, true); pos += 4;
-    const nextRef = dv.getInt32(pos, true);  pos += 4;
-    const nextPos = dv.getInt32(pos, true);  pos += 4;
-    const tlen    = dv.getInt32(pos, true);  pos += 4;
-
-    // Read name
-    const name = new TextDecoder().decode(buf.subarray(pos, pos + lName - 1)); // -1 for null
-    pos += lName;
-
-    // CIGAR
-    const cigarOps = [];
-    for (let i = 0; i < nCigar; i++) {
-        const cigRaw = dv.getUint32(pos, true); pos += 4;
-        cigarOps.push({ len: cigRaw >> 4, op: CIGAR_OPS[cigRaw & 0xF] });
+// A read that stays in the decompressed BAM: seq, qual and tags are decoded when asked for, once. Decoding every read on
+// opening took 2.3 s for 200,000 short reads and 5.8 s for 30 Mb of long reads; a view shows a few dozen. The caller
+// (sample-call.js) counts straight from the packed bases: _b, _so (offset of the bases), _n (length), _hq (has qualities).
+const NAME_DECODER = new TextDecoder(), LATIN1 = new TextDecoder('latin1');
+const SINGLE_CIGAR = new Map();   // most reads have one CIGAR operation: one shared array per length. Never changed.
+class BamRecord {
+    constructor(name, refID, pos, mapq, flag, cigar, tlen, nextRef, nextPos, buf, seqOff, lSeq, hasQual, tagOff, tagEnd) {
+        this.name = name; this.refID = refID; this.pos = pos; this.mapq = mapq; this.flag = flag; this.cigar = cigar;
+        this.tlen = tlen; this.next_refID = nextRef; this.next_pos = nextPos;
+        this._b = buf; this._so = seqOff; this._n = lSeq; this._hq = hasQual; this._to = tagOff; this._te = tagEnd;
+        this._seq = null; this._qual = null; this._tags = null;
     }
-
-    // Sequence (4-bit encoded: 2 bases per byte, high nibble first)
-    let seq = '';
-    const seqBytes = (lSeq + 1) >> 1;
-    for (let i = 0; i < lSeq; i++) {
-        const byte = buf[pos + (i >> 1)];
-        const nibble = (i & 1) ? (byte & 0x0F) : (byte >> 4);
-        seq += SEQ_DECODE[nibble] || 'N';
-    }
-    pos += seqBytes;
-
-    // Quality scores (Phred + 33 offset)
-    let qual = '';
-    if (lSeq > 0 && buf[pos] !== 0xFF) {
-        // '*' in SAM means missing quality; BAM encodes this as 0xFF
-        // If the first byte is 0xFF, omit qual string
-        for (let i = 0; i < lSeq; i++) {
-            qual += String.fromCharCode(buf[pos + i] + 33);
+    get seq() {
+        if (this._seq === null) {
+            const n = this._n, b = this._b, so = this._so, out = new Uint8Array(n);
+            for (let i = 0; i < n; i++) out[i] = SEQ_CODES[(b[so + (i >> 1)] >> ((~i & 1) << 2)) & 15];
+            this._seq = LATIN1.decode(out);
         }
+        return this._seq;
     }
-    pos += lSeq;
-
-    // Optional tags (remaining bytes in block)
+    get qual() {
+        if (this._qual === null) {
+            if (!this._hq) this._qual = '';
+            else {
+                const n = this._n, b = this._b, qo = this._so + ((n + 1) >> 1);
+                let s = '';
+                for (let i = 0; i < n; i++) s += String.fromCharCode(b[qo + i] + 33);
+                this._qual = s;
+            }
+        }
+        return this._qual;
+    }
+    get tags() {
+        if (this._tags === null) this._tags = parseBAMTags(this._b, this._to, this._te);
+        return this._tags;
+    }
+}
+function parseBAMTags(buf, start, tagEnd) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    let pos = start;
     const tags = {};
-    const tagEnd = offset + 4 + blockSize;
     while (pos + 2 < tagEnd) {
         const tag = String.fromCharCode(buf[pos], buf[pos + 1]);
         pos += 2;
@@ -287,21 +274,56 @@ function parseBAMRecord(buf, offset) {
         }
     }
 
+    return tags;
+}
+function parseBAMRecord(buf, offset, dvIn) {
+    if (offset + 4 > buf.length) return null;
+
+    const dv = dvIn || new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const blockSize = dv.getUint32(offset, true);
+    if (blockSize === 0 || offset + 4 + blockSize > buf.length) return null;
+
+    let pos = offset + 4;
+    const refID   = dv.getInt32(pos, true);  pos += 4;
+    const rpos    = dv.getInt32(pos, true);  pos += 4;
+    const lName   = dv.getUint8(pos);        pos += 1;
+    const mapq    = dv.getUint8(pos);        pos += 1;
+    pos += 2;                                            // bin
+    const nCigar  = dv.getUint16(pos, true); pos += 2;
+    const flag    = dv.getUint16(pos, true); pos += 2;
+    const lSeq    = dv.getUint32(pos, true); pos += 4;
+    const nextRef = dv.getInt32(pos, true);  pos += 4;
+    const nextPos = dv.getInt32(pos, true);  pos += 4;
+    const tlen    = dv.getInt32(pos, true);  pos += 4;
+
+    // Read name
+    const name = NAME_DECODER.decode(buf.subarray(pos, pos + lName - 1)); // -1 for null
+    pos += lName;
+
+    // CIGAR
+    let cigarOps;
+    if (nCigar === 1) {
+        const raw = dv.getUint32(pos, true);
+        cigarOps = SINGLE_CIGAR.get(raw);
+        if (!cigarOps) { cigarOps = [{ len: raw >>> 4, op: CIGAR_OPS[raw & 0xF] }]; if (SINGLE_CIGAR.size < 100000) SINGLE_CIGAR.set(raw, cigarOps); }
+        pos += 4;
+    } else {
+        cigarOps = [];
+        for (let i = 0; i < nCigar; i++) {
+            const cigRaw = dv.getUint32(pos, true); pos += 4;
+            cigarOps.push({ len: cigRaw >>> 4, op: CIGAR_OPS[cigRaw & 0xF] });
+        }
+    }
+
+    // Bases (4-bit, 2 per byte, high nibble first), then qualities: 0xFF first means none ('*' in SAM)
+    const seqOff = pos, seqBytes = (lSeq + 1) >> 1;
+    pos += seqBytes;
+    const hasQual = lSeq > 0 && buf[pos] !== 0xFF;
+    pos += lSeq;
+    const tagEnd = offset + 4 + blockSize;
+
     return {
-        record: {
-            name,
-            refID,
-            pos: rpos,         // 0-based leftmost coordinate
-            mapq,
-            flag,
-            seq,
-            qual,
-            cigar: cigarOps,
-            tlen,
-            next_refID: nextRef,
-            next_pos: nextPos,
-            tags,
-        },
+        record: new BamRecord(name, refID, rpos, mapq, flag, cigarOps, tlen, nextRef, nextPos, buf, seqOff, lSeq, hasQual, pos, tagEnd),
         nextOffset: tagEnd,
     };
 }
@@ -313,6 +335,7 @@ function parseBAMRecord(buf, offset) {
  * Returns { records[], exceededLimit: bool, totalReads: number (all records), skipped: { reason: count } }
  */
 function parseBAMRecords(buf, headerEndOffset, keepFlagged) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     const records = [];
     let offset = headerEndOffset;
     let totalReads = 0;
@@ -320,7 +343,7 @@ function parseBAMRecords(buf, headerEndOffset, keepFlagged) {
     const skipped = {};
 
     while (offset < buf.length) {
-        const result = parseBAMRecord(buf, offset);
+        const result = parseBAMRecord(buf, offset, dv);
         if (!result) break;
         offset = result.nextOffset;
         totalReads++;
