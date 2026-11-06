@@ -10535,7 +10535,10 @@ function _readsScrollRatio(v) {
 }
 const _readsLeft = () => (_readsView ? alignmentContainer.scrollLeft * _readsScrollRatio(_readsView) : alignmentContainer.scrollLeft);
 function _readsSetLeft(px) {
-    if (_readsView) alignmentContainer.scrollLeft = Math.max(0, px) / (_readsScrollRatio(_readsView) || 1);
+    if (!_readsView) return;
+    alignmentContainer.scrollLeft = Math.max(0, px) / (_readsScrollRatio(_readsView) || 1);
+    // the bar too, at once: it trusts its own place during input (Enter counts) and wrote the old one back a frame later
+    window._syncHorizontalScrollbar?.();
 }
 const _readsCoverageOnly = v => (v.w - _READS_NAME_W) / v.cell > _READS_WINDOW;
 function _readsSizeSpacer(v) {
