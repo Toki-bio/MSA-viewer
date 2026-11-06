@@ -1290,6 +1290,41 @@ check('Find a function: lists every control, finds by name or tooltip, Enter doe
   return { pass: ok, detail: JSON.stringify(o) };
 }, { timeoutMs: 60000 });
 
+// Right-click menus are built at the click, so the finder holds them in a list by hand. Read the menu code: every item in it
+// must be in the list, or a new item would silently be missing. They are marked, and cannot be run from the bar.
+check('Find a function: right-click functions are all listed, marked, and only say what to do', async (page) => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'script.js'), 'utf8').replace(/\r/g, '');
+  const body = name => { const i = src.search(new RegExp('^function ' + name + '\\(', 'm')); return src.slice(i, src.indexOf('\n}\n', i)); };
+  const norm = t => t.replace(/\$\{[^}]*\}/g, '').replace(/\s*\(.*\)$/, '').replace(/ at\s*$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const labels = new Set();
+  for (const f of ['showContextMenu', '_dotAddSelectionMenuItems', '_dotStretchMenu', '_readsOpenMenu']) {
+    const b = body(f);
+    for (const m of b.matchAll(/(?:textContent = |nucItem\(|\bitem\((?:'\w+', )?|\badd\()([`'])(.*?)\1/g)) labels.add(m[2]);
+    for (const m of b.matchAll(/textContent = [^\n]*\? '([^']*)' : '([^']*)'/g)) { labels.add(m[1]); labels.add(m[2]); }
+  }
+  const wanted = [...labels].filter(t => !/^(Cancel|Color:|None of the rows)/.test(t) && /[a-z]{3}/i.test(t.replace(/\$\{[^}]*\}/g, '')) && !/^\$\{/.test(t) && !/^ ?Rows /.test(t) && !/down, |across$/.test(t));
+  await page.setInputFiles('#fileInput', { name: 'f.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTTGCAAC\n>b\nACGTTGCTAC\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 2); await page.waitForTimeout(400);
+  const list = await page.evaluate(() => ViewAlignFinder.list().filter(x => x.kind === 'right'));
+  const have = new Set(list.map(x => norm(x.name)));
+  const o = { labels: wanted.length, listed: list.length, missing: wanted.filter(t => !have.has(norm(t))), noWhere: list.filter(x => !x.where).length };
+  const before = await page.evaluate(() => JSON.stringify(state.seqs.map(s => s.header + s.seq)));
+  await page.keyboard.press('Control+k'); await page.waitForTimeout(60); await page.keyboard.type('rename seq'); await page.waitForTimeout(60);
+  o.row = await page.evaluate(() => { const r = document.querySelector('.finder-row'); return { name: r.querySelector('.finder-name').textContent, note: r.querySelector('.finder-note').textContent, mark: r.classList.contains('finder-right'), tip: r.title }; });
+  await page.keyboard.press('Enter'); await page.waitForTimeout(200);
+  o.after = await page.evaluate(b => ({ same: b === JSON.stringify(state.seqs.map(s => s.header + s.seq)), menu: !!document.querySelector('.context-menu'), msg: el('statusMessage').textContent, closed: el('finderPanel').hidden }), before);
+  await page.keyboard.press('Escape'); await page.waitForTimeout(60);
+  await page.keyboard.press('Control+k'); await page.waitForTimeout(60); await page.keyboard.type('revers'); await page.waitForTimeout(60);
+  o.order = await page.evaluate(() => [...document.querySelectorAll('.finder-row')].map(r => r.classList.contains('finder-right')));
+  await page.keyboard.press('Escape');
+  const firstRight = o.order.indexOf(true);
+  const ok = o.labels >= 30 && !o.missing.length && !o.noWhere && o.listed >= o.labels - 8
+    && o.row.name === 'Rename sequence' && /right-click a sequence/.test(o.row.note) && o.row.mark && /cannot be run/.test(o.row.tip)
+    && o.after.same && !o.after.menu && /Right-click a sequence, then choose: Rename sequence/.test(o.after.msg) && o.after.closed
+    && firstRight > 0;   // RevComp, which runs from the bar, before the right-click Reverse complement
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 60000 });
+
 // Reads could only be looked at: codon analysis and MACSE work on rows, and in Full view the reads were gone.
 // Full hidden from the switch (owner 2026-11-01): Sample -> row now lands in Canvas (view 'canvas', was 'full').
 // "Sample -> row" puts the sample under the reference; codon analysis must then classify each planted change of

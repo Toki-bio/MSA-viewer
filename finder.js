@@ -4,10 +4,26 @@
  * The list is read from the live menus each time it opens, so a new button is in it without anyone adding it here, and a
  * function that cannot run now (Edit tools outside Edit, Groups before grouping) shows dimmed. Enter does what a click on
  * the real control does: nothing here knows what any function means.
+ *
+ * Right-click menus are the one hand-kept list: they are built at the click, for the row or read under the pointer, so
+ * they cannot be read in advance or run from here. A regression check compares this list with the menu code.
  */
 (function () {
   'use strict';
   var KEY_NAMES = { Del: 'Delete', Up: 'ArrowUp', Down: 'ArrowDown', Left: 'ArrowLeft', Right: 'ArrowRight', Esc: 'Escape', PgUp: 'PageUp', PgDn: 'PageDown' };
+  var RIGHT_CLICK = [
+    ['a sequence', ['Copy as FASTA gapped', 'Copy as FASTA ungapped', 'Copy as plain text gapped', 'Copy as plain text ungapped',
+      'Edit Sequence...', 'Reverse complement', 'Rename sequence', 'Delete sequence', 'Move to Top', 'Move to Bottom', 'BLAST Search',
+      'Re-align against consensus', 'Dot-plot (self)', 'Dot-plot vs consensus', 'Dot-plot vs pasted sequence…', 'Find repeats', 'Find TSD (SINE)']],
+    ['a sequence with a coloured name', ['Copy this color (gapped)', 'Copy this color (ungapped)']],
+    ['a sequence loaded from an AB1 file', ['View Chromatogram...']],
+    ['a residue', ['Insert Single Gap Here', 'Remove Single Gap Here']],
+    ['the selected residues', ['Copy selected bases: plain text', 'Copy selected bases: FASTA', 'Dot-plot of rectangle']],
+    ['the selected columns', ['Dot-plot of selected columns']],
+    ['the selected rows', ['Delete selected', 'Clear selection', 'Replace selected with consensus', 'Add consensus below (selected)', 'Dot-plot (two selected rows)']],
+    ['a read in the Reads view', ['Copy read name', 'Copy read sequence', 'Copy left soft clip', 'Copy right soft clip', 'Go to mate', 'Sort by base', 'Group by base']],
+    ['a green stretch in the dot plot', ['Show this stretch in the alignment', 'Add to the collection', 'Copy both stretches as FASTA']]
+  ];
   var input, panel, list, items = [], shown = [], active = -1, isOpen = false;
 
   function clean(t) { return String(t || '').replace(/\s+/g, ' ').replace(/[\s▾▼▸▶]+$/, '').trim(); }
@@ -62,7 +78,7 @@
       var k = (it.name + '|' + it.path + '|' + (it.tip || '')).toLowerCase();   // a slider and its number box are one
       if (!it.name || seen[k]) return;
       seen[k] = 1;
-      var d = clause(it.tip);
+      var d = it.kind === 'right' ? '' : clause(it.tip);
       it.desc = d && d.toLowerCase() !== it.name.toLowerCase() && !it.deep ? d : '';
       it.hay = (it.name + ' ' + it.path + ' ' + (it.tip || '') + ' ' + (it.hint || '')).toLowerCase();
       it.low = it.name.toLowerCase();
@@ -94,6 +110,9 @@
       if (same) same.hint = same.hint || key;
       else add({ kind: 'key', name: clean(d.textContent), path: 'Keys', hint: key, ok: true });
     });
+    RIGHT_CLICK.forEach(function (g) {
+      g[1].forEach(function (n) { add({ kind: 'right', name: n, path: 'Right-click', where: g[0], tip: 'right click context menu ' + g[0], ok: true }); });
+    });
     return out;
   }
 
@@ -124,12 +143,13 @@
   }
   function row(it, i, words, withPath) {
     var r = document.createElement('div');
-    r.className = 'finder-row' + (it.ok ? '' : ' finder-off');
+    r.className = 'finder-row' + (it.ok ? '' : ' finder-off') + (it.kind === 'right' ? ' finder-right' : '');
     r.id = 'finderRow' + i;
     r.setAttribute('role', 'option');
     r.setAttribute('aria-selected', 'false');
     r.dataset.i = i;
-    if (it.tip) r.title = it.tip;
+    if (it.kind === 'right') r.title = 'Right-click ' + it.where + ' to use this: it cannot be run from here';
+    else if (it.tip) r.title = it.tip;
     var main = document.createElement('span');
     main.className = 'finder-main';
     main.appendChild(textNode(it.name, words, 'finder-name'));
@@ -138,6 +158,7 @@
     var note = it.ok ? '' : 'not available now';
     if (it.ok && it.kind === 'check') note = it.el.checked ? 'on' : 'off';
     if (it.ok && it.kind === 'menu') note = 'menu';
+    if (it.kind === 'right') { note = 'right-click ' + it.where; withPath = false; }
     if (note || it.hint || withPath) {
       var s = document.createElement('span');
       s.className = 'finder-note';
@@ -146,6 +167,8 @@
     }
     return r;
   }
+  // what runs from here comes before what only a right-click can do, and that before what cannot run now
+  function later(it) { return !it.ok ? 2 : it.kind === 'right' ? 1 : 0; }
   function render() {
     var q = input.value.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean);
     list.textContent = '';
@@ -169,7 +192,7 @@
     } else {
       shown = items.map(function (it, i) { return { it: it, r: rank(it, q, words), i: i }; })
         .filter(function (x) { return x.r >= 0; })
-        .sort(function (a, b) { return a.r - b.r || (a.it.ok === b.it.ok ? 0 : a.it.ok ? -1 : 1) || a.it.name.length - b.it.name.length || a.i - b.i; })
+        .sort(function (a, b) { return a.r - b.r || later(a.it) - later(b.it) || a.it.name.length - b.it.name.length || a.i - b.i; })
         .map(function (x) { return x.it; });
       shown.forEach(function (it, i) { list.appendChild(row(it, i, words, true)); });
       if (!shown.length) {
@@ -236,6 +259,7 @@
     if (!it.ok) { if (typeof showMessage === 'function') showMessage(it.name + ' is not available now', 3000); return; }
     close();
     input.blur();
+    if (it.kind === 'right') { if (typeof showMessage === 'function') showMessage('Right-click ' + it.where + ', then choose: ' + it.name, 5000); return; }
     if (it.kind === 'do' || it.kind === 'check') it.el.click();
     else if (it.kind === 'key') pressKey(it.hint);
     else if (it.kind === 'option') {
@@ -296,5 +320,5 @@
     }, true);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
-  window.ViewAlignFinder = { list: function () { return collect().map(function (it) { return { name: it.name, path: it.path, kind: it.kind, ok: it.ok, hint: it.hint, id: it.el && it.el.id, deep: !!it.deep }; }); } };
+  window.ViewAlignFinder = { list: function () { return collect().map(function (it) { return { name: it.name, path: it.path, kind: it.kind, ok: it.ok, hint: it.hint, id: it.el && it.el.id, deep: !!it.deep, where: it.where }; }); } };
 })();

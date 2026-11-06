@@ -4666,5 +4666,6 @@ body.name-resizing { user-select: none; }
     font-size: 10.5px;
 }
 .finder-off { color: #777; cursor: default; }
+.finder-right .finder-note { color: #8a5200; }
 .finder-none { padding: 14px 9px; color: #667; }
 .finder-flash { outline: 2px solid #4a9eff; outline-offset: 1px; }
