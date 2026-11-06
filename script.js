@@ -11617,7 +11617,6 @@ function _readsDrawCoverage(v, a, b, X) {
         v.covMax = max;
     }
     const max = v.covMax, H = _COV_H - 6;
-    if (_genome) _genomeCovLabel(v, top, max, sl);
     const COL = { A: '#4caf50', C: '#2196f3', G: '#ff9800', T: '#f44336' };
     const totals = i => ({ A: cs.fwd[0][i] + cs.rev[0][i], C: cs.fwd[1][i] + cs.rev[1][i], G: cs.fwd[2][i] + cs.rev[2][i], T: cs.fwd[3][i] + cs.rev[3][i] });
     const isMixed = (p, t) => { const i = p - cs.lo, n = t.A + t.C + t.G + t.T; return n > 0 && (n - (t[(_readsRefChar(p) || 'N').toUpperCase()] || 0)) / n >= 0.2 || cs.del[i] / Math.max(1, cs.depth[i]) >= 0.2; };

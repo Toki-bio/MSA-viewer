@@ -43,7 +43,8 @@ async function _genomeOpen(files) {
         _genomeUi(true);
         _genomeShow(fai[0].name);
         syncQuickModeSwitch();
-        const n = fai.length;
+        const n = fai.length, src = el('sourceInfo');
+        if (src) src.textContent = f.bam ? `${f.fasta.name} + ${f.bam.name}` : f.fasta.name;
         showMessage(`${f.fasta.name}: ${n.toLocaleString()} sequence${n === 1 ? '' : 's'}` + (f.bam ? `, reads from ${f.bam.name}, read where you look.` : ', no reads.'), 4000);
     } catch (e) {
         console.error('genome open:', e);
@@ -71,6 +72,8 @@ function _genomeClose() {
     const win = document.getElementById('variantsWindow');
     if (win) win.style.display = 'none';
     alignmentContainer.innerHTML = '';
+    const src = el('sourceInfo');
+    if (src) src.textContent = 'No file loaded';
 }
 
 function _genomeUi(on) {
@@ -199,6 +202,7 @@ const _genomeCoverageOnly = v => { const g = _genome, w = g.win; return g.tooWid
 function _genomeAfterDraw(v, a, b, X) {
     const g = _genome;
     _genomeDrawHatch(v, a, b, X);
+    if (v.covMax != null && !g.tooWide) _genomeCovLabel(v, _READS_REF_H + _READS_SCALE_H, v.covMax);
     if (a === g.lastA && b === g.lastB) return;
     g.lastA = a; g.lastB = b;
     const wasWide = g.tooWide, wasWaiting = g.waiting;
@@ -253,11 +257,12 @@ function _genomeDrawHatch(v, a, b, X) {
         ctx.fillRect(x0, head, x1 - x0, h - head);
     }
 }
-function _genomeCovLabel(v, top, max, sl) {
-    const { ctx } = v;
-    ctx.fillStyle = '#fff'; ctx.fillRect(0, top, Math.max(0, _READS_NAME_W - sl), _COV_H - 1);
-    ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
-    ctx.fillText(`coverage 0-${max}`, _READS_NAME_W - 4 - sl, top + _COV_H / 2);
+// Drawn last, at the left of the screen: the name column it has in the Reads view scrolls away at once on a chromosome
+function _genomeCovLabel(v, top, max) {
+    const { ctx } = v, text = `coverage 0-${max}`;
+    ctx.font = '10px monospace'; ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(0, top + 1, ctx.measureText(text).width + 8, 13);
+    ctx.fillStyle = '#444'; ctx.fillText(text, 4, top + 8);
     ctx.textAlign = 'center';
 }
 

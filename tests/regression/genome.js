@@ -337,6 +337,22 @@ check('reads: outside the loaded bases a read shows no changes and the reference
   return { pass: r.without === 0 && r.blank && r.withBases > 0 && r.ink === 0, detail: JSON.stringify(r) };
 });
 
+check('screen: the coverage scale is on screen away from the chromosome start, and the header names the genome', async (page) => {
+  await open(page, allFiles());
+  await jump(page, 'chrA:700,000');
+  await page.evaluate(() => _readsCalls());
+  const r = await page.evaluate(() => {
+    const v = _readsView, seen = [], o = v.ctx.fillText;
+    v.ctx.fillText = function (s, x, y) { if (/^coverage/.test(s)) seen.push([s, x, this.textAlign]); return o.call(this, s, x, y); };
+    _readsDraw(); v.ctx.fillText = o;
+    const l = seen[seen.length - 1];
+    return { l, shown: !!l && /0-\d+/.test(l[0]) && (l[2] === 'left' ? l[1] >= 0 : l[1] > 60), info: document.getElementById('sourceInfo').textContent };
+  });
+  await page.click('#genomeCloseBtn');
+  const after = await page.evaluate(() => document.getElementById('sourceInfo').textContent);
+  return { pass: r.shown && /g\.fa/.test(r.info) && /r\.bam/.test(r.info) && /No file/.test(after), detail: JSON.stringify({ ...r, after }) };
+});
+
 // ---- step 6: cache, prefetch, cancel ---------------------------------------------------------------------------------------
 check('cache: a walk across the chromosome stays inside the budget', async (page) => {
   await open(page, allFiles());
