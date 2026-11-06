@@ -127,13 +127,13 @@ check('scroll at 250 Mb: dragging moves the view by exactly the mouse, and it st
   await jump(page, 'big:123,456,789');
   await page.evaluate(() => { _readsView.cell = _READS_CELL; _readsSizeSpacer(_readsView); _readsCentre(123456789); });
   const out = [];
-  for (const dx of [-5, 7, -40, 13]) {
+  for (const dx of [-5, 7, -40, 13, -500, 400]) {   // the last two move the scrollbar too (188:1): its scroll event must not move the view
     const a = await left(page);
     await dragBy(page, dx);
     await page.waitForTimeout(80);   // a scroll echo would arrive here
     out.push((await left(page)) - a);
   }
-  const want = [5, -7, 40, -13];
+  const want = [5, -7, 40, -13, 500, -400];
   return { pass: out.every((x, i) => Math.abs(x - want[i]) < 0.01), detail: JSON.stringify(out) };
 });
 
@@ -296,7 +296,17 @@ check('reads: a chromosome switch and back reads the right reads, nothing of the
   const b = await page.evaluate(() => [bamState.refName, bamState.refEnd, bamState.reads.length, bamState.reads.every(r => r.refID === 1)]);
   await jump(page, 'chrA:600000');
   const a = await page.evaluate(() => [bamState.refName, bamState.reads.every(r => r.refID === 0), bamState.reads.length]);
-  return { pass: b[0] === 'chrB' && b[1] === 200000 && b[2] > 0 && b[3] && a[0] === 'chrA' && a[1] && a[2] > 0, detail: JSON.stringify({ a, b }) };
+  // a tile of chrA still being read when the view goes to chrB must not land on chrB
+  await jump(page, 'chrA:100,000');
+  await page.evaluate(() => { _genome.cache.clear(); window.__gate = []; const o = GenomeWindow.loadTile; GenomeWindow.loadTile = async (...a) => { const t = await o(...a); await new Promise(r => window.__gate.push(r)); return t; }; window.__o = o; _genome.lastA = -1; _readsCentre(100500); });
+  await page.waitForFunction(() => window.__gate.length > 0);
+  await page.evaluate(() => { GenomeWindow.loadTile = window.__o; });
+  await page.selectOption('#genomeChrom', 'chrB');
+  await page.evaluate(() => { for (const r of window.__gate) r(); });
+  await page.waitForTimeout(40); await idle(page);
+  await jump(page, 'chrB:100,000');
+  const late = await page.evaluate(() => [bamState.refName, bamState.reads.length, bamState.reads.filter(r => r.refID !== 1).length]);
+  return { pass: b[0] === 'chrB' && b[1] === 200000 && b[2] > 0 && b[3] && a[0] === 'chrA' && a[1] && a[2] > 0 && late[0] === 'chrB' && late[2] === 0, detail: JSON.stringify({ a, b, late }) };
 });
 
 check('reads: the draw limit goes by the density of the window, not of the chromosome', async (page) => {
