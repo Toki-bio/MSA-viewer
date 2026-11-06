@@ -15961,6 +15961,37 @@ check('Large input: after a big ?url= load, opening another file shows that file
   const r = await page.evaluate(() => ({ n: state.seqs.length, first: state.seqs[0].header, name: state.currentFilename }));
   return { pass: r.n === 2 && r.first === 's1', detail: JSON.stringify(r) };
 }, { timeoutMs: 120000 });
+// Every row kept a table of its residue position per column: 215 MB of the 266 MB live at 100,000 x 400, and the
+// parser built it and updateSourceInfo threw it away and built it again. Above 10 million residues nothing keeps it:
+// the header counts, and the readers (length badge, hover) build it for the rows they show.
+check('Large input: above 10 million residues rows keep no position table, and lengths and hover stay right', async (page) => {
+  const rows = 40000, cols = 300, b = 'ACGT', out = [];
+  for (let i = 0; i < rows; i++) {
+    let s = '-'.repeat(i % 5); for (let j = s.length; j < cols; j++) s += b[(i * 7 + j * (1 + (j % 3))) & 3];
+    out.push('>g' + i, s);
+  }
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto(new URL(page.url()).origin + '/index.html', { waitUntil: 'load' });
+  await page.setInputFiles('#fileInput', { name: 'tall.fa', mimeType: 'text/plain', buffer: Buffer.from(out.join('\n') + '\n') });
+  for (let i = 0; i < 300; i++) {
+    const pb = await page.$('#alignLoadProceed');
+    if (pb && await pb.isVisible().catch(() => false)) await pb.click().catch(() => {});
+    if (await page.evaluate(n => typeof state !== 'undefined' && state.seqs && state.seqs.length === n, rows)) break;
+    await page.waitForTimeout(100);
+  }
+  await page.waitForTimeout(1500);
+  const r = await page.evaluate(() => ({
+    kept: state.seqs.filter(q => q.gaplessPositions).length,
+    info: el('sourceInfo').textContent,
+    badge: _seqLengthBadgeHtml(3),
+    res: _linkColToRes(4, 10),            // row 4 starts with 4 gaps: column 10 is residue 7
+    keptAfter: state.seqs.filter(q => q.gaplessPositions).length,
+  }));
+  const box = await page.locator('canvas').first().boundingBox();
+  await page.mouse.move(box.x + 300, box.y + 120); await page.waitForTimeout(700);
+  const pass = r.kept === 0 && /296-300/.test(r.info) && /Sequence length: 297 /.test(r.badge) && r.res === 7 && r.keptAfter === 2 && errors.length === 0;
+  return { pass, detail: JSON.stringify({ ...r, errors: errors.slice(0, 2) }) };
+}, { timeoutMs: 120000 });
 // Counting a column with typed arrays must give what the object counting gave, for every option and odd character.
 check('Large input: consensus and conservation equal the plain counting on odd characters and ragged rows', async (page) => {
   const res = await page.evaluate(() => {

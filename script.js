@@ -3236,6 +3236,14 @@ function toggleStickyNames() {
     // and paid a second full render in Block for nothing; GLM audit cblk #6).
     if (isCanvasMode() && !isBlockLayout()) debounceRender();
 }
+// Above this many residues no row keeps its table of residue positions (215 MB of 266 MB live at 100,000 x 400):
+// the parsers stop building it, updateSourceInfo counts, and _linkGapless builds it for a row that is asked for.
+const GAPLESS_TABLE_MAX_RESIDUES = 10_000_000;
+function _gaplessCount(sequence) {
+    let n = 0;
+    for (let i = 0; i < sequence.length; i++) { const c = sequence.charCodeAt(i); if (c !== 45 && c !== 46) n++; }
+    return n;
+}
 function calculateGaplessPositions(sequence) {
     const positions = [];
     let gaplessCount = 0;
@@ -8115,7 +8123,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
             if (seqObj) {
                 const base = seqObj.seq[col] || '-';
                 if (base !== '-' && base !== '.') {
-                    const gaplessPos = seqObj.gaplessPositions[col];
+                    const gaplessPos = _linkGapless(seqObj)[col];
                     // Position the 1×1 target at the cell's top-centre so
                     // showTooltipAt places the tooltip directly above the
                     // cell, matching DOM mode's span-anchored positioning.
@@ -8523,7 +8531,7 @@ function _pushParsedFastaSequence(seqs, header, seq) {
     const cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ');
     const displayHeader = cleanHeader.split(/\s+/)[0] || 'unnamed';
     const processedSeq = _sanitizeFastaSequence(seq, _isProteinFastaSequence(seq));
-    const gaplessPositions = calculateGaplessPositions(processedSeq);
+    const gaplessPositions = seqs.length * processedSeq.length < GAPLESS_TABLE_MAX_RESIDUES ? calculateGaplessPositions(processedSeq) : null;
     seqs.push({ header: displayHeader, fullHeader: cleanHeader, seq: processedSeq, gaplessPositions: gaplessPositions });
 }
 
@@ -8809,7 +8817,7 @@ function parseMsf(text) {
             while (processedSeq.length < maxLen) {
                 processedSeq += '-';
             }
-            const gaplessPositions = calculateGaplessPositions(processedSeq);
+            const gaplessPositions = seqs.length * processedSeq.length < GAPLESS_TABLE_MAX_RESIDUES ? calculateGaplessPositions(processedSeq) : null;
             const displayHeader = name.split(/\s+/)[0] || 'unnamed';
             seqs.push({ header: displayHeader, fullHeader: name, seq: processedSeq, gaplessPositions: gaplessPositions });
         }
@@ -12843,7 +12851,9 @@ function updateSourceInfo() {
     const seqCount = state.seqs.length;
     const aliLength = _maxOf(state.seqs, s => s.seq.length);
     // (_linkGapless recounts a row whose text changed: a typed residue keeps the length and left the old counts)
-    const gaplessLengths = state.seqs.map(seq => { const g = _linkGapless(seq); return g[g.length - 1] || 0; });
+    const bigTable = seqCount * aliLength > GAPLESS_TABLE_MAX_RESIDUES;
+    if (bigTable) for (const seq of state.seqs) { seq.gaplessPositions = null; seq._linkGapFor = null; }
+    const gaplessLengths = state.seqs.map(seq => { if (bigTable) return _gaplessCount(seq.seq); const g = _linkGapless(seq); return g[g.length - 1] || 0; });
     const minLength = _minOf(gaplessLengths);
     const maxLength = _maxOf(gaplessLengths);
     const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
@@ -13588,7 +13598,7 @@ function _seqDataSpansHtml(index, start, end, standard, ambiguous, blackThresh, 
 
 // The "sequence length" badge shown after a row's last column.
 function _seqLengthBadgeHtml(index) {
-    const gaplessPositions = state.seqs[index].gaplessPositions;
+    const gaplessPositions = _linkGapless(state.seqs[index]);
     const gaplessLength = gaplessPositions[gaplessPositions.length - 1] || 0;
     return `<span class="seq-length" title="Sequence length: ${gaplessLength} (gapless)">${gaplessLength}</span>`;
 }
@@ -28538,7 +28548,7 @@ function attachUIListeners() {
                     if (seqIdx !== undefined && state.seqs[seqIdx]) {
                         const base = span.textContent;
                         if (base !== '-' && base !== '.') {
-                            const gaplessPos = state.seqs[seqIdx].gaplessPositions[pos];
+                            const gaplessPos = _linkGapless(state.seqs[seqIdx])[pos];
                             showTooltipAt(`${state.seqs[seqIdx].header}: ${gaplessPos}`, span);
                         }
                     }
