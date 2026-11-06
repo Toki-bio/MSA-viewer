@@ -583,18 +583,21 @@ function baiChunks(index, refId, beg, end) {
 async function readVirtualRange(file, beg, end) {
     // the block holding `end` starts at end.c: read up to there plus one whole block (at most 64 KiB)
     const bytes = new Uint8Array(await file.slice(beg.c, Math.min(file.size, end.c + 65536 + 1024)).arrayBuffer());
-    const parts = [];
-    let off = 0, total = 0;
+    // the blocks first, then all decompressed at once: one at a time made an index slower than reading the whole file
+    const blocks = [];
+    let off = 0, total = 0, cut = -1;
     while (off < bytes.length) {
         const bsize = bgzfBlockSize(bytes, off);
         if (bsize <= 0 || off + bsize > bytes.length) break;
         const atEnd = beg.c + off === end.c;
-        let data = await gunzipBytes(bytes.subarray(off, off + bsize));
-        if (atEnd) data = data.subarray(0, end.u);
-        parts.push(data); total += data.length;
+        blocks.push(bytes.subarray(off, off + bsize));
+        if (atEnd) cut = blocks.length - 1;
         off += bsize;
         if (atEnd || beg.c + off > end.c) break;
     }
+    const parts = await Promise.all(blocks.map(gunzipBytes));
+    if (cut >= 0) parts[cut] = parts[cut].subarray(0, end.u);
+    for (const d of parts) total += d.length;
     const out = new Uint8Array(total);
     let p = 0;
     for (const d of parts) { out.set(d, p); p += d.length; }
@@ -642,8 +645,9 @@ async function readBamRegion(file, index, refId, beg, end, keepFlagged) {
         bytesRead += buf.length;
         fileBytesRead += buf.compressedBytes || 0;
         let off = 0;
+        const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
         while (off + 4 <= buf.length) {
-            const res = parseBAMRecord(buf, off);
+            const res = parseBAMRecord(buf, off, dv);
             if (!res) break;
             off = res.nextOffset;
             const r = res.record;
