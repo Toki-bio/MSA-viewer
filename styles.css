@@ -785,6 +785,7 @@ button:hover {
     height: 52vh;
     min-height: 180px;
     overflow: auto;
+    overscroll-behavior: contain;   /* two fingers at the end of the tree do not move the window behind it */
     resize: vertical;
     position: relative;
     /* Click-drag panning shouldn't trigger native browser text selection

@@ -449,7 +449,8 @@
     (function w(n) { if (!n.children.length) maxLabel = Math.max(maxLabel, measure(n.name || '?')); n.children.forEach(w); })(root);
     maxLabel *= (fontSize / 12);
 
-    var labelW = Math.min(maxLabel + 10, 260 * zoom), gap = 8;
+    // as wide as the longest name: a cap cut names at the edge of the image, on screen and in the saved file
+    var labelW = maxLabel + 10, gap = 8;
     var plotW = Math.max(150, (containerW - padL - gap - 8) * zoom - labelW);
     var scaleX = maxX > 0 ? plotW / maxX : 1;
     var totalW = padL + plotW + gap + labelW + 8;
@@ -899,15 +900,43 @@
         if (moved) st._suppressNextClick = true;
       });
     })();
-    // Plain wheel zooms, matching iTOL/most tree viewers (Ctrl/Cmd+wheel also works, for
-    // anyone used to the rest of this app's Ctrl+wheel convention). Shift+wheel is left
-    // alone so it still does the browser's native horizontal-scroll-pan on this box's own
-    // scrollbars when the tree is too wide to fit.
+    // A mouse wheel zooms, matching iTOL/most tree viewers. On a touchpad two fingers scroll, natively, and a pinch zooms:
+    // the browser sends a pinch as wheel with ctrlKey, deltaY = -100 ln(scale), so exp(-deltaY / 100) is the pinch itself.
+    // Shift+wheel is left alone for the browser's horizontal pan. A wheel event does not say what sent it: a notch is
+    // a whole step on one axis, a touchpad sends small deltas, and a fast flick that grows from them stays a touchpad.
+    var touchpadUntil = 0, zoomAnchor = null;
+    function isMouseNotch(ev) {
+      if (ev.deltaMode !== 0) return true;
+      var small = ev.deltaX !== 0 || Math.abs(ev.deltaY) < 50 || !Number.isInteger(ev.deltaY);
+      if (small) touchpadUntil = ev.timeStamp + 400;
+      return !small && ev.timeStamp > touchpadUntil;
+    }
+    function zoomAtPointer(factor, ev) {
+      var z = Math.min(4, Math.max(0.25, st.zoom * factor));
+      if (z === st.zoom) return;
+      st.zoom = z;
+      var r = canvas.getBoundingClientRect();
+      var queued = !!zoomAnchor;
+      zoomAnchor = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+      if (queued) return;
+      requestAnimationFrame(function () {   // one redraw a frame: a pinch sends many events
+        var a = zoomAnchor, svg = currentSvgEl();
+        zoomAnchor = null;
+        var w = svg ? +svg.getAttribute('width') : 0, h = svg ? +svg.getAttribute('height') : 0;
+        var fx = w ? (canvas.scrollLeft + a.x) / w : 0, fy = h ? (canvas.scrollTop + a.y) / h : 0;
+        draw();
+        svg = currentSvgEl();
+        if (!svg) return;
+        canvas.scrollLeft = fx * +svg.getAttribute('width') - a.x;
+        canvas.scrollTop = fy * +svg.getAttribute('height') - a.y;
+      });
+    }
     canvas.addEventListener('wheel', function (ev) {
       if (ev.shiftKey) return;
+      var notch = isMouseNotch(ev);
+      if (!notch && !ev.ctrlKey) return;
       ev.preventDefault();
-      st.zoom = ev.deltaY < 0 ? Math.min(4, st.zoom * 1.1) : Math.max(0.25, st.zoom / 1.1);
-      draw();
+      zoomAtPointer(notch ? (ev.deltaY < 0 ? 1.1 : 1 / 1.1) : Math.exp(-ev.deltaY / 100), ev);
     }, { passive: false });
     return panel;
   }

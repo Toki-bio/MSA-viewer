@@ -1174,6 +1174,51 @@ check('Reads on real shapes: few long reads show over a wide view, soft clips ca
   return { pass: ok, detail: JSON.stringify(o) };
 }, { timeoutMs: 60000 });
 
+// The tree cut every long name at 260 px (10 of 10 names, up to 470 px, also in the saved image). On a touchpad two fingers
+// zoomed instead of scrolling, a sideways swipe zoomed out, and a pinch of 1.6x went to the 400% limit because each small
+// event was a whole 10% step. Zoom did not stay at the pointer. Chrome's own touchpad gestures, through CDP.
+check('Tree: long names are whole, two fingers scroll, a pinch zooms by its size at the pointer, the mouse wheel still zooms', async (page) => {
+  let seed = 5; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let base = ''; for (let i = 0; i < 300; i++) base += 'ACGT'[(rnd() * 4) | 0];
+  let fa = ''; for (let i = 0; i < 40; i++) { let s = ''; for (const c of base) s += rnd() < 0.05 + i * 0.002 ? 'ACGT'[(rnd() * 4) | 0] : c; fa += `>${i % 4 === 0 ? 'Long_species_name_voucher_' + (1000 + i) + '_isolate_some_region_mitochondrion_complete_genome_cytochrome_b_gene_partial_cds_END' + i : 'seq' + i}\n${s}\n`; }
+  await page.setInputFiles('#fileInput', { name: 't.fa', mimeType: 'text/plain', buffer: Buffer.from(fa) });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 40); await page.waitForTimeout(400);
+  await page.evaluate(() => { state.selectedRows = new Set(state.seqs.map((_, i) => i)); openTreeBuilder(); });
+  await page.waitForSelector('#treeSvgCanvas svg', { timeout: 30000 }); await page.waitForTimeout(400);
+  const cut = () => page.evaluate(() => { const svg = document.querySelector('#treeSvgCanvas svg'), W = +svg.getAttribute('width'), t = [...svg.querySelectorAll('text')].filter(x => /END|^seq/.test(x.textContent)); return { n: t.length, cut: t.filter(x => x.getBBox().x + x.getBBox().width > W + 0.5).length }; });
+  const look = () => page.evaluate(() => { const c = document.getElementById('treeSvgCanvas'); return { zoom: parseInt(document.getElementById('treeZoomLabel').textContent, 10), top: Math.round(c.scrollTop), left: Math.round(c.scrollLeft) }; });
+  const box = await page.locator('#treeSvgCanvas').boundingBox(), cx = Math.round(box.x + box.width / 2), cy = Math.round(box.y + box.height / 2);
+  // where the name nearest the pointer is on screen
+  const mark = () => page.evaluate(y => { const t = [...document.querySelectorAll('#treeSvgCanvas svg text')].filter(x => /END|^seq/.test(x.textContent)); let b = t[0]; for (const x of t) if (Math.abs(x.getBoundingClientRect().top - y) < Math.abs(b.getBoundingClientRect().top - y)) b = x; return b.textContent; }, cy);
+  const yOf = n => page.evaluate(n => Math.round([...document.querySelectorAll('#treeSvgCanvas svg text')].find(x => x.textContent === n).getBoundingClientRect().top), n);
+  const cdp = await page.context().newCDPSession(page);
+  const o = { names: await cut(), start: await look() };
+  await page.mouse.move(cx, cy);
+  await cdp.send('Input.synthesizeScrollGesture', { x: cx, y: cy, yDistance: -200, speed: 800, gestureSourceType: 'mouse' }); await page.waitForTimeout(300);
+  o.down = await look();
+  await page.waitForTimeout(600);
+  // a mouse notch: 10% at the pointer
+  let n = await mark(), y0 = await yOf(n);
+  await page.mouse.wheel(0, -100); await page.waitForTimeout(250);
+  o.notch = await look(); o.notchDrift = Math.abs(await yOf(n) - y0);
+  await page.waitForTimeout(600);
+  n = await mark(); y0 = await yOf(n);
+  const z0 = (await look()).zoom;
+  await cdp.send('Input.synthesizePinchGesture', { x: cx, y: cy, scaleFactor: 1.6, gestureSourceType: 'mouse' }); await page.waitForTimeout(400);
+  o.pinch = await look(); o.pinchRatio = +(o.pinch.zoom / z0).toFixed(2); o.pinchDrift = Math.abs(await yOf(n) - y0);
+  await page.waitForTimeout(600);
+  const l0 = (await look()).left;
+  await cdp.send('Input.synthesizeScrollGesture', { x: cx, y: cy, xDistance: -150, speed: 800, gestureSourceType: 'mouse' }); await page.waitForTimeout(300);
+  o.side = await look(); o.sideMoved = o.side.left - l0;
+  o.namesAfter = await cut();
+  const ok = o.names.n === 40 && o.names.cut === 0 && o.namesAfter.cut === 0
+    && o.down.zoom === o.start.zoom && o.down.top > 100
+    && o.notch.zoom === 110 && o.notchDrift <= 12
+    && o.pinchRatio > 1.4 && o.pinchRatio < 1.8 && o.pinchDrift <= 30
+    && o.side.zoom === o.pinch.zoom && o.sideMoved > 80;
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 60000 });
+
 // Reads could only be looked at: codon analysis and MACSE work on rows, and in Full view the reads were gone.
 // Full hidden from the switch (owner 2026-11-01): Sample -> row now lands in Canvas (view 'canvas', was 'full').
 // "Sample -> row" puts the sample under the reference; codon analysis must then classify each planted change of
