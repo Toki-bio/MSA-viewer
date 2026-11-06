@@ -108,6 +108,7 @@ const SUITES = [
   { name: 'unit: indexed BAM reading against samtools', args: ['tests/unit/bam-index.test.js'] },
   { name: 'unit: BAM header read stops at the header', args: ['tests/unit/bam-header-read.test.js'] },
   { name: 'unit: FASTA read through .fai', args: ['tests/unit/genome-fasta.test.js'] },
+  { name: 'unit: genome view window', args: ['tests/unit/genome-window.test.js'] },
   { name: 'unit: per-check time limit', args: ['tests/unit/check-timeout.test.js'] },
   { name: 'unit: sleep detection and retry after sleep', args: ['tests/unit/sleep-watch.test.js'] },
   { name: 'unit: resume progress file', args: ['tests/unit/resume.test.js'] },

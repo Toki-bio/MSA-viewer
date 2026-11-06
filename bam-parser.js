@@ -650,19 +650,22 @@ async function readBamHeaderFromFile(file) {
 
 /**
  * The reads of one reference overlapping [beg, end) from an indexed BAM, flags filtered as parseBAMRecords does:
- * { records, totalReads (in the chunks read), skipped, chunks, bytesRead }.
+ * { records, totalReads (in the chunks read), skipped, chunks, bytesRead }. opts for the genome view's tiles: isStale(), asked
+ * between steps, ends the reading with stale: true; maxReads stops there with cut: true.
  */
-async function readBamRegion(file, index, refId, beg, end, keepFlagged) {
+async function readBamRegion(file, index, refId, beg, end, keepFlagged, opts) {
     const records = [], skipped = {};
     let totalReads = 0, bytesRead = 0, fileBytesRead = 0;
     const chunks = baiChunks(index, refId, beg, end);
     // A chunk is read in growing steps and left at the first record past the region: the file is sorted, so nothing later can
     // overlap. A chunk merged into a parent bin can span the reference, and baiChunks cannot cut it. A record cut by the end of
     // a step is carried into the next one.
-    let past = false;
+    let past = false, cut = false;
+    const isStale = opts && opts.isStale, maxReads = (opts && opts.maxReads) || 0;
     for (const ch of chunks) {
         let c = ch.beg.c, first = ch.beg.u, carry = null, step = 1 << 17, done = false;
         while (!done && !past) {
+            if (isStale && isStale()) return { records: [], totalReads, skipped, chunks: chunks.length, bytesRead, fileBytesRead, stale: true };
             const got = await readBlocks(file, c, ch.end, step);
             fileBytesRead += got.next - c;
             bytesRead += got.data.length;
@@ -686,13 +689,14 @@ async function readBamRegion(file, index, refId, beg, end, keepFlagged) {
                 totalReads++;
                 const why = skipReason(r.flag, keepFlagged);
                 if (why || !r.cigar.length) { skipped[why || 'no CIGAR'] = (skipped[why || 'no CIGAR'] || 0) + 1; continue; }
+                if (maxReads && records.length >= maxReads) { cut = true; past = true; break; }
                 if (records.length < MAX_READS) records.push(r);
             }
             carry = off < buf.length ? buf.slice(off) : null;
         }
         if (past) break;
     }
-    return { records, totalReads, skipped, chunks: chunks.length, bytesRead, fileBytesRead };
+    return { records, totalReads, skipped, chunks: chunks.length, bytesRead, fileBytesRead, cut };
 }
 
 /**
