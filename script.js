@@ -3244,6 +3244,17 @@ function _gaplessCount(sequence) {
     for (let i = 0; i < sequence.length; i++) { const c = sequence.charCodeAt(i); if (c !== 45 && c !== 46) n++; }
     return n;
 }
+// A row's residue count without a position table, counted once per row text. Beside the row, not on it: snapshots
+// and undo copy the row's own fields. The canvas needs it for every row on every redraw (the length badge's width):
+// recounting 20 million residues there blocked the page for 565 ms (check 'Audit v284: hidden columns').
+const _rowLenCache = new WeakMap();
+function _rowLen(q) {
+    const e = _rowLenCache.get(q);
+    if (e && e.s === q.seq) return e.n;
+    const n = _gaplessCount(q.seq);
+    _rowLenCache.set(q, { s: q.seq, n });
+    return n;
+}
 function calculateGaplessPositions(sequence) {
     const positions = [];
     let gaplessCount = 0;
@@ -6536,7 +6547,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // in a grey box. Its width is measured once for the longest number.
     const BADGE_FONT = 'bold ' + Math.round(fontSizePx * 0.85) + 'px "Courier New", monospace';
     const BADGE_GAP = 6, BADGE_PAD = 4;
-    const _gaplessLen = (q) => { const g = q.gaplessPositions; return (g && g.length) ? (g[g.length - 1] || 0) : q.seq.replace(/[-.]/g, '').length; };
+    const _gaplessLen = (q) => { const g = q.gaplessPositions; return (g && g.length) ? (g[g.length - 1] || 0) : _rowLen(q); };
     const BADGE_W = (() => {
         let maxLen = 0;
         for (let i = 0; i < nSeqs; i++) maxLen = Math.max(maxLen, _gaplessLen(state.seqs[i]));
@@ -12853,7 +12864,7 @@ function updateSourceInfo() {
     // (_linkGapless recounts a row whose text changed: a typed residue keeps the length and left the old counts)
     const bigTable = seqCount * aliLength > GAPLESS_TABLE_MAX_RESIDUES;
     if (bigTable) for (const seq of state.seqs) { seq.gaplessPositions = null; seq._linkGapFor = null; }
-    const gaplessLengths = state.seqs.map(seq => { if (bigTable) return _gaplessCount(seq.seq); const g = _linkGapless(seq); return g[g.length - 1] || 0; });
+    const gaplessLengths = state.seqs.map(seq => { if (bigTable) return _rowLen(seq); const g = _linkGapless(seq); return g[g.length - 1] || 0; });
     const minLength = _minOf(gaplessLengths);
     const maxLength = _maxOf(gaplessLengths);
     const lengthRange = minLength === maxLength ? `${minLength}` : `${minLength}-${maxLength}`;
