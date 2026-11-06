@@ -587,24 +587,78 @@ check('BAM piles onto a loaded reference (multi-block BGZF decompresses in Chrom
 
 // The reference letters, the ruler and the read bars are three separate rows; each base must sit in
 // one column across all three (the reference name label had borrowed the main view's -12px margin)
+// The Reads view is a canvas: these read what was really painted. __ink: pixels in a box that differ from the box's
+// background, with their mean x; __has: does a colour occur in the box; __first: leftmost x of a colour along a row.
+const READS_PX = `
+  window.__px = (x0, y0, w, h) => { const c = el('readsCanvas'), d = window.devicePixelRatio || 1;
+    return { d: c.getContext('2d').getImageData(Math.round(x0 * d), Math.round(y0 * d), Math.max(1, Math.round(w * d)), Math.max(1, Math.round(h * d))), s: d }; };
+  window.__rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  window.__near = (D, i, c, t) => Math.abs(D[i] - c[0]) <= t && Math.abs(D[i + 1] - c[1]) <= t && Math.abs(D[i + 2] - c[2]) <= t;
+  window.__ink = (x0, y0, w, h, bg) => { const { d, s } = __px(x0, y0, w, h), c = __rgb(bg); let n = 0, sx = 0;
+    for (let y = 0; y < d.height; y++) for (let x = 0; x < d.width; x++) if (!__near(d.data, (y * d.width + x) * 4, c, 40)) { n++; sx += x; }
+    return { n, cx: n ? x0 + sx / n / s : null }; };
+  window.__has = (x0, y0, w, h, col, t = 12) => { const { d } = __px(x0, y0, w, h), c = __rgb(col);
+    for (let i = 0; i < d.data.length; i += 4) if (__near(d.data, i, c, t)) return true; return false; };
+  window.__first = (x0, y, w, col) => { const { d, s } = __px(x0, y, w, 1), c = __rgb(col);
+    for (let x = 0; x < d.width; x++) if (__near(d.data, x * 4, c, 30)) return x0 + x / s; return null; };
+  window.__rowY = read => _readsHeadH() + read.track * _READS_TRACK_H - alignmentContainer.scrollTop;
+  window.__colX = p => _READS_NAME_W + (p - bamState.refStart) * _READS_CELL - alignmentContainer.scrollLeft;
+`;
+
 check('BAM Reads view: reference bases, ruler and reads line up base for base', async (page) => {
   await openSynthetic(page, 'synth_ref.fa');
   await openSynthetic(page, 'synth_reads.bam');
+  await page.evaluate(READS_PX);
   const r = await page.evaluate(() => {
-    const L = e => e.getBoundingClientRect().left;
-    const refCells = [...document.querySelectorAll('.ref-track-line .seq-data span')];
-    const rulerCells = [...document.querySelector('.scale-line').children[1].children];
-    const svg = document.getElementById('readsPileSvg');   // the reads (a coverage row's svg now comes first)
     // read_perfect_a: 40M at position 1, so its bar starts at the reference's first base
     const read = bamState.reads.find(x => x.name === 'read_perfect_a' || x.readName === 'read_perfect_a');
-    const bar = read && [...svg.querySelectorAll('rect')].find(e => e.getAttribute('width') == String(40 * 12));
-    const p = read ? read.pos - bamState.refStart : -1;
-    return { refBase: refCells[p] && Math.round(L(refCells[p])), ruler: rulerCells[p] && Math.round(L(rulerCells[p])),
-             read: bar && Math.round(L(svg) + +bar.getAttribute('x')), refLetter: refCells[p] && refCells[p].textContent, p };
+    const p = read.pos, x = __colX(p), ruled = p + 9 - (p + 9 + 1) % 10;   // the first column with a number
+    return { x, refLetter: bamState.refSeq[p],
+      refInk: __ink(x, 2, _READS_CELL, 16, '#fafafa').cx,                  // the letter, in the middle of its cell
+      read: __first(0, __rowY(read) + 8, 600, '#2c5d80'),                  // the read's start cap
+      rulerInk: __ink(__colX(ruled), _READS_REF_H + 1, _READS_CELL, 10, '#f5f5f5').cx, rulerAt: __colX(ruled) + _READS_CELL / 2 };
   });
-  const ok = r.refBase != null && r.refBase === r.ruler && r.refBase === r.read && r.refLetter === 'A';
+  const ok = r.refLetter === 'A' && Math.abs(r.refInk - (r.x + 6)) <= 2 && Math.abs(r.read - r.x) <= 1.5 && Math.abs(r.rulerInk - r.rulerAt) <= 3;
   return { pass: ok, detail: JSON.stringify(r) };
 });
+
+// The SVG held a node per read, cap and mismatch for the whole reference: 100 kb at 30x took 9.5 s and 460,000 nodes,
+// 1 Mb 90 s and 4.6 million. Only what is on screen is drawn now, so hover and click must find the read from the
+// mouse position, also far from the start of the reference.
+check('Reads canvas: 100 kb at 30x stays small, and at the far end the painted read, hover and click are the right one', async (page) => {
+  const L = 100000, RL = 150, b = 'ACGT'; let seed = 3; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const lines = [`@SQ\tSN:chrF\tLN:${L}`];
+  for (let i = 0, p = 0; p < L - RL; i++, p += 5) {
+    let s = ref.slice(p, p + RL);
+    if (p === 99000) s = s.slice(0, 20) + (s[20] === 'A' ? 'C' : 'A') + s.slice(21);   // one mismatch at position 99021
+    lines.push(`far${p}\t${i % 2 ? 16 : 0}\tchrF\t${p + 1}\t60\t${RL}M\t*\t0\t0\t${s}\t*`);
+  }
+  await page.setInputFiles('#fileInput', { name: 'far.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrF\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(600);
+  await page.setInputFiles('#bamFileInput', { name: 'far.sam', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\n') + '\n') });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView && _readsView.drawn.length > 0, null, { timeout: 30000 });
+  await page.evaluate(READS_PX);
+  const cdp = await page.context().newCDPSession(page); await cdp.send('Performance.enable');
+  const nodes = (await cdp.send('Performance.getMetrics')).metrics.find(m => m.name === 'Nodes').value;
+  const r = await page.evaluate(() => {
+    const q = bamState.reads.find(x => x.name === 'far99000');
+    alignmentContainer.scrollLeft = _readsBarGeom(q).x - 400; alignmentContainer.scrollTop = q.track * _READS_TRACK_H; _readsDraw();
+    const p = 99020, y = __rowY(q), box = el('readsCanvas').getBoundingClientRect();
+    return { name: q.name, drawnNow: _readsView.drawn.length, total: bamState.reads.length, x: __colX(p), y,
+      red: __has(__colX(p), y + 3, _READS_CELL, 10, '#e74c3c', 40), redBeside: __has(__colX(p + 1), y + 3, _READS_CELL, 10, '#e74c3c', 40),
+      mx: box.left + __colX(99005) + 6, my: box.top + y + 8 };
+  });
+  await page.mouse.move(r.mx, r.my); await page.waitForTimeout(250);
+  const tip = await page.evaluate(() => document.querySelector('.tooltip.reads-tooltip')?.textContent || '');
+  await page.mouse.click(r.mx, r.my); await page.waitForTimeout(100);
+  const sel = await page.evaluate(() => _readsView.selected && _readsView.selected.name);
+  await page.mouse.click(r.mx, r.my); await page.waitForTimeout(100);
+  const unsel = await page.evaluate(() => _readsView.selected);
+  const ok = nodes < 30000 && r.drawnNow < 2000 && r.total > 3000 && r.red && !r.redBeside && tip.includes('far99000') && sel === 'far99000' && !unsel;
+  return { pass: ok, detail: JSON.stringify({ nodes, r, tip: tip.slice(0, 50), sel, unsel }) };
+}, { timeoutMs: 120000 });
 
 // Reads could only be looked at: codon analysis and MACSE work on rows, and in Full view the reads were gone.
 // Full hidden from the switch (owner 2026-11-01): Sample -> row now lands in Canvas (view 'canvas', was 'full').
@@ -1074,11 +1128,15 @@ check('Reads: Variants window lists each change with depth, strands and gene eff
   await page.waitForTimeout(2500);
   await page.click('#readsVariantsButton');
   await page.waitForTimeout(800);
+  await page.evaluate(READS_PX);
   const r = await page.evaluate(() => ({
     rows: [...document.querySelectorAll('#variantsTable tbody tr[data-pos]')].map(tr => [...tr.children].map(td => td.textContent)),
     tsvLines: _variantsTsv().trim().split('\n').length,
-    coverageBars: [...document.querySelectorAll('#readsCoverageSvg rect')].filter(x => !x.classList.contains('reads-downsampled')).reduce((t, x) => t + (+x.getAttribute('width')), 0) / 12,   // bases with a bar
-    strandColours: new Set([...document.querySelectorAll('#readsPileSvg rect[data-stroke]')].map(b => b.getAttribute('fill'))).size
+    coverageBars: _readsCalls().counts.depth.reduce((t, d) => t + (d > 0 ? 1 : 0), 0),   // bases with a bar
+    // each strand's bar as painted: scroll to a read of that strand and read its fill
+    strandColours: new Set([0, 0x10].map(s => { const q = bamState.reads.find(x => (x.flag & 0x10) === s && x.end - x.start > 3);
+      alignmentContainer.scrollLeft = Math.max(0, _readsBarGeom(q).x - 300); alignmentContainer.scrollTop = q.track * _READS_TRACK_H; _readsDraw();
+      return ['#f3d3d6', '#d3dbf3'].filter(c => __has(__colX(q.start), __rowY(q) + 3, _READS_CELL * 3, 4, c, 6)).join(); }).filter(Boolean)).size
   }));
   const pOf = r.rows.map(c => c[10]).join(',');
   const effects = r.rows.map(c => c[8]).join(',');
@@ -1090,7 +1148,7 @@ check('Reads: Variants window lists each change with depth, strands and gene eff
     const p = bamState.focusPos;
     const first = bamState.reads.filter(x => x.track === 0).map(x => _readBaseAt(x, p)).find(b => b != null);
     const last = bamState.reads.filter(x => x.track === bamState.nTracks - 1).map(x => _readBaseAt(x, p)).find(b => b != null);
-    return { focus: p, mode: document.getElementById('modeReads').checked, first, last, band: !!document.querySelector('.reads-focus-band'), tip: _readsCountsHtml(p) };
+    return { focus: p, mode: document.getElementById('modeReads').checked, first, last, band: __has(__colX(p) - 2, _READS_REF_H + _READS_SCALE_H, _READS_CELL + 4, _COV_H, '#e0a800'), tip: _readsCountsHtml(p) };
   });
   const ok = pOf === 'p.R30=,,p.R140Q,p.S170fs,p.G120E,p.S51*' && effects === 'synonymous,intron,missense,frameshift,missense,stop gained'
     && r.tsvLines === 7 && r.coverageBars > 2000 && r.strandColours === 2
@@ -7750,15 +7808,17 @@ check('Audit #162: soft-clip boxes of reads stay inside the plot (not over the n
     'r2\t0\tchrS\t31\t60\t10M20S\t*\t0\t0\tGTACGTACGTTTTTTTTTTTTTTTTTTTTT\tIIIIIIIIIIIIIIIIIIIIIIIIIIIIII\n';
   await page.setInputFiles('#fileInput', { name: 'clip.sam', mimeType: 'text/plain', buffer: Buffer.from(sam) });
   await page.waitForTimeout(1500);
+  await page.evaluate(READS_PX);
   const r = await page.evaluate(() => {
-    if (!document.getElementById('readsPileSvg')) renderReadsAlignment();
-    const svg = document.getElementById('readsPileSvg');   // the reads (a coverage row's svg now comes first)
-    if (!svg) return { noSvg: true, n: (bamState.reads || []).length };
-    const W = parseFloat(svg.getAttribute('width'));
-    const clips = [...svg.querySelectorAll('rect[fill="#e8eef5"]')].map(c => ({ x: +c.getAttribute('x'), w: +c.getAttribute('width') }));
-    return { W, clips };
+    if (!document.getElementById('readsCanvas')) renderReadsAlignment();
+    if (!_readsView) return { noSvg: true, n: (bamState.reads || []).length };
+    const W = _readsView.fullW, g = bamState.reads.map(_readsBarGeom);
+    const clips = g.flatMap(b => [b.left, b.right]).filter(Boolean);
+    // and on screen: no clip fill over the names or past the plot
+    const top = _readsHeadH(), hh = _readsView.h - top;
+    return { W, clips, overNames: __has(0, top, 158, hh, '#e8eef5', 3), pastPlot: W + 2 < _readsView.w && __has(W + 2, top, _readsView.w - W - 2, hh, '#e8eef5', 3) };
   });
-  const ok = !r.noSvg && r.clips.length === 2 && r.clips.every(c => c.x >= 160 && c.x + c.w <= r.W + 0.01);
+  const ok = !r.noSvg && r.clips.length === 2 && r.clips.every(c => c.x >= 160 && c.x + c.w <= r.W + 0.01) && !r.overNames && !r.pastPlot;
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
@@ -9061,17 +9121,15 @@ check('Audit: Reads mode lines up reads, reference and ruler', async (page) => {
   await openSynthetic(page, 'synth_ref.fa');
   await openSynthetic(page, 'synth_reads.bam');
   await page.evaluate(() => { el('modeReads').checked = true; onModeChange(); }); await page.waitForTimeout(1200);
+  await page.evaluate(READS_PX);
   const r = await page.evaluate(() => {
-    const c = el('alignmentContainer');
-    const ref0 = c.querySelector('.ref-track-line .seq-data span[data-pos]').getBoundingClientRect().left;
-    const scale0 = c.querySelector('.scale-line').lastChild.children[0].getBoundingClientRect().left;
-    const svg = el('readsPileSvg'), sr = svg.getBoundingClientRect();
-    const read = bamState.reads.find(rd => rd.start === bamState.refStart);
-    // (ported: read bars are now coloured by strand, forward #b0606a and reverse #5a6fb0, not #4a7fa8)
-    const bars = [...svg.querySelectorAll('rect[stroke="#b0606a"], rect[stroke="#5a6fb0"]')].map(b => +b.getAttribute('x') + sr.left);
-    return { ref0, scale0, firstBar: Math.min(...bars), hasReadAtStart: !!read };
+    const read = bamState.reads.find(rd => rd.start === bamState.refStart), p = bamState.refStart, x = __colX(p);
+    const ruled = p + 9 - (p + 9 + 1) % 10;
+    return { x, hasReadAtStart: !!read, ref0: __ink(x, 2, _READS_CELL, 16, '#fafafa').cx - 6,
+      scale0: __ink(__colX(ruled), _READS_REF_H + 1, _READS_CELL, 10, '#f5f5f5').cx - 6 - (ruled - p) * _READS_CELL,
+      firstBar: read ? __first(0, __rowY(read) + 8, 600, '#2c5d80') : null };
   });
-  const ok = r.hasReadAtStart && Math.abs(r.firstBar - r.ref0) < 1 && Math.abs(r.scale0 - r.ref0) < 1;
+  const ok = r.hasReadAtStart && Math.abs(r.firstBar - r.x) <= 1.5 && Math.abs(r.ref0 - r.x) <= 2 && Math.abs(r.scale0 - r.x) <= 3;
   return { pass: ok, detail: JSON.stringify(r) };
 });
 

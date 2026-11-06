@@ -9731,8 +9731,6 @@ let bamState = {
     readOrder: [],      // sorted read indices (by pos, then name)
 };
 
-// Currently highlighted read bar in Reads mode (click-to-highlight)
-let _readsHighlightedBar = null;
 // Reads-mode display: 'diff' (mismatches only) or 'bases' (all bases colored)
 let _readsDisplayMode = 'diff';
 
@@ -10473,379 +10471,358 @@ function addSampleRowFromReads() {
  * Render the reads alignment view (BAM mode).
  * Shows reference track at top, reads below in pileup order.
  */
+// The Reads view is one canvas that holds the window's size, over a spacer as large as the whole pile: native scrolling
+// moves the spacer and each frame draws only the bases and tracks on screen. It was one SVG of the whole reference,
+// with a node per read, cap, mismatch and base: 1 Mb at 30x took 90 s and 4.6 million nodes, a frame up to 1.6 s.
+const _READS_CELL = 12, _READS_NAME_W = 160, _READS_TRACK_H = 16, _READS_REF_H = 22, _READS_SCALE_H = 14, _READS_STATUS_H = 21;
+const _readsHeadH = () => _READS_REF_H + _READS_SCALE_H + _COV_H + _READS_STATUS_H;
+let _readsView = null;   // { canvas, ctx, w, h, groups, maxClip, covMax, selected, status, reads, drawn, raf, ro, onScroll }
+
+function _readsDispose() {
+    const v = _readsView;
+    if (!v) return;
+    if (v.raf) cancelAnimationFrame(v.raf);
+    alignmentContainer.removeEventListener('scroll', v.onScroll);
+    if (v.ro) v.ro.disconnect();
+    _readsView = null;
+}
+function _readsSchedule() {
+    const v = _readsView;
+    if (!v) return;
+    if (!v.canvas.isConnected) { _readsDispose(); return; }   // another view took the container
+    if (!v.raf) v.raf = requestAnimationFrame(() => { v.raf = 0; _readsDraw(); });
+}
+function _readsResize() {
+    const v = _readsView;
+    if (!v || !v.canvas.isConnected) return;
+    const cs = getComputedStyle(alignmentContainer), c = alignmentContainer;
+    const w = Math.max(1, c.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
+    const h = Math.max(1, c.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom));
+    const dpr = window.devicePixelRatio || 1;
+    if (w !== v.w || h !== v.h || dpr !== v.dpr) {
+        v.w = w; v.h = h; v.dpr = dpr;
+        v.canvas.width = Math.round(w * dpr); v.canvas.height = Math.round(h * dpr);
+        v.canvas.style.width = w + 'px'; v.canvas.style.height = h + 'px';
+        v.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        v.spacer.style.width = Math.max(v.fullW, w) + 'px';
+        v.spacer.style.height = Math.max(v.fullH, h) + 'px';
+    }
+    _readsDraw();
+}
+function _readsDefaultStatus() {
+    const { reads, nTracks = 0 } = bamState;
+    return `${reads.length} reads in ${nTracks} track${nTracks !== 1 ? 's' : ''}`;
+}
+// Left and right soft-clip lengths: an S before the first reference base is the left one (as _getReadCigarFeatures)
+function _readsClips(read) {
+    let l = 0, r = 0, seen = false;
+    for (const { op, len } of read.cigar) {
+        if (op === 'S') { if (seen) r = len; else l = len; }
+        else if (op === 'M' || op === '=' || op === 'X' || op === 'D' || op === 'N') seen = true;
+    }
+    return [l, r];
+}
+// A read's bar and soft-clip boxes in pile coordinates (x from the left of the whole pile), kept off the name
+// column and inside the plot
+function _readsBarGeom(read) {
+    const cell = _READS_CELL, fullW = _READS_NAME_W + (bamState.refEnd - bamState.refStart) * cell;
+    const x = _READS_NAME_W + (read.start - bamState.refStart) * cell, w = (read.end - read.start + 1) * cell;
+    const [l, r] = _readsClips(read), out = { x, w, left: null, right: null };
+    if (l > 0) { const a = Math.max(_READS_NAME_W, x - l * cell); out.left = { x: a, w: Math.max(0, x - a) }; }
+    if (r > 0) out.right = { x: x + w, w: Math.max(0, Math.min(r * cell, fullW - (x + w))) };
+    return out;
+}
+function _readsTooltipHtml(read) {
+    const rev = !!(read.flag & 0x10), features = _getReadCigarFeatures(read, bamState.refSeq);
+    const cigarStr = read.cigar.map(c => c.len + c.op).join('');
+    // inserted bases were only a tick in the picture, their sequence nowhere
+    const insText = features.insertions.length ? '<br>Inserted: ' + features.insertions.slice(0, 4).map(x => `${_escapeHtml(x.bases)} after ${x.refPos + 1}`).join(', ') + (features.insertions.length > 4 ? `, and ${features.insertions.length - 4} more` : '') : '';
+    return `<b>${_escapeHtml(read.name)}</b><br>`
+        + `Pos: ${read.pos + 1}${bamState.offset ? ` (${_escapeHtml(bamState.bamRefName)}:${(read.pos + 1 + bamState.offset).toLocaleString()})` : ''}<br>`
+        + `Strand: ${rev ? 'reverse (-)' : 'forward (+)'}<br>`
+        + `CIGAR: ${cigarStr}<br>`
+        + `MAPQ: ${read.mapq}${read.flag & 1 ? '<br>Paired' + (read.flag & 0x40 ? ', first' : read.flag & 0x80 ? ', second' : '') + ' in pair' : ''}${insText}`;
+}
+// First index in a track's reads (sorted by start, not overlapping) that can reach position p
+function _readsFirstAt(group, p) {
+    let lo = 0, hi = group.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (group[m].end < p) lo = m + 1; else hi = m; }
+    return lo;
+}
+function _readsReadAt(track, p) {
+    const g = _readsView && _readsView.groups[track];
+    if (!g) return null;
+    const r = g[_readsFirstAt(g, p)];
+    return r && r.start <= p && p <= r.end ? r : null;
+}
+
 function renderReadsAlignment() {
     _readsSyncRef();
     ensureReadsDisplayToggle();
     if (!bamState.reads.length || !bamState.refSeq) {
+        _readsDispose();
         const msg = bamState.reads.length
-            ? `${bamState.reads.length.toLocaleString()} reads are loaded, but their reference sequence${bamState.refName ? ' "' + _escapeHtml(bamState.refName) + '"' : ''} is empty in the alignment, so there is nothing to show them against.`
+            ? `${bamState.reads.length.toLocaleString()} reads are loaded, but their reference sequence${bamState.refName ? ' "' + _escapeHtml(bamState.refName) + '"' : ''} is empty in the alignment.`
             : 'No reads loaded. Open a BAM file with the BAM button.';
         alignmentContainer.innerHTML = '<div style="padding:20px;color:#888;">' + msg + '</div>';
         return;
     }
-
+    // a redraw of the same reads (Show bases, a sort) stays where it was
+    const keep = _readsView && _readsView.reads === bamState.reads && _readsView.canvas.isConnected
+        ? [alignmentContainer.scrollLeft, alignmentContainer.scrollTop] : null;
+    const selected = keep ? _readsView.selected : null;
+    _readsDispose();
+    if (window.scrollY) window.scrollTo(0, 0);
     alignmentContainer.innerHTML = '';
-    _readsHighlightedBar = null;
     alignmentContainer.style.position = '';
-    alignmentContainer.style.height = '';
     alignmentContainer.style.overflow = 'auto';
+    _fitAlignmentViewport();
 
-    const { reads, refSeq, refStart, refEnd, columns, nTracks = 0 } = bamState;
-    const viewLen = refEnd - refStart;
-    const container = alignmentContainer;
-    const cellW = 12; // px per base
-    const NAME_W = 160; // px for the name/label column (matches sticky DOM elements)
-
-    // -- Reference track --
-    const refLine = document.createElement('div');
-    refLine.className = 'seq-line ref-track-line';
-    refLine.style.display = 'flex';
-    refLine.style.alignItems = 'center';
-    refLine.style.minHeight = '20px';
-    refLine.style.borderBottom = '2px solid #333';
-    refLine.style.position = 'sticky';
-    refLine.style.top = '0';
-    refLine.style.background = '#fafafa';
-    refLine.style.zIndex = '2';
-
-    // Reference name label
-    const refLabel = document.createElement('span');
-    refLabel.className = 'seq-name';
-    // Exactly NAME_W wide, as the reads drawing assumes: .seq-name brings the main view's -12px margin
-    // (and the ruler's padding added to its width), which put the reference 12px left of the reads
-    refLabel.style.cssText = `width:${NAME_W}px;min-width:${NAME_W}px;max-width:${NAME_W}px;margin-left:0;box-sizing:border-box;flex:none;font-weight:bold;font-size:11px;padding:0 4px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
-    refLabel.textContent = bamState.refName;
-    refLabel.title = bamState.refName;
-    refLine.appendChild(refLabel);
-
-    // Reference bases
-    const refData = document.createElement('div');
-    refData.className = 'seq-data';
-    refData.style.display = 'flex';
-    refData.style.flexWrap = 'nowrap';
-
-    for (let p = refStart; p < refEnd; p++) {
-        const base = refSeq[p] || 'N';
-        const span = document.createElement('span');
-        span.style.cssText = `display:inline-block;width:${cellW}px;text-align:center;font-size:10px;font-family:monospace;font-weight:bold;`;
-        span.style.color = baseColorRef(base);
-        span.textContent = base;
-        span.dataset.pos = p;
-        refData.appendChild(span);
-    }
-    refLine.appendChild(refData);
-    container.appendChild(refLine);
-
-    // -- Scale ruler --
-    const scaleLine = document.createElement('div');
-    scaleLine.className = 'seq-line scale-line';
-    scaleLine.style.display = 'flex';
-    scaleLine.style.alignItems = 'center';
-    scaleLine.style.minHeight = '14px';
-    scaleLine.style.background = '#f5f5f5';
-    scaleLine.style.borderBottom = '1px solid #ddd';
-    scaleLine.style.fontSize = '8px';
-    scaleLine.style.color = '#888';
-    scaleLine.style.position = 'sticky';
-    scaleLine.style.top = '22px';
-    scaleLine.style.zIndex = '1';
-
-    const scaleLabel = document.createElement('span');
-    scaleLabel.style.cssText = `width:${NAME_W}px;min-width:${NAME_W}px;box-sizing:border-box;flex:none;text-align:right;padding:0 4px;`;
-    scaleLine.appendChild(scaleLabel);
-
-    const scaleData = document.createElement('div');
-    scaleData.style.display = 'flex';
-    // Show position ticks every 10 bases
-    for (let p = refStart; p < refEnd; p++) {
-        const span = document.createElement('span');
-        span.style.cssText = `display:inline-block;width:${cellW}px;text-align:center;font-size:7px;`;
-        if ((p + 1) % 10 === 0) {
-            span.textContent = p + 1;
-        } else if ((p + 1) % 5 === 0) {
-            span.textContent = '.';
-        }
-        scaleData.appendChild(span);
-    }
-    scaleLine.appendChild(scaleData);
-    container.appendChild(scaleLine);
-
-    // -- Coverage (all reads, before downsampling), allele mix, downsampled windows --
-    container.appendChild(_buildReadsCoverageRow(NAME_W, cellW, refStart, refEnd));
-
-    // -- Status line for selected read info --
-    const statusLine = document.createElement('div');
-    statusLine.id = 'readsStatusLine';
-    statusLine.style.cssText = 'padding:3px 8px;font-size:11px;font-family:monospace;'
-        + 'color:#333;background:#e8f0fe;border-bottom:1px solid #c5d8ee;min-height:20px;';
-    statusLine.textContent = `${reads.length} reads in ${nTracks} track${nTracks !== 1 ? 's' : ''}`;
-    container.appendChild(statusLine);
-
-    // -- Track bands (SVG) --
-    // One horizontal band per packed track (not per read). Non-overlapping
-    // reads share a track, so the number of visual rows equals nTracks, not
-    // reads.length. Reuses the SVG rect pattern from renderCompactAlignment().
-    const TRACK_H = 16;
-    const svgW = NAME_W + viewLen * cellW;
-    const svgH = nTracks * TRACK_H + 4;
-
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', svgW);
-    svg.setAttribute('height', svgH);
-    svg.setAttribute('style', 'font-family:monospace;font-size:10px;');
-    svg.setAttribute('id', 'readsPileSvg');
-
-    // Group reads by track in a single pass (O(n), not O(nTracks * n))
-    const trackGroups = Array.from({ length: nTracks }, () => []);
-    const focus = bamState.focusPos;
+    const { reads, refStart, refEnd, nTracks = 0 } = bamState;
+    const groups = Array.from({ length: nTracks }, () => []);
+    let maxClip = 0;
     for (const read of reads) {
-        if (read.track >= 0 && read.track < nTracks) {
-            trackGroups[read.track].push(read);
+        if (read.track >= 0 && read.track < nTracks) groups[read.track].push(read);
+        const [l, r] = _readsClips(read);
+        if (l > maxClip) maxClip = l;
+        if (r > maxClip) maxClip = r;
+    }
+    for (const g of groups) g.sort((a, b) => a.start - b.start);
+
+    const spacer = document.createElement('div');
+    spacer.id = 'readsSpacer';
+    spacer.style.cssText = 'position:relative;';
+    const canvas = document.createElement('canvas');
+    canvas.id = 'readsCanvas';
+    canvas.style.cssText = 'position:sticky;left:0;top:0;display:block;';
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', `Reads on ${bamState.refName}: ${_readsDefaultStatus()}`);
+    spacer.appendChild(canvas);
+    alignmentContainer.appendChild(spacer);
+
+    const v = _readsView = {
+        canvas, spacer, ctx: canvas.getContext('2d'), w: 0, h: 0, dpr: 0, groups, maxClip, covMax: null,
+        selected, status: null, reads, drawn: [], raf: 0, ro: null, onScroll: _readsSchedule,
+        fullW: _READS_NAME_W + (refEnd - refStart) * _READS_CELL,
+        fullH: _readsHeadH() + nTracks * _READS_TRACK_H + 4
+    };
+    alignmentContainer.addEventListener('scroll', v.onScroll, { passive: true });
+    if (typeof ResizeObserver !== 'undefined') { v.ro = new ResizeObserver(() => _readsResize()); v.ro.observe(alignmentContainer); }
+    _readsWireMouse(v);
+    _readsResize();
+    if (keep) { alignmentContainer.scrollLeft = keep[0]; alignmentContainer.scrollTop = keep[1]; _readsDraw(); }
+}
+
+function _readsWireMouse(v) {
+    const { canvas } = v;
+    const hit = e => {
+        const b = canvas.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+        const p = bamState.refStart + Math.floor((x + alignmentContainer.scrollLeft - _READS_NAME_W) / _READS_CELL);
+        const inPlot = p >= bamState.refStart && p < bamState.refEnd;
+        const covTop = _READS_REF_H + _READS_SCALE_H;
+        if (y >= covTop && y < covTop + _COV_H) return inPlot ? { p, cov: true } : null;
+        if (y < _readsHeadH() || !inPlot) return null;
+        const read = _readsReadAt(Math.floor((y - _readsHeadH() + alignmentContainer.scrollTop) / _READS_TRACK_H), p);
+        return read ? { p, read } : null;
+    };
+    const at = e => ({ getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX + 1, top: e.clientY, bottom: e.clientY + 1, width: 1, height: 1 }) });
+    let shown = null;
+    canvas.addEventListener('mousemove', e => {
+        const h = hit(e), key = h ? (h.read ? h.read : 'c' + h.p) : null;
+        canvas.style.cursor = h ? 'pointer' : '';
+        if (key === shown) return;
+        shown = key;
+        if (!h) hideTooltip();
+        else showTooltipAt(h.read ? _readsTooltipHtml(h.read) : _readsCountsHtml(h.p), at(e), { html: true, className: 'reads-tooltip' });
+    });
+    canvas.addEventListener('mouseleave', () => { shown = null; hideTooltip(); });
+    canvas.addEventListener('click', e => {
+        const h = hit(e);
+        if (!h) return;
+        if (h.cov) { readsGoTo(h.p, { sort: true, scroll: false }); return; }
+        const read = h.read, rev = !!(read.flag & 0x10);
+        v.selected = v.selected === read ? null : read;
+        v.status = v.selected ? `${read.name}  |  pos: ${read.pos + 1}  |  ${rev ? 'reverse' : 'forward'} strand  |  cigar: ${read.cigar.map(c => c.len + c.op).join('')}  |  mapq: ${read.mapq}` : null;
+        _readsDraw();
+    });
+}
+
+function _readsDraw() {
+    const v = _readsView;
+    if (!v || !v.canvas.isConnected) return;
+    const { ctx, w, h, groups } = v, cell = _READS_CELL, NAME_W = _READS_NAME_W;
+    const { refSeq, refStart, refEnd } = bamState;
+    const sl = alignmentContainer.scrollLeft, st = alignmentContainer.scrollTop, head = _readsHeadH();
+    const a = Math.max(refStart, refStart + Math.floor((sl - NAME_W) / cell));
+    const b = Math.min(refEnd, a + Math.ceil(w / cell) + 2);
+    const X = p => NAME_W + (p - refStart) * cell - sl;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+    // -- Tracks: under the header, which stays --
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, head, w, h - head); ctx.clip();
+    const H = _READS_TRACK_H, t0 = Math.floor(st / H), t1 = Math.min(groups.length - 1, Math.floor((st + h - head) / H));
+    const plotR = Math.min(w, v.fullW - sl), drawn = [];
+    ctx.font = '9px monospace';
+    for (let t = t0; t <= t1; t++) {
+        const y = head + t * H - st;
+        ctx.fillStyle = t % 2 === 0 ? '#f0f4f8' : '#ffffff';
+        ctx.fillRect(0, y, plotR, H);
+        const g = groups[t];
+        for (let i = _readsFirstAt(g, a - v.maxClip); i < g.length && g[i].start < b + v.maxClip; i++) {
+            _readsPaintRead(ctx, g[i], y, a, b, sl, X, v.selected === g[i]);
+            drawn.push(g[i]);
         }
     }
-
-    for (let t = 0; t < nTracks; t++) {
-        // Alternating track background shading for visual separation
-        const trackBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        trackBg.setAttribute('x', 0);
-        trackBg.setAttribute('y', t * TRACK_H);
-        trackBg.setAttribute('width', svgW);
-        trackBg.setAttribute('height', TRACK_H);
-        trackBg.setAttribute('fill', t % 2 === 0 ? '#f0f4f8' : '#ffffff');
-        trackBg.setAttribute('stroke', 'none');
-        svg.appendChild(trackBg);
-
-        for (const read of trackGroups[t]) {
-            const rx = NAME_W + (read.start - refStart) * cellW;
-            const rw = (read.end - read.start + 1) * cellW;
-            const ry = t * TRACK_H;
-            const rh = TRACK_H - 4;
-            const features = _getReadCigarFeatures(read, refSeq);
-
-            // Soft-clip extensions (lighter fill, dashed stroke)
-            if (features.softClipLeft > 0) {
-                const scX = Math.max(NAME_W, rx - features.softClipLeft * cellW), scW = rx - scX;   // not over the names
-                const scLeft = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                scLeft.setAttribute('x', scX);
-                scLeft.setAttribute('y', ry + 2);
-                scLeft.setAttribute('width', Math.max(0, scW));
-                scLeft.setAttribute('height', rh);
-                scLeft.setAttribute('fill', '#e8eef5');
-                scLeft.setAttribute('stroke', '#a0b8d0');
-                scLeft.setAttribute('stroke-width', '1');
-                scLeft.setAttribute('stroke-dasharray', '3,2');
-                scLeft.setAttribute('rx', '2');
-                scLeft.setAttribute('pointer-events', 'none');
-                svg.appendChild(scLeft);
-            }
-            if (features.softClipRight > 0) {
-                const scW = Math.max(0, Math.min(features.softClipRight * cellW, svgW - (rx + rw)));   // not past the plot
-                const scRight = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                scRight.setAttribute('x', rx + rw);
-                scRight.setAttribute('y', ry + 2);
-                scRight.setAttribute('width', scW);
-                scRight.setAttribute('height', rh);
-                scRight.setAttribute('fill', '#e8eef5');
-                scRight.setAttribute('stroke', '#a0b8d0');
-                scRight.setAttribute('stroke-width', '1');
-                scRight.setAttribute('stroke-dasharray', '3,2');
-                scRight.setAttribute('rx', '2');
-                scRight.setAttribute('pointer-events', 'none');
-                svg.appendChild(scRight);
-            }
-
-            // Main bar with visible border
-            const bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            bar.setAttribute('x', rx);
-            bar.setAttribute('y', ry + 2);
-            bar.setAttribute('width', rw);
-            bar.setAttribute('height', rh);
-            // strand, as igv.js colours by strand: forward pink, reverse blue (the bars were one colour, so a change
-            // seen on one strand only - a common artefact - could not be told from a real one); MAPQ 0 faded
-            const rev = !!(read.flag & 0x10);
-            const BAR_STROKE = rev ? '#5a6fb0' : '#b0606a';
-            bar.setAttribute('fill', rev ? '#d3dbf3' : '#f3d3d6');
-            bar.setAttribute('stroke', BAR_STROKE);
-            bar.setAttribute('stroke-width', '1.5');
-            bar.setAttribute('rx', '2');
-            if (!read.mapq) bar.setAttribute('opacity', '0.35');
-            bar.style.cursor = 'pointer';
-
-            // Start cap mark (vertical line at read start)
-            const startCap = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            startCap.setAttribute('x1', rx);
-            startCap.setAttribute('y1', ry);
-            startCap.setAttribute('x2', rx);
-            startCap.setAttribute('y2', ry + TRACK_H);
-            startCap.setAttribute('stroke', '#2c5d80');
-            startCap.setAttribute('stroke-width', '2');
-            startCap.setAttribute('pointer-events', 'none');
-
-            // End cap mark (vertical line at read end+1)
-            const endCap = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            endCap.setAttribute('x1', rx + rw);
-            endCap.setAttribute('y1', ry);
-            endCap.setAttribute('x2', rx + rw);
-            endCap.setAttribute('y2', ry + TRACK_H);
-            endCap.setAttribute('stroke', '#2c5d80');
-            endCap.setAttribute('stroke-width', '2');
-            endCap.setAttribute('pointer-events', 'none');
-
-            // Tooltip text (built once per read)
-            const cigarStr = read.cigar.map(c => c.len + c.op).join('');
-            // inserted bases were only a tick in the picture, their sequence nowhere
-            const insText = features.insertions.length ? '<br>Inserted: ' + features.insertions.slice(0, 4).map(x => `${_escapeHtml(x.bases)} after ${x.refPos + 1}`).join(', ') + (features.insertions.length > 4 ? ', ...' : '') : '';
-            const tooltipHtml = `<b>${_escapeHtml(read.name)}</b><br>`
-                + `Pos: ${read.pos + 1}${bamState.offset ? ` (${_escapeHtml(bamState.bamRefName)}:${(read.pos + 1 + bamState.offset).toLocaleString()})` : ''}<br>`
-                + `Strand: ${rev ? 'reverse (-)' : 'forward (+)'}<br>`
-                + `CIGAR: ${cigarStr}<br>`
-                + `MAPQ: ${read.mapq}${read.flag & 1 ? '<br>Paired' + (read.flag & 0x40 ? ', first' : read.flag & 0x80 ? ', second' : '') + ' in pair' : ''}${insText}`;
-
-            // Hover tooltip
-            bar.addEventListener('mouseover', () => {
-                showTooltipAt(tooltipHtml, bar, { html: true, className: 'reads-tooltip' });
-            });
-            bar.addEventListener('mouseout', () => {
-                hideTooltip();
-            });
-
-            // Click to highlight
-            bar.addEventListener('click', () => {
-                if (_readsHighlightedBar === bar) {
-                    // Deselect
-                    bar.setAttribute('stroke', BAR_STROKE);
-                    bar.setAttribute('stroke-width', '1.5');
-                    _readsHighlightedBar = null;
-                    statusLine.textContent = `${reads.length} reads in ${nTracks} track${nTracks !== 1 ? 's' : ''}`;
-                } else {
-                    // Reset previous highlight
-                    if (_readsHighlightedBar) {
-                        _readsHighlightedBar.setAttribute('stroke', _readsHighlightedBar.dataset.stroke || '#4a7fa8');
-                        _readsHighlightedBar.setAttribute('stroke-width', '1.5');
-                    }
-                    // Highlight new bar
-                    bar.setAttribute('stroke', '#d9402b');
-                    bar.setAttribute('stroke-width', '3');
-                    _readsHighlightedBar = bar;
-                    statusLine.textContent = `${read.name}  |  pos: ${read.pos + 1}  |  ${rev ? 'reverse' : 'forward'} strand  |  cigar: ${cigarStr}  |  mapq: ${read.mapq}`;
-                }
-            });
-
-            bar.dataset.stroke = BAR_STROKE;
-            svg.appendChild(bar);
-
-            // Deletion gaps (grey segments inside the bar)
-            features.deletions.forEach(delPos => {
-                if (delPos < read.start || delPos > read.end) return;
-                const dx = NAME_W + (delPos - refStart) * cellW;
-                const delRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                delRect.setAttribute('x', dx);
-                delRect.setAttribute('y', ry + 2);
-                delRect.setAttribute('width', cellW);
-                delRect.setAttribute('height', rh);
-                delRect.setAttribute('fill', '#b0b0b0');
-                delRect.setAttribute('pointer-events', 'none');
-                svg.appendChild(delRect);
-            });
-
-            // Insertion ticks (small vertical marks at insertion positions)
-            features.insertions.forEach(ins => {
-                if (ins.refPos < read.start - 1 || ins.refPos > read.end) return;
-                const ix = NAME_W + (ins.refPos - refStart + 1) * cellW;
-                const insLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                insLine.setAttribute('x1', ix);
-                insLine.setAttribute('y1', ry + 1);
-                insLine.setAttribute('x2', ix);
-                insLine.setAttribute('y2', ry + TRACK_H - 1);
-                insLine.setAttribute('stroke', '#e67e22');
-                insLine.setAttribute('stroke-width', '1.5');
-                insLine.setAttribute('pointer-events', 'none');
-                svg.appendChild(insLine);
-            });
-
-            svg.appendChild(startCap);
-            svg.appendChild(endCap);
-
-            // Per-base content inside bar (diff/bases display mode)
-            if (cellW >= 7) {
-                for (let p = read.start; p <= read.end; p++) {
-                    const entry = features.bases.get(p);
-                    if (!entry) continue;
-                    const bx = NAME_W + (p - refStart) * cellW + cellW / 2;
-                    const by = ry + 2 + rh / 2;
-                    if (_readsDisplayMode === 'diff') {
-                        if (entry.type === 'mismatch') {
-                            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                            text.setAttribute('x', bx);
-                            text.setAttribute('y', by);
-                            text.setAttribute('text-anchor', 'middle');
-                            text.setAttribute('dominant-baseline', 'middle');
-                            text.setAttribute('font-size', '9');
-                            text.setAttribute('font-family', 'monospace');
-                            text.setAttribute('fill', '#e74c3c');
-                            text.setAttribute('pointer-events', 'none');
-                            text.textContent = entry.base;
-                            svg.appendChild(text);
-                        }
-                    } else {
-                        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                        text.setAttribute('x', bx);
-                        text.setAttribute('y', by);
-                        text.setAttribute('text-anchor', 'middle');
-                        text.setAttribute('dominant-baseline', 'middle');
-                        text.setAttribute('font-size', '9');
-                        text.setAttribute('font-family', 'monospace');
-                        text.setAttribute('fill', baseColorRef(entry.base));
-                        text.setAttribute('pointer-events', 'none');
-                        text.textContent = entry.base;
-                        svg.appendChild(text);
-                    }
-                }
-            } else {
-                // Low-zoom: thin-line-plus-mismatch-ticks rendering
-                const thinLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                thinLine.setAttribute('x1', rx);
-                thinLine.setAttribute('y1', ry + 2 + rh / 2);
-                thinLine.setAttribute('x2', rx + rw);
-                thinLine.setAttribute('y2', ry + 2 + rh / 2);
-                thinLine.setAttribute('stroke', '#8ab4d6');
-                thinLine.setAttribute('stroke-width', '1');
-                thinLine.setAttribute('pointer-events', 'none');
-                svg.appendChild(thinLine);
-
-                // Mismatch ticks
-                features.bases.forEach((entry, refPos) => {
-                    if (refPos < read.start || refPos > read.end) return;
-                    if (entry.type !== 'mismatch') return;
-                    const mx = NAME_W + (refPos - refStart) * cellW + cellW / 2;
-                    const tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                    tick.setAttribute('x1', mx);
-                    tick.setAttribute('y1', ry + 2);
-                    tick.setAttribute('x2', mx);
-                    tick.setAttribute('y2', ry + 2 + rh);
-                    tick.setAttribute('stroke', '#e74c3c');
-                    tick.setAttribute('stroke-width', '1');
-                    tick.setAttribute('pointer-events', 'none');
-                    svg.appendChild(tick);
-                });
-            }
-        }
-    }
-
-    if (focus != null && focus >= refStart && focus < refEnd) {
+    v.drawn = drawn;
+    if (bamState.focusPos != null && bamState.focusPos >= a && bamState.focusPos < b) {
         // the selected column (a variant, or a click on the coverage row): a translucent band over every track
-        const band = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        band.setAttribute('x', NAME_W + (focus - refStart) * cellW);
-        band.setAttribute('y', 0);
-        band.setAttribute('width', cellW);
-        band.setAttribute('height', svgH);
-        band.setAttribute('fill', 'rgba(255, 193, 7, 0.28)');
-        band.setAttribute('stroke', '#e0a800');
-        band.setAttribute('pointer-events', 'none');
-        band.setAttribute('class', 'reads-focus-band');
-        svg.appendChild(band);
+        const x = X(bamState.focusPos);
+        ctx.fillStyle = 'rgba(255, 193, 7, 0.28)'; ctx.fillRect(x, head, cell, h - head);
+        ctx.strokeStyle = '#e0a800'; ctx.lineWidth = 1; ctx.strokeRect(x, head, cell, h - head);
     }
-    container.appendChild(svg);
+    ctx.restore();
+
+    // -- Reference --
+    ctx.fillStyle = '#fafafa'; ctx.fillRect(0, 0, w, _READS_REF_H - 2);
+    ctx.fillStyle = '#333'; ctx.fillRect(0, _READS_REF_H - 2, w, 2);
+    ctx.font = 'bold 10px monospace';
+    for (let p = a; p < b; p++) {
+        const base = refSeq[p] || 'N';
+        ctx.fillStyle = baseColorRef(base);
+        ctx.fillText(base, X(p) + cell / 2, (_READS_REF_H - 2) / 2);
+    }
+    // the name stays as the reference scrolls under it
+    ctx.fillStyle = '#fafafa'; ctx.fillRect(0, 0, NAME_W, _READS_REF_H - 2);
+    ctx.fillStyle = '#000'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'right';
+    let name = String(bamState.refName);
+    if (name.length > 24) name = name.slice(0, 23) + '…';
+    ctx.fillText(name, NAME_W - 4, (_READS_REF_H - 2) / 2);
+    ctx.textAlign = 'center';
+
+    // -- Scale: a number every 10 bases --
+    const sy = _READS_REF_H;
+    ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, sy, w, _READS_SCALE_H);
+    ctx.fillStyle = '#ddd'; ctx.fillRect(0, sy + _READS_SCALE_H - 1, w, 1);
+    ctx.fillStyle = '#888'; ctx.font = '7px monospace';
+    for (let p = a; p < b; p++) {
+        const n = p + 1;
+        if (n % 10 === 0) ctx.fillText(String(n), X(p) + cell / 2, sy + _READS_SCALE_H / 2);
+        else if (n % 5 === 0) ctx.fillText('.', X(p) + cell / 2, sy + _READS_SCALE_H / 2);
+    }
+
+    _readsDrawCoverage(v, a, b, X);
+
+    // -- Status: the selected read, or the counts --
+    const y2 = _READS_REF_H + _READS_SCALE_H + _COV_H;
+    ctx.fillStyle = '#e8f0fe'; ctx.fillRect(0, y2, w, _READS_STATUS_H - 1);
+    ctx.fillStyle = '#c5d8ee'; ctx.fillRect(0, y2 + _READS_STATUS_H - 1, w, 1);
+    ctx.fillStyle = '#333'; ctx.font = '11px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(v.status || _readsDefaultStatus(), 8, y2 + (_READS_STATUS_H - 1) / 2);
+    ctx.textAlign = 'center';
+}
+
+// One read, between positions a and b only. Walks the CIGAR once: on a long read a table of every base per read
+// (_getReadCigarFeatures) is too much per frame.
+function _readsPaintRead(ctx, read, y, a, b, sl, X, selected) {
+    const cell = _READS_CELL, H = _READS_TRACK_H, rh = H - 4, geom = _readsBarGeom(read), rx = geom.x - sl, rw = geom.w;
+    const rev = !!(read.flag & 0x10), minX = -cell, maxX = X(b) + cell;
+    for (const box of [geom.left, geom.right]) {
+        if (!box || !box.w) continue;
+        // soft clips: lighter fill, dashed edge
+        ctx.fillStyle = '#e8eef5'; ctx.fillRect(box.x - sl, y + 2, box.w, rh);
+        ctx.strokeStyle = '#a0b8d0'; ctx.lineWidth = 1; ctx.setLineDash([3, 2]);
+        ctx.strokeRect(box.x - sl, y + 2, box.w, rh);
+        ctx.setLineDash([]);
+    }
+    // strand, as igv.js colours by strand: forward pink, reverse blue (the bars were one colour, so a change seen on
+    // one strand only - a common artefact - could not be told from a real one); MAPQ 0 faded
+    const lo = Math.max(rx, minX), hi = Math.min(rx + rw, maxX);
+    if (hi > lo) {
+        ctx.globalAlpha = read.mapq ? 1 : 0.35;
+        ctx.fillStyle = rev ? '#d3dbf3' : '#f3d3d6'; ctx.fillRect(lo, y + 2, hi - lo, rh);
+        ctx.strokeStyle = selected ? '#d9402b' : rev ? '#5a6fb0' : '#b0606a'; ctx.lineWidth = selected ? 3 : 1.5;
+        ctx.beginPath();
+        ctx.moveTo(lo, y + 2); ctx.lineTo(hi, y + 2); ctx.moveTo(lo, y + 2 + rh); ctx.lineTo(hi, y + 2 + rh);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+    }
+    const letters = [], showAll = _readsDisplayMode !== 'diff', ticks = [];
+    let q = read.pos, rp = 0;
+    for (const { op, len } of read.cigar) {
+        if (op === 'M' || op === '=' || op === 'X') {
+            const s = Math.max(q, a), e = Math.min(q + len, b);
+            for (let p = s; p < e; p++) {
+                const rb = (read.seq[rp + p - q] || 'N').toUpperCase();
+                const mism = op === 'X' || (op === 'M' && rb !== (bamState.refSeq[p] || 'N').toUpperCase());
+                if (showAll || mism) letters.push(p, rb);
+            }
+            q += len; rp += len;
+        } else if (op === 'D') {
+            const s = Math.max(q, a), e = Math.min(q + len, b);
+            if (e > s) { ctx.fillStyle = '#b0b0b0'; ctx.fillRect(X(s), y + 2, (e - s) * cell, rh); }
+            q += len;
+        } else if (op === 'N') q += len;
+        else if (op === 'I') { if (q >= a && q <= b) ticks.push(q); rp += len; }
+        else if (op === 'S') rp += len;
+    }
+    ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 1.5;
+    for (const p of ticks) { const x = X(p); ctx.beginPath(); ctx.moveTo(x, y + 1); ctx.lineTo(x, y + H - 1); ctx.stroke(); }
+    // caps: a line at each end of the read
+    ctx.strokeStyle = '#2c5d80'; ctx.lineWidth = 2;
+    for (const x of [rx, rx + rw]) if (x >= minX && x <= maxX) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + H); ctx.stroke(); }
+    for (let i = 0; i < letters.length; i += 2) {
+        ctx.fillStyle = showAll ? baseColorRef(letters[i + 1]) : '#e74c3c';
+        ctx.fillText(letters[i + 1], X(letters[i]) + cell / 2, y + 2 + rh / 2);
+    }
+}
+
+// Coverage from every read (before downsampling), the allele mix where it is mixed, the downsampled windows. One
+// scale for the whole reference, so a bar does not change height as it scrolls.
+function _readsDrawCoverage(v, a, b, X) {
+    const { ctx, w } = v, cell = _READS_CELL, top = _READS_REF_H + _READS_SCALE_H, sl = alignmentContainer.scrollLeft;
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, top, w, _COV_H);
+    ctx.fillStyle = '#ddd'; ctx.fillRect(0, top + _COV_H - 1, w, 1);
+    ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
+    ctx.fillText('coverage', _READS_NAME_W - 4 - sl, top + _COV_H / 2);
+    ctx.textAlign = 'center';
+    const calls = _readsCalls();
+    if (!calls) return;
+    const cs = calls.counts, refStart = bamState.refStart, refEnd = bamState.refEnd;
+    if (v.covMax == null) {
+        let max = 1;
+        for (let p = Math.max(refStart, cs.lo); p < Math.min(refEnd, cs.hi); p++) max = Math.max(max, cs.depth[p - cs.lo]);
+        v.covMax = max;
+    }
+    const max = v.covMax, H = _COV_H - 6;
+    const COL = { A: '#4caf50', C: '#2196f3', G: '#ff9800', T: '#f44336' };
+    for (let p = Math.max(a, cs.lo); p < Math.min(b, cs.hi); p++) {
+        const i = p - cs.lo, x = X(p);
+        const t = { A: cs.fwd[0][i] + cs.rev[0][i], C: cs.fwd[1][i] + cs.rev[1][i], G: cs.fwd[2][i] + cs.rev[2][i], T: cs.fwd[3][i] + cs.rev[3][i] };
+        const n = t.A + t.C + t.G + t.T, refB = (bamState.refSeq[p] || 'N').toUpperCase();
+        const mixed = n > 0 && (n - (t[refB] || 0)) / n >= 0.2 || cs.del[i] / Math.max(1, cs.depth[i]) >= 0.2;
+        if (!mixed) {
+            const hh = Math.round(H * cs.depth[i] / max * 2) / 2;
+            if (hh > 0) { ctx.fillStyle = '#b4b4b4'; ctx.fillRect(x, top + H - hh, cell, hh); }
+            continue;
+        }
+        // stacked: bases (reference first), deletions on top
+        let y = H;
+        const seg = (cnt, col) => { if (!cnt) return; const hh = H * cnt / max; y -= hh; ctx.fillStyle = col; ctx.fillRect(x, top + y, cell, hh); };
+        if (t[refB]) seg(t[refB], COL[refB]);
+        for (const c of ['A', 'C', 'G', 'T']) if (c !== refB) seg(t[c], COL[c]);
+        seg(cs.del[i], '#555');
+    }
+    // windows whose reads were not all drawn
+    ctx.fillStyle = '#222';
+    for (const d of bamState.downsampled || []) {
+        const s = Math.max(d.start, a), e = Math.min(d.end, b);
+        if (e > s) ctx.fillRect(X(s), top + _COV_H - 4, (e - s) * cell, 3);
+    }
+    const f = bamState.focusPos;
+    if (f != null && f >= a && f < b) { ctx.strokeStyle = '#e0a800'; ctx.lineWidth = 2; ctx.strokeRect(X(f), top, cell, _COV_H); }
 }
 
 // ---- Variants: what the reads say, gene by gene ------------------------------------------------------------
@@ -11038,76 +11015,6 @@ function _readsCountsHtml(p) {
     return h + '<br><i>click: sort the reads by their base here</i>';
 }
 
-function _buildReadsCoverageRow(NAME_W, cellW, refStart, refEnd) {
-    const row = document.createElement('div');
-    row.className = 'seq-line reads-coverage-line';
-    row.style.cssText = `display:flex;align-items:flex-end;height:${_COV_H}px;position:sticky;top:36px;z-index:1;background:#fff;border-bottom:1px solid #ddd;`;
-    const label = document.createElement('span');
-    label.style.cssText = `width:${NAME_W}px;min-width:${NAME_W}px;box-sizing:border-box;flex:none;font-size:10px;color:#666;text-align:right;padding:0 4px;align-self:center;`;
-    label.textContent = 'coverage';
-    row.appendChild(label);
-    const calls = _readsCalls();
-    const NS = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(NS, 'svg');
-    const viewLen = refEnd - refStart;
-    svg.setAttribute('width', viewLen * cellW);
-    svg.setAttribute('height', _COV_H);
-    svg.setAttribute('id', 'readsCoverageSvg');
-    svg.style.flex = 'none';
-    if (calls) {
-        const cs = calls.counts;
-        let max = 1;
-        for (let p = Math.max(refStart, cs.lo); p < Math.min(refEnd, cs.hi); p++) max = Math.max(max, cs.depth[p - cs.lo]);
-        const H = _COV_H - 6;
-        const COL = { A: '#4caf50', C: '#2196f3', G: '#ff9800', T: '#f44336' };
-        const parts = [];
-        // runs of equal plain bars are one rect: one per base made 200,000 nodes for a 200 kb reference
-        let run = null;
-        const flush = () => { if (run) { parts.push(`<rect x="${run.x}" y="${H - run.h}" width="${run.w}" height="${run.h}" fill="#b4b4b4"/>`); run = null; } };
-        for (let p = Math.max(refStart, cs.lo); p < Math.min(refEnd, cs.hi); p++) {
-            const i = p - cs.lo, x = (p - refStart) * cellW;
-            const t = { A: cs.fwd[0][i] + cs.rev[0][i], C: cs.fwd[1][i] + cs.rev[1][i], G: cs.fwd[2][i] + cs.rev[2][i], T: cs.fwd[3][i] + cs.rev[3][i] };
-            const n = t.A + t.C + t.G + t.T, refB = (bamState.refSeq[p] || 'N').toUpperCase();
-            const hDepth = H * cs.depth[i] / max;
-            const mixed = n > 0 && (n - (t[refB] || 0)) / n >= 0.2 || cs.del[i] / Math.max(1, cs.depth[i]) >= 0.2;
-            if (!mixed) {
-                const hh = Math.round(hDepth * 2) / 2;
-                if (run && run.h === hh && run.x + run.w === x) run.w += cellW; else { flush(); if (hh > 0) run = { x, w: cellW, h: hh }; }
-                continue;
-            }
-            flush();
-            // stacked: bases (reference first), deletions on top
-            let y = H;
-            const seg = (cnt, col) => { if (!cnt) return; const hh = H * cnt / max; y -= hh; parts.push(`<rect x="${x}" y="${y}" width="${cellW}" height="${hh}" fill="${col}"/>`); };
-            if (t[refB]) seg(t[refB], COL[refB]);
-            for (const b of ['A', 'C', 'G', 'T']) if (b !== refB) seg(t[b], COL[b]);
-            seg(cs.del[i], '#555');
-        }
-        flush();
-        // windows whose reads were not all drawn
-        for (const w of bamState.downsampled || []) {
-            const a = Math.max(w.start, refStart), b = Math.min(w.end, refEnd);
-            if (b > a) parts.push(`<rect class="reads-downsampled" x="${(a - refStart) * cellW}" y="${_COV_H - 4}" width="${(b - a) * cellW}" height="3" fill="#222"><title>${w.dropped} reads starting in ${w.start + 1}-${w.end} not drawn (all are counted)</title></rect>`);
-        }
-        if (bamState.focusPos != null && bamState.focusPos >= refStart && bamState.focusPos < refEnd) {
-            parts.push(`<rect x="${(bamState.focusPos - refStart) * cellW}" y="0" width="${cellW}" height="${_COV_H}" fill="none" stroke="#e0a800" stroke-width="2"/>`);
-        }
-        svg.innerHTML = parts.join('');
-        const posOf = e => refStart + Math.floor((e.clientX - svg.getBoundingClientRect().left) / cellW);
-        svg.addEventListener('mousemove', e => {
-            const p = posOf(e);
-            if (p < refStart || p >= refEnd) return;
-            const at = { getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX + 1, top: e.clientY, bottom: e.clientY + 1, width: 1, height: 1 }) };   // at the mouse
-            showTooltipAt(_readsCountsHtml(p), at, { html: true, className: 'reads-tooltip' });
-        });
-        svg.addEventListener('mouseleave', () => hideTooltip());
-        svg.addEventListener('click', e => { const p = posOf(e); if (p >= refStart && p < refEnd) readsGoTo(p, { sort: true, scroll: false }); });
-        svg.style.cursor = 'pointer';
-    }
-    row.appendChild(svg);
-    return row;
-}
-
 // Sort the reads at reference position p (0-based) as igv.js does: the most frequent non-reference base first,
 // then the other bases, deletions, the reference base, and rows without a read there last. Only the order of
 // the packed tracks changes (each track holds non-overlapping reads, so at most one covers p).
@@ -11287,7 +11194,6 @@ function clearReadsData() {
         columns: [],
         readOrder: [],
     };
-    _readsHighlightedBar = null;
     // Switch back to Block mode
     const blockRadio = document.getElementById('modeBlocks');
     if (blockRadio) blockRadio.checked = true;
@@ -14644,7 +14550,6 @@ async function parseAndRender(isFromDrop = false) {
             columns: [],
             readOrder: [],
         };
-        _readsHighlightedBar = null;
         // If we were in Reads mode, switch back to Block mode
         if (document.getElementById('modeReads')?.checked) {
             const blockRadio = document.getElementById('modeBlocks');

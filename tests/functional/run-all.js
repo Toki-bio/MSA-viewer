@@ -51,10 +51,9 @@ check('Reads mode: SAM loads 3 mapped reads with correct track packing', async (
     // 4. Assert specific, correct output
     const result = await page.evaluate(() => {
         const reads = bamState.reads;
-        const svg = document.querySelector('#readsPileSvg');
-        // Main read bars use fill #c8d8e8 (set in renderReadsAlignment)
-        // (bars are coloured by strand since v271; each main bar carries data-stroke)
-        const readBars = svg ? svg.querySelectorAll('rect[data-stroke]').length : 0;
+        // (one canvas since the Reads view draws only what is on screen: _readsView.drawn is what the last frame drew)
+        const svg = document.querySelector('#readsCanvas');
+        const readBars = svg && _readsView ? _readsView.drawn.length : 0;
         return {
             readCount: reads ? reads.length : 0,
             refName: bamState.refName,
@@ -77,7 +76,7 @@ check('Reads mode: SAM loads 3 mapped reads with correct track packing', async (
         return { pass: false, detail: `expected refName 'ref', got '${result.refName}'` };
     }
     if (!result.svgExists) {
-        return { pass: false, detail: 'SVG element #readsPileSvg not found' };
+        return { pass: false, detail: 'canvas #readsCanvas not found' };
     }
     if (result.readBars !== 3) {
         return { pass: false, detail: `expected 3 read bars in SVG, got ${result.readBars}` };
