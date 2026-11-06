@@ -10392,6 +10392,24 @@ function ensureSampleRowButton() {
     vb.style.cssText = btn.style.cssText;
     vb.addEventListener('click', openVariantsPanel);
     btn.parentNode.insertBefore(vb, btn.nextSibling);
+    // Zoom: the same steps as Ctrl+wheel over the reads; the width of reference on screen beside them
+    const zoom = document.createElement('span');
+    zoom.id = 'readsZoomGroup';
+    zoom.style.cssText = 'display:none;align-items:center;gap:3px;margin-left:8px;font-size:11px;white-space:nowrap;';
+    const zb = (id, text, title, f) => {
+        const b = document.createElement('button');
+        b.id = id; b.type = 'button'; b.textContent = text; b.title = title; b.setAttribute('aria-label', title);
+        b.style.cssText = 'font-size:11px;height:18px;min-width:20px;padding:0 4px;cursor:pointer;border:1px solid #999;border-radius:3px;background:#f0f0f0;';
+        b.addEventListener('click', f);
+        zoom.appendChild(b);
+    };
+    zb('readsZoomOut', '\u2212', 'Zoom out (or Ctrl+wheel over the reads)', () => _readsZoomBy(1 / _READS_ZOOM_STEP));
+    zb('readsZoomIn', '+', 'Zoom in (or Ctrl+wheel over the reads)', () => _readsZoomBy(_READS_ZOOM_STEP));
+    const zs = document.createElement('span');
+    zs.id = 'readsZoomSpan';
+    zs.title = 'Length of reference on screen';
+    zoom.appendChild(zs);
+    vb.parentNode.insertBefore(zoom, vb.nextSibling);
     return btn;
 }
 
@@ -10476,7 +10494,53 @@ function addSampleRowFromReads() {
 // with a node per read, cap, mismatch and base: 1 Mb at 30x took 90 s and 4.6 million nodes, a frame up to 1.6 s.
 const _READS_CELL = 12, _READS_NAME_W = 160, _READS_TRACK_H = 16, _READS_REF_H = 22, _READS_SCALE_H = 14, _READS_STATUS_H = 21;
 const _readsHeadH = () => _READS_REF_H + _READS_SCALE_H + _COV_H + _READS_STATUS_H;
-let _readsView = null;   // { canvas, ctx, w, h, groups, maxClip, covMax, selected, status, reads, drawn, raf, ro, onScroll }
+// Zoom: px per base, from the whole region to _READS_CELL. Letters need _READS_LETTERS px; past _READS_WINDOW bases on
+// screen only coverage is drawn (igv.js: visibilityWindow). The spacer is capped (an element stops growing near 33
+// million px, 2.8 Mb at 12 px per base) and its scroll range mapped onto the pile: _readsLeft / _readsSetLeft.
+const _READS_LETTERS = 7, _READS_WINDOW = 30000, _READS_MAX_SPACER = 16000000, _READS_ZOOM_STEP = 1.5;
+const _readsCell = () => (_readsView ? _readsView.cell : _READS_CELL);
+function _readsScrollRatio(v) {
+    const spacerW = Math.max(Math.min(v.fullW, _READS_MAX_SPACER), v.w);
+    return spacerW > v.w ? Math.max(0, v.fullW - v.w) / (spacerW - v.w) : 1;
+}
+const _readsLeft = () => (_readsView ? alignmentContainer.scrollLeft * _readsScrollRatio(_readsView) : alignmentContainer.scrollLeft);
+function _readsSetLeft(px) {
+    if (_readsView) alignmentContainer.scrollLeft = Math.max(0, px) / (_readsScrollRatio(_readsView) || 1);
+}
+const _readsCoverageOnly = v => (v.w - _READS_NAME_W) / v.cell > _READS_WINDOW;
+function _readsSizeSpacer(v) {
+    v.fullW = _READS_NAME_W + (bamState.refEnd - bamState.refStart) * v.cell;
+    v.spacer.style.width = Math.max(Math.min(v.fullW, _READS_MAX_SPACER), v.w) + 'px';
+    v.spacer.style.height = (_readsCoverageOnly(v) ? v.h : Math.max(v.fullH, v.h)) + 'px';
+}
+const _readsMinCell = v => Math.min(_READS_CELL, (v.w - _READS_NAME_W) / Math.max(1, bamState.refEnd - bamState.refStart));
+// The base at x on the canvas stays at x
+function _readsZoomTo(cell, x) {
+    const v = _readsView;
+    if (!v) return;
+    cell = Math.max(_readsMinCell(v), Math.min(_READS_CELL, cell));
+    const base = (x + _readsLeft() - _READS_NAME_W) / v.cell;
+    v.cell = cell;
+    _readsSizeSpacer(v);
+    _readsSetLeft(_READS_NAME_W + base * cell - x);
+    _readsDraw();
+}
+function _readsZoomBy(f, x) {
+    const v = _readsView;
+    if (v) _readsZoomTo(v.cell * f, x == null ? _READS_NAME_W + (v.w - _READS_NAME_W) / 2 : x);
+}
+// Position p (0-based) in the middle of the plot
+function _readsCentre(p) {
+    const v = _readsView;
+    if (!v) return;
+    _readsSetLeft(_READS_NAME_W + (p - bamState.refStart) * v.cell - (_READS_NAME_W + (v.w - _READS_NAME_W) / 2));
+    _readsDraw();
+}
+function _readsSpanText(v) {
+    const n = Math.min(bamState.refEnd - bamState.refStart, Math.round((v.w - _READS_NAME_W) / v.cell));
+    return n >= 1e6 ? (n / 1e6).toFixed(2) + ' Mb' : n >= 1e4 ? Math.round(n / 1e3) + ' kb' : n.toLocaleString() + ' bp';
+}
+let _readsView = null;   // { canvas, ctx, w, h, cell, groups, maxClip, covMax, selected, status, reads, drawn, raf, ro, onScroll }
 
 function _readsDispose() {
     const v = _readsView;
@@ -10504,8 +10568,8 @@ function _readsResize() {
         v.canvas.width = Math.round(w * dpr); v.canvas.height = Math.round(h * dpr);
         v.canvas.style.width = w + 'px'; v.canvas.style.height = h + 'px';
         v.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        v.spacer.style.width = Math.max(v.fullW, w) + 'px';
-        v.spacer.style.height = Math.max(v.fullH, h) + 'px';
+        v.cell = Math.max(v.cell, _readsMinCell(v));
+        _readsSizeSpacer(v);
     }
     _readsDraw();
 }
@@ -10525,7 +10589,7 @@ function _readsClips(read) {
 // A read's bar and soft-clip boxes in pile coordinates (x from the left of the whole pile), kept off the name
 // column and inside the plot
 function _readsBarGeom(read) {
-    const cell = _READS_CELL, fullW = _READS_NAME_W + (bamState.refEnd - bamState.refStart) * cell;
+    const cell = _readsCell(), fullW = _READS_NAME_W + (bamState.refEnd - bamState.refStart) * cell;
     const x = _READS_NAME_W + (read.start - bamState.refStart) * cell, w = (read.end - read.start + 1) * cell;
     const [l, r] = _readsClips(read), out = { x, w, left: null, right: null };
     if (l > 0) { const a = Math.max(_READS_NAME_W, x - l * cell); out.left = { x: a, w: Math.max(0, x - a) }; }
@@ -10569,7 +10633,7 @@ function renderReadsAlignment() {
     }
     // a redraw of the same reads (Show bases, a sort) stays where it was
     const keep = _readsView && _readsView.reads === bamState.reads && _readsView.canvas.isConnected
-        ? [alignmentContainer.scrollLeft, alignmentContainer.scrollTop] : null;
+        ? [_readsLeft(), alignmentContainer.scrollTop, _readsView.cell] : null;
     const selected = keep ? _readsView.selected : null;
     _readsDispose();
     if (window.scrollY) window.scrollTo(0, 0);
@@ -10601,27 +10665,27 @@ function renderReadsAlignment() {
     alignmentContainer.appendChild(spacer);
 
     const v = _readsView = {
-        canvas, spacer, ctx: canvas.getContext('2d'), w: 0, h: 0, dpr: 0, groups, maxClip, covMax: null,
+        canvas, spacer, ctx: canvas.getContext('2d'), w: 0, h: 0, dpr: 0, cell: keep ? keep[2] : _READS_CELL, groups, maxClip, covMax: null, mixed: null,
         selected, status: null, reads, drawn: [], raf: 0, ro: null, onScroll: _readsSchedule,
-        fullW: _READS_NAME_W + (refEnd - refStart) * _READS_CELL,
+        fullW: _READS_NAME_W + (refEnd - refStart) * (keep ? keep[2] : _READS_CELL),
         fullH: _readsHeadH() + nTracks * _READS_TRACK_H + 4
     };
     alignmentContainer.addEventListener('scroll', v.onScroll, { passive: true });
     if (typeof ResizeObserver !== 'undefined') { v.ro = new ResizeObserver(() => _readsResize()); v.ro.observe(alignmentContainer); }
     _readsWireMouse(v);
     _readsResize();
-    if (keep) { alignmentContainer.scrollLeft = keep[0]; alignmentContainer.scrollTop = keep[1]; _readsDraw(); }
+    if (keep) { _readsSetLeft(keep[0]); alignmentContainer.scrollTop = keep[1]; _readsDraw(); }
 }
 
 function _readsWireMouse(v) {
     const { canvas } = v;
     const hit = e => {
         const b = canvas.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
-        const p = bamState.refStart + Math.floor((x + alignmentContainer.scrollLeft - _READS_NAME_W) / _READS_CELL);
+        const p = bamState.refStart + Math.floor((x + _readsLeft() - _READS_NAME_W) / v.cell);
         const inPlot = p >= bamState.refStart && p < bamState.refEnd;
         const covTop = _READS_REF_H + _READS_SCALE_H;
         if (y >= covTop && y < covTop + _COV_H) return inPlot ? { p, cov: true } : null;
-        if (y < _readsHeadH() || !inPlot) return null;
+        if (y < _readsHeadH() || !inPlot || _readsCoverageOnly(v)) return null;
         const read = _readsReadAt(Math.floor((y - _readsHeadH() + alignmentContainer.scrollTop) / _READS_TRACK_H), p);
         return read ? { p, read } : null;
     };
@@ -10636,6 +10700,12 @@ function _readsWireMouse(v) {
         else showTooltipAt(h.read ? _readsTooltipHtml(h.read) : _readsCountsHtml(h.p), at(e), { html: true, className: 'reads-tooltip' });
     });
     canvas.addEventListener('mouseleave', () => { shown = null; hideTooltip(); });
+    // Ctrl+wheel zooms round the mouse, as Canvas mode leaves it to the browser only outside the Reads view
+    canvas.addEventListener('wheel', e => {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        _readsZoomBy(e.deltaY < 0 ? _READS_ZOOM_STEP : 1 / _READS_ZOOM_STEP, Math.max(_READS_NAME_W, e.clientX - canvas.getBoundingClientRect().left));
+    }, { passive: false });
     canvas.addEventListener('click', e => {
         const h = hit(e);
         if (!h) return;
@@ -10650,11 +10720,14 @@ function _readsWireMouse(v) {
 function _readsDraw() {
     const v = _readsView;
     if (!v || !v.canvas.isConnected) return;
-    const { ctx, w, h, groups } = v, cell = _READS_CELL, NAME_W = _READS_NAME_W;
+    const { ctx, w, h, groups } = v, cell = v.cell, NAME_W = _READS_NAME_W;
     const { refSeq, refStart, refEnd } = bamState;
-    const sl = alignmentContainer.scrollLeft, st = alignmentContainer.scrollTop, head = _readsHeadH();
+    const sl = _readsLeft(), st = alignmentContainer.scrollTop, head = _readsHeadH();
     const a = Math.max(refStart, refStart + Math.floor((sl - NAME_W) / cell));
     const b = Math.min(refEnd, a + Math.ceil(w / cell) + 2);
+    const letters = cell >= _READS_LETTERS, covOnly = _readsCoverageOnly(v);
+    const span = document.getElementById('readsZoomSpan');
+    if (span) span.textContent = _readsSpanText(v);
     const X = p => NAME_W + (p - refStart) * cell - sl;
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
@@ -10663,7 +10736,7 @@ function _readsDraw() {
     // -- Tracks: under the header, which stays --
     ctx.save();
     ctx.beginPath(); ctx.rect(0, head, w, h - head); ctx.clip();
-    const H = _READS_TRACK_H, t0 = Math.floor(st / H), t1 = Math.min(groups.length - 1, Math.floor((st + h - head) / H));
+    const H = _READS_TRACK_H, t0 = Math.floor(st / H), t1 = covOnly ? -1 : Math.min(groups.length - 1, Math.floor((st + h - head) / H));
     const plotR = Math.min(w, v.fullW - sl), drawn = [];
     ctx.font = '9px monospace';
     for (let t = t0; t <= t1; t++) {
@@ -10672,16 +10745,21 @@ function _readsDraw() {
         ctx.fillRect(0, y, plotR, H);
         const g = groups[t];
         for (let i = _readsFirstAt(g, a - v.maxClip); i < g.length && g[i].start < b + v.maxClip; i++) {
-            _readsPaintRead(ctx, g[i], y, a, b, sl, X, v.selected === g[i]);
+            _readsPaintRead(ctx, g[i], y, a, b, sl, X, v.selected === g[i], cell);
             drawn.push(g[i]);
         }
     }
     v.drawn = drawn;
+    if (covOnly) {
+        ctx.fillStyle = '#666'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
+        ctx.fillText(`Zoom in to see the reads: they are drawn up to ${(_READS_WINDOW / 1000)} kb across`, NAME_W, head + 24);
+        ctx.textAlign = 'center';
+    }
     if (bamState.focusPos != null && bamState.focusPos >= a && bamState.focusPos < b) {
         // the selected column (a variant, or a click on the coverage row): a translucent band over every track
         const x = X(bamState.focusPos);
-        ctx.fillStyle = 'rgba(255, 193, 7, 0.28)'; ctx.fillRect(x, head, cell, h - head);
-        ctx.strokeStyle = '#e0a800'; ctx.lineWidth = 1; ctx.strokeRect(x, head, cell, h - head);
+        ctx.fillStyle = 'rgba(255, 193, 7, 0.28)'; ctx.fillRect(x, head, Math.max(1, cell), h - head);
+        ctx.strokeStyle = '#e0a800'; ctx.lineWidth = 1; ctx.strokeRect(x, head, Math.max(1, cell), h - head);
     }
     ctx.restore();
 
@@ -10689,7 +10767,7 @@ function _readsDraw() {
     ctx.fillStyle = '#fafafa'; ctx.fillRect(0, 0, w, _READS_REF_H - 2);
     ctx.fillStyle = '#333'; ctx.fillRect(0, _READS_REF_H - 2, w, 2);
     ctx.font = 'bold 10px monospace';
-    for (let p = a; p < b; p++) {
+    if (letters) for (let p = a; p < b; p++) {
         const base = refSeq[p] || 'N';
         ctx.fillStyle = baseColorRef(base);
         ctx.fillText(base, X(p) + cell / 2, (_READS_REF_H - 2) / 2);
@@ -10707,10 +10785,16 @@ function _readsDraw() {
     ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, sy, w, _READS_SCALE_H);
     ctx.fillStyle = '#ddd'; ctx.fillRect(0, sy + _READS_SCALE_H - 1, w, 1);
     ctx.fillStyle = '#888'; ctx.font = '7px monospace';
-    for (let p = a; p < b; p++) {
+    if (letters) for (let p = a; p < b; p++) {
         const n = p + 1;
         if (n % 10 === 0) ctx.fillText(String(n), X(p) + cell / 2, sy + _READS_SCALE_H / 2);
         else if (n % 5 === 0) ctx.fillText('.', X(p) + cell / 2, sy + _READS_SCALE_H / 2);
+    } else {
+        // a round step at least 70 px apart
+        let step = 1;
+        while (step * cell < 70) step *= (String(step)[0] === '2' ? 2.5 : 2);
+        ctx.font = '9px monospace';
+        for (let n = Math.ceil((a + 1) / step) * step; n <= b; n += step) ctx.fillText(n.toLocaleString(), X(n - 1), sy + _READS_SCALE_H / 2);
     }
 
     _readsDrawCoverage(v, a, b, X);
@@ -10726,11 +10810,11 @@ function _readsDraw() {
 
 // One read, between positions a and b only. Walks the CIGAR once: on a long read a table of every base per read
 // (_getReadCigarFeatures) is too much per frame.
-function _readsPaintRead(ctx, read, y, a, b, sl, X, selected) {
-    const cell = _READS_CELL, H = _READS_TRACK_H, rh = H - 4, geom = _readsBarGeom(read), rx = geom.x - sl, rw = geom.w;
+function _readsPaintRead(ctx, read, y, a, b, sl, X, selected, cell) {
+    const H = _READS_TRACK_H, rh = H - 4, fine = cell >= 2, geom = _readsBarGeom(read), rx = geom.x - sl, rw = geom.w;
     const rev = !!(read.flag & 0x10), minX = -cell, maxX = X(b) + cell;
     for (const box of [geom.left, geom.right]) {
-        if (!box || !box.w) continue;
+        if (!box || !box.w || !fine) continue;
         // soft clips: lighter fill, dashed edge
         ctx.fillStyle = '#e8eef5'; ctx.fillRect(box.x - sl, y + 2, box.w, rh);
         ctx.strokeStyle = '#a0b8d0'; ctx.lineWidth = 1; ctx.setLineDash([3, 2]);
@@ -10743,26 +10827,29 @@ function _readsPaintRead(ctx, read, y, a, b, sl, X, selected) {
     if (hi > lo) {
         ctx.globalAlpha = read.mapq ? 1 : 0.35;
         ctx.fillStyle = rev ? '#d3dbf3' : '#f3d3d6'; ctx.fillRect(lo, y + 2, hi - lo, rh);
-        ctx.strokeStyle = selected ? '#d9402b' : rev ? '#5a6fb0' : '#b0606a'; ctx.lineWidth = selected ? 3 : 1.5;
-        ctx.beginPath();
-        ctx.moveTo(lo, y + 2); ctx.lineTo(hi, y + 2); ctx.moveTo(lo, y + 2 + rh); ctx.lineTo(hi, y + 2 + rh);
-        ctx.stroke();
+        if (fine || selected) {
+            ctx.strokeStyle = selected ? '#d9402b' : rev ? '#5a6fb0' : '#b0606a'; ctx.lineWidth = selected ? 3 : 1.5;
+            ctx.beginPath();
+            ctx.moveTo(lo, y + 2); ctx.lineTo(hi, y + 2); ctx.moveTo(lo, y + 2 + rh); ctx.lineTo(hi, y + 2 + rh);
+            ctx.stroke();
+        }
         ctx.globalAlpha = 1;
     }
-    const letters = [], showAll = _readsDisplayMode !== 'diff', ticks = [];
+    const letters = [], withLetters = cell >= _READS_LETTERS, showAll = withLetters && _readsDisplayMode !== 'diff', ticks = [];
+    const refSeq = bamState.refSeq, seq = read.seq;
     let q = read.pos, rp = 0;
     for (const { op, len } of read.cigar) {
         if (op === 'M' || op === '=' || op === 'X') {
             const s = Math.max(q, a), e = Math.min(q + len, b);
             for (let p = s; p < e; p++) {
-                const rb = (read.seq[rp + p - q] || 'N').toUpperCase();
-                const mism = op === 'X' || (op === 'M' && rb !== (bamState.refSeq[p] || 'N').toUpperCase());
-                if (showAll || mism) letters.push(p, rb);
+                // & 0xDF: upper case, without a string per base (at low zoom this runs over many reads)
+                const mism = op === 'X' || (op === 'M' && (seq.charCodeAt(rp + p - q) & 0xDF) !== (refSeq.charCodeAt(p) & 0xDF));
+                if (showAll || mism) letters.push(p, (seq[rp + p - q] || 'N').toUpperCase());
             }
             q += len; rp += len;
         } else if (op === 'D') {
             const s = Math.max(q, a), e = Math.min(q + len, b);
-            if (e > s) { ctx.fillStyle = '#b0b0b0'; ctx.fillRect(X(s), y + 2, (e - s) * cell, rh); }
+            if (e > s) { ctx.fillStyle = '#b0b0b0'; ctx.fillRect(X(s), y + 2, Math.max(1, (e - s) * cell), rh); }
             q += len;
         } else if (op === 'N') q += len;
         else if (op === 'I') { if (q >= a && q <= b) ticks.push(q); rp += len; }
@@ -10772,7 +10859,13 @@ function _readsPaintRead(ctx, read, y, a, b, sl, X, selected) {
     for (const p of ticks) { const x = X(p); ctx.beginPath(); ctx.moveTo(x, y + 1); ctx.lineTo(x, y + H - 1); ctx.stroke(); }
     // caps: a line at each end of the read
     ctx.strokeStyle = '#2c5d80'; ctx.lineWidth = 2;
-    for (const x of [rx, rx + rw]) if (x >= minX && x <= maxX) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + H); ctx.stroke(); }
+    if (fine) for (const x of [rx, rx + rw]) if (x >= minX && x <= maxX) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + H); ctx.stroke(); }
+    if (!withLetters) {
+        // too small for a letter: a changed base is a tick, at least a pixel wide
+        ctx.fillStyle = '#e74c3c';
+        for (let i = 0; i < letters.length; i += 2) ctx.fillRect(X(letters[i]), y + 2, Math.max(1, cell), rh);
+        return;
+    }
     for (let i = 0; i < letters.length; i += 2) {
         ctx.fillStyle = showAll ? baseColorRef(letters[i + 1]) : '#e74c3c';
         ctx.fillText(letters[i + 1], X(letters[i]) + cell / 2, y + 2 + rh / 2);
@@ -10782,7 +10875,7 @@ function _readsPaintRead(ctx, read, y, a, b, sl, X, selected) {
 // Coverage from every read (before downsampling), the allele mix where it is mixed, the downsampled windows. One
 // scale for the whole reference, so a bar does not change height as it scrolls.
 function _readsDrawCoverage(v, a, b, X) {
-    const { ctx, w } = v, cell = _READS_CELL, top = _READS_REF_H + _READS_SCALE_H, sl = alignmentContainer.scrollLeft;
+    const { ctx, w } = v, cell = v.cell, top = _READS_REF_H + _READS_SCALE_H, sl = _readsLeft();
     ctx.fillStyle = '#fff'; ctx.fillRect(0, top, w, _COV_H);
     ctx.fillStyle = '#ddd'; ctx.fillRect(0, top + _COV_H - 1, w, 1);
     ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
@@ -10798,31 +10891,50 @@ function _readsDrawCoverage(v, a, b, X) {
     }
     const max = v.covMax, H = _COV_H - 6;
     const COL = { A: '#4caf50', C: '#2196f3', G: '#ff9800', T: '#f44336' };
-    for (let p = Math.max(a, cs.lo); p < Math.min(b, cs.hi); p++) {
-        const i = p - cs.lo, x = X(p);
-        const t = { A: cs.fwd[0][i] + cs.rev[0][i], C: cs.fwd[1][i] + cs.rev[1][i], G: cs.fwd[2][i] + cs.rev[2][i], T: cs.fwd[3][i] + cs.rev[3][i] };
-        const n = t.A + t.C + t.G + t.T, refB = (bamState.refSeq[p] || 'N').toUpperCase();
-        const mixed = n > 0 && (n - (t[refB] || 0)) / n >= 0.2 || cs.del[i] / Math.max(1, cs.depth[i]) >= 0.2;
-        if (!mixed) {
-            const hh = Math.round(H * cs.depth[i] / max * 2) / 2;
-            if (hh > 0) { ctx.fillStyle = '#b4b4b4'; ctx.fillRect(x, top + H - hh, cell, hh); }
-            continue;
-        }
-        // stacked: bases (reference first), deletions on top
+    const totals = i => ({ A: cs.fwd[0][i] + cs.rev[0][i], C: cs.fwd[1][i] + cs.rev[1][i], G: cs.fwd[2][i] + cs.rev[2][i], T: cs.fwd[3][i] + cs.rev[3][i] });
+    const isMixed = (p, t) => { const i = p - cs.lo, n = t.A + t.C + t.G + t.T; return n > 0 && (n - (t[(bamState.refSeq[p] || 'N').toUpperCase()] || 0)) / n >= 0.2 || cs.del[i] / Math.max(1, cs.depth[i]) >= 0.2; };
+    // stacked: bases (reference first), deletions on top
+    const stack = (p, t, x, bw) => {
+        const i = p - cs.lo, refB = (bamState.refSeq[p] || 'N').toUpperCase();
         let y = H;
-        const seg = (cnt, col) => { if (!cnt) return; const hh = H * cnt / max; y -= hh; ctx.fillStyle = col; ctx.fillRect(x, top + y, cell, hh); };
+        const seg = (cnt, col) => { if (!cnt) return; const hh = H * cnt / max; y -= hh; ctx.fillStyle = col; ctx.fillRect(x, top + y, bw, hh); };
         if (t[refB]) seg(t[refB], COL[refB]);
         for (const c of ['A', 'C', 'G', 'T']) if (c !== refB) seg(t[c], COL[c]);
         seg(cs.del[i], '#555');
+    };
+    const lo = Math.max(a, cs.lo), hi = Math.min(b, cs.hi);
+    if (cell >= 1) {
+        for (let p = lo; p < hi; p++) {
+            const i = p - cs.lo, x = X(p), t = totals(i);
+            if (isMixed(p, t)) { stack(p, t, x, cell); continue; }
+            const hh = Math.round(H * cs.depth[i] / max * 2) / 2;
+            if (hh > 0) { ctx.fillStyle = '#b4b4b4'; ctx.fillRect(x, top + H - hh, cell, hh); }
+        }
+    } else {
+        // several bases to a pixel: the deepest one's bar, then the mixed sites over it, so none is lost (found once)
+        if (!v.mixed) {
+            const m = [];
+            for (let p = Math.max(refStart, cs.lo); p < Math.min(refEnd, cs.hi); p++) if (isMixed(p, totals(p - cs.lo))) m.push(p);
+            v.mixed = Int32Array.from(m);
+        }
+        ctx.fillStyle = '#b4b4b4';
+        for (let px = Math.floor(X(lo)); px < Math.min(w, X(hi)); px++) {
+            const p0 = Math.max(lo, Math.floor(refStart + (px + sl - _READS_NAME_W) / cell)), p1 = Math.min(hi, Math.ceil(refStart + (px + 1 + sl - _READS_NAME_W) / cell));
+            let d = 0;
+            for (let p = p0; p < p1; p++) if (cs.depth[p - cs.lo] > d) d = cs.depth[p - cs.lo];
+            const hh = H * d / max;
+            if (hh > 0) ctx.fillRect(px, top + H - hh, 1, hh);
+        }
+        for (const p of v.mixed) if (p >= lo && p < hi) stack(p, totals(p - cs.lo), Math.floor(X(p)), 1);
     }
     // windows whose reads were not all drawn
     ctx.fillStyle = '#222';
     for (const d of bamState.downsampled || []) {
         const s = Math.max(d.start, a), e = Math.min(d.end, b);
-        if (e > s) ctx.fillRect(X(s), top + _COV_H - 4, (e - s) * cell, 3);
+        if (e > s) ctx.fillRect(X(s), top + _COV_H - 4, Math.max(1, (e - s) * cell), 3);
     }
     const f = bamState.focusPos;
-    if (f != null && f >= a && f < b) { ctx.strokeStyle = '#e0a800'; ctx.lineWidth = 2; ctx.strokeRect(X(f), top, cell, _COV_H); }
+    if (f != null && f >= a && f < b) { ctx.strokeStyle = '#e0a800'; ctx.lineWidth = 2; ctx.strokeRect(X(f), top, Math.max(2, cell), _COV_H); }
 }
 
 // ---- Variants: what the reads say, gene by gene ------------------------------------------------------------
@@ -11056,11 +11168,12 @@ function readsGoTo(p, opts = {}) {
     if (opts.sort !== false) _sortReadTracksAt(p);
     const readsRadio = document.getElementById('modeReads');
     if (readsRadio && !readsRadio.checked) { readsRadio.checked = true; syncQuickModeSwitch(); }
-    const keepLeft = alignmentContainer.scrollLeft;
+    const keepLeft = _readsLeft();
     renderAlignment();
-    if (opts.scroll === false) { alignmentContainer.scrollLeft = keepLeft; return; }
-    const NAME_W = 160, cellW = 12;
-    alignmentContainer.scrollLeft = Math.max(0, NAME_W + (p - bamState.refStart) * cellW - alignmentContainer.clientWidth / 2);
+    if (opts.scroll === false) { _readsSetLeft(keepLeft); _readsDraw(); return; }
+    // a change is looked at base by base: back to where letters show
+    if (_readsView && _readsView.cell < _READS_LETTERS) { _readsView.cell = _READS_CELL; _readsSizeSpacer(_readsView); }
+    _readsCentre(p);
 }
 
 /**
@@ -14906,6 +15019,8 @@ function syncQuickModeSwitch() {
     if (readsToggle) readsToggle.style.display = isReadsMode ? 'flex' : 'none';
     const sampleBtn = ensureSampleRowButton();
     if (sampleBtn) sampleBtn.style.display = isReadsMode && bamState?.reads?.length ? '' : 'none';
+    const zoomGroup = document.getElementById('readsZoomGroup');
+    if (zoomGroup) zoomGroup.style.display = isReadsMode && bamState?.reads?.length ? 'inline-flex' : 'none';
     const varBtn = document.getElementById('readsVariantsButton');
     if (varBtn) varBtn.style.display = isReadsMode && bamState?.reads?.length ? '' : 'none';
     syncModeRow();

@@ -602,7 +602,7 @@ const READS_PX = `
   window.__first = (x0, y, w, col) => { const { d, s } = __px(x0, y, w, 1), c = __rgb(col);
     for (let x = 0; x < d.width; x++) if (__near(d.data, x * 4, c, 30)) return x0 + x / s; return null; };
   window.__rowY = read => _readsHeadH() + read.track * _READS_TRACK_H - alignmentContainer.scrollTop;
-  window.__colX = p => _READS_NAME_W + (p - bamState.refStart) * _READS_CELL - alignmentContainer.scrollLeft;
+  window.__colX = p => _READS_NAME_W + (p - bamState.refStart) * _readsCell() - _readsLeft();
 `;
 
 check('BAM Reads view: reference bases, ruler and reads line up base for base', async (page) => {
@@ -658,6 +658,83 @@ check('Reads canvas: 100 kb at 30x stays small, and at the far end the painted r
   const unsel = await page.evaluate(() => _readsView.selected);
   const ok = nodes < 30000 && r.drawnNow < 2000 && r.total > 3000 && r.red && !r.redBeside && tip.includes('far99000') && sel === 'far99000' && !unsel;
   return { pass: ok, detail: JSON.stringify({ nodes, r, tip: tip.slice(0, 50), sel, unsel }) };
+}, { timeoutMs: 120000 });
+
+// Reads mode had one size, 12 px per base: 130 bases on a screen, 7,500 screens for 1 Mb. Zoom runs from single bases to
+// the whole region. Letters go below 7 px per base, a changed base stays as a tick, past 30 kb only coverage shows
+// (igv.js: visibilityWindow), and a mixed site must stay visible in the coverage row at any zoom.
+check('Reads zoom: buttons and Ctrl+wheel, the base under the mouse stays, letters then ticks then coverage only, a variant comes back to bases', async (page) => {
+  const L = 100000, RL = 150, b = 'ACGT'; let seed = 5; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const lines = [`@SQ\tSN:chrZ\tLN:${L}`];
+  const alt = c => (c === 'A' ? 'C' : 'A');
+  for (let i = 0, p = 0; p < L - RL; i++, p += 5) {
+    let s = ref.slice(p, p + RL);
+    const k = 60000 - p;                                   // position 60001: every second read carries the other base
+    if (k >= 0 && k < RL && i % 2) s = s.slice(0, k) + alt(s[k]) + s.slice(k + 1);
+    lines.push(`z${p}\t${i % 2 ? 16 : 0}\tchrZ\t${p + 1}\t60\t${RL}M\t*\t0\t0\t${s}\t*`);
+  }
+  await page.setInputFiles('#fileInput', { name: 'z.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrZ\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(600);
+  await page.setInputFiles('#bamFileInput', { name: 'z.sam', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\n') + '\n') });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView && _readsView.drawn.length > 0, null, { timeout: 30000 });
+  await page.evaluate(READS_PX);
+  const o = {};
+  await page.evaluate(() => _readsCentre(60000));
+  const box = await page.locator('#readsCanvas').boundingBox();
+  const at = () => page.evaluate(() => ({ cell: _readsCell(), left: _readsLeft(), span: el('readsZoomSpan').textContent }));
+  // Ctrl+wheel over a known spot: the base under the mouse stays under it
+  const mx = box.x + 900, my = box.y + 300;
+  const nameW = 160, under = s => Math.floor((900 + s.left - nameW) / s.cell);
+  o.a = await at(); await page.mouse.move(mx, my);
+  await page.keyboard.down('Control'); await page.mouse.wheel(0, 120); await page.waitForTimeout(150); await page.mouse.wheel(0, 120); await page.waitForTimeout(150); await page.keyboard.up('Control');
+  o.b = await at();
+  const wheelOk = o.b.cell < o.a.cell && Math.abs(under(o.a) - under(o.b)) <= 1;
+  // the buttons, down to under 7 px: no letters on the reference, a changed base is a red tick on its read
+  const stepTo = async (want, btn) => { for (let i = 0; i < 40; i++) { const c = await page.evaluate(() => _readsCell()); if (want(c)) return c; await page.click(btn); await page.waitForTimeout(40); } return null; };
+  o.c = await stepTo(c => c < 5, '#readsZoomOut');
+  await page.evaluate(() => _readsCentre(60000));
+  o.ticks = await page.evaluate(() => {
+    const q = bamState.reads.find(x => x.name === 'z59995');
+    alignmentContainer.scrollTop = q.track * _READS_TRACK_H; _readsDraw();
+    const x = __colX(60000), c = _readsCell();
+    return { letters: __ink(170, 2, _readsView.w - 180, 16, '#fafafa').n, red: __has(x - 1, __rowY(q) + 3, c + 2, 10, '#e74c3c', 40) };
+  });
+  // past 30 kb: no reads drawn, coverage stays, the pile's height goes; the mixed site is still marked
+  o.d = await stepTo(c => c * 30000 < 1200, '#readsZoomOut');
+  await page.evaluate(() => _readsCentre(60000));
+  o.cov = await page.evaluate(() => { const top = _READS_REF_H + _READS_SCALE_H, x = __colX(60000);
+    return { drawn: _readsView.drawn.length, ink: __ink(200, top, 600, _COV_H - 6, '#ffffff').n, mixed: __has(x - 2, top, 5, _COV_H - 6, '#4caf50', 40) || __has(x - 2, top, 5, _COV_H - 6, '#2196f3', 40) || __has(x - 2, top, 5, _COV_H - 6, '#ff9800', 40) || __has(x - 2, top, 5, _COV_H - 6, '#f44336', 40),
+      high: alignmentContainer.scrollHeight <= alignmentContainer.clientHeight + 2 }; });
+  // all the way out: the whole reference fits, nothing to scroll sideways
+  await stepTo(c => false, '#readsZoomOut');
+  o.fit = await page.evaluate(() => ({ cell: _readsCell(), span: el('readsZoomSpan').textContent, wide: alignmentContainer.scrollWidth <= alignmentContainer.clientWidth + 2, end: Math.abs(_READS_NAME_W + bamState.refEnd * _readsCell() - _readsView.w) <= 2 + bamState.refStart * _readsCell() }));
+  // a variant opened from the list comes back to where bases show, on its column
+  o.go = await page.evaluate(() => { readsGoTo(60000, { sort: true }); const x = __colX(60000); return { cell: _readsCell(), x, inView: x > 160 && x < _readsView.w, drawn: _readsView.drawn.length }; });
+  const ok = wheelOk && o.c != null && o.ticks.letters === 0 && o.ticks.red && o.d != null && o.cov.drawn === 0 && o.cov.ink > 100 && o.cov.mixed && o.cov.high
+    && o.fit.wide && o.fit.end && o.go.cell === 12 && o.go.inView && o.go.drawn > 0;
+  return { pass: ok, detail: JSON.stringify({ wheelOk, o }) };
+}, { timeoutMs: 120000 });
+
+// One pile as wide as the reference at 12 px per base runs into the browser's limit for an element's size near 2.8 Mb:
+// the end of a longer reference could not be reached. The scroll range is capped and mapped onto the pile.
+check('Reads zoom: the end of a 4 Mb reference can be reached and its read is on the right base', async (page) => {
+  const L = 4000000, b = 'ACGT', parts = []; for (let i = 0; i < L / 1000; i++) { let s = ''; for (let j = 0; j < 1000; j++) s += b[(i * 7 + j * (1 + (j % 3))) & 3]; parts.push(s); }
+  const ref = parts.join(''), p = L - 400;
+  const sam = `@SQ\tSN:chrL\tLN:${L}\nfirst\t0\tchrL\t1\t60\t100M\t*\t0\t0\t${ref.slice(0, 100)}\t*\nlast\t0\tchrL\t${p + 1}\t60\t100M\t*\t0\t0\t${ref.slice(p, p + 100)}\t*\n`;
+  await page.setInputFiles('#fileInput', { name: 'l.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrL\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1, null, { timeout: 60000 });
+  await page.waitForTimeout(800);
+  await page.setInputFiles('#bamFileInput', { name: 'l.sam', mimeType: 'text/plain', buffer: Buffer.from(sam) });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView, null, { timeout: 30000 });
+  await page.evaluate(READS_PX);
+  const r = await page.evaluate(p => { _readsCentre(p + 30);
+    const q = bamState.reads.find(x => x.name === 'last'), x = _READS_NAME_W + (p - bamState.refStart) * _readsCell() - _readsLeft();
+    return { cell: _readsCell(), x, w: _readsView.w, cap: __first(Math.max(0, x - 5), __rowY(q) + 8, 12, '#2c5d80'), names: _readsView.drawn.map(d => d.name) };
+  }, p);
+  const ok = r.x > 160 && r.x < r.w && r.cap != null && Math.abs(r.cap - r.x) <= 1.5 && r.names.includes('last');
+  return { pass: ok, detail: JSON.stringify(r) };
 }, { timeoutMs: 120000 });
 
 // Reads could only be looked at: codon analysis and MACSE work on rows, and in Full view the reads were gone.
