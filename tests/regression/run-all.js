@@ -601,7 +601,7 @@ const READS_PX = `
     for (let i = 0; i < d.data.length; i += 4) if (__near(d.data, i, c, t)) return true; return false; };
   window.__first = (x0, y, w, col) => { const { d, s } = __px(x0, y, w, 1), c = __rgb(col);
     for (let x = 0; x < d.width; x++) if (__near(d.data, x * 4, c, 30)) return x0 + x / s; return null; };
-  window.__rowY = read => _readsHeadH() + read.track * _READS_TRACK_H - alignmentContainer.scrollTop;
+  window.__rowY = read => _readsHeadH() + read.track * _readsTrackH() - alignmentContainer.scrollTop;
   window.__colX = p => _READS_NAME_W + (p - bamState.refStart) * _readsCell() - _readsLeft();
 `;
 
@@ -787,6 +787,72 @@ check('Reads jump box: position, range, file coordinates on a region, gene; a wr
     && near(o.gene.first, 5000, 2) && near(o.gene.last, 6000, 2) && near(o.prefix.first, 5000, 2)
     && /EPS8L1/.test(o.eSeveral) && /EPS8L2/.test(o.eSeveral) && /20,000|19,9/.test(o.ePast) && /NOSUCH/.test(o.eNone) && /chr9/.test(o.eOther)
     && before[0] === after[0] && before[1] === after[1];
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 120000 });
+
+// A spliced read was one solid bar across its intron, which reads as if the intron were sequenced. Deep places needed
+// many screens of 16-px rows. Genes were in the Variants table only, never beside the reads.
+check('Reads: an intron is a thin line, Compact fits a deep pile, the gene row shows exons and goes to a gene, and the toolbar fits a narrow window', async (page) => {
+  const L = 20000, RL = 150, b = 'ACGT'; let seed = 11; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const lines = [`@SQ\tSN:chrG\tLN:${L}`];
+  lines.push(`start\t0\tchrG\t1\t60\t${RL}M\t*\t0\t0\t${ref.slice(0, RL)}\t*`, `end\t0\tchrG\t${L - RL + 1}\t60\t${RL}M\t*\t0\t0\t${ref.slice(L - RL)}\t*`);
+  lines.push(`spliced\t0\tchrG\t5001\t60\t50M1000N50M\t*\t0\t0\t${ref.slice(5000, 5050) + ref.slice(6050, 6100)}\t*`);
+  for (let i = 0; i < 120; i++) lines.push(`deep${i}\t0\tchrG\t${3001 + i}\t60\t${RL}M\t*\t0\t0\t${ref.slice(3000 + i, 3000 + i + RL)}\t*`);
+  await page.setInputFiles('#fileInput', { name: 'g.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrG\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(600);
+  await page.setInputFiles('#bamFileInput', { name: 'g.sam', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\n') + '\n') });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView, null, { timeout: 30000 });
+  await page.evaluate(READS_PX);
+  const o = {};
+  const box = await page.locator('#readsCanvas').boundingBox();
+  // the intron
+  o.intron = await page.evaluate(() => { const q = bamState.reads.find(x => x.name === 'spliced');
+    alignmentContainer.scrollTop = q.track * _readsTrackH(); _readsCentre(6045); const y = __rowY(q);
+    const gap = __colX(6040), exon = __colX(6060);
+    return { fillInGap: __has(gap, y + 3, 12, 2, '#f3d3d6', 6), line: __has(gap, y + 5, 12, 6, '#96aaaa', 30), fillInExon: __has(exon, y + 3, 12, 2, '#f3d3d6', 6), gx: gap + 6, gy: y + 8 }; });
+  await page.mouse.move(box.x + o.intron.gx, box.y + o.intron.gy); await page.waitForTimeout(200);
+  o.gapTip = await page.evaluate(() => document.querySelector('.tooltip.reads-tooltip')?.textContent?.slice(0, 8) || '');
+  await page.mouse.move(box.x + 5, box.y + 5);
+  // Compact: the deep place on one screen, the right read under the mouse
+  o.before = await page.evaluate(() => ({ h: alignmentContainer.scrollHeight, H: _readsTrackH(), tracks: bamState.nTracks }));
+  await page.check('#readsCompact'); await page.waitForTimeout(150);
+  o.compact = await page.evaluate(() => { const q = bamState.reads.filter(x => x.name.startsWith('deep'))[30], p = q.start + 10; alignmentContainer.scrollTop = 0; _readsCentre(p); const y = __rowY(q);
+    return { h: alignmentContainer.scrollHeight, client: alignmentContainer.clientHeight, H: _readsTrackH(), fill: __has(__colX(p), y, 12, 3, '#f3d3d6', 6), x: __colX(p) + 6, y: y + 1, want: q.name, track: q.track }; });
+  await page.mouse.move(box.x + o.compact.x, box.y + o.compact.y); await page.waitForTimeout(200);
+  o.compactTip = await page.evaluate(() => document.querySelector('.tooltip.reads-tooltip')?.textContent || '');
+  await page.uncheck('#readsCompact'); await page.waitForTimeout(150);
+  o.back = await page.evaluate(() => _readsTrackH());
+  // the gene row: only with genes on this row
+  o.head0 = await page.evaluate(() => _readsHeadH());
+  await page.evaluate(() => setAnnotation('chrG\t5000\t8000\tGENEA\t0\t+\t5000\t8000\t0\t2\t500,500,\t0,2500,\nchrG\t5200\t5400\tGENEB\t0\t-\nchrG\t12000\t12300\tGENEC\t0\t+\n', 'g.bed'));
+  await page.waitForTimeout(400);
+  await page.evaluate(READS_PX);
+  await page.evaluate(() => _readsFit(4800, 8200)); await page.waitForTimeout(100);
+  o.gene = await page.evaluate(() => { const top = _READS_REF_H + _READS_SCALE_H + _COV_H;
+    return { head: _readsHeadH(), genes: _readsView.genes.map(g => g.name + ':' + g.lane), exon: __has(__colX(5100), top, 2, _readsView.geneH, '#3b6ea5', 20),
+      exonTall: __ink(__colX(5100), top + 3, 1, 12, '#ffffff').n, intronTall: __ink(__colX(6500), top + 3, 1, 12, '#ffffff').n, hx: __colX(7800), hy: top + 8 }; });
+  await page.mouse.move(box.x + o.gene.hx, box.y + o.gene.hy); await page.waitForTimeout(200);
+  o.geneTip = await page.evaluate(() => document.querySelector('.tooltip.reads-tooltip')?.textContent || '');
+  await page.evaluate(() => _readsCentre(12100)); await page.waitForTimeout(60);
+  o.c = await page.evaluate(() => ({ x: __colX(12100), y: _READS_REF_H + _READS_SCALE_H + _COV_H + 8 }));
+  await page.mouse.click(box.x + o.c.x, box.y + o.c.y); await page.waitForTimeout(150);
+  o.click = await page.evaluate(() => { const c = _readsCell(), f = _readsLeft() / c; return { first: Math.round(f), last: Math.round(f + (_readsView.w - 160) / c) }; });
+  // the toolbar in a narrow window: nothing on top of anything
+  await page.setViewportSize({ width: 1000, height: 700 }); await page.waitForTimeout(300);
+  o.overlap = await page.evaluate(() => { const ids = ['quickModeSwitch', 'readsDisplayToggle', 'readsSampleRowButton', 'readsVariantsButton', 'readsZoomGroup', 'readsJumpBox'];
+    const rs = ids.map(i => [i, el(i)?.getBoundingClientRect()]).filter(x => x[1] && x[1].width), hit = [];
+    for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) { const [a, A] = rs[i], [c, C] = rs[j];
+      if (c === 'readsJumpBox' && a === 'readsZoomGroup') continue;
+      if (A.left < C.right - 1 && C.left < A.right - 1 && A.top < C.bottom - 1 && C.top < A.bottom - 1) hit.push(a + '/' + c); }
+    const j = el('readsJumpBox').getBoundingClientRect();
+    return { hit, off: j.right > innerWidth, n: rs.length }; });
+  const near = (a, c, t) => Math.abs(a - c) <= t;
+  const ok = !o.intron.fillInGap && o.intron.line && o.intron.fillInExon && o.gapTip.startsWith('spliced')
+    && o.before.H === 16 && o.compact.H === 4 && o.compact.h < o.before.h && o.compact.fill && o.compactTip.startsWith(o.compact.want + 'Pos') && o.back === 16
+    && o.gene.head > o.head0 && o.gene.genes.join() === 'GENEA:0,GENEB:1,GENEC:0' && o.gene.exon && o.gene.exonTall > o.gene.intronTall && /GENEA/.test(o.geneTip) && /5,001/.test(o.geneTip)
+    && near(o.click.first, 12000, 2) && near(o.click.last, 12300, 3) && o.overlap.n === 6 && !o.overlap.hit.length && !o.overlap.off;
   return { pass: ok, detail: JSON.stringify(o) };
 }, { timeoutMs: 120000 });
 

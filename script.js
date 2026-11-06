@@ -10419,6 +10419,18 @@ function ensureSampleRowButton() {
         if (e.key === 'Enter') { e.preventDefault(); readsJump(jb.value); }
     });
     zoom.appendChild(jb);
+    const cl = document.createElement('label');
+    cl.title = 'Thin rows, so a deep place fits on the screen';
+    cl.style.cssText = 'display:inline-flex;align-items:center;gap:3px;margin-left:5px;cursor:pointer;user-select:none;';
+    const cc = document.createElement('input');
+    cc.type = 'checkbox'; cc.id = 'readsCompact'; cc.style.margin = '0';
+    cc.addEventListener('change', () => {
+        _readsCompact = cc.checked;
+        if (_readsView) { _readsSizeSpacer(_readsView); _readsDraw(); }
+    });
+    cl.appendChild(cc);
+    cl.appendChild(document.createTextNode('Compact'));
+    zoom.appendChild(cl);
     vb.parentNode.insertBefore(zoom, vb.nextSibling);
     return btn;
 }
@@ -10503,7 +10515,12 @@ function addSampleRowFromReads() {
 // moves the spacer and each frame draws only the bases and tracks on screen. It was one SVG of the whole reference,
 // with a node per read, cap, mismatch and base: 1 Mb at 30x took 90 s and 4.6 million nodes, a frame up to 1.6 s.
 const _READS_CELL = 12, _READS_NAME_W = 160, _READS_TRACK_H = 16, _READS_REF_H = 22, _READS_SCALE_H = 14, _READS_STATUS_H = 21;
-const _readsHeadH = () => _READS_REF_H + _READS_SCALE_H + _COV_H + _READS_STATUS_H;
+// Compact: rows of 4 px (the reads as bars and ticks), for a deep place. The gene row is there only with genes on this row.
+const _READS_COMPACT_H = 4, _READS_GENE_LANE = 14, _READS_GENE_LANES = 3;
+let _readsCompact = false;
+const _readsTrackH = () => (_readsCompact ? _READS_COMPACT_H : _READS_TRACK_H);
+const _readsGeneH = () => (_readsView ? _readsView.geneH : 0);
+const _readsHeadH = () => _READS_REF_H + _READS_SCALE_H + _COV_H + _readsGeneH() + _READS_STATUS_H;
 // Zoom: px per base, from the whole region to _READS_CELL. Letters need _READS_LETTERS px; past _READS_WINDOW bases on
 // screen only coverage is drawn (igv.js: visibilityWindow). The spacer is capped (an element stops growing near 33
 // million px, 2.8 Mb at 12 px per base) and its scroll range mapped onto the pile: _readsLeft / _readsSetLeft.
@@ -10521,6 +10538,7 @@ const _readsCoverageOnly = v => (v.w - _READS_NAME_W) / v.cell > _READS_WINDOW;
 function _readsSizeSpacer(v) {
     v.fullW = _READS_NAME_W + (bamState.refEnd - bamState.refStart) * v.cell;
     v.spacer.style.width = Math.max(Math.min(v.fullW, _READS_MAX_SPACER), v.w) + 'px';
+    v.fullH = _readsHeadH() + (bamState.nTracks || 0) * _readsTrackH() + 4;
     v.spacer.style.height = (_readsCoverageOnly(v) ? v.h : Math.max(v.fullH, v.h)) + 'px';
 }
 const _readsMinCell = v => Math.min(_READS_CELL, (v.w - _READS_NAME_W) / Math.max(1, bamState.refEnd - bamState.refStart));
@@ -10587,12 +10605,62 @@ function readsJump(text) {
     if (!v || r.error === '') return;
     if (r.error) { showMessage(r.error, 6000); return; }
     if (r.single) { readsGoTo(r.from, { sort: false }); return; }
+    _readsFit(r.from, r.to);
+}
+// Positions from..to (0-based, inclusive) fill the view; a short stretch stays at full size, in the middle
+function _readsFit(from, to) {
+    const v = _readsView;
+    if (!v) return;
     bamState.focusPos = null;
-    const want = (v.w - _READS_NAME_W) / (r.to - r.from + 1);
+    const want = (v.w - _READS_NAME_W) / (to - from + 1);
     v.cell = Math.max(_readsMinCell(v), Math.min(_READS_CELL, want));
     _readsSizeSpacer(v);
-    if (want > _READS_CELL) _readsCentre((r.from + r.to) / 2);
-    else { _readsSetLeft((r.from - bamState.refStart) * v.cell); _readsDraw(); }
+    if (want > _READS_CELL) _readsCentre((from + to) / 2);
+    else { _readsSetLeft((from - bamState.refStart) * v.cell); _readsDraw(); }
+}
+// Genes of the row in lanes, so overlapping ones do not cover each other; past the last lane they share it
+function _readsGeneLanes() {
+    const genes = _readsGenes().slice().sort((a, b) => a.start - b.start || b.end - a.end), ends = [];
+    for (const g of genes) {
+        let l = ends.findIndex(e => e <= g.start);
+        if (l < 0) l = ends.length < _READS_GENE_LANES ? ends.length : _READS_GENE_LANES - 1;
+        ends[l] = Math.max(ends[l] || 0, g.end);
+        g.lane = l;
+    }
+    return { genes, h: ends.length ? ends.length * _READS_GENE_LANE + 4 : 0 };
+}
+function _readsDrawGenes(v, a, b, X, top) {
+    const { ctx, w } = v, H = v.geneH, sl = _readsLeft(), COL = '#3b6ea5', clampX = x => Math.max(-4, Math.min(w + 4, x));
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, top, w, H);
+    ctx.fillStyle = '#ddd'; ctx.fillRect(0, top + H - 1, w, 1);
+    ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
+    ctx.fillText('genes', _READS_NAME_W - 4 - sl, top + H / 2);
+    ctx.textAlign = 'left';
+    ctx.font = '9px sans-serif';
+    const nameEnd = [];
+    for (const g of v.genes) {
+        if (g.end <= a || g.start >= b) continue;
+        const y = top + 2 + g.lane * _READS_GENE_LANE, mid = y + 6, x0 = clampX(X(g.start)), x1 = clampX(X(g.end));
+        ctx.fillStyle = COL; ctx.fillRect(x0, mid, Math.max(1, x1 - x0), 1);
+        // strand: a chevron every 40 px along the line
+        ctx.strokeStyle = COL; ctx.lineWidth = 1;
+        const dir = g.strand === '-' ? -1 : 1;
+        for (let x = x0 + 20; x < x1 - 6; x += 40) { ctx.beginPath(); ctx.moveTo(x - 2 * dir, mid - 2.5); ctx.lineTo(x + 2 * dir, mid + 0.5); ctx.lineTo(x - 2 * dir, mid + 3.5); ctx.stroke(); }
+        // exons thin, the coding part tall
+        const box = (blocks, dy, h) => { for (const [s, e] of blocks) { if (e <= a || s >= b) continue; const p = clampX(X(s)); ctx.fillRect(p, y + dy, Math.max(1, clampX(X(e)) - p), h); } };
+        if (g.blocks && g.blocks.length) box(g.blocks, 3, 7);
+        if (g.coding) box(g.cdsBlocks, 1, 11);
+        else if (!g.blocks || !g.blocks.length) box([[g.start, g.end]], 3, 7);
+        // the name, on white, where it does not run into the last one in this lane
+        const name = String(g.name), tw = ctx.measureText(name).width, nx = Math.max(x0, _READS_NAME_W - sl > 0 ? _READS_NAME_W - sl : 0) + 2;
+        if (nx >= (nameEnd[g.lane] || 0) && nx + tw < w) {
+            ctx.fillStyle = '#fff'; ctx.fillRect(nx - 1, y + 1, tw + 2, 11);
+            ctx.fillStyle = '#1f3f63'; ctx.fillText(name, nx, y + 6.5);
+            nameEnd[g.lane] = nx + tw + 6;
+        }
+        ctx.fillStyle = COL;
+    }
+    ctx.textAlign = 'center';
 }
 function _readsSpanText(v) {
     const n = Math.min(bamState.refEnd - bamState.refStart, Math.round((v.w - _READS_NAME_W) / v.cell));
@@ -10722,11 +10790,12 @@ function renderReadsAlignment() {
     spacer.appendChild(canvas);
     alignmentContainer.appendChild(spacer);
 
+    const lanes = _readsGeneLanes();
     const v = _readsView = {
-        canvas, spacer, ctx: canvas.getContext('2d'), w: 0, h: 0, dpr: 0, cell: keep ? keep[2] : _READS_CELL, groups, maxClip, covMax: null, mixed: null,
+        genes: lanes.genes, geneH: lanes.h, canvas, spacer, ctx: canvas.getContext('2d'), w: 0, h: 0, dpr: 0, cell: keep ? keep[2] : _READS_CELL, groups, maxClip, covMax: null, mixed: null,
         selected, status: null, reads, drawn: [], raf: 0, ro: null, onScroll: _readsSchedule,
         fullW: _READS_NAME_W + (refEnd - refStart) * (keep ? keep[2] : _READS_CELL),
-        fullH: _readsHeadH() + nTracks * _READS_TRACK_H + 4
+        fullH: 0
     };
     alignmentContainer.addEventListener('scroll', v.onScroll, { passive: true });
     if (typeof ResizeObserver !== 'undefined') { v.ro = new ResizeObserver(() => _readsResize()); v.ro.observe(alignmentContainer); }
@@ -10735,27 +10804,37 @@ function renderReadsAlignment() {
     if (keep) { _readsSetLeft(keep[0]); alignmentContainer.scrollTop = keep[1]; _readsDraw(); }
 }
 
+function _readsGeneTip(g) {
+    return `<b>${_escapeHtml(g.name)}</b><br>${(g.start + 1).toLocaleString()} to ${g.end.toLocaleString()} (${(g.end - g.start).toLocaleString()} bp), ${g.strand === '-' ? 'minus' : 'plus'} strand<br><i>click: go to this gene</i>`;
+}
+
 function _readsWireMouse(v) {
     const { canvas } = v;
     const hit = e => {
         const b = canvas.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
         const p = bamState.refStart + Math.floor((x + _readsLeft() - _READS_NAME_W) / v.cell);
         const inPlot = p >= bamState.refStart && p < bamState.refEnd;
-        const covTop = _READS_REF_H + _READS_SCALE_H;
-        if (y >= covTop && y < covTop + _COV_H) return inPlot ? { p, cov: true } : null;
+        const covTop = _READS_REF_H + _READS_SCALE_H, geneTop = covTop + _COV_H;
+        if (y >= covTop && y < geneTop) return inPlot ? { p, cov: true } : null;
+        if (y >= geneTop && y < geneTop + v.geneH) {
+            // a gene under a pixel or two is still hit
+            const lane = Math.floor((y - geneTop - 2) / _READS_GENE_LANE), slack = 3 / v.cell;
+            const gene = v.genes.find(g => g.lane === lane && g.start - slack <= p && p < g.end + slack);
+            return gene ? { p, gene } : null;
+        }
         if (y < _readsHeadH() || !inPlot || _readsCoverageOnly(v)) return null;
-        const read = _readsReadAt(Math.floor((y - _readsHeadH() + alignmentContainer.scrollTop) / _READS_TRACK_H), p);
+        const read = _readsReadAt(Math.floor((y - _readsHeadH() + alignmentContainer.scrollTop) / _readsTrackH()), p);
         return read ? { p, read } : null;
     };
     const at = e => ({ getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX + 1, top: e.clientY, bottom: e.clientY + 1, width: 1, height: 1 }) });
     let shown = null;
     canvas.addEventListener('mousemove', e => {
-        const h = hit(e), key = h ? (h.read ? h.read : 'c' + h.p) : null;
+        const h = hit(e), key = h ? (h.read || h.gene || 'c' + h.p) : null;
         canvas.style.cursor = h ? 'pointer' : '';
         if (key === shown) return;
         shown = key;
         if (!h) hideTooltip();
-        else showTooltipAt(h.read ? _readsTooltipHtml(h.read) : _readsCountsHtml(h.p), at(e), { html: true, className: 'reads-tooltip' });
+        else showTooltipAt(h.read ? _readsTooltipHtml(h.read) : h.gene ? _readsGeneTip(h.gene) : _readsCountsHtml(h.p), at(e), { html: true, className: 'reads-tooltip' });
     });
     canvas.addEventListener('mouseleave', () => { shown = null; hideTooltip(); });
     // Ctrl+wheel zooms round the mouse, as Canvas mode leaves it to the browser only outside the Reads view
@@ -10768,6 +10847,7 @@ function _readsWireMouse(v) {
         const h = hit(e);
         if (!h) return;
         if (h.cov) { readsGoTo(h.p, { sort: true, scroll: false }); return; }
+        if (h.gene) { _readsFit(Math.max(h.gene.start, bamState.refStart), Math.min(h.gene.end, bamState.refEnd) - 1); return; }
         const read = h.read, rev = !!(read.flag & 0x10);
         v.selected = v.selected === read ? null : read;
         v.status = v.selected ? `${read.name}  |  pos: ${read.pos + 1}  |  ${rev ? 'reverse' : 'forward'} strand  |  cigar: ${read.cigar.map(c => c.len + c.op).join('')}  |  mapq: ${read.mapq}` : null;
@@ -10794,7 +10874,7 @@ function _readsDraw() {
     // -- Tracks: under the header, which stays --
     ctx.save();
     ctx.beginPath(); ctx.rect(0, head, w, h - head); ctx.clip();
-    const H = _READS_TRACK_H, t0 = Math.floor(st / H), t1 = covOnly ? -1 : Math.min(groups.length - 1, Math.floor((st + h - head) / H));
+    const H = _readsTrackH(), t0 = Math.floor(st / H), t1 = covOnly ? -1 : Math.min(groups.length - 1, Math.floor((st + h - head) / H));
     const plotR = Math.min(w, v.fullW - sl), drawn = [];
     ctx.font = '9px monospace';
     for (let t = t0; t <= t1; t++) {
@@ -10856,9 +10936,11 @@ function _readsDraw() {
     }
 
     _readsDrawCoverage(v, a, b, X);
+    const geneTop = _READS_REF_H + _READS_SCALE_H + _COV_H;
+    if (v.geneH) _readsDrawGenes(v, a, b, X, geneTop);
 
     // -- Status: the selected read, or the counts --
-    const y2 = _READS_REF_H + _READS_SCALE_H + _COV_H;
+    const y2 = geneTop + v.geneH;
     ctx.fillStyle = '#e8f0fe'; ctx.fillRect(0, y2, w, _READS_STATUS_H - 1);
     ctx.fillStyle = '#c5d8ee'; ctx.fillRect(0, y2 + _READS_STATUS_H - 1, w, 1);
     ctx.fillStyle = '#333'; ctx.font = '11px monospace'; ctx.textAlign = 'left';
@@ -10869,33 +10951,48 @@ function _readsDraw() {
 // One read, between positions a and b only. Walks the CIGAR once: on a long read a table of every base per read
 // (_getReadCigarFeatures) is too much per frame.
 function _readsPaintRead(ctx, read, y, a, b, sl, X, selected, cell) {
-    const H = _READS_TRACK_H, rh = H - 4, fine = cell >= 2, geom = _readsBarGeom(read), rx = geom.x - sl, rw = geom.w;
+    const H = _readsTrackH(), compact = H < 8, pad = compact ? 0 : 2, rh = compact ? H - 1 : H - 4, fine = cell >= 2 && !compact;
+    const geom = _readsBarGeom(read), rx = geom.x - sl, rw = geom.w;
     const rev = !!(read.flag & 0x10), minX = -cell, maxX = X(b) + cell;
     for (const box of [geom.left, geom.right]) {
         if (!box || !box.w || !fine) continue;
         // soft clips: lighter fill, dashed edge
-        ctx.fillStyle = '#e8eef5'; ctx.fillRect(box.x - sl, y + 2, box.w, rh);
+        ctx.fillStyle = '#e8eef5'; ctx.fillRect(box.x - sl, y + pad, box.w, rh);
         ctx.strokeStyle = '#a0b8d0'; ctx.lineWidth = 1; ctx.setLineDash([3, 2]);
-        ctx.strokeRect(box.x - sl, y + 2, box.w, rh);
+        ctx.strokeRect(box.x - sl, y + pad, box.w, rh);
         ctx.setLineDash([]);
     }
+    // the aligned stretches; a skipped region (N: an intron) is a thin line, it was not sequenced
+    const segs = [];
+    let from = read.pos, q = read.pos;
+    for (const { op, len } of read.cigar) {
+        if (op === 'N') {
+            segs.push([from, q]);
+            const g0 = Math.max(X(q), minX), g1 = Math.min(X(q + len), maxX);
+            if (g1 > g0) { ctx.fillStyle = 'rgb(150, 170, 170)'; ctx.fillRect(g0, y + pad + Math.floor(rh / 2), g1 - g0, 1); }
+            q += len; from = q;
+        } else if (op === 'M' || op === '=' || op === 'X' || op === 'D') q += len;
+    }
+    segs.push([from, q]);
     // strand, as igv.js colours by strand: forward pink, reverse blue (the bars were one colour, so a change seen on
     // one strand only - a common artefact - could not be told from a real one); MAPQ 0 faded
-    const lo = Math.max(rx, minX), hi = Math.min(rx + rw, maxX);
-    if (hi > lo) {
-        ctx.globalAlpha = read.mapq ? 1 : 0.35;
-        ctx.fillStyle = rev ? '#d3dbf3' : '#f3d3d6'; ctx.fillRect(lo, y + 2, hi - lo, rh);
+    ctx.globalAlpha = read.mapq ? 1 : 0.35;
+    for (const [s0, e0] of segs) {
+        const lo = Math.max(X(s0), minX), hi = Math.min(X(e0), maxX);
+        if (hi <= lo) continue;
+        ctx.fillStyle = rev ? '#d3dbf3' : '#f3d3d6'; ctx.fillRect(lo, y + pad, hi - lo, rh);
         if (fine || selected) {
-            ctx.strokeStyle = selected ? '#d9402b' : rev ? '#5a6fb0' : '#b0606a'; ctx.lineWidth = selected ? 3 : 1.5;
+            ctx.strokeStyle = selected ? '#d9402b' : rev ? '#5a6fb0' : '#b0606a'; ctx.lineWidth = selected ? (compact ? 1 : 3) : 1.5;
             ctx.beginPath();
-            ctx.moveTo(lo, y + 2); ctx.lineTo(hi, y + 2); ctx.moveTo(lo, y + 2 + rh); ctx.lineTo(hi, y + 2 + rh);
+            ctx.moveTo(lo, y + pad); ctx.lineTo(hi, y + pad); ctx.moveTo(lo, y + pad + rh); ctx.lineTo(hi, y + pad + rh);
             ctx.stroke();
         }
-        ctx.globalAlpha = 1;
     }
-    const letters = [], withLetters = cell >= _READS_LETTERS, showAll = withLetters && _readsDisplayMode !== 'diff', ticks = [];
+    ctx.globalAlpha = 1;
+    const letters = [], withLetters = cell >= _READS_LETTERS && !compact, showAll = withLetters && _readsDisplayMode !== 'diff', ticks = [];
     const refSeq = bamState.refSeq, seq = read.seq;
-    let q = read.pos, rp = 0;
+    let rp = 0;
+    q = read.pos;
     for (const { op, len } of read.cigar) {
         if (op === 'M' || op === '=' || op === 'X') {
             const s = Math.max(q, a), e = Math.min(q + len, b);
@@ -10907,26 +11004,26 @@ function _readsPaintRead(ctx, read, y, a, b, sl, X, selected, cell) {
             q += len; rp += len;
         } else if (op === 'D') {
             const s = Math.max(q, a), e = Math.min(q + len, b);
-            if (e > s) { ctx.fillStyle = '#b0b0b0'; ctx.fillRect(X(s), y + 2, Math.max(1, (e - s) * cell), rh); }
+            if (e > s) { ctx.fillStyle = '#b0b0b0'; ctx.fillRect(X(s), y + pad, Math.max(1, (e - s) * cell), rh); }
             q += len;
         } else if (op === 'N') q += len;
         else if (op === 'I') { if (q >= a && q <= b) ticks.push(q); rp += len; }
         else if (op === 'S') rp += len;
     }
     ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 1.5;
-    for (const p of ticks) { const x = X(p); ctx.beginPath(); ctx.moveTo(x, y + 1); ctx.lineTo(x, y + H - 1); ctx.stroke(); }
+    for (const p of ticks) { const x = X(p); ctx.beginPath(); ctx.moveTo(x, y + (compact ? 0 : 1)); ctx.lineTo(x, y + H - (compact ? 0 : 1)); ctx.stroke(); }
     // caps: a line at each end of the read
     ctx.strokeStyle = '#2c5d80'; ctx.lineWidth = 2;
     if (fine) for (const x of [rx, rx + rw]) if (x >= minX && x <= maxX) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + H); ctx.stroke(); }
     if (!withLetters) {
         // too small for a letter: a changed base is a tick, at least a pixel wide
         ctx.fillStyle = '#e74c3c';
-        for (let i = 0; i < letters.length; i += 2) ctx.fillRect(X(letters[i]), y + 2, Math.max(1, cell), rh);
+        for (let i = 0; i < letters.length; i += 2) ctx.fillRect(X(letters[i]), y + pad, Math.max(1, cell), rh);
         return;
     }
     for (let i = 0; i < letters.length; i += 2) {
         ctx.fillStyle = showAll ? baseColorRef(letters[i + 1]) : '#e74c3c';
-        ctx.fillText(letters[i + 1], X(letters[i]) + cell / 2, y + 2 + rh / 2);
+        ctx.fillText(letters[i + 1], X(letters[i]) + cell / 2, y + pad + rh / 2);
     }
 }
 
