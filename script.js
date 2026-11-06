@@ -9733,6 +9733,8 @@ let bamState = {
 
 // Reads-mode display: 'diff' (mismatches only) or 'bases' (all bases colored)
 let _readsDisplayMode = 'diff';
+// The open genome view (genome-view.js), else null: every line that asks for it does nothing on a plain alignment
+let _genome = null;
 
 /**
  * Show the BAM file picker when user clicks the BAM button.
@@ -10541,19 +10543,22 @@ function _readsScrollRatio(v) {
     const spacerW = Math.max(Math.min(v.fullW, _READS_MAX_SPACER), v.w);
     return spacerW > v.w ? Math.max(0, v.fullW - v.w) / (spacerW - v.w) : 1;
 }
-const _readsLeft = () => (_readsView ? alignmentContainer.scrollLeft * _readsScrollRatio(_readsView) : alignmentContainer.scrollLeft);
+// (a genome view keeps its place itself: at 250 Mb one pixel of this range is 188 pixels of the view)
+const _readsLeft = () => (_readsView ? (_genome ? _genome.left : alignmentContainer.scrollLeft * _readsScrollRatio(_readsView)) : alignmentContainer.scrollLeft);
 function _readsSetLeft(px) {
     if (!_readsView) return;
+    if (_genome) { _genomeSetLeft(px); return; }
     alignmentContainer.scrollLeft = Math.max(0, px) / (_readsScrollRatio(_readsView) || 1);
     // the bar too, at once: it trusts its own place during input (Enter counts) and wrote the old one back a frame later
     window._syncHorizontalScrollbar?.();
 }
-const _readsCoverageOnly = v => ((v.w - _READS_NAME_W) / v.cell) * (bamState.alignedBases || 0) / Math.max(1, bamState.refEnd - bamState.refStart) > _READS_MAX_DRAWN;
+const _readsCoverageOnly = v => (_genome ? _genomeCoverageOnly(v) : ((v.w - _READS_NAME_W) / v.cell) * (bamState.alignedBases || 0) / Math.max(1, bamState.refEnd - bamState.refStart) > _READS_MAX_DRAWN);
 function _readsSizeSpacer(v) {
     v.fullW = _READS_NAME_W + (bamState.refEnd - bamState.refStart) * v.cell;
     v.spacer.style.width = Math.max(Math.min(v.fullW, _READS_MAX_SPACER), v.w) + 'px';
     v.fullH = _readsHeadH() + (bamState.nTracks || 0) * _readsTrackH() + 4;
     v.spacer.style.height = (_readsCoverageOnly(v) ? v.h : Math.max(v.fullH, v.h)) + 'px';
+    if (_genome) _genomeSyncBar(v);
 }
 const _readsMinCell = v => Math.min(_READS_CELL, (v.w - _READS_NAME_W) / Math.max(1, bamState.refEnd - bamState.refStart));
 // The base at x on the canvas stays at x
@@ -10586,7 +10591,7 @@ function _readsParseJump(text) {
     if (!t) return { error: '' };
     const NUM = /^([\d,\s]+?)(?:\s*(?:-|\u2013|\.\.)\s*([\d,\s]+))?$/;
     const fmt = n => n.toLocaleString();
-    const inPlot = 'The reads cover ' + fmt(refStart + 1) + ' to ' + fmt(refEnd) + ' here.';
+    const inPlot = (_genome ? 'This chromosome runs from ' : 'The reads cover ') + fmt(refStart + 1) + ' to ' + fmt(refEnd) + ' here.';
     const range = (m, shift) => {
         const n = x => parseInt(String(x).replace(/[,\s]/g, ''), 10);
         let a = n(m[1]) - 1 - shift, b = m[2] != null ? n(m[2]) - 1 - shift : null;
@@ -10615,6 +10620,7 @@ function _readsParseJump(text) {
 }
 // A position goes to the middle of the view, marked, and to letters if they were too small; a range fills the view
 function readsJump(text) {
+    if (_genome) { _genomeJump(text); return; }
     const v = _readsView, r = _readsParseJump(text);
     if (!v || r.error === '') return;
     if (r.error) { showMessage(r.error, 6000); return; }
@@ -10741,6 +10747,7 @@ function _readsParseVcf(text) {
     return { sites, samples, other, outside, seen: [...seen] };
 }
 async function _readsLoadVcf(file) {
+    if (_genome) { showMessage('A VCF cannot be shown in the genome view yet.', 6000); return; }
     if (!bamState.reads || !bamState.reads.length) { showMessage('Open the reads first: a VCF is shown beside them.', 6000); return; }
     const bytes = new Uint8Array(await file.arrayBuffer());
     const text = bytes[0] === 0x1f && bytes[1] === 0x8b ? _decodeTextBytes(await BamParser.decompressBAM(new Blob([bytes]))) : _decodeTextBytes(bytes);
@@ -10792,7 +10799,7 @@ function _readsDefaultStatus() {
     if (o.sort !== 'start') on.push(`sorted by ${_READS_SORTS[o.sort]} at ${(o.sortPos + 1).toLocaleString()}`);
     if (o.color !== 'strand') on.push(`colour: ${o.color === 'tag' ? o.tag : _READS_COLORS[o.color]}`);
     if (o.pairs) on.push('pairs');
-    return `${reads.length} reads in ${nTracks} track${nTracks !== 1 ? 's' : ''}${on.length ? '  |  ' + on.join(', ') : ''}`;
+    return `${_genome ? _genomeStatusHead() : `${reads.length} reads in ${nTracks} track${nTracks !== 1 ? 's' : ''}`}${on.length ? '  |  ' + on.join(', ') : ''}`;
 }
 // Which reads are drawn. Flagged reads shown here are still not evidence: SampleCall leaves them out of the coverage
 // and the calls. A MAPQ minimum leaves reads out of those too.
@@ -10819,10 +10826,11 @@ function _readsSyncFilterBoxes() {
 function _readsFillFilterCounts() {
     const count = {};
     for (const r of bamState.fileReads || []) for (const [key, bit] of _READS_FLAGGED) if (r.flag & bit) count[key] = (count[key] || 0) + 1;
-    for (const [key, , label, id] of _READS_FLAGGED) { const t = document.getElementById(id + 'Text'); if (t) t.textContent = `${label} (${(count[key] || 0).toLocaleString()})`; }
+    for (const [key, , label, id] of _READS_FLAGGED) { const t = document.getElementById(id + 'Text'); if (t) t.textContent = `${label} (${(count[key] || 0).toLocaleString()}${_genome ? ' in window' : ''})`; }
 }
 // The reads drawn again from all that were read; the same place stays in the middle. Nothing passing is said and undone.
 function _readsSetFilter(next) {
+    if (_genome) { _genomeSetFilter(next); return; }
     const all = bamState.fileReads || [], kept = all.filter(r => _readsPasses(r, next));
     if (!kept.length) {
         showMessage(`No read passes that filter (MAPQ \u2265 ${next.minMapq}): it was not applied.`, 5000);
@@ -10925,7 +10933,7 @@ function _readsLayout() {
             ends[t] = u.end + 1;
             for (const r of u.reads) r.track = from + t;
         }
-        if (grouped) bamState.groupRanges.push({ from, to: from + ends.length, label: `${k} (${us.reduce((n, u) => n + u.reads.length, 0).toLocaleString()})`, key: _readsGroupKey });
+        if (grouped) bamState.groupRanges.push({ from, to: from + ends.length, label: `${k} (${us.reduce((n, u) => n + u.reads.length, 0).toLocaleString()}${_genome ? ' in window' : ''})`, key: _readsGroupKey });
         row = from + ends.length;
     }
     bamState.nTracks = row;
@@ -10935,7 +10943,7 @@ function _readsLayout() {
 function _readsSortRows(kind, p) {
     const n = bamState.nTracks || 0;
     if (!n || p == null) return;
-    const refB = (bamState.refSeq[p] || 'N').toUpperCase();
+    const refB = (_readsRefChar(p) || 'N').toUpperCase();
     const calls = kind === 'base' ? _readsCalls() : null, c = calls && SampleCall.countsAt(calls.counts, p);
     const freq = b => (c && c[b] ? c[b][0] + c[b][1] : 0);
     const value = r => {
@@ -10973,11 +10981,13 @@ function _readsSetOpts(next) {
     _readsSyncFilterBoxes();
 }
 function _readsInsertMedian() {
+    if (_genome && _genome.tlenMedian) return _genome.tlenMedian;   // or the colours would shift as the window moves
     if (bamState.tlenFor === bamState.allReads) return bamState.tlenMedian;
     const t = [];
     for (const r of bamState.allReads) if ((r.flag & 1) && r.tlen > 0) t.push(r.tlen);
     t.sort((a, b) => a - b);
     bamState.tlenFor = bamState.allReads; bamState.tlenMedian = t.length ? t[t.length >> 1] : 0;
+    if (_genome && t.length >= 1000) _genome.tlenMedian = bamState.tlenMedian;
     return bamState.tlenMedian;
 }
 // Fill and edge of a read's bar
@@ -11227,10 +11237,29 @@ function _readsReadAt(track, p) {
     return null;
 }
 
+// The reads of each track, in start order, and the longest soft clip
+function _readsBuildGroups() {
+    const { reads, nTracks = 0 } = bamState;
+    const groups = Array.from({ length: nTracks }, () => []);
+    let maxClip = 0;
+    for (const read of reads) {
+        if (read.track >= 0 && read.track < nTracks) groups[read.track].push(read);
+        const [l, r] = _readsClips(read);
+        if (l > maxClip) maxClip = l;
+        if (r > maxClip) maxClip = r;
+    }
+    for (const g of groups) {
+        g.sort((a, b) => a.start - b.start);
+        let reach = 0;
+        for (const r of g) { const e = r._mateLeft ? Math.max(r.end, r._mate.end) : r.end; if (e - r.start > reach) reach = e - r.start; }
+        g.reach = reach;
+    }
+    return { groups, maxClip };
+}
 function renderReadsAlignment() {
     _readsSyncRef();
     ensureReadsDisplayToggle();
-    if (!bamState.reads.length || !bamState.refSeq) {
+    if (!_genome && (!bamState.reads.length || !bamState.refSeq)) {
         _readsDispose();
         const msg = bamState.reads.length
             ? `${bamState.reads.length.toLocaleString()} reads are loaded, but their reference sequence${bamState.refName ? ' "' + _escapeHtml(bamState.refName) + '"' : ''} is empty in the alignment.`
@@ -11249,21 +11278,8 @@ function renderReadsAlignment() {
     alignmentContainer.style.overflow = 'auto';
     _fitAlignmentViewport();
 
-    const { reads, refStart, refEnd, nTracks = 0 } = bamState;
-    const groups = Array.from({ length: nTracks }, () => []);
-    let maxClip = 0;
-    for (const read of reads) {
-        if (read.track >= 0 && read.track < nTracks) groups[read.track].push(read);
-        const [l, r] = _readsClips(read);
-        if (l > maxClip) maxClip = l;
-        if (r > maxClip) maxClip = r;
-    }
-    for (const g of groups) {
-        g.sort((a, b) => a.start - b.start);
-        let reach = 0;
-        for (const r of g) { const e = r._mateLeft ? Math.max(r.end, r._mate.end) : r.end; if (e - r.start > reach) reach = e - r.start; }
-        g.reach = reach;
-    }
+    const { reads, refStart, refEnd } = bamState;
+    const { groups, maxClip } = _readsBuildGroups();
 
     const spacer = document.createElement('div');
     spacer.id = 'readsSpacer';
@@ -11279,13 +11295,14 @@ function renderReadsAlignment() {
     const lanes = _readsGeneLanes();
     const v = _readsView = {
         genes: lanes.genes, geneH: lanes.h, vcfH: _readsVcfHeight(), canvas, spacer, ctx: canvas.getContext('2d'), w: 0, h: 0, dpr: 0, cell: keep ? keep[2] : _READS_CELL, groups, maxClip, covMax: null, mixed: null,
-        selected, status: null, reads, drawn: [], raf: 0, ro: null, onScroll: _readsSchedule,
+        selected, status: null, reads, drawn: [], raf: 0, ro: null, onScroll: _genome ? _genomeOnScroll : _readsSchedule,
         fullW: _READS_NAME_W + (refEnd - refStart) * (keep ? keep[2] : _READS_CELL),
         fullH: 0
     };
     alignmentContainer.addEventListener('scroll', v.onScroll, { passive: true });
     if (typeof ResizeObserver !== 'undefined') { v.ro = new ResizeObserver(() => _readsResize()); v.ro.observe(alignmentContainer); }
     _readsWireMouse(v);
+    if (_genome) _genomeWire(v);
     _readsResize();
     if (keep) { _readsSetLeft(keep[0]); alignmentContainer.scrollTop = keep[1]; _readsDraw(); }
 }
@@ -11431,7 +11448,7 @@ function _readsDraw() {
         }
         ctx.font = '9px monospace'; ctx.textAlign = 'center';
     }
-    if (covOnly) {
+    if (covOnly && !(_genome && _genome.tooWide)) {
         ctx.fillStyle = '#666'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
         ctx.fillText('Too many reads to draw at this width: zoom in to see them', NAME_W, head + 24);
         ctx.textAlign = 'center';
@@ -11449,7 +11466,8 @@ function _readsDraw() {
     ctx.fillStyle = '#333'; ctx.fillRect(0, _READS_REF_H - 2, w, 2);
     ctx.font = 'bold 10px monospace';
     if (letters) for (let p = a; p < b; p++) {
-        const base = refSeq[p] || 'N';
+        const base = _readsRefChar(p) || (_genome ? '' : 'N');   // bases not read yet are blank, not N
+        if (!base) continue;
         ctx.fillStyle = baseColorRef(base);
         ctx.fillText(base, X(p) + cell / 2, (_READS_REF_H - 2) / 2);
     }
@@ -11490,6 +11508,7 @@ function _readsDraw() {
     ctx.fillStyle = '#333'; ctx.font = '11px monospace'; ctx.textAlign = 'left';
     ctx.fillText(v.status || _readsDefaultStatus(), 8, y2 + (_READS_STATUS_H - 1) / 2);
     ctx.textAlign = 'center';
+    if (_genome) _genomeAfterDraw(v, a, b, X);
 }
 
 // One read, between positions a and b only. Walks the CIGAR once: on a long read a table of every base per read
@@ -11534,15 +11553,17 @@ function _readsPaintRead(ctx, read, y, a, b, sl, X, selected, cell) {
     }
     ctx.globalAlpha = 1;
     const letters = [], withLetters = cell >= _READS_LETTERS && !compact, showAll = withLetters && _readsDisplayMode !== 'diff', ticks = [];
-    const refSeq = bamState.refSeq, seq = read.seq;
+    const refSeq = bamState.refSeq, seq = read.seq, rb = bamState.refBase || 0;
+    // a genome's bases are a window: outside it nothing can be called changed (charCodeAt there paints every base)
+    const rLo = _genome ? rb : -Infinity, rHi = _genome ? rb + refSeq.length : Infinity;
     let rp = 0;
     q = read.pos;
     for (const { op, len } of read.cigar) {
         if (op === 'M' || op === '=' || op === 'X') {
-            const s = Math.max(q, a), e = Math.min(q + len, b);
+            const s = Math.max(q, a, rLo), e = Math.min(q + len, b, rHi);
             for (let p = s; p < e; p++) {
                 // & 0xDF: upper case, without a string per base (at low zoom this runs over many reads)
-                const mism = op === 'X' || (op === 'M' && (seq.charCodeAt(rp + p - q) & 0xDF) !== (refSeq.charCodeAt(p) & 0xDF));
+                const mism = op === 'X' || (op === 'M' && (seq.charCodeAt(rp + p - q) & 0xDF) !== (refSeq.charCodeAt(p - rb) & 0xDF));
                 if (showAll || mism) letters.push(p, (seq[rp + p - q] || 'N').toUpperCase(), mism ? _readsBaseAlpha(read, rp + p - q) : 1);
             }
             q += len; rp += len;
@@ -11583,6 +11604,7 @@ function _readsDrawCoverage(v, a, b, X) {
     ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
     ctx.fillText('coverage', _READS_NAME_W - 4 - sl, top + _COV_H / 2);
     ctx.textAlign = 'center';
+    if (_genome && _genome.tooWide) return;
     // the reads go on screen first: counting every read takes most of a second on a large file, then the bars come
     if (!bamState.calls) {
         if (!v.callsQueued) { v.callsQueued = true; requestAnimationFrame(() => setTimeout(() => { if (_readsView === v) { _readsCalls(); _readsDraw(); } }, 0)); }
@@ -11595,12 +11617,13 @@ function _readsDrawCoverage(v, a, b, X) {
         v.covMax = max;
     }
     const max = v.covMax, H = _COV_H - 6;
+    if (_genome) _genomeCovLabel(v, top, max, sl);
     const COL = { A: '#4caf50', C: '#2196f3', G: '#ff9800', T: '#f44336' };
     const totals = i => ({ A: cs.fwd[0][i] + cs.rev[0][i], C: cs.fwd[1][i] + cs.rev[1][i], G: cs.fwd[2][i] + cs.rev[2][i], T: cs.fwd[3][i] + cs.rev[3][i] });
-    const isMixed = (p, t) => { const i = p - cs.lo, n = t.A + t.C + t.G + t.T; return n > 0 && (n - (t[(bamState.refSeq[p] || 'N').toUpperCase()] || 0)) / n >= 0.2 || cs.del[i] / Math.max(1, cs.depth[i]) >= 0.2; };
+    const isMixed = (p, t) => { const i = p - cs.lo, n = t.A + t.C + t.G + t.T; return n > 0 && (n - (t[(_readsRefChar(p) || 'N').toUpperCase()] || 0)) / n >= 0.2 || cs.del[i] / Math.max(1, cs.depth[i]) >= 0.2; };
     // stacked: bases (reference first), deletions on top
     const stack = (p, t, x, bw) => {
-        const i = p - cs.lo, refB = (bamState.refSeq[p] || 'N').toUpperCase();
+        const i = p - cs.lo, refB = (_readsRefChar(p) || 'N').toUpperCase();
         let y = H;
         const seg = (cnt, col) => { if (!cnt) return; const hh = H * cnt / max; y -= hh; ctx.fillStyle = col; ctx.fillRect(x, top + y, bw, hh); };
         if (t[refB]) seg(t[refB], COL[refB]);
@@ -11646,6 +11669,8 @@ function _readsDrawCoverage(v, a, b, X) {
 // The changes called from every read (SampleCall), each with its depth, allele fraction, reads per strand and its
 // effect on the annotated genes (VariantEffect: codon, amino acid, c./p.). Before this the changes were only in a
 // message: no depth, no strand, no codon, no amino-acid change, no way back to the reads.
+// The reference base at position p: the whole row, or a genome's window of bases (undefined outside it)
+const _readsRefChar = p => bamState.refSeq[p - (bamState.refBase || 0)];
 function _readsRefRowIndex() {
     return state.seqs.findIndex(s => String(s.fullHeader || s.header || '').trim().split(/\s+/)[0] === bamState.refName);
 }
@@ -11745,9 +11770,12 @@ function _fillVariantsTable() {
     const rows = _readsVariantRows();
     const genes = _readsGenes();
     const n = new Set(rows.map(r => r.v)).size;
-    win.querySelector('#variantsSummary').textContent = `${n} change${n === 1 ? '' : 's'} from ${(bamState.allReads || bamState.reads).length.toLocaleString()} reads on ${bamState.refName}`
+    win.querySelector('#variantsSummary').textContent = `${n} change${n === 1 ? '' : 's'} from ${(bamState.allReads || bamState.reads).length.toLocaleString()} reads on ${bamState.refName}${_genome ? ' ' + _genomeWindowNote() : ''}`
         + (genes.length ? `; ${genes.filter(g => g.coding).length} coding gene${genes.filter(g => g.coding).length === 1 ? '' : 's'}` : '; no genes annotated (load GenBank or BED for effects)')
         + `; code: ${el('codonCode')?.selectedOptions?.[0]?.text || 'Standard'}`;
+    const help = win.querySelector('.var-help');
+    if (!help.dataset.plain) help.dataset.plain = help.textContent;
+    help.textContent = _genome ? 'Click a row: the reads at that position, sorted by their base there.' : help.dataset.plain;
     const head = '<tr>' + _VARIANT_COLUMNS.map(c => `<th>${_escapeHtml(c)}</th>`).join('') + '</tr>';
     const body = rows.map(r => `<tr data-pos="${r.v.pos}" class="${_EFFECT_CLASS(r.e.effect)}">` + _variantCells(r).map(c => `<td>${_escapeHtml(c)}</td>`).join('') + '</tr>').join('');
     win.querySelector('#variantsTable').innerHTML = '<thead>' + head + '</thead><tbody>' + (body || `<tr><td colspan="${_VARIANT_COLUMNS.length}">No changes against the reference.</td></tr>`) + '</tbody>';
@@ -11789,7 +11817,7 @@ function _leaveReadsForCanvas(always) {
 // computed against the old bases. A base edit (same length) is taken over and the calls redone; a change of length
 // can shift every position, so it is said (reload the reads)
 function _readsSyncRef() {
-    if (!bamState.refSeq || !bamState.refName) return;
+    if (_genome || !bamState.refSeq || !bamState.refName) return;
     const ri = state.seqs.findIndex(s => String(s.fullHeader || s.header || '').trim().split(/\s+/)[0] === bamState.refName);
     if (ri < 0) return;
     const cur = state.seqs[ri].seq.replace(/[-.]/g, '').toUpperCase();
@@ -11803,6 +11831,7 @@ function _readsSyncRef() {
 }
 
 function _readsCalls() {
+    if (_genome) return _genomeCalls();
     _readsSyncRef();
     if (!bamState.refSeq || !(bamState.allReads || bamState.reads || []).length || typeof SampleCall === 'undefined') return null;
     if (!bamState.calls) bamState.calls = SampleCall.call(bamState.allReads || bamState.reads, bamState.refSeq);
@@ -11816,7 +11845,7 @@ const _COV_H = 34;
 function _readsCountsHtml(p) {
     const calls = _readsCalls();
     const c = calls && SampleCall.countsAt(calls.counts, p);
-    const refB = (bamState.refSeq[p] || 'N').toUpperCase();
+    const refB = (_readsRefChar(p) || 'N').toUpperCase();
     let h = `<b>${_escapeHtml(bamState.refName)}:${(p + 1).toLocaleString()}</b>`
         + (bamState.offset ? ` (${_escapeHtml(bamState.bamRefName)}:${(p + 1 + bamState.offset).toLocaleString()})` : '') + `, reference ${refB}`;
     if (!c) return h + '<br>no reads';
@@ -11855,7 +11884,7 @@ function _sortReadTracksAt(p) {
 // Show position p (0-based on the reference row) in the Reads view: the column marked, the reads sorted by their
 // base there (opts.sort), scrolled to the middle (opts.scroll, default on)
 function readsGoTo(p, opts = {}) {
-    if (!bamState.reads || !bamState.reads.length) return;
+    if (!_genome && (!bamState.reads || !bamState.reads.length)) return;
     bamState.focusPos = p;
     if (opts.sort !== false) _sortReadTracksAt(p);
     const readsRadio = document.getElementById('modeReads');
@@ -12458,6 +12487,7 @@ function renderAlignment(options = {}) {
     syncQuickModeSwitch();
     syncCodonModePanel();
     syncSearchControlsAvailability();
+    if (_genome) { _genomeRender(); return; }
     if (!state.seqs || state.seqs.length === 0) {
         // Wraps (on a phone the one line ran off under its own scrollbar) and offers the
         // example alignment through the ?url= loader
@@ -15344,6 +15374,7 @@ async function parseAndRender(isFromDrop = false) {
         state.deletedHistory = [];
         state.redoHistory = [];
         // Clear any loaded reads - they belong to the previous reference
+        if (_genome) _genomeClose();
         bamState = {
             reads: [],
             allReads: [],
@@ -15703,20 +15734,20 @@ function syncQuickModeSwitch() {
     // Reads is only a real option once a reads (BAM/SAM) file has actually
     // been loaded - it's not a mode you'd otherwise want to switch into blind.
     const readsLabel = document.getElementById('qmReadsLabel');
-    if (readsLabel) readsLabel.style.display = (bamState?.reads?.length > 0 || isReadsMode) ? '' : 'none';
+    if (readsLabel) readsLabel.style.display = (bamState?.reads?.length > 0 || isReadsMode) ? '' : 'none';   // (a genome view is always isReadsMode)
 
     const canvasNotice = ensureCanvasModeNotice();
     setCanvasNoticeVisible(!!isCanvasMode);
     const readsToggle = ensureReadsDisplayToggle();
     if (readsToggle) readsToggle.style.display = isReadsMode ? 'flex' : 'none';
     const sampleBtn = ensureSampleRowButton();
-    if (sampleBtn) sampleBtn.style.display = isReadsMode && bamState?.reads?.length ? '' : 'none';
+    if (sampleBtn) sampleBtn.style.display = isReadsMode && bamState?.reads?.length && !_genome ? '' : 'none';
     const zoomGroup = document.getElementById('readsZoomGroup');
-    if (zoomGroup) zoomGroup.style.display = isReadsMode && bamState?.reads?.length ? 'inline-flex' : 'none';
+    if (zoomGroup) zoomGroup.style.display = isReadsMode && (bamState?.reads?.length || _genome) ? 'inline-flex' : 'none';
     const optionsPanel = document.getElementById('readsOptionsPanel');
-    if (optionsPanel && !(isReadsMode && bamState?.reads?.length)) optionsPanel.style.display = 'none';
+    if (optionsPanel && !(isReadsMode && (bamState?.reads?.length || _genome))) optionsPanel.style.display = 'none';
     const varBtn = document.getElementById('readsVariantsButton');
-    if (varBtn) varBtn.style.display = isReadsMode && bamState?.reads?.length ? '' : 'none';
+    if (varBtn) varBtn.style.display = isReadsMode && (bamState?.reads?.length || _genome) ? '' : 'none';
     syncModeRow();
     syncSearchControlsAvailability();
 }
@@ -31066,6 +31097,8 @@ function handleAlignmentPanContextMenu(e) {
         }, true); // Use capture phase to catch events early
     });
 
+    // A drop handled earlier (a genome's files, genome-view.js) never gets to the handler below that clears this
+    window._dragOverlayDone = () => { dragCounter = 0; dragOverlay.classList.remove('active'); dragOverlay.classList.add('hidden'); };
     // Show overlay when file enters window
     document.body.addEventListener('dragenter', function(e) {
         if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
