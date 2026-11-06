@@ -9890,7 +9890,8 @@ async function cramToSamText(file) {
                 const mate = r.nextSequenceId < 0 ? '*' : (r.nextSequenceId === r.sequenceId ? '=' : (refs[r.nextSequenceId] || '*'));
                 out.push([r.readName || '*', r.flags, rname, r.start + 1, r.mappingQuality || 0,
                     r.getCigarString() || '*', mate, r.nextStart >= 0 ? r.nextStart + 1 : 0,
-                    r.templateSize || 0, r.getReadBases() || '*', _cramQualString(r)].join('\t'));
+                    r.templateSize || 0, r.getReadBases() || '*', _cramQualString(r),
+                    ...Object.entries(r.tags || {}).filter(([, v]) => typeof v === 'number' || typeof v === 'string').map(([k, v]) => `${k}:${typeof v === 'number' ? 'i' : 'Z'}:${v}`)].join('\t'));
             }
         }
     }
@@ -10039,11 +10040,12 @@ async function _handleBamFileInner(event) {
         let fileReads = records.filter(r => r.refID === refIdx);
         if (offset) {
             fileReads = fileReads.filter(r => r.pos + computeReadSpan(r.cigar) > offset && r.pos < offset + regionLen);
-            for (const r of fileReads) r.pos -= offset;
+            for (const r of fileReads) { r.pos -= offset; if (r.next_pos >= 0) r.next_pos -= offset; }
         }
         fileReads.sort((a, b) => a.pos - b.pos || a.name.localeCompare(b.name));
         for (const r of fileReads) { r.start = r.pos; r.end = r.pos + computeReadSpan(r.cigar) - 1; }
         _readsFilter = { ..._READS_FILTER_DEFAULT };
+        _readsOpts = { ..._READS_OPTS_DEFAULT };
         _readsSyncFilterBoxes();
         const matchedReads = fileReads.filter(_readsPasses);
 
@@ -10079,6 +10081,8 @@ async function _handleBamFileInner(event) {
         // Store BAM state
         bamState = {
             reads: shown,                     // drawn
+            sampled: shown,                   // the downsampled reads; with pairs on, their mates join them in reads
+            groupRanges: [],                  // [{ from, to, label, key }] the tracks of each group
             sampleName: String(file.name || 'sample').replace(/\.(bam|sam|cram)$/i, ''),   // the sample row's name
             allReads: matchedReads,           // every read that passed the filters: coverage, sample row
             fileReads,                        // every mapped read on this reference, the flagged ones too
@@ -10098,7 +10102,7 @@ async function _handleBamFileInner(event) {
         // Phase 1: compute genomic start/end span and assign packed tracks.
         // assignReadTracks sorts reads in place by start (consistent with the
         // pos sort above) and sets read.track on each read.
-        bamState.nTracks = assignReadTracks(bamState.reads);
+        _readsLayout();
 
         // Reads view (Full is hidden; the rows go to Canvas when the user leaves Reads)
         const singleRadio = document.getElementById('modeCanvas');
@@ -10242,7 +10246,7 @@ function parseSAMToBuffer(text) {
         // Parse optional tags
         const tags = {};
         for (let i = 11; i < f.length; i++) {
-            const tagMatch = f[i].match(/^([A-Z][A-Z]):([AifZHB]):(.*)$/);
+            const tagMatch = f[i].match(/^([A-Za-z][A-Za-z0-9]):([AifZHB]):(.*)$/);
             if (tagMatch) {
                 const [, tag, type, value] = tagMatch;
                 if (type === 'i' || type === 'I') tags[tag] = parseInt(value);
@@ -10710,6 +10714,10 @@ function _readsDefaultStatus() {
     const f = _readsFilter, on = [];
     if (f.minMapq > 0) on.push(`MAPQ \u2265 ${f.minMapq}`);
     for (const [key, , label] of _READS_FLAGGED) if (f[key]) on.push('with ' + label);
+    const o = _readsOpts;
+    if (o.sort !== 'start') on.push(`sorted by ${_READS_SORTS[o.sort]} at ${(o.sortPos + 1).toLocaleString()}`);
+    if (o.color !== 'strand') on.push(`colour: ${o.color === 'tag' ? o.tag : _READS_COLORS[o.color]}`);
+    if (o.pairs) on.push('pairs');
     return `${reads.length} reads in ${nTracks} track${nTracks !== 1 ? 's' : ''}${on.length ? '  |  ' + on.join(', ') : ''}`;
 }
 // Which reads are drawn. Flagged reads shown here are still not evidence: SampleCall leaves them out of the coverage
@@ -10727,6 +10735,8 @@ function _readsSyncFilterBoxes() {
     const box = document.getElementById('readsMinMapq');
     if (!box) return;
     box.value = String(_readsFilter.minMapq);
+    const set = (id, val) => { const e = document.getElementById(id); if (e) { if (e.type === 'checkbox') e.checked = val; else e.value = val; } };
+    set('readsSortBy', _readsOpts.sort); set('readsColorBy', _readsOpts.color); set('readsGroupBy', _readsOpts.group); set('readsPairs', _readsOpts.pairs); set('readsTagName', _readsOpts.tag);
     for (const [key, , , id] of _READS_FLAGGED) { const c = document.getElementById(id); if (c) c.checked = !!_readsFilter[key]; }
     _readsFillFilterCounts();
 }
@@ -10743,21 +10753,226 @@ function _readsSetFilter(next) {
         _readsSyncFilterBoxes();
         return;
     }
-    const v = _readsView, cell = v ? v.cell : _READS_CELL;
+    _readsKeepPlace(() => {
+        _readsFilter = next;
+        const { shown, dropped } = _downsampleReads(kept);
+        let lo = Infinity, hi = 0;
+        for (const r of kept) { if (r.start < lo) lo = r.start; if (r.end + 1 > hi) hi = r.end + 1; }
+        Object.assign(bamState, { reads: shown, sampled: shown, allReads: kept, downsampled: dropped, calls: null,
+            refStart: Math.max(0, lo - 10), refEnd: Math.min(bamState.refSeq.length, hi + 10) });
+        _readsLayout();
+    });
+}
+// Do something that redraws the reads; the same place stays in the middle, at the same zoom
+function _readsKeepPlace(change) {
+    const v = _readsView, cell = v ? v.cell : _READS_CELL, top = alignmentContainer.scrollTop;
     const middle = v ? bamState.refStart + (_readsLeft() + (v.w - _READS_NAME_W) / 2) / v.cell : null;
-    _readsFilter = next;
-    const { shown, dropped } = _downsampleReads(kept);
-    let lo = Infinity, hi = 0;
-    for (const r of kept) { if (r.start < lo) lo = r.start; if (r.end + 1 > hi) hi = r.end + 1; }
-    Object.assign(bamState, { reads: shown, allReads: kept, downsampled: dropped, calls: null,
-        refStart: Math.max(0, lo - 10), refEnd: Math.min(bamState.refSeq.length, hi + 10) });
-    bamState.nTracks = assignReadTracks(bamState.reads);
+    change();
     renderAlignment();
     if (_readsView && middle != null) {
         _readsView.cell = Math.max(_readsMinCell(_readsView), cell);
         _readsSizeSpacer(_readsView);
+        alignmentContainer.scrollTop = top;
         _readsCentre(middle);
     }
+}
+
+// How the pile is laid out and coloured. All of it comes through _readsLayout: mates joined, groups split, rows packed,
+// then the sort. groupRanges holds each group's rows, so a sort stays inside its group.
+const _READS_OPTS_DEFAULT = { sort: 'start', sortPos: null, color: 'strand', group: 'none', groupPos: null, tag: '', pairs: false };
+let _readsOpts = { ..._READS_OPTS_DEFAULT };
+const _READS_SORTS = { start: 'start', base: 'base', strand: 'strand', mapq: 'MAPQ', name: 'read name', length: 'read length', insert: 'insert size' };
+const _READS_COLORS = { strand: 'read strand', none: 'none', first: 'first-of-pair strand', mapq: 'MAPQ', insert: 'insert size', orientation: 'pair orientation', tag: 'tag' };
+const _READS_GROUPS = { none: 'none', strand: 'read strand', first: 'first-of-pair strand', flag: 'kind of read', base: 'base at a column', tag: 'tag' };
+const _READS_PALETTE = ['#f3d3d6', '#d3dbf3', '#cdebc8', '#f7e3b0', '#e2d0f0', '#c7ebea', '#f5cfe4', '#dedede'];
+const _readsFirstStrandRev = r => (r.flag & 0x80 ? !(r.flag & 0x10) : !!(r.flag & 0x10));
+function _readsGroupKey(r) {
+    const o = _readsOpts;
+    if (o.group === 'strand') return r.flag & 0x10 ? 'reverse strand' : 'forward strand';
+    if (o.group === 'first') return _readsFirstStrandRev(r) ? 'first of pair reverse' : 'first of pair forward';
+    if (o.group === 'flag') return r.flag & 0x100 ? 'secondary' : r.flag & 0x800 ? 'supplementary' : r.flag & 0x400 ? 'duplicate' : r.flag & 0x200 ? 'QC-failed' : 'primary';
+    if (o.group === 'base') { const b = _readBaseAt(r, o.groupPos); return b == null ? 'no base at ' + (o.groupPos + 1).toLocaleString() : (b === '-' ? 'deletion' : b) + ' at ' + (o.groupPos + 1).toLocaleString(); }
+    if (o.group === 'tag') { const v = r.tags && r.tags[o.tag]; return v == null ? 'no ' + o.tag : o.tag + ' ' + v; }
+    return '';
+}
+// The pair's left mate, and whether both are here to be joined
+function _readsJoinMates(reads) {
+    const byName = new Map(), units = [];
+    for (const r of reads) {
+        r._mate = null; r._mateLeft = false;
+        if ((r.flag & 1) && !(r.flag & 0x900) && !(r.flag & 8) && r.next_refID === r.refID) {
+            const m = byName.get(r.name);
+            if (m && !m._mate) {
+                const [l, q] = m.start <= r.start ? [m, r] : [r, m];
+                l._mate = q; q._mate = l; l._mateLeft = true;
+                units[l === m ? m._unit : m._unit] = { start: l.start, end: Math.max(l.end, q.end), reads: [l, q] };
+                continue;
+            }
+            byName.set(r.name, r);
+        }
+        r._unit = units.length;
+        units.push({ start: r.start, end: r.end, reads: [r] });
+    }
+    return units;
+}
+function _readsLayout() {
+    const o = _readsOpts;
+    let reads = bamState.sampled || bamState.reads;
+    if (o.pairs) {
+        // a mate that downsampling left out comes back, so no pair is drawn in half
+        const have = new Set(reads.map(r => r.name)), held = new Set(reads), extra = [];
+        for (const r of bamState.allReads || []) if (have.has(r.name) && !held.has(r) && (r.flag & 1) && !(r.flag & 0x900)) extra.push(r);
+        if (extra.length) reads = reads.concat(extra).sort((a, b) => a.start - b.start);
+    }
+    bamState.reads = reads;
+    const units = o.pairs ? _readsJoinMates(reads) : reads.map(r => { r._mate = null; r._mateLeft = false; return { start: r.start, end: r.end, reads: [r] }; });
+    const parts = new Map();
+    for (const u of units) {
+        const k = _readsGroupKey(u.reads[0]);
+        if (!parts.has(k)) parts.set(k, []);
+        parts.get(k).push(u);
+    }
+    const names = [...parts.keys()].sort((a, b) => (/^no /.test(a) - /^no /.test(b)) || a.localeCompare(b, undefined, { numeric: true }));
+    const grouped = o.group !== 'none';
+    let row = 0;
+    bamState.groupRanges = [];
+    for (const k of names) {
+        const us = parts.get(k).sort((a, b) => a.start - b.start), ends = [];
+        let from = row;
+        if (grouped) from = row + 1;   // the group's label has a row of its own
+        for (const u of us) {
+            let t = 0;
+            while (t < ends.length && u.start < ends[t]) t++;
+            ends[t] = u.end + 1;
+            for (const r of u.reads) r.track = from + t;
+        }
+        if (grouped) bamState.groupRanges.push({ from, to: from + ends.length, label: `${k} (${us.reduce((n, u) => n + u.reads.length, 0).toLocaleString()})`, key: _readsGroupKey });
+        row = from + ends.length;
+    }
+    bamState.nTracks = row;
+    if (o.sort !== 'start') _readsSortRows(o.sort, o.sortPos);
+}
+// Rows in order of the read at position p; rows with none there go last. Within each group.
+function _readsSortRows(kind, p) {
+    const n = bamState.nTracks || 0;
+    if (!n || p == null) return;
+    const refB = (bamState.refSeq[p] || 'N').toUpperCase();
+    const calls = kind === 'base' ? _readsCalls() : null, c = calls && SampleCall.countsAt(calls.counts, p);
+    const freq = b => (c && c[b] ? c[b][0] + c[b][1] : 0);
+    const value = r => {
+        if (kind === 'base') { const b = _readBaseAt(r, p); return b == null ? null : b === '-' ? 1e6 : b === refB ? 2e6 : -freq(b); }
+        if (kind === 'strand') return r.flag & 0x10 ? 1 : 0;
+        if (kind === 'mapq') return -(r.mapq || 0);
+        if (kind === 'name') return r.name;
+        if (kind === 'length') return -(r.end - r.start);
+        if (kind === 'insert') return -Math.abs(r.tlen || 0);
+        return r.start;
+    };
+    const key = new Array(n).fill(null);
+    for (const r of bamState.reads) if (r.track >= 0 && r.track < n && r.start <= p && p <= r.end) { const v = value(r); if (v != null) key[r.track] = v; }
+    const newIdx = Array.from({ length: n }, (_, i) => i);
+    const cmp = (a, b) => {
+        const x = key[a], y = key[b];
+        if (x == null || y == null) return (x == null) - (y == null) || a - b;
+        return (x < y ? -1 : x > y ? 1 : 0) || a - b;
+    };
+    const ranges = bamState.groupRanges.length ? bamState.groupRanges : [{ from: 0, to: n }];
+    for (const g of ranges) {
+        const rows = []; for (let t = g.from; t < g.to; t++) rows.push(t);
+        rows.slice().sort(cmp).forEach((t, i) => { newIdx[t] = g.from + i; });
+    }
+    for (const r of bamState.reads) if (r.track != null && r.track >= 0 && r.track < n) r.track = newIdx[r.track];
+}
+// The column an option works at: the marked one, else the middle of the view
+function _readsWorkPos() {
+    const v = _readsView;
+    if (bamState.focusPos != null) return bamState.focusPos;
+    return v ? Math.round(bamState.refStart + (_readsLeft() + (v.w - _READS_NAME_W) / 2) / v.cell - (_READS_NAME_W ? 0 : 0)) : bamState.refStart;
+}
+function _readsSetOpts(next) {
+    _readsKeepPlace(() => { _readsOpts = { ..._readsOpts, ...next }; _readsLayout(); });
+    _readsSyncFilterBoxes();
+}
+function _readsInsertMedian() {
+    if (bamState.tlenFor === bamState.allReads) return bamState.tlenMedian;
+    const t = [];
+    for (const r of bamState.allReads) if ((r.flag & 1) && r.tlen > 0) t.push(r.tlen);
+    t.sort((a, b) => a - b);
+    bamState.tlenFor = bamState.allReads; bamState.tlenMedian = t.length ? t[t.length >> 1] : 0;
+    return bamState.tlenMedian;
+}
+// Fill and edge of a read's bar
+function _readsBarColour(r) {
+    const rev = !!(r.flag & 0x10), kind = _readsOpts.color;
+    const strand = x => (x ? ['#d3dbf3', '#5a6fb0'] : ['#f3d3d6', '#b0606a']), plain = ['#d8d8d8', '#909090'];
+    if (kind === 'strand') return strand(rev);
+    if (kind === 'none') return plain;
+    if (kind === 'first') return strand(_readsFirstStrandRev(r));
+    if (kind === 'mapq') { const q = Math.min(60, r.mapq || 0) / 60; return [`hsl(${Math.round(q * 210)}, 70%, 80%)`, `hsl(${Math.round(q * 210)}, 50%, 45%)`]; }
+    if (kind === 'insert') {
+        const m = _readsInsertMedian(), t = Math.abs(r.tlen || 0);
+        if (!(r.flag & 1) || !t || !m) return plain;
+        return t > 3 * m ? ['#e58a8a', '#b03a3a'] : t < m / 3 ? ['#8a9fe5', '#3a4fb0'] : plain;
+    }
+    if (kind === 'orientation') {
+        if (!(r.flag & 1) || r.next_refID !== r.refID || (r.flag & 8)) return plain;
+        const mateRev = !!(r.flag & 0x20);
+        if (rev === mateRev) return rev ? ['#8a9fe5', '#3a4fb0'] : ['#8fd8d8', '#3a9090'];   // both reverse, both forward
+        const fwdLeft = rev ? r.next_pos <= r.pos : r.pos <= r.next_pos;
+        return fwdLeft ? plain : ['#8fd08f', '#3a903a'];                                       // reverse before forward
+    }
+    if (kind === 'tag') {
+        const v = r.tags && r.tags[_readsOpts.tag];
+        if (v == null) return plain;
+        let h = 0; const t = String(v); for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
+        return [_READS_PALETTE[Math.abs(h) % _READS_PALETTE.length], '#777'];
+    }
+    return strand(rev);
+}
+// How strong a changed base is drawn: as igv.js, faint under Phred 5, full from 20
+function _readsBaseAlpha(read, i) {
+    const q = read.qual;
+    if (!q || q === '*' || i >= q.length) return 1;
+    const v = typeof q === 'string' ? q.charCodeAt(i) - 33 : q[i];
+    return v >= 255 ? 1 : v < 5 ? 0.1 : Math.min(1, 0.1 + 0.9 * (v - 5) / 15);
+}
+// The right-click menu of a read
+function _readsOpenMenu(e, read, p) {
+    const old = document.getElementById('readsMenu');
+    const menu = old || document.createElement('div');
+    menu.id = 'readsMenu';
+    menu.innerHTML = '';
+    menu.style.cssText = 'position:fixed;z-index:1001;display:block;min-width:190px;padding:3px;background:#fff;border:1px solid #999;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.25);font-size:12px;';
+    const close = () => { menu.style.display = 'none'; document.removeEventListener('mousedown', outside, true); document.removeEventListener('keydown', onKey, true); };
+    const outside = ev => { if (!menu.contains(ev.target)) close(); };
+    const onKey = ev => { if (ev.key === 'Escape') close(); };
+    const item = (act, text, run) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.dataset.act = act; b.textContent = text;
+        b.style.cssText = 'display:block;width:100%;padding:3px 8px;text-align:left;background:none;border:0;cursor:pointer;font-size:12px;';
+        b.addEventListener('mouseenter', () => { b.style.background = '#e8f0fe'; });
+        b.addEventListener('mouseleave', () => { b.style.background = 'none'; });
+        b.addEventListener('click', () => { close(); run(); });
+        menu.appendChild(b);
+    };
+    const copy = (text, what) => {
+        const done = () => showMessage(`${what} copied (${text.length.toLocaleString()} characters).`, 2500);
+        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, () => showMessage('The browser did not allow copying.', 3000));
+        else showMessage('The browser did not allow copying.', 3000);
+    };
+    const [l, r] = _readsClips(read), seq = String(read.seq || '').toUpperCase();
+    item('name', 'Copy read name', () => copy(read.name, 'Read name'));
+    item('seq', 'Copy read sequence', () => copy(seq.slice(l, seq.length - r), 'Read sequence'));
+    if (l) item('clipL', `Copy left soft clip (${l} bases)`, () => copy(seq.slice(0, l), 'Left soft clip'));
+    if (r) item('clipR', `Copy right soft clip (${r} bases)`, () => copy(seq.slice(seq.length - r), 'Right soft clip'));
+    if ((read.flag & 1) && !(read.flag & 8) && read.next_refID === read.refID && read.next_pos >= 0) item('mate', `Go to mate (${(read.next_pos + 1).toLocaleString()})`, () => _readsCentre(read.next_pos));
+    item('sortBase', `Sort by base at ${(p + 1).toLocaleString()}`, () => { bamState.focusPos = p; _readsSetOpts({ sort: 'base', sortPos: p }); });
+    item('groupBase', `Group by base at ${(p + 1).toLocaleString()}`, () => { bamState.focusPos = p; _readsSetOpts({ group: 'base', groupPos: p }); });
+    if (!old) document.body.appendChild(menu);
+    menu.style.left = Math.max(2, Math.min(e.clientX, window.innerWidth - 210)) + 'px';
+    menu.style.top = Math.max(2, Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 4)) + 'px';
+    document.addEventListener('mousedown', outside, true);
+    document.addEventListener('keydown', onKey, true);
 }
 function _readsToggleOptions() {
     const panel = document.getElementById('readsOptionsPanel'), btn = document.getElementById('readsOptionsBtn');
@@ -10811,6 +11026,55 @@ function _readsBuildOptions(group) {
         l.appendChild(c); l.appendChild(t);
         panel.appendChild(l);
     }
+    const head2 = document.createElement('div');
+    head2.textContent = 'Layout'; head2.style.cssText = 'font-weight:bold;margin:8px 0 5px;';
+    panel.appendChild(head2);
+    const pick = (id, label, title, options, onChange) => {
+        const l = document.createElement('label');
+        l.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:3px;';
+        l.title = title;
+        l.appendChild(document.createTextNode(label));
+        const sel = document.createElement('select');
+        sel.id = id; sel.style.cssText = 'font-size:11px;width:140px;';
+        for (const [k, t] of Object.entries(options)) { const op = document.createElement('option'); op.value = k; op.textContent = t; sel.appendChild(op); }
+        sel.addEventListener('change', () => onChange(sel.value));
+        l.appendChild(sel);
+        panel.appendChild(l);
+    };
+    const needTag = () => {
+        const t = document.getElementById('readsTagName').value.trim();
+        if (!t) showMessage('Type a tag name first, for example HP or RG.', 4000);
+        return t;
+    };
+    pick('readsSortBy', 'Sort by', 'Rows in order of the read at the marked column, or else at the middle of the view', _READS_SORTS,
+        k => _readsSetOpts({ sort: k, sortPos: _readsWorkPos() }));
+    pick('readsColorBy', 'Colour by', 'What the colour of a read shows', _READS_COLORS, k => {
+        if (k === 'tag' && !needTag()) { _readsSyncFilterBoxes(); return; }
+        _readsOpts = { ..._readsOpts, color: k, tag: document.getElementById('readsTagName').value.trim() };
+        _readsDraw();
+    });
+    pick('readsGroupBy', 'Group by', 'Split the pile into labelled parts. Base at a column: the marked one, or else the middle of the view', _READS_GROUPS, k => {
+        if (k === 'tag' && !needTag()) { _readsSyncFilterBoxes(); return; }
+        _readsSetOpts({ group: k, groupPos: _readsWorkPos(), tag: document.getElementById('readsTagName').value.trim() });
+    });
+    const tg = document.createElement('label');
+    tg.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:3px;';
+    tg.title = 'The SAM tag that Colour by tag and Group by tag use, for example HP (haplotype) or RG (read group)';
+    tg.appendChild(document.createTextNode('Tag'));
+    const tb = document.createElement('input');
+    tb.id = 'readsTagName'; tb.type = 'text'; tb.maxLength = 2; tb.placeholder = 'HP, RG'; tb.spellcheck = false;
+    tb.style.cssText = 'width:60px;font-size:11px;';
+    tb.addEventListener('keydown', e => e.stopPropagation());
+    tg.appendChild(tb);
+    panel.appendChild(tg);
+    const pr = document.createElement('label');
+    pr.style.cssText = 'display:flex;align-items:center;gap:5px;cursor:pointer;margin-top:4px;';
+    pr.title = 'Mates on one row with a line between them; a mate that downsampling left out comes back';
+    const pc = document.createElement('input');
+    pc.type = 'checkbox'; pc.id = 'readsPairs'; pc.style.margin = '0';
+    pc.addEventListener('change', () => _readsSetOpts({ pairs: pc.checked }));
+    pr.appendChild(pc); pr.appendChild(document.createTextNode('View as pairs'));
+    panel.appendChild(pr);
     document.body.appendChild(panel);
 }
 // Left and right soft-clip lengths: an S before the first reference base is the left one (as _getReadCigarFeatures)
@@ -10842,19 +11106,23 @@ function _readsTooltipHtml(read) {
         + `Strand: ${rev ? 'reverse (-)' : 'forward (+)'}<br>`
         + `CIGAR: ${cigarStr}<br>`
         + `MAPQ: ${read.mapq}${read.flag & 1 ? '<br>Paired' + (read.flag & 0x40 ? ', first' : read.flag & 0x80 ? ', second' : '') + ' in pair' : ''}${insText}`
-        + (_READS_FLAGGED.filter(([, bit]) => read.flag & bit).map(([, , label]) => '<br>' + label.charAt(0).toUpperCase() + label.slice(1) + ': not counted in coverage or calls').join(''));
+        + (read.flag & 1 ? `<br>Mate: ${read.flag & 8 ? 'unmapped' : read.next_refID === read.refID ? (read.next_pos + 1).toLocaleString() : 'on another reference'}${read.tlen ? `, insert size ${Math.abs(read.tlen).toLocaleString()}` : ''}` : '')
+        + (_READS_FLAGGED.filter(([, bit]) => read.flag & bit).map(([, , label]) => '<br>' + label.charAt(0).toUpperCase() + label.slice(1) + ': not counted in coverage or calls').join(''))
+        + (() => { const t = Object.entries(read.tags || {}).filter(([k, v]) => k !== 'MD' && k !== 'SA' && String(v).length <= 30).slice(0, 8); return t.length ? '<br>Tags: ' + _escapeHtml(t.map(([k, v]) => `${k}=${v}`).join(' ')) : ''; })();
 }
 // First index in a track's reads (sorted by start, not overlapping) that can reach position p
 function _readsFirstAt(group, p) {
+    // a row's reads are in start order; mates on one row can overlap, so go back by the row's longest reach
+    const from = p - (group.reach || 0);
     let lo = 0, hi = group.length;
-    while (lo < hi) { const m = (lo + hi) >> 1; if (group[m].end < p) lo = m + 1; else hi = m; }
+    while (lo < hi) { const m = (lo + hi) >> 1; if (group[m].start < from) lo = m + 1; else hi = m; }
     return lo;
 }
 function _readsReadAt(track, p) {
     const g = _readsView && _readsView.groups[track];
     if (!g) return null;
-    const r = g[_readsFirstAt(g, p)];
-    return r && r.start <= p && p <= r.end ? r : null;
+    for (let i = _readsFirstAt(g, p); i < g.length && g[i].start <= p; i++) if (p <= g[i].end) return g[i];
+    return null;
 }
 
 function renderReadsAlignment() {
@@ -10888,7 +11156,12 @@ function renderReadsAlignment() {
         if (l > maxClip) maxClip = l;
         if (r > maxClip) maxClip = r;
     }
-    for (const g of groups) g.sort((a, b) => a.start - b.start);
+    for (const g of groups) {
+        g.sort((a, b) => a.start - b.start);
+        let reach = 0;
+        for (const r of g) { const e = r._mateLeft ? Math.max(r.end, r._mate.end) : r.end; if (e - r.start > reach) reach = e - r.start; }
+        g.reach = reach;
+    }
 
     const spacer = document.createElement('div');
     spacer.id = 'readsSpacer';
@@ -10948,6 +11221,13 @@ function _readsWireMouse(v) {
         else showTooltipAt(h.read ? _readsTooltipHtml(h.read) : h.gene ? _readsGeneTip(h.gene) : _readsCountsHtml(h.p), at(e), { html: true, className: 'reads-tooltip' });
     });
     canvas.addEventListener('mouseleave', () => { shown = null; hideTooltip(); });
+    canvas.addEventListener('contextmenu', e => {
+        const h = hit(e);
+        if (!h || !h.read) return;
+        e.preventDefault();
+        hideTooltip();
+        _readsOpenMenu(e, h.read, h.p);
+    });
     // Ctrl+wheel zooms round the mouse, as Canvas mode leaves it to the browser only outside the Reads view
     canvas.addEventListener('wheel', e => {
         if (!e.ctrlKey) return;
@@ -10994,11 +11274,31 @@ function _readsDraw() {
         ctx.fillRect(0, y, plotR, H);
         const g = groups[t];
         for (let i = _readsFirstAt(g, a - v.maxClip); i < g.length && g[i].start < b + v.maxClip; i++) {
-            _readsPaintRead(ctx, g[i], y, a, b, sl, X, v.selected === g[i], cell);
-            drawn.push(g[i]);
+            const r = g[i];
+            if (r._mateLeft && r._mate.start > r.end + 1) {
+                // the line between mates, behind them
+                const c0 = Math.max(X(r.end + 1), -2), c1 = Math.min(X(r._mate.start), w + 2);
+                if (c1 > c0) { ctx.fillStyle = '#a0a0a0'; ctx.fillRect(c0, y + Math.floor(H / 2), c1 - c0, 1); }
+            }
+            if (r.end + v.maxClip < a) continue;
+            _readsPaintRead(ctx, r, y, a, b, sl, X, v.selected === r, cell);
+            drawn.push(r);
         }
     }
     v.drawn = drawn;
+    // each group's label, on its own row, at the left of the screen
+    if (!covOnly) {
+        ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
+        const LH = _READS_TRACK_H;
+        for (const gr of bamState.groupRanges || []) {
+            const y = head + (gr.from - 1) * H - st;
+            if (y + H < head || y > h) continue;
+            ctx.fillStyle = '#fff'; ctx.fillRect(0, y, w, H);
+            ctx.fillStyle = '#c0c8d4'; ctx.fillRect(0, y + H - 1, w, 1);
+            if (H >= 12) { ctx.fillStyle = '#334'; ctx.fillText(gr.label, 4, y + H / 2); }
+        }
+        ctx.font = '9px monospace'; ctx.textAlign = 'center';
+    }
     if (covOnly) {
         ctx.fillStyle = '#666'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
         ctx.fillText(`Zoom in to see the reads: they are drawn up to ${(_READS_WINDOW / 1000)} kb across`, NAME_W, head + 24);
@@ -11064,7 +11364,7 @@ function _readsDraw() {
 function _readsPaintRead(ctx, read, y, a, b, sl, X, selected, cell) {
     const H = _readsTrackH(), compact = H < 8, pad = compact ? 0 : 2, rh = compact ? H - 1 : H - 4, fine = cell >= 2 && !compact;
     const geom = _readsBarGeom(read), rx = geom.x - sl, rw = geom.w;
-    const rev = !!(read.flag & 0x10), minX = -cell, maxX = X(b) + cell;
+    const minX = -cell, maxX = X(b) + cell, [barFill, barEdge] = _readsBarColour(read);
     for (const box of [geom.left, geom.right]) {
         if (!box || !box.w || !fine) continue;
         // soft clips: lighter fill, dashed edge
@@ -11091,9 +11391,9 @@ function _readsPaintRead(ctx, read, y, a, b, sl, X, selected, cell) {
     for (const [s0, e0] of segs) {
         const lo = Math.max(X(s0), minX), hi = Math.min(X(e0), maxX);
         if (hi <= lo) continue;
-        ctx.fillStyle = rev ? '#d3dbf3' : '#f3d3d6'; ctx.fillRect(lo, y + pad, hi - lo, rh);
+        ctx.fillStyle = barFill; ctx.fillRect(lo, y + pad, hi - lo, rh);
         if (fine || selected) {
-            ctx.strokeStyle = selected ? '#d9402b' : rev ? '#5a6fb0' : '#b0606a'; ctx.lineWidth = selected ? (compact ? 1 : 3) : 1.5;
+            ctx.strokeStyle = selected ? '#d9402b' : barEdge; ctx.lineWidth = selected ? (compact ? 1 : 3) : 1.5;
             ctx.beginPath();
             ctx.moveTo(lo, y + pad); ctx.lineTo(hi, y + pad); ctx.moveTo(lo, y + pad + rh); ctx.lineTo(hi, y + pad + rh);
             ctx.stroke();
@@ -11110,7 +11410,7 @@ function _readsPaintRead(ctx, read, y, a, b, sl, X, selected, cell) {
             for (let p = s; p < e; p++) {
                 // & 0xDF: upper case, without a string per base (at low zoom this runs over many reads)
                 const mism = op === 'X' || (op === 'M' && (seq.charCodeAt(rp + p - q) & 0xDF) !== (refSeq.charCodeAt(p) & 0xDF));
-                if (showAll || mism) letters.push(p, (seq[rp + p - q] || 'N').toUpperCase());
+                if (showAll || mism) letters.push(p, (seq[rp + p - q] || 'N').toUpperCase(), mism ? _readsBaseAlpha(read, rp + p - q) : 1);
             }
             q += len; rp += len;
         } else if (op === 'D') {
@@ -11129,13 +11429,16 @@ function _readsPaintRead(ctx, read, y, a, b, sl, X, selected, cell) {
     if (!withLetters) {
         // too small for a letter: a changed base is a tick, at least a pixel wide
         ctx.fillStyle = '#e74c3c';
-        for (let i = 0; i < letters.length; i += 2) ctx.fillRect(X(letters[i]), y + pad, Math.max(1, cell), rh);
+        for (let i = 0; i < letters.length; i += 3) { ctx.globalAlpha = letters[i + 2]; ctx.fillRect(X(letters[i]), y + pad, Math.max(1, cell), rh); }
+        ctx.globalAlpha = 1;
         return;
     }
-    for (let i = 0; i < letters.length; i += 2) {
+    for (let i = 0; i < letters.length; i += 3) {
+        ctx.globalAlpha = letters[i + 2];
         ctx.fillStyle = showAll ? baseColorRef(letters[i + 1]) : '#e74c3c';
         ctx.fillText(letters[i + 1], X(letters[i]) + cell / 2, y + pad + rh / 2);
     }
+    ctx.globalAlpha = 1;
 }
 
 // Coverage from every read (before downsampling), the allele mix where it is mixed, the downsampled windows. One
@@ -11408,22 +11711,8 @@ function _readBaseAt(read, p) {
     return null;
 }
 function _sortReadTracksAt(p) {
-    const n = bamState.nTracks || 0;
-    if (!n) return;
-    const refB = (bamState.refSeq[p] || 'N').toUpperCase();
-    const calls = _readsCalls(), c = calls && SampleCall.countsAt(calls.counts, p);
-    const freq = b => (c && c[b] ? c[b][0] + c[b][1] : 0);
-    const key = new Array(n).fill(1e9);
-    for (const r of bamState.reads) {
-        if (r.track == null || r.track < 0 || r.track >= n) continue;
-        const b = _readBaseAt(r, p);
-        if (b == null) continue;
-        key[r.track] = b === '-' ? 1e6 : b === refB ? 2e6 : -freq(b);
-    }
-    const order = [...Array(n).keys()].sort((a, b) => key[a] - key[b] || a - b);
-    const newIdx = new Array(n);
-    order.forEach((t, i) => { newIdx[t] = i; });
-    for (const r of bamState.reads) if (r.track != null && r.track >= 0 && r.track < n) r.track = newIdx[r.track];
+    _readsOpts = { ..._readsOpts, sort: 'base', sortPos: p };
+    _readsSortRows('base', p);
 }
 
 // Show position p (0-based on the reference row) in the Reads view: the column marked, the reads sorted by their

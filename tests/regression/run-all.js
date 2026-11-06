@@ -917,6 +917,148 @@ check('Reads filters: MAPQ minimum and showing flagged reads; flagged reads stay
   return { pass: ok, detail: JSON.stringify(o) };
 }, { timeoutMs: 120000 });
 
+// The basic IGV reading tools. Sort orders the rows by the read at the marked column (or the middle of the view), group
+// splits the pile into labelled parts, and group by the base at a column separates the two alleles of a site.
+check('Reads sort, colour, group: rows by MAPQ, colour by MAPQ and tag, groups by strand, tag and base at a column; the place stays; a new file starts clean', async (page) => {
+  const L = 5000, RL = 100, b = 'ACGT'; let seed = 17; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const alt = c => (c === 'A' ? 'C' : 'A');
+  const lines = [`@SQ\tSN:chrS\tLN:${L}`];
+  for (let i = 0, p = 0; p + RL <= L; i++, p += 5) {
+    let s = ref.slice(p, p + RL); const hp = i % 2 ? 1 : 2, k = 2500 - p;
+    if (hp === 1 && k >= 0 && k < RL) s = s.slice(0, k) + alt(s[k]) + s.slice(k + 1);     // haplotype 1 carries the change
+    lines.push(`s${i}\t${i % 3 ? 0 : 16}\tchrS\t${p + 1}\t${10 + (i * 7) % 50}\t${RL}M\t*\t0\t0\t${s}\t*\tHP:i:${hp}\tRG:Z:g${i % 2}`);
+  }
+  const text = lines.join('\n') + '\n';
+  await page.setInputFiles('#fileInput', { name: 's.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrS\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(500);
+  await page.setInputFiles('#bamFileInput', { name: 's.sam', mimeType: 'text/plain', buffer: Buffer.from(text) });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView, null, { timeout: 30000 });
+  await page.evaluate(READS_PX);
+  await page.click('#readsOptionsBtn');
+  const o = {};
+  await page.evaluate(() => _readsCentre(2500));
+  // sort by MAPQ: rows at the middle column go down in MAPQ
+  await page.selectOption('#readsSortBy', 'mapq'); await page.waitForTimeout(150);
+  o.sort = await page.evaluate(() => { const at = []; for (let t = 0; t < bamState.nTracks; t++) { const r = bamState.reads.find(x => x.track === t && x.start <= 2500 && 2500 <= x.end); if (r) at.push(r.mapq); }
+    return { desc: at.every((m, i) => !i || at[i - 1] >= m), n: at.length, status: _readsDefaultStatus() }; });
+  await page.selectOption('#readsSortBy', 'name'); await page.waitForTimeout(150);
+  o.sortName = await page.evaluate(() => { const at = []; for (let t = 0; t < bamState.nTracks; t++) { const r = bamState.reads.find(x => x.track === t && x.start <= 2500 && 2500 <= x.end); if (r) at.push(r.name); }
+    return at.every((m, i) => !i || at[i - 1] <= m); });
+  // colour by MAPQ and by a tag, on the painted bars
+  const fills = () => page.evaluate(() => { const px = q => { const c = el('readsCanvas'), d = devicePixelRatio || 1; alignmentContainer.scrollTop = Math.max(0, q.track * _readsTrackH() - 40); _readsDraw();
+      const v = c.getContext('2d').getImageData(Math.round((__colX(2500) + 3) * d), Math.round((__rowY(q) + 3) * d), 1, 1).data; return [v[0], v[1], v[2]].join(); };
+    const lo = bamState.reads.find(x => x.mapq <= 20 && x.start <= 2490 && 2510 <= x.end), hi = bamState.reads.find(x => x.mapq >= 50 && x.start <= 2490 && 2510 <= x.end);
+    const h1 = bamState.reads.find(x => x.tags.HP === 1 && x.start <= 2490 && 2510 <= x.end), h2 = bamState.reads.find(x => x.tags.HP === 2 && x.start <= 2490 && 2510 <= x.end);
+    return { lo: lo && px(lo), hi: hi && px(hi), h1: px(h1), h2: px(h2) }; });
+  await page.selectOption('#readsColorBy', 'mapq'); await page.waitForTimeout(150);
+  o.cMapq = await fills();
+  await page.fill('#readsTagName', 'HP'); await page.selectOption('#readsColorBy', 'tag'); await page.waitForTimeout(150);
+  o.cTag = await fills();
+  await page.selectOption('#readsColorBy', 'strand'); await page.waitForTimeout(100);
+  // groups
+  const groups = () => page.evaluate(() => ({ labels: bamState.groupRanges.map(g => g.label), keyed: bamState.groupRanges.map(g => { const k = new Set(bamState.reads.filter(r => r.track >= g.from && r.track < g.to).map(r => g.key(r))); return k.size; }), nTracks: bamState.nTracks, left: Math.round(_readsLeft()) }));
+  const before = await page.evaluate(() => { _readsCentre(2500); return Math.round(_readsLeft()); });
+  await page.selectOption('#readsGroupBy', 'strand'); await page.waitForTimeout(200);
+  o.gStrand = await groups();
+  o.labelInk = await page.evaluate(() => { alignmentContainer.scrollTop = 0; _readsDraw(); return __ink(0, _readsHeadH(), 300, _readsTrackH(), '#ffffff').n; });
+  await page.selectOption('#readsGroupBy', 'tag'); await page.waitForTimeout(200);
+  o.gTag = await groups();
+  // the base at the marked column separates the alleles: group by it, and each part holds one base there
+  await page.evaluate(() => readsGoTo(2500, { sort: false })); await page.waitForTimeout(100);
+  await page.selectOption('#readsGroupBy', 'base'); await page.waitForTimeout(200);
+  o.gBase = await groups();
+  o.alleles = await page.evaluate(() => { const hp = bamState.groupRanges.map(g => [...new Set(bamState.reads.filter(r => r.track >= g.from && r.track < g.to && r.start <= 2500 && 2500 <= r.end).map(r => r.tags.HP))]); return hp; });
+  // sorting inside groups keeps them apart
+  await page.selectOption('#readsSortBy', 'mapq'); await page.waitForTimeout(200);
+  o.gSorted = await groups();
+  await page.selectOption('#readsGroupBy', 'none'); await page.waitForTimeout(200);
+  o.gNone = await groups();
+  await page.setInputFiles('#bamFileInput', { name: 's2.sam', mimeType: 'text/plain', buffer: Buffer.from(text) }); await page.waitForTimeout(800);
+  o.fresh = await page.evaluate(() => [el('readsSortBy').value, el('readsColorBy').value, el('readsGroupBy').value, bamState.groupRanges.length]);
+  const ok = o.sort.desc && o.sort.n > 10 && /MAPQ/i.test(o.sort.status) && o.sortName
+    && o.cMapq.lo && o.cMapq.hi && o.cMapq.lo !== o.cMapq.hi && o.cTag.h1 !== o.cTag.h2
+    && o.gStrand.labels.length === 2 && /forward/.test(o.gStrand.labels[0]) && /reverse/.test(o.gStrand.labels[1]) && o.gStrand.keyed.every(n => n === 1) && o.gStrand.left === before && o.labelInk > 20
+    && o.gTag.labels.length === 2 && o.gTag.keyed.every(n => n === 1)
+    && o.gBase.labels.length >= 3 && o.alleles.filter(a => a.length === 1).length === 2 && o.gSorted.keyed.every(n => n === 1) && o.gSorted.labels.join() === o.gBase.labels.join()
+    && o.gNone.labels.length === 0 && o.fresh.join() === 'start,strand,none,0';
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 120000 });
+
+// Pairs were one label in the tooltip. Mates on one row with a line between, insert size and orientation colours, the
+// mate kept when downsampling; a right click offers what IGV's read menu offers; a change on a poor base looks fainter.
+check('Reads pairs and menu: mates on one row, insert size and orientation colours, tooltip with mate and tags, mate kept in a downsampled place, read menu, quality shading', async (page) => {
+  const L = 8000, RL = 100, b = 'ACGT'; let seed = 19; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const Q = c => c.repeat(RL), alt = c => (c === 'A' ? 'C' : 'A');
+  const lines = [`@SQ\tSN:chrP\tLN:${L}`, `@SQ\tSN:chrO\tLN:900`];
+  const pair = (n, a, c, fa, fb, tl) => {
+    lines.push(`${n}\t${fa}\tchrP\t${a + 1}\t60\t${RL}M\t=\t${c + 1}\t${tl}\t${ref.slice(a, a + RL)}\t${Q('I')}\tNM:i:0\tRG:Z:lib1`);
+    lines.push(`${n}\t${fb}\tchrP\t${c + 1}\t60\t${RL}M\t=\t${a + 1}\t${-tl}\t${ref.slice(c, c + RL)}\t${Q('I')}\tNM:i:0\tRG:Z:lib1`);
+  };
+  for (let i = 0; i < 40; i++) pair('n' + i, 100 + i * 100, 400 + i * 100, 99, 147, 400);       // normal, forward then reverse
+  pair('big', 5000, 7000, 99, 147, 2100);                                                         // far apart
+  pair('rr', 6000, 6300, 113, 177, 400);                                                          // both reverse
+  lines.push(`other\t65\tchrP\t6500\t60\t${RL}M\tchrO\t50\t0\t${ref.slice(6499, 6599)}\t${Q('I')}`);
+  // two reads with a change at 7500: one on a good base, one on a poor one
+  const mk = q => { const s = ref.slice(7450, 7550); return s.slice(0, 50) + alt(s[50]) + s.slice(51); };
+  const quals = c => 'I'.repeat(50) + c + 'I'.repeat(49);
+  lines.push(`qgood\t0\tchrP\t7451\t60\t${RL}M\t*\t0\t0\t${mk()}\t${quals('I')}`, `qpoor\t0\tchrP\t7451\t60\t${RL}M\t*\t0\t0\t${mk()}\t${quals('(')}`);
+  // a place deeper than the drawing limit, all paired with mates far enough to fall in another window
+  for (let i = 0; i < 120; i++) pair('d' + i, 300, 700, 99, 147, 500);
+  await page.setInputFiles('#fileInput', { name: 'p.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrP\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(500);
+  await page.setInputFiles('#bamFileInput', { name: 'p.sam', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\n') + '\n') });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView, null, { timeout: 30000 });
+  await page.evaluate(READS_PX);
+  await page.click('#readsOptionsBtn');
+  const o = {};
+  o.tip = await page.evaluate(() => _readsTooltipHtml(bamState.reads.find(r => r.name === 'big')));
+  await page.check('#readsPairs'); await page.waitForTimeout(200);
+  o.pairs = await page.evaluate(() => { const by = n => bamState.reads.filter(r => r.name === n), a = by('big');
+    const d = new Map(); for (const r of bamState.reads) if (r.name.startsWith('d')) d.set(r.name, (d.get(r.name) || 0) + 1);
+    alignmentContainer.scrollTop = Math.max(0, a[0].track * _readsTrackH() - 30); _readsCentre(5550); const y = __rowY(a[0]);
+    return { same: a.length === 2 && a[0].track === a[1].track, line: __has(__colX(5550), y + 5, 12, 6, '#a0a0a0', 25), fill: __has(__colX(5550), y + 3, 12, 2, '#f3d3d6', 6),
+      deepNames: d.size, deepAllTwo: [...d.values()].every(n => n === 2), other: by('other').length }; });
+  const px = n => page.evaluate(n => { const q = bamState.reads.find(r => r.name === n); alignmentContainer.scrollTop = Math.max(0, q.track * _readsTrackH() - 30); _readsCentre(q.start + 30);
+    const c = el('readsCanvas'), d = devicePixelRatio || 1, v = c.getContext('2d').getImageData(Math.round((__colX(q.start + 30) + 3) * d), Math.round((__rowY(q) + 3) * d), 1, 1).data; return [v[0], v[1], v[2]].join(); }, n);
+  await page.selectOption('#readsColorBy', 'insert'); await page.waitForTimeout(150);
+  o.ins = { big: await px('big'), normal: await px('n5') };
+  await page.selectOption('#readsColorBy', 'orientation'); await page.waitForTimeout(150);
+  o.ori = { rr: await px('rr'), normal: await px('n5') };
+  await page.selectOption('#readsColorBy', 'strand'); await page.uncheck('#readsPairs'); await page.waitForTimeout(200);
+  o.unpaired = await page.evaluate(() => { const a = bamState.reads.filter(r => r.name === 'n5'); return a.length === 2 && a[0].track !== undefined; });
+  // quality: the same change, fainter on the poor base
+  o.q = await page.evaluate(() => { const red = n => { const q = bamState.reads.find(r => r.name === n); alignmentContainer.scrollTop = Math.max(0, q.track * _readsTrackH() - 30); _readsCentre(7500); const y = __rowY(q), x = __colX(7500);
+      const { d } = __px(x, y + 2, 12, 12); let m = 0; for (let i = 0; i < d.data.length; i += 4) m = Math.max(m, d.data[i] - d.data[i + 2]); return m; }; return { good: red('qgood'), poor: red('qpoor') }; });
+  // the menu
+  await page.click('#readsOptionsBtn');
+  await page.evaluate(() => { window.__copied = []; navigator.clipboard.writeText = t => { window.__copied.push(t); return Promise.resolve(); }; });
+  const box = await page.locator('#readsCanvas').boundingBox();
+  const at = await page.evaluate(() => { const q = bamState.reads.find(r => r.name === 'big' && r.pos === 5000); alignmentContainer.scrollTop = Math.max(0, q.track * _readsTrackH() - 30); _readsCentre(5050); return { x: __colX(5050) + 6, y: __rowY(q) + 8 }; });
+  await page.mouse.click(box.x + at.x, box.y + at.y, { button: 'right' }); await page.waitForTimeout(150);
+  o.menu = await page.evaluate(() => [...document.querySelectorAll('#readsMenu button')].map(b => b.textContent));
+  await page.click('#readsMenu button[data-act="seq"]'); await page.waitForTimeout(100);
+  o.copied = await page.evaluate(() => window.__copied[0]);
+  await page.mouse.click(box.x + at.x, box.y + at.y, { button: 'right' }); await page.waitForTimeout(150);
+  await page.click('#readsMenu button[data-act="mate"]'); await page.waitForTimeout(200);
+  o.mate = await page.evaluate(() => { const x = __colX(7000); return { x, w: _readsView.w, menu: !!document.querySelector('#readsMenu') && el('readsMenu').style.display !== 'none' }; });
+  await page.evaluate(() => _readsCentre(5050)); await page.waitForTimeout(100);
+  await page.mouse.click(box.x + at.x, box.y + at.y, { button: 'right' }); await page.waitForTimeout(150);
+  await page.keyboard.press('Escape'); await page.waitForTimeout(80);
+  o.esc = await page.evaluate(() => el('readsMenu').style.display);
+  const want = await page.evaluate(() => bamState.refSeq.slice(5000, 5100));
+  const ok = /Mate/.test(o.tip) && /2,?100/.test(o.tip) && /RG/.test(o.tip)
+    && o.pairs.same && o.pairs.line && !o.pairs.fill && o.pairs.deepAllTwo && o.pairs.deepNames >= 10 && o.pairs.other === 1
+    && o.ins.big !== o.ins.normal && o.ori.rr !== o.ori.normal && o.unpaired
+    && o.q.good > 2 * Math.max(1, o.q.poor)
+    && o.menu.some(t => /sequence/i.test(t)) && o.menu.some(t => /mate/i.test(t)) && o.menu.some(t => /Sort by base/i.test(t)) && o.menu.some(t => /Group by base/i.test(t))
+    && o.copied === want && o.mate.x > 160 && o.mate.x < o.mate.w && !o.mate.menu && o.esc === 'none';
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 120000 });
+
 // Reads could only be looked at: codon analysis and MACSE work on rows, and in Full view the reads were gone.
 // Full hidden from the switch (owner 2026-11-01): Sample -> row now lands in Canvas (view 'canvas', was 'full').
 // "Sample -> row" puts the sample under the reference; codon analysis must then classify each planted change of
