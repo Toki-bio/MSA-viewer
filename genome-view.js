@@ -279,7 +279,7 @@ function _genomeStatusHead() {
     if (!g.loader) return g.bam ? `${g.chrom.name}: not in the BAM` : `${g.chrom.name}: reference only, no reads`;
     if (g.tooWide) return `${g.chrom.name}: zoom in to read reads`;
     if (g.waiting) return `reading ${g.chrom.name}...`;
-    const n = bamState.allReads.length, drawn = bamState.reads.length < n ? `, ${bamState.reads.length.toLocaleString()} drawn` : '', cut = w.cuts && w.cuts.length ? ` (cut at ${(w.cuts[0][0] + 1).toLocaleString()}: too many reads here, depth past it is not known)` : '';
+    const n = bamState.allReads.length, drawn = bamState.reads.length < n ? `, ${bamState.reads.length.toLocaleString()} drawn` : '', cut = w.cuts && w.cuts.length ? ` (cut at ${(w.cuts[0][0] + 1).toLocaleString()}-${w.cuts[0][1].toLocaleString()}${w.cuts.length > 1 ? ` and ${w.cuts.length - 1} more` : ''}: too many reads here, the hatched depth is not known)` : '';
     const lost = g.refFailed ? ' (the bases could not be read: no changes or coverage here)' : '';
     return `${n.toLocaleString()} reads in window ${w.t0 < 0 ? g.chrom.name : _genomeLocus(w.ws, w.we)}${drawn}, ${(g.cache.bytes / 1048576).toFixed(1)} MB held${cut}${lost}`;
 }
@@ -334,22 +334,26 @@ async function _genomeAdoptOnce(g) {
     const tiles = GenomeWindow.loadedRun(g.cache, plan.keepFirst, plan.keepLast, centre);
     const sig = JSON.stringify(_readsFilter), t0 = tiles[0].t, t1 = tiles[tiles.length - 1].t;
     if (t0 === g.win.t0 && t1 === g.win.t1 && sig === g.win.sig) return;
-    const fileReads = GenomeWindow.assemble(tiles);
+    const extra = GenomeWindow.recovered(tiles), fileReads = GenomeWindow.assemble(tiles, extra);
     let lo = tiles[0].start, hi = tiles[tiles.length - 1].end;
-    for (const r of tiles[0].over) if (r.start < lo) lo = r.start;
-    for (const t of tiles) for (const r of t.own) if (r.end + 1 > hi) hi = r.end + 1;
-    for (const r of tiles[0].over) if (r.end + 1 > hi) hi = r.end + 1;
+    for (const r of fileReads) { if (r.start < lo) lo = r.start; if (r.end + 1 > hi) hi = r.end + 1; }
     hi = Math.min(hi, chrom.length);
     await _genomeEnsureRef(lo, hi);
     if (g.chrom !== chrom || _genome !== g || _readsView !== v) return;
     for (const t of tiles) _genomeTileReads(t, sig);
     const overKept = tiles[0].over.filter(r => _readsPasses(r)), overD = _downsampleReads(overKept, _readsFilter.perWindow);
     const allReads = overKept.slice(), shown = overD.shown.slice(), dropped = overD.dropped.slice();
-    for (const t of tiles) {
+    tiles.forEach((t, i) => {
+        if (extra[i].length) {   // reads a cut tile lost, from this tile's overhang: in file order they come before its own
+            const kept = extra[i].filter(r => _readsPasses(r)), d = _downsampleReads(kept, _readsFilter.perWindow);
+            for (const r of kept) allReads.push(r);
+            for (const r of d.shown) shown.push(r);
+            for (const x of d.dropped) dropped.push(x);
+        }
         for (const r of t._kept) allReads.push(r);
         for (const r of t._shown) shown.push(r);
         for (const d of t._dropped) dropped.push(d);
-    }
+    });
     Object.assign(bamState, { fileReads, allReads, sampled: shown, reads: shown, downsampled: dropped });
     const o = _readsOpts;
     if (o.group === 'none' && !o.pairs) {

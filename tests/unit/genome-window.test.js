@@ -53,6 +53,68 @@ async function tiles(s) {
   check(`assembly: ${windows} windows, ${wanted} reads, each exactly once`, !lost && !twice && !extra, `${lost} lost, ${twice} twice, ${extra} extra`);
 }
 
+// Every position of a window with cut tiles is either right or hatched. Reads lost from the right part of a cut tile that reach into
+// the next tile are only in that tile's `over`, which assemble dropped unless the tile was first: 60x data showed 2, 22, 44 where the
+// truth was 60, 64, 62, in solid colour, past the end of the hatch. The oracle is the list the BAM was built from, and every position
+// of every contiguous window is compared. The long reads make a cap fall inside `over` (a whole tile hatched, the next one holding
+// what both lost); ties and identical records sit across the cut so a read taken twice shows too.
+async function cutWindows() {
+  const depthOf = (reads, L) => {
+    const d = new Int32Array(L + 1);
+    for (const r of reads) { let q = r.pos; for (const [l, o] of r.cigar) { if ('M=XD'.includes(o)) { d[q]++; d[q + l]--; q += l; } else if (o === 'N') q += l; } }
+    for (let i = 1; i <= L; i++) d[i] += d[i - 1];
+    return d;
+  };
+  const sets = {
+    '60x': (L, rnd, reads) => { for (let i = 0; i < 24000; i++) reads.push({ ref: 0, pos: (rnd() * (L - 150)) | 0, name: 'r' + i, cigar: [[150, 'M']] }); },
+    'long reads': (L, rnd, reads) => {
+      for (let i = 0; i < 9000; i++) reads.push({ ref: 0, pos: (rnd() * (L - 150)) | 0, name: 's' + i, cigar: [[150, 'M']] });
+      for (let i = 0; i < 400; i++) reads.push({ ref: 0, pos: (rnd() * (L - 60000)) | 0, name: 'l' + i, cigar: [[5000 + ((rnd() * 50000) | 0), 'M']] });
+      for (let i = 0; i < 60; i++) reads.push({ ref: 0, pos: (rnd() * (L - 30000)) | 0, name: 'n' + i, cigar: [[80, 'M'], [20000, 'N'], [70, 'M']] });
+    },
+    'ties and identical records': (L, rnd, reads) => {
+      for (let i = 0; i < 300; i++) { const pos = (rnd() * (L - 400)) | 0; for (let k = 0; k < 20; k++) reads.push({ ref: 0, pos, name: 'd' + (k % 4 ? i * 20 + k : i), cigar: [[300, 'M']] }); }
+    },
+  };
+  for (const [name, fill] of Object.entries(sets)) {
+    const L = 100000, rnd = mulberry(5), reads = [];
+    fill(L, rnd, reads);
+    reads.sort((a, b) => a.pos - b.pos);
+    await cutCase(name, L, reads, [40, 300, 900], depthOf);   // below a tile's reads in each set: a cap that cuts nothing fails the check
+  }
+  // the last small tile of a chromosome: chrM at high depth, where tile 0 is cut and tile 1 is 185 bases
+  const L = 16569, rnd = mulberry(8), reads = [];
+  for (let i = 0; i < 44000; i++) reads.push({ ref: 0, pos: (rnd() * (L - 150)) | 0, name: 'm' + i, cigar: [[150, 'M']] });
+  reads.sort((a, b) => a.pos - b.pos);
+  await cutCase('chrM, a last tile of 185 bases', L, reads, [200, 600, 6000], depthOf);
+}
+async function cutCase(name, L, reads, caps, depthOf) {
+  const { bam, bai } = buildBam([['chrA', L]], reads), file = new Blob([bam]), index = BP.parseBAI(new Uint8Array(bai));
+  const truth = depthOf(reads, L), refSeq = 'A'.repeat(L), last = Math.floor((L - 1) / GW.TILE);
+  const names = new Map();
+  for (const r of reads) { const k = r.pos + '|' + r.name; names.set(k, (names.get(k) || 0) + 1); }
+  for (const cap of caps) {
+    const tiles = [];
+    for (let t = 0; t <= last; t++) tiles.push(await GW.loadTile(BP, file, index, 0, t, L, { maxReads: cap }));
+    let windows = 0, positions = 0, hatched = 0, wrong = 0, first = '', twice = 0, unordered = 0, cuts = 0;
+    for (let a = 0; a <= last; a++) for (let b = a; b <= last; b++) {
+      const list = tiles.slice(a, b + 1), win = GW.assemble(list), spans = GW.cutSpans(list), ws = list[0].start, we = list[list.length - 1].end;
+      windows++; cuts += spans.length;
+      const c = win.length ? GW.callsFor(SC, win, refSeq, 0, ws, we).counts : null, seen = new Map();
+      for (const r of win) { const k = r.pos + '|' + r.name; seen.set(k, (seen.get(k) || 0) + 1); }
+      for (const [k, n] of seen) if (n > (names.get(k) || 0)) twice++;
+      for (let i = 1; i < win.length; i++) if (win[i].pos < win[i - 1].pos) unordered++;
+      for (let p = ws; p < we; p++) {
+        positions++;
+        if (spans.some(([s, e]) => p >= s && p < e)) { hatched++; continue; }
+        const got = c && p >= c.lo && p < c.hi ? c.depth[p - c.lo] : 0;
+        if (got !== truth[p]) { wrong++; if (!first) first = `tiles ${a}-${b}: position ${p + 1} shows ${got}, truth ${truth[p]}, not hatched`; }
+      }
+    }
+    check(`cut tiles, ${name}, cap ${cap}: ${windows} windows, ${positions} positions (${hatched} hatched, ${cuts} cuts) are right or hatched`, cuts > 0 && !wrong && !twice && !unordered, `${wrong} wrong, ${twice} read twice, ${unordered} out of order; ${first}`);
+  }
+}
+
 function fakeRead(name, start, len) { return { name, flag: 0, pos: start, start, end: start + len - 1, cigar: [{ op: 'M', len }], track: -1 }; }
 function rows() {
   // a walk of windows over one set of reads: objects are renewed for reads that cross a window's left edge, as tile overhangs are
@@ -256,6 +318,7 @@ function audit() {
   const s = await loadSet();
   await readerOptions(s);
   await tiles(s);
+  await cutWindows();
   rows();
   cache();
   await loader();

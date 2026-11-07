@@ -6,6 +6,7 @@
  * A tile is 16,384 bp, the .bai's own linear window. It owns the reads starting in it (own); over is the reads starting before
  * it that reach into it. A window of contiguous tiles T1..Tk holds own(T1..Tk) + over(T1): a read starting inside is in exactly
  * one own, and a read starting before overlaps T1, so every overlapping read is there once, with no matching of names.
+ * A tile cut at the read cap breaks that: its lost reads that reach the next tile are in that tile's over, see recovered().
  */
 (function (root, factory) {
     const api = factory();
@@ -46,11 +47,37 @@
         return { t, start, end, own, over, cut: !!got.cut, bytes: (got.records.length ? got.bytesRead : 0) + got.records.length * RECORD_COST + 64 };
     }
 
-    /** The reads of contiguous tiles, each once, in position order. */
-    function assemble(tiles) {
+    /**
+     * What later tiles hold of the reads a cut tile lost: for each tile of a contiguous run, the reads of its over that are in no tile
+     * before it. Those reach the tile from a cut part, and nothing else carries them: without them its first bases drew too low in solid
+     * colour. A tile's over is complete unless its own cap fell inside it, and then it has no own, so the whole tile is in cutSpans and the
+     * next over takes up what both lost: past a cut tile every position is right or hatched, with no hatch past the tile's end. Reads
+     * are matched by key: an over holds other objects than the own of the tile before. Identical records count one by one.
+     * The result follows the file: extra[i] comes after everything before tile i and before tile i's own.
+     */
+    function recovered(tiles) {
+        const extra = tiles.map(() => []);
+        let cut = false;
+        for (let j = 1; j < tiles.length; j++) {
+            cut = cut || tiles[j - 1].cut;
+            if (!cut || !tiles[j].over.length) continue;
+            const at = tiles[j].start, have = new Map();
+            const hold = r => { if (r.end >= at) { const k = readKey(r); have.set(k, (have.get(k) || 0) + 1); } };
+            tiles[0].over.forEach(hold);
+            for (let i = 0; i < j; i++) { extra[i].forEach(hold); tiles[i].own.forEach(hold); }
+            for (const r of tiles[j].over) {
+                const k = readKey(r), n = have.get(k) || 0;
+                if (n) have.set(k, n - 1); else extra[j].push(r);
+            }
+        }
+        return extra;
+    }
+
+    /** The reads of contiguous tiles, each once, in position order. extra: recovered(tiles), when the caller has it. */
+    function assemble(tiles, extra) {
         if (!tiles.length) return [];
-        const out = tiles[0].over.slice();
-        for (const t of tiles) for (const r of t.own) out.push(r);
+        const add = extra || recovered(tiles), out = tiles[0].over.slice();
+        tiles.forEach((t, i) => { for (const r of add[i]) out.push(r); for (const r of t.own) out.push(r); });
         return out;
     }
 
@@ -299,5 +326,5 @@
         return { name: hit, rest: t.slice(colon + 1).trim() };
     }
 
-    return { TILE, MAX_TILE_READS, CACHE_BYTES, GROUP, spanOf, tileRange, readKey, loadTile, assemble, TileCache, loadedRun, packWindow, createLoader, callsFor, indexBytes, firstRead, cutSpans, planView, isGenomeSet, pickFiles, matchChromosomes, parseLocus };
+    return { TILE, MAX_TILE_READS, CACHE_BYTES, GROUP, spanOf, tileRange, readKey, loadTile, recovered, assemble, TileCache, loadedRun, packWindow, createLoader, callsFor, indexBytes, firstRead, cutSpans, planView, isGenomeSet, pickFiles, matchChromosomes, parseLocus };
 });

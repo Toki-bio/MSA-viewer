@@ -559,6 +559,34 @@ check('audit: every tile cut at the read cap is marked, and from the last start 
 });
 
 // Design: the dialog says the alignment is closed: nothing of it may come back through a tool
+// A tile cut at the read cap lost reads that reach the next tile; those are only in the next tile's overhang, which the window dropped.
+// The first bases of the next tile drew too low in solid colour (60x data: 2, 22, 44 where the truth was 60, 64, 62). The page's own depth is
+// compared at every position with the list the BAM was built from: right, or hatched. Unit level: cutWindows in genome-window.test.js.
+check('audit: past a cut tile every position is right or hatched, in the page', async (page) => {
+  const L = 200000, rnd = mulberry(5), reads = [];
+  for (let i = 0; i < 80000; i++) reads.push({ ref: 0, pos: (rnd() * (L - 150)) | 0, name: 'r' + i, cigar: [[150, 'M']] });
+  reads.sort((a, b) => a.pos - b.pos);
+  const { bam, bai } = buildBam([['chrD', L]], reads), { text, fai } = fastaOf([['chrD', 'A'.repeat(L)]]);
+  await open(page, [file('d.fa', Buffer.from(text)), file('d.fa.fai', Buffer.from(fai)), file('d.bam', bam), file('d.bam.bai', bai)]);
+  await page.evaluate(() => { _genome.cache.clear(); _genome.win = { ..._genome.win, t0: -1, t1: -1 }; const o = GenomeWindow.loadTile; GenomeWindow.loadTile = (BP, f, ix, id, t, L, op) => o(BP, f, ix, id, t, L, { ...op, maxReads: 3000 }); });
+  await jump(page, 'chrD:20000-60000');
+  const r = await page.evaluate(() => {
+    const w = _genome.win; _genome.callsId = -1; const c = _genomeCalls().counts;
+    return { ws: w.ws, we: w.we, cuts: w.cuts, lo: c.lo, hi: c.hi, depth: Array.from(c.depth), status: _readsDefaultStatus(), n: bamState.allReads.length, file: bamState.fileReads.length };
+  });
+  const d = new Int32Array(L + 1);
+  for (const x of reads) { d[x.pos]++; d[x.pos + 150]--; }
+  for (let i = 1; i <= L; i++) d[i] += d[i - 1];
+  let wrong = 0, hatched = 0, first = '';
+  for (let p = r.ws; p < r.we; p++) {
+    if (r.cuts.some(([s, e]) => p >= s && p < e)) { hatched++; continue; }
+    const got = p >= r.lo && p < r.hi ? r.depth[p - r.lo] : 0;
+    if (got !== d[p]) { wrong++; first = first || `${p + 1}: page ${got}, truth ${d[p]}`; }
+  }
+  // the status names the stretch that is not known: past the tile the depth is known again
+  return { pass: r.cuts.length >= 2 && hatched > 0 && !wrong && r.n === r.file && /cut at [\d,]+-[\d,]+/.test(r.status), detail: JSON.stringify({ wrong, first, hatched, cuts: r.cuts, status: r.status, n: r.n, file: r.file }) };
+});
+
 check('audit: an alignment closed by a genome stays closed: Close shows the start page, Undo and trim restore bring nothing back', async (page) => {
   await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAA\n');
   await page.evaluate(() => { pushUndo('test'); state.trimBackup = state.seqs.map(s => ({ ...s })); });
