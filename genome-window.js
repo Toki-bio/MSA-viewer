@@ -323,7 +323,7 @@
             return e ? e.name : null;
         };
         const whole = find(t);
-        if (whole && !/^[\d,\s]+$/.test(t)) return { name: whole, rest: '' };
+        if (whole) return { name: whole, rest: '' };   // a bare 2 is chromosome 2 when there is one; 2,000 has no such name, so it stays a position
         const colon = t.lastIndexOf(':');
         if (colon <= 0) return { name: null, rest: t };
         const name = t.slice(0, colon).trim(), hit = find(name);

@@ -297,6 +297,10 @@ function locus() {
   check('locus: 7:100-200, the name without chr', L('7:100-200').name === 'chr7', JSON.stringify(L('7:100-200')));
   check('locus: a name with a colon in it', L('chrUn:odd').name === 'chrUn:odd', JSON.stringify(L('chrUn:odd')));
   check('locus: an unknown name is an error', /chr9/.test(L('chr9:5').error || ''), JSON.stringify(L('chr9:5')));
+  // owner 2026-11-07: a bare 7 is chromosome 7 when there is one; it used to be position 7 of this chromosome
+  check('locus: a bare number that names a chromosome goes there', L('7').name === 'chr7' && L('7').rest === '', JSON.stringify(L('7')));
+  check('locus: a bare number that names no chromosome is a position', L('12000').name === null && L('12000').rest === '12000', JSON.stringify(L('12000')));
+  check('locus: a number with a comma is always a position', L('7,000').name === null && L('7,000').rest === '7,000', JSON.stringify(L('7,000')));
 }
 
 function audit() {
