@@ -6602,7 +6602,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         return lo;
     };
     // band-local draw parameters read by drawRegion (defaults = the strip: everything); _bLanes -1: all lanes
-    let _bS0 = 0, _bS1 = nSlots, _bScale = null, _bScaleC0 = 0, _bLast = true, _bLanes = -1;
+    let _bS0 = 0, _bS1 = nSlots, _bScale = null, _bScaleC0 = 0, _bLast = true, _bLanes = -1, _bRL = null;
     const bandSlot0 = b => b * bandCols;
     const bandSlot1 = b => Math.min(nSlots, (b + 1) * bandCols);
     const bandRight = b => NAME_W + (bandSlot1(b) - bandSlot0(b)) * CHAR_W + (b === nBands - 1 ? BADGE_GAP + BADGE_W + 4 : 0);
@@ -6615,6 +6615,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     };
     // The band's ruler, as the DOM Block makes each block's (generateScale over the block's columns):
     // a label that does not fit the band is left out, not cut at the band's edge. [text, first column]
+    // Variable sites only: whole labels on their own columns (see _hiddenColRulerLabels), made once for the strip and once per band
+    let _stripRL = null; const bandRL = [];
+    const stripRulerLabels = () => _stripRL || (_stripRL = _hiddenColRulerLabels(slots, 0, nSlots, _canvasScaleInterval(CHAR_W)));
+    const bandRulerLabels = b => bandRL[b] || (bandRL[b] = _hiddenColRulerLabels(slots, bandSlot0(b), bandSlot1(b), _canvasScaleInterval(CHAR_W)));
     const bandRuler = b => {
         if (!bandScale[b]) { const [c0, c1] = bandColRange(b); bandScale[b] = [generateScale(Math.max(0, c1 - c0), _canvasScaleInterval(CHAR_W), c0), c0]; }
         return bandScale[b];
@@ -6633,10 +6637,10 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
     // Draw band b (drawRegion / drawOverlayStrip read these), and back to the strip
     const setBand = b => {
         _bS0 = bandSlot0(b); _bS1 = bandSlot1(b); _bLast = b === nBands - 1;
-        const r = bandRuler(b); _bScale = r[0]; _bScaleC0 = r[1];
+        const r = bandRuler(b); _bScale = r[0]; _bScaleC0 = r[1]; _bRL = varHide ? bandRulerLabels(b) : null;
         rowPitch = bandPitch[b]; _bLanes = bandLanes[b];
     };
-    const clearBand = () => { _bS0 = 0; _bS1 = nSlots; _bScale = null; _bScaleC0 = 0; _bLast = true; rowPitch = basePitch; _bLanes = -1; };
+    const clearBand = () => { _bS0 = 0; _bS1 = nSlots; _bScale = null; _bRL = null; _bScaleC0 = 0; _bLast = true; rowPitch = basePitch; _bLanes = -1; };
     _canvasState.relayoutMs = 0;
     // (Re)wrap to the viewport width. True when it changed. A render lays the bands out afresh (it nulls the layout
     // first and keeps its place with the anchor it captured, applied at its end); a window resize re-wraps the
@@ -7343,6 +7347,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     }
                     continue;
                 }
+                if (varHide) continue;   // Variable sites only: the labels are drawn whole below, not a character per column
                 const ch = _bScale ? _bScale[pc - _bScaleC0] : scaleTextAll[pc];
                 if (!ch || ch === ' ') continue;
                 const x = NAME_W + sI * CHAR_W - ox;
@@ -7353,6 +7358,24 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                     if (variable !== rulerBold) { rulerBold = variable; ctx.font = variable ? 'bold ' + fontStr : fontStr; }
                 }
                 ctx.fillText(ch, x, rulerBase);
+            }
+            if (varHide) {
+                // whole labels, each character in its own slot (the last on the label's column), only the slots of the strip being drawn
+                const rl = _bScale ? _bRL : stripRulerLabels();
+                if (hdCols) { ctx.globalAlpha = 1; ctx.font = 'bold ' + fontStr; rulerBold = true; }
+                let lo = 0, hi = rl.length;
+                while (lo < hi) { const mid = (lo + hi) >> 1; if (rl[mid][0] < firstCol) lo = mid + 1; else hi = mid; }
+                for (let k = lo; k < rl.length; k++) {
+                    const [ls, text] = rl[k];
+                    if (ls - text.length + 1 > lastCol) break;
+                    for (let q = 0; q < text.length; q++) {
+                        const sI = ls - text.length + 1 + q;
+                        if (sI < firstCol || sI > lastCol) continue;
+                        const x = NAME_W + sI * CHAR_W - ox;
+                        if (x + CHAR_W < 0 || x > w) continue;
+                        ctx.fillText(text[q], x, rulerBase);
+                    }
+                }
             }
             ctx.textBaseline = 'top';
             if (hdCols) { ctx.globalAlpha = 1; if (rulerBold) ctx.font = fontStr; }
@@ -9521,6 +9544,31 @@ function generateScale(maxLength, interval = 10, startPos = 0) {
     return scaleArray.join('');
 }
 
+/**
+ * The ruler's labels when columns are hidden (Variable sites only). generateScale() writes one character per
+ * column, so with hidden columns a number such as "230" lost its middle digit and left scraps ("2", "0").
+ * Here each number is one whole label, right-aligned on its own column like generateScale's, and a label is
+ * left out when its column is hidden, when it would not fit before the first shown column (lo), or when it would
+ * touch the previous label. cols[s] is the column in slot s (a negative entry is a breakpoint marker's slot).
+ * Returns [slot of the label's last character, text] for the slots in [lo, hi), in order.
+ */
+function _hiddenColRulerLabels(cols, lo, hi, interval) {
+    const out = [];
+    let prevEnd = -2;   // slot of the previous label's last character; one blank slot is kept between labels
+    for (let s = lo; s < hi; s++) {
+        const p = cols[s];
+        if (p < 0) continue;
+        const absPos = p + 1;
+        if (absPos % interval !== 0) continue;
+        const text = (absPos / interval) % 2 === 1 ? String(absPos) : '*';
+        const first = s - text.length + 1;
+        if (first < lo || first <= prevEnd + 1) continue;
+        out.push([s, text]);
+        prevEnd = s;
+    }
+    return out;
+}
+
 // Generate scale ruler as HTML spans with data-pos for var-sites compatibility
 function generateScaleHTML(maxLength, interval, startPos) {
     const scaleText = generateScale(maxLength, interval, startPos);
@@ -9556,6 +9604,21 @@ function generateScaleHTML(maxLength, interval, startPos) {
     const diffColumns = state._diffColumns;
     const fd = _foldDomInfo();
 
+    // Variable sites only hides columns: the numbers are then whole labels on their own column (see
+    // _hiddenColRulerLabels), not one digit per column; the label is a child of its column's cell and runs left over the hidden ones
+    let labAt = null;
+    if (diffColumns && document.body.classList.contains('var-sites-only')) {
+        const shown = [];
+        for (let i = 0; i < maxLength; i++) {
+            const p = startPos + i;
+            if (!diffColumns.has(p) || (fd && fd.hidden[p])) continue;
+            if (state._brkBeforePos && state._brkBeforePos.has(p)) shown.push(-1 - p);   // the marker's slot, as the rows (and Canvas) have it
+            shown.push(p);
+        }
+        labAt = new Map();
+        _hiddenColRulerLabels(shown, 0, shown.length, interval).forEach(([s, t]) => labAt.set(shown[s], t));
+    }
+
     const parts = [];
     for (let i = 0; i < maxLength; i++) {
         const absPos = startPos + i;
@@ -9569,7 +9632,9 @@ function generateScaleHTML(maxLength, interval, startPos) {
         // nothing and cost a character slot in the one row whose entire
         // purpose is spacing out those numbers - the same slot a torn label
         // needed.
-        const ch = scaleText[i] || ' ';
+        let ch = scaleText[i] || ' ';
+        let whole = null;
+        if (labAt) { const lt = labAt.get(startPos + i); ch = lt && lt.length === 1 ? lt : ' '; if (lt && lt.length > 1) whole = lt; }
         // Variable columns must carry .diff-highlight here too, decided one
         // column at a time so the ruler can never disagree with the rows
         // beneath it. The var-sites CSS hides span[data-pos]:not(.diff-highlight),
@@ -9578,8 +9643,11 @@ function generateScaleHTML(maxLength, interval, startPos) {
         const isVar = !!(diffColumns && diffColumns.has(absPos));
         // (a fold, unlike a var-sites breakpoint, has its marker in the ruler too: a click there shows the run)
         if (fd && fd.before.has(absPos)) parts.push(_foldMarkerHtml(fd.before.get(absPos)));
-        const cls = (isVar ? 'diff-highlight' : '') + (fd && fd.hidden[absPos] ? ' fold-hidden' : '');
-        parts.push(`<span class="${cls.trim()}" data-pos="${absPos}">${ch}</span>`);
+        // Variable sites only: the rows have a breakpoint marker cell before this column; the ruler keeps the same (invisible) cell
+        // so its columns stay over the rows' (without it the ruler drifted left by one marker cell per hidden run)
+        if (labAt && state._brkBeforePos && state._brkBeforePos.has(absPos) && diffColumns.has(absPos)) parts.push(`<span class="col-breakpoint" style="visibility:hidden;pointer-events:none;">${_escapeHtml(brkStyle.symbol)}</span>`);
+        const cls = (isVar ? 'diff-highlight' : '') + (fd && fd.hidden[absPos] ? ' fold-hidden' : '') + (whole ? ' scale-lab' : '');
+        parts.push(`<span class="${cls.trim()}" data-pos="${absPos}">${ch}${whole ? '<i class="scale-num">' + whole + '</i>' : ''}</span>`);   // the blank keeps the cell one column wide: the label is out of the flow
     }
     if (fd && startPos + maxLength >= fd.len && fd.before.has(fd.len)) parts.push(_foldMarkerHtml(fd.before.get(fd.len)));
     return parts.join('');

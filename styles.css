@@ -3748,6 +3748,9 @@ body.codon-mode .aa-row-best .aa-name { font-weight: bold; color: #444; }
 
 /* Variable sites only — hide fully-conserved columns */
 body.var-sites-only .seq-data > span[data-pos]:not(.diff-highlight) { display: none !important; }
+/* Variable sites only: a ruler number is one whole label on its own column, running left over the hidden ones */
+body.var-sites-only .seq-data > span.scale-lab { position: relative; }
+body.var-sites-only .seq-data > span.scale-lab > .scale-num { position: absolute; right: 0; top: 0; font-style: normal; white-space: pre; }
 body.var-sites-only .seq-data > span[data-pos]:not(.diff-highlight).var-site-hidden { display: none !important; }
 
 /* Variable sites — breakpoint markers */

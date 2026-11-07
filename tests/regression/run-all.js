@@ -16839,6 +16839,91 @@ check('Tree: swap mode on a tip says there is nothing to swap and to click an in
   return { pass: say.test(out.tipSwap) && /inner node/i.test(out.tipSwap) && !say.test(out.innerSwap) && !say.test(out.tipReroot), detail: JSON.stringify(out) };
 });
 
+// Same colleague: the position ruler with "Variable sites only" is one character per column, so a number such as "230" lost the digits of its hidden
+// columns and left scraps ("2", "0") over the shown ones. Now each number is one whole label right-aligned on its own column (left out when that column is
+// hidden or when it would touch the previous label). Read from what is drawn: the number of every label must be the column under its last digit, in Canvas
+// (the text actually passed to fillText) and in Full and Block (the label elements). With no hidden column the ruler is as it was: one number per 10 columns.
+check('Ruler with Variable sites only: every number is whole and sits on its own column (Canvas, Full, Block); without hidden columns it is unchanged', async (page) => {
+  await loadFasta(page, colleagueFasta());
+  await setMode(page, 'canvas');
+  await page.evaluate(() => { const c = document.getElementById('codonAnalysis'); if (c && c.checked) { c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); } });
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { window.__ft = []; const o = CanvasRenderingContext2D.prototype.fillText; CanvasRenderingContext2D.prototype.fillText = function (t, x, y) { window.__ft.push([String(t), x, y]); return o.apply(this, arguments); }; });
+  const canvasLabels = (hidden) => page.evaluate((hidden) => {
+    const m = _canvasState.metrics, interval = _canvasScaleInterval(m.charW), slots = _canvasState.slots, seen = new Map();
+    for (const [t, x, y] of window.__ft) if (/^[0-9*]$/.test(t) && y < m.headerH) seen.set(x + ':' + y, [t, x]);
+    const bySlot = new Map();
+    for (const [t, x] of seen.values()) bySlot.set(Math.round((x - m.nameW + _canvasState.offsetX) / m.charW), t);
+    const ss = [...bySlot.keys()].sort((a, b) => a - b), groups = [];
+    for (const s of ss) { const g = groups[groups.length - 1]; if (g && g.last === s - 1) { g.text += bySlot.get(s); g.last = s; } else groups.push({ text: bySlot.get(s), last: s }); }
+    const col = s => slots ? slots[s] : s;
+    const bad = groups.filter(g => { const c = col(g.last); return !(c >= 0 && (/^\d+$/.test(g.text) ? g.text === String(c + 1) : (g.text === '*' && (c + 1) % interval === 0))); }).map(g => g.text + '@' + col(g.last));
+    return { groups: groups.length, numbers: groups.filter(g => /^\d+$/.test(g.text)).length, long: groups.filter(g => g.text.length >= 3).length, bad: bad.slice(0, 6), badN: bad.length, hiddenCols: slots ? state.seqs[0].seq.length - slots.filter(x => x >= 0).length : 0 };
+  }, hidden);
+  const out = {};
+  await page.evaluate(() => { window.__ft = []; const c = document.getElementById('varSitesOnly'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(1200); out.canvas = await canvasLabels(true);
+  await page.evaluate(() => { window.__ft = []; _canvasState.offsetX = Math.round(_canvasState.metrics.charW * 150); _canvasState.scheduleDraw(); }); await page.waitForTimeout(800); out.canvasScrolled = await canvasLabels(true);
+  for (const mode of ['full', 'block']) {
+    await setMode(page, mode); await page.waitForTimeout(800);
+    out[mode] = await page.evaluate(() => {
+      const lines = [...document.querySelectorAll('.scale-ruler-line .seq-data')], bad = []; let labels = 0, scraps = 0, prevR = -1e9;
+      for (const d of lines) {
+        const dr = d.getBoundingClientRect(); if (dr.bottom < 0 || dr.top > innerHeight) continue; prevR = -1e9;
+        for (const sp of d.querySelectorAll(':scope > span[data-pos]')) {
+          if (getComputedStyle(sp).display === 'none') continue;
+          const pos = +sp.dataset.pos, num = sp.querySelector('.scale-num');
+          if (!num) { if (/\d/.test(sp.textContent)) scraps++; else if (/\*/.test(sp.textContent) && (pos + 1) % 10 !== 0) bad.push('*@' + pos); continue; }
+          labels++; const nr = num.getBoundingClientRect(), sr = sp.getBoundingClientRect();
+          const row = document.querySelector(`.seq-line[data-seq-index="0"] .seq-data > span[data-pos="${pos}"]`), rr = row && row.getBoundingClientRect();
+          if (num.textContent !== String(pos + 1)) bad.push(num.textContent + '@' + pos);
+          if (Math.abs(nr.right - sr.right) > 1.5) bad.push('right ' + num.textContent);
+          if (rr && Math.abs(rr.left - sr.left) > 1.5) bad.push('col ' + num.textContent);
+          if (nr.left < prevR - 0.5) bad.push('touch ' + num.textContent);
+          prevR = nr.right;
+        }
+      }
+      return { labels, scraps, bad: bad.slice(0, 6), badN: bad.length };
+    });
+  }
+  // no hidden columns: the plain ruler, a number per 10 columns, each over its own column
+  await setMode(page, 'canvas'); await page.waitForTimeout(500);
+  await page.evaluate(() => { window.__ft = []; const c = document.getElementById('varSitesOnly'); c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.waitForTimeout(1200); out.plain = await canvasLabels(false);
+  const ok = out.canvas.numbers >= 4 && out.canvas.long >= 3 && out.canvas.badN === 0 && out.canvas.hiddenCols > 300
+    && out.canvasScrolled.numbers >= 4 && out.canvasScrolled.badN === 0
+    && ['full', 'block'].every(k => out[k].labels >= 8 && out[k].scraps === 0 && out[k].badN === 0)
+    && out.plain.numbers >= 8 && out.plain.badN === 0 && out.plain.hiddenCols === 0;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// The same ruler in Canvas Block (bands, each with its own ruler): a number is whole, on its own column, and a label that does not fit the band is left out.
+check('Ruler with Variable sites only in Canvas Block: every number is whole and sits on its own column in each band', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, colleagueFasta());
+  await p.waitForTimeout(500);
+  await p.evaluate(async () => {
+    const c = document.getElementById('codonAnalysis'); if (c && c.checked) { c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); }
+    const bs = document.getElementById('blockSizeSlider'); bs.value = '89'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 500));
+    window.__ft = []; const o = CanvasRenderingContext2D.prototype.fillText; CanvasRenderingContext2D.prototype.fillText = function (t, x, y) { window.__ft.push([String(t), x, y]); return o.apply(this, arguments); };
+    const v = document.getElementById('varSitesOnly'); v.checked = true; v.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 1200));
+  });
+  const r = await p.evaluate(() => {
+    const L = _canvasState.layout, m = _canvasState.metrics, slots = _canvasState.slots, interval = _canvasScaleInterval(m.charW);
+    if (!L || L.kind !== 'block' || !slots) return { notBlock: true, kind: L && L.kind };
+    const seen = new Map(); for (const [t, x, y] of window.__ft) if (/^[0-9*]$/.test(t) && y < 3000) seen.set(x + ':' + y, [t, x, y]);
+    const ys = [...new Set([...seen.values()].map(v => v[2]))].sort((a, b) => a - b);
+    const per = ys.map((y, k) => { const bySlot = new Map(); for (const [t, x, yy] of seen.values()) if (yy === y) bySlot.set(k * L.bandCols + Math.round((x - m.nameW) / m.charW), t);
+      const ss = [...bySlot.keys()].sort((a, b) => a - b), groups = []; for (const s of ss) { const g = groups[groups.length - 1]; if (g && g.last === s - 1) { g.text += bySlot.get(s); g.last = s; } else groups.push({ text: bySlot.get(s), last: s }); }
+      const bad = groups.filter(g => { const c = slots[g.last]; return !(c >= 0 && (/^\d+$/.test(g.text) ? g.text === String(c + 1) : (g.text === '*' && (c + 1) % interval === 0))); }).map(g => g.text + '@' + slots[g.last]);
+      return { band: k, groups: groups.length, numbers: groups.filter(g => /^\d+$/.test(g.text)).length, bad: bad.slice(0, 4), badN: bad.length }; });
+    return { bands: L.nBands, bandsSeen: ys.length, per };
+  });
+  const ok = !r.notBlock && r.bandsSeen >= 2 && r.per.every(b => b.badN === 0) && r.per.some(b => b.numbers >= 2);
+  return { pass: ok, detail: JSON.stringify(r) };
+}));
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
