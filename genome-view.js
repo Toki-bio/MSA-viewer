@@ -24,6 +24,7 @@ async function _genomeOpen(files) {
             header = await BamParser.readBamHeaderFromFile(f.bam);
             index = BamParser.parseBAI(new Uint8Array(await f.bai.arrayBuffer()));
             if (index.refs.length !== header.refNames.length) throw new Error(`the index (${f.bai.name}) is not this BAM's: ${index.refs.length} references in the index, ${header.refNames.length} in the BAM`);
+            await BamParser.checkIndex(f.bam, index);
             const big = header.refNames.find((n, i) => header.refLengths[i] >= 2 ** 29);
             if (big) throw new Error(`${big} is over 512 Mb, which a .bai cannot address`);
             const m = GenomeWindow.matchChromosomes(fai, header.refNames, header.refLengths);
@@ -118,12 +119,20 @@ function _genomeShow(name) {
     if (g.cache) { g.budget = g.cache.budget; g.cache.clear(); }
     const refId = g.refIds.has(name) ? g.refIds.get(name) : -1;
     Object.assign(g, { chrom: e, refId, cache: new GenomeWindow.TileCache(g.budget), win: { ws: 0, we: 0, t0: -1, t1: -1, id: 0, sig: '', lo: 0, hi: 0 }, plan: null, prevWin: null, tracksHigh: 0, left: 0, barLeft: 0,
-        refLo: 0, refHi: 0, refChain: Promise.resolve(), refFailed: false, refNoFit: false, lastA: -1, lastB: -1, tooWide: false, waiting: false, callsId: -1, wideBytes: 0 });
+        refLo: 0, refHi: 0, refChain: Promise.resolve(), refFailed: false, refNoFit: false, readFailed: '', lastA: -1, lastB: -1, tooWide: false, waiting: false, callsId: -1, wideBytes: 0 });
     const cache = g.cache, loader = refId < 0 ? null : GenomeWindow.createLoader({
         load: (t, isStale) => GenomeWindow.loadTile(BamParser, g.bam, g.index, refId, t, e.length, { isStale }),
         cache, group: GenomeWindow.GROUP,
         onTiles: () => { if (g.loader === loader && _genome === g) _genomeAdopt(); },
-        onError: err => { console.error('genome read:', err); showMessage('The BAM could not be read: ' + err.message + '. If the file changed on disk, open it again.', 9000); },
+        onError: err => {
+            console.error('genome read:', err);
+            if (!err.indexMisfit) { showMessage('The BAM could not be read: ' + err.message + '. If the file changed on disk, open it again.', 9000); return; }
+            // reading on cannot help: said once, on the screen too, and nothing here may pass for a place with no reads
+            if (g.loader !== loader || _genome !== g) return;
+            g.readFailed = err.message; g.waiting = false;
+            showMessage('The reads could not be read: ' + err.message + '.', 12000);
+            _readsSchedule();
+        },
     });
     g.loader = loader;
     // a filter is the reader's and stays; sort and group are tied to a position of the last chromosome (GLM audit #24)
@@ -219,7 +228,7 @@ function _genomeAfterDraw(v, a, b, X) {
         if (w.hi > w.lo && Math.max(hi, w.hi) - Math.min(lo, w.lo) <= 2 * _GENOME_REF_MAX_SPAN) { lo = Math.min(lo, w.lo); hi = Math.max(hi, w.hi); }
         _genomeEnsureRef(Math.max(0, lo), Math.min(g.chrom.length, hi));
     }
-    if (g.loader) {
+    if (g.loader && !g.readFailed) {
         g.wideBytes = GenomeWindow.indexBytes(g.index, g.refId, a, b);
         g.tooWide = g.wideBytes > g.gateBytes && b - a > GenomeWindow.TILE;   // the index cannot see finer than a tile: zooming in must reach the reads
         if (g.tooWide) { g.loader.stop(); g.waiting = false; } else {
@@ -253,7 +262,7 @@ function _genomeDrawHatch(v, a, b, X) {
     }
     // what is not in the window has not been read: never to be taken for no reads
     const end = Math.min(b, g.chrom.length), gaps = [[a, Math.min(end, g.win.ws)], [Math.max(a, g.win.we), end]];
-    if (g.win.t0 < 0) gaps.splice(0, 2, [a, end]);
+    if (g.win.t0 < 0 || g.readFailed) gaps.splice(0, 2, [a, end]);
     for (const [s, e] of g.win.cuts || []) gaps.push([Math.max(a, s), Math.min(end, e)]);
     ctx.fillStyle = g.hatch;
     for (const [s, e] of gaps) {
@@ -261,6 +270,11 @@ function _genomeDrawHatch(v, a, b, X) {
         const x0 = Math.max(0, X(s)), x1 = Math.min(w, X(e));
         ctx.fillRect(x0, covTop, x1 - x0, _COV_H);
         ctx.fillRect(x0, head, x1 - x0, h - head);
+    }
+    if (g.readFailed) {
+        ctx.fillStyle = '#a00'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
+        ctx.fillText(`The reads could not be read: ${g.readFailed}`, 12, covTop + _COV_H / 2);
+        ctx.textAlign = 'center';
     }
 }
 // Drawn last, at the left of the screen: the name column it has in the Reads view scrolls away at once on a chromosome
@@ -278,6 +292,7 @@ function _genomeStatusHead() {
     const g = _genome, w = g.win;
     const lost = g.refFailed ? (g.refNoFit ? ' (the .fai does not fit the FASTA here: no bases, changes or coverage)' : ' (the bases could not be read: no changes or coverage here)') : '';
     if (!g.loader) return (g.bam ? `${g.chrom.name}: not in the BAM` : `${g.chrom.name}: reference only, no reads`) + lost;
+    if (g.readFailed) return `${g.chrom.name}: ${g.readFailed}`;
     if (g.tooWide) return `${g.chrom.name}: zoom in to read reads`;
     if (g.waiting) return `reading ${g.chrom.name}...`;
     const n = bamState.allReads.length, drawn = bamState.reads.length < n ? `, ${bamState.reads.length.toLocaleString()} drawn` : '', cut = w.cuts && w.cuts.length ? ` (cut at ${(w.cuts[0][0] + 1).toLocaleString()}-${w.cuts[0][1].toLocaleString()}${w.cuts.length > 1 ? ` and ${w.cuts.length - 1} more` : ''}: too many reads here, the hatched depth is not known)` : '';

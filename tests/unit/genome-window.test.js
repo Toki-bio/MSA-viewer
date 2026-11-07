@@ -267,6 +267,15 @@ function files() {
   check('pick: a .fai without its FASTA is named', /FASTA/.test(GW.pickFiles(F('g.fa.fai')).errors.join()), 'no message');
   check('pick: compressed FASTA is refused', /gz/.test(GW.pickFiles(F('g.fa.gz', 'g.fa.gz.fai')).errors.join()), 'no message');
   check('pick: .csi and .crai are refused', /csi/.test(GW.pickFiles(F('g.fa', 'g.fa.fai', 'r.bam', 'r.bam.csi')).errors.join()) && /crai/.test(GW.pickFiles(F('g.fa', 'g.fa.fai', 'r.cram', 'r.cram.crai')).errors.join()), 'no message');
+  // Several BAMs: the first .bam went with the first .bai by name order, so x.bam could open with y.bam.bai, and the reads of x.bam came
+  // through the index of y.bam. They are paired by name now.
+  const names = p => [p.bam && p.bam.name, p.bai && p.bai.name].join();
+  check('pick: x.bam goes with x.bam.bai, not with the .bai that sorts first', names(GW.pickFiles(F('g.fa', 'g.fa.fai', 'x.bam', 'y.bam', 'a.bam.bai', 'x.bam.bai'))) === 'x.bam,x.bam.bai', names(GW.pickFiles(F('g.fa', 'g.fa.fai', 'x.bam', 'y.bam', 'a.bam.bai', 'x.bam.bai'))));
+  check('pick: x.bam goes with x.bai', names(GW.pickFiles(F('g.fa', 'g.fa.fai', 'x.bam', 'a.bai', 'x.bai'))) === 'x.bam,x.bai', names(GW.pickFiles(F('g.fa', 'g.fa.fai', 'x.bam', 'a.bai', 'x.bai'))));
+  check('pick: the BAM with an index is taken over one without', names(GW.pickFiles(F('g.fa', 'g.fa.fai', 'a.bam', 'x.bam', 'x.bam.bai'))) === 'x.bam,x.bam.bai', names(GW.pickFiles(F('g.fa', 'g.fa.fai', 'a.bam', 'x.bam', 'x.bam.bai'))));
+  check('pick: x.bam.bai is taken over x.bai', names(GW.pickFiles(F('g.fa', 'g.fa.fai', 'x.bam', 'x.bai', 'x.bam.bai'))) === 'x.bam,x.bam.bai', names(GW.pickFiles(F('g.fa', 'g.fa.fai', 'x.bam', 'x.bai', 'x.bam.bai'))));
+  check('pick: one BAM and one .bai of another name stay a pair (a renamed file); the reader checks the fit', names(GW.pickFiles(F('g.fa', 'g.fa.fai', 'x.bam', 'renamed.bai'))) === 'x.bam,renamed.bai' && !GW.pickFiles(F('g.fa', 'g.fa.fai', 'x.bam', 'renamed.bai')).errors.length, 'not paired');
+  check('pick: several BAMs and indexes with no pair by name are refused', /by name/.test(GW.pickFiles(F('g.fa', 'g.fa.fai', 'x.bam', 'y.bam', 'a.bai', 'b.bai')).errors.join()), 'no message');
   const two = GW.pickFiles(F('x.fa', 'g.fa', 'g.fa.fai'));
   check('pick: of two FASTA the one the .fai is named after', two.fasta.name === 'g.fa', two.fasta && two.fasta.name);
 }

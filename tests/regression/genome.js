@@ -606,6 +606,35 @@ check('audit: a .fai that does not fit the FASTA is refused, no wrong base is sh
   return { pass: !refused.genome && refused.said && first.startsWith(chr1.slice(0, 40)) && r.name === 'chr2' && r.ref === '' && r.said && /\.fai/.test(r.status), detail: JSON.stringify({ refused, ok1: first.slice(0, 10), ...r, ref: r.ref.slice(0, 20) }) };
 });
 
+// The .bai of another BAM with the same header passed the one check made (the number of references): chunks that were no BGZF block ended
+// quietly and the screen drew zero coverage in places full of reads. It is refused at the door; one that gets past the door (a stale
+// chunk the probes missed) stops the reading and the screen says why, once, with no coverage drawn.
+check('audit: the .bai of another BAM is refused, and the screen never shows no reads for it', async (page) => {
+  const mk = seed => { const rnd = mulberry(seed), reads = []; for (let i = 0; i < 30000; i++) reads.push({ ref: 0, pos: (rnd() * 1999000) | 0, name: 's' + seed + '_' + i, cigar: [[150, 'M']] }); return buildBam([['chrD', 2000000]], reads.sort((a, b) => a.pos - b.pos), false, { noisyQual: true }); };
+  const A = mk(1), B = mk(2), { text, fai } = fastaOf([['chrD', 'A'.repeat(2000000)]]);
+  const set = [file('d.fa', Buffer.from(text)), file('d.fa.fai', Buffer.from(fai)), file('d.bam', B.bam), file('d.bam.bai', A.bai)];
+  await page.setInputFiles('#genomeFileInput', set);
+  await page.waitForFunction(() => /does not fit this BAM/.test(document.body.innerText) || (typeof _genome !== 'undefined' && _genome), null, { timeout: 8000 }).catch(() => {});
+  const door = await page.evaluate(() => ({ genome: typeof _genome !== 'undefined' && !!_genome, said: /does not fit this BAM/.test(document.body.innerText) }));
+  if (door.genome) { await page.evaluate(() => _genomeClose()); await page.waitForTimeout(50); }
+  await page.evaluate(() => {
+    BamParser.checkIndex = async () => {};
+    window._said = []; const m = showMessage; showMessage = (t, ms) => { window._said.push(String(t)); return m(t, ms); };
+  });
+  await open(page, set);
+  await jump(page, 'chrD:1000000-1001000');
+  await page.waitForTimeout(100); await idle(page);
+  await jump(page, 'chrD:1500000-1501000');
+  await page.waitForTimeout(100); await idle(page);
+  const r = await page.evaluate(() => {
+    const v = _readsView, seen = [], o = v.ctx.fillText;
+    v.ctx.fillText = function (s, x, y) { seen.push(String(s)); return o.call(this, s, x, y); };
+    _readsDraw(); v.ctx.fillText = o;
+    return { status: _readsDefaultStatus(), drawn: seen.some(s => /does not fit this BAM/.test(s)), reads: bamState.allReads.length, told: window._said.filter(s => /does not fit this BAM/.test(s)).length };
+  });
+  return { pass: !door.genome && door.said && /does not fit this BAM/.test(r.status) && r.drawn && r.told === 1, detail: JSON.stringify({ door, ...r }) };
+});
+
 check('audit: an alignment closed by a genome stays closed: Close shows the start page, Undo and trim restore bring nothing back', async (page) => {
   await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAA\n');
   await page.evaluate(() => { pushUndo('test'); state.trimBackup = state.seqs.map(s => ({ ...s })); });

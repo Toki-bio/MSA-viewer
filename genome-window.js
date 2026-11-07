@@ -282,14 +282,19 @@
         const fastas = by(/\.(fa|fasta|fna|fas)$/i), fais = by(/\.fai$/i);
         const fai = fais.find(i => fastas.some(f => f.name + '.fai' === i.name)) || fais[0] || null;
         const fasta = (fai && fastas.find(f => f.name + '.fai' === fai.name)) || fastas[0] || null;
-        const bam = by(/\.bam$/i)[0] || null, bai = by(/\.bai$/i)[0] || null;
+        // by name when several are given: the first of each went together, and a BAM could open through another BAM's index
+        const bams = by(/\.bam$/i), bais = by(/\.bai$/i), low = f => f.name.toLowerCase();
+        const baiOf = b => bais.find(i => low(i) === low(b) + '.bai') || bais.find(i => low(i) === low(b).replace(/\.bam$/, '.bai'));
+        const paired = bams.find(baiOf), lone = bams.length <= 1 && bais.length <= 1;
+        const bam = paired || bams[0] || null, bai = paired ? baiOf(paired) : (lone && bais[0]) || null;
         if (!fasta && by(/\.(fa|fasta|fna|fas)\.b?gz(ip)?$/i).length) errors.push('A compressed FASTA (.gz) cannot be read here yet: open the plain FASTA with its .fai (gunzip, then samtools faidx).');
         else if (!fasta) errors.push('The reference FASTA is missing: select the .fa together with its .fai.');
         if (!fai) errors.push('The .fai is missing: make it with samtools faidx, then select it with the FASTA.');
         if (by(/\.csi$/i).length) errors.push('.csi indexes are not read yet: make a .bai with samtools index.');
         if (by(/\.(cram|crai)$/i).length) errors.push('CRAM and .crai are not read in the genome view yet: use a BAM with its .bai.');
-        if (bam && !bai) errors.push('The BAM needs its .bai: make it with samtools index, then select both.');
-        if (bai && !bam) errors.push('A .bai came without its BAM: select the BAM too.');
+        if (bam && !bai && bais.length) errors.push('None of the .bai files goes with a BAM by name (x.bam with x.bam.bai or x.bai): select the BAM with its own index.');
+        else if (bam && !bai) errors.push('The BAM needs its .bai: make it with samtools index, then select both.');
+        if (bais.length && !bam) errors.push('A .bai came without its BAM: select the BAM too.');
         return { fasta, fai, bam, bai, errors };
     }
 
