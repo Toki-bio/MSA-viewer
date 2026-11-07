@@ -6676,6 +6676,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         bandCols = cols;
         nBands = Math.max(1, Math.ceil(nSlots / bandCols));
         bandScale = [];
+        bandRL.length = 0;   // the whole-label rulers too (Variable sites only): they are cut for the old bands' slots (GLM audit of the colleague fixes, #0)
         bandLanes = new Uint8Array(nBands);
         bandPitch = new Float64Array(nBands);
         bandBody = new Float64Array(nBands);

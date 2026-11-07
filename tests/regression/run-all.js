@@ -17023,6 +17023,39 @@ check('Tree: Fit on an unrooted tree that cannot fit the panel does not shrink i
   return { pass: r.svgW > r.cw && r.zoom === '100%', detail: JSON.stringify(r) };
 });
 
+// GLM audit of the colleague fixes (2026-11-07, #0/#10): Canvas Block with Variable sites only caches each band's whole-label ruler (bandRL) by band number.
+// A window resize re-wraps the bands (relayout) and reset the per-digit cache but not this one, so a band drew the labels of its OLD slots: numbers on
+// the wrong columns, whole labels cut by the band's end. Same reading as the check above, after the window is made narrower.
+check('Ruler with Variable sites only in Canvas Block: after a window resize every band\'s numbers still sit on their own columns', async (page) => withCanvasBlockPage(page, async (p, origin) => {
+  await p.goto(origin + '/index.html?view=block', { waitUntil: 'networkidle' });
+  await loadFasta(p, colleagueFasta());
+  await p.waitForTimeout(500);
+  await p.evaluate(async () => {
+    const c = document.getElementById('codonAnalysis'); if (c && c.checked) { c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); }
+    const bs = document.getElementById('blockSizeSlider'); bs.value = '89'; bs.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 500));
+    const v = document.getElementById('varSitesOnly'); v.checked = true; v.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 1200));
+  });
+  const before = await p.evaluate(() => _canvasState.layout && _canvasState.layout.bandCols);
+  await p.evaluate(() => { window.__ft = []; const o = CanvasRenderingContext2D.prototype.fillText; CanvasRenderingContext2D.prototype.fillText = function (t, x, y) { window.__ft.push([String(t), x, y]); return o.apply(this, arguments); }; });
+  await p.setViewportSize({ width: 800, height: 900 }); await p.waitForTimeout(1500);
+  const r = await p.evaluate((before) => {
+    const L = _canvasState.layout, m = _canvasState.metrics, slots = _canvasState.slots, interval = _canvasScaleInterval(m.charW);
+    if (!L || L.kind !== 'block' || !slots) return { notBlock: true, kind: L && L.kind };
+    const seen = new Map(); for (const [t, x, y] of window.__ft) if (/^[0-9*]$/.test(t) && y < 3000) seen.set(x + ':' + y, [t, x, y]);
+    const ys = [...new Set([...seen.values()].map(v => v[2]))].sort((a, b) => a - b);
+    const per = ys.map((y) => { const oy = _canvasState.offsetY || 0; let k = 0; for (let b = 0; b < L.nBands; b++) if (L.bandTop[b] - oy <= y + 1) k = b; const bySlot = new Map(); for (const [t, x, yy] of seen.values()) if (yy === y) bySlot.set(k * L.bandCols + Math.round((x - m.nameW) / m.charW), t);
+      const ss = [...bySlot.keys()].sort((a, b) => a - b), groups = []; for (const s of ss) { const g = groups[groups.length - 1]; if (g && g.last === s - 1) { g.text += bySlot.get(s); g.last = s; } else groups.push({ text: bySlot.get(s), last: s }); }
+      const bad = groups.filter(g => { const c = slots[g.last]; return !(c >= 0 && (/^\d+$/.test(g.text) ? g.text === String(c + 1) : (g.text === '*' && (c + 1) % interval === 0))); }).map(g => g.text + '@' + slots[g.last]);
+      const s0 = k * L.bandCols, exp = _hiddenColRulerLabels(slots, s0, Math.min(L.nSlots, s0 + L.bandCols), interval).map(e => e[1] + '@' + e[0]).join(','), got = groups.map(g => g.text + '@' + g.last).join(',');
+      if (exp !== got) bad.push('expected ' + exp + ' got ' + got);
+      return { band: k, groups: groups.length, numbers: groups.filter(g => /^\d+$/.test(g.text)).length, bad: bad.slice(0, 4), badN: bad.length }; });
+    return { oy: _canvasState.offsetY, before, bandCols: L.bandCols, bands: L.nBands, bandsSeen: ys.length, per };
+  }, before);
+  const ok = !r.notBlock && r.bandCols < r.before && r.bandsSeen >= 2 && r.per.every(b => b.badN === 0) && r.per.some(b => b.numbers >= 2);
+  return { pass: ok, detail: JSON.stringify(r) };
+}));
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
