@@ -16942,6 +16942,50 @@ check('Sequence editor box: Undo and Redo answer the Meta key as well as Ctrl', 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// Same colleague: Reverse complement decided RNA row by row (a U and no T in THAT row), so in an RNA alignment a row with no U (such as a short
+// one, or one of G and C and A) came back with T in the middle of U. RNA is now decided from the whole alignment: any U and no T anywhere.
+// Every path that rewrites rows: Ctrl+R, the right-click menu, RevComp All, the Sequence editor's Rev Comp / Complement, and Adjust direction.
+check('Reverse complement in an RNA alignment: a row with no U comes back with U on every path; a DNA alignment is unchanged', async (page) => {
+  const rcOf = (s, rna) => s.split('').reverse().map(c => ({ A: rna ? 'U' : 'T', T: 'A', U: 'A', C: 'G', G: 'C' }[c] || c)).join('');
+  const rnaRows = ['AUGGCUACGUAGCUAG', 'GGCAGCCAGGCAGCGC', 'ACGUACGUACGUUUUA'], dnaRows = ['ATGGCTACGTAGCTAG', 'GGCAGCCAGGCAGCGC', 'ACGTACGTACGTTTTA'];
+  const fa = rows => rows.map((s, i) => `>r${i + 1}\n${s}`).join('\n') + '\n';
+  const seqs = () => page.evaluate(() => state.seqs.map(s => s.seq));
+  const out = {}, want = rnaRows.map(s => rcOf(s, true));
+  // Ctrl+R on all rows
+  await loadFasta(page, fa(rnaRows));
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1, 2]); }); await page.keyboard.press('Control+r'); await page.waitForTimeout(500);
+  out.ctrlR = await seqs();
+  // right-click menu on the row with no U
+  await loadFasta(page, fa(rnaRows));
+  await page.evaluate(() => { state.selectedRows = new Set(); });
+  const p = await auditName(page, 1);
+  await page.mouse.click(p.x, p.y, { button: 'right' }); await page.waitForTimeout(250);
+  await page.locator('div', { hasText: /^Reverse complement$/ }).last().click(); await page.waitForTimeout(400);
+  out.menu = (await seqs())[1];
+  // RevComp All
+  await loadFasta(page, fa(rnaRows));
+  await page.evaluate(() => document.getElementById('reverseComplementAllButton').click()); await page.waitForTimeout(500);
+  out.all = await seqs();
+  // the Sequence editor's Rev Comp and Complement on the row with no U
+  await loadFasta(page, fa(rnaRows));
+  await page.evaluate(() => openSeqEditor(1)); await page.waitForTimeout(300);
+  await page.click('#seqEditRevComp'); out.editRev = await page.inputValue('#seqEditTextarea');
+  await page.click('#seqEditRevComp'); await page.click('#seqEditComplement'); out.editComp = await page.inputValue('#seqEditTextarea');
+  await page.evaluate(() => { document.getElementById('seqEditModal').style.display = 'none'; });
+  // Adjust direction: the second row is the reverse complement of the first and has no U
+  out.adjust = await page.evaluate(([a, b]) => { const r = _adjustDirection(`>r1\n${a}\n>r2\n${b}\n>r3\nACGUACGUACGUUUUAGGCUAGCUAGCUAGGCUA\n`); return { flipped: [...r.flipped], seqs: r.fasta.split('\n').filter(l => l && l[0] !== '>') }; }, [rcOf('GGCAGCCAGGCAGCGCAGGCAGCCAGGCAGCGC', true), 'GGCAGCCAGGCAGCGCAGGCAGCCAGGCAGCGC']);
+  // a DNA alignment is unchanged: Ctrl+R gives T
+  await loadFasta(page, fa(dnaRows));
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1, 2]); }); await page.keyboard.press('Control+r'); await page.waitForTimeout(500);
+  out.dna = await seqs();
+  const J = JSON.stringify;
+  const ok = J(out.ctrlR) === J(want) && out.menu === want[1] && J(out.all) === J(want) && out.editRev === '>r2\n' + rcOf(rnaRows[1], true)
+    && out.editComp === '>r2\n' + rnaRows[1].split('').map(c => ({ A: 'U', C: 'G', G: 'C' }[c] || c)).join('')
+    && out.adjust.flipped.length === 1 && !/T/.test(out.adjust.seqs.join(''))
+    && J(out.dna) === J(dnaRows.map(s => rcOf(s, false)));
+  return { pass: ok, detail: J(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

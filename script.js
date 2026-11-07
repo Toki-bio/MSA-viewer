@@ -4396,10 +4396,25 @@ function _setupUnifiedScrollListener(container) {
     _unifiedScrollController.bind(container);
 }
 
-function reverseComplement(seq) {
+// RNA is decided from the WHOLE alignment: any U and no T anywhere. Decided row by row, a row with no U (a short one, or
+// only A, C, G) of an RNA alignment came back with T (colleague check 2026-11-07).
+function alignmentIsRna(seqs) {
+    let u = false;
+    for (const q of (seqs || state.seqs || [])) {
+        const t = q.seq || '';
+        if (/[Tt]/.test(t)) return false;
+        if (!u && /[Uu]/.test(t)) u = true;
+    }
+    return u;
+}
+// reverseComplement for rows of the open alignment: the RNA decision is made once
+function _rcForAlignment() { const rna = alignmentIsRna(); return (t) => _reverseComplement(t, rna); }
+
+function reverseComplement(seq, rna) {
     // RNA stays RNA (A pairs with U when the sequence has U and no T); gap,
     // stop and missing-data symbols (~ * ? X) are kept as they are.
-    const isRna = /[Uu]/.test(seq) && !/[Tt]/.test(seq);
+    // rna (true/false) is the alignment's decision, given for rows; without it the sequence itself decides (a motif, a site).
+    const isRna = rna === undefined ? (/[Uu]/.test(seq) && !/[Tt]/.test(seq)) : !!rna;
     const complement = { 'A': isRna ? 'U' : 'T','T':'A','C':'G','G':'C','N':'N','-':'-','.':'.','~':'~', 'U':'A','R':'Y','Y':'R','M':'K','K':'M','S':'S','W':'W','H':'D','B':'V','V':'B','D':'H',
                          '*':'*','?':'?','X':'X' };
     return seq.split('').reverse().map(b => {
@@ -20069,6 +20084,7 @@ function reverseComplementSequences(indices) {
         return;
     }
     pushUndo('revcomp');
+    const rnaAln = alignmentIsRna();
     for (const i of targets) {
         const seqObj = state.seqs[i];
         const newHeader = withRcPrefix(seqObj.header);
@@ -20084,7 +20100,7 @@ function reverseComplementSequences(indices) {
             ...seqObj,
             header: newHeader,
             fullHeader: newFullHeader,
-            seq: reverseComplement(seqObj.seq)
+            seq: reverseComplement(seqObj.seq, rnaAln)
         };
         state.seqs[i].gaplessPositions = calculateGaplessPositions(state.seqs[i].seq);
     }
@@ -23755,13 +23771,13 @@ function _mafftAskYesNo({ message, defaultYes, dontAskKey, defaultKey, skipPromp
 /**
  * Reverse-complement a nucleotide sequence.
  */
-function _reverseComplement(seq) {
+function _reverseComplement(seq, rna) {   // rna: the alignment's decision; without it the sequence decides
     const comp = { A:'T', T:'A', C:'G', G:'C', a:'t', t:'a', c:'g', g:'c',
                    R:'Y', Y:'R', S:'S', W:'W', K:'M', M:'K', B:'V', V:'B', D:'H', H:'D',
                    r:'y', y:'r', s:'s', w:'w', k:'m', m:'k', b:'v', v:'b', d:'h', h:'d',
                    N:'N', n:'n', '-':'-', '.':'.', U:'A', u:'a' };
     const out = seq.split('').reverse().map(c => comp[c] || c).join('');
-    return (/[Uu]/.test(seq) && !/[Tt]/.test(seq)) ? out.replace(/T/g, 'U').replace(/t/g, 'u') : out;   // RNA stays RNA
+    return (rna === undefined ? (/[Uu]/.test(seq) && !/[Tt]/.test(seq)) : rna) ? out.replace(/T/g, 'U').replace(/t/g, 'u') : out;   // RNA stays RNA
 }
 
 /**
@@ -23793,6 +23809,7 @@ function _adjustDirection(fasta) {
     }
 
     const flipped = new Set();
+    const rnaAll = alignmentIsRna(seqs.concat(state.seqs || []));   // the rows given and the open alignment decide together
     const result = [`>${seqs[0].header}\n${seqs[0].seq}`];
 
     for (let i = 1; i < seqs.length; i++) {
@@ -23807,7 +23824,7 @@ function _adjustDirection(fasta) {
         }
 
         if (rcScore > fwdScore) {
-            result.push(`>${s.header}\n${_reverseComplement(s.seq)}`);
+            result.push(`>${s.header}\n${_reverseComplement(s.seq, rnaAll)}`);
             flipped.add(s.header);
         } else {
             result.push(`>${s.header}\n${s.seq}`);
@@ -26086,7 +26103,7 @@ async function realignSelectedBlock(opts) {
             parseFasta: parseMafftOutput,
             adjustDirection: (fa) => _adjustDirection(fa),
             reorderByGuideTree: (fa) => _reorderByGuideTree(fa),
-            reverseComplement: _reverseComplement
+            reverseComplement: _rcForAlignment()
         }).finally(() => { _alignRowIds = false; });
         if (result.cancelled) {
             showMessage('Region realign cancelled.', 2500);
@@ -26158,7 +26175,7 @@ async function _realignRectangle(rect, opts) {
             parseFasta: parseMafftOutput,
             adjustDirection: (fa) => _adjustDirection(fa),
             reorderByGuideTree: (fa) => _reorderByGuideTree(fa),
-            reverseComplement: _reverseComplement
+            reverseComplement: _rcForAlignment()
         }).finally(() => { _alignRowIds = false; });
         if (result.cancelled) { showMessage('Block realign cancelled.', 2500); return; }
         if (!result.aligned) { showMessage(result.message || 'Nothing to do.', 2500); return; }
@@ -26235,9 +26252,10 @@ async function realignAll() {
     // Reorder only: skip MAFFT. Apply RC to gapped rows if needed, then permute.
     if (reorderOnly) {
         if (flippedNames.size > 0) {
+            const rcAln = _rcForAlignment();
             for (const [id, s] of rowById) {
                 if (flippedNames.has(id)) {
-                    s.seq = _reverseComplement(s.seq);
+                    s.seq = rcAln(s.seq);
                     s.gaplessPositions = calculateGaplessPositions(s.seq);
                 }
             }
@@ -27210,12 +27228,16 @@ function seqEditReverse() {
     _seqEditTransform(seq => seq.split('').reverse().join(''));
 }
 
+// the Sequence editor's complement: in an RNA alignment A pairs with U (the alignment decides, as for Reverse complement)
+function _seqEditComp(rna) { return b => (rna && (b === 'A' || b === 'a')) ? (b === 'A' ? 'U' : 'u') : (_complementMap[b] || b); }
 function seqEditComplement() {
-    _seqEditTransform(seq => seq.split('').map(b => _complementMap[b] || b).join(''));
+    const f = _seqEditComp(alignmentIsRna());
+    _seqEditTransform(seq => seq.split('').map(f).join(''));
 }
 
 function seqEditRevComp() {
-    _seqEditTransform(seq => seq.split('').reverse().map(b => _complementMap[b] || b).join(''));
+    const f = _seqEditComp(alignmentIsRna());
+    _seqEditTransform(seq => seq.split('').reverse().map(f).join(''));
 }
 
 function seqEditUppercase() {
