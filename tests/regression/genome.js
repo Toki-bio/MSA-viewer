@@ -46,17 +46,17 @@ const file = (name, buffer) => ({ name, mimeType: 'application/octet-stream', bu
 const refFiles = () => { const d = getData(); return [file('g.fa', d.fasta), file('g.fa.fai', d.fai)]; };
 const allFiles = () => { const d = getData(); return [...refFiles(), file('r.bam', d.bam), file('r.bam.bai', d.bai)]; };
 
-async function idle(page) { await page.waitForFunction(() => typeof _genomeIdle === 'function' && _genomeIdle(), null, { timeout: 30000 }); }
+async function idle(page, ms = 30000) { await page.waitForFunction(() => typeof _genomeIdle === 'function' && _genomeIdle(), null, { timeout: ms }); }
 async function open(page, files) {
   await page.setInputFiles('#genomeFileInput', files);
   await page.waitForFunction(() => typeof _genome !== 'undefined' && _genome && _readsView, null, { timeout: 15000 });
   await idle(page);
 }
-async function jump(page, text) {
+async function jump(page, text, ms) {
   await page.fill('#readsJumpBox', text);
   await page.press('#readsJumpBox', 'Enter');
   await page.waitForTimeout(30);
-  await idle(page);
+  await idle(page, ms);
 }
 const left = page => page.evaluate(() => _readsLeft());
 async function zoom(page, cell) { await page.evaluate(c => { const v = _readsView; _readsZoomTo(c, _READS_NAME_W + (v.w - _READS_NAME_W) / 2); }, cell); await page.waitForTimeout(30); await idle(page); }
@@ -313,8 +313,9 @@ check('reads: the draw limit goes by the density of the window, not of the chrom
   // a window of under a third of the chromosome: past the limit on the window's own density; on the whole chromosome's it would be below
   await open(page, allFiles());
   await page.evaluate(() => { _genome.gateBytes = 1e12; _genome.cache.budget = 1e9; });
-  await jump(page, 'chrA:100,000-400,000');
-  await idle(page);
+  // 60 s, owner's yes 2026-11-07: reading 300 kb takes 22-28 s on an idle machine, so 30 s timed out once in a full suite with nothing wrong
+  await jump(page, 'chrA:100,000-400,000', 60000);
+  await idle(page, 60000);
   const r = await page.evaluate(() => { const v = _readsView, w = _genome.win; bamState.alignedBases = Math.ceil(1.3 * _READS_MAX_DRAWN * (w.we - w.ws) / ((v.w - _READS_NAME_W) / v.cell)); return { over: _readsCoverageOnly(v), span: w.we - w.ws, chr: bamState.refEnd }; });
   return { pass: r.over && r.span < r.chr / 2, detail: JSON.stringify(r) };
 });
