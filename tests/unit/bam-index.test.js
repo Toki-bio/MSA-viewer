@@ -31,6 +31,8 @@ const region = s => { const m = /^([^:]+)(?::(\d+)-(\d+))?$/.exec(s); return { r
   const whole = await BP.readBamRegion(big, ix, h.refNames.indexOf('chrT'), 0, 200000);
   check('a 1 kb region reads a small part of what the whole reference needs', small.bytesRead * 5 < whole.bytesRead, `${small.bytesRead} vs ${whole.bytesRead}`);
   await tileChecks();
+  await indexFits();
+  await cgTag();
   // reg2bins: the spec's example values
   check('reg2bins(0, 1) is bins 0, 1, 9, 73, 585, 4681', BP.reg2bins(0, 1).join() === '0,1,9,73,585,4681', BP.reg2bins(0, 1).join());
   console.log(fails ? `\n${fails} failed` : '\nall passed');
@@ -44,82 +46,7 @@ const region = s => { const m = /^([^:]+)(?::(\d+)-(\d+))?$/.exec(s); return { r
 // htslib's rule (a bin to the right of the region) alone is not enough: samtools merges small bins into a parent, whose
 // one chunk can span the reference. So the reader also stops at the first record past the region; the merged-index
 // checks below fail on a reader that takes such a chunk whole.
-const zlib = require('zlib');
-const CRC = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
-const crc32 = b => { let c = 0xffffffff; for (const x of b) c = CRC[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
-function bgzfBlock(data) {
-  const body = zlib.deflateRawSync(data), head = Buffer.from([31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0, 66, 67, 2, 0, 0, 0]), tail = Buffer.alloc(8);
-  head.writeUInt16LE(body.length + 25, 16);
-  tail.writeUInt32LE(crc32(data), 0); tail.writeUInt32LE(data.length, 4);
-  return Buffer.concat([head, body, tail]);
-}
-function reg2bin(beg, end) {   // SAMv1 5.3
-  end--;
-  for (const [sh, first] of [[14, 4681], [17, 585], [20, 73], [23, 9], [26, 1]]) if (beg >> sh === end >> sh) return first + (beg >> sh);
-  return 0;
-}
-function mulberry(a) { return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-function bamRecord(r, rnd) {
-  const name = Buffer.from(r.name + '\0'), lSeq = r.cigar.reduce((n, [l, o]) => n + ('MIS=X'.includes(o) ? l : 0), 0);
-  const span = r.cigar.reduce((n, [l, o]) => n + ('MDN=X'.includes(o) ? l : 0), 0);
-  const sb = (lSeq + 1) >> 1, size = 32 + name.length + 4 * r.cigar.length + sb + lSeq, b = Buffer.alloc(4 + size);
-  b.writeInt32LE(size, 0); b.writeInt32LE(r.ref, 4); b.writeInt32LE(r.pos, 8); b[12] = name.length; b[13] = 60;
-  b.writeUInt16LE(reg2bin(r.pos, r.pos + span), 14); b.writeUInt16LE(r.cigar.length, 16); b.writeUInt16LE(0, 18);
-  b.writeInt32LE(lSeq, 20); b.writeInt32LE(-1, 24); b.writeInt32LE(-1, 28); b.writeInt32LE(0, 32);
-  let o = 36; name.copy(b, o); o += name.length;
-  for (const [l, op] of r.cigar) { b.writeUInt32LE(l * 16 + 'MIDNSHP=X'.indexOf(op), o); o += 4; }
-  for (let i = 0; i < sb; i++) b[o++] = [1, 2, 4, 8][(rnd() * 4) | 0] * 16 + [1, 2, 4, 8][(rnd() * 4) | 0];
-  b.fill(0xff, o);
-  return { bytes: b, span };
-}
-// A sorted BAM of reads with its index, built by the rules of htslib's hts_idx_push: each record in the bin of its whole span,
-// and the linear index set for EVERY 16 kb window the record overlaps. merged: all of a reference's chunks in bin 0.
-function buildBam(refs, reads, merged) {
-  const rnd = mulberry(7), text = Buffer.from('@HD\tVN:1.6\tSO:coordinate\n' + refs.map(([n, l]) => '@SQ\tSN:' + n + '\tLN:' + l + '\n').join(''));
-  const parts = [Buffer.from('BAM\x01'), Buffer.alloc(4), text, Buffer.alloc(4)];
-  parts[1].writeInt32LE(text.length, 0); parts[3].writeInt32LE(refs.length, 0);
-  for (const [n, l] of refs) { const nb = Buffer.from(n + '\0'), h = Buffer.alloc(4), t = Buffer.alloc(4); h.writeInt32LE(nb.length, 0); t.writeInt32LE(l, 0); parts.push(h, nb, t); }
-  const out = [];
-  let comp = 0, pending = [], pendingLen = 0;
-  const flush = () => { if (!pendingLen) return; const blk = bgzfBlock(Buffer.concat(pending)); out.push(blk); comp += blk.length; pending = []; pendingLen = 0; };
-  const push = b => { pending.push(b); pendingLen += b.length; };
-  push(Buffer.concat(parts)); flush();
-  const bins = refs.map(() => new Map()), lin = refs.map(() => []);
-  const BLOCK = 16000;
-  for (const r of reads) {
-    const { bytes, span } = bamRecord(r, rnd);
-    const beg = { c: comp, u: pendingLen };
-    // a record may run across a block edge, as in a real BAM
-    let o = 0;
-    while (o < bytes.length) { const take = Math.min(bytes.length - o, BLOCK - pendingLen); push(bytes.subarray(o, o + take)); o += take; if (pendingLen >= BLOCK) flush(); }
-    const end = { c: comp, u: pendingLen };
-    const bin = merged ? 0 : reg2bin(r.pos, r.pos + span), m = bins[r.ref];
-    const list = m.get(bin) || m.set(bin, []).get(bin), last = list[list.length - 1];
-    if (last && last.end.c === beg.c && last.end.u === beg.u) last.end = end; else list.push({ beg, end });
-    for (let w = r.pos >> 14; w <= (r.pos + span - 1) >> 14; w++) if (!lin[r.ref][w]) lin[r.ref][w] = beg;
-  }
-  flush();
-  out.push(bgzfBlock(Buffer.alloc(0)));
-  const bam = Buffer.concat(out);
-  const vo = v => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(v.c) * 65536n + BigInt(v.u)); return b; }, i32 = n => { const b = Buffer.alloc(4); b.writeInt32LE(n); return b; };
-  const bai = [Buffer.from('BAI\x01'), i32(refs.length)];
-  refs.forEach((_, i) => {
-    bai.push(i32(bins[i].size));
-    for (const [bin, list] of bins[i]) { const h = Buffer.alloc(8); h.writeUInt32LE(bin, 0); h.writeInt32LE(list.length, 4); bai.push(h); for (const c of list) bai.push(vo(c.beg), vo(c.end)); }
-    const l = lin[i]; for (let w = l.length - 2; w >= 0; w--) if (!l[w]) l[w] = l[w + 1];   // empty windows take the next entry (htslib)
-    bai.push(i32(l.length)); for (const v of l) bai.push(vo(v));
-  });
-  return { bam, bai: Buffer.concat(bai) };
-}
-function syntheticReads() {
-  const rnd = mulberry(11), L = 3000000, reads = [];
-  for (let i = 0; i < 22000; i++) reads.push({ ref: 0, pos: (rnd() * (L - 200)) | 0, name: 's' + i, cigar: [[150, 'M']] });
-  for (let i = 0; i < 40; i++) reads.push({ ref: 0, pos: (rnd() * (L - 80000)) | 0, name: 'long' + i, cigar: [[20000 + ((rnd() * 50000) | 0), 'M']] });   // a few 16 kb windows each
-  for (let i = 0; i < 20; i++) reads.push({ ref: 0, pos: (rnd() * (L - 300000)) | 0, name: 'spliced' + i, cigar: [[80, 'M'], [200000, 'N'], [70, 'M']] });
-  for (const p of [16300, 16383, 32767, 49100]) reads.push({ ref: 0, pos: p, name: 'edge' + p, cigar: [[150, 'M']] });   // across a window edge
-  for (let i = 0; i < 300; i++) reads.push({ ref: 1, pos: (rnd() * 199000) | 0, name: 'b' + i, cigar: [[150, 'M']] });
-  return reads.sort((a, b) => a.ref - b.ref || a.pos - b.pos);
-}
+const { buildBam, syntheticReads, mulberry } = require('../lib/synth-bam.js');
 const spanOf = c => c.reduce((n, x) => n + ('MDN=X'.includes(x.op) ? x.len : 0), 0);
 async function exactOnRegions(label, file, index, all, refId, regions) {
   let wanted = 0, lost = 0, extra = 0, worst = '';
@@ -157,4 +84,108 @@ async function tileChecks() {
     check(name + ': a 16 kb region reads under 10% of the file (' + got.fileBytesRead + ' of ' + bam.length + ' bytes)', got.fileBytesRead * 10 < bam.length, got.fileBytesRead + ' of ' + bam.length);
     if (merged) check('merged index: the chunk list itself still spans the reference (the reader is what stops)', BP.baiChunks(ix, 0, 1500000, 1516384).length === 1, 'chunks changed');
   }
+}
+
+// ---- An index that does not fit its BAM -------------------------------------------------------------------------------
+// What used to go wrong: readBlocks stopped quietly when a chunk offset was no BGZF block, so the .bai of another BAM with the same
+// header (another sample on the same reference) gave "no reads" in 121 of 122 tiles, with no error: a place with reads looked empty.
+// A BAM shorter than the index did the same. The rule here: every region reads exactly as with the right index, or throws.
+async function indexFits() {
+  const FIT = /does not fit this BAM/, refs = [['chr1', 2000000]], tile = 16384;
+  const mk = seed => { const rnd = mulberry(seed), reads = []; for (let i = 0; i < 30000; i++) reads.push({ ref: 0, pos: (rnd() * 1999000) | 0, name: 's' + seed + '_' + i, cigar: [[150, 'M']] }); return buildBam(refs, reads.sort((a, b) => a.pos - b.pos), false, { noisyQual: true }); };
+  const A = mk(1), B = mk(2), fileB = new Blob([B.bam]), ixA = BP.parseBAI(new Uint8Array(A.bai)), ixB = BP.parseBAI(new Uint8Array(B.bai));
+  const key = got => got.records.map(r => r.name + '/' + r.pos).join();
+  const refuses = async f => { try { await f(); return false; } catch (e) { return FIT.test(e.message) || e.message; } };
+  const everyTile = async (file, index, label) => {
+    let same = 0, refused = 0, silent = 0, first = '';
+    for (let t = 0; t * tile < 2000000; t++) {
+      const beg = t * tile, end = Math.min(2000000, beg + tile), right = await BP.readBamRegion(fileB, ixB, 0, beg, end, true);
+      let got;
+      try { got = await BP.readBamRegion(file, index, 0, beg, end, true); } catch (e) { if (!FIT.test(e.message)) throw e; refused++; continue; }
+      if (key(got) === key(right)) same++; else { silent++; first = first || `tile ${t}: ${got.records.length} reads, right ${right.records.length}`; }
+    }
+    check(`${label}: every tile reads right or is refused (${same} right, ${refused} refused)`, !silent && refused > 0, `${silent} silently wrong; ${first}`);
+    return { same, refused };
+  };
+  await everyTile(fileB, ixA, 'the .bai of another BAM');
+  check('the .bai of another BAM is refused before any region is read', await refuses(() => BP.checkIndex(fileB, ixA)) === true, 'accepted');
+  // offsets moved inside the right index: no block there; past the end of a block; a block, but not a record start
+  const moved = f => { const ix = structuredClone(ixB); for (const ref of ix.refs) { for (const list of ref.bins.values()) for (const ch of list) ch.beg = f(ch.beg); ref.lin = ref.lin.map(v => (v.c || v.u ? f(v) : v)); } return ix; };
+  for (const [what, f] of [['no block at the offset', v => ({ c: v.c + 1, u: v.u })], ['past the end of the block', v => ({ c: v.c, u: 70000 })], ['inside a record', v => ({ c: v.c, u: v.u + 7 })]]) {
+    const ix = moved(f);
+    check(`a chunk with ${what} is refused`, await refuses(() => BP.readBamRegion(fileB, ix, 0, 1000000, 1016384, true)) === true, 'read quietly');
+    check(`an index with ${what} is refused at the door`, await refuses(() => BP.checkIndex(fileB, ix)) === true, 'accepted');
+  }
+  // a stale chunk on a real block and a real record, of another reference
+  const two = buildBam([['c1', 100000], ['c2', 100000]], [{ ref: 0, pos: 5, name: 'a', cigar: [[50, 'M']] }, { ref: 1, pos: 5, name: 'b', cigar: [[50, 'M']] }]);
+  const ix2 = BP.parseBAI(new Uint8Array(two.bai)); ix2.refs[1] = ix2.refs[0];
+  check('a chunk on a record of another reference is refused', await refuses(() => BP.readBamRegion(new Blob([two.bam]), ix2, 1, 0, 1000, true)) === true, 'read quietly');
+  // the right place in the file, a read of another place: the linear index says where the first read of a window lies
+  // (all entries moved, as in a stale index: the door samples 8 of them, so one wrong entry alone can pass it)
+  const lin = structuredClone(ixB); lin.refs[0].lin = ixB.refs[0].lin.map((v, k) => ({ ...ixB.refs[0].lin[Math.max(0, k - 8)] }));
+  check('window entries on reads far left of their windows are refused at the door', await refuses(() => BP.checkIndex(fileB, lin)) === true, 'accepted');
+  // a BAM cut short: in a block, on a block edge, before everything. Tiles before the cut still read
+  const blockEdge = (() => { let off = 0, edge = 0; while (off < B.bam.length / 2) { edge = off; off += B.bam.readUInt16LE(off + 16) + 1; } return edge; })();
+  for (const [what, n] of [['inside a block', (B.bam.length / 2) | 0], ['on a block edge', blockEdge]]) {
+    const cutFile = new Blob([B.bam.subarray(0, n)]);
+    const r = await everyTile(cutFile, ixB, `a BAM cut short ${what}`);
+    check(`a BAM cut short ${what}: the tiles before the cut still read`, r.same > 10, `${r.same}`);
+    check(`a BAM cut short ${what} is refused at the door`, await refuses(() => BP.checkIndex(cutFile, ixB)) === true, 'accepted');
+  }
+  // good files pass: samtools indexes, a binned and a merged index, and an index that fills empty windows from the left, as older tools do
+  for (const [bam, bai] of [['tests/fixtures/reads/chrom/chrom_reads.bam', 'tests/fixtures/reads/chrom/chrom_reads.bam.bai'], ['examples/real/htslib_range.bam', 'examples/real/htslib_range.bam.bai']]) {
+    const said = await refuses(() => BP.checkIndex(asFile(path.join(ROOT, bam)), BP.parseBAI(new Uint8Array(fs.readFileSync(path.join(ROOT, bai))))));
+    check(`${path.basename(bam)} and its samtools index pass`, said === false, String(said));
+  }
+  for (const merged of [false, true]) {
+    const { bam, bai } = buildBam([['chrA', 3000000], ['chrB', 200000]], syntheticReads(), merged);
+    const said = await refuses(() => BP.checkIndex(new Blob([bam]), BP.parseBAI(new Uint8Array(bai))));
+    check(`a ${merged ? 'merged' : 'binned'} index passes`, said === false, String(said));
+  }
+  const sparse = (() => { const rnd = mulberry(4), reads = []; for (let i = 0; i < 400; i++) reads.push({ ref: 0, pos: 1000000 + ((rnd() * 900000) | 0), name: 'x' + i, cigar: [[150, 'M']] }); for (let i = 0; i < 100; i++) reads.push({ ref: 0, pos: (rnd() * 90000) | 0, name: 'y' + i, cigar: [[150, 'M']] }); return buildBam(refs, reads.sort((a, b) => a.pos - b.pos)); })();
+  const left = BP.parseBAI(new Uint8Array(sparse.bai)), l = left.refs[0].lin, spans = []; for (let k = 1; k < l.length; k++) { if (k * tile > 90000 && k * tile < 1000000) l[k] = { ...l[k - 1] }; }
+  const said = await refuses(() => BP.checkIndex(new Blob([sparse.bam]), left));
+  check('an index with empty windows filled from the left passes', said === false, String(said));
+}
+
+// ---- CIGARs in the CG tag -------------------------------------------------------------------------------------------
+// BAM holds at most 65,535 CIGAR operations in a record. A longer one is stored as the placeholder <l_seq>S<span>N with the real CIGAR in
+// CG:B,I (SAMv1 4.2.2). The parser took the placeholder as real: an ultra-long read was all soft clip and a skip, with depth 0 over its
+// whole span. Both ways of reading a BAM are checked, and the depth against the reads the BAM was built from.
+async function cgTag() {
+  const SC = require('../../sample-call.js'), GW = require('../../genome-window.js');
+  const ops = [], n = 70000; for (let i = 0; i < n; i++) ops.push([1, 'M'], [1, 'I']);
+  const nm = Buffer.from([78, 77, 67, 7]);   // NM:C:7 after the CG tag
+  const reads = [
+    { ref: 0, pos: 1000, name: 'ultra', cigar: ops, cg: true, tail: nm },
+    { ref: 0, pos: 1100, name: 'shortcg', cigar: [[10, 'S'], [40, 'M'], [5, 'D'], [50, 'M']], cg: true },                       // the rule does not ask for 65,536 operations
+    { ref: 0, pos: 1200, name: 'typei', cigar: [[100, 'M']], cg: true, cgType: 'i' },                                            // htslib takes B,i too
+    { ref: 0, pos: 1300, name: 'plain', cigar: [[30, 'S'], [100, 'M']] },
+    { ref: 0, pos: 1400, name: 'realskip', cigar: [[50, 'S'], [500, 'N']] },                                                    // the placeholder's shape, with no tag
+  ];
+  const { bam, bai } = buildBam([['chrA', 300000]], reads), file = new Blob([bam]), index = BP.parseBAI(new Uint8Array(bai));
+  const buf = await BP.decompressBAM(file), h = BP.parseBAMHeader(buf);
+  const paths = {
+    'whole file': BP.parseBAMRecords(buf, h.headerEndOffset, true).records,
+    'indexed': (await BP.readBamRegion(file, index, 0, 0, 300000, true)).records,
+  };
+  for (const [how, list] of Object.entries(paths)) {
+    const by = Object.fromEntries(list.map(r => [r.name, r])), u = by.ultra;
+    check(`CG ${how}: the real CIGAR is used`, u && u.cigar.length === 2 * n && u.cigar[0].op === 'M' && u.cigar[1].op === 'I' && u.cigar[2 * n - 1].op === 'I', u ? BP.cigarToString(u.cigar).slice(0, 30) : 'no read');
+    check(`CG ${how}: the span is the reference length`, GW.spanOf(u.cigar) === n, String(GW.spanOf(u.cigar)));
+    check(`CG ${how}: the tag is no ordinary tag now, the others stay`, u.tags.CG === undefined && u.tags.NM === 7, JSON.stringify({ CG: !!u.tags.CG, NM: u.tags.NM }));
+    check(`CG ${how}: a short CIGAR in the tag is used too`, BP.cigarToString(by.shortcg.cigar) === '10S40M5D50M', BP.cigarToString(by.shortcg.cigar));
+    check(`CG ${how}: B,i is taken as htslib takes it`, BP.cigarToString(by.typei.cigar) === '100M', BP.cigarToString(by.typei.cigar));
+    check(`CG ${how}: S then N with no tag is a real CIGAR`, BP.cigarToString(by.realskip.cigar) === '50S500N', BP.cigarToString(by.realskip.cigar));
+    const c = SC.call([u], 'A'.repeat(1000 + n + 10)).counts;
+    let depth = 0; for (let p = 1000; p < 1000 + n; p++) if (p >= c.lo && p < c.hi) depth += c.depth[p - c.lo];
+    check(`CG ${how}: depth one on each reference base of the read`, depth === n, `${depth} of ${n}`);
+  }
+  // a region far inside the read: found only if the reader knows its span
+  const mid = await BP.readBamRegion(file, index, 0, 50000, 50100, true);
+  check('CG: a region inside the long read finds it', mid.records.some(r => r.name === 'ultra'), mid.records.map(r => r.name).join());
+  // a CG of another element type is not the spec's: the placeholder stays, as in htslib
+  const other = buildBam([['chrA', 300000]], [{ ref: 0, pos: 5, name: 'x', cigar: [[100, 'M']], cg: true, cgType: 'S' }]);
+  const b2 = await BP.decompressBAM(new Blob([other.bam])), r2 = BP.parseBAMRecords(b2, BP.parseBAMHeader(b2).headerEndOffset, true).records[0];
+  check('CG: a tag not of type B,I stays an ordinary tag', BP.cigarToString(r2.cigar) === '100S100N' && r2.tags.CG !== undefined, BP.cigarToString(r2.cigar));
 }

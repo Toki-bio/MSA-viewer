@@ -213,7 +213,7 @@ class BamRecord {
         return this._tags;
     }
 }
-function parseBAMTags(buf, start, tagEnd) {
+function parseBAMTags(buf, start, tagEnd, arrayTypes) {
     const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     let pos = start;
     const tags = {};
@@ -250,6 +250,7 @@ function parseBAMTags(buf, start, tagEnd) {
             }
             case 'B': {
                 const btype = String.fromCharCode(buf[pos]); pos += 1;
+                if (arrayTypes) arrayTypes[tag] = btype;
                 const count = dv.getUint32(pos, true); pos += 4;
                 const arr = [];
                 for (let j = 0; j < count; j++) {
@@ -276,6 +277,28 @@ function parseBAMTags(buf, start, tagEnd) {
 
     return tags;
 }
+/**
+ * A CIGAR too long for the record (over 65,535 operations) is stored as the placeholder <l_seq>S<n>N, n the reference length, with the real
+ * one in the tag CG:B,I (SAMv1 4.2.2). Puts the real one on the read and takes the tag out of the read's tags, as htslib does: it is
+ * the read's CIGAR, not a tag. It was taken as real: the read was all clip and a skip, with no depth over its span. B,i is taken too, as htslib.
+ */
+function useCigarTag(rec, cigarOps, lSeq) {
+    if (cigarOps[0].op !== 'S' || cigarOps[0].len !== lSeq || cigarOps[1].op !== 'N' || rec.refID < 0 || rec.pos < 0) return;
+    const types = {}, tags = parseBAMTags(rec._b, rec._to, rec._te, types), cg = tags.CG;
+    if (!cg || !cg.length || (types.CG !== 'I' && types.CG !== 'i')) return;
+    const real = new Array(cg.length);
+    let span = 0;
+    for (let i = 0; i < cg.length; i++) {
+        const op = CIGAR_OPS[cg[i] & 0xF], len = cg[i] >>> 4;
+        if (!op) return;
+        if ('MDN=X'.includes(op)) span += len;
+        real[i] = { len, op };
+    }
+    if (span !== cigarOps[1].len) return;
+    delete tags.CG;
+    rec.cigar = real; rec._tags = tags;
+}
+
 function parseBAMRecord(buf, offset, dvIn) {
     if (offset + 4 > buf.length) return null;
 
@@ -322,10 +345,9 @@ function parseBAMRecord(buf, offset, dvIn) {
     pos += lSeq;
     const tagEnd = offset + 4 + blockSize;
 
-    return {
-        record: new BamRecord(name, refID, rpos, mapq, flag, cigarOps, tlen, nextRef, nextPos, buf, seqOff, lSeq, hasQual, pos, tagEnd),
-        nextOffset: tagEnd,
-    };
+    const record = new BamRecord(name, refID, rpos, mapq, flag, cigarOps, tlen, nextRef, nextPos, buf, seqOff, lSeq, hasQual, pos, tagEnd);
+    if (nCigar === 2) useCigarTag(record, cigarOps, lSeq);
+    return { record, nextOffset: tagEnd };
 }
 
 /**
@@ -588,11 +610,27 @@ function baiChunks(index, refId, beg, end) {
     return merged;
 }
 
+/** An index that cannot be this BAM's, or a BAM shorter than it was: said, never read as a place with no reads. */
+function indexMisfit(why) {
+    const e = new Error('the index does not fit this BAM' + why);
+    e.indexMisfit = true;
+    return e;
+}
+
+/** Whether the bytes at off can be the start of a BAM record on reference refId: the fixed fields only (36 bytes), so a record not yet whole can be judged. */
+function recordFits(dv, off, refId) {
+    const size = dv.getInt32(off, true), lName = dv.getUint8(off + 12), nCigar = dv.getUint16(off + 16, true), lSeq = dv.getInt32(off + 20, true);
+    return dv.getInt32(off + 4, true) === refId && dv.getInt32(off + 8, true) >= -1 && lName >= 1 && lSeq >= 0
+        && 32 + lName + 4 * nCigar + ((lSeq + 1) >> 1) + lSeq <= size;
+}
+
 /**
  * The next piece of a chunk: the whole BGZF blocks in `step` compressed bytes from file offset c, decompressed, the block
- * holding `end` cut at end.u: { data, next (offset after them), done (the chunk or the file ended) }.
+ * holding `end` cut at end.u: { data, next (offset after them), done (the chunk or the file ended) }. A place that is no block
+ * throws: it used to end the chunk quietly, so the .bai of another BAM read as "no reads here".
  */
 async function readBlocks(file, c, end, step) {
+    if (c >= file.size || end.c > file.size) throw indexMisfit(`, or the BAM is cut short: the index reaches offset ${Math.max(c, end.c).toLocaleString()} of a file of ${file.size.toLocaleString()} bytes`);
     // the block holding `end` starts at end.c: never past it plus one whole block (at most 64 KiB)
     const bytes = new Uint8Array(await file.slice(c, Math.min(file.size, c + step, end.c + 65536 + 1024)).arrayBuffer());
     // the blocks first, then all decompressed at once: one at a time made an index slower than reading the whole file
@@ -600,21 +638,61 @@ async function readBlocks(file, c, end, step) {
     let off = 0, cut = -1, done = false;
     while (off < bytes.length) {
         const bsize = bgzfBlockSize(bytes, off);
-        if (bsize <= 0 || off + bsize > bytes.length) break;
+        if (bsize <= 0 && bytes.length - off >= 18) throw indexMisfit(`: there is no BGZF block at file offset ${(c + off).toLocaleString()}`);
+        if (bsize <= 0 || off + bsize > bytes.length) {
+            // a block cut by the end of this step goes into the next; a step always holds a whole block, unless the file ended
+            if (off === 0) throw indexMisfit(`, or the BAM is cut short: the file ends inside the block at offset ${c.toLocaleString()}`);
+            break;
+        }
         const atEnd = c + off === end.c;
         blocks.push(bytes.subarray(off, off + bsize));
         if (atEnd) cut = blocks.length - 1;
         off += bsize;
-        if (atEnd || c + off > end.c) { done = true; break; }
+        if (atEnd) { done = true; break; }
+        // the walk went past the chunk's end: blocks of another file, which a stale chunk start can land on by chance
+        if (c + off > end.c) throw indexMisfit(`: the chunk ends at file offset ${end.c.toLocaleString()}, inside a block`);
     }
     if (!blocks.length || c + off >= file.size) done = true;
     const parts = await Promise.all(blocks.map(gunzipBytes));
-    if (cut >= 0) parts[cut] = parts[cut].subarray(0, end.u);
+    if (cut >= 0) {
+        if (end.u > parts[cut].length) throw indexMisfit(`: the chunk ends past the block at file offset ${end.c.toLocaleString()}`);
+        parts[cut] = parts[cut].subarray(0, end.u);
+    }
     let total = 0, p = 0;
     for (const d of parts) total += d.length;
     const data = new Uint8Array(total);
     for (const d of parts) { data.set(d, p); p += d.length; }
     return { data, next: c + off, done };
+}
+
+/**
+ * Cheap check, before anything is read, that a .bai is this BAM's: nothing in it past the end of the file, and at up to 8 of its
+ * linear entries, spread over the file, a block, a record of that reference, and a record that reaches the window. Throws indexMisfit.
+ * An entry equal to the one before can be an empty window filled from the left, as older tools do, so it says nothing about its window.
+ */
+async function checkIndex(file, index) {
+    const entries = [];
+    let last = 0;
+    index.refs.forEach((ref, id) => {
+        for (const list of ref.bins.values()) for (const ch of list) if (ch.end.c > last) last = ch.end.c;
+        ref.lin.forEach((v, w) => {
+            const before = ref.lin[w - 1];
+            if ((v.c || v.u) && !(before && before.c === v.c && before.u === v.u)) entries.push({ id, w, v });
+        });
+    });
+    if (last > file.size) throw indexMisfit(`, or the BAM is cut short: the index reaches offset ${last.toLocaleString()} of a file of ${file.size.toLocaleString()} bytes`);
+    const n = Math.min(8, entries.length);
+    for (let i = 0; i < n; i++) {
+        const { id, w, v } = entries[n > 1 ? Math.round(i * (entries.length - 1) / (n - 1)) : 0];
+        const data = (await readBlocks(file, v.c, { c: file.size, u: 0 }, 1 << 17)).data;
+        const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        if (v.u + 36 > data.length || !recordFits(dv, v.u, id)) throw indexMisfit(`: no record of this reference at file offset ${v.c.toLocaleString()}`);
+        const res = parseBAMRecord(data, v.u, dv);
+        if (!res) continue;                                  // longer than the blocks read: cannot judge
+        let span = 0;
+        for (const c of res.record.cigar) if ('MDN=X'.includes(c.op)) span += c.len;
+        if (res.record.pos + Math.max(1, span) <= w * 16384) throw indexMisfit(`: the read at file offset ${v.c.toLocaleString()} ends before the window the index gives it`);
+    }
 }
 
 /** The BAM header read from the start of the file, block by block until it is complete. */
@@ -650,29 +728,38 @@ async function readBamHeaderFromFile(file) {
 
 /**
  * The reads of one reference overlapping [beg, end) from an indexed BAM, flags filtered as parseBAMRecords does:
- * { records, totalReads (in the chunks read), skipped, chunks, bytesRead }.
+ * { records, totalReads (in the chunks read), skipped, chunks, bytesRead }. opts for the genome view's tiles: isStale(), asked
+ * between steps, ends the reading with stale: true; maxReads stops there with cut: true.
  */
-async function readBamRegion(file, index, refId, beg, end, keepFlagged) {
+async function readBamRegion(file, index, refId, beg, end, keepFlagged, opts) {
     const records = [], skipped = {};
     let totalReads = 0, bytesRead = 0, fileBytesRead = 0;
     const chunks = baiChunks(index, refId, beg, end);
     // A chunk is read in growing steps and left at the first record past the region: the file is sorted, so nothing later can
     // overlap. A chunk merged into a parent bin can span the reference, and baiChunks cannot cut it. A record cut by the end of
     // a step is carried into the next one.
-    let past = false;
+    let past = false, cut = false;
+    const isStale = opts && opts.isStale, maxReads = (opts && opts.maxReads) || 0;
     for (const ch of chunks) {
-        let c = ch.beg.c, first = ch.beg.u, carry = null, step = 1 << 17, done = false;
+        let c = ch.beg.c, first = ch.beg.u, carry = null, step = 1 << 17, done = false, judged = false;
         while (!done && !past) {
+            if (isStale && isStale()) return { records: [], totalReads, skipped, chunks: chunks.length, bytesRead, fileBytesRead, stale: true };
             const got = await readBlocks(file, c, ch.end, step);
             fileBytesRead += got.next - c;
             bytesRead += got.data.length;
             c = got.next; done = got.done;
             step = Math.min(step * 2, 8 << 20);
-            let buf = got.data.subarray(Math.min(first, got.data.length));
+            if (first > got.data.length) throw indexMisfit(`: the chunk starts past the block at file offset ${ch.beg.c.toLocaleString()}`);
+            let buf = got.data.subarray(first);
             first = 0;
             if (carry) { const joined = new Uint8Array(carry.length + buf.length); joined.set(carry); joined.set(buf, carry.length); buf = joined; }
             let off = 0;
             const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+            // a chunk starts on a record of its reference, also where a stale one lands on a real block by chance
+            if (!judged && buf.length >= 36) {
+                judged = true;
+                if (!recordFits(dv, 0, refId)) throw indexMisfit(`: no record of this reference at the chunk starting at file offset ${ch.beg.c.toLocaleString()}`);
+            }
             while (off + 4 <= buf.length) {
                 const res = parseBAMRecord(buf, off, dv);
                 if (!res) break;
@@ -686,13 +773,14 @@ async function readBamRegion(file, index, refId, beg, end, keepFlagged) {
                 totalReads++;
                 const why = skipReason(r.flag, keepFlagged);
                 if (why || !r.cigar.length) { skipped[why || 'no CIGAR'] = (skipped[why || 'no CIGAR'] || 0) + 1; continue; }
+                if (maxReads && records.length >= maxReads) { cut = true; past = true; break; }
                 if (records.length < MAX_READS) records.push(r);
             }
             carry = off < buf.length ? buf.slice(off) : null;
         }
         if (past) break;
     }
-    return { records, totalReads, skipped, chunks: chunks.length, bytesRead, fileBytesRead };
+    return { records, totalReads, skipped, chunks: chunks.length, bytesRead, fileBytesRead, cut };
 }
 
 /**
@@ -761,6 +849,7 @@ const _bamParserApi = {
     baiChunks,
     readBamHeaderFromFile,
     readBamRegion,
+    checkIndex,
     MAX_READS,
     skipReason,
 };
