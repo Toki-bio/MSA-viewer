@@ -370,7 +370,7 @@
       });
     }
 
-    var labelBounds = [];
+    var labelBounds = [], labelBoxes = [];   // labelBoxes: each label's box, to keep the scale bar clear of them
     labels.forEach(function (c) {
       var px = ox0 + c.r * Math.cos(c.th), py = oy0 + c.r * Math.sin(c.th);
       var lx = PX(c.leaf), ly = PY(c.leaf);
@@ -385,9 +385,14 @@
       if (orientation === 'horizontal') {
         // horizontal text is not rotated: it runs its whole width to the right of the anchor, or to the left when the label is on the left half
         // (cos(th)*w, right only for text turned along its branch, cut names at the edge of the drawing: colleague check 2026-11-07)
-        labelBounds.push([px, py], [px + (t.anchor === 'end' ? -1 : 1) * c.w, py]);
+        var hdir = t.anchor === 'end' ? -1 : 1;
+        labelBounds.push([px, py], [px + hdir * c.w, py]);
+        labelBoxes.push({ l: Math.min(px, px + hdir * c.w), r: Math.max(px, px + hdir * c.w), t: py - c.h / 2, b: py + c.h / 2 });
       } else {
         labelBounds.push([px, py], [px + Math.cos(c.th) * c.w, py + Math.sin(c.th) * c.w]);   // the text runs outward from the anchor
+        var along = t.anchor === 'end' ? -1 : 1, cx2 = Math.cos(c.th), sy2 = Math.sin(c.th), bxs = [], bys = [];
+        [0, along * c.w].forEach(function (a) { [-c.h / 2, c.h / 2].forEach(function (p) { bxs.push(px + a * cx2 - p * sy2); bys.push(py + a * sy2 + p * cx2); }); });
+        labelBoxes.push({ l: Math.min.apply(null, bxs), r: Math.max.apply(null, bxs), t: Math.min.apply(null, bys), b: Math.max.apply(null, bys) });
       }
       var titleEl = c.isGroup ? '<title>' + esc(c.members.map(function (m) { return m.name || '?'; }).join(', ')) + '</title>' : '';
       // the omitted names on their own lines under the group label (tspans stack along the label's own axis)
@@ -402,18 +407,33 @@
         '>' + titleEl + esc(c.text) + restEl + '</text>');
     });
 
-    if (anyLen) {
-      var sbv = niceNum(spanX / 4), sbpx = sbv * scale, sy = totalH - 12;
-      out.push('<line x1="12" y1="' + sy.toFixed(1) + '" x2="' + (12 + sbpx).toFixed(1) + '" y2="' + sy.toFixed(1) +
-        '" stroke="#999" stroke-width="1.5"/>');
-      out.push('<text x="' + (12 + sbpx / 2).toFixed(1) + '" y="' + (sy - 4).toFixed(1) +
-        '" font-size="10" fill="#777" text-anchor="middle">' + sbv + '</text>');
-    }
     // Labels moved outward can end beyond the box sized before placement: the drawing grows to hold them
     var bx0 = 0, by0 = 0, bx1 = totalW, by1 = totalH;
     labelBounds.forEach(function (q) {
       bx0 = Math.min(bx0, q[0] - lineH); by0 = Math.min(by0, q[1] - lineH); bx1 = Math.max(bx1, q[0] + lineH); by1 = Math.max(by1, q[1] + lineH);
     });
+    // The scale bar is placed once the drawing's bounds are known, in the first corner (bottom left as before, then bottom right,
+    // top left, top right) where its box (bar plus number) touches no label; when all four are taken the drawing grows by a strip
+    // under it. It used to sit at a fixed x=12, y=height-12, before the drawing grew, and landed on a name (colleague check 2026-11-07).
+    if (anyLen) {
+      var sbv = niceNum(spanX / 4), sbpx = sbv * scale;
+      var sbW = Math.max(sbpx, measure(String(sbv)) * (10 / 12) + 4), sbH = 20;   // number above the line: 10 px font + 4 px gap + the line
+      var sbFree = function (x, y) {   // x = left end of the bar, y = the line's y
+        for (var bi = 0; bi < labelBoxes.length; bi++) {
+          var q = labelBoxes[bi];
+          if (q.l < x + sbW + 3 && q.r > x - 3 && q.t < y + 3 && q.b > y - sbH - 3) return false;
+        }
+        return true;
+      };
+      var sbCands = [[bx0 + 12, by1 - 12], [bx1 - 12 - sbW, by1 - 12], [bx0 + 12, by0 + sbH + 8], [bx1 - 12 - sbW, by0 + sbH + 8]];
+      var sbx = null, sy = null;
+      for (var ci = 0; ci < sbCands.length && sbx === null; ci++) if (sbFree(sbCands[ci][0], sbCands[ci][1])) { sbx = sbCands[ci][0]; sy = sbCands[ci][1]; }
+      if (sbx === null) { by1 += sbH + 16; sbx = bx0 + 12; sy = by1 - 12; }
+      out.push('<line x1="' + sbx.toFixed(1) + '" y1="' + sy.toFixed(1) + '" x2="' + (sbx + sbpx).toFixed(1) + '" y2="' + sy.toFixed(1) +
+        '" stroke="#999" stroke-width="1.5"/>');
+      out.push('<text x="' + (sbx + sbpx / 2).toFixed(1) + '" y="' + (sy - 4).toFixed(1) +
+        '" font-size="10" fill="#777" text-anchor="middle">' + sbv + '</text>');
+    }
     if (bx0 < 0 || by0 < 0 || bx1 > totalW || by1 > totalH) {
       out[0] = '<svg xmlns="http://www.w3.org/2000/svg" width="' + (bx1 - bx0).toFixed(0) + '" height="' + (by1 - by0).toFixed(0) +
         '" viewBox="' + bx0.toFixed(0) + ' ' + by0.toFixed(0) + ' ' + (bx1 - bx0).toFixed(0) + ' ' + (by1 - by0).toFixed(0) + '" font-family="' + esc(fontFamily) + '">';
@@ -624,9 +644,12 @@
     var clone = svg.cloneNode(true);
     clone.querySelectorAll('.tree-hit').forEach(function (n) { n.remove(); });
     var bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    bg.setAttribute('x', '0'); bg.setAttribute('y', '0');
-    bg.setAttribute('width', clone.getAttribute('width'));
-    bg.setAttribute('height', clone.getAttribute('height'));
+    // cover the viewBox, which starts below zero when the unrooted drawing grew to hold its labels
+    var vbp = (clone.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+    var hasVb = vbp.length === 4 && vbp.every(isFinite);
+    bg.setAttribute('x', hasVb ? String(vbp[0]) : '0'); bg.setAttribute('y', hasVb ? String(vbp[1]) : '0');
+    bg.setAttribute('width', hasVb ? String(vbp[2]) : clone.getAttribute('width'));
+    bg.setAttribute('height', hasVb ? String(vbp[3]) : clone.getAttribute('height'));
     bg.setAttribute('fill', '#ffffff');
     clone.insertBefore(bg, clone.firstChild);
     return new XMLSerializer().serializeToString(clone);

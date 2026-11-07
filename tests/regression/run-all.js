@@ -16793,6 +16793,31 @@ check('Tree: Fit on an unrooted tree fits the drawing, labels included, in the p
   return { pass: r.svgW <= r.cw + 1 && r.svgH <= r.ch + 1 && r.labelOutsidePanel <= 1, detail: JSON.stringify(r) };
 });
 
+// Same colleague: the unrooted scale bar sat at a fixed x=12, y=height-12, chosen before the drawing grew to hold the labels, so at font 18
+// it landed on a name in the exported SVG; the white background of the exported SVG started at 0,0 while the viewBox starts negative.
+check('Tree: unrooted scale bar is clear of every label (screen and exported SVG) and the export background covers the viewBox', async (page) => {
+  const res = [];
+  for (const [orient, fontPx] of [['horizontal', 18], ['angled', 18], ['angled', 12]]) {
+    if (res.length) await page.evaluate(() => { document.getElementById('treeBuilderCloseBtn').click(); });
+    res.push(Object.assign({ orient, fontPx }, await colleagueScaleBar(page, orient, fontPx)));
+  }
+  return { pass: res.every(r => r.ok), detail: JSON.stringify(res) };
+});
+async function colleagueScaleBar(page, orient, fontPx) {
+  await colleagueTree(page, 'unrooted', orient, fontPx);
+  const measure = (root) => { const svg = root.querySelector('svg'); const bar = [...svg.querySelectorAll('line')].find(l => l.getAttribute('stroke') === '#999'), bt = [...svg.querySelectorAll('text')].find(t => t.getAttribute('fill') === '#777' && t.getAttribute('font-size') === '10');
+    if (!bar || !bt) return { noBar: true }; const A = bar.getBoundingClientRect(), B = bt.getBoundingClientRect(), box = { l: Math.min(A.left, B.left), r: Math.max(A.right, B.right), t: Math.min(A.top, B.top), b: Math.max(A.bottom, B.bottom) };
+    const hit = []; for (const x of svg.querySelectorAll('text.tree-leaf-label')) { const q = x.getBoundingClientRect(); if (q.left < box.r && q.right > box.l && q.top < box.b && q.bottom > box.t) hit.push(x.textContent.slice(0, 12)); }
+    return { hit }; };
+  const screen = await page.evaluate(`(${measure.toString()})(document.getElementById('treeSvgCanvas'))`);
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#treeSvgToolbar [data-act=export-svg]')]);
+  const markup = require('fs').readFileSync(await dl.path(), 'utf8');
+  const exp = await page.evaluate(([mk, fn]) => { const d = document.createElement('div'); d.style.cssText = 'position:absolute;left:0;top:0;z-index:99999;background:#fff'; d.innerHTML = mk.replace(/^<\?xml[^>]*>\s*/, ''); document.body.appendChild(d);
+    const svg = d.querySelector('svg'), vb = svg.getAttribute('viewBox').split(/\s+/).map(Number), bg = svg.querySelector('rect'); const res = (eval('(' + fn + ')'))(d); res.vb = vb; res.bg = bg ? [bg.getAttribute('x'), bg.getAttribute('y'), bg.getAttribute('width'), bg.getAttribute('height')].map(Number) : null; d.remove(); return res; }, [markup, measure.toString()]);
+  const bgOk = exp.bg && exp.vb && exp.bg[0] <= exp.vb[0] + 0.5 && exp.bg[1] <= exp.vb[1] + 0.5 && exp.bg[0] + exp.bg[2] >= exp.vb[0] + exp.vb[2] - 0.5 && exp.bg[1] + exp.bg[3] >= exp.vb[1] + exp.vb[3] - 0.5;
+  return { ok: !screen.noBar && screen.hit.length === 0 && !exp.noBar && exp.hit.length === 0 && !!bgOk, screen, exp };
+}
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
