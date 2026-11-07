@@ -213,7 +213,7 @@ class BamRecord {
         return this._tags;
     }
 }
-function parseBAMTags(buf, start, tagEnd) {
+function parseBAMTags(buf, start, tagEnd, arrayTypes) {
     const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     let pos = start;
     const tags = {};
@@ -250,6 +250,7 @@ function parseBAMTags(buf, start, tagEnd) {
             }
             case 'B': {
                 const btype = String.fromCharCode(buf[pos]); pos += 1;
+                if (arrayTypes) arrayTypes[tag] = btype;
                 const count = dv.getUint32(pos, true); pos += 4;
                 const arr = [];
                 for (let j = 0; j < count; j++) {
@@ -276,6 +277,28 @@ function parseBAMTags(buf, start, tagEnd) {
 
     return tags;
 }
+/**
+ * A CIGAR too long for the record (over 65,535 operations) is stored as the placeholder <l_seq>S<n>N, n the reference length, with the real
+ * one in the tag CG:B,I (SAMv1 4.2.2). Puts the real one on the read and takes the tag out of the read's tags, as htslib does: it is
+ * the read's CIGAR, not a tag. It was taken as real: the read was all clip and a skip, with no depth over its span. B,i is taken too, as htslib.
+ */
+function useCigarTag(rec, cigarOps, lSeq) {
+    if (cigarOps[0].op !== 'S' || cigarOps[0].len !== lSeq || cigarOps[1].op !== 'N' || rec.refID < 0 || rec.pos < 0) return;
+    const types = {}, tags = parseBAMTags(rec._b, rec._to, rec._te, types), cg = tags.CG;
+    if (!cg || !cg.length || (types.CG !== 'I' && types.CG !== 'i')) return;
+    const real = new Array(cg.length);
+    let span = 0;
+    for (let i = 0; i < cg.length; i++) {
+        const op = CIGAR_OPS[cg[i] & 0xF], len = cg[i] >>> 4;
+        if (!op) return;
+        if ('MDN=X'.includes(op)) span += len;
+        real[i] = { len, op };
+    }
+    if (span !== cigarOps[1].len) return;
+    delete tags.CG;
+    rec.cigar = real; rec._tags = tags;
+}
+
 function parseBAMRecord(buf, offset, dvIn) {
     if (offset + 4 > buf.length) return null;
 
@@ -322,10 +345,9 @@ function parseBAMRecord(buf, offset, dvIn) {
     pos += lSeq;
     const tagEnd = offset + 4 + blockSize;
 
-    return {
-        record: new BamRecord(name, refID, rpos, mapq, flag, cigarOps, tlen, nextRef, nextPos, buf, seqOff, lSeq, hasQual, pos, tagEnd),
-        nextOffset: tagEnd,
-    };
+    const record = new BamRecord(name, refID, rpos, mapq, flag, cigarOps, tlen, nextRef, nextPos, buf, seqOff, lSeq, hasQual, pos, tagEnd);
+    if (nCigar === 2) useCigarTag(record, cigarOps, lSeq);
+    return { record, nextOffset: tagEnd };
 }
 
 /**

@@ -17,16 +17,28 @@ function mulberry(a) { return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imu
 function bamRecord(r, rnd, noisyQual, ref) {
   const name = Buffer.from(r.name + '\0'), lSeq = r.cigar.reduce((n, [l, o]) => n + ('MIS=X'.includes(o) ? l : 0), 0);
   const span = r.cigar.reduce((n, [l, o]) => n + ('MDN=X'.includes(o) ? l : 0), 0);
-  const sb = (lSeq + 1) >> 1, size = 32 + name.length + 4 * r.cigar.length + sb + lSeq, b = Buffer.alloc(4 + size);
+  // r.cg: as BAM stores a CIGAR of over 65,535 operations (SAMv1 4.2.2): the placeholder <l_seq>S<span>N, the real one in the tag CG:B,I.
+  // r.tail: bytes of other tags, after CG. r.cgType: another element type for the tag
+  const opsOf = c => c.map(([l, o]) => l * 16 + 'MIDNSHP=X'.indexOf(o)), stored = r.cg ? [lSeq * 16 + 4, span * 16 + 3] : opsOf(r.cigar);
+  let tags = Buffer.alloc(0);
+  if (r.cg) {
+    const real = opsOf(r.cigar), t = r.cgType || 'I', w = { I: 4, i: 4, S: 2 }[t], cg = Buffer.alloc(8 + w * real.length);
+    cg.write('CGB' + t, 0, 'latin1'); cg.writeUInt32LE(real.length, 4);
+    real.forEach((v, i) => (w === 4 ? cg.writeUInt32LE(v, 8 + 4 * i) : cg.writeUInt16LE(v & 0xffff, 8 + 2 * i)));
+    tags = Buffer.concat([cg, r.tail || Buffer.alloc(0)]);
+  }
+  const sb = (lSeq + 1) >> 1, size = 32 + name.length + 4 * stored.length + sb + lSeq + tags.length, b = Buffer.alloc(4 + size);
   b.writeInt32LE(size, 0); b.writeInt32LE(r.ref, 4); b.writeInt32LE(r.pos, 8); b[12] = name.length; b[13] = 60;
-  b.writeUInt16LE(reg2bin(r.pos, r.pos + span), 14); b.writeUInt16LE(r.cigar.length, 16); b.writeUInt16LE(0, 18);
+  b.writeUInt16LE(reg2bin(r.pos, r.pos + span), 14); b.writeUInt16LE(stored.length, 16); b.writeUInt16LE(0, 18);
   b.writeInt32LE(lSeq, 20); b.writeInt32LE(-1, 24); b.writeInt32LE(-1, 28); b.writeInt32LE(0, 32);
   let o = 36; name.copy(b, o); o += name.length;
-  for (const [l, op] of r.cigar) { b.writeUInt32LE(l * 16 + 'MIDNSHP=X'.indexOf(op), o); o += 4; }
+  for (const v of stored) { b.writeUInt32LE(v, o); o += 4; }
   // ref: bases copied from the reference with 1% errors, as a real read; else random, a mismatch at 3 bases of 4
   const N = { A: 1, C: 2, G: 4, T: 8 }, base = i => (ref && rnd() >= 0.01 ? N[ref[r.pos + i]] || 1 : [1, 2, 4, 8][(rnd() * 4) | 0]);
   for (let i = 0; i < sb; i++) b[o++] = base(2 * i) * 16 + base(2 * i + 1);
-  if (noisyQual) for (; o < b.length; o++) b[o] = 20 + ((rnd() * 8) | 0) * 3; else b.fill(0xff, o);   // noisy: compresses about as a real BAM does
+  const qualEnd = b.length - tags.length;
+  if (noisyQual) for (; o < qualEnd; o++) b[o] = 20 + ((rnd() * 8) | 0) * 3; else b.fill(0xff, o, qualEnd);   // noisy: compresses about as a real BAM does
+  tags.copy(b, qualEnd);
   return { bytes: b, span };
 }
 // A sorted BAM of reads with its index, built by the rules of htslib's hts_idx_push: each record in the bin of its whole span,

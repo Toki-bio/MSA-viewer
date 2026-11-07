@@ -32,6 +32,7 @@ const region = s => { const m = /^([^:]+)(?::(\d+)-(\d+))?$/.exec(s); return { r
   check('a 1 kb region reads a small part of what the whole reference needs', small.bytesRead * 5 < whole.bytesRead, `${small.bytesRead} vs ${whole.bytesRead}`);
   await tileChecks();
   await indexFits();
+  await cgTag();
   // reg2bins: the spec's example values
   check('reg2bins(0, 1) is bins 0, 1, 9, 73, 585, 4681', BP.reg2bins(0, 1).join() === '0,1,9,73,585,4681', BP.reg2bins(0, 1).join());
   console.log(fails ? `\n${fails} failed` : '\nall passed');
@@ -145,4 +146,46 @@ async function indexFits() {
   const left = BP.parseBAI(new Uint8Array(sparse.bai)), l = left.refs[0].lin, spans = []; for (let k = 1; k < l.length; k++) { if (k * tile > 90000 && k * tile < 1000000) l[k] = { ...l[k - 1] }; }
   const said = await refuses(() => BP.checkIndex(new Blob([sparse.bam]), left));
   check('an index with empty windows filled from the left passes', said === false, String(said));
+}
+
+// ---- CIGARs in the CG tag -------------------------------------------------------------------------------------------
+// BAM holds at most 65,535 CIGAR operations in a record. A longer one is stored as the placeholder <l_seq>S<span>N with the real CIGAR in
+// CG:B,I (SAMv1 4.2.2). The parser took the placeholder as real: an ultra-long read was all soft clip and a skip, with depth 0 over its
+// whole span. Both ways of reading a BAM are checked, and the depth against the reads the BAM was built from.
+async function cgTag() {
+  const SC = require('../../sample-call.js'), GW = require('../../genome-window.js');
+  const ops = [], n = 70000; for (let i = 0; i < n; i++) ops.push([1, 'M'], [1, 'I']);
+  const nm = Buffer.from([78, 77, 67, 7]);   // NM:C:7 after the CG tag
+  const reads = [
+    { ref: 0, pos: 1000, name: 'ultra', cigar: ops, cg: true, tail: nm },
+    { ref: 0, pos: 1100, name: 'shortcg', cigar: [[10, 'S'], [40, 'M'], [5, 'D'], [50, 'M']], cg: true },                       // the rule does not ask for 65,536 operations
+    { ref: 0, pos: 1200, name: 'typei', cigar: [[100, 'M']], cg: true, cgType: 'i' },                                            // htslib takes B,i too
+    { ref: 0, pos: 1300, name: 'plain', cigar: [[30, 'S'], [100, 'M']] },
+    { ref: 0, pos: 1400, name: 'realskip', cigar: [[50, 'S'], [500, 'N']] },                                                    // the placeholder's shape, with no tag
+  ];
+  const { bam, bai } = buildBam([['chrA', 300000]], reads), file = new Blob([bam]), index = BP.parseBAI(new Uint8Array(bai));
+  const buf = await BP.decompressBAM(file), h = BP.parseBAMHeader(buf);
+  const paths = {
+    'whole file': BP.parseBAMRecords(buf, h.headerEndOffset, true).records,
+    'indexed': (await BP.readBamRegion(file, index, 0, 0, 300000, true)).records,
+  };
+  for (const [how, list] of Object.entries(paths)) {
+    const by = Object.fromEntries(list.map(r => [r.name, r])), u = by.ultra;
+    check(`CG ${how}: the real CIGAR is used`, u && u.cigar.length === 2 * n && u.cigar[0].op === 'M' && u.cigar[1].op === 'I' && u.cigar[2 * n - 1].op === 'I', u ? BP.cigarToString(u.cigar).slice(0, 30) : 'no read');
+    check(`CG ${how}: the span is the reference length`, GW.spanOf(u.cigar) === n, String(GW.spanOf(u.cigar)));
+    check(`CG ${how}: the tag is no ordinary tag now, the others stay`, u.tags.CG === undefined && u.tags.NM === 7, JSON.stringify({ CG: !!u.tags.CG, NM: u.tags.NM }));
+    check(`CG ${how}: a short CIGAR in the tag is used too`, BP.cigarToString(by.shortcg.cigar) === '10S40M5D50M', BP.cigarToString(by.shortcg.cigar));
+    check(`CG ${how}: B,i is taken as htslib takes it`, BP.cigarToString(by.typei.cigar) === '100M', BP.cigarToString(by.typei.cigar));
+    check(`CG ${how}: S then N with no tag is a real CIGAR`, BP.cigarToString(by.realskip.cigar) === '50S500N', BP.cigarToString(by.realskip.cigar));
+    const c = SC.call([u], 'A'.repeat(1000 + n + 10)).counts;
+    let depth = 0; for (let p = 1000; p < 1000 + n; p++) if (p >= c.lo && p < c.hi) depth += c.depth[p - c.lo];
+    check(`CG ${how}: depth one on each reference base of the read`, depth === n, `${depth} of ${n}`);
+  }
+  // a region far inside the read: found only if the reader knows its span
+  const mid = await BP.readBamRegion(file, index, 0, 50000, 50100, true);
+  check('CG: a region inside the long read finds it', mid.records.some(r => r.name === 'ultra'), mid.records.map(r => r.name).join());
+  // a CG of another element type is not the spec's: the placeholder stays, as in htslib
+  const other = buildBam([['chrA', 300000]], [{ ref: 0, pos: 5, name: 'x', cigar: [[100, 'M']], cg: true, cgType: 'S' }]);
+  const b2 = await BP.decompressBAM(new Blob([other.bam])), r2 = BP.parseBAMRecords(b2, BP.parseBAMHeader(b2).headerEndOffset, true).records[0];
+  check('CG: a tag not of type B,I stays an ordinary tag', BP.cigarToString(r2.cigar) === '100S100N' && r2.tags.CG !== undefined, BP.cigarToString(r2.cigar));
 }
