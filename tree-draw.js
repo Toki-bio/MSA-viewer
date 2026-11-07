@@ -390,8 +390,10 @@
         labelBoxes.push({ l: Math.min(px, px + hdir * c.w), r: Math.max(px, px + hdir * c.w), t: py - c.h / 2, b: py + c.h / 2 });
       } else {
         labelBounds.push([px, py], [px + Math.cos(c.th) * c.w, py + Math.sin(c.th) * c.w]);   // the text runs outward from the anchor
-        var along = t.anchor === 'end' ? -1 : 1, cx2 = Math.cos(c.th), sy2 = Math.sin(c.th), bxs = [], bys = [];
-        [0, along * c.w].forEach(function (a) { [-c.h / 2, c.h / 2].forEach(function (p) { bxs.push(px + a * cx2 - p * sy2); bys.push(py + a * sy2 + p * cx2); }); });
+        var cx2 = Math.cos(c.th), sy2 = Math.sin(c.th), bxs = [], bys = [];
+        // the glyphs run OUTWARD along the label's direction whichever side the label is on: a flipped (left-half) label is turned
+        // 180 degrees and anchored at its end, which puts the text outward again (the box was taken inward for it, so the bar could sit on a name)
+        [0, c.w + 5].forEach(function (a) { [-c.h / 2, c.h / 2].forEach(function (p) { bxs.push(px + a * cx2 - p * sy2); bys.push(py + a * sy2 + p * cx2); }); });
         labelBoxes.push({ l: Math.min.apply(null, bxs), r: Math.max.apply(null, bxs), t: Math.min.apply(null, bys), b: Math.max.apply(null, bys) });
       }
       var titleEl = c.isGroup ? '<title>' + esc(c.members.map(function (m) { return m.name || '?'; }).join(', ')) + '</title>' : '';

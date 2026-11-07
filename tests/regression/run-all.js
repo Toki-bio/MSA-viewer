@@ -16986,6 +16986,34 @@ check('Reverse complement in an RNA alignment: a row with no U comes back with U
   return { pass: ok, detail: J(out) };
 });
 
+// GLM audit of the colleague fixes (2026-11-07, #7): the scale bar's label boxes were taken INWARD for a flipped (left-half) angled label, but its
+// glyphs run outward (turned 180 degrees and anchored at the end), so the bar could still be drawn on a name. 1500 random trees (angled and horizontal
+// text, fonts 10-28, panels 300-1200 x 250-650 px): 3 had the bar on a label before the fix, found by the same generator.
+check('Tree: unrooted scale bar never sits on a label, in 1500 random trees (flipped labels)', async (page) => {
+  const res = await page.evaluate(() => {
+    let s = 5; const r = () => (s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+    const mk = (n) => { const nodes = []; for (let i = 0; i < n; i++) nodes.push('Taxon' + i + '_species_name_' + 'x'.repeat((r() * 12) | 0) + ':' + (0.05 + r()).toFixed(3));
+      while (nodes.length > 1) { const a = nodes.splice((r() * nodes.length) | 0, 1)[0]; const b = nodes.splice((r() * nodes.length) | 0, 1)[0]; nodes.push('(' + a + ',' + b + '):' + (0.05 + r()).toFixed(3)); }
+      return nodes[0] + ';'; };
+    const host = document.createElement('div'); host.style.cssText = 'position:fixed;left:0;top:0;width:2400px;height:2400px;background:#fff;z-index:99999'; document.body.appendChild(host);
+    let bad = 0, tot = 0, ex = null;
+    for (let t = 0; t < 1500; t++) {
+      const n = 6 + ((r() * 40) | 0), font = [10, 14, 20, 28][t % 4], orient = t % 3 === 0 ? 'horizontal' : 'angled';
+      const root = _treeDraw.parseNewick(mk(n));
+      host.innerHTML = _treeDraw.buildTreeSVGString(root, { measure: (txt) => txt.length * 6.5, width: 300 + ((r() * 900) | 0), height: 250 + ((r() * 400) | 0), zoom: 1, layout: 'unrooted', fontSize: font, fontFamily: 'sans-serif', labelOrientation: orient, labelSpacing: 1, groupOverlap: false });
+      const svg = host.querySelector('svg'); if (!svg) continue;
+      const bar = [...svg.querySelectorAll('line')].find(l => l.getAttribute('stroke') === '#999'), bt = [...svg.querySelectorAll('text')].find(q => q.getAttribute('fill') === '#777' && q.getAttribute('font-size') === '10');
+      if (!bar) continue; tot++;
+      const A = bar.getBoundingClientRect(), B = bt.getBoundingClientRect(), box = { l: Math.min(A.left, B.left), r: Math.max(A.right, B.right), t: Math.min(A.top, B.top), b: Math.max(A.bottom, B.bottom) };
+      const hit = []; for (const x of svg.querySelectorAll('text.tree-leaf-label')) { const q = x.getBoundingClientRect(); if (q.left < box.r && q.right > box.l && q.top < box.b && q.bottom > box.t) hit.push(x.textContent.slice(0, 10)); }
+      if (hit.length) { bad++; if (!ex) ex = { t, n, font, orient, hit }; }
+    }
+    host.remove();
+    return { tot, bad, ex };
+  });
+  return { pass: res.tot > 1000 && res.bad === 0, detail: JSON.stringify(res) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
