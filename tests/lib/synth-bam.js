@@ -29,8 +29,8 @@ function bamRecord(r, rnd, noisyQual, ref) {
   }
   const sb = (lSeq + 1) >> 1, size = 32 + name.length + 4 * stored.length + sb + lSeq + tags.length, b = Buffer.alloc(4 + size);
   b.writeInt32LE(size, 0); b.writeInt32LE(r.ref, 4); b.writeInt32LE(r.pos, 8); b[12] = name.length; b[13] = 60;
-  b.writeUInt16LE(reg2bin(r.pos, r.pos + span), 14); b.writeUInt16LE(stored.length, 16); b.writeUInt16LE(0, 18);
-  b.writeInt32LE(lSeq, 20); b.writeInt32LE(-1, 24); b.writeInt32LE(-1, 28); b.writeInt32LE(0, 32);
+  b.writeUInt16LE(reg2bin(r.pos, r.pos + span), 14); b.writeUInt16LE(stored.length, 16); b.writeUInt16LE(r.flag || 0, 18);
+  b.writeInt32LE(lSeq, 20); b.writeInt32LE(r.matePos != null ? r.ref : -1, 24); b.writeInt32LE(r.matePos != null ? r.matePos : -1, 28); b.writeInt32LE(0, 32);
   let o = 36; name.copy(b, o); o += name.length;
   for (const v of stored) { b.writeUInt32LE(v, o); o += 4; }
   // ref: bases copied from the reference with 1% errors, as a real read; else random, a mismatch at 3 bases of 4

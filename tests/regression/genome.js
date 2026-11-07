@@ -635,6 +635,37 @@ check('audit: the .bai of another BAM is refused, and the screen never shows no 
   return { pass: !door.genome && door.said && /does not fit this BAM/.test(r.status) && r.drawn && r.told === 1, detail: JSON.stringify({ door, ...r }) };
 });
 
+// Pairs on, move away, Pairs off, move back: the reads of tiles still in the cache kept _mate and _mateLeft, because the window's plain path
+// packs rows without _readsLayout, the one place that clears them. The page drew 60 grey mate lines with Pairs off.
+check('audit: Pairs off leaves no mate line on reads that come back from the cache', async (page) => {
+  const L = 1000000, reads = [];
+  for (const base of [100000, 400000]) for (let i = 0; i < 60; i++) {
+    const x = base + i * 20, name = 'p' + base + '_' + i;
+    reads.push({ ref: 0, pos: x, name, flag: 1 | 64 | 32, matePos: x + 700, cigar: [[100, 'M']] });
+    reads.push({ ref: 0, pos: x + 700, name, flag: 1 | 128 | 16, matePos: x, cigar: [[100, 'M']] });
+  }
+  reads.sort((a, b) => a.pos - b.pos);
+  const { bam, bai } = buildBam([['chrP', L]], reads), { text, fai } = fastaOf([['chrP', 'ACGT'.repeat(L / 4)]]);
+  await open(page, [file('p.fa', Buffer.from(text)), file('p.fa.fai', Buffer.from(fai)), file('p.bam', bam), file('p.bam.bai', bai)]);
+  const grey = () => page.evaluate(() => {
+    const v = _readsView, o = v.ctx.fillRect; let n = 0;
+    v.ctx.fillRect = function (x, y, w, h) { if (String(this.fillStyle).toLowerCase() === '#a0a0a0' && h === 1) n++; return o.call(this, x, y, w, h); };
+    _readsDraw(); v.ctx.fillRect = o;
+    return n;
+  });
+  const pairs = () => page.evaluate(() => document.getElementById('readsPairs').click());
+  await jump(page, 'chrP:100000-103000');
+  await pairs(); await idle(page);
+  const on = await grey();
+  await jump(page, 'chrP:400000-403000');
+  await pairs(); await idle(page);
+  await jump(page, 'chrP:100000-103000');
+  const back = await grey(), still = await page.evaluate(() => bamState.reads.filter(r => r._mateLeft).length);
+  await pairs(); await idle(page);
+  const again = await grey();   // and on again: the pairs are joined as before
+  return { pass: on > 0 && back === 0 && still === 0 && again === on, detail: JSON.stringify({ on, back, still, again }) };
+});
+
 check('audit: an alignment closed by a genome stays closed: Close shows the start page, Undo and trim restore bring nothing back', async (page) => {
   await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAA\n');
   await page.evaluate(() => { pushUndo('test'); state.trimBackup = state.seqs.map(s => ({ ...s })); });

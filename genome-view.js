@@ -373,6 +373,8 @@ async function _genomeAdoptOnce(g) {
     Object.assign(bamState, { fileReads, allReads, sampled: shown, reads: shown, downsampled: dropped });
     const o = _readsOpts;
     if (o.group === 'none' && !o.pairs) {
+        // reads back from the cache keep the links of an earlier Pairs on: _readsLayout clears them, but this path does not go there
+        for (const r of shown) if (r._mate) { r._mate._mate = null; r._mate._mateLeft = false; r._mate = null; r._mateLeft = false; }
         const n = GenomeWindow.packWindow(shown, g.prevWin);
         let aligned = 0;
         for (const r of shown) aligned += r.end - r.start + 1;
