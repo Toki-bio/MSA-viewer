@@ -28492,7 +28492,8 @@ function initializeAppUI() {
                 seqEditTextarea.addEventListener('input', _seqEditPushUndo);
         seqEditTextarea.addEventListener('keydown', (e) => {
             if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {   // Cmd as well as Ctrl (colleague check 2026-11-07)
-                e.preventDefault(); _seqEditUndo();
+                e.preventDefault();
+                if (e.shiftKey) _seqEditRedo(); else _seqEditUndo();   // Cmd/Ctrl+Shift+Z is the platform's redo (it used to undo once more; GLM audit #2)
             } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
                 e.preventDefault(); _seqEditRedo();
             }

@@ -17056,6 +17056,24 @@ check('Ruler with Variable sites only in Canvas Block: after a window resize eve
   return { pass: ok, detail: JSON.stringify(r) };
 }));
 
+// GLM audit of the colleague fixes (2026-11-07, #2): the Sequence editor box took Cmd/Ctrl+Shift+Z (the platform's redo chord) as another Undo
+// (no shiftKey test; with the Meta key added, a Mac's redo undid the text a second time). Shift+Z is Redo now, as in the viewer's own keys.
+check('Sequence editor box: Cmd/Ctrl+Shift+Z is Redo, not a second Undo', async (page) => {
+  await loadFasta(page, '>alpha\nACGTACGT\n>beta\nTTTTGGGG\n');
+  await page.evaluate(() => openSeqEditor(0));
+  await page.waitForTimeout(300);
+  const val = () => page.inputValue('#seqEditTextarea');
+  const out = { start: await val() };
+  await page.click('#seqEditTextarea'); await page.keyboard.press('Control+End'); await page.keyboard.type('GGCC'); await page.waitForTimeout(100);
+  out.typed = await val();
+  await page.keyboard.press('Meta+z'); await page.waitForTimeout(150); out.undo1 = await val();
+  await page.keyboard.press('Meta+z'); await page.waitForTimeout(150); out.undo2 = await val();
+  await page.keyboard.press('Meta+Shift+Z'); await page.waitForTimeout(150); out.metaShiftZ = await val();
+  await page.keyboard.press('Control+Shift+Z'); await page.waitForTimeout(150); out.ctrlShiftZ = await val();
+  const ok = out.typed === out.start + 'GGCC' && out.undo1 === out.start + 'GGC' && out.undo2 === out.start + 'GG' && out.metaShiftZ === out.start + 'GGC' && out.ctrlShiftZ === out.typed;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
