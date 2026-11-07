@@ -16782,6 +16782,17 @@ check('Tree: unrooted with horizontal labels, no name is cut at the edge (font 1
   return { pass: out.f12.cut === 0 && out.f20.cut === 0, detail: JSON.stringify(out) };
 });
 
+// Same colleague: Fit on the unrooted tree left the zoom at 100 % and a 746 px drawing in a 480 px panel, though the button's tooltip says it fits the whole panel.
+check('Tree: Fit on an unrooted tree fits the drawing, labels included, in the panel', async (page) => {
+  await colleagueTree(page, 'unrooted', 'horizontal', 20);
+  await page.click('#treeSvgToolbar [data-act=zoom-in]'); await page.click('#treeSvgToolbar [data-act=zoom-in]'); await page.waitForTimeout(200);
+  await page.click('#treeSvgToolbar [data-act=zoom-fit]'); await page.waitForTimeout(400);
+  const r = await page.evaluate(() => { const c = document.getElementById('treeSvgCanvas'), s = c.querySelector('svg'), R = s.getBoundingClientRect(), C = c.getBoundingClientRect(); let out = 0;
+    for (const x of s.querySelectorAll('text.tree-leaf-label')) { const b = x.getBoundingClientRect(); out = Math.max(out, C.left - b.left, b.right - C.right, C.top - b.top, b.bottom - C.bottom); }
+    return { svgW: Math.round(R.width), svgH: Math.round(R.height), cw: c.clientWidth, ch: c.clientHeight, labelOutsidePanel: Math.round(out), zoom: document.getElementById('treeZoomLabel').textContent }; });
+  return { pass: r.svgW <= r.cw + 1 && r.svgH <= r.ch + 1 && r.labelOutsidePanel <= 1, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

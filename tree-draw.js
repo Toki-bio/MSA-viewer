@@ -205,9 +205,12 @@
     var maxLabel = 0;
     leaves.forEach(function (l) { maxLabel = Math.max(maxLabel, measure(l.name || '?')); });
     var margin = Math.min(maxLabel * (fontSize / 12) + 14, 240);
+    // horizontal text needs the label's width at the left and right of the tree but only a line's height above and below it
+    // (a margin as wide as the longest name on every side made Fit impossible in a short panel: colleague check 2026-11-07)
+    var marginY = orientation === 'horizontal' ? Math.min(margin, fontSize * 1.35 + 14) : margin;
 
     var spanX = Math.max(maxX - minX, 1e-9), spanY = Math.max(maxY - minY, 1e-9);
-    var innerW = Math.max(120, boxW - 2 * margin), innerH = Math.max(120, boxH - 2 * margin);
+    var innerW = Math.max(120, boxW - 2 * margin), innerH = Math.max(120, boxH - 2 * marginY);
     var fitScale = Math.min(innerW / spanX, innerH / spanY);
     // Fitting the WHOLE tree into the visible box (fitScale above) is exactly the wrong
     // goal once there are many leaves: it shrinks per-leaf spacing as leaf count grows,
@@ -236,9 +239,9 @@
     // can still pack some leaves closer than others and overlap locally. Real collision
     // detection would be needed to guarantee zero overlap in every case.
     var scale = Math.max(fitScale, densityFloorScale) * zoom;   // was clamped at 0.4, so 25-40 % changed only the label
-    var totalW = spanX * scale + 2 * margin, totalH = spanY * scale + 2 * margin;
+    var totalW = spanX * scale + 2 * margin, totalH = spanY * scale + 2 * marginY;
     function PX(n) { return margin + (n.ux - minX) * scale; }
-    function PY(n) { return margin + (n.uy - minY) * scale; }
+    function PY(n) { return marginY + (n.uy - minY) * scale; }
 
     var out = [];
     out.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + totalW.toFixed(0) + '" height="' + totalH.toFixed(0) +
@@ -547,26 +550,50 @@
     return out;
   }
 
-  function draw() {
+  // the drawing options for the current panel size and a given zoom
+  function drawOpts(zoom) {
     var box = document.getElementById('treeSvgCanvas');
-    if (!box || !st.root) return;
     // clientWidth/Height include the panel's padding; drawing to them made the tree 12px
     // wider than the space inside it, so it always scrolled sideways at Fit (100%)
     var cs = getComputedStyle(box);
     var innerW = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     var innerH = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-    box.innerHTML = buildTreeSVGString(st.root, {
+    return {
       measure: measurer(st.fontFamily),
       width: innerW > 0 ? innerW : 700,
       height: innerH > 0 ? innerH : 520,
-      zoom: st.zoom,
+      zoom: zoom,
       layout: st.layout,
       labelSpacing: st.labelSpacing,
       fontSize: st.fontSize,
       fontFamily: st.fontFamily,
       labelOrientation: st.labelOrientation,
       groupOverlap: st.groupOverlap
-    });
+    };
+  }
+
+  // Fit on an unrooted tree: the zoom at which the whole drawing, labels included, sits inside the panel. At 100 % the drawing is
+  // the tree fitted to the panel BEFORE the labels (and the density floor) are added, so it could be 746 px in a 480 px panel
+  // (colleague check 2026-11-07). The size is not proportional to the zoom, so the largest zoom that fits is found by halving.
+  function fitUnrootedZoom() {
+    var o = drawOpts(1);
+    var fits = function (z) {
+      var m = /<svg[^>]* width="(\d+)" height="(\d+)"/.exec(buildTreeSVGString(st.root, Object.assign({}, o, { zoom: z })));
+      return !m || (+m[1] <= o.width && +m[2] <= o.height);
+    };
+    if (fits(1)) return 1;
+    var lo = 0.1, hi = 1;   // lo is taken to fit; the largest zoom that fits is found by halving (in the logarithm)
+    for (var i = 0; i < 7; i++) {
+      var mid = Math.sqrt(lo * hi);
+      if (fits(mid)) lo = mid; else hi = mid;
+    }
+    return lo;
+  }
+
+  function draw() {
+    var box = document.getElementById('treeSvgCanvas');
+    if (!box || !st.root) return;
+    box.innerHTML = buildTreeSVGString(st.root, drawOpts(st.zoom));
     var zl = document.getElementById('treeZoomLabel');
     if (zl) zl.textContent = Math.round(st.zoom * 100) + '%';
     var sl = document.getElementById('treeSpacingLabel');
@@ -824,7 +851,7 @@
       var act = b.getAttribute('data-act');
       if (act === 'zoom-in') st.zoom = Math.min(4, st.zoom * 1.25);
       else if (act === 'zoom-out') st.zoom = Math.max(0.25, st.zoom / 1.25);
-      else if (act === 'zoom-fit') st.zoom = 1;
+      else if (act === 'zoom-fit') st.zoom = st.layout === 'unrooted' && st.root ? fitUnrootedZoom() : 1;
       else if (act === 'spacing-in') st.labelSpacing = Math.min(4, st.labelSpacing * 1.25);
       else if (act === 'spacing-out') st.labelSpacing = Math.max(0.25, st.labelSpacing / 1.25);
       else if (act === 'font-larger') st.fontSize = Math.min(28, st.fontSize + 1);
