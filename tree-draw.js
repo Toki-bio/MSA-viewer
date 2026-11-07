@@ -604,6 +604,9 @@
       return !m || (+m[1] <= o.width && +m[2] <= o.height);
     };
     if (fits(1)) return 1;
+    // When not even the smallest zoom fits (the labels alone are wider or taller than the panel: long names at a big font) no zoom helps, and a
+    // zoom of 10 % only shrinks the tree to a speck inside the same ring of labels: leave it at 100 % (GLM audit of the colleague fixes, #14)
+    if (!fits(0.1)) return 1;
     var lo = 0.1, hi = 1;   // lo is taken to fit; the largest zoom that fits is found by halving (in the logarithm)
     for (var i = 0; i < 7; i++) {
       var mid = Math.sqrt(lo * hi);

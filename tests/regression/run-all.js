@@ -17014,6 +17014,15 @@ check('Tree: unrooted scale bar never sits on a label, in 1500 random trees (fli
   return { pass: res.tot > 1000 && res.bad === 0, detail: JSON.stringify(res) };
 });
 
+// GLM audit of the colleague fixes (2026-11-07, #14): when the labels alone are wider than the panel (horizontal text, font 28, long names) no zoom makes the
+// drawing fit; Fit then searched down to its 10 % floor and shrank the tree to a speck inside the same ring of labels. It leaves the zoom at 100 % now.
+check('Tree: Fit on an unrooted tree that cannot fit the panel does not shrink it to the floor', async (page) => {
+  await colleagueTree(page, 'unrooted', 'horizontal', 28);
+  await page.click('#treeSvgToolbar [data-act=zoom-fit]'); await page.waitForTimeout(400);
+  const r = await page.evaluate(() => { const c = document.getElementById('treeSvgCanvas'), s = c.querySelector('svg'), R = s.getBoundingClientRect(); return { svgW: Math.round(R.width), cw: c.clientWidth, zoom: document.getElementById('treeZoomLabel').textContent }; });
+  return { pass: r.svgW > r.cw && r.zoom === '100%', detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
