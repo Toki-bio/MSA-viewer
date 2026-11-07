@@ -16924,6 +16924,24 @@ check('Ruler with Variable sites only in Canvas Block: every number is whole and
   return { pass: ok, detail: JSON.stringify(r) };
 }));
 
+// Same colleague: the Sequence editor box handled Undo and Redo only for e.ctrlKey, so Cmd+Z and Cmd+Y (a Mac's, or any Meta key) did nothing there.
+// Real key presses with the Meta key (Ctrl as before): the typed text goes away with Meta+Z and comes back with Meta+Y.
+check('Sequence editor box: Undo and Redo answer the Meta key as well as Ctrl', async (page) => {
+  await loadFasta(page, '>alpha\nACGTACGT\n>beta\nTTTTGGGG\n');
+  await page.evaluate(() => openSeqEditor(0));
+  await page.waitForTimeout(300);
+  const val = () => page.inputValue('#seqEditTextarea');
+  const out = { start: await val() };
+  await page.click('#seqEditTextarea'); await page.keyboard.press('Control+End'); await page.keyboard.type('GGCC'); await page.waitForTimeout(100);
+  out.typed = await val();
+  await page.keyboard.press('Meta+z'); await page.waitForTimeout(150); out.metaUndo = await val();
+  await page.keyboard.press('Meta+y'); await page.waitForTimeout(150); out.metaRedo = await val();
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(150); out.ctrlUndo = await val();
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(150); out.ctrlRedo = await val();
+  const ok = out.typed === out.start + 'GGCC' && out.metaUndo === out.start + 'GGC' && out.metaRedo === out.typed && out.ctrlUndo === out.start + 'GGC' && out.ctrlRedo === out.typed;   // one undo step per typed letter
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

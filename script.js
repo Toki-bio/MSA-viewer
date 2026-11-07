@@ -28468,9 +28468,9 @@ function initializeAppUI() {
         seqEditTextarea.addEventListener('input', _updateSeqEditLength);
                 seqEditTextarea.addEventListener('input', _seqEditPushUndo);
         seqEditTextarea.addEventListener('keydown', (e) => {
-            if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {   // Cmd as well as Ctrl (colleague check 2026-11-07)
                 e.preventDefault(); _seqEditUndo();
-            } else if (e.ctrlKey && (e.key === 'y' || e.key === 'Y')) {
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
                 e.preventDefault(); _seqEditRedo();
             }
         });
