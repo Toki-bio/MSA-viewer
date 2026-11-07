@@ -794,6 +794,8 @@
       parts.push(nLeaves + ' leaves below this node');
     }
     if (isBranch) parts.push('branch length ' + (node.len || 0).toFixed(6));
+    // swap mode on a tip: swapAt() has nothing to rotate, and the click used to show only the banner (colleague check 2026-11-07)
+    if (isLeaf && st.mode !== 'reroot') parts.push('nothing to swap on a tip, click an inner node');
     line.querySelector('#treeInfoText').innerHTML = parts.join(' &middot; ');
     var subBtn = line.querySelector('#treeInfoSubtreeBtn');
     subBtn.style.display = (!isLeaf && nLeaves >= 2) ? '' : 'none';

@@ -16818,6 +16818,27 @@ async function colleagueScaleBar(page, orient, fontPx) {
   return { ok: !screen.noBar && screen.hit.length === 0 && !exp.noBar && exp.hit.length === 0 && !!bgOk, screen, exp };
 }
 
+// Same colleague: in swap mode, clicking a tip (a leaf branch) showed the info banner and did nothing at all: swapAt() has nothing to rotate on a
+// leaf. The banner now says so in plain words. An inner node still swaps; re-root mode is not touched.
+check('Tree: swap mode on a tip says there is nothing to swap and to click an inner node (no message on an inner node or in re-root mode)', async (page) => {
+  await colleagueTree(page, 'rect', 'angled', 12);
+  const info = () => page.evaluate(() => document.getElementById('treeInfoText').textContent);
+  const clickNode = async (kind) => {   // real mouse click on a tip's branch ('tip') or on an inner node's dot ('inner')
+    const pt = await page.evaluate((kind) => { const root = _treeDraw.state.root; let target = null;
+      (function walk(n) { if (target) return; if (kind === 'tip' ? !n.children.length : (n.children.length >= 2 && n !== root)) { target = n; return; } n.children.forEach(walk); })(root);
+      const el = document.querySelector(kind === 'tip' ? `#treeSvgCanvas .tree-branch-hit[data-node="${target._id}"]` : `#treeSvgCanvas .tree-node-hit[data-node="${target._id}"]`);
+      const b = el.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; }, kind);
+    await page.mouse.click(pt.x, pt.y); await page.waitForTimeout(200); return info();
+  };
+  const out = {};
+  out.tipSwap = await clickNode('tip');
+  out.innerSwap = await clickNode('inner');
+  await page.evaluate(() => document.querySelector('input[name=treeClickMode][value=reroot]').click());
+  out.tipReroot = await clickNode('tip');
+  const say = /nothing to swap/i;
+  return { pass: say.test(out.tipSwap) && /inner node/i.test(out.tipSwap) && !say.test(out.innerSwap) && !say.test(out.tipReroot), detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
