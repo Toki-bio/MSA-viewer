@@ -16808,12 +16808,16 @@ function handleKeyDown(e) {
                 break;
             case 'z':
                 // Ctrl+Shift+Z / Cmd+Shift+Z is redo (it used to undo once more)
-                if (e.shiftKey) redoAction();
+                // with the Sequence editor open and focus on one of its buttons these keys are the editor's:
+                // they used to change the alignment behind the dialog
+                if (_seqEditOpen()) { if (e.shiftKey) _seqEditRedo(); else _seqEditUndo(); }
+                else if (e.shiftKey) redoAction();
                 else undoDelete();
                 e.preventDefault();
                 break;
             case 'y':
-                redoAction();
+                if (_seqEditOpen()) _seqEditRedo();
+                else redoAction();
                 e.preventDefault();
                 break;
             case 'b':
@@ -26258,8 +26262,10 @@ async function realignAll() {
                 if (flippedNames.has(id)) {
                     s.seq = rcAln(s.seq);
                     s.gaplessPositions = calculateGaplessPositions(s.seq);
+                    state.selectedNucs.delete(Number(id.slice(1)));   // these positions now hold other bases (ids are r<row>)
                 }
             }
+            _dropColumnAnalysesAfterRealign();   // a turned row changes its bases in every column
         }
         const reordered = _reorderByGuideTree(fasta);
         const newSeqs = [];
@@ -27002,6 +27008,11 @@ function _seqEditPushUndo() {
     _updateSeqEditUndoButtons();
 }
 
+function _seqEditOpen() {
+    const modal = document.getElementById('seqEditModal');
+    return !!modal && modal.style.display !== 'none' && modal.getClientRects().length > 0;
+}
+
 function _seqEditUndo() {
     if (_seqEditUndoPos <= 0) return;
     _seqEditUndoPos--;
@@ -27219,6 +27230,7 @@ function _seqEditTransform(fn) {
     } else {
         _setSeqEditSequence(fn(_getSeqEditSequence()));
     }
+    _seqEditPushUndo();   // setting the value fires no 'input': without this Undo could not get the text back
 }
 
 function seqEditDegap() {

@@ -17074,6 +17074,77 @@ check('Sequence editor box: Cmd/Ctrl+Shift+Z is Redo, not a second Undo', async 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// GLM audit of the colleague fixes (2026-11-07, #1, #13): Align all with "reorder only" and Adjust direction turned rows round in place and returned without
+// touching what was selected or computed on them: a residue selection stayed on positions that now hold other bases, and Groups and 2D blocks stayed drawn.
+check('Reorder only: selections follow their rows; a row turned round loses its residue selection and the column analyses go', async (page) => {
+  const out = {};
+  const load = async () => { await page.setInputFiles('#fileInput', { name: 'r.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nACGTTGCAAC\n>b\nACGTAGCAAC\n>c\nACGTTGCTAC\n>d\nACCTTGCAAC\n') }); await page.waitForFunction(() => state.seqs && state.seqs.length === 4 && state.seqs[0].header === 'a'); await page.waitForTimeout(300); };
+  const go = flip => page.evaluate(async flip => {
+    el('mafftReorderOnly').checked = true; el('mafftAdjustDir').checked = !!flip;
+    window._reorderByGuideTree = () => ({ order: ['r3', 'r2', 'r1', 'r0'] });
+    window._adjustDirection = fa => ({ fasta: fa, flipped: new Set(flip ? ['r1'] : []) });
+    state.selectedRows.clear(); state.selectedRows.add(0);
+    state.selectedNucs.clear(); state.selectedNucs.set(0, buildNucSelectionSet(0, 1, 3)); state.selectedNucs.set(1, buildNucSelectionSet(1, 1, 3));
+    state.blockMask = { blocks: [], row_headers: [] };
+    await realignAll();
+    el('mafftReorderOnly').checked = false; el('mafftAdjustDir').checked = false;
+    return { order: state.seqs.map(s => s.header).join(''), rows: [...state.selectedRows].map(i => state.seqs[i].header), nucs: [...state.selectedNucs.keys()].map(i => state.seqs[i].header).sort().join(''), mask: !!state.blockMask };
+  }, flip);
+  await load(); out.plain = await go(false);
+  await load(); out.flip = await go(true);
+  const ok = out.plain.order === 'dcba' && out.plain.rows.join() === 'a' && out.plain.nucs === 'ab' && out.plain.mask
+    && out.flip.order === 'dcba' && out.flip.rows.join() === 'a' && out.flip.nucs === 'a' && !out.flip.mask;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// GLM audit of the colleague fixes (2026-11-07, #5): only typing made an undo step in the Sequence editor. After Degap or any other button, Undo did nothing
+// and the whole sequence could not be got back.
+check('Sequence editor: every transform button makes one undo step, and Redo brings it back', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'e.fa', mimeType: 'text/plain', buffer: Buffer.from('>a\nacgtT-GCAAC\n>b\nACGTTGGCAAC\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 2); await page.waitForTimeout(300);
+  const out = {};
+  for (const b of ['seqEditDegap', 'seqEditReverse', 'seqEditComplement', 'seqEditRevComp', 'seqEditUppercase', 'seqEditLowercase']) {
+    await page.evaluate(() => openSeqEditor(0)); await page.waitForTimeout(200);
+    const v0 = await page.inputValue('#seqEditTextarea');
+    await page.click('#' + b);
+    const v1 = await page.inputValue('#seqEditTextarea');
+    const can = await page.evaluate(() => !el('seqEditUndoBtn').disabled);
+    if (can) await page.click('#seqEditUndoBtn');
+    const v2 = await page.inputValue('#seqEditTextarea');
+    const canRedo = await page.evaluate(() => !el('seqEditRedoBtn').disabled);
+    if (canRedo) await page.click('#seqEditRedoBtn');
+    const v3 = await page.inputValue('#seqEditTextarea');
+    out[b] = { changed: v1 !== v0, undone: v2 === v0, redone: v3 === v1 };
+    await page.evaluate(() => closeSeqEditor());
+  }
+  return { pass: Object.values(out).every(o => o.changed && o.undone && o.redone), detail: JSON.stringify(out) };
+});
+
+// GLM audit of the colleague fixes (2026-11-07, #6): with the Sequence editor open and focus on one of its buttons, Ctrl/Cmd+Z went to the viewer and changed
+// the alignment behind the dialog. While the dialog is open these keys belong to it; once closed, they are the viewer's again.
+check('Sequence editor open: undo keys on a button work the editor and leave the alignment alone', async (page) => {
+  await page.setInputFiles('#fileInput', { name: 'k.fa', mimeType: 'text/plain', buffer: Buffer.from('>b\nACGTTGGCAAC\n>a\nACGTTGCCAAC\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 2); await page.waitForTimeout(300);
+  const order = () => page.evaluate(() => state.seqs.map(s => s.header).join(''));
+  const out = {};
+  await page.evaluate(() => sortByName()); await page.waitForTimeout(400);
+  out.sorted = await order();
+  await page.evaluate(() => openSeqEditor(0)); await page.waitForTimeout(200);
+  const v0 = await page.inputValue('#seqEditTextarea');
+  await page.focus('#seqEditTextarea'); await page.keyboard.press('Control+End'); await page.keyboard.type('A');
+  const v1 = await page.inputValue('#seqEditTextarea');
+  await page.focus('#seqEditCancelBtn');
+  for (const [k, name] of [['Control+z', 'ctrlZ'], ['Control+Shift+z', 'ctrlShiftZ'], ['Meta+z', 'metaZ'], ['Control+y', 'ctrlY']]) {
+    await page.keyboard.press(k); await page.waitForTimeout(150);
+    out[name] = { order: await order(), text: await page.inputValue('#seqEditTextarea') === (/Shift|y$/.test(k) ? v1 : v0) };
+  }
+  await page.evaluate(() => closeSeqEditor()); await page.mouse.click(700, 500); await page.waitForTimeout(100);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+  out.closed = await order();
+  const ok = out.sorted === 'ab' && ['ctrlZ', 'ctrlShiftZ', 'metaZ', 'ctrlY'].every(n => out[n].order === 'ab' && out[n].text) && out.closed === 'ba';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 // GLM audit of the colleague fixes (2026-11-07, #4): the Sequence editor's Complement / Rev Comp took "RNA or DNA" from the open alignment even in freeform
 // mode (no row selected), where the text is a pasted sequence with nothing to do with it: a DNA sequence pasted while an RNA alignment is open came back
 // with U. A row of the alignment still follows the alignment; a freeform text follows the text itself (any U and no T in it).
