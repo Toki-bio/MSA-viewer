@@ -437,6 +437,25 @@ check('wide view: past the gate nothing is read and the screen says why, coverag
   return { pass: r.wide && r.n === 0 && /Zoom in/.test(r.text) && /coverage/i.test(r.text) && /zoom in/i.test(r.status), detail: JSON.stringify(r) };
 });
 
+// NA12878 chr20:31.05 Mb: the index sees 16 kb at best and put 22 MB there, past the gate, so even 10 bases said "zoom in" and no
+// zoom could help, with 1,292 reads on that spot. Zooming in has to reach the reads: a view of one tile or less is always read.
+check('wide view: a dense place past the gate is still read once the view is a tile or less', async (page) => {
+  await open(page, allFiles());
+  await page.evaluate(() => { _genome.gateBytes = -1; });
+  const at = await page.evaluate(() => { const c = _genome.chrom; return { name: c.name, mid: Math.floor(c.length / 2) }; });
+  await page.fill('#readsJumpBox', `${at.name}:${at.mid}-${at.mid + 500}`); await page.press('#readsJumpBox', 'Enter');
+  await page.waitForTimeout(100); await idle(page);
+  const r = await page.evaluate(() => ({ wide: _genome.tooWide, reads: (bamState.allReads || []).length, status: _readsDefaultStatus() }));
+  return { pass: !r.wide && r.reads > 0 && !/zoom in/i.test(r.status), detail: JSON.stringify(r) };
+});
+
+// NA12878 chr20:31.05 Mb said "6,300 reads in window" with 115,424 loaded and counted: 6,300 were only the ones drawn.
+check('status: the count is the reads in the window, and the drawn ones are named as drawn', async (page) => {
+  await open(page, allFiles());
+  const r = await page.evaluate(() => { const keep = bamState.reads, all = bamState.allReads.length; bamState.reads = bamState.allReads.slice(0, 5); const s = _readsDefaultStatus(); bamState.reads = keep; return { all, s }; });
+  return { pass: r.all > 5 && r.s.startsWith(r.all.toLocaleString() + ' reads in window') && /5 drawn/.test(r.s), detail: JSON.stringify(r) };
+});
+
 // ---- GLM audit of 03400b1 -------------------------------------------------------------------------------------------------
 // #1: Add sequences puts rows in state.seqs without parseAndRender, so the genome stayed on screen and the rows never showed
 check('audit: rows added while a genome is open close it and show, they do not vanish behind it', async (page) => {

@@ -221,7 +221,7 @@ function _genomeAfterDraw(v, a, b, X) {
     }
     if (g.loader) {
         g.wideBytes = GenomeWindow.indexBytes(g.index, g.refId, a, b);
-        g.tooWide = g.wideBytes > g.gateBytes;
+        g.tooWide = g.wideBytes > g.gateBytes && b - a > GenomeWindow.TILE;   // the index cannot see finer than a tile: zooming in must reach the reads
         if (g.tooWide) { g.loader.stop(); g.waiting = false; } else {
             g.plan = GenomeWindow.planView({ a, b, dir: g.dir, chrLen: g.chrom.length });
             g.waiting = a < g.win.ws || Math.min(b, g.chrom.length) > g.win.we;
@@ -279,9 +279,9 @@ function _genomeStatusHead() {
     if (!g.loader) return g.bam ? `${g.chrom.name}: not in the BAM` : `${g.chrom.name}: reference only, no reads`;
     if (g.tooWide) return `${g.chrom.name}: zoom in to read reads`;
     if (g.waiting) return `reading ${g.chrom.name}...`;
-    const n = bamState.reads.length, cut = w.cuts && w.cuts.length ? ` (cut at ${(w.cuts[0][0] + 1).toLocaleString()}: too many reads here, depth past it is not known)` : '';
+    const n = bamState.allReads.length, drawn = bamState.reads.length < n ? `, ${bamState.reads.length.toLocaleString()} drawn` : '', cut = w.cuts && w.cuts.length ? ` (cut at ${(w.cuts[0][0] + 1).toLocaleString()}: too many reads here, depth past it is not known)` : '';
     const lost = g.refFailed ? ' (the bases could not be read: no changes or coverage here)' : '';
-    return `${n.toLocaleString()} reads in window ${w.t0 < 0 ? g.chrom.name : _genomeLocus(w.ws, w.we)}, ${(g.cache.bytes / 1048576).toFixed(1)} MB held${cut}${lost}`;
+    return `${n.toLocaleString()} reads in window ${w.t0 < 0 ? g.chrom.name : _genomeLocus(w.ws, w.we)}${drawn}, ${(g.cache.bytes / 1048576).toFixed(1)} MB held${cut}${lost}`;
 }
 
 // ---- bases -----------------------------------------------------------------------------------------------------------------
