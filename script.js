@@ -16808,8 +16808,8 @@ function handleKeyDown(e) {
                 break;
             case 'z':
                 // Ctrl+Shift+Z / Cmd+Shift+Z is redo (it used to undo once more)
-                // with the Sequence editor open and focus on one of its buttons these keys are the editor's:
-                // they used to change the alignment behind the dialog
+                // while the Sequence editor is open these keys are the editor's, wherever focus is outside a text
+                // field: they used to change the alignment behind the dialog
                 if (_seqEditOpen()) { if (e.shiftKey) _seqEditRedo(); else _seqEditUndo(); }
                 else if (e.shiftKey) redoAction();
                 else undoDelete();
@@ -26262,7 +26262,11 @@ async function realignAll() {
                 if (flippedNames.has(id)) {
                     s.seq = rcAln(s.seq);
                     s.gaplessPositions = calculateGaplessPositions(s.seq);
-                    state.selectedNucs.delete(Number(id.slice(1)));   // these positions now hold other bases (ids are r<row>)
+                    // these positions now hold other bases (ids are r<row>)
+                    const row = Number(id.slice(1));
+                    state.selectedNucs.delete(row);
+                    if (state.pendingNucStart?.row === row) state.pendingNucStart = null;
+                    if (state.editCell?.row === row) state.editCell = null;
                 }
             }
             _dropColumnAnalysesAfterRealign();   // a turned row changes its bases in every column
