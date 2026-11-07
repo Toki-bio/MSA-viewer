@@ -384,7 +384,7 @@
       }
       if (orientation === 'horizontal') {
         // horizontal text is not rotated: it runs its whole width to the right of the anchor, or to the left when the label is on the left half
-        // (cos(th)*w, right only for text turned along its branch, cut names at the edge of the drawing: colleague check 2026-11-07)
+        // (the bounds used cos(th)*w, right only for text turned along its branch, so names were cut at the edge of the drawing: colleague check 2026-11-07)
         var hdir = t.anchor === 'end' ? -1 : 1;
         labelBounds.push([px, py], [px + hdir * c.w, py]);
         labelBoxes.push({ l: Math.min(px, px + hdir * c.w), r: Math.max(px, px + hdir * c.w), t: py - c.h / 2, b: py + c.h / 2 });
@@ -824,7 +824,7 @@
         '<button type="button" class="tree-tool" data-act="zoom-out" title="Zoom out">&minus;</button>' +
         '<span id="treeZoomLabel" style="min-width:34px;text-align:center;">100%</span>' +
         '<button type="button" class="tree-tool" data-act="zoom-in" title="Zoom in">+</button>' +
-        '<button type="button" class="tree-tool" data-act="zoom-fit" title="Back to 100%: the tree drawn to fit the panel (rooted: its width; unrooted: the whole panel)">Fit</button>' +
+        '<button type="button" class="tree-tool" data-act="zoom-fit" title="Fit the tree to the panel (rooted: back to 100%, its width; unrooted: the largest zoom at which the whole drawing, labels included, is inside the panel)">Fit</button>' +
         '<span id="treeSpacingGroup" style="display:none;align-items:center;gap:6px;">' +
           '<span style="width:1px;height:14px;background:#c5d2df;margin:0 2px;"></span>' +
           '<span style="color:#6b8299;" title="How far apart unrooted-tree leaf labels are spaced, independent of Zoom">Label spacing</span>' +

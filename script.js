@@ -7340,7 +7340,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
         const hdCols = document.body.classList.contains('highlight-diffs') ? state._diffColumns : null;
         const scaleY = TRACK_H - oy;
         if (scaleY + SCALE_H > 0 && scaleY < h && firstCol <= lastCol && scaleY + SCALE_H > cy0 && scaleY < cy1) {
-            // Each digit is drawn in its column's slot (a marker slot shows nothing, like the DOM
+            // Each digit is drawn in its column's slot (with Variable sites only, whole labels instead: below) (a marker slot shows nothing, like the DOM
             // ruler, but keeps the width). With sticky names the digits stop at the name column,
             // as the DOM's sticky name cell covers them.
             if (stickyNames) {
@@ -7376,7 +7376,7 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 ctx.fillText(ch, x, rulerBase);
             }
             if (varHide) {
-                // whole labels, each character in its own slot (the last on the label's column), only the slots of the strip being drawn
+                // whole labels, each character in its own slot (the last on the label's column), only the slots of the strip or band being drawn
                 const rl = _bScale ? _bRL : stripRulerLabels();
                 if (hdCols) { ctx.globalAlpha = 1; ctx.font = 'bold ' + fontStr; rulerBold = true; }
                 let lo = 0, hi = rl.length;
@@ -9565,7 +9565,7 @@ function generateScale(maxLength, interval = 10, startPos = 0) {
  * column, so with hidden columns a number such as "230" lost its middle digit and left scraps ("2", "0").
  * Here each number is one whole label, right-aligned on its own column like generateScale's, and a label is
  * left out when its column is hidden, when it would not fit before the first shown column (lo), or when it would
- * touch the previous label. cols[s] is the column in slot s (a negative entry is a breakpoint marker's slot).
+ * touch the previous label. cols[s] is the column in slot s (a negative entry is a marker's slot, -1 minus the column after it; it carries no label).
  * Returns [slot of the label's last character, text] for the slots in [lo, hi), in order.
  */
 function _hiddenColRulerLabels(cols, lo, hi, interval) {
@@ -28494,7 +28494,7 @@ function initializeAppUI() {
         });
     }
 
-    // SeqEdit textarea: update length on input
+    // SeqEdit textarea: length on input, the undo history, and Cmd/Ctrl+Z (Undo), Cmd/Ctrl+Y and Cmd/Ctrl+Shift+Z (Redo)
     const seqEditTextarea = document.getElementById('seqEditTextarea');
     if (seqEditTextarea) {
         seqEditTextarea.addEventListener('input', _updateSeqEditLength);
