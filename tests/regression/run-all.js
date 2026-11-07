@@ -17086,15 +17086,16 @@ check('Reorder only: selections follow their rows; a row turned round loses its 
     state.selectedRows.clear(); state.selectedRows.add(0);
     state.selectedNucs.clear(); state.selectedNucs.set(0, buildNucSelectionSet(0, 1, 3)); state.selectedNucs.set(1, buildNucSelectionSet(1, 1, 3));
     state.blockMask = { blocks: [], row_headers: [] };
-    state.pendingNucStart = { row: 1, pos: 2 }; state.editCell = { row: 1, pos: 2 };
+    if (flip === 'cell') state.editCell = { row: 1, pos: 2 }; else state.pendingNucStart = { row: 1, pos: 2 };   // one at a time: the remap gives each row out once
     await realignAll();
     el('mafftReorderOnly').checked = false; el('mafftAdjustDir').checked = false;
     return { order: state.seqs.map(s => s.header).join(''), rows: [...state.selectedRows].map(i => state.seqs[i].header), nucs: [...state.selectedNucs.keys()].map(i => state.seqs[i].header).sort().join(''), mask: !!state.blockMask, start: state.pendingNucStart && state.seqs[state.pendingNucStart.row].header, cell: state.editCell && state.seqs[state.editCell.row].header };
   }, flip);
   await load(); out.plain = await go(false);
   await load(); out.flip = await go(true);
-  const ok = out.plain.order === 'dcba' && out.plain.rows.join() === 'a' && out.plain.nucs === 'ab' && out.plain.mask && out.plain.cell === 'b'
-    && out.flip.order === 'dcba' && out.flip.rows.join() === 'a' && out.flip.nucs === 'a' && !out.flip.mask && !out.flip.start && !out.flip.cell;
+  await load(); out.cell = await go('cell');
+  const ok = out.plain.order === 'dcba' && out.plain.rows.join() === 'a' && out.plain.nucs === 'ab' && out.plain.mask
+    && out.flip.order === 'dcba' && out.flip.rows.join() === 'a' && out.flip.nucs === 'a' && !out.flip.mask && !out.flip.start && !out.cell.cell;
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
