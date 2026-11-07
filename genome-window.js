@@ -54,6 +54,14 @@
         return out;
     }
 
+    /**
+     * What a window lacks through the read cap: [from, to) of each cut tile. From the last start kept, not past it: reads with that very start
+     * can be the missing ones (GLM audit #2), and every cut tile counts, not only the first (#14).
+     */
+    function cutSpans(tiles) {
+        return tiles.filter(t => t.cut).map(t => [t.own.length ? t.own[t.own.length - 1].start : t.start, t.end]);
+    }
+
     class TileCache {
         constructor(budget) { this.budget = budget || CACHE_BYTES; this.map = new Map(); this.bytes = 0; }
         has(t) { return this.map.has(t); }
@@ -73,7 +81,7 @@
             if (!x) return;
             this.map.delete(t); this.bytes -= x.bytes;
             // a live read's mate link would keep this tile's buffer in memory
-            for (const list of [x.own, x.over]) for (const r of list) if (r._mate) { r._mate._mate = null; r._mate = null; }
+            for (const list of [x.own, x.over]) for (const r of list) if (r._mate) { r._mate._mate = null; r._mate._mateLeft = false; r._mate = null; r._mateLeft = false; }   // _mateLeft too: a frame reads r._mate.start on it (GLM audit #39)
         }
         evict(keepFirst, keepLast) {
             for (const t of [...this.map.keys()]) {
@@ -108,7 +116,7 @@
         let wsNew = Infinity, weNew = 0;
         for (const r of reads) { if (r.start < wsNew) wsNew = r.start; if (r.end > weNew) weNew = r.end; }
         const oldSet = prev ? new Set(prev.reads) : null;
-        if (prev) for (const r of prev.reads) if (!held.has(r) && r.end >= wsNew && r.start <= weNew && r.track >= 0) gone.set(readKey(r), r);
+        if (prev) for (const r of prev.reads) if (!held.has(r) && r.end >= wsNew && r.start <= weNew && r.track >= 0) { const k = readKey(r); if (gone.has(k)) gone.get(k).push(r); else gone.set(k, [r]); }
         const ends = [], starts = [], fresh = [];
         const place = (r, t) => {
             r.track = t;
@@ -117,7 +125,8 @@
         };
         for (const r of reads) {
             if (oldSet && oldSet.has(r) && r.track >= 0) { place(r, r.track); continue; }
-            const was = gone.size ? gone.get(readKey(r)) : null;
+            // identical records share a key: each old one is used once, or they landed on one row (GLM audit #38)
+            const list = gone.size ? gone.get(readKey(r)) : null, was = list && list.shift();
             if (was) { place(r, was.track); continue; }
             fresh.push(r);
         }
@@ -242,11 +251,12 @@
     /** The picked or dropped files of a genome by kind: { fasta, fai, bam, bai, errors }. */
     function pickFiles(files) {
         const all = Array.from(files), errors = [], by = re => all.filter(f => re.test(f.name));
-        const fai = by(/\.fai$/i)[0] || null;
-        const fastas = by(/\.(fa|fasta|fna|fas)$/i);
+        // a .fa.gz in the same folder is left out when the plain FASTA is there: only a lone .fa.gz is refused (GLM audit #4)
+        const fastas = by(/\.(fa|fasta|fna|fas)$/i), fais = by(/\.fai$/i);
+        const fai = fais.find(i => fastas.some(f => f.name + '.fai' === i.name)) || fais[0] || null;
         const fasta = (fai && fastas.find(f => f.name + '.fai' === fai.name)) || fastas[0] || null;
         const bam = by(/\.bam$/i)[0] || null, bai = by(/\.bai$/i)[0] || null;
-        if (by(/\.(fa|fasta|fna|fas)\.b?gz(ip)?$/i).length) errors.push('A compressed FASTA (.gz) cannot be read here yet: open the plain FASTA with its .fai (gunzip, then samtools faidx).');
+        if (!fasta && by(/\.(fa|fasta|fna|fas)\.b?gz(ip)?$/i).length) errors.push('A compressed FASTA (.gz) cannot be read here yet: open the plain FASTA with its .fai (gunzip, then samtools faidx).');
         else if (!fasta) errors.push('The reference FASTA is missing: select the .fa together with its .fai.');
         if (!fai) errors.push('The .fai is missing: make it with samtools faidx, then select it with the FASTA.');
         if (by(/\.csi$/i).length) errors.push('.csi indexes are not read yet: make a .bai with samtools index.');
@@ -289,5 +299,5 @@
         return { name: hit, rest: t.slice(colon + 1).trim() };
     }
 
-    return { TILE, MAX_TILE_READS, CACHE_BYTES, GROUP, spanOf, tileRange, readKey, loadTile, assemble, TileCache, loadedRun, packWindow, createLoader, callsFor, indexBytes, firstRead, planView, isGenomeSet, pickFiles, matchChromosomes, parseLocus };
+    return { TILE, MAX_TILE_READS, CACHE_BYTES, GROUP, spanOf, tileRange, readKey, loadTile, assemble, TileCache, loadedRun, packWindow, createLoader, callsFor, indexBytes, firstRead, cutSpans, planView, isGenomeSet, pickFiles, matchChromosomes, parseLocus };
 });

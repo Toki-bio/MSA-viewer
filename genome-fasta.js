@@ -58,8 +58,9 @@
         const nl = body.lastIndexOf('\n');
         if (nl < 0 && from > 0) return;   // header longer than the window: cannot judge, accept
         const header = body.slice(nl + 1).replace(/\r$/, '');
-        const n = e.name.length + 1;
-        if (header.slice(0, n) !== '>' + e.name || (header.length > n && !/\s/.test(header[n])))
+        // the header here is bytes, the name decoded text: compare bytes, or a name with an accent was refused (GLM audit #20)
+        const want = latin1(new TextEncoder().encode('>' + e.name)), n = want.length;
+        if (header.slice(0, n) !== want || (header.length > n && !/\s/.test(header[n])))
             throw bad(`expected a header line starting ">${e.name}" before offset ${e.offset}, found "${header.slice(0, 40)}"`);
     }
 

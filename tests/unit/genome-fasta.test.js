@@ -96,6 +96,8 @@ function spy(blob) {
     await assert.rejects(GF.checkFai(spy(other), GF.parseFai(a.fai)), /does not belong to spy\.fa/);
     await assert.rejects(GF.checkFai(new Blob(['x' + a.fa]), GF.parseFai(a.fai)), /does not belong/);
     await GF.checkFai(new Blob([a.fa]), GF.parseFai(a.fai));
+    // the .fai is read as UTF-8, the header as bytes: a name with an accent was refused as another file's
+    await GF.checkFai(new Blob([Buffer.from('>chr\u00e9-1 x\nACGT\n')]), GF.parseFai('chr\u00e9-1\t4\t' + Buffer.byteLength('>chr\u00e9-1 x\n') + '\t4\t5\n'));
   }
   console.log('genome-fasta: all passed');
 })().catch(e => { console.error(e); process.exit(1); });

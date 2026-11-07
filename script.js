@@ -11716,7 +11716,7 @@ const _EFFECT_CLASS = e => /stop gained|frameshift|start lost|stop lost|splice/.
     : /synonymous/.test(e) ? 'var-silent' : 'var-other';
 
 function openVariantsPanel() {
-    if (!_readsCalls()) { showMessage('No reads loaded: open a reference, then its SAM/BAM/CRAM.', 3000); return; }
+    if (!_readsCalls()) { showMessage(_genome ? 'No reads in the loaded window: nothing to call here.' : 'No reads loaded: open a reference, then its SAM/BAM/CRAM.', 3000); return; }
     let win = document.getElementById('variantsWindow');
     if (!win) {
         win = document.createElement('div');
@@ -12486,7 +12486,13 @@ function renderAlignment(options = {}) {
     syncQuickModeSwitch();
     syncCodonModePanel();
     syncSearchControlsAvailability();
-    if (_genome) { _genomeRender(); return; }
+    // A genome holds no rows. Rows here came by a way other than a load (Add sequences, a snapshot): they were invisible behind
+    // the genome, so the genome goes and they show (GLM audit #1)
+    if (_genome) {
+        if (!state.seqs || !state.seqs.length) { _genomeRender(); return; }
+        _genomeClose();
+        syncQuickModeSwitch();
+    }
     if (!state.seqs || state.seqs.length === 0) {
         // Wraps (on a phone the one line ran off under its own scrollbar) and offers the
         // example alignment through the ?url= loader
@@ -15162,6 +15168,7 @@ function _autoLoadSucceeded(seqsBefore) {
 }
 
 function _clearFailedLoad() {
+    if (_genome) _genomeClose();   // its message goes where the genome's canvas was: no genome left half open (GLM audit #35)
     state.seqs = [];
     state.selectedRows?.clear();
     state.selectedColumns?.clear();
@@ -15184,6 +15191,11 @@ async function parseAndRender(isFromDrop = false) {
         if (!isFromDrop && state.seqs?.length) {
             statusMessage.style.display = 'none';
             showMessage('The paste box is empty: paste FASTA or MSF first (the alignment shown is kept).', 4000);
+            return;
+        }
+        if (_genome) {   // nothing was loaded: the text below went over the genome's canvas (GLM audit #35)
+            statusMessage.style.display = 'none';
+            showMessage(isFromDrop ? 'The file is empty (the genome stays open).' : 'The paste box is empty: paste FASTA or MSF first (the genome stays open).', 4000);
             return;
         }
         alignmentContainer.innerHTML = '<div>Paste MSF or FASTA into the box and click Load, or drop a file.</div>';

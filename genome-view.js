@@ -34,7 +34,12 @@ async function _genomeOpen(files) {
         if (state.seqs && state.seqs.length && !confirm('Opening a genome closes the alignment that is open. Go on?')) return;
         if (_genome) _genomeClose();
         _clearFailedLoad();
-        state.deletedHistory = []; state.redoHistory = [];
+        // the dialog says closed: nothing of the alignment may come back through Undo or a trim restore
+        state.deletedHistory = []; state.redoHistory = []; state.trimBackup = null; state.trimBackupColState = null;
+        // renderAlignment's "Leaving Canvas" block is past its genome return: its deferred jobs would run on (GLM audit #5)
+        if (_canvasDeferredToken) { _canvasDeferredToken.cancelled = true; _canvasDeferredToken = null; }
+        _readsFilter = { ..._READS_FILTER_DEFAULT };
+        _readsOpts = { ..._READS_OPTS_DEFAULT };
         _genome = { fasta: f.fasta, bam: f.bam, index, fai, refIds, sampleName: f.bam ? f.bam.name.replace(/\.bam$/i, '') : f.fasta.name, left: 0, barLeft: 0, dir: 1, gateBytes: _GENOME_GATE,
             budget: GenomeWindow.CACHE_BYTES, adopting: false, adoptAgain: false, refBusy: 0, callsTimer: 0, moved: 0, opening: false, tooWide: false, waiting: false, tlenMedian: 0, chrom: null };
         document.body.classList.add('genome-mode');
@@ -113,7 +118,7 @@ function _genomeShow(name) {
     if (g.cache) { g.budget = g.cache.budget; g.cache.clear(); }
     const refId = g.refIds.has(name) ? g.refIds.get(name) : -1;
     Object.assign(g, { chrom: e, refId, cache: new GenomeWindow.TileCache(g.budget), win: { ws: 0, we: 0, t0: -1, t1: -1, id: 0, sig: '', lo: 0, hi: 0 }, plan: null, prevWin: null, tracksHigh: 0, left: 0, barLeft: 0,
-        refLo: 0, refHi: 0, refChain: Promise.resolve(), lastA: -1, lastB: -1, tooWide: false, waiting: false, callsId: -1, wideBytes: 0 });
+        refLo: 0, refHi: 0, refChain: Promise.resolve(), refFailed: false, lastA: -1, lastB: -1, tooWide: false, waiting: false, callsId: -1, wideBytes: 0 });
     const cache = g.cache, loader = refId < 0 ? null : GenomeWindow.createLoader({
         load: (t, isStale) => GenomeWindow.loadTile(BamParser, g.bam, g.index, refId, t, e.length, { isStale }),
         cache, group: GenomeWindow.GROUP,
@@ -121,8 +126,8 @@ function _genomeShow(name) {
         onError: err => { console.error('genome read:', err); showMessage('The BAM could not be read: ' + err.message + '. If the file changed on disk, open it again.', 9000); },
     });
     g.loader = loader;
-    _readsFilter = { ..._READS_FILTER_DEFAULT };
-    _readsOpts = { ..._READS_OPTS_DEFAULT };
+    // a filter is the reader's and stays; sort and group are tied to a position of the last chromosome (GLM audit #24)
+    _readsOpts = { ..._readsOpts, sort: 'start', sortPos: null, group: 'none', groupPos: null };
     bamState = { ..._genomeEmptyBam(), sampled: [], fileReads: [], groupRanges: [], alignedBases: 0, nTracks: 0, sampleName: g.sampleName, skipped: {}, refName: name, bamRefName: name, offset: 0, refSeq: '', refBase: 0, refStart: 0, refEnd: e.length };
     _readsSyncFilterBoxes();
     const sel = document.getElementById('genomeChrom');
@@ -140,7 +145,8 @@ function _genomeShow(name) {
 
 function _genomeRender() {
     const g = _genome, r = document.getElementById('modeReads');
-    if (r && !r.checked) r.checked = true;
+    // a mode radio moved: the toolbar was just synced for that mode, and without this the chromosome list and Close went (GLM audit #18)
+    if (r && !r.checked) { r.checked = true; _lastModeRadioId = 'modeReads'; syncQuickModeSwitch(); }
     renderReadsAlignment();
     g.prevWin = { reads: bamState.reads, start: g.win.ws };
     const win = document.getElementById('variantsWindow');
@@ -248,7 +254,7 @@ function _genomeDrawHatch(v, a, b, X) {
     // what is not in the window has not been read: never to be taken for no reads
     const end = Math.min(b, g.chrom.length), gaps = [[a, Math.min(end, g.win.ws)], [Math.max(a, g.win.we), end]];
     if (g.win.t0 < 0) gaps.splice(0, 2, [a, end]);
-    if (g.win.cutFrom != null) gaps.push([Math.max(a, g.win.cutFrom), Math.min(end, g.win.cutTo)]);
+    for (const [s, e] of g.win.cuts || []) gaps.push([Math.max(a, s), Math.min(end, e)]);
     ctx.fillStyle = g.hatch;
     for (const [s, e] of gaps) {
         if (e <= s) continue;
@@ -273,13 +279,15 @@ function _genomeStatusHead() {
     if (!g.loader) return g.bam ? `${g.chrom.name}: not in the BAM` : `${g.chrom.name}: reference only, no reads`;
     if (g.tooWide) return `${g.chrom.name}: zoom in to read reads`;
     if (g.waiting) return `reading ${g.chrom.name}...`;
-    const n = bamState.reads.length, cut = w.cutFrom != null ? ` (cut at ${(w.cutFrom + 1).toLocaleString()}: too many reads here, depth past it is not known)` : '';
-    return `${n.toLocaleString()} reads in window ${w.t0 < 0 ? g.chrom.name : _genomeLocus(w.ws, w.we)}, ${(g.cache.bytes / 1048576).toFixed(1)} MB held${cut}`;
+    const n = bamState.reads.length, cut = w.cuts && w.cuts.length ? ` (cut at ${(w.cuts[0][0] + 1).toLocaleString()}: too many reads here, depth past it is not known)` : '';
+    const lost = g.refFailed ? ' (the bases could not be read: no changes or coverage here)' : '';
+    return `${n.toLocaleString()} reads in window ${w.t0 < 0 ? g.chrom.name : _genomeLocus(w.ws, w.we)}, ${(g.cache.bytes / 1048576).toFixed(1)} MB held${cut}${lost}`;
 }
 
 // ---- bases -----------------------------------------------------------------------------------------------------------------
 function _genomeEnsureRef(lo, hi) {
     const g = _genome, chrom = g.chrom;
+    if (g.refFailed) return g.refChain;   // said once; a chromosome switch tries again (GLM audit #3: asked for ever, a message each time)
     g.refBusy++;
     g.refChain = g.refChain.then(async () => {
         try {
@@ -292,6 +300,7 @@ function _genomeEnsureRef(lo, hi) {
             _readsSchedule();
         } catch (e) {
             console.error('genome bases:', e);
+            if (g.chrom === chrom) g.refFailed = true;
             showMessage('The FASTA could not be read: ' + e.message + '. If the file changed on disk, open it again.', 9000);
         } finally { g.refBusy--; }
     });
@@ -341,7 +350,6 @@ async function _genomeAdoptOnce(g) {
         for (const r of t._shown) shown.push(r);
         for (const d of t._dropped) dropped.push(d);
     }
-    const cutTile = tiles.find(t => t.cut);
     Object.assign(bamState, { fileReads, allReads, sampled: shown, reads: shown, downsampled: dropped });
     const o = _readsOpts;
     if (o.group === 'none' && !o.pairs) {
@@ -354,7 +362,7 @@ async function _genomeAdoptOnce(g) {
     } else _readsLayout();
     g.prevWin = { reads: bamState.reads, start: tiles[0].start };
     const last = tiles[tiles.length - 1];
-    g.win = { ws: tiles[0].start, we: last.end, t0, t1, id: g.win.id + 1, sig, lo, hi, cutFrom: cutTile ? (cutTile.own.length ? cutTile.own[cutTile.own.length - 1].start + 1 : cutTile.start) : null, cutTo: cutTile ? cutTile.end : null };
+    g.win = { ws: tiles[0].start, we: last.end, t0, t1, id: g.win.id + 1, sig, lo, hi, cuts: GenomeWindow.cutSpans(tiles) };
     const { groups, maxClip } = _readsBuildGroups();
     v.groups = groups; v.maxClip = maxClip; v.reads = bamState.reads; v.drawn = [];
     if (v.selected && !bamState.reads.includes(v.selected)) {
@@ -402,6 +410,7 @@ function _genomeCalls() {
     for (const r of reads) { if (r.start < lo) lo = r.start; if (r.end + 1 > hi) hi = r.end + 1; }
     hi = Math.min(hi, g.chrom.length);
     const base = bamState.refBase || 0;
+    if (g.refFailed) return bamState.calls || null;
     if (lo < base || hi > g.refHi) { g.callsId = -1; _genomeEnsureRef(lo, hi).then(() => { if (_genome === g) _genomeQueueCalls(); }); return bamState.calls || null; }
     bamState.calls = GenomeWindow.callsFor(SampleCall, reads, bamState.refSeq.slice(lo - base, hi - base), lo, w.ws, w.we);
     return bamState.calls;

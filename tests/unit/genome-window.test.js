@@ -228,7 +228,31 @@ function locus() {
   check('locus: an unknown name is an error', /chr9/.test(L('chr9:5').error || ''), JSON.stringify(L('chr9:5')));
 }
 
+function audit() {
+  const F = (...n) => n.map(name => ({ name }));
+  // #4: a .fa.gz in the folder refused a set that has the plain FASTA too
+  const p = GW.pickFiles(F('g.fa.gz', 'g.fa', 'g.fa.fai', 'r.bam', 'r.bam.bai'));
+  check('audit: a .fa.gz beside the plain .fa is left out, the plain one opens', p.fasta && p.fasta.name === 'g.fa' && !p.errors.length, JSON.stringify(p.errors));
+  const q = GW.pickFiles(F('g.fa.gz', 'g.fa.gz.fai', 'g.fa', 'g.fa.fai'));
+  check('audit: of two .fai the plain FASTA\'s is taken', q.fai && q.fai.name === 'g.fa.fai' && !q.errors.length, JSON.stringify([q.fai && q.fai.name, q.errors]));
+  check('audit: a .fa.gz with no plain FASTA is still refused', /gz/.test(GW.pickFiles(F('g.fa.gz', 'g.fa.gz.fai')).errors.join()), 'no message');
+  // #2 #14: cut tiles
+  const own = s => s.map(x => ({ start: x }));
+  const cuts = GW.cutSpans([{ start: 0, end: 100, cut: true, own: own([5, 50, 50]) }, { start: 100, end: 200, cut: false, own: own([120]) }, { start: 200, end: 300, cut: true, own: own([]) }]);
+  check('audit: a cut tile is marked from its last start kept, every cut tile', JSON.stringify(cuts) === '[[50,100],[200,300]]', JSON.stringify(cuts));
+  // #39: drop() cleared _mate but left _mateLeft on the live mate: the next frame read r._mate.start of null
+  const live = { _mateLeft: true }, dead = { _mateLeft: false, _mate: live }; live._mate = dead;
+  const e = new GW.TileCache(1); e.put({ t: 1, bytes: 10, own: [dead], over: [] }); e.evict(9, 9);
+  check('audit: eviction leaves no read marked left mate with no mate', !live._mateLeft && live._mate === null, JSON.stringify({ l: live._mateLeft }));
+  // #38: two identical records renewed by a tile reload shared one key, so one row, overlapping
+  const mk = () => [fakeRead('d', 100, 50), fakeRead('d', 100, 50)];
+  const was = mk(); GW.packWindow(was, null);
+  const now = mk(); GW.packWindow(now, { reads: was, start: 0 });
+  check('audit: two identical records keep two rows', now[0].track !== now[1].track, now.map(r => r.track).join());
+}
+
 (async () => {
+  audit();
   const s = await loadSet();
   await readerOptions(s);
   await tiles(s);

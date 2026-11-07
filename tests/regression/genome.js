@@ -437,6 +437,144 @@ check('wide view: past the gate nothing is read and the screen says why, coverag
   return { pass: r.wide && r.n === 0 && /Zoom in/.test(r.text) && /coverage/i.test(r.text) && /zoom in/i.test(r.status), detail: JSON.stringify(r) };
 });
 
+// ---- GLM audit of 03400b1 -------------------------------------------------------------------------------------------------
+// #1: Add sequences puts rows in state.seqs without parseAndRender, so the genome stayed on screen and the rows never showed
+check('audit: rows added while a genome is open close it and show, they do not vanish behind it', async (page) => {
+  await open(page, allFiles());
+  await page.click('#addSeqPlusButton');
+  await page.fill('#addSeqInput', '>x\nACGTACGT\n>y\nACGTACGA\n');
+  await page.click('#addSeqJustAddButton');
+  await page.waitForTimeout(400);
+  const r = await page.evaluate(() => ({ genome: !!_genome, rows: state.seqs.length, reads: !!document.getElementById('readsCanvas'), body: document.body.classList.contains('genome-mode'), quick: document.getElementById('quickModeSwitch').style.display }));
+  return { pass: !r.genome && r.rows === 2 && !r.reads && !r.body && r.quick === '', detail: JSON.stringify(r) };
+});
+
+// #35: a load that fails wrote its message over the canvas with the genome still open: chrome of a genome, no genome
+check('audit: a failed load leaves no half-open genome; Load with an empty box keeps the genome', async (page) => {
+  await open(page, allFiles());
+  await page.evaluate(() => { document.getElementById('fastaInput').value = ''; });
+  await page.click('#input-section .section-header');
+  await page.click('#loadButton');
+  await page.waitForTimeout(200);
+  const empty = await page.evaluate(() => ({ genome: !!_genome, canvas: !!document.getElementById('readsCanvas')?.isConnected, text: statusMessage.textContent }));
+  await page.evaluate(() => { document.getElementById('fastaInput').value = '@r1\nACGT\n+\nIIII\n@r2\nACGT\n+\nIIII\n'; });
+  await page.click('#loadButton');
+  await page.waitForTimeout(300);
+  const fq = await page.evaluate(() => ({ genome: !!_genome, body: document.body.classList.contains('genome-mode'), close: document.getElementById('genomeCloseBtn').offsetWidth, msg: alignmentContainer.textContent.slice(0, 60) }));
+  return { pass: empty.genome && empty.canvas && !fq.genome && !fq.body && fq.close === 0 && /FASTQ/.test(fq.msg), detail: JSON.stringify({ empty, fq }) };
+});
+
+// #3: when the FASTA stopped being readable the calls asked for the bases again for ever, a message every few hundred ms
+check('audit: a FASTA that cannot be read is said once and not asked again and again', async (page) => {
+  await open(page, allFiles());
+  await jump(page, 'chrA:600,000');
+  const r = await page.evaluate(async () => {
+    window.__n = 0; window.__m = 0;
+    const o = showMessage; window.showMessage = o;
+    GenomeFasta.readBases = async () => { window.__n++; throw new Error('gone'); };
+    const box = document.getElementById('statusMessage'), mo = new MutationObserver(() => window.__m++); mo.observe(box, { childList: true, characterData: true, subtree: true });
+    _readsCentre(2000000);
+    await new Promise(r => setTimeout(r, 2500));
+    return { reads: window.__n, messages: window.__m, status: _readsDefaultStatus() };
+  });
+  return { pass: r.reads <= 3 && r.messages <= 3 && /bases/.test(r.status), detail: JSON.stringify(r) };
+});
+
+// #5: the early return in renderAlignment skipped the block that cancels Canvas's deferred jobs; one of them threw on spliced-out rows
+check('audit: opening a genome cancels the deferred jobs of the Canvas it leaves', async (page) => {
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  const { loadSyntheticFasta } = require('../lib/browser');
+  await loadSyntheticFasta(page, 800, 4000);
+  await page.evaluate(() => { document.getElementById('modeCanvas').checked = true; window.__p = onModeChange(); });
+  await page.evaluate(() => window.__p);
+  await page.waitForTimeout(100);
+  const before = await page.evaluate(() => { window.__tok = _canvasDeferredToken; return !!_canvasDeferredToken; });
+  page.once('dialog', d => d.accept());
+  await open(page, refFiles());
+  const r = await page.evaluate(() => ({ now: _canvasDeferredToken, cancelled: window.__tok ? window.__tok.cancelled : null }));
+  await page.waitForTimeout(600);
+  return { pass: before && r.cancelled === true && r.now === null && !errors.length, detail: JSON.stringify({ before, r, errors }) };
+});
+
+// #18: the mode radios are still there; a click sent renderAlignment back to the genome after the toolbar had gone
+check('audit: the Canvas radio with a genome open leaves the chromosome list and Close on screen', async (page) => {
+  await open(page, allFiles());
+  await page.evaluate(() => { const c = document.getElementById('modeCanvas'); c.checked = true; window.__p = onModeChange(); });
+  await page.evaluate(() => window.__p);
+  await page.waitForTimeout(100);
+  const r = await page.evaluate(() => ({ sel: document.getElementById('genomeChrom').offsetWidth, close: document.getElementById('genomeCloseBtn').offsetWidth, reads: document.getElementById('modeReads').checked, view: !!_readsView }));
+  return { pass: r.sel > 0 && r.close > 0 && r.reads && r.view, detail: JSON.stringify(r) };
+});
+
+// #36: over an empty window Variants said to open a reference and a BAM, both open
+check('audit: Variants over a window with no reads says that, not to open a reference', async (page) => {
+  await open(page, allFiles());
+  await jump(page, 'chrA:1,350,000');
+  await page.click('#readsVariantsButton');
+  await page.waitForTimeout(100);
+  const m = await page.evaluate(() => statusMessage.textContent);
+  return { pass: /window/.test(m) && !/open a reference/.test(m), detail: m };
+});
+
+// #24: a filter is the reader's, not a chromosome's
+check('audit: a filter stays over a chromosome switch; sort and group, tied to a position, do not', async (page) => {
+  await open(page, allFiles());
+  await jump(page, 'chrA:700,000');
+  await page.click('#readsOptionsBtn');
+  await page.fill('#readsMinMapq', '20'); await page.press('#readsMinMapq', 'Enter');
+  await page.selectOption('#readsSortBy', 'length');
+  await idle(page);
+  await page.selectOption('#genomeChrom', 'chrB');
+  await page.waitForTimeout(40); await idle(page);
+  const r = await page.evaluate(() => ({ q: _readsFilter.minMapq, box: document.getElementById('readsMinMapq').value, sort: _readsOpts.sort }));
+  return { pass: r.q === 20 && r.box === '20' && r.sort === 'start', detail: JSON.stringify(r) };
+});
+
+// #2 #14: only the first cut tile was marked, and from one base past the last read kept, though reads at that very start can be missing
+check('audit: every tile cut at the read cap is marked, and from the last start kept', async (page) => {
+  await open(page, allFiles());
+  await page.evaluate(() => { _genome.cache.clear(); const o = GenomeWindow.loadTile; GenomeWindow.loadTile = (BP, f, ix, id, t, L, op) => o(BP, f, ix, id, t, L, { ...op, maxReads: 3 }); });
+  await jump(page, 'chrA:700000-760000');
+  const r = await page.evaluate(() => { const w = _genome.win, tiles = []; for (let t = w.t0; t <= w.t1; t++) tiles.push(_genome.cache.peek(t)); return { cuts: w.cuts, tiles: tiles.filter(t => t.cut).length, status: _readsDefaultStatus(), lastStart: tiles.filter(t => t.cut).map(t => (t.own.length ? t.own[t.own.length - 1].start : t.start)) }; });
+  return { pass: r.tiles >= 2 && r.cuts && r.cuts.length === r.tiles && r.cuts.every((c, i) => c[0] === r.lastStart[i]) && /cut/.test(r.status), detail: JSON.stringify(r) };
+});
+
+// Design: the dialog says the alignment is closed: nothing of it may come back through a tool
+check('audit: an alignment closed by a genome stays closed: Close shows the start page, Undo and trim restore bring nothing back', async (page) => {
+  await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAA\n');
+  await page.evaluate(() => { pushUndo('test'); state.trimBackup = state.seqs.map(s => ({ ...s })); });
+  page.once('dialog', d => d.accept());
+  await open(page, refFiles());
+  const r = await page.evaluate(() => { const a = { undo: state.deletedHistory.length, redo: state.redoHistory.length, trim: state.trimBackup, rows: state.seqs.length }; return a; });
+  await page.click('#genomeCloseBtn');
+  const after = await page.evaluate(() => ({ rows: state.seqs.length, start: /No sequences loaded/.test(alignmentContainer.textContent) }));
+  return { pass: r.undo === 0 && r.redo === 0 && r.trim === null && r.rows === 0 && after.rows === 0 && after.start, detail: JSON.stringify({ r, after }) };
+});
+
+// Refutations kept as checks. #9: refBase cannot leak: a plain load builds bamState anew. #15: a variant row goes to its own base.
+check('audit: after a genome, plain reads have no refBase and their mismatches are right', async (page) => {
+  await open(page, allFiles());
+  await jump(page, 'chrA:700,000');
+  const had = await page.evaluate(() => bamState.refBase);
+  await page.click('#genomeCloseBtn');
+  await loadFasta(page, '>chrZ\n' + 'ACGT'.repeat(50) + '\n');
+  const sam = '@SQ\tSN:chrZ\tLN:200\nr1\t0\tchrZ\t11\t60\t20M\t*\t0\t0\t' + 'GTACGTACGTACGTACGTAC' + '\t*\n';
+  await page.setInputFiles('#bamFileInput', file('z.sam', Buffer.from(sam)));
+  await page.waitForFunction(() => bamState.reads.length > 0);
+  const r = await page.evaluate(() => ({ base: bamState.refBase, ch: _readsRefChar(0), g: !!_genome }));
+  return { pass: had > 0 && r.base === undefined && r.ch === 'A' && !r.g, detail: JSON.stringify({ had, ...r }) };
+});
+
+check('audit: a click on a variant row goes to that base', async (page) => {
+  await open(page, allFiles());
+  await jump(page, 'chrA:700,000');
+  await zoom(page, 1);
+  await page.click('#readsVariantsButton');
+  await idle(page);
+  const r = await page.evaluate(() => { const tr = document.querySelector('#variantsTable tbody tr[data-pos]'); const pos = +tr.dataset.pos; tr.click(); return { pos, focus: bamState.focusPos, centre: (_readsLeft() + (_readsView.w - _READS_NAME_W) / 2) / _readsView.cell }; });
+  return { pass: r.focus === r.pos - 1 && Math.abs(r.centre - (r.pos - 1)) < 1, detail: JSON.stringify(r) };
+});
+
 // ---- the runner -------------------------------------------------------------------------------------------------------
 (async () => {
   const { server, baseUrl } = await start();
