@@ -587,6 +587,25 @@ check('audit: past a cut tile every position is right or hatched, in the page', 
   return { pass: r.cuts.length >= 2 && hatched > 0 && !wrong && r.n === r.file && /cut at [\d,]+-[\d,]+/.test(r.status), detail: JSON.stringify({ wrong, first, hatched, cuts: r.cuts, status: r.status, n: r.n, file: r.file }) };
 });
 
+// A .fai that does not fit its FASTA was taken as long as the first header was in place: the page showed wrong bases and said nothing.
+// A re-wrapped FASTA is refused at the door; a record added before the second chromosome is refused when that chromosome is opened.
+check('audit: a .fai that does not fit the FASTA is refused, no wrong base is shown', async (page) => {
+  const rnd = mulberry(4), seq = n => { let q = ''; for (let i = 0; i < n; i++) q += 'ACGT'[(rnd() * 4) | 0]; return q; };
+  const chr1 = seq(4000), chr2 = seq(3000), good = fastaOf([['chr1', chr1], ['chr2', chr2]], 80);
+  const refused = await (async () => {
+    await page.setInputFiles('#genomeFileInput', [file('a.fa', Buffer.from(fastaOf([['chr1', chr1], ['chr2', chr2]], 60).text)), file('a.fa.fai', Buffer.from(good.fai))]);
+    await page.waitForFunction(() => /fit/.test(document.body.innerText), null, { timeout: 8000 }).catch(() => {});
+    return page.evaluate(() => ({ genome: typeof _genome !== 'undefined' && !!_genome, said: /does not fit the FASTA/.test(document.body.innerText) }));
+  })();
+  const moved = fastaOf([['chr1', chr1], ['chrX', seq(500)], ['chr2', chr2]], 80);
+  await open(page, [file('b.fa', Buffer.from(moved.text)), file('b.fa.fai', Buffer.from(good.fai))]);
+  const first = await page.evaluate(() => bamState.refSeq);
+  await page.selectOption('#genomeChrom', 'chr2');
+  await page.waitForTimeout(60); await idle(page);
+  const r = await page.evaluate(() => ({ name: bamState.refName, ref: bamState.refSeq, status: _genomeStatusHead(), said: /does not fit the FASTA/.test(document.body.innerText) }));
+  return { pass: !refused.genome && refused.said && first.startsWith(chr1.slice(0, 40)) && r.name === 'chr2' && r.ref === '' && r.said && /\.fai/.test(r.status), detail: JSON.stringify({ refused, ok1: first.slice(0, 10), ...r, ref: r.ref.slice(0, 20) }) };
+});
+
 check('audit: an alignment closed by a genome stays closed: Close shows the start page, Undo and trim restore bring nothing back', async (page) => {
   await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAA\n');
   await page.evaluate(() => { pushUndo('test'); state.trimBackup = state.seqs.map(s => ({ ...s })); });

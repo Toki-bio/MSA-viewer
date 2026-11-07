@@ -99,5 +99,64 @@ function spy(blob) {
     // the .fai is read as UTF-8, the header as bytes: a name with an accent was refused as another file's
     await GF.checkFai(new Blob([Buffer.from('>chr\u00e9-1 x\nACGT\n')]), GF.parseFai('chr\u00e9-1\t4\t' + Buffer.byteLength('>chr\u00e9-1 x\n') + '\t4\t5\n'));
   }
+  // A .fai that does not fit its FASTA. checkFai looked at the first record's header and nothing else, so the same FASTA re-wrapped to 60
+  // columns under an 80-column .fai, or a record added in front of chr2 under the old .fai, gave wrong bases with no word said.
+  // Now each chromosome is checked when it is opened (header, a line end, the end of the sequence) and every read counts its line ends.
+  {
+    const wrap = (recs, w, eol = '\n') => {
+      let fa = '', fai = '';
+      for (const [name, q] of recs) {
+        fa += '>' + name + eol;
+        fai += `${name}\t${q.length}\t${fa.length}\t${w}\t${w + eol.length}\n`;
+        for (let i = 0; i < q.length; i += w) fa += q.slice(i, i + w) + eol;
+      }
+      return { fa, fai };
+    };
+    const pure = n => { let q = ''; for (let i = 0; i < n; i++) q += 'ACGT'[rnd(4)]; return q; };
+    const chr1 = pure(1000), chr2 = pure(777), recs = [['chr1', chr1], ['chr2', chr2]], FIT = /does not fit the FASTA/;
+    const w80 = wrap(recs, 80), w60 = wrap(recs, 60), e80 = GF.parseFai(w80.fai), e60 = GF.parseFai(w60.fai);
+    const no = (fa, e, what) => assert.rejects(GF.checkEntry(new Blob([fa]), e), FIT, what);
+    // re-wrapped, both ways
+    await no(w60.fa, e80[0], 'chr1, 60 columns, 80-column .fai'); await no(w60.fa, e80[1], 'chr2, 60 columns, 80-column .fai');
+    await no(w80.fa, e60[0], 'chr1, 80 columns, 60-column .fai');
+    await assert.rejects(GF.checkFai(new Blob([w60.fa]), e80), FIT, 'checkFai refuses a re-wrapped FASTA');
+    // a record in front of chr2: chr1 still fits, chr2 does not
+    const extra = wrap([['chr1', chr1], ['chrX', pure(300)], ['chr2', chr2]], 80);
+    await GF.checkEntry(new Blob([extra.fa]), e80[0]);
+    await no(extra.fa, e80[1], 'a record in front of chr2');
+    // the same width, the sequence longer or shorter: by a part of a line, by whole lines; and a FASTA cut short
+    await no(wrap([['chr1', chr1 + 'ACGT'], ['chr2', chr2]], 80).fa, e80[0], 'chr1 4 bases longer');
+    await no(wrap([['chr1', chr1.slice(0, 960)]], 80).fa, GF.parseFai(wrap([['chr1', chr1.slice(0, 880)]], 80).fai)[0], 'whole lines longer');
+    await no(wrap([['chr1', chr1.slice(0, 880)], ['chr2', chr2]], 80).fa, GF.parseFai(wrap([['chr1', chr1.slice(0, 960)]], 80).fai)[0], 'whole lines shorter');
+    // a FASTA that ends early cannot be told from a .fai longer than its file, which the 250 Mb scroll checks open on purpose: it is taken,
+    // and what can be read is right, the rest is not there
+    const short = new Blob([w80.fa.slice(0, w80.fa.length - 200)]);
+    await GF.checkEntry(short, e80[1]);
+    const part = await GF.readBases(short, e80[1], 0, 777);
+    assert.ok(part.length < 777 && chr2.startsWith(part), 'a FASTA cut short gives the bases it has, none wrong');
+    // LF under a CRLF .fai
+    await no(w80.fa, GF.parseFai(wrap(recs, 80, '\r\n').fai)[0], 'LF FASTA, CRLF .fai');
+    // first and last lines right, a line in the middle not: only a read can see it, and it must not hand out shifted bases
+    const inner = '>c\n' + 'A'.repeat(10) + '\n' + 'C'.repeat(7) + '\n' + 'G'.repeat(13) + '\n' + 'T'.repeat(10) + '\n' + 'A'.repeat(5) + '\n', ie = GF.parseFai('c\t45\t3\t10\t11\n')[0];
+    await GF.checkEntry(new Blob([inner]), ie);
+    await assert.rejects(GF.readBases(new Blob([inner]), ie, 5, 40), FIT, 'a short line inside a read');
+    // a read running into the next record
+    await assert.rejects(GF.readBases(new Blob(['>a\nACGT\n>b\nACGT\n']), { name: 'a', length: 10, offset: 3, lineBases: 4, lineBytes: 5 }, 0, 10), FIT, 'a read into the next record');
+
+    // what must keep working: LF and CRLF, a last line with and without a line end, one short line, one base, whole last lines, a line of 2 MB
+    for (const eol of ['\n', '\r\n']) for (const [w, lens] of [[80, [800, 801, 79, 1]], [60, [60, 61]], [7, [7, 8, 14]], [1, [1, 3]]]) {
+      const b = wrap(lens.map((n, k) => ['s' + k, pure(n)]), w, eol), es = GF.parseFai(b.fai);
+      for (const text of [b.fa, b.fa.slice(0, b.fa.length - eol.length), b.fa + eol]) {
+        for (const e of es) await GF.checkEntry(new Blob([text]), e);
+        await GF.checkFai(new Blob([text]), es);
+      }
+    }
+    const one = pure(2000000), big = wrap([['one', one], ['two', 'ACGT']], 2000000), f = spy(new Blob([big.fa])), be = GF.parseFai(big.fai);
+    for (const e of be) await GF.checkEntry(f, e);
+    assert.ok(f.log.every(n => n < 70000), `a one-line chromosome read whole: ${Math.max(...f.log)}`);
+    assert.strictEqual(await GF.readBases(new Blob([big.fa]), be[0], 1999990, 2000000), one.slice(1999990));
+    await GF.checkEntry(new Blob(['>e\n>f\nACGT\n']), { name: 'e', length: 0, offset: 3, lineBases: 0, lineBytes: 1 });   // no bases: samtools lists it with 0 bases
+  }
+
   console.log('genome-fasta: all passed');
 })().catch(e => { console.error(e); process.exit(1); });

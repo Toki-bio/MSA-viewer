@@ -19,7 +19,6 @@ async function _genomeOpen(files) {
     try {
         const fai = GenomeFasta.parseFai(await f.fai.text());
         if (!fai.length) { showMessage(`${f.fai.name} lists no sequences.`, 6000); return; }
-        await GenomeFasta.checkFai(f.fasta, fai);
         let header = null, index = null, refIds = new Map();
         if (f.bam) {
             header = await BamParser.readBamHeaderFromFile(f.bam);
@@ -31,6 +30,7 @@ async function _genomeOpen(files) {
             if (m.error) { showMessage(m.error, 12000); return; }
             refIds = m.refId;
         }
+        await GenomeFasta.checkFai(f.fasta, fai);   // after the BAM: another assembly is the better thing to say
         if (state.seqs && state.seqs.length && !confirm('Opening a genome closes the alignment that is open. Go on?')) return;
         if (_genome) _genomeClose();
         _clearFailedLoad();
@@ -118,7 +118,7 @@ function _genomeShow(name) {
     if (g.cache) { g.budget = g.cache.budget; g.cache.clear(); }
     const refId = g.refIds.has(name) ? g.refIds.get(name) : -1;
     Object.assign(g, { chrom: e, refId, cache: new GenomeWindow.TileCache(g.budget), win: { ws: 0, we: 0, t0: -1, t1: -1, id: 0, sig: '', lo: 0, hi: 0 }, plan: null, prevWin: null, tracksHigh: 0, left: 0, barLeft: 0,
-        refLo: 0, refHi: 0, refChain: Promise.resolve(), refFailed: false, lastA: -1, lastB: -1, tooWide: false, waiting: false, callsId: -1, wideBytes: 0 });
+        refLo: 0, refHi: 0, refChain: Promise.resolve(), refFailed: false, refNoFit: false, lastA: -1, lastB: -1, tooWide: false, waiting: false, callsId: -1, wideBytes: 0 });
     const cache = g.cache, loader = refId < 0 ? null : GenomeWindow.createLoader({
         load: (t, isStale) => GenomeWindow.loadTile(BamParser, g.bam, g.index, refId, t, e.length, { isStale }),
         cache, group: GenomeWindow.GROUP,
@@ -276,11 +276,11 @@ const _genomeLocus = (a, b) => `${_genome.chrom.name}:${(a + 1).toLocaleString()
 function _genomeWindowNote() { const w = _genome.win; return `in ${_genomeLocus(w.ws, w.we)} only (the loaded window)`; }
 function _genomeStatusHead() {
     const g = _genome, w = g.win;
-    if (!g.loader) return g.bam ? `${g.chrom.name}: not in the BAM` : `${g.chrom.name}: reference only, no reads`;
+    const lost = g.refFailed ? (g.refNoFit ? ' (the .fai does not fit the FASTA here: no bases, changes or coverage)' : ' (the bases could not be read: no changes or coverage here)') : '';
+    if (!g.loader) return (g.bam ? `${g.chrom.name}: not in the BAM` : `${g.chrom.name}: reference only, no reads`) + lost;
     if (g.tooWide) return `${g.chrom.name}: zoom in to read reads`;
     if (g.waiting) return `reading ${g.chrom.name}...`;
     const n = bamState.allReads.length, drawn = bamState.reads.length < n ? `, ${bamState.reads.length.toLocaleString()} drawn` : '', cut = w.cuts && w.cuts.length ? ` (cut at ${(w.cuts[0][0] + 1).toLocaleString()}-${w.cuts[0][1].toLocaleString()}${w.cuts.length > 1 ? ` and ${w.cuts.length - 1} more` : ''}: too many reads here, the hatched depth is not known)` : '';
-    const lost = g.refFailed ? ' (the bases could not be read: no changes or coverage here)' : '';
     return `${n.toLocaleString()} reads in window ${w.t0 < 0 ? g.chrom.name : _genomeLocus(w.ws, w.we)}${drawn}, ${(g.cache.bytes / 1048576).toFixed(1)} MB held${cut}${lost}`;
 }
 
@@ -292,6 +292,7 @@ function _genomeEnsureRef(lo, hi) {
     g.refChain = g.refChain.then(async () => {
         try {
             if (g.chrom !== chrom || (g.refLo <= lo && hi <= g.refHi && g.refHi > g.refLo)) return;
+            if (!chrom.fits) { await GenomeFasta.checkEntry(g.fasta, chrom); chrom.fits = true; }   // once, when the chromosome is opened
             const pad = Math.max(0, (_GENOME_REF_MIN - (hi - lo)) >> 1), a = Math.max(0, lo - pad), b = Math.min(chrom.length, hi + pad);
             const s = (await GenomeFasta.readBases(g.fasta, chrom, a, b)).toUpperCase();
             if (g.chrom !== chrom || _genome !== g) return;
@@ -300,8 +301,8 @@ function _genomeEnsureRef(lo, hi) {
             _readsSchedule();
         } catch (e) {
             console.error('genome bases:', e);
-            if (g.chrom === chrom) g.refFailed = true;
-            showMessage('The FASTA could not be read: ' + e.message + '. If the file changed on disk, open it again.', 9000);
+            if (g.chrom === chrom) { g.refFailed = true; g.refNoFit = !!e.faiMismatch; }
+            showMessage(e.faiMismatch ? e.message : 'The FASTA could not be read: ' + e.message + '. If the file changed on disk, open it again.', 9000);
         } finally { g.refBusy--; }
     });
     return g.refChain;
