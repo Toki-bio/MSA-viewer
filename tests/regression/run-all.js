@@ -16747,6 +16747,41 @@ check('Large input: a closed Repeat Finder builds no sequence list on load, and 
   return { pass: closed === 0 && /b0/.test(open) && /b2/.test(open) && !/a0/.test(open), detail: JSON.stringify({ closed, open }) };
 });
 
+// ===== colleague check (branch fix/colleague, 2026-11-07): tree bugs =====
+// Helper: a 14-sequence alignment with long names, the tree window open, layout/orientation/font chosen with the real controls.
+function colleagueFasta(n = 14, L = 1200, seed = 7) {
+  const NAMES = ['BlackBackedJackal_Lupulella_mesomelas_KT447688.1', 'RaccoonDog_Nyctereutes_procyonoides_NC_013700.1', 'GrayWolf_Canis_lupus_familiaris_NC_002008.4', 'RedFox_Vulpes_vulpes_voucher_MK123456.1', 'ArcticFox_Vulpes_lagopus_isolate_KX987654.1', 'FennecFox_Vulpes_zerda_mitochondrion_AB123456', 'Dhole_Cuon_alpinus_genome_complete_NC_031234.1', 'AfricanWildDog_Lycaon_pictus_NC_024567.1', 'ManeWolf_Chrysocyon_brachyurus_KT111222.1', 'BushDog_Speothos_venaticus_isolate_JX888777', 'BatEaredFox_Otocyon_megalotis_voucher_KY333444', 'CrabEatingFox_Cerdocyon_thous_NC_099887.1', 'SideStripedJackal_Lupulella_adusta_KT555666', 'GoldenJackal_Canis_aureus_mitochondrion_MN121212'];
+  let s = seed; const r = () => (s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let base = ''; for (let i = 0; i < L; i++) base += 'ACGT'[(r() * 4) | 0];
+  const rate = Array.from({ length: L }, () => r() < 0.5 ? 0.0 : (r() < 0.5 ? 0.04 : 0.25));
+  let out = '';
+  for (let i = 0; i < n; i++) { let q = ''; const lvl = 0.3 + (i % 5) * 0.4; for (let j = 0; j < L; j++) q += r() < rate[j] * lvl ? 'ACGT'[(r() * 4) | 0] : base[j]; out += '>' + NAMES[i % NAMES.length] + '\n' + q + '\n'; }
+  return out;
+}
+async function colleagueTree(page, layout, orient, fontPx) {
+  await loadFasta(page, colleagueFasta());
+  await page.evaluate(() => { state.selectedRows = new Set(state.seqs.map((_, i) => i)); openTreeBuilder(); });
+  await page.waitForSelector('#treeSvgCanvas svg', { timeout: 30000 }); await page.waitForTimeout(500);
+  await page.evaluate(([l, o]) => { document.querySelector(`input[name=treeLayout][value=${l}]`).click(); document.querySelector(`input[name=treeOrientation][value=${o}]`).click(); }, [layout, orient]);
+  for (let i = 0; i < 30; i++) await page.click('#treeSvgToolbar [data-act=font-smaller]');
+  for (let i = 0; i < fontPx - 6; i++) await page.click('#treeSvgToolbar [data-act=font-larger]');
+  await page.waitForTimeout(300);
+}
+
+// Owner's colleague (2026-11-07): in the unrooted tree with horizontal labels the names were cut at the edge of the drawing
+// ("RaccoonDog..." lost 10 px at font 12, up to 31 px at font 20). The label bounds that size the drawing used cos(angle)*width,
+// right only for text rotated along its branch; horizontal text extends its whole width.
+check('Tree: unrooted with horizontal labels, no name is cut at the edge (font 12 and 20)', async (page) => {
+  await colleagueTree(page, 'unrooted', 'horizontal', 12);
+  const cut = () => page.evaluate(() => { const svg = document.querySelector('#treeSvgCanvas svg'), R = svg.getBoundingClientRect(); let mo = 0, n = 0;
+    for (const x of svg.querySelectorAll('text.tree-leaf-label')) { const b = x.getBoundingClientRect(); const o = Math.max(R.left - b.left, b.right - R.right, R.top - b.top, b.bottom - R.bottom, 0); if (o > 1) n++; mo = Math.max(mo, o); }
+    return { cut: n, maxOver: Math.round(mo) }; });
+  const out = { f12: await cut() };
+  for (let i = 0; i < 8; i++) await page.click('#treeSvgToolbar [data-act=font-larger]');
+  await page.waitForTimeout(300); out.f20 = await cut();
+  return { pass: out.f12.cut === 0 && out.f20.cut === 0, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

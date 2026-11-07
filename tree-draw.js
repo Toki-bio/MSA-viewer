@@ -379,7 +379,13 @@
         out.push('<line x1="' + lx.toFixed(1) + '" y1="' + ly.toFixed(1) + '" x2="' + gx.toFixed(1) + '" y2="' + gy.toFixed(1) +
           '" stroke="#b5b5b5" stroke-width="0.8" pointer-events="none"/>');
       }
-      labelBounds.push([px, py], [px + Math.cos(c.th) * c.w, py + Math.sin(c.th) * c.w]);   // the text runs outward from the anchor
+      if (orientation === 'horizontal') {
+        // horizontal text is not rotated: it runs its whole width to the right of the anchor, or to the left when the label is on the left half
+        // (cos(th)*w, right only for text turned along its branch, cut names at the edge of the drawing: colleague check 2026-11-07)
+        labelBounds.push([px, py], [px + (t.anchor === 'end' ? -1 : 1) * c.w, py]);
+      } else {
+        labelBounds.push([px, py], [px + Math.cos(c.th) * c.w, py + Math.sin(c.th) * c.w]);   // the text runs outward from the anchor
+      }
       var titleEl = c.isGroup ? '<title>' + esc(c.members.map(function (m) { return m.name || '?'; }).join(', ')) + '</title>' : '';
       // the omitted names on their own lines under the group label (tspans stack along the label's own axis)
       var restEl = c.rest.map(function (n) {
