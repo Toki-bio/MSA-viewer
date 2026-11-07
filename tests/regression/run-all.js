@@ -17074,6 +17074,30 @@ check('Sequence editor box: Cmd/Ctrl+Shift+Z is Redo, not a second Undo', async 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// GLM audit of the colleague fixes (2026-11-07, #4): the Sequence editor's Complement / Rev Comp took "RNA or DNA" from the open alignment even in freeform
+// mode (no row selected), where the text is a pasted sequence with nothing to do with it: a DNA sequence pasted while an RNA alignment is open came back
+// with U. A row of the alignment still follows the alignment; a freeform text follows the text itself (any U and no T in it).
+check('Sequence editor box: Complement in freeform mode decides DNA/RNA from the pasted text, a row follows the alignment', async (page) => {
+  const out = {};
+  const run = async (open, text, btn) => {
+    await page.evaluate(open); await page.waitForTimeout(250);
+    if (text !== null) await page.fill('#seqEditTextarea', text);
+    await page.click('#' + btn); await page.waitForTimeout(150);
+    const v = (await page.inputValue('#seqEditTextarea')).split(String.fromCharCode(10)).slice(1).join(String.fromCharCode(10)); await page.click('#seqEditCancelBtn'); await page.waitForTimeout(150); return v;
+  };
+  await loadFasta(page, '>r1\nAUGGCUACGUAGCUAG\n>r2\nGGCAGCCAGGCAGCGC\n');
+  out.dnaInRna = await run(() => openSeqEditor(-1), '>p\nATGC', 'seqEditComplement');
+  out.dnaInRnaRc = await run(() => openSeqEditor(-1), '>p\nATGC', 'seqEditRevComp');
+  out.rnaInRna = await run(() => openSeqEditor(-1), '>p\nAUGC', 'seqEditComplement');
+  out.rowOfRna = await run(() => openSeqEditor(1), null, 'seqEditComplement');   // r2 has no U: the alignment says RNA, G and C only change
+  await loadFasta(page, '>d1\nATGGCTACGTAGCTAG\n>d2\nGGCAGCCAGGCAGCGC\n');
+  out.rnaInDna = await run(() => openSeqEditor(-1), '>q\nAUGC', 'seqEditComplement');
+  out.rowOfDna = await run(() => openSeqEditor(0), null, 'seqEditComplement');
+  const ok = out.dnaInRna === 'TACG' && out.dnaInRnaRc === 'GCAT' && out.rnaInRna === 'UACG' && out.rowOfRna === 'CCGUCGGUCCGUCGCG'
+    && out.rnaInDna === 'UACG' && out.rowOfDna === 'TACCGATGCATCGATC';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

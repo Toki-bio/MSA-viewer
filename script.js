@@ -27231,13 +27231,22 @@ function seqEditReverse() {
 
 // the Sequence editor's complement: in an RNA alignment A pairs with U (the alignment decides, as for Reverse complement)
 function _seqEditComp(rna) { return b => (rna && (b === 'A' || b === 'a')) ? (b === 'A' ? 'U' : 'u') : (_complementMap[b] || b); }
+// RNA or DNA for the editor's Complement / Rev Comp: a row of the alignment follows the alignment; freeform mode (no row) is a pasted text with nothing
+// to do with the open alignment, so the text itself decides (any U and no T in it)
+function _seqEditRna() {
+    if (document.getElementById('seqEditIndex')?.textContent === '-1') {
+        const body = (document.getElementById('seqEditTextarea')?.value || '').split(/\r?\n/).filter(l => !l.trim().startsWith('>'));
+        return alignmentIsRna(body.map(l => ({ seq: l })));
+    }
+    return alignmentIsRna();
+}
 function seqEditComplement() {
-    const f = _seqEditComp(alignmentIsRna());
+    const f = _seqEditComp(_seqEditRna());
     _seqEditTransform(seq => seq.split('').map(f).join(''));
 }
 
 function seqEditRevComp() {
-    const f = _seqEditComp(alignmentIsRna());
+    const f = _seqEditComp(_seqEditRna());
     _seqEditTransform(seq => seq.split('').reverse().map(f).join(''));
 }
 
