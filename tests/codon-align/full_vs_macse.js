@@ -27,7 +27,7 @@ for (const id of ids) {
     const f1 = names.map(x => fsC(by[x])), f2 = names.map(x => fsC(mb[x] || ''));
     if (f1.every((v, i) => v === f2[i])) same++;
     fsMine += f1.reduce((s, v) => s + v, 0); fsMac += f2.reduce((s, v) => s + v, 0);
-    const iS = names.indexOf('Csokolovi'), iG = names.indexOf('Cgriseus');
+    const iS = names.indexOf('HamA'), iG = names.indexOf('Cgriseus');
     if (iS >= 0 && iG >= 0) { const m1 = f1[iS] > 0 && f1[iG] === 0, m2 = f2[iS] > 0 && f2[iG] === 0; if (m1) sokOnlyMine++; if (m2) sokOnlyMac++; if (m1 && m2) both++; }
     fs.appendFileSync(outPath, `${id}\t${inp[0].seq.length}\t${ms}\t${agree.toFixed(4)}\t${f1.join(',')}\t${f2.join(',')}\n`);
 }
@@ -35,4 +35,4 @@ const srt = [...ag].sort((x, y) => x - y);
 console.log(`genes ${n} (errors ${errs}); total ${((Date.now() - t0) / 1000).toFixed(0)} s; slowest ${maxId} ${maxMs} ms`);
 console.log(`agreement mean ${(ag.reduce((s, v) => s + v, 0) / n).toFixed(4)} median ${srt[Math.floor(n / 2)].toFixed(4)} q05 ${srt[Math.floor(n * 0.05)].toFixed(4)} min ${srt[0].toFixed(4)}; genes <0.95: ${ag.filter(v => v < 0.95).length}`);
 console.log(`identical fs counts ${same}/${n}; total frameshift codons mine ${fsMine} vs MACSE ${fsMac}`);
-console.log(`sokolovi-fs & griseus-clean: mine ${sokOnlyMine}, MACSE ${sokOnlyMac}, both ${both}`);
+console.log(`hamA-fs & griseus-clean: mine ${sokOnlyMine}, MACSE ${sokOnlyMac}, both ${both}`);
