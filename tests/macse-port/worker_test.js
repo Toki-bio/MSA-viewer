@@ -42,8 +42,8 @@ const check = (cond, msg) => { if (!cond) { fails++; console.log('FAIL', msg); }
 
     // 1. reversed order, names with commas/parentheses
     const byName = Object.fromEntries(inp.map(r => [r.name, r.seq]));
-    const order = ['Prob', 'Csokolovi', 'CricCric', 'Cgriseus'];
-    const disp = { Cgriseus: 'Cgriseus (CriGri, PICRH)', Csokolovi: 'C. sokolovi', Prob: 'Prob', CricCric: 'CricCric' };
+    const order = ['Prob', 'HamA', 'CricCric', 'Cgriseus'];
+    const disp = { Cgriseus: 'Cgriseus (CriGri, PICRH)', HamA: 'hamster A', Prob: 'Prob', CricCric: 'CricCric' };
     const fasta = order.map(n => `>${disp[n]}\n${byName[n]}\n`).join('');
     let out = await w.send({ id: 1, type: 'align', fasta, opts: { engine: 'macse', frameRestored: true } });
     let fin = out[out.length - 1];
@@ -57,13 +57,13 @@ const check = (cond, msg) => { if (!cond) { fails++; console.log('FAIL', msg); }
     check(fin.stats.engine === 'macse' && fin.stats.columns > 0 && fin.stats.wasm === true, 'stats report the engine, codon columns and the WebAssembly kernel');
 
     // 2. user letters survive: lower case, U, IUPAC codes
-    const s0 = byName.Csokolovi;
+    const s0 = byName.HamA;
     const tweak = s0.slice(0, 30).toLowerCase() + 'U' + s0.slice(31, 60) + 'W' + s0.slice(61);
-    const fasta2 = `>Cgriseus\n${byName.Cgriseus}\n>Csokolovi\n${tweak}\n>Prob\n${byName.Prob}\n>CricCric\n${byName.CricCric}\n`;
+    const fasta2 = `>Cgriseus\n${byName.Cgriseus}\n>HamA\n${tweak}\n>Prob\n${byName.Prob}\n>CricCric\n${byName.CricCric}\n`;
     out = await w.send({ id: 2, type: 'align', fasta: fasta2, opts: { engine: 'macse' } });
     fin = out[out.length - 1];
     res = parse(fin.result);
-    check(res.find(r => r.name === 'Csokolovi').seq.replace(/-/g, '') === tweak, 'lower case, U and W are kept in the output');
+    check(res.find(r => r.name === 'HamA').seq.replace(/-/g, '') === tweak, 'lower case, U and W are kept in the output');
 
     // 3. raw MACSE output with '!' when frameRestored is false
     out = await w.send({ id: 3, type: 'align', fasta, opts: { engine: 'macse', frameRestored: false } });
