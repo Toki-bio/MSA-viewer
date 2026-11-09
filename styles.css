@@ -1837,7 +1837,7 @@ span.ge-col-flash {
     /* --text-dy: how far the letters move down from where the browser puts them, so that the capitals
        are centred in the row as in Canvas (set with --row-h; 0 when the browser's place is right) */
     --text-dy: 0px;
-    /* --row-overlap: one device pixel at a fractional browser zoom (90 %, 110 %, 125 %...), 0 at a whole one:
+    /* --row-overlap: two device pixels (one was not always enough, 2026-11-09: see _syncResidueWidthVar) at a fractional browser zoom (90 %, 110 %, 125 %...), 0 at a whole one:
        each cell paints that much under the cell below it, because --row-h asks for whole device pixels but
        layout keeps 1/64 px units, so row edges fall between device pixels and a blended, lighter row showed
        between two shaded rows (at 90 % a grey line between two black rows, v274). */

@@ -5086,6 +5086,20 @@ check('Canvas mode: codon analysis draws stops, syn/nonsyn, the codon track, fra
     return [...f.entries()].sort((a, b) => b[1] - a[1]);
   }, { x, y, w, h });
   const has = (list, c) => list.some(([k]) => k === c);
+  // A letter's colour (the AA letters, the stop letters, the frame tags) counts within LETTER_TOL per channel:
+  // on Linux (Liberation Mono for Courier New, software antialiasing; owner 2026-11-09) no pixel of a letter
+  // reaches its exact colour (nearest: 11 off for the ATG letter, rgb(40, 79, 145) for rgb(29, 79, 145); 19 for the
+  // frame-2 tag; 7 for frame 3). 19 is the smallest that passes there. It cannot take another colour for the letter:
+  // the boxes' backgrounds are >= 100 away from their letters, and a frame tag's row is 49 (Windows) / 59 (Linux)
+  // from the nearest other tag colour, white or the black names far more.
+  const LETTER_TOL = 19;
+  const letterDist = {};
+  const hasLetter = (list, c, what) => {
+    const w = c.match(/\d+/g).map(Number);
+    let best = 999; for (const [k] of list) { const m = k.match(/\d+/g).map(Number); best = Math.min(best, Math.max(Math.abs(m[0] - w[0]), Math.abs(m[1] - w[1]), Math.abs(m[2] - w[2]))); }
+    letterDist[what] = best;
+    return best <= LETTER_TOL;
+  };
   const top = list => list[0] && list[0][0];
   const bad = [];
   let g = await geom();
@@ -5094,7 +5108,7 @@ check('Canvas mode: codon analysis draws stops, syn/nonsyn, the codon track, fra
   // 1. stop codon bases (ref, last three columns) are pink with a red letter
   const stopCols = await page.evaluate(() => state._codonData.stops[0]);
   const stopCell = await colors(cellX(stopCols[0]), rowY(0), g.charW, g.charH);
-  if (top(stopCell) !== want.ntStopBg || !has(stopCell, want.ntStopFg)) bad.push(`stop base cell: ${JSON.stringify(stopCell.slice(0, 3))}, wanted bg ${want.ntStopBg} + fg ${want.ntStopFg}`);
+  if (top(stopCell) !== want.ntStopBg || !hasLetter(stopCell, want.ntStopFg, 'ntStopFg')) bad.push(`stop base cell: ${JSON.stringify(stopCell.slice(0, 3))}, wanted bg ${want.ntStopBg} + fg ${want.ntStopFg}`);
   // 2. syn (green) and nonsyn (red) underlines on the sub row
   const sn = await page.evaluate(() => { const r = state._codonData.synNonSyn[1]; const out = {}; for (let p = 0; p < 12; p++) if (r && r[p]) out[r[p]] = out[r[p]] ?? p; return out; });
   if (sn.syn == null || sn.nonsyn == null) bad.push('fixture has no syn/nonsyn codon: ' + JSON.stringify(sn));
@@ -5105,9 +5119,9 @@ check('Canvas mode: codon analysis draws stops, syn/nonsyn, the codon track, fra
   }
   // 3. codon track: ATG box (hydrophobic class) with its letter, stop box red
   const mBox = await colors(cellX(0), aaY(0), 3 * g.charW, g.aaRowH);
-  if (top(mBox) !== want.hydBg || !has(mBox, want.hydFg)) bad.push(`ATG codon box: ${JSON.stringify(mBox.slice(0, 3))}, wanted ${want.hydBg} + ${want.hydFg}`);
+  if (top(mBox) !== want.hydBg || !hasLetter(mBox, want.hydFg, 'hydFg')) bad.push(`ATG codon box: ${JSON.stringify(mBox.slice(0, 3))}, wanted ${want.hydBg} + ${want.hydFg}`);
   const stopBox = await colors(cellX(stopCols[0]), aaY(0), 3 * g.charW, g.aaRowH);
-  if (top(stopBox) !== want.stopBg || !has(stopBox, want.stopFg)) bad.push(`stop codon box: ${JSON.stringify(stopBox.slice(0, 3))}, wanted ${want.stopBg} + ${want.stopFg}`);
+  if (top(stopBox) !== want.stopBg || !hasLetter(stopBox, want.stopFg, 'stopFg')) bad.push(`stop codon box: ${JSON.stringify(stopBox.slice(0, 3))}, wanted ${want.stopBg} + ${want.stopFg}`);
   // 4. frameshift mark on del1 (gap at column 21): a red "!" cell on the track at the run start
   const fsAt = await page.evaluate(() => (state._codonData.frameShifts[2] || []).filter(f => f.type === 'indel').map(f => f.runStart));
   if (!fsAt.length) bad.push('fixture has no frameshift on del1');
@@ -5125,7 +5139,7 @@ check('Canvas mode: codon analysis draws stops, syn/nonsyn, the codon track, fra
     const tagCols = await Promise.all([0, 1, 2].map(k => colors(0, aaY(0, k), g.nameW, g.aaRowH)));
     const tagColors = ['rgb(59, 111, 214)', 'rgb(42, 138, 68)', 'rgb(194, 120, 0)'];   // frame 1, 2, 3 tags (styles.css .aa-row-fN .aa-tag)
     // rows are frame 1 at the top .. frame 3 at the bottom, as _codonRowsFor appends them in the DOM
-    const seen = tagCols.map(c => tagColors.findIndex(t => has(c, t)));
+    const seen = tagCols.map((c, k) => tagColors.findIndex((t, i) => hasLetter(c, t, `tag${k}f${i}`)));
     if (JSON.stringify(seen) !== JSON.stringify([0, 1, 2])) bad.push(`frame tags per row: ${JSON.stringify(seen)} (expected [0,1,2])`);
   }
   await page.evaluate(() => { const s = document.getElementById('codonFrame'); s.value = 'auto'; s.dispatchEvent(new Event('change', { bubbles: true })); }); await settle();
@@ -5161,7 +5175,7 @@ check('Canvas mode: codon analysis draws stops, syn/nonsyn, the codon track, fra
   }
   for (const [l, r] of Object.entries(scroll)) if (r.copies < 1 || !r.same || (r.moved[0] === 0 && r.moved[1] === 0)) bad.push(`scroll ${l}: ${JSON.stringify(r)}`);
   await tick('codonAnalysis', false); await settle();
-  const out = { want, stopCols, sn, fsAt, tip, scroll };
+  const out = { want, stopCols, sn, fsAt, tip, scroll, letterDist };
   return { pass: bad.length === 0, detail: bad.length ? bad.join('; ') + ' ' + JSON.stringify(out) : JSON.stringify(out) };
 });
 
@@ -5695,7 +5709,12 @@ check('Canvas rows have the Full row height; Highlight diffs in Full draws no da
   const shot = await page.screenshot({ clip: { x: Math.floor(box.x), y: Math.floor(box.y) - 1, width: Math.ceil(box.w), height: 15 } });
   const col = await page.evaluate(async (b64) => { const i = new Image(); i.src = 'data:image/png;base64,' + b64; await i.decode(); const c = document.createElement('canvas'); c.width = i.width; c.height = i.height; const x = c.getContext('2d'); x.drawImage(i, 0, 0); const d = x.getImageData(0, 0, c.width, c.height).data; const row = (y) => [d[(y * c.width) * 4], d[(y * c.width) * 4 + 1], d[(y * c.width) * 4 + 2]]; return { rows: Array.from({ length: c.height }, (_, y) => row(y)[0]) }; }, shot.toString('base64'));
   // left edge column of the cell, top to bottom: background tint, no darker band at a row edge
-  const bgRows = col.rows.slice(2, 13), tint = Math.max(...bgRows);
+  // the tint: the value most of rows 2-12 share, i.e. the letter-free pixels (it was their brightest pixel; on Linux
+  // the wider Liberation Mono "G" reaches this column, 155-181 over the plain 153, which made 153 look like a dark
+  // line; owner 2026-11-09)
+  const bgRows = col.rows.slice(2, 13), freq = new Map();
+  for (const v of bgRows) freq.set(v, (freq.get(v) || 0) + 1);
+  const tint = [...freq.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0][0];
   const darkLine = col.rows.some((v, y) => y <= 2 && v < tint - 12);
   await setMode(page, 'canvas'); await page.waitForTimeout(600);
   const cvPitch = await page.evaluate(() => _canvasState.rowPitch);
@@ -16784,7 +16803,11 @@ check('Tree: unrooted with horizontal labels, no name is cut at the edge (font 1
 
 // Same colleague: Fit on the unrooted tree left the zoom at 100 % and a 746 px drawing in a 480 px panel, though the button's tooltip says it fits the whole panel.
 check('Tree: Fit on an unrooted tree fits the drawing, labels included, in the panel', async (page) => {
-  await colleagueTree(page, 'unrooted', 'horizontal', 20);
+  // font 16, not 20 (owner 2026-11-09): on Linux system-ui falls back to Liberation Mono, whose labels are a quarter wider
+  // (345.7 px for the longest name at 12 px vs 279 on Windows), so at 20 no zoom fits and Fit rightly stays at 100 % (the
+  // check below). At 16 the drawing at 100 % is still wider than the panel on both (1209 px Windows, 1376 px Linux, panel
+  // 1166), so Fit has to shrink it (to 88 % and 54 %).
+  await colleagueTree(page, 'unrooted', 'horizontal', 16);
   await page.click('#treeSvgToolbar [data-act=zoom-in]'); await page.click('#treeSvgToolbar [data-act=zoom-in]'); await page.waitForTimeout(200);
   await page.click('#treeSvgToolbar [data-act=zoom-fit]'); await page.waitForTimeout(400);
   const r = await page.evaluate(() => { const c = document.getElementById('treeSvgCanvas'), s = c.querySelector('svg'), R = s.getBoundingClientRect(), C = c.getBoundingClientRect(); let out = 0;

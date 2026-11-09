@@ -723,7 +723,11 @@ function _syncResidueWidthVar(fontSize) {
     const fontPx = parseFloat(size) || 13, rowH = _rowHeightPx(fontPx), fm = _fontMetrics(fontPx);
     alignmentContainer.style.setProperty('--row-h', rowH + 'px');
     const dprNow = window.devicePixelRatio || 1;
-    alignmentContainer.style.setProperty('--row-overlap', (Math.abs(dprNow - Math.round(dprNow)) < 1e-6 ? 0 : (1 / dprNow).toFixed(4)) + 'px');
+    // two device pixels, not one: a cell's painted box does not end where its layout box does (measured by colouring
+    // rows: up to about a device pixel short), so with one pixel of overlap the white page showed through part of the
+    // boundary row (measured 2026-11-09, software drawing as on Linux CI or Windows --disable-gpu: 240 at 110 %,
+    // 327 at 125 %, out of 765; 0 with two pixels, GPU and software alike)
+    alignmentContainer.style.setProperty('--row-overlap', (Math.abs(dprNow - Math.round(dprNow)) < 1e-6 ? 0 : (2 / dprNow).toFixed(4)) + 'px');
     // --text-dy moves the DOM's baseline down onto the device row _textBaselineDev. The browser puts the
     // text's content area at a half-leading it rounds to whole CSS px, then the glyphs at the floor of
     // (row top + content top + rounded ascent) in device px, and at a fractional browser zoom the row
@@ -6956,7 +6960,13 @@ function _renderCanvasAlignment(len, conservationData, shadeMode, blackThresh, d
                 const e = Math.round((NAME_W + kk * CHAR_W - ox) * dpr);
                 return left ? Math.max(fixed, Math.min(e, xDev)) : Math.min(W, Math.max(e, xDev));
             };
-            if (dxDev > 0) drawClipped(colEdgeDev(W - dxDev, true), 0, W, H);
+            // Scrolling right, the strip takes one more whole cell on its left: a glyph wider than its cell (the
+            // bold codon-track letters in Liberation Mono, Linux, 9 px of ink in an 8 px cell) has ink in the cell
+            // to its left, which a full redraw keeps (that cell is drawn first) but a strip that started at the
+            // glyph's cell edge never drew, so the copy kept a column without it (measured 2026-11-09: one column
+            // at the canvas's right edge, up to 11 units off a full redraw, depending on the wheel steps).
+            // Scrolling left needs nothing: drawRegion draws the cell at the strip's right edge too.
+            if (dxDev > 0) drawClipped(colEdgeDev(W - dxDev - CHAR_W * dpr, true), 0, W, H);
             else if (dxDev < 0) drawClipped(fixed, 0, colEdgeDev(fixed - dxDev, false), H);
             else if (dyDev > 0) drawClipped(0, rowEdgeDev(H - dyDev, true), W, H);
             else drawClipped(0, 0, W, rowEdgeDev(-dyDev, false));
@@ -19699,7 +19709,14 @@ function _exportAlignmentAsSvg(mode = 'viewport') {
         const fontFamily = style.fontFamily || 'monospace';
         const fontWeight = style.fontWeight || '400';
         const fontStyle = style.fontStyle || 'normal';
-        const textY = y0 + r.height - Math.max(1, r.height * 0.18);
+        // The baseline from where the letters really are: a residue span has a top padding of 2 * --text-dy and a
+        // line box that much shorter, which moves its letters down by half the padding (--text-dy), and a bottom
+        // padding (--row-overlap) that is painted under the row below and holds no text. Using the whole box put
+        // the residues --text-dy above their names and above the screen where --text-dy is not 0 (1 px with
+        // Liberation Mono on Linux, 2026-11-09).
+        const padT = parseFloat(style.paddingTop) || 0, padB = parseFloat(style.paddingBottom) || 0;
+        const boxH = r.height - padB;
+        const textY = y0 + padT / 2 + boxH - Math.max(1, boxH * 0.18);
 
         if (!_isTransparentCssColor(bg)) {
             bgRects.push(`<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" fill="${_escapeXmlText(bg)}" />`);
