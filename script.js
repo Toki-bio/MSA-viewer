@@ -28892,19 +28892,20 @@ const DEMOS = {
         file: 'examples/demo/alu_subfamilies.fa',
         title: 'Alu copies (k-mer groups example)',
         place: { sel: '#clusterGuideTreeButton', how: 'title' },
-        // the panel's own defaults, set here so the example does not depend on what the panel shows
+        // method peel (owner, 2026-11-09: tree cut mixes these old subfamilies); the other settings are the panel's defaults
         run: async () => {
             const set = (id, v) => { const e = el(id); if (e) e.value = v; };
-            set('guideTreeMethod', 'tree'); set('guideTreeMetric', 'pdist'); set('guideTreeK', '6');
+            set('guideTreeMethod', 'peel'); el('guideTreeMethod')?.dispatchEvent(new Event('change')); set('guideTreeMetric', 'pdist'); set('guideTreeK', '6');
             set('guideTreeLinkage', 'average'); set('guideTreeMinSize', '2'); set('guideTreeGroups', '');
             if (el('guideTreeAuto')) el('guideTreeAuto').checked = true;
             for (const id of ['clusterSelColsOnly', 'clusterSelRowsOnly']) if (el(id)) el(id).checked = false;
             await clusterByGuideTree();
         },
-        // DRAFT note
-        note: 'This is svk_k4.fa from the examples folder of the GitHub repository. "Group by k-mer" (Clustering menu, k-mer groups) '
-            + 'built a similarity tree of the sequences and cut it into groups, with the panel\'s default settings; every sequence was assigned. '
-            + 'Look at the sequence names and the bases: each group has its own colour.'
+        note: "This is alu_subfamilies.fa from the examples/demo folder of the GitHub repository: 36 full-length Alu copies from "
+            + "human chromosome 1 (hg38, UCSC RepeatMasker), 12 each of AluY, AluSx and AluJb. \"Group by k-mer\" (Clustering menu, "
+            + "k-mer groups) with method \"peel\" split off groups that share diagnostic columns: all 12 AluY copies form one group, "
+            + "and the 24 AluSx and AluJb copies form the other. AluSx and AluJb stay together: these old copies carry so many of "
+            + "their own mutations that the few columns telling the two apart are not enough. Each group has its own colour."
     },
     snp: {
         name: 'Diagnostic SNPs',
@@ -28920,11 +28921,11 @@ const DEMOS = {
             set('sizeSmallMediumInput', '11'); set('sizeMediumLargeInput', '20'); set('minOccurrencesInput', '3');
             await clusterSequences();
         },
-        // DRAFT note
-        note: 'This is svk_k4.fa from the examples folder of the GitHub repository: 40 SINE copies, 10 each of K1-K4. '
-            + '"Find SNP groups" (Clustering menu, Diagnostic SNPs) looked for columns where a set of sequences shares a base the others lack, '
-            + 'and grouped the sequences by them with the default thresholds. Coloured names and bases are the groups found; '
-            + 'sequences without such columns stay uncoloured.'
+        note: "This is alu_subfamilies.fa from the examples/demo folder of the GitHub repository: 36 full-length Alu copies from "
+            + "human chromosome 1 (hg38, UCSC RepeatMasker), 12 each of AluY, AluSx and AluJb. \"Find SNP groups\" (Clustering menu, "
+            + "Diagnostic SNPs) looked for columns where a set of sequences shares a base the others lack, and grouped the sequences "
+            + "by them with the default thresholds. It found 2 types: 3 AluY copies, and the 24 AluSx and AluJb copies together. The "
+            + "other 9 AluY copies share no such columns and stay uncoloured."
     },
     bicluster: {
         name: '2D analysis',
