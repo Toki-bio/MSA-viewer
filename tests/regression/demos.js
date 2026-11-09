@@ -8,18 +8,18 @@ const { start } = require('../lib/static-server');
 const { launch, closeLaunched } = require('../lib/browser');
 
 const FILES = {
-    kmer: { file: 'examples/svk_k4.fa' },
-    snp: { file: 'examples/svk_k4.fa' },
-    bicluster: { file: 'examples/svk_k4.fa' },
+    kmer: { file: 'examples/demo/alu_subfamilies.fa' },
+    snp: { file: 'examples/demo/alu_subfamilies.fa' },
+    bicluster: { file: 'examples/demo/alu_subfamilies.fa' },
     trim: { file: 'examples/svk_k4.fa' },
-    autocolour: { file: 'examples/svk_k4.fa' },
-    macse: { file: 'examples/synthetic/synth_msa.fa' },
+    autocolour: { file: 'examples/demo/alu_subfamilies.fa' },
+    macse: { file: 'examples/demo/cmah_primates.fa' },
     codon: { file: 'examples/real/ncbi_NC_012920_human_mito.gb' },
-    dotplot: { file: 'examples/synthetic/synth_dotplot.fa' },
+    dotplot: { file: 'examples/demo/alu_copy.fa' },
     repeats: { file: 'examples/synthetic/synth_msa.fa' },
     resites: { file: 'examples/real/ncbi_NC_012920_human_mito.gb' },
     reads: { file: 'examples/synthetic/synth_ref.fa', reads: 'examples/synthetic/synth_reads.bam' },
-    tree: { file: 'examples/svk_k4.fa' },
+    tree: { file: 'examples/demo/andricus_cytb.fa' },
 };
 
 // What each feature leaves behind when it really ran: read from the feature's own state and DOM
@@ -76,7 +76,7 @@ const PROBES = {
         const vis = document.getElementById('treeBuilderModal').style.display !== 'none';
         const nwk = document.getElementById('treeNewickOutput');
         const t = (nwk && (nwk.value || nwk.textContent)) || '';
-        return { ok: vis && /^\(.*\);?\s*$/s.test(t.trim()) && t.includes('K1_001'), detail: { vis, nwk: t.slice(0, 60) } };
+        return { ok: vis && /^\(.*\);?\s*$/s.test(t.trim()) && t.includes('JQ416415'), detail: { vis, nwk: t.slice(0, 60) } };
     },
 };
 

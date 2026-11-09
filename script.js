@@ -28889,8 +28889,8 @@ async function _demoUntil(test, ms = 30000) {
 const DEMOS = {
     kmer: {
         name: 'k-mer groups',
-        file: 'examples/svk_k4.fa',   // TODO file: examples/demo/alu_subfamilies.fa (not made yet)
-        title: 'SINE copies (k-mer groups example)',
+        file: 'examples/demo/alu_subfamilies.fa',
+        title: 'Alu copies (k-mer groups example)',
         place: { sel: '#clusterGuideTreeButton', how: 'title' },
         // the panel's own defaults, set here so the example does not depend on what the panel shows
         run: async () => {
@@ -28908,8 +28908,8 @@ const DEMOS = {
     },
     snp: {
         name: 'Diagnostic SNPs',
-        file: 'examples/svk_k4.fa',
-        title: 'SINE copies K1-K4 (diagnostic SNPs example)',
+        file: 'examples/demo/alu_subfamilies.fa',
+        title: 'Alu copies (diagnostic SNPs example)',
         place: { sel: '#clusterNowButton', how: 'title' },
         // the factory thresholds (the "optimal" preset, createOptimalPreset), not a preset the user saved
         run: async () => {
@@ -28928,18 +28928,17 @@ const DEMOS = {
     },
     bicluster: {
         name: '2D analysis',
-        file: 'examples/svk_k4.fa',   // TODO file
-        title: 'SINE copies (2D analysis example)',
+        file: 'examples/demo/alu_subfamilies.fa',
+        title: 'Alu copies (2D analysis example)',
         place: { sel: '#biclusterComputeButton', how: 'title' },
         run: async () => { computeAndShowBicluster(); },
-        // DRAFT note
-        note: 'This is svk_k4.fa from the examples folder of the GitHub repository. "Show 2D" (Clustering menu, 2D analysis) drew '
-            + 'rectangles over stretches where a subset of rows share a local pattern of bases. '
-            + 'Each rectangle covers those rows and columns; the status line under the button lists them. Row order is not changed.'
+        note: "This is alu_subfamilies.fa from the examples/demo folder of the GitHub repository: 36 full-length Alu copies from human "
+            + "chromosome 1 (hg38, UCSC RepeatMasker), 12 each of AluY, AluSx and AluJb. \"Show 2D\" (Clustering menu, 2D analysis) drew "
+            + "rectangles over stretches where a set of rows shares a local pattern of bases; here most are conserved stretches shared "
+            + "by all 36 copies. The status line under the button lists them. Row order is not changed."
     },
     trim: {
         name: 'Trimming',
-        // TODO file: examples/real/pfam_PF00046_seed.sto was asked for, but it has no gappy ends (Preview keeps all 66 columns)
         file: 'examples/svk_k4.fa',
         title: 'SINE copies (trimming example)',
         place: { sel: '#previewTrimButton', how: 'title' },
@@ -28950,38 +28949,38 @@ const DEMOS = {
             set('leftGapInput', '60'); set('rightGapInput', '60'); set('edgeWindowInput', '20');
             previewTrimming();
         },
-        // DRAFT note
         note: 'This is svk_k4.fa from the examples folder of the GitHub repository. "Preview" (Clustering menu, Trimming) measured the '
             + 'gappy ends with Left 60 %, Right 60 % and Window 20, filled Keep, and painted the columns to be cut on the Consensus row. '
             + 'Nothing was deleted: drag the coloured edges or edit Keep, then Trim.'
     },
     autocolour: {
         name: 'Auto-Color by Similarity',
-        file: 'examples/svk_k4.fa',   // TODO file
-        title: 'SINE copies (auto-colour example)',
+        file: 'examples/demo/alu_subfamilies.fa',
+        title: 'Alu copies (auto-colour example)',
         place: { sel: '#colourAutoButton', how: 'wrap' },
         run: async () => {
-            if (el('colourSimilarityChars')) el('colourSimilarityChars').value = '2';   // the names here are K1_..., K2_...
+            if (el('colourSimilarityChars')) el('colourSimilarityChars').value = '4';   // the names start AluY, AluS, AluJ
             autoColourBySimilarity();
         },
-        // DRAFT note
-        note: 'This is svk_k4.fa from the examples folder of the GitHub repository. "Auto-Color by Similarity" (Colour Names menu) '
-            + 'compared the first 2 characters of the sequence names and gave names that look alike one colour. '
-            + 'It reads the names only, not the sequences.'
+        note: "This is alu_subfamilies.fa from the examples/demo folder of the GitHub repository: 36 full-length Alu copies from human "
+            + "chromosome 1 (hg38, UCSC RepeatMasker), 12 each of AluY, AluSx and AluJb. \"Auto-Color by Similarity\" (Colour Names menu)"
+            + " compared the first 4 characters of the names (AluY, AluS, AluJ) and gave names that look alike one colour: 3 colours, 1"
+            + "2 names each. It reads the names only, not the sequences."
     },
     macse: {
         name: 'Codon alignment (MACSE)',
-        file: 'examples/synthetic/synth_msa.fa',   // TODO file: a cytb set with a NUMT
-        title: 'Synthetic coding alignment (MACSE example)',
+        file: 'examples/demo/cmah_primates.fa',
+        title: 'CMAH coding sequences of primates (MACSE example)',
         place: { sel: '#macsePresetButton', how: 'wrap' },
         run: async () => {
             openMacsePreset(false);
             await realignAll();
         },
-        // DRAFT note
-        note: 'This is synthetic/synth_msa.fa from the examples folder of the GitHub repository (row beta_fs has a one-base deletion). '
-            + '"Codon alignment (MACSE)" set Sequence type to Coding sequence (Alignment menu), then Realign All aligned the '
-            + 'sequences codon by codon with MACSE v2.07, allowing frameshifts. The message line gives the frameshifts and stops; details are in the browser console.'
+        note: "This is cmah_primates.fa from the examples/demo folder of the GitHub repository: the CMAH coding sequence of chimpanzee,"
+            + " bonobo, gorilla, orangutan, macaque and human (GenBank). The human copy lacks 92 bases, an exon lost in human evolution"
+            + "; 92 is not a multiple of 3, so the reading frame shifts. \"Codon alignment (MACSE)\" (Alignment menu) aligned the sequenc"
+            + "es codon by codon with MACSE v2.07, which allows frameshifts: it reports one frameshift, in the human row only, and no i"
+            + "nternal stop. Details are in the browser console."
     },
     codon: {
         name: 'Codon analysis',
@@ -28998,15 +28997,14 @@ const DEMOS = {
             const first = ph ? ph.findIndex(p => p >= 0) : -1;
             if (first > 0) requestAnimationFrame(() => _scrollToColumn(first));
         },
-        // DRAFT note
         note: 'This is the human mitochondrial genome (NCBI NC_012920, GenBank) from the examples folder of the GitHub repository. '
             + 'Codon analysis (Display menu) took each CDS of the annotation in its own frame and strand, coloured the codon positions '
             + 'and marked stop codons. The view starts at the first CDS.'
     },
     dotplot: {
         name: 'Dot Plot',
-        file: 'examples/synthetic/synth_dotplot.fa',   // TODO file: one Alu copy, self-comparison
-        title: 'Synthetic sequences (dot plot example)',
+        file: 'examples/demo/alu_copy.fa',
+        title: 'One AluY copy (dot plot example)',
         place: { sel: '#dotPlotDockClear', how: 'before' },
         // the same call as the row menu's "Dot-plot (self)" on the first row
         run: async () => {
@@ -29015,14 +29013,14 @@ const DEMOS = {
             await openDotPlot(u, u, s.header, s.header, { rowIndexA: 0, rowIndexB: 0, alignedSeqA: s.seq, alignedSeqB: s.seq });
             await _demoUntil(() => !_dotPlotState.computing, 30000);
         },
-        // DRAFT note
-        note: 'This is synthetic/synth_dotplot.fa from the examples folder of the GitHub repository. The dot plot compares the first '
-            + 'sequence with itself (as "Dot-plot (self)" in the menu of a sequence name): the main diagonal is the sequence matching itself, and '
-            + 'lines beside it are repeated stretches.'
+        note: "This is alu_copy.fa from the examples/demo folder of the GitHub repository: one AluY copy from human chromosome 1 (hg38 "
+            + "chr1:11,897,747-11,898,057). The dot plot compares it with itself (as \"Dot-plot (self)\" in the menu of a sequence name)."
+            + " The main diagonal is the sequence matching itself. Alu is made of two similar halves, so short lines appear off the dia"
+            + "gonal, about 135 positions away; the dense block at the end is the A-rich tail."
     },
     repeats: {
         name: 'Repeat Finder',
-        file: 'examples/synthetic/synth_msa.fa',   // TODO file
+        file: 'examples/synthetic/synth_msa.fa',
         title: 'Synthetic alignment (repeat finder example)',
         place: { sel: '#repeatFinderMaxBtn', how: 'before' },
         run: async () => {
@@ -29034,7 +29032,6 @@ const DEMOS = {
             runRepeatAnalysis();
             await _demoUntil(() => !_repeatJob, 60000);
         },
-        // DRAFT note
         note: 'This is synthetic/synth_msa.fa from the examples folder of the GitHub repository. The Repeat Finder (Actions menu, Repeats) '
             + 'searched every sequence for tandem arrays of at least 12 bases with up to 15 % divergence. '
             + 'The table lists each array; click a row to see it in the alignment.'
@@ -29060,7 +29057,6 @@ const DEMOS = {
             });
             if (first > 0) requestAnimationFrame(() => _scrollToColumn(first));
         },
-        // DRAFT note
         note: 'This is the human mitochondrial genome (NCBI NC_012920, GenBank) from the examples folder of the GitHub repository. '
             + 'Restriction Sites (Search menu) looked for EcoRI, BamHI and HindIII sites; each enzyme has its own highlight colour, '
             + 'and the message line gives the number of sites. The view starts at the first site.'
@@ -29073,15 +29069,14 @@ const DEMOS = {
         place: { sel: '#input-controls', how: 'append', label: 'SAM/BAM reads on a reference' },
         // the reads come through ?reads= (the SAM/BAM button's loader), which has run before this
         run: async () => { await _demoUntil(() => bamState.reads && bamState.reads.length > 0, 15000); },
-        // DRAFT note
         note: 'This is synthetic/synth_ref.fa with the reads in synthetic/synth_reads.bam, from the examples folder of the GitHub repository. '
             + 'The BAM went through the SAM/BAM button\'s loader, which matched it to the reference and opened the Reads view. '
             + 'Bases that differ from the reference are coloured; insertions and deletions are marked.'
     },
     tree: {
         name: 'Tree',
-        file: 'examples/svk_k4.fa',   // TODO file: a cytb set
-        title: 'SINE copies (tree example)',
+        file: 'examples/demo/andricus_cytb.fa',
+        title: 'Andricus cytb and NUMT copies (tree example)',
         place: { sel: '#treeBuilderCloseBtn', how: 'before' },
         run: async () => {
             const upgma = document.querySelector('input[name="treeMethod"][value="upgma"]');
@@ -29090,10 +29085,10 @@ const DEMOS = {
             await _demoUntil(() => el('treeBuilderModal')?.style.display !== 'none'
                 && !!(el('treeNewickOutput')?.value || el('treeNewickOutput')?.textContent), 30000);
         },
-        // DRAFT note
-        note: 'This is svk_k4.fa from the examples folder of the GitHub repository. "Tree" (Actions menu) built a UPGMA tree from '
-            + 'the distances between all sequences, with the distance model chosen in the window. '
-            + 'The window shows the tree, a summary line and the Newick text.'
+        note: "This is andricus_cytb.fa from the examples/demo folder of the GitHub repository: 15 cytochrome b sequences of two gall w"
+            + "asps, Andricus grossulariae and A. quercusramuli (GenBank JQ416366-JQ416415), 10 mitochondrial (mt) and 5 nuclear copies"
+            + " (NUMT). \"Tree\" (Actions menu) built a UPGMA tree from p-distances. The mitochondrial sequences of each species form the"
+            + "ir own clade; three NUMTs sit beside their own species' clade, and two (pan109, pan111) sit outside both."
     }
 };
 
