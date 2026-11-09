@@ -28714,6 +28714,7 @@ function initializeAppUI() {
     //   ?mask=<url>                        - fetch a 2D block-mask JSON and overlay it
     //   ?bed=<url>                         - fetch a BED file and show it as the annotation track
     //   ?reads=<url>                       - fetch a SAM/BAM mapped to a loaded row and open Reads mode
+    //   ?demo=<id>                         - with ?url=: run the worked example <id> of DEMOS and show its note
     //   ?view=full|block|canvas             - open in this view (full/block is remembered as the user's choice);
     //                                         also single (= full), blocks and cblock (= block, cblock the prototype's name)
     //   ?view=domblock                      - test-only: Block drawn by the old DOM renderer (for this tab only:
@@ -28742,6 +28743,7 @@ function initializeAppUI() {
     const autoReads = urlParams.get('reads');
     const autoHandoff = urlParams.get('handoff');   // Actions > New Tab (openSelectedInNewTab)
     const autoLink = urlParams.get('link');         // Clone Tab from a linked view: start linked
+    const autoDemo = urlParams.get('demo');         // a worked example (DEMOS): run it after ?url= has loaded
     // Loaded after the alignment: the mask overlay, then the annotation track
     const _loadUrlExtras = () => {
         let p = autoMask ? _loadBlockMaskFromUrl(autoMask) : Promise.resolve();
@@ -28826,7 +28828,7 @@ function initializeAppUI() {
                     // normally: this message replaced its error (GLM audit cblk #14)
                     if (!_autoLoadSucceeded(seqsBefore)) return;
                     showMessage('Alignment loaded from URL', 2000);
-                    return _loadUrlExtras();
+                    return Promise.resolve(_loadUrlExtras()).then(() => autoDemo ? _runDemoFromUrl(autoDemo) : undefined);
                 });
             })
             .catch(err => {
@@ -28860,7 +28862,335 @@ function initializeAppUI() {
     initResEnzymeSearch();
     initBlockMaskPanel();
     initAnnotationPanel();
+    _initDemoButtons();
     updateBamButtonVisibility();
+}
+
+// ---- Worked examples (owner, 2026-11-09) ----------------------------------------------------------------------------
+// "For k-mer clustering, diagnostic SNPs, 2D colouring etc. there should be a small but distinct button opening a good
+// example in a new separate tab, demonstrating how it works, on the example deposited at GitHub."
+// Each feature has an "Example ↗" pill, built from this table by _initDemoButtons. It opens
+//   index.html?url=<file>&title=<title>&demo=<id>[&reads=<reads>]
+// in a new tab; after the ?url= alignment has loaded, _runDemoFromUrl calls the feature's own function with the
+// settings in run() and then shows a short closable note. The files are in examples/ (served by the site).
+// place: where the pill goes. sel = an element of the feature; how = 'title' (into the .cluster-block-title of the block
+// holding sel), 'after' (right after sel), 'afterLabel' (after the label holding sel), 'wrap' (sel and the pill share
+// sel's place; sel keeps most of the width) or 'append' (a line at the end of sel, with label).
+// Checks: tests/regression/demos.js
+const _demoWait = (ms) => new Promise(r => setTimeout(r, ms));
+async function _demoUntil(test, ms = 30000) {
+    const t0 = Date.now();
+    while (!test()) {
+        if (Date.now() - t0 > ms) throw new Error('the analysis did not finish in time');
+        await _demoWait(100);
+    }
+}
+const DEMOS = {
+    kmer: {
+        name: 'k-mer groups',
+        file: 'examples/svk_k4.fa',   // TODO file: examples/demo/alu_subfamilies.fa (not made yet)
+        title: 'SINE copies (k-mer groups example)',
+        place: { sel: '#clusterGuideTreeButton', how: 'title' },
+        // the panel's own defaults, set here so the example does not depend on what the panel shows
+        run: async () => {
+            const set = (id, v) => { const e = el(id); if (e) e.value = v; };
+            set('guideTreeMethod', 'tree'); set('guideTreeMetric', 'pdist'); set('guideTreeK', '6');
+            set('guideTreeLinkage', 'average'); set('guideTreeMinSize', '2'); set('guideTreeGroups', '');
+            if (el('guideTreeAuto')) el('guideTreeAuto').checked = true;
+            for (const id of ['clusterSelColsOnly', 'clusterSelRowsOnly']) if (el(id)) el(id).checked = false;
+            await clusterByGuideTree();
+        },
+        // DRAFT note
+        note: 'This is svk_k4.fa from the examples folder of the GitHub repository. "Group by k-mer" (Clustering menu, k-mer groups) '
+            + 'built a similarity tree of the sequences and cut it into groups, with the panel\'s default settings; every sequence was assigned. '
+            + 'Look at the sequence names and the bases: each group has its own colour.'
+    },
+    snp: {
+        name: 'Diagnostic SNPs',
+        file: 'examples/svk_k4.fa',
+        title: 'SINE copies K1-K4 (diagnostic SNPs example)',
+        place: { sel: '#clusterNowButton', how: 'title' },
+        // the factory thresholds (the "optimal" preset, createOptimalPreset), not a preset the user saved
+        run: async () => {
+            for (const id of ['clusterWithinTypes', 'clusterSelColsOnly', 'clusterSelRowsOnly']) if (el(id)) el(id).checked = false;
+            const set = (id, v) => { const e = el(id); if (e) e.value = v; };
+            set('clusterMinSizeInput', '3'); set('clusterMinPerfectInput', '5'); set('clusterMaxIterationsInput', '10');
+            set('qualitySmallInput', '80'); set('qualityMediumInput', '70'); set('qualityLargeInput', '60');
+            set('sizeSmallMediumInput', '11'); set('sizeMediumLargeInput', '20'); set('minOccurrencesInput', '3');
+            await clusterSequences();
+        },
+        // DRAFT note
+        note: 'This is svk_k4.fa from the examples folder of the GitHub repository: 40 SINE copies, 10 each of K1-K4. '
+            + '"Find SNP groups" (Clustering menu, Diagnostic SNPs) looked for columns where a set of sequences shares a base the others lack, '
+            + 'and grouped the sequences by them with the default thresholds. Coloured names and bases are the groups found; '
+            + 'sequences without such columns stay uncoloured.'
+    },
+    bicluster: {
+        name: '2D analysis',
+        file: 'examples/svk_k4.fa',   // TODO file
+        title: 'SINE copies (2D analysis example)',
+        place: { sel: '#biclusterComputeButton', how: 'title' },
+        run: async () => { computeAndShowBicluster(); },
+        // DRAFT note
+        note: 'This is svk_k4.fa from the examples folder of the GitHub repository. "Show 2D" (Clustering menu, 2D analysis) drew '
+            + 'rectangles over stretches where a subset of rows share a local pattern of bases. '
+            + 'Each rectangle covers those rows and columns; the status line under the button lists them. Row order is not changed.'
+    },
+    trim: {
+        name: 'Trimming',
+        // TODO file: examples/real/pfam_PF00046_seed.sto was asked for, but it has no gappy ends (Preview keeps all 66 columns)
+        file: 'examples/svk_k4.fa',
+        title: 'SINE copies (trimming example)',
+        place: { sel: '#previewTrimButton', how: 'title' },
+        // Preview only: the columns Trim would remove are painted on the Consensus row; nothing is deleted.
+        // 60/60/20: the values the panel shows on a fresh page (the "optimal" preset, createOptimalPreset)
+        run: async () => {
+            const set = (id, v) => { const e = el(id); if (e) e.value = v; };
+            set('leftGapInput', '60'); set('rightGapInput', '60'); set('edgeWindowInput', '20');
+            previewTrimming();
+        },
+        // DRAFT note
+        note: 'This is svk_k4.fa from the examples folder of the GitHub repository. "Preview" (Clustering menu, Trimming) measured the '
+            + 'gappy ends with Left 60 %, Right 60 % and Window 20, filled Keep, and painted the columns to be cut on the Consensus row. '
+            + 'Nothing was deleted: drag the coloured edges or edit Keep, then Trim.'
+    },
+    autocolour: {
+        name: 'Auto-Color by Similarity',
+        file: 'examples/svk_k4.fa',   // TODO file
+        title: 'SINE copies (auto-colour example)',
+        place: { sel: '#colourAutoButton', how: 'wrap' },
+        run: async () => {
+            if (el('colourSimilarityChars')) el('colourSimilarityChars').value = '2';   // the names here are K1_..., K2_...
+            autoColourBySimilarity();
+        },
+        // DRAFT note
+        note: 'This is svk_k4.fa from the examples folder of the GitHub repository. "Auto-Color by Similarity" (Colour Names menu) '
+            + 'compared the first 2 characters of the sequence names and gave names that look alike one colour. '
+            + 'It reads the names only, not the sequences.'
+    },
+    macse: {
+        name: 'Codon alignment (MACSE)',
+        file: 'examples/synthetic/synth_msa.fa',   // TODO file: a cytb set with a NUMT
+        title: 'Synthetic coding alignment (MACSE example)',
+        place: { sel: '#macsePresetButton', how: 'wrap' },
+        run: async () => {
+            openMacsePreset(false);
+            await realignAll();
+        },
+        // DRAFT note
+        note: 'This is synthetic/synth_msa.fa from the examples folder of the GitHub repository (row beta_fs has a one-base deletion). '
+            + '"Codon alignment (MACSE)" set Sequence type to Coding sequence (Alignment menu), then Realign All aligned the '
+            + 'sequences codon by codon with MACSE v2.07, allowing frameshifts. The message line gives the frameshifts and stops; details are in the browser console.'
+    },
+    codon: {
+        name: 'Codon analysis',
+        file: 'examples/real/ncbi_NC_012920_human_mito.gb',
+        title: 'Human mitochondrial genome NC_012920 (codon analysis example)',
+        place: { sel: '#codonAnalysis', how: 'afterLabel' },
+        run: async () => {
+            const cb = el('codonAnalysis');
+            if (el('codonFrame')) el('codonFrame').value = 'auto';
+            if (cb && !cb.checked) { cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); }
+            await _demoUntil(() => !!state._codonData, 15000);
+            // go to the first codon of the first CDS
+            const ph = state._codonData.phase && state._codonData.phase[0];
+            const first = ph ? ph.findIndex(p => p >= 0) : -1;
+            if (first > 0) requestAnimationFrame(() => _scrollToColumn(first));
+        },
+        // DRAFT note
+        note: 'This is the human mitochondrial genome (NCBI NC_012920, GenBank) from the examples folder of the GitHub repository. '
+            + 'Codon analysis (Display menu) took each CDS of the annotation in its own frame and strand, coloured the codon positions '
+            + 'and marked stop codons. The view starts at the first CDS.'
+    },
+    dotplot: {
+        name: 'Dot Plot',
+        file: 'examples/synthetic/synth_dotplot.fa',   // TODO file: one Alu copy, self-comparison
+        title: 'Synthetic sequences (dot plot example)',
+        place: { sel: '#dotPlotTitle', how: 'after' },
+        // the same call as the row menu's "Dot-plot (self)" on the first row
+        run: async () => {
+            const s = state.seqs[0];
+            const u = s.seq.replace(/[-. ]/g, '');
+            await openDotPlot(u, u, s.header, s.header, { rowIndexA: 0, rowIndexB: 0, alignedSeqA: s.seq, alignedSeqB: s.seq });
+            await _demoUntil(() => !_dotPlotState.computing, 30000);
+        },
+        // DRAFT note
+        note: 'This is synthetic/synth_dotplot.fa from the examples folder of the GitHub repository. The dot plot compares the first '
+            + 'sequence with itself (as "Dot-plot (self)" in the menu of a sequence name): the main diagonal is the sequence matching itself, and '
+            + 'lines beside it are repeated stretches.'
+    },
+    repeats: {
+        name: 'Repeat Finder',
+        file: 'examples/synthetic/synth_msa.fa',   // TODO file
+        title: 'Synthetic alignment (repeat finder example)',
+        place: { sel: '#repeatFinderDragHandle > h3', how: 'after' },
+        run: async () => {
+            openRepeatFinder(0, 'tandem');
+            const all = document.querySelector('input[name="repeatScope"][value="all"]');
+            if (all) { all.checked = true; all.dispatchEvent(new Event('change', { bubbles: true })); }
+            if (el('repeatMinLen')) el('repeatMinLen').value = '12';
+            if (el('repeatMaxDiv')) el('repeatMaxDiv').value = '15';
+            runRepeatAnalysis();
+            await _demoUntil(() => !_repeatJob, 60000);
+        },
+        // DRAFT note
+        note: 'This is synthetic/synth_msa.fa from the examples folder of the GitHub repository. The Repeat Finder (Actions menu, Repeats) '
+            + 'searched every sequence for tandem arrays of at least 12 bases with up to 15 % divergence. '
+            + 'The table lists each array; click a row to see it in the alignment.'
+    },
+    resites: {
+        name: 'Restriction Sites',
+        file: 'examples/real/ncbi_NC_012920_human_mito.gb',
+        title: 'Human mitochondrial genome NC_012920 (restriction sites example)',
+        place: { sel: '#reSitePopupBtn', how: 'after' },
+        enzymes: ['EcoRI', 'BamHI', 'HindIII'],
+        run: async () => {
+            renderRestrictionEnzymeList();
+            document.querySelectorAll('.re-cb').forEach(cb => { cb.checked = DEMOS.resites.enzymes.includes(cb.dataset.name); });
+            if (el('reSiteManualInput')) el('reSiteManualInput').value = '';
+            searchResEnzyme();
+            // go to the first site in the first row
+            const seq = state.seqs[0]?.seq || '';
+            let first = -1;
+            document.querySelectorAll('.re-cb:checked').forEach(cb => {
+                const re = restrictionSiteToRegex(cb.value);
+                const m = re ? new RegExp(re, 'i').exec(seq) : null;
+                if (m && (first < 0 || m.index < first)) first = m.index;
+            });
+            if (first > 0) requestAnimationFrame(() => _scrollToColumn(first));
+        },
+        // DRAFT note
+        note: 'This is the human mitochondrial genome (NCBI NC_012920, GenBank) from the examples folder of the GitHub repository. '
+            + 'Restriction Sites (Search menu) looked for EcoRI, BamHI and HindIII sites; each enzyme has its own highlight colour, '
+            + 'and the message line gives the number of sites. The view starts at the first site.'
+    },
+    reads: {
+        name: 'SAM/BAM reads',
+        file: 'examples/synthetic/synth_ref.fa',
+        reads: 'examples/synthetic/synth_reads.bam',
+        title: 'Synthetic reference (reads example)',
+        place: { sel: '#input-controls', how: 'append', label: 'SAM/BAM reads on a reference' },
+        // the reads come through ?reads= (the SAM/BAM button's loader), which has run before this
+        run: async () => { await _demoUntil(() => bamState.reads && bamState.reads.length > 0, 15000); },
+        // DRAFT note
+        note: 'This is synthetic/synth_ref.fa with the reads in synthetic/synth_reads.bam, from the examples folder of the GitHub repository. '
+            + 'The BAM went through the SAM/BAM button\'s loader, which matched it to the reference and opened the Reads view. '
+            + 'Bases that differ from the reference are coloured; insertions and deletions are marked.'
+    },
+    tree: {
+        name: 'Tree',
+        file: 'examples/svk_k4.fa',   // TODO file: a cytb set
+        title: 'SINE copies (tree example)',
+        place: { sel: '#treeBuilderDialog > .win-titlebar > h3', how: 'after' },
+        run: async () => {
+            const upgma = document.querySelector('input[name="treeMethod"][value="upgma"]');
+            if (upgma) upgma.checked = true;
+            openTreeBuilder();
+            await _demoUntil(() => el('treeBuilderModal')?.style.display !== 'none'
+                && !!(el('treeNewickOutput')?.value || el('treeNewickOutput')?.textContent), 30000);
+        },
+        // DRAFT note
+        note: 'This is svk_k4.fa from the examples folder of the GitHub repository. "Tree" (Actions menu) built a UPGMA tree from '
+            + 'the distances between all sequences, with the distance model chosen in the window. '
+            + 'The window shows the tree, a summary line and the Newick text.'
+    }
+};
+
+// The link of an example: this page with ?url=&title=&demo= (and ?reads=)
+function _demoUrl(id) {
+    const d = DEMOS[id];
+    const q = new URLSearchParams();
+    q.set('url', d.file);
+    if (d.reads) q.set('reads', d.reads);
+    q.set('title', d.title);
+    q.set('demo', id);
+    return location.href.split(/[?#]/)[0] + '?' + q.toString();
+}
+
+function _initDemoButtons() {
+    for (const [id, d] of Object.entries(DEMOS)) {
+        const target = document.querySelector(d.place.sel);
+        if (!target || document.querySelector(`.demo-pill[data-demo="${id}"]`)) continue;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'demo-pill';
+        b.dataset.demo = id;
+        b.textContent = 'Example ↗';
+        b.title = 'Open a worked example in a new tab';
+        b.setAttribute('aria-label', 'Open a worked example in a new tab');
+        // a title bar under the pill is dragged by mousedown: the click must stay a click
+        b.addEventListener('mousedown', e => e.stopPropagation());
+        b.addEventListener('click', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            window.open(_demoUrl(id), '_blank', 'noopener');
+        });
+        const how = d.place.how;
+        if (how === 'title') {
+            const t = target.closest('.cluster-block')?.querySelector('.cluster-block-title');
+            if (!t) continue;
+            t.appendChild(b);
+        } else if (how === 'wrap') {
+            const w = document.createElement('div');
+            w.className = 'demo-wrap' + (target.classList.contains('al-btn-wide') ? ' al-btn-wide' : '');
+            target.parentNode.insertBefore(w, target);
+            w.appendChild(target);
+            w.appendChild(b);
+        } else if (how === 'afterLabel') {
+            const lab = target.closest('label') || target;
+            lab.parentNode.insertBefore(b, lab.nextSibling);
+        } else if (how === 'append') {
+            const row = document.createElement('div');
+            row.className = 'demo-row';
+            row.appendChild(document.createTextNode(d.place.label || d.name));
+            row.appendChild(b);
+            target.appendChild(row);
+        } else {
+            target.parentNode.insertBefore(b, target.nextSibling);
+        }
+    }
+}
+
+function _showDemoNote(id) {
+    const d = DEMOS[id];
+    document.getElementById('demoNote')?.remove();
+    const box = document.createElement('div');
+    box.id = 'demoNote';
+    box.setAttribute('role', 'region');
+    box.setAttribute('aria-label', 'About this example');
+    const head = document.createElement('div');
+    head.className = 'demo-note-head';
+    const h = document.createElement('strong');
+    h.textContent = 'Example: ' + d.name;
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.id = 'demoNoteClose';
+    x.className = 'demo-note-close';
+    x.textContent = '×';
+    x.title = 'Close this note';
+    x.setAttribute('aria-label', 'Close the example note');
+    x.addEventListener('click', () => box.remove());
+    head.appendChild(h);
+    head.appendChild(x);
+    const p = document.createElement('p');
+    p.textContent = d.note;
+    box.appendChild(head);
+    box.appendChild(p);
+    document.body.appendChild(box);
+}
+
+// ?demo=<id>: run the example after the ?url= alignment (and ?reads=) has loaded, then explain it
+async function _runDemoFromUrl(id) {
+    const d = Object.prototype.hasOwnProperty.call(DEMOS, id) ? DEMOS[id] : null;
+    if (!d) return;
+    try {
+        await d.run();
+    } catch (err) {
+        console.warn('Example could not run:', err);
+        showMessage(`The example could not run: ${err.message}`, 6000);
+        return;
+    }
+    _showDemoNote(id);
 }
 
 document.addEventListener('DOMContentLoaded', initializeAppUI);
