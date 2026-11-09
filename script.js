@@ -28874,7 +28874,8 @@ function initializeAppUI() {
 // in a new tab; after the ?url= alignment has loaded, _runDemoFromUrl calls the feature's own function with the
 // settings in run() and then shows a short closable note. The files are in examples/ (served by the site).
 // place: where the pill goes. sel = an element of the feature; how = 'title' (into the .cluster-block-title of the block
-// holding sel), 'after' (right after sel), 'afterLabel' (after the label holding sel), 'wrap' (sel and the pill share
+// holding sel), 'after' / 'before' (right after / before sel; in a window's title bar it goes before the window buttons,
+// not on the bar's free part, which drags the window: a drag cannot start on a button), 'afterLabel' (after the label holding sel), 'wrap' (sel and the pill share
 // sel's place; sel keeps most of the width) or 'append' (a line at the end of sel, with label).
 // Checks: tests/regression/demos.js
 const _demoWait = (ms) => new Promise(r => setTimeout(r, ms));
@@ -29006,7 +29007,7 @@ const DEMOS = {
         name: 'Dot Plot',
         file: 'examples/synthetic/synth_dotplot.fa',   // TODO file: one Alu copy, self-comparison
         title: 'Synthetic sequences (dot plot example)',
-        place: { sel: '#dotPlotTitle', how: 'after' },
+        place: { sel: '#dotPlotDockClear', how: 'before' },
         // the same call as the row menu's "Dot-plot (self)" on the first row
         run: async () => {
             const s = state.seqs[0];
@@ -29023,7 +29024,7 @@ const DEMOS = {
         name: 'Repeat Finder',
         file: 'examples/synthetic/synth_msa.fa',   // TODO file
         title: 'Synthetic alignment (repeat finder example)',
-        place: { sel: '#repeatFinderDragHandle > h3', how: 'after' },
+        place: { sel: '#repeatFinderMaxBtn', how: 'before' },
         run: async () => {
             openRepeatFinder(0, 'tandem');
             const all = document.querySelector('input[name="repeatScope"][value="all"]');
@@ -29081,7 +29082,7 @@ const DEMOS = {
         name: 'Tree',
         file: 'examples/svk_k4.fa',   // TODO file: a cytb set
         title: 'SINE copies (tree example)',
-        place: { sel: '#treeBuilderDialog > .win-titlebar > h3', how: 'after' },
+        place: { sel: '#treeBuilderCloseBtn', how: 'before' },
         run: async () => {
             const upgma = document.querySelector('input[name="treeMethod"][value="upgma"]');
             if (upgma) upgma.checked = true;
@@ -29118,8 +29119,8 @@ function _initDemoButtons() {
         b.textContent = 'Example ↗';
         b.title = 'Open a worked example in a new tab';
         b.setAttribute('aria-label', 'Open a worked example in a new tab');
-        // a title bar under the pill is dragged by mousedown: the click must stay a click
-        b.addEventListener('mousedown', e => e.stopPropagation());
+        // no stopPropagation on mousedown: in a window's title bar a drag that starts on the pill still moves the
+        // window (regression check 'Dot plot window: ... draggable' grabs the bar where the pill sits); a click stays a click
         b.addEventListener('click', e => {
             e.preventDefault();
             e.stopPropagation();
@@ -29145,6 +29146,8 @@ function _initDemoButtons() {
             row.appendChild(document.createTextNode(d.place.label || d.name));
             row.appendChild(b);
             target.appendChild(row);
+        } else if (how === 'before') {
+            target.parentNode.insertBefore(b, target);
         } else {
             target.parentNode.insertBefore(b, target.nextSibling);
         }

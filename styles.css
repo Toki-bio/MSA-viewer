@@ -4729,8 +4729,9 @@ button.demo-pill[data-demo] {
 }
 button.demo-pill[data-demo]:hover { background: #ede9fe; }
 button.demo-pill[data-demo]:focus-visible { outline: 2px solid #5b21b6; outline-offset: 1px; }
-/* in a window's title bar: right after the title, the window buttons stay on the right */
-.win-titlebar > button.demo-pill[data-demo] { margin-right: auto; margin-left: 0; }
+/* in a window's title bar: just before the window buttons, on the right */
+.win-titlebar > button.demo-pill[data-demo] { margin: 0 6px 0 auto; }
+.win-titlebar .win-btns > button.demo-pill[data-demo] { margin: 0 6px 0 0; align-self: center; }
 /* a button that shares its place with a pill keeps most of the width */
 .demo-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .demo-wrap > button:first-child { flex: 1 1 auto; min-width: 0; }
