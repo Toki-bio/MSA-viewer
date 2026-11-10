@@ -2,7 +2,7 @@
 
 This file is for a local Claude Code session. It has two jobs:
 
-1. run the GLM check on the fixes of batches 1 to 4 (builds v332 to v335), and
+1. run the GLM check on the fixes of batches 1 to 4 (builds v332 to v335) and of build v336, and
 2. carry on with the open findings listed at the end.
 
 Follow CLAUDE.md throughout: a failing check first for every fix, never weaken a check without asking the
@@ -68,6 +68,50 @@ GLM tasks for batch 4:
 14. `safeLocalGet`: list every caller and its fallback; is there one that stores a list, a number or a string and
     now gets `{}` back?
 
+## What build v336 changed (batches 5 to 8)
+
+Every item has a check named "Audit <number>..." in `tests/regression/run-all.js` unless another file is named.
+
+| Finding | Change |
+|---|---|
+| M2 | `parsePhylip`: a strict name that ends in a number keeps it. |
+| M3, L18 | `_parseGenBankRecord`: header fields are read only before FEATURES; a DEFINITION of several lines is kept whole. |
+| M4, L12 | `?` stays `?` in loading, Save and snapshots (`_sanitizeFastaSequence`). |
+| M5 | Save, copy and snapshots write the row's name first (`_fastaDefline`), so a renamed row keeps its name. |
+| M6, L17 | A snapshot with an empty `fasta`, and a file of names only, are failed loads; the open alignment stays. |
+| M7-M9 | Snapshot settings: radio values looked up without building a selector from the file's text (`_radioByValue`), colours through `_safeCssColor`, a saved regex that may run very long is loaded switched off (`_regexMayExplode`). |
+| M10 | `_linkAddress()`: a link parameter may not point at the page's own `/api/` routes. |
+| M12, M13, L10 | Sequence editor: rows matched by name, digits dropped, two records in the one-row editor refused. |
+| M14, L9 | Add & Align matches the result by internal row ids; a cancelled run leaves no undo step. |
+| M15 | Group explorer: rows claimed by full name, then by residues, not by first word alone. |
+| M16 | Check only (fixed by the busy guard of v332). |
+| M17 | A Canvas drag past the last row or column selects up to the edge (`_canvasDragCell`). |
+| U4 | Undo and redo keep name colours given after the undone step (`_restoreNameColours`). |
+| M18 | NJ branch lengths of a cherry sum to the distance also in the negative case. |
+| M19 | Variable sites: `?`, X and (nucleotide) N are no difference. |
+| M20 | Restriction search always looks on both strands. |
+| L13, L14 | GenBank and A3M detection stricter. |
+| U11 | Ctrl+M removed from the key lists; Ctrl+K added to the Info window. |
+| U14 | Colour Names also matches the text as typed (`gamma(3)`). |
+| U15 | `safeLocalGet` returns stores without a prototype: a preset named `__proto__` is stored. |
+| L19 | BED chrom: the loose match needs the chrom as a whole word in the row name. |
+| L20 | Statistics .csv: a text cell starting with `=`, `@`, `+`, `-` gets a leading apostrophe. |
+| U12 | The Recent list opens under its button; Esc closes it. |
+| U8 | Ctrl+H twice: the toolbar comes back with the stylesheet's layout and its current height. |
+| M22-M26, L26, L28 | Reads: CRLF SAM, `=` bases, insertions at CDS block starts, deletions into splice sites, BAM SEQ `*`, VCF names without chr and GT 1/2, protein dot plot N. M25 (insertion at a read's end not counted) also changed `tests/fixtures/sample-call-reference.js`, with the owner's yes. Checks in `tests/unit/sample-call.test.js`, `variant-effect.test.js`, `audit-low.test.js` and regression "Reads ...". |
+| H11, M27-M32 | server.js: static allowlist (`STATIC_SERVE_ALL=1` serves all), deletes confined to `blast_dbs/`, changing routes loopback only unless `ALLOW_REMOTE_FILE_ACCESS=1`. `tests/server/hardening.test.js`. |
+| T2 | pages.yml deploys after the Tests workflow passed for a push to main, and not when a later commit passed already. `tests/meta/workflows.test.js`. tests.yml: 150 min limit, superseded branch runs cancelled. |
+| T6 | The regression runner fails a check that passed while the page threw an uncaught error (`allowPageErrors: true` to opt out). |
+
+GLM tasks for v336:
+
+15. `_fastaDefline` and `seqEditApply`: a row whose name contains spaces, `>` or is empty; two rows with one name.
+16. `addSequencesAndAlign`: can a row id `rN` collide with a real name in the aligner's output?
+17. `_restoreNameColours`: undo of a delete, of a rename, of a reorder; are colours of deleted rows dropped?
+18. `safeLocalGet` now returns objects without a prototype: any caller using `.hasOwnProperty` or `instanceof Object` on the result?
+19. pages.yml: can a failed or cancelled Tests run, or a pull request run, reach the deploy? Can an older commit be deployed over a newer one?
+20. server.js: `isOwnedDbFile` and the loopback test with IPv4-mapped IPv6 addresses and a symlink inside `blast_dbs/`.
+
 ## What the GLM check should look at
 
 Read-only tasks, each answered with exact code quotes:
@@ -116,33 +160,33 @@ Neither was a viewer defect; both checks were changed with the owner's yes.
   100 below the view, then counted tint after a view switch that keeps the place. It now goes back to the
   marked row before the switch.
 
-## Open findings, in the suggested order
+## Open findings after v336
 
-Numbers are those of the audit report ("ViewAlign audit 2026-11-10"). All reproduced in a browser unless
-marked code-read.
+Numbers are those of the audit report ("ViewAlign audit 2026-11-10").
 
-1. (M11 fixed in v335; H4 in v333.)
-2. (H5 fixed in v333.)
-3. (H6, H7, M1 fixed in v334.) **M2** strict PHYLIP names lose a trailing number; binary 0/1 PHYLIP is
-   still refused (L15).
-   **M3** GenBank qualifier lines starting LOCUS/DEFINITION/ORGANISM rewrite the record.
-   **M4** `?` becomes N in protein rows that look like DNA. **M5** Save and snapshots rename rows whose name
-   is not the first word of fullHeader. **M6** a snapshot .json with an empty `fasta` keeps the old alignment
-   under the new name.
-4. (H8 fixed in v333.)
-5. (H9, T9 fixed in v335.)
-6. **T1-T5** CI has been red on main since 2026-11-04; pages.yml deploys without waiting for the tests; 55 %
-   of the regression checks run only in the test-only DOM Block view; Canvas Block has no checks for
-   selection, undo, gap tools or keys.
-7. **H10, H11** optional server: file and SSH routes trust any local program; `DELETE /api/blast-db` unlinks a
-   FASTA outside `blast_dbs/`.
-8. (U2 fixed in v335.) **U4** undo wipes name colours
-   applied after the undone step.
-9. Mediums: **M12-M16** Sequence editor matching by position and keeping digits, Add & Align matching by name,
-   groups keyed by first word, second Ctrl+Shift+R hiding the busy overlay. **M17** a drag past the last row
-   or column does not select up to the edge. **M18** NJ branch lengths depend on row order
-   (script.js `buildNJTreeFromAlignment`, the negative `bj` case). **M19** variable sites count N/X/? as a
-   difference. **M20** restriction search misses minus-strand Type IIS sites by default. **M21, M22** repeat
-   finder and protein dot plot. **M23-M26** reads: CRLF SAM, insertion before a CDS block, insertion at the
-   region end, `=` bases.
-10. Lows: see the report (L2-L40, U6-U17). (L1 fixed in v335.)
+Waiting for the owner's decision:
+
+- **H10** optional server: another user of the same computer can read files through the local server. Two designs:
+  a start-up token kept in a cookie, or a check that the caller is the same OS user.
+- **M21** repeat finder: a pair with a mismatch one base before its end is reported one base short. Keeping the
+  longer end on a tie moved the planted pairs in three "Repeat Finder ... owner 2026-10-31" checks, so it was taken
+  back out. Tandem coverage is a tuned heuristic too.
+- **U9** everything outside the toolbar uses the browser's serif font (Times New Roman on Windows). One line in
+  styles.css (`body { font-family: Arial, sans-serif }`), but it changes the look of every window.
+- **L24** TSD finder counts IUPAC-compatible bases as mismatches; benchmark figures in existing checks depend on it.
+- **L27** a space as thousands separator in a typed position is ambiguous by design.
+- **M15, part** name colours are keyed by name, so rows with one name share a colour. **U4, part** colour actions
+  are still not undoable.
+
+Not done yet:
+
+- **T3-T5** 55 % of the regression checks run only in the test-only DOM Block view; Canvas Block has no checks for
+  selection, undo, gap tools or keys; three checks cannot fail ("column selection highlights only
+  currently-visible rows after scroll", the consensus windowing check, the windowed Full selection check).
+  Making them strict needs the owner to say what the right behaviour is.
+- **T7, T8** runner gaps (exit code 3 collision, suites without a per-check limit) and fixed waits.
+- **L15** binary 0/1 PHYLIP refused. **L8** two start texts. **L11, L16, L21-L23, L25, L30-L40**, **U6, U7, U10,
+  U13, U16, U17**: see the report.
+- Reads: a SAM opened as an alignment still shows `=` as a letter; unclear errors for a cut-off BAM.
+- Server: Windows path forms in `/api/local-cat` are untested; dev pages give 404 under the server unless
+  `STATIC_SERVE_ALL=1`.
