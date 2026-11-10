@@ -113,6 +113,7 @@ const SUITES = [
   { name: 'unit: sleep detection and retry after sleep', args: ['tests/unit/sleep-watch.test.js'] },
   { name: 'unit: resume progress file', args: ['tests/unit/resume.test.js'] },
   { name: 'release version consistency', args: ['tests/meta/version.test.js'] },
+  { name: 'cache-busting numbers in index.html', args: ['tests/meta/cache-bust.test.js'] },
   { name: 'correctness (consensus, parsers, exports, rendering)', args: ['tests/correctness/run.js'], browser: true },
   { name: 'input compatibility (examples/)', args: ['tests/compat/run.js'], browser: true },
   { name: 'functional', args: ['tests/functional/run-all.js'], browser: true },

@@ -2,7 +2,7 @@
 
 This file is for a local Claude Code session. It has two jobs:
 
-1. run the GLM check on the fixes of batches 1 to 3 (builds v332, v333, v334), and
+1. run the GLM check on the fixes of batches 1 to 4 (builds v332 to v335), and
 2. carry on with the open findings listed at the end.
 
 Follow CLAUDE.md throughout: a failing check first for every fix, never weaken a check without asking the
@@ -11,7 +11,7 @@ owner, run the suites before every push.
 ## Prompt to give local Claude Code
 
 > Read docs/sessions/2026-11-10-audit-HANDOFF.md and CLAUDE.md. Run the GLM check described there on the batch 1
-> to batch 3 changes (commits "v332: audit batch 1", "v333: audit batch 2", "v334: audit batch 3"), using the GLM harness on this machine the same way as for the earlier
+> to batch 4 changes (commits "v332: audit batch 1", "v333: audit batch 2", "v334: audit batch 3", "v335: audit batch 4"), using the GLM harness on this machine the same way as for the earlier
 > GLM audits (see dev-tools/reads-audit/REPORT.md). Check every GLM finding against the code before believing it.
 > For each confirmed finding: write a regression check that fails first, fix it, and report. Do not start on the
 > open findings until the GLM check is done and I say so.
@@ -49,6 +49,24 @@ Checks: "Audit H6", "Audit H7", "Audit M1".
 | H7 | Clustal and Stockholm rows were keyed by name: two rows with one name became one row of double length. | `_interleavedRows()`: a row is the n-th line with its name within a block. A blank line, a Clustal conservation line and a Stockholm `#=GC` line end a block. |
 | H6 | `parseFasta` deleted every digit, so a NEXUS 0/1 matrix did not survive Save FASTA or a snapshot. | A FASTA record made only of digits, `?`, `-`, `.` (with at least one digit) is kept as a row of states (`_fastaStateRow`). Numbers beside letters are still layout. |
 | M1 | MSF `Name: seq1 oo  Len: 8` gave the name "seq1 oo" and nothing loaded. | A trailing ` oo` is dropped from the name. |
+
+## What batch 4 changed (v335)
+
+Checks: "Audit U2", "Audit M11", "Audit L1" in `tests/regression/run-all.js`; `tests/meta/cache-bust.test.js`.
+
+| Finding | What used to happen | Change |
+|---|---|---|
+| H9, T9 | `finder.js?v=1` stayed when finder.js changed; nothing checked the numbers. | `finder.js?v=2`. New suite "cache-busting numbers in index.html": the commit that last changed a file must be an ancestor of the commit that wrote its `?v=N`. tests.yml checks out with `fetch-depth: 0` for it (a shallow clone cannot be checked and passes with a notice). |
+| U2 | A null or wrong-kind value in localStorage (`msaviewer_brk_style`, `clusteringPresets`, `seqColourPresets`, a null entry in `msaviewer_history`) threw at start-up or when the feature was opened. | `safeLocalGet` returns the fallback when the stored value is null or not the fallback's kind; `applyBrkStyle` keeps only a text colour and symbol; the history drops entries without a name. |
+| M11 | MAFFT stopped with "no output" on protein U/O and on nucleotide letters that are no base code (I, E, F, J, L, O, P, Q, Z). | `_alignerGuardInput` sends them as X or N (rows without gaps), `_alignerRestoreResidues` writes them back. Protein or nucleotide is judged as MAFFT does (more than 75 % A, C, G, T, U, N), not by `isProteinAlignment()`. |
+| L1 | The Canvas redraw after a zoom step read the font size mid-transition (12.2 px for 12 px). | `setZoom` switches the transition off for Canvas too. |
+
+GLM tasks for batch 4:
+
+13. `_alignerGuardInput`: is the 75 % rule the same as MAFFT's own (`mafft` script / `countATGC`)? Which inputs
+    would the viewer call nucleotide and MAFFT protein, or the reverse?
+14. `safeLocalGet`: list every caller and its fallback; is there one that stores a list, a number or a string and
+    now gets `{}` back?
 
 ## What the GLM check should look at
 
@@ -103,7 +121,7 @@ Neither was a viewer defect; both checks were changed with the owner's yes.
 Numbers are those of the audit report ("ViewAlign audit 2026-11-10"). All reproduced in a browser unless
 marked code-read.
 
-1. **M11** MAFFT fails on protein U/O and nucleotide I/E without naming the row or the letter. (H4 fixed in v333.)
+1. (M11 fixed in v335; H4 in v333.)
 2. (H5 fixed in v333.)
 3. (H6, H7, M1 fixed in v334.) **M2** strict PHYLIP names lose a trailing number; binary 0/1 PHYLIP is
    still refused (L15).
@@ -112,15 +130,13 @@ marked code-read.
    is not the first word of fullHeader. **M6** a snapshot .json with an empty `fasta` keeps the old alignment
    under the new name.
 4. (H8 fixed in v333.)
-5. **H9 / T9** `finder.js?v=1` was not raised when finder.js changed; the version test should check every
-   `?v=` against the file's last change.
+5. (H9, T9 fixed in v335.)
 6. **T1-T5** CI has been red on main since 2026-11-04; pages.yml deploys without waiting for the tests; 55 %
    of the regression checks run only in the test-only DOM Block view; Canvas Block has no checks for
    selection, undo, gap tools or keys.
 7. **H10, H11** optional server: file and SSH routes trust any local program; `DELETE /api/blast-db` unlinks a
    FASTA outside `blast_dbs/`.
-8. **U2** one bad value in localStorage (`msaviewer_brk_style = null`, `clusteringPresets = null`, a null entry
-   in `msaviewer_history`) leaves the page dead until site data is cleared. **U4** undo wipes name colours
+8. (U2 fixed in v335.) **U4** undo wipes name colours
    applied after the undone step.
 9. Mediums: **M12-M16** Sequence editor matching by position and keeping digits, Add & Align matching by name,
    groups keyed by first word, second Ctrl+Shift+R hiding the busy overlay. **M17** a drag past the last row
@@ -129,5 +145,4 @@ marked code-read.
    difference. **M20** restriction search misses minus-strand Type IIS sites by default. **M21, M22** repeat
    finder and protein dot plot. **M23-M26** reads: CRLF SAM, insertion before a CDS block, insertion at the
    region end, `=` bases.
-10. Lows: see the report (L1-L40, U6-U17). L1 is quick: `setZoom` should switch off the 0.1 s font-size
-    transition for Canvas too, because the redraw reads the font size mid-transition (12.08 px for 12 px).
+10. Lows: see the report (L2-L40, U6-U17). (L1 fixed in v335.)

@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v334';
+const BUILD_TAG = 'v335';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -85,6 +85,11 @@ const BRK_STYLE_DEFAULT = { color: '#d0d0d0', symbol: '⋮' };
 let brkStyle = BRK_STYLE_DEFAULT;
 
 function applyBrkStyle(style) {
+    // Stored values come from localStorage: keep only a text colour and a text symbol (audit U2)
+    style = {
+        color: (style && typeof style.color === 'string' && style.color) || BRK_STYLE_DEFAULT.color,
+        symbol: (style && typeof style.symbol === 'string' && style.symbol) || BRK_STYLE_DEFAULT.symbol,
+    };
     brkStyle = style;
     document.documentElement.style.setProperty('--brk-bg', style.color);
 }
@@ -198,7 +203,13 @@ function setupBrkStylePopover() {
 function safeLocalGet(key, fallback = {}) {
     try {
         const raw = localStorage.getItem(key);
-        return raw ? JSON.parse(raw) : fallback;
+        if (!raw) return fallback;
+        const value = JSON.parse(raw);
+        // A stored value of the wrong kind (null, a number, a list where an object is expected)
+        // used to be handed on and threw in the caller, at start-up for some keys (audit U2).
+        if (value === null || typeof value !== typeof fallback
+            || Array.isArray(value) !== Array.isArray(fallback)) return fallback;
+        return value;
     } catch (e) {
         // Blocked storage throws here too: never let that stop the page loading
         console.warn(`localStorage key "${key}" unreadable, resetting.`, e);
@@ -1549,6 +1560,9 @@ const _historyManager = {
             }
         } catch(e) { this.items = []; }
         if (!Array.isArray(this.items)) this.items = [];
+        // An entry that is not a record with a name used to throw when Recent was opened (audit U2)
+        this.items = this.items.filter(e => e && typeof e === 'object' && typeof e.name === 'string');
+        if (!Number.isFinite(this.maxItems) || this.maxItems < 1) this.maxItems = 10;
     },
 
     save() {
@@ -14856,7 +14870,10 @@ function setZoom(percent) {
     const zoomAnchor = !state.seqs?.length || !!document.getElementById('modeReads')?.checked ? null
         : isCanvas ? (_canvasState.pendingAnchor || _captureViewAnchor(true)) : _captureViewAnchor(false);
     // DOM views: no font-size transition while anchoring, so the anchor is applied at the final size
-    if (bigDom || (zoomAnchor && !isCanvas)) alignmentContainer.style.transition = 'none';
+    // Canvas too (audit L1): its redraw reads the font size, and read it mid-transition
+    // (12.2 px for 12 px), so cells were measured for a size the text never has.
+    const noTransition = isCanvas || bigDom || !!zoomAnchor;
+    if (noTransition) alignmentContainer.style.transition = 'none';
     _syncResidueWidthVar(size + 'px');   // before the font change: the probe needs no layout of the alignment
     alignmentContainer.style.fontSize = size + 'px';
     el('zoomVal').textContent = percent + '%';
@@ -14887,7 +14904,7 @@ function setZoom(percent) {
     } else if (zoomAnchor) {
         _applyViewAnchor(zoomAnchor);
     }
-    if (bigDom || (zoomAnchor && !isCanvas)) {
+    if (noTransition) {
         // Keep transitions disabled through the next paint so restoring the
         // stylesheet rule cannot animate away from the geometry just measured.
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -26182,9 +26199,27 @@ async function _mafftAlignWithUi(fasta, extraArgs, label) {
 // sent, position by position. A result with a different number of residues for a row is refused.
 function _alignerGuardInput(fasta) {
     const recs = parseMafftOutput(fasta);
-    if (!recs.some(r => r.seq.includes('*'))) return { fasta, recs };
-    const ph = isProteinAlignment() ? 'X' : 'N';
-    return { fasta: recs.map(r => `>${r.name}\n${r.seq.replace(/\*/g, ph)}\n`).join(''), recs };
+    // Letters MAFFT does not know make it stop with "no output" (audit M11): protein U and O, and in
+    // nucleotide rows every letter that is no base code (I for inosine, E, F, J, L, O, P, Q, Z). They go
+    // out as the placeholder too, in rows without gaps only: those are the rows written back afterwards.
+    // Protein or nucleotide is judged the way MAFFT judges it (more than 75 % of the letters are
+    // A, C, G, T, U or N), not by isProteinAlignment(): one E in a DNA alignment makes the viewer say
+    // protein while MAFFT still reads DNA and stops at the E.
+    let acgt = 0, letters = 0;
+    for (const r of recs) for (let i = 0; i < r.seq.length; i++) {
+        const c = r.seq.charCodeAt(i) & ~32;
+        if (c < 65 || c > 90) continue;
+        letters++;
+        if (c === 65 || c === 67 || c === 71 || c === 84 || c === 85 || c === 78) acgt++;
+    }
+    const protein = !(letters && acgt / letters > 0.75);
+    const ph = protein ? 'X' : 'N';
+    const unknown = protein ? /[*UOuo]/g : /[*EFIJLOPQZefijlopqz]/g;
+    const swap = (seq) => /[-.]/.test(seq) ? seq.replace(/\*/g, ph) : seq.replace(unknown, ph);
+    let changed = false;
+    const sent = recs.map(r => { const t = swap(r.seq); if (t !== r.seq) changed = true; return t; });
+    if (!changed) return { fasta, recs };
+    return { fasta: recs.map((r, i) => `>${r.name}\n${sent[i]}\n`).join(''), recs };
 }
 function _alignerRestoreResidues(result, recs) {
     if (typeof result !== 'string') return result;

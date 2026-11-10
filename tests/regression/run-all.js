@@ -17460,6 +17460,108 @@ check('Audit M1: an MSF file with "oo" on its Name: lines loads; MSF names with 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// Audit 2026-11-10, U2. What used to go wrong: one bad value in the browser's saved settings left the
+// page dead until the user cleared the site data. `msaviewer_brk_style` saved as null (or a number)
+// threw in applyBrkStyle during start-up, so no file could be loaded; a null entry in `msaviewer_history`
+// threw when Recent was opened; `clusteringPresets` saved as null threw in every preset function.
+// Each case: store the value, reload for real, then load a file and use the feature.
+check('Audit U2: a bad saved setting (null break style, null history entry, null clustering presets) does not stop the page', async (page) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  const cases = [
+    ['msaviewer_brk_style', 'null'],
+    ['msaviewer_brk_style', '5'],
+    ['msaviewer_brk_style', '{"color":7}'],
+    ['msaviewer_history', JSON.stringify({ max: 10, items: [null, { type: 'file', name: 'kept.fa', timestamp: 1, nSeqs: 3, length: 10 }, 'x', { type: 'file' }] })],
+    ['msaviewer_history', '{"max":"many","items":[null]}'],
+    ['clusteringPresets', 'null'],
+    ['clusteringPresets', '[1,2]'],
+    ['seqColourPresets', 'null'],
+    ['msaviewer_dotPresets', 'null'],
+  ];
+  for (const [key, value] of cases) {
+    errors.length = 0;
+    await page.evaluate(([k, v]) => { localStorage.clear(); localStorage.setItem(k, v); }, [key, value]);
+    await page.reload({ waitUntil: 'networkidle' });
+    const tag = `${key} = ${value.slice(0, 40)}`;
+    try { await loadFasta(page, makeFasta(6, 60)); } catch (e) { return { pass: false, detail: `${tag}: no file could be loaded (${String(e.message).split('\n')[0]}; page errors: ${JSON.stringify(errors)})` }; }
+    const n = await page.evaluate(() => state.seqs.length);
+    if (n !== 6) return { pass: false, detail: `${tag}: ${n} rows loaded, expected 6` };
+    // Recent list opens and shows what can be shown
+    await page.evaluate(() => { document.querySelector('.section-header[data-section="input"]')?.closest('.menu-section')?.classList.add('menu-open'); });
+    await page.evaluate(() => document.getElementById('recentButton').click());
+    await page.waitForTimeout(120);
+    const recent = await page.evaluate(() => document.getElementById('recentDropdown')?.textContent || '');
+    if (!recent.trim()) return { pass: false, detail: `${tag}: the Recent list is empty text (page errors: ${JSON.stringify(errors)})` };
+    if (key === 'msaviewer_history' && value.includes('kept.fa') && !recent.includes('kept.fa')) return { pass: false, detail: `${tag}: the good history entry was not shown: ${recent.slice(0, 80)}` };
+    // the preset functions run without throwing
+    const thrown = await page.evaluate(() => {
+      const out = [];
+      for (const fn of ['updateClusteringPresetList', '_dotPresetList', 'updateColourPresetList', 'updateSearchPresetList']) {
+        try { if (typeof window[fn] === 'function') window[fn](); } catch (e) { out.push(fn + ': ' + e.message); }
+      }
+      return out;
+    });
+    if (thrown.length) return { pass: false, detail: `${tag}: ${thrown.join('; ')}` };
+    if (errors.length) return { pass: false, detail: `${tag}: page errors ${JSON.stringify(errors).slice(0, 300)}` };
+  }
+  await page.evaluate(() => localStorage.clear());
+  return { pass: true, detail: `${cases.length} bad saved values: the page loads a file, Recent opens, presets list` };
+}, { timeoutMs: 180000 });
+
+// Audit 2026-11-10, M11. What used to go wrong: MAFFT refuses letters outside its alphabet. A protein
+// row with U (selenocysteine) or O (pyrrolysine), or a nucleotide row with I (inosine) or another letter
+// that is no base code, made Realign All fail with the aligner's own text and no row or letter named;
+// nothing was aligned. Such letters are now sent as X (protein) or N (nucleotide) and written back
+// afterwards, the same way as "*" (H4). Each case: the rows keep every letter AND are aligned (the
+// row with two residues missing gets its gap inside, which a failed run would not give).
+check('Audit M11: Realign All aligns rows with letters MAFFT does not know (protein U, O; nucleotide I, E and others) and keeps the letters', async (page) => {
+  const base = 'MKVLAAGIVALLLAAGCSSWERTYIPDFHKNQMKVLAAGIVALWERTY', dna = 'ACGTACGGTACCATGACGTAGCATGCATGCAAGTCGATCGTTGACCATGGA';
+  const idle = async () => { await page.waitForTimeout(200); await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 60000 }); await page.waitForTimeout(400); };
+  const bad = [];
+  const run = async (seqBase, letters) => {
+    for (const ch of letters) {
+      const a = seqBase.slice(0, 10) + ch + seqBase.slice(10, 30) + ch.toLowerCase() + seqBase.slice(30);
+      const b = seqBase.slice(0, 20) + seqBase.slice(22);
+      await loadFasta(page, `>a\n${a}\n>b\n${b}\n>c\n${seqBase}\n`);
+      await page.evaluate(() => document.getElementById('realignAllButton').click());
+      await idle();
+      const r = await page.evaluate(() => ({ msg: document.getElementById('statusMessage').textContent.slice(0, 90), rows: state.seqs.map(q => q.seq) }));
+      const ung = r.rows.map(t => t.replace(/[-.]/g, ''));
+      const kept = ung[0] === a && ung[1] === b && ung[2] === seqBase;
+      const aligned = /[A-Za-z]-+[A-Za-z]/.test(r.rows[1]) && new Set(r.rows.map(t => t.length)).size === 1;
+      if (!kept || !aligned) bad.push(`${ch}: ${!kept ? 'letters changed ' + ung[0] : 'not aligned'} (${r.msg})`);
+    }
+  };
+  await run(base, 'UOJBZX');
+  await run(dna, 'IEFJLOPQZXU');
+  return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : '17 letters: aligned, every letter kept in place and case' };
+}, { timeoutMs: 300000 });
+
+// Audit 2026-11-10, L1. What used to go wrong: the alignment's font size changes with a 0.1 s CSS
+// transition, and the Canvas redraw after a zoom step read the size while it was still moving
+// (12.08 px for 12 px). Cell width and row height were then measured for that in-between size and
+// stayed so until the next redraw. setZoom now switches the transition off for Canvas as for the DOM views.
+check('Audit L1: Canvas and Canvas Block measure their cells at the final font size after a zoom step, not mid-transition', async (page) => {
+  return withCanvasBlockPage(page, async (p, origin) => {
+    await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+    await loadFasta(p, makeFasta(30, 300));
+    const bad = [];
+    for (const mode of ['canvas', 'block']) {
+      await setMode(p, mode);
+      await p.waitForTimeout(300);
+      for (const pct of [92, 100, 108, 77, 123, 100]) {
+        await p.evaluate((v) => { const sl = document.getElementById('zoomSlider'); sl.value = _zoomToSlider(v); sl.dispatchEvent(new Event('input', { bubbles: true })); }, pct);
+        await p.waitForTimeout(700);
+        const r = await p.evaluate(() => ({ m: _canvasState.metrics && _canvasState.metrics.fontSizePx, css: parseFloat(getComputedStyle(alignmentContainer).fontSize) }));
+        if (r.m !== r.css || r.m !== Math.round(r.m)) bad.push(`${mode} ${pct}%: cells measured at ${r.m} px, font is ${r.css} px`);
+      }
+    }
+    await p.evaluate(() => resetZoom());
+    return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 600) : '12 zoom steps: measured at the final whole-pixel size' };
+  });
+}, { timeoutMs: 120000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
