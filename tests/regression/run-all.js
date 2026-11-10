@@ -18174,6 +18174,30 @@ check('Audit M21: the repeat search finds planted pairs whose one mismatch sits 
   return { pass: r.found === r.planted, detail: JSON.stringify(r) };
 });
 
+// Audit 2026-11-10, L13 and L14: two wrong guesses of the file format.
+// L13: any line starting with "locus" (any case) sent the file to the GenBank parser, so a Clustal,
+//      Stockholm or PHYLIP alignment with a row named locus failed to load ("GenBank parsing failed").
+// L14: unaligned FASTA with lowercase stretches (soft-masked sequences) whose capital letters happen to
+//      be equally many in every record was taken for A3M and its rows were re-gapped. In A3M the first
+//      record (the query) has no insert states, so a first record with lowercase letters is not A3M.
+check('Audit L13: a row named "locus" does not turn a Clustal, Stockholm or PHYLIP file into GenBank; soft-masked unaligned FASTA is not taken for A3M', async (page) => {
+  const rows = async (text) => { await loadFasta(page, text); return page.evaluate(() => state.seqs.map(q => q.header + '=' + q.seq)); };
+  const out = {};
+  out.clustal = await rows('CLUSTAL W (1.83) multiple sequence alignment\n\nlocus      ACGTACGT\nLOCUS      ACGTACGA\nother      ACGTTCGT\n\n');
+  out.stockholm = await rows('# STOCKHOLM 1.0\nlocus  ACGTACGT\nLOCUS  ACGTACGA\n//\n');
+  out.phylip = await rows(' 2 8\nlocus ACGTACGT\nLOCUS ACGTACGA\n');
+  out.genbank = await rows('LOCUS       REC1                  8 bp    DNA     linear   SYN 01-JAN-2026\nORIGIN\n        1 acgtacgt\n//\n');
+  out.masked = await rows('>m1\nacgtACGTACGTac\n>m2\nACGTACGTttttgg\n>m3\nggACGTACGT\n');
+  out.a3m = await rows('>q\nACDEFGHIK\n>h1\nACdeDEFGHIK\n>h2\nAC-EFGHIKw\n');
+  const want = {
+    clustal: ['locus=ACGTACGT', 'LOCUS=ACGTACGA', 'other=ACGTTCGT'], stockholm: ['locus=ACGTACGT', 'LOCUS=ACGTACGA'], phylip: ['locus=ACGTACGT', 'LOCUS=ACGTACGA'],
+    genbank: ['REC1=ACGTACGT'], masked: ['m1=acgtACGTACGTac', 'm2=ACGTACGTttttgg', 'm3=ggACGTACGT----'],
+  };
+  const bad = Object.keys(want).filter(k => JSON.stringify(out[k]) !== JSON.stringify(want[k])).map(k => `${k}: ${JSON.stringify(out[k])}`);
+  if (new Set(out.a3m.map(t => t.split('=')[1].length)).size !== 1 || out.a3m[1].split('=')[1].length <= 9) bad.push('a3m no longer expanded: ' + JSON.stringify(out.a3m));
+  return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 800) : 'four formats read as themselves; soft-masked FASTA kept; real A3M still expanded' };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

@@ -8845,6 +8845,9 @@ function _looksLikeA3m(seqs) {
     if (seqs.length < 2) return false;
     if (!seqs.some(s => /[a-z]/.test(s.seq))) return false;
     if (seqs.every(s => s.seq.length === seqs[0].seq.length)) return false;
+    // The first record of an A3M file is the query: it has no insert states. Soft-masked unaligned
+    // FASTA whose capitals happened to be equally many per record was re-gapped as A3M (audit L14).
+    if (/[a-z]/.test(seqs[0].seq)) return false;
     // A3M match columns are capitals: an all-lowercase alignment is just ragged
     if (!seqs.some(s => /[A-Z]/.test(s.seq))) return false;
     const matchCols = s => s.seq.replace(/[a-z.]/g, '').length;
@@ -15529,7 +15532,9 @@ async function parseAndRender(isFromDrop = false) {
             parsed = parseFasta(inputText);
             if (!parsed) throw new Error('FASTA parsing failed');
             if (!isFromDrop) state.currentFilename = state.currentFilename || 'fasta_import';
-        } else if (/^LOCUS\s+/mi.test(inputText)) {
+        } else if (/^LOCUS\s+\S+/m.test(inputText) && /^(ORIGIN|FEATURES|DEFINITION|ACCESSION|VERSION|CONTIG)\b/m.test(inputText) && !_isClustalInput(inputText) && !/^# STOCKHOLM/m.test(inputText)) {
+            // GenBank: a LOCUS line in capitals and another flatfile keyword. Any line starting with "locus" used
+            // to be enough, so an alignment with a row named locus went to this parser and failed (audit L13).
             parsed = parseGenBank(inputText);
             if (!parsed) throw new Error('GenBank parsing failed');
             state.currentFilename = state.currentFilename || 'genbank_import';
