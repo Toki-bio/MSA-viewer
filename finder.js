@@ -254,8 +254,12 @@
       ctrlKey: parts.indexOf('Ctrl') >= 0, altKey: parts.indexOf('Alt') >= 0, shiftKey: parts.indexOf('Shift') >= 0
     }));
   }
+  // nothing runs while a job holds the alignment (the busy overlay is up): Ctrl+K, a typed command and Enter used to
+  // click the command's button behind the overlay (GLM check 2026-11-10, #2)
+  function jobRunning() { return typeof _alignmentKeysAway === 'function' && _alignmentKeysAway() === 'busy'; }
   function run(it) {
     if (!it) return;
+    if (jobRunning()) { close(); input.blur(); return; }
     if (!it.ok) { if (typeof showMessage === 'function') showMessage(it.name + ' is not available now', 3000); return; }
     close();
     input.blur();
@@ -311,7 +315,7 @@
         e.stopPropagation();
         close();
         input.blur();
-      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k' && !jobRunning()) {   // during a job the program's own key guard answers
         e.preventDefault();
         e.stopPropagation();
         input.focus();
