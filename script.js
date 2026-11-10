@@ -200,7 +200,9 @@ function setupBrkStylePopover() {
     window.addEventListener('resize', closePopover);
 }
 
-function safeLocalGet(key, fallback = {}) {
+function safeLocalGet(key, fallback) {
+    // No fallback given: an empty store of named entries, without a prototype (see below)
+    if (fallback === undefined) fallback = Object.create(null);
     try {
         const raw = localStorage.getItem(key);
         if (!raw) return fallback;
@@ -209,6 +211,9 @@ function safeLocalGet(key, fallback = {}) {
         // used to be handed on and threw in the caller, at start-up for some keys (audit U2).
         if (value === null || typeof value !== typeof fallback
             || Array.isArray(value) !== Array.isArray(fallback)) return fallback;
+        // A store of named entries has no prototype: a preset named __proto__ is an entry like any
+        // other (on an ordinary object that name set the prototype and nothing was stored; audit U15)
+        if (typeof value === 'object' && !Array.isArray(value)) return Object.assign(Object.create(null), value);
         return value;
     } catch (e) {
         // Blocked storage throws here too: never let that stop the page loading
@@ -32336,12 +32341,17 @@ function applyPatternColour() {
     let matchedNames = new Set();
 
     try {
-        const regex = new RegExp(pattern, 'i');
+        // The pattern is a regular expression, and also plain text: a name typed as it is written,
+        // gamma(3) or eps*5, matched nothing as an expression (audit U14). A text that is no valid
+        // expression is plain text only.
+        let regex = null;
+        try { regex = new RegExp(pattern, 'i'); } catch (_) { regex = null; }
+        const literal = pattern.toLowerCase();
         // every row of the alignment, not the name elements on the page: Canvas has none, and the
         // windowed Full/Block views only hold the rows near the screen
         state.seqs.forEach(q => {
             const header = q.header;
-            if (regex.test(header) && !matchedNames.has(header)) {
+            if (((regex && regex.test(header)) || String(header).toLowerCase().includes(literal)) && !matchedNames.has(header)) {
                 matchedNames.add(header);
                 colourState.mappings.set(header, colour);
                 recordColorHistory(header, colour, 'Pattern');

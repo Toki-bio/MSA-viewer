@@ -18198,6 +18198,49 @@ check('Audit L13: a row named "locus" does not turn a Clustal, Stockholm or PHYL
   return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 800) : 'four formats read as themselves; soft-masked FASTA kept; real A3M still expanded' };
 });
 
+// Audit 2026-11-10, U14. What used to go wrong: the Colour Names pattern is a regular expression, so a
+// name typed as it is written, with ( ) [ ] or *, matched nothing: gamma(3), delta[4] and eps*5
+// coloured no row. A name that contains the typed text is now coloured too, and a text that is no
+// valid expression is taken as plain text instead of "Invalid regex".
+check('Audit U14: Colour Names colours a name typed as it is written, with ( ) [ ] * in it; expressions still work', async (page) => {
+  await loadFasta(page, '>gamma(3)\nACGT\n>delta[4]\nACGA\n>eps*5\nACGC\n>alpha_1\nACGG\n>alpha_2\nACTT\n>open(paren\nAGTT\n');
+  const paint = (pattern) => page.evaluate((pattern) => {
+    colourState.mappings.clear();
+    document.getElementById('colourPatternInput').value = pattern;
+    applyPatternColour();
+    return { names: [...colourState.mappings.keys()].sort(), msg: document.getElementById('statusMessage').textContent };
+  }, pattern);
+  const out = {};
+  for (const pat of ['gamma(3)', 'delta[4]', 'eps*5', 'open(paren', '^alpha_\\d$', 'ALPHA']) out[pat] = await paint(pat);
+  await page.evaluate(() => { colourState.mappings.clear(); applyColourToSeqNames(colourState.mappings); });
+  const want = { 'gamma(3)': ['gamma(3)'], 'delta[4]': ['delta[4]'], 'eps*5': ['eps*5'], 'open(paren': ['open(paren'], '^alpha_\\d$': ['alpha_1', 'alpha_2'], 'ALPHA': ['alpha_1', 'alpha_2'] };
+  const bad = Object.keys(want).filter(k => JSON.stringify(out[k].names) !== JSON.stringify(want[k])).map(k => `${k}: ${JSON.stringify(out[k])}`);
+  return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 700) : '4 names with special characters and 2 expressions colour the right rows' };
+});
+
+// Audit 2026-11-10, U15. What used to go wrong: a clustering preset named __proto__ reported "saved" but
+// was not stored: the presets object was an ordinary object, where that name sets the prototype
+// instead of adding an entry. Saved settings are now read into an object without a prototype.
+check('Audit U15: a clustering preset named __proto__ is stored like any other name', async (page) => {
+  await loadFasta(page, makeFasta(6, 60));
+  const r = await page.evaluate(() => {
+    localStorage.removeItem('clusteringPresets');
+    const out = {};
+    for (const name of ['__proto__', 'constructor', 'plain']) {
+      document.getElementById('presetNameInput').value = name;
+      saveClusteringPreset();
+      out[name] = document.getElementById('statusMessage').textContent;
+    }
+    const stored = JSON.parse(localStorage.getItem('clusteringPresets') || '{}');
+    out.keys = Object.keys(stored).sort();
+    out.listed = [...document.querySelectorAll('#presetSelect option, #clusteringPresetSelect option')].map(o => o.value).filter(Boolean);
+    localStorage.removeItem('clusteringPresets');
+    return out;
+  });
+  const pass = JSON.stringify(r.keys) === JSON.stringify(['__proto__', 'constructor', 'plain']);
+  return { pass, detail: JSON.stringify(r).slice(0, 500) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
