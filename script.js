@@ -20353,8 +20353,10 @@ function expandMenu() {
     requestAnimationFrame(() => {
         minimizeBar.style.display = 'none';
         const controls = el('controls');
-        alignmentContainer.style.top = (_lastMenuHeight || 80) + 'px';
-        controls.style.display = 'grid';
+        // back to the stylesheet's own layout, and the height as it is now: 'grid' with the height noted
+        // before hiding left an empty band above the alignment that grew with each round (audit U8)
+        controls.style.display = '';
+        alignmentContainer.style.top = (controls.offsetHeight || _lastMenuHeight || 80) + 'px';
         controls.style.position = '';
         controls.style.top = '';
         controls.style.left = '';

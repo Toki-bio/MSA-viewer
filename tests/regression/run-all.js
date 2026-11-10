@@ -18387,6 +18387,28 @@ check('Audit U12: the Recent list opens under its button and Esc closes it', asy
   return { pass, detail: JSON.stringify({ shown, after }) };
 });
 
+// Audit 2026-11-10, U8. What used to go wrong: hiding the menu with Ctrl+H and showing it again brought the
+// toolbar back with another layout (display: grid; the stylesheet's is flex) and a stale height, so an empty
+// band appeared above the alignment and grew with every round (at 1024 px wide the alignment started at
+// 78, then 131, then 156 px). After any number of rounds the alignment must start where it started.
+check('Audit U8: hiding and showing the menu with Ctrl+H leaves the alignment where it started', async (page) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await loadFasta(page, makeFasta(6, 80));
+  await page.mouse.move(500, 600);
+  const top = () => page.evaluate(() => ({ top: Math.round(document.getElementById('alignmentContainer').getBoundingClientRect().top),
+    menu: Math.round(document.getElementById('controls').getBoundingClientRect().height), display: getComputedStyle(document.getElementById('controls')).display }));
+  const before = await top();
+  const rounds = [];
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press('Control+h'); await page.waitForTimeout(200);
+    const hidden = await top();
+    await page.keyboard.press('Control+h'); await page.waitForTimeout(300);
+    rounds.push({ hiddenTop: hidden.top, ...(await top()) });
+  }
+  const pass = rounds.every(r => r.top === before.top && r.menu === before.menu && r.display === before.display && r.hiddenTop < before.top);
+  return { pass, detail: JSON.stringify({ before, rounds }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
