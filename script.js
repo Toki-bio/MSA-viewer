@@ -16985,7 +16985,9 @@ function handleKeyDown(e) {
     const keysAway = _alignmentKeysAway();
     if (keysAway) {
         const ae = document.activeElement;
-        const inText = _isTextEntry(ae) && ae.getClientRects().length > 0;
+        // a drop-down has no shortcuts of its own: the text-field branch below does not treat it as one, so a SELECT let
+        // Ctrl+U / Ctrl+R / Ctrl+A through to the alignment behind the window (GLM check 2026-11-10, #1)
+        const inText = _isTextEntry(ae) && ae.tagName !== 'SELECT' && ae.getClientRects().length > 0;
         // the Sequence editor's own undo keys (handled further down) and native keys of a text field stay
         const editorUndo = keysAway === 'window' && _seqEditOpen() && (e.ctrlKey || e.metaKey) && /^[zy]$/i.test(e.key);
         if (!editorUndo && !(keysAway === 'window' && inText)) {
