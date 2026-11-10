@@ -17718,6 +17718,100 @@ check('Audit M6: a snapshot or FASTA file without residues is a failed load (mes
   return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : '4 files without residues: failed load each time; a good file loads after' };
 });
 
+// Audit 2026-11-10, U11. What used to go wrong: the Keys menu and the Info window listed Ctrl+M as
+// "Toggle all menu sections", but the key only shows a note (menus open on hover since long ago);
+// the Info window's list had no Ctrl+K (Find a function). H11 follow-up: the Delete database question
+// said the FASTA file is removed, also for a database registered from a file elsewhere, which is now kept.
+check('Audit U11: the shortcut lists do not promise "Toggle all menu sections" for Ctrl+M, and the Info window lists Ctrl+K', async (page) => {
+  const r = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('strong')].filter(s => s.nextElementSibling && s.nextElementSibling.tagName === 'SPAN').map(s => ({ key: s.textContent.trim(), what: s.nextElementSibling.textContent.trim(), inInfo: !!s.closest('#infoModal') }));
+    return { toggle: rows.filter(x => /toggle all menu/i.test(x.what)).map(x => x.key), infoK: rows.some(x => x.inInfo && x.key === 'Ctrl+K'), menuK: rows.some(x => !x.inInfo && x.key === 'Ctrl+K'), n: rows.length };
+  });
+  const pass = r.toggle.length === 0 && r.infoK && r.menuK;
+  return { pass, detail: JSON.stringify(r) };
+});
+
+// Audit 2026-11-10, M7, M8, M9: a snapshot file or link is data from someone else.
+// M9: view.consensusType, consensusPosition or shadeMode holding a text with a quote went into a CSS
+//     selector as it was; the selector was invalid, the load threw, and everything after it in the
+//     snapshot (selection, colours, searches, annotation) was not applied.
+// M8: selections.tsdColor and selections.repeats[*].color were taken without the colour check that the
+//     other snapshot colours get, so text such as "red;background:url(//x)" reached style rules.
+// M7: a saved regex search such as (A+)+$ ran at once and froze the tab on a row of A's (the time
+//     doubles with every A). Such a pattern is now loaded switched off, with a note.
+check('Audit M7-M9: a snapshot with a quote in a view value, a non-colour in a mark colour, or an exploding search pattern loads, with the rest applied', async (page) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  const fasta = '>a\n' + 'A'.repeat(34) + 'C\n>b\n' + 'A'.repeat(30) + 'CGTGC\n>c\n' + 'ACGTACGTACGTACGTACGTACGTACGTACGTACG\n';
+  await loadFasta(page, fasta);
+  const base = await page.evaluate(() => JSON.parse(JSON.stringify(_buildSnapshotPayload())));
+  const load = (pl) => Promise.race([
+    page.evaluate(async (pl) => { try { await _loadSnapshotPayload(pl); } catch (e) { return { thrown: e.message }; }
+      await new Promise(r => setTimeout(r, 200));
+      return { n: state.seqs.length, rows: [...state.selectedRows], tsdColor: state.tsdMarkColor, repeatColors: [...state.repeatHighlights.values()].map(v => v && v.color),
+        searches: state.searchHistory.map(h => [h.searchValue, h.enabled]), ann: !!document.getElementById('showAnnotation'), msg: document.getElementById('statusMessage').textContent }; }, pl),
+    new Promise(r => setTimeout(() => r({ frozen: true }), 12000)),
+  ]);
+  const bad = [];
+  // M9
+  for (const k of ['consensusType', 'consensusPosition', 'shadeMode']) {
+    const pl = JSON.parse(JSON.stringify(base)); pl.view[k] = 'a"]b'; pl.view.selectedRows = [1, 2];
+    const r = await load(pl);
+    if (r.thrown || r.frozen || r.n !== 3 || JSON.stringify(r.rows) !== '[1,2]') bad.push(`M9 view.${k}: ${JSON.stringify(r).slice(0, 160)}`);
+  }
+  // M8
+  { const pl = JSON.parse(JSON.stringify(base));
+    pl.selections = { tsd: [[0, [1, 2]]], tsdStyle: 'color', tsdColor: 'red;background:url(//x.example/a)', repeats: [['direct-0', { segs: [[0, 4]], row: 0, color: '#f00}body{background:url(//x.example/b)' }], ['direct-1', { segs: [[5, 9]], row: 1, color: '#00ff00' }]] };
+    const r = await load(pl);
+    if (r.thrown || r.frozen) bad.push('M8: ' + JSON.stringify(r).slice(0, 160));
+    else {
+      if (/url|;|\}/.test(String(r.tsdColor))) bad.push(`M8: tsd colour taken as "${r.tsdColor}"`);
+      if (r.repeatColors.some(c => /url|;|\}/.test(String(c)))) bad.push(`M8: repeat colour taken as ${JSON.stringify(r.repeatColors)}`);
+      if (!r.repeatColors.includes('#00ff00')) bad.push(`M8: the good repeat colour was lost: ${JSON.stringify(r.repeatColors)}`);
+    } }
+  // M7 (last: a frozen page cannot be used again)
+  { const pl = JSON.parse(JSON.stringify(base));
+    const mk = (v, regex) => ({ motif: v + ':fwd', searchValue: v, useRegex: regex, strand: 'fwd', color: '#ffcc00', label: v, maxMismatches: 0, enabled: true });
+    pl.searchHistory = [mk('(A+)+$', true), mk('(A*)*C$', true), mk('ACG+T', true), mk('CGT', false)];
+    const r = await load(pl);
+    if (r.frozen) bad.push('M7: the page froze on (A+)+$');
+    else if (r.thrown) bad.push('M7: ' + r.thrown);
+    else {
+      const on = Object.fromEntries(r.searches);
+      if (on['(A+)+$'] !== false || on['(A*)*C$'] !== false) bad.push(`M7: exploding patterns left on: ${JSON.stringify(r.searches)}`);
+      if (on['ACG+T'] !== true || on['CGT'] !== true) bad.push(`M7: ordinary searches switched off: ${JSON.stringify(r.searches)}`);
+      if (!/switched off/i.test(r.msg)) bad.push(`M7: no note about the pattern (status "${r.msg}")`);
+    } }
+  if (errors.length) bad.push('page errors: ' + errors.slice(0, 2).join(' ; '));
+  return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : 'quote in 3 view values, 2 non-colours, 2 exploding patterns: loaded, rest applied, patterns off with a note' };
+}, { timeoutMs: 120000 });
+
+// Audit 2026-11-10, M10. What used to go wrong: a link such as ?url=/api/local-cat?file=... made the page
+// request that address. When the page is served by the optional local server, a link from someone
+// else thus called the server's own routes (read a local file into the viewer, poll SSH). Link
+// parameters (url, snapshotFile, mask, bed, reads) no longer fetch /api/ addresses of the page's own origin.
+check('Audit M10: link parameters (?url=, ?snapshotFile=, ?mask=, ?bed=, ?reads=) do not call /api/ routes of the page\'s own server', async (page) => {
+  const origin = new URL(page.url()).origin;
+  const asked = [];
+  page.on('request', r => { const u = new URL(r.url()); if (/^\/+api/i.test(decodeURIComponent(u.pathname)) && !/^\/api\/viewer-info$/.test(u.pathname)) asked.push(u.pathname + u.search); });   // viewer-info: the page's own start-up question
+  const bad = [];
+  for (const q of ['url=/api/local-cat%3Ffile%3D/etc/hostname', 'url=' + encodeURIComponent(origin + '/API/local-cat?file=/etc/hostname'), 'snapshotFile=/api/local-cat%3Ffile%3Dx.json',
+    'url=' + encodeURIComponent(origin + '/examples/svk_k4.fa') + '&mask=/api/local-cat%3Ffile%3Dm', 'url=' + encodeURIComponent(origin + '/examples/svk_k4.fa') + '&bed=/api/ssh-ls&reads=/api/bam2sam%3Ffile%3Dx']) {
+    asked.length = 0;
+    await page.goto(origin + '/index.html?' + q, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(700);
+    if (asked.length) bad.push(`${q.slice(0, 50)}: requested ${asked.join(', ')}`);
+    const msg = await page.evaluate(() => document.getElementById('statusMessage').textContent);
+    if (!asked.length && !/local server|not allowed|\/api/i.test(msg) && !/svk_k4/.test(q)) bad.push(`${q.slice(0, 50)}: no message (status "${msg}")`);
+  }
+  // an ordinary same-origin file still loads by link
+  await page.goto(origin + '/index.html?url=' + encodeURIComponent('/examples/svk_k4.fa'), { waitUntil: 'networkidle' });
+  await page.waitForTimeout(900);
+  const n = await page.evaluate(() => state.seqs.length);
+  if (!n) bad.push('an ordinary ?url= file no longer loads');
+  return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : `5 links: no /api/ request; an ordinary file loads (${n} rows)` };
+}, { timeoutMs: 120000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

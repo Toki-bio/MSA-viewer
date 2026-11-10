@@ -18840,6 +18840,24 @@ function _buildSnapshotPayload(opts = {}) {
     };
 }
 
+// The radio of a group with this value. A snapshot's value went into a CSS selector as text: one
+// with a quote made the selector invalid and stopped the whole snapshot from loading (audit M9).
+function _radioByValue(name, value) {
+    return Array.from(document.querySelectorAll('input[type="radio"]')).find(r => r.name === name && r.value === String(value)) || null;
+}
+// A regex that can take time doubling with the length of the text: a group that holds a repeat and is
+// itself repeated, as in (A+)+$ or (A*)*C. Found by folding the innermost groups one at a time.
+function _regexMayExplode(src) {
+    let t = String(src || '').replace(/\\./g, 'x').replace(/\[[^\]]*\]/g, 'x');
+    const rep = /[+*]|\{\d+,\d*\}/;
+    for (let guard = 0; guard < 200; guard++) {
+        const m = /\((?:\?[:=!]|\?<[=!]|\?<[^>]*>)?([^()]*)\)([+*]|\{\d+,\d*\})?/.exec(t);
+        if (!m) return false;
+        if (m[2] && rep.test(m[1])) return true;
+        t = t.slice(0, m.index) + (rep.test(m[1]) || m[2] ? 'x+' : 'x') + t.slice(m.index + m[0].length);
+    }
+    return true;
+}
 function _applySnapshotView(view) {
     if (!view || typeof view !== 'object') return;
     if (view.residueCase === 'upper' || view.residueCase === 'lower' || view.residueCase === 'asis') setResidueCase(view.residueCase);
@@ -18904,11 +18922,11 @@ function _applySnapshotView(view) {
     }
 
     if (view.consensusType) {
-        const consensusTypeRadio = document.querySelector(`input[name="consensusType"][value="${view.consensusType}"]`);
+        const consensusTypeRadio = _radioByValue('consensusType', view.consensusType);
         if (consensusTypeRadio) consensusTypeRadio.checked = true;
     }
     if (view.consensusPosition) {
-        const consensusPosRadio = document.querySelector(`input[name="consensusPosition"][value="${view.consensusPosition}"]`);
+        const consensusPosRadio = _radioByValue('consensusPosition', view.consensusPosition);
         if (consensusPosRadio && !consensusPosRadio.disabled) consensusPosRadio.checked = true;
     }
     if (view.showConsensus !== undefined) {
@@ -18918,7 +18936,7 @@ function _applySnapshotView(view) {
         el('consensusFallback').value = view.consensusFallback;
     }
     if (view.shadeMode) {
-        const shadeModeRadio = document.querySelector(`input[name="shadeMode"][value="${view.shadeMode}"]`);
+        const shadeModeRadio = _radioByValue('shadeMode', view.shadeMode);
         if (shadeModeRadio) shadeModeRadio.checked = true;
     }
     if (view.colorScheme && el('colorSchemeSelect')) {
@@ -19117,9 +19135,13 @@ function _applySnapshotSearchHistory(sh, legacyMismatches) {
             sequencesWithMatches: entry.sequencesWithMatches || 0
         });
     });
+    // A saved pattern that can freeze the tab is loaded switched off (audit M7); the user can switch it on
+    const risky = state.searchHistory.filter(h => h.useRegex && h.enabled && _regexMayExplode(h.searchValue));
+    risky.forEach(h => { h.enabled = false; });
     bumpSearchLayer();
     reapplySearchHighlights();
     updateActiveSearchesPanel();
+    if (risky.length) setTimeout(() => showMessage(`A saved search was switched off because its pattern can take very long: ${risky.map(h => h.searchValue).join(', ').slice(0, 80)}`, 7000), 50);
 }
 
 function _sanitizeSnapshotFileBaseName(sourceTitle) {
@@ -21459,15 +21481,21 @@ function _applySnapshotSelections(sel) {
     const hadMarks = (state.tsdMarks?.size || 0) + (state.repeatHighlights?.size || 0) > 0;
     // Replace, not keep: marks from the previous session belong to other rows
     state.tsdMarks = setMap(sel.tsd);
-    if (sel.tsd) { state.tsdMarkStyle = sel.tsdStyle || state.tsdMarkStyle; state.tsdMarkColor = sel.tsdColor || state.tsdMarkColor; }
-    state.repeatHighlights = new Map(sel.repeats || []);
+    // Colours and the style name come from the file: only a plain colour and a known style (audit M8)
+    if (sel.tsd) {
+        state.tsdMarkStyle = ['color', 'bold', 'lowercase'].includes(sel.tsdStyle) ? sel.tsdStyle : state.tsdMarkStyle;
+        state.tsdMarkColor = _safeCssColor(sel.tsdColor) || state.tsdMarkColor;
+    }
+    const safeRepeats = arr => new Map((Array.isArray(arr) ? arr : []).filter(e => Array.isArray(e) && e[1] && typeof e[1] === 'object')
+        .map(([id, v]) => [String(id), { ...v, color: _safeCssColor(v.color) || '#ffd54f' }]));
+    state.repeatHighlights = safeRepeats(sel.repeats);
     const s = sel.stash || {};
     state.selectionStash = {
         rows: s.rows ? _rowsToObjs(s.rows.filter(i => Number.isInteger(i) && i < n)) : null,
         cols: s.cols ? new Set(s.cols) : null,
         nucs: s.nucs ? _nucsToObjs(nucMap(s.nucs)) : null,
         tsd: s.tsd ? ResidueMarks.fromRowCols(setMap(s.tsd)) : null,
-        repeats: s.repeats ? new Map(s.repeats) : null,
+        repeats: s.repeats ? safeRepeats(s.repeats) : null,
         names: s.names ? new Map(s.names) : null
     };
     _selectionsUndo = null;
@@ -28968,14 +28996,28 @@ function initializeAppUI() {
             syncQuickModeSwitch?.();
         }
     }
+    // An address taken from the link must not be one of the local server's own routes: with the page
+    // served by server.js, ?url=/api/local-cat?file=... read a local file at a stranger's request (audit M10)
+    let _apiLinkRefused = false;
+    const _linkAddress = (name) => {
+        const v = urlParams.get(name);
+        if (!v) return v;
+        try {
+            const u = new URL(v, location.href);
+            let path = u.pathname; try { path = decodeURIComponent(path); } catch (_) {}
+            if (u.origin === location.origin && /^[\/\\]+api([\/\\]|$)/i.test(path)) { _apiLinkRefused = true; return null; }
+        } catch (_) {}
+        return v;
+    };
     const autoSnapshot = urlParams.get('snapshot');
-    const autoSnapshotFile = urlParams.get('snapshotFile');
-    const autoUrl   = urlParams.get('url');
+    const autoSnapshotFile = _linkAddress('snapshotFile');
+    const autoUrl   = _linkAddress('url');
     const autoData  = urlParams.get('data');
     const autoTitle = urlParams.get('title');
-    const autoMask  = urlParams.get('mask');
-    const autoBed   = urlParams.get('bed');
-    const autoReads = urlParams.get('reads');
+    const autoMask  = _linkAddress('mask');
+    const autoBed   = _linkAddress('bed');
+    const autoReads = _linkAddress('reads');
+    if (_apiLinkRefused) setTimeout(() => showMessage('This link asks the local server for a file (/api/...). That is not allowed from a link; open the file from the Input menu.', 8000), 600);
     const autoHandoff = urlParams.get('handoff');   // Actions > New Tab (openSelectedInNewTab)
     const autoLink = urlParams.get('link');         // Clone Tab from a linked view: start linked
     const autoDemo = urlParams.get('demo');         // a worked example (DEMOS): run it after ?url= has loaded
@@ -33264,7 +33306,7 @@ function showDbManagementModal() {
                 delBtn.style.borderRadius = '3px';
                 delBtn.style.cursor = 'pointer';
                 delBtn.onclick = async () => {
-                    if (!confirm('Delete database "' + db.name + '"? This removes the FASTA file and BLAST indexes.')) return;
+                    if (!confirm('Delete database "' + db.name + '"? This removes it from the list, with its copy and indexes in the server\'s blast_dbs folder. A FASTA file registered from another folder is kept.')) return;
                     try {
                         const resp = await fetch('/api/blast-db/' + encodeURIComponent(db.name), { method: 'DELETE' });
                         if (resp.ok) {
