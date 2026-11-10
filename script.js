@@ -27029,6 +27029,10 @@ async function addSequencesJustAdd() {
     const alignToCons = document.getElementById('addSeqAlignCons')?.checked;
 
     pushUndo('add-sequences');
+    // taken back on a stale result or an error only while it is still the last step: popping blindly removed the
+    // user's own edit made during the run (GLM check 2026-11-10, #8)
+    const ownStep = state.deletedHistory[state.deletedHistory.length - 1];
+    const dropOwnStep = () => { if (state.deletedHistory[state.deletedHistory.length - 1] === ownStep) state.deletedHistory.pop(); };
 
     // If align-to-consensus, do pairwise alignment of each new seq against consensus
     // computes its own consensus below; state.consensusSeq is only kept up to date while the row is shown
@@ -27062,7 +27066,7 @@ async function addSequencesJustAdd() {
             }
 
             if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp) {
-                state.deletedHistory.pop();   // the undo entry pushed for this add: nothing was added
+                dropOwnStep();   // the undo entry pushed for this add: nothing was added
                 showMessage('The alignment changed while the new sequences were being aligned; nothing was added. Add them again.', 6000);
                 return;
             }
@@ -27075,7 +27079,7 @@ async function addSequencesJustAdd() {
             _dropColumnAnalysesAfterRealign();
         } catch (err) {
             console.error('Add-to-consensus alignment failed:', err);
-            state.deletedHistory.pop();   // nothing was added
+            dropOwnStep();   // nothing was added
             showMessage(`Add-to-consensus alignment failed: ${err.message}`, 4000);
             return;
         }

@@ -18511,6 +18511,32 @@ check('GLM 1110 #7: Add & Align with no result leaves the undo history as it was
   return { pass: h0[1] === 1 && out.undo === h0[0] && out.redo === h0[1] && out.rows === 40 && /changed while/i.test(out.msg), detail: JSON.stringify(out) };
 }, { timeoutMs: 240000 });
 
+// #8: Add Sequences with "align to consensus" runs without the busy overlay. When the rows changed meanwhile (here
+// Ctrl+U after closing the dialog) it popped the top undo step blindly: the user's 'duplicate' step went and the
+// empty 'add-sequences' step stayed.
+check('GLM 1110 #8: Add Sequences "align to consensus" refused as stale keeps the user\'s own undo step', async (page) => {
+  let x = 7; const r = () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296;
+  let base = ''; for (let i = 0; i < 4000; i++) base += 'ACGT'[Math.floor(r() * 4)];
+  let fa = '', add = ''; for (let i = 0; i < 46; i++) { let q = ''; for (let j = 0; j < base.length; j++) { const u = r(); q += u < 0.06 ? 'ACGT'[Math.floor(r() * 4)] : u < 0.09 ? '' : base[j]; } if (i < 40) fa += `>s${i}\n${q}\n`; else add += `>a${i}\n${q}\n`; }
+  page.on('dialog', d => d.accept());
+  await loadFasta(page, fa);
+  await page.evaluate((add) => {
+    state.selectedRows = new Set([3]); renderAlignment();
+    openAddSequencesModal();
+    document.getElementById('addSeqInput').value = add;
+    document.getElementById('addSeqAlignCons').checked = true;
+    window.__glmDone = false;
+    window.__glmP = addSequencesJustAdd().then(() => { window.__glmDone = true; });
+  }, add);
+  await page.waitForTimeout(150);
+  await page.evaluate(() => { closeAddSequencesModal(); document.activeElement?.blur?.(); });
+  await page.keyboard.press('Control+u'); await page.waitForTimeout(100);
+  const during = await page.evaluate(() => ({ done: window.__glmDone, rows: state.seqs.length }));
+  await page.evaluate(() => window.__glmP);
+  const end = await page.evaluate(() => ({ rows: state.seqs.length, undo: state.deletedHistory.map(h => h.type).slice(-3), msg: document.getElementById('statusMessage').textContent.slice(0, 80) }));
+  return { pass: during.done === false && during.rows === 41 && end.rows === 41 && end.undo.at(-1) === 'duplicate' && /changed while/i.test(end.msg), detail: JSON.stringify({ during, end }) };
+}, { timeoutMs: 240000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
