@@ -18492,6 +18492,25 @@ check('GLM 1110 #6: a region realign whose rows changed during the run says so, 
   return { pass: /changed while/i.test(msg) && !/cancelled/i.test(msg), detail: msg };
 }, { timeoutMs: 240000 });
 
+// #7: Add & Align pushed its undo step first and kept it when the aligner gave no result (rows changed during the
+// run, or an error): an empty Undo step was left and the Redo steps were lost.
+check('GLM 1110 #7: Add & Align with no result leaves the undo history as it was and keeps Redo', async (page) => {
+  page.on('dialog', d => d.dismiss());
+  await loadFasta(page, audit1Big());
+  await page.evaluate(() => { state.selectedRows = new Set([1]); renderAlignment(); document.activeElement?.blur?.(); });
+  await page.keyboard.press('Control+u'); await page.waitForTimeout(300);
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  const h0 = await page.evaluate(() => [state.deletedHistory.length, state.redoHistory.length]);
+  await page.evaluate(() => { document.getElementById('addSeqInput').value = '>new1\nACGTACGTACGTAGCTAGCTAGCATCGATCGATCGTACGTAGCTAGCTAG\n'; addSequencesAndAlign(); });
+  await glmBusyUp(page);
+  await page.evaluate(() => { const a = state.seqs[4]; state.seqs[4] = state.seqs[5]; state.seqs[5] = a; });
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 180000 });
+  await page.waitForTimeout(400);
+  const out = await page.evaluate(() => ({ undo: state.deletedHistory.length, redo: state.redoHistory.length, rows: state.seqs.length, top: state.deletedHistory.at(-1)?.type || '', msg: document.getElementById('statusMessage').textContent.slice(0, 80) }));
+  out.h0 = h0;
+  return { pass: h0[1] === 1 && out.undo === h0[0] && out.redo === h0[1] && out.rows === 40 && /changed while/i.test(out.msg), detail: JSON.stringify(out) };
+}, { timeoutMs: 240000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
