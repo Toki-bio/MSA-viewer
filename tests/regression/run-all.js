@@ -18137,6 +18137,43 @@ check('Audit M20: restriction search finds minus-strand sites of non-palindromic
   return { pass, detail: JSON.stringify(r) };
 });
 
+// Audit 2026-11-10, M21 (direct and inverted pairs). What used to go wrong: a copy is extended from its
+// seed and ends where the score was best; on a tie the shorter end was kept. A pair with its one
+// allowed mismatch next to the last (or first) base, as in 12 bases with the mismatch at base 11,
+// was therefore found as 10 bases and dropped as shorter than Min length: 8 of 96 planted 10-14 bp
+// pairs were missed at the default settings. On a tie the longer end (on a match) is kept now.
+check('Audit M21: the repeat search finds planted pairs whose one mismatch sits next to a copy end (direct and inverted, 10 to 14 bases)', async (page) => {
+  await loadFasta(page, makeFasta(3, 30));
+  const r = await page.evaluate(() => {
+    let x = 99; const rnd = () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296;
+    const rc = t => t.split('').reverse().map(c => ({ A: 'T', C: 'G', G: 'C', T: 'A' })[c]).join('');
+    const other = c => 'ACGT'.replace(c, '')[Math.floor(rnd() * 3)];
+    let planted = 0, found = 0; const missed = [];
+    for (let trial = 0; trial < 120; trial++) {
+      const type = trial % 2 ? 'inverted' : 'direct';
+      const L = 10 + (trial % 5), where = [1, L - 2, 2, L - 3][trial % 4];
+      // a background without repeats of its own: every 6-mer at most once is not needed, a random 400-mer is enough to host one pair
+      let bg = ''; for (let i = 0; i < 400; i++) bg += 'ACGT'[Math.floor(rnd() * 4)];
+      let unit = ''; for (let i = 0; i < L; i++) unit += 'ACGT'[Math.floor(rnd() * 4)];
+      let copy = unit.slice(0, where) + other(unit[where]) + unit.slice(where + 1);
+      if (type === 'inverted') copy = rc(copy);
+      const a = 100, b = 250;
+      // the bases beside the copies do not pair, so the planted pair is the whole stretch
+      const fl = type === 'inverted' ? ['A', 'A', 'A', 'A'] : ['A', 'A', 'C', 'C'];   // before A, after A, before B, after B
+      const seq = bg.slice(0, a - 1) + fl[0] + unit + fl[1] + bg.slice(a + L + 1, b - 1) + fl[2] + copy + fl[3] + bg.slice(b + L + 1);
+      planted++;
+      const res = _findRepeats(seq, 10, 10, type);
+      // found: a listed pair covers the planted copies but for at most 3 bases at one end (where the random flank
+      // happens to continue the match, the longest stretch within the limit is the planted one shifted by up to three bases, which is as good an answer)
+      const ov = (s1, n1, s2, n2) => Math.max(0, Math.min(s1 + n1, s2 + n2) - Math.max(s1, s2));
+      const hit = res.some(h => h.length >= L && ov(h.posA, h.length, a, L) >= L - 3 && ov(h.posB, h.length, b, L) >= L - 3);
+      if (hit) found++; else if (missed.length < 4) missed.push(`${type} L${L} mismatch at ${where + 1}`);
+    }
+    return { planted, found, missed };
+  });
+  return { pass: r.found === r.planted, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

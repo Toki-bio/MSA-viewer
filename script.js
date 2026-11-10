@@ -37791,15 +37791,18 @@ function* _findRepeatsSteps(seq, minLen, maxDivPct, type, opts = {}) {
                     let sc = k, best = k, hiT = k - 1, t = k;
                     for (; x + t < n; t++) {
                         const c = code[p + t];
-                        sc += (c >= 0 && c === code[x + t]) ? 1 : -1;
-                        if (sc > best) { best = sc; hiT = t; } else if (best - sc > xdrop) break;
+                        const hitF = c >= 0 && c === code[x + t];
+                        sc += hitF ? 1 : -1;
+                        // a tie on a match keeps the longer end: 12 bases with the one mismatch at base 11 ended at base 10 (audit M21)
+                        if (sc > best || (hitF && sc === best)) { best = sc; hiT = t; } else if (best - sc > xdrop) break;
                     }
                     work += t;
                     let loT = 0; sc = 0; best = 0;
                     for (t = -1; p + t >= 0; t--) {
                         const c = code[p + t];
-                        sc += (c >= 0 && c === code[x + t]) ? 1 : -1;
-                        if (sc > best) { best = sc; loT = t; } else if (best - sc > xdrop) break;
+                        const hitB = c >= 0 && c === code[x + t];
+                        sc += hitB ? 1 : -1;
+                        if (sc > best || (hitB && sc === best)) { best = sc; loT = t; } else if (best - sc > xdrop) break;
                     }
                     work -= t;
                     covered[d] = x + hiT;
@@ -37813,15 +37816,17 @@ function* _findRepeatsSteps(seq, minLen, maxDivPct, type, opts = {}) {
                     let sc = k, best = k, hiT = k - 1, t = k;
                     for (; p + t < j - t; t++) {   // inward until the arms meet
                         const a = code[p + t], b = code[j - t];
-                        sc += (a >= 0 && b >= 0 && a + b === 3) ? 1 : -1;
-                        if (sc > best) { best = sc; hiT = t; } else if (best - sc > xdrop) break;
+                        const hitF = a >= 0 && b >= 0 && a + b === 3;
+                        sc += hitF ? 1 : -1;
+                        if (sc > best || (hitF && sc === best)) { best = sc; hiT = t; } else if (best - sc > xdrop) break;
                     }
                     work += t;
                     let loT = 0; sc = 0; best = 0;
                     for (t = -1; p + t >= 0 && j - t < n; t--) {
                         const a = code[p + t], b = code[j - t];
-                        sc += (a >= 0 && b >= 0 && a + b === 3) ? 1 : -1;
-                        if (sc > best) { best = sc; loT = t; } else if (best - sc > xdrop) break;
+                        const hitB = a >= 0 && b >= 0 && a + b === 3;
+                        sc += hitB ? 1 : -1;
+                        if (sc > best || (hitB && sc === best)) { best = sc; loT = t; } else if (best - sc > xdrop) break;
                     }
                     work -= t;
                     covered[ad] = p + loT;
