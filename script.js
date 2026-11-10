@@ -16962,6 +16962,8 @@ function _blurFocusInWindow() {
 }
 function handleKeyDown(e) {
     if (e.key === 'Escape') {
+        // while a job runs Esc leaves the selection alone (it cleared it behind the busy overlay; GLM check 2026-11-10, #5)
+        if (_alignmentKeysAway() === 'busy') { e.preventDefault(); return; }
         // A rename box handles its own Esc (cancel); closing menus here blurred it, and the
         // blur saved the name, so Esc used to commit the rename
         if (document.activeElement?.classList?.contains('seq-name-edit')) return;

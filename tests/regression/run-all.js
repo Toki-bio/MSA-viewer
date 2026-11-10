@@ -18468,6 +18468,17 @@ check('GLM 1110 #4: a click on the alignment (Full residue, Canvas name column) 
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// #5: Escape is handled before the batch-1 guard, so during a run it cleared the selection (behind the overlay).
+check('GLM 1110 #5: Escape while the aligner runs keeps the selection', async (page) => {
+  await loadFasta(page, audit1Big());
+  await page.evaluate(() => { state.selectedRows = new Set([5, 6]); renderAlignment(); document.getElementById('realignSelectedButton').click(); });
+  await glmBusyUp(page);
+  await page.keyboard.press('Escape'); await page.waitForTimeout(100);
+  const out = await page.evaluate(() => ({ busy: !document.getElementById('busyOverlay').hidden, rows: [...state.selectedRows].sort((a, b) => a - b).join(',') }));
+  await glmBusyEnd(page);
+  return { pass: out.busy && out.rows === '5,6', detail: JSON.stringify(out) };
+}, { timeoutMs: 240000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
