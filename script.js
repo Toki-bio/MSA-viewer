@@ -17359,6 +17359,18 @@ function _dropNoOpUndo(redoBefore) {
     state.redoHistory = redoBefore || [];
 }
 
+// Name colours after Undo or Redo replaced the rows. `saved` is the colour set stored with the step,
+// `namesBefore` the row names just before the rows were replaced. Only names that the step brings back
+// get their stored colour, and names that it takes away lose theirs (a rename: the colour goes back to
+// the old name). Names present before and after keep the colour they have now: the whole stored set
+// used to be put back, which wiped every colour given after the undone step (audit U4).
+function _restoreNameColours(saved, namesBefore) {
+    if (!saved || !colourState?.mappings) return;
+    const namesNow = new Set(state.seqs.map(q => q.header));
+    for (const n of namesBefore) if (!namesNow.has(n)) colourState.mappings.delete(n);
+    for (const n of namesNow) if (!namesBefore.has(n) && saved.has(n)) colourState.mappings.set(n, saved.get(n));
+}
+
 function pushUndo(type) {
     _paneEditNote?.();
     _noteRowSelectionForReorder();
@@ -17553,9 +17565,10 @@ function undoDelete(quiet) {
     };
     if (last.colStateBefore) redoEntry.colStateAfter = _snapshotColumnState();
     state.redoHistory.push(redoEntry);
+    const namesBeforeUndo = new Set(state.seqs.map(q => q.header));
     state.seqs = _undoRestoreSeqs(last.seqs);
     if (typeof _statsInvalidate === 'function') _statsInvalidate(false);
-    if (last.colours && colourState?.mappings) { colourState.mappings.clear(); last.colours.forEach((v, k) => colourState.mappings.set(k, v)); }
+    _restoreNameColours(last.colours, namesBeforeUndo);
     _restoreGroupOrder(last.groupOrder);
     if (last.colStateBefore) _restoreColumnState(last.colStateBefore);
     state.selectedRows = last.selectedRows || new Set();
@@ -17597,9 +17610,10 @@ function redoAction(quiet) {
     undoEntry.colours = colourState?.mappings ? new Map(colourState.mappings) : null;
     undoEntry.groupOrder = state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null;
     state.deletedHistory.push(undoEntry);
+    const namesBeforeRedo = new Set(state.seqs.map(q => q.header));
     state.seqs = _undoRestoreSeqs(next.seqs);
     if (typeof _statsInvalidate === 'function') _statsInvalidate(false);
-    if (next.colours && colourState?.mappings) { colourState.mappings.clear(); next.colours.forEach((v, k) => colourState.mappings.set(k, v)); }
+    _restoreNameColours(next.colours, namesBeforeRedo);
     _restoreGroupOrder(next.groupOrder);
     if (next.colStateAfter) _restoreColumnState(next.colStateAfter);
     state.selectedRows = next.selectedRows || new Set();

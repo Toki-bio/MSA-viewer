@@ -18016,6 +18016,43 @@ check('Audit M17: a drag past the last column or row selects up to the edge (res
   });
 }, { timeoutMs: 120000 });
 
+// Audit 2026-11-10, U4. What used to go wrong: every undo step stores the name colours of its moment,
+// and Undo put that whole set back. A colour given to a name AFTER an edit was therefore wiped when the
+// edit was undone. Undo and Redo now only move colours for names that the step brings back or takes
+// away (a rename, RevComp's rc_ prefix, a deleted row); colours of names present before and after stay.
+check('Audit U4: undoing an earlier edit keeps name colours applied after it; a rename undone still takes its colour back to the old name', async (page) => {
+  await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAA\n>c\nACGTACGTTT\n>d\nACGAACGTTT\n');
+  const cols = () => page.evaluate(() => Object.fromEntries(colourState.mappings));
+  const paint = (name, c) => page.evaluate(([name, c]) => { colourState.mappings.set(name, c); applyColourToSeqNames(colourState.mappings); renderAlignment(); }, [name, c]);
+  const out = {};
+  // an edit (move row d up), then a colour, then Undo of the edit
+  await page.evaluate(() => { state.selectedRows = new Set([3]); renderAlignment(); document.activeElement?.blur?.(); });
+  await page.keyboard.press('Control+u'); await page.waitForTimeout(250);
+  await paint('b', '#ff0000');
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  out.afterUndo = await cols();
+  out.order = await page.evaluate(() => state.seqs.map(q => q.header).join(''));
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(300);
+  out.afterRedo = await cols();
+  // a rename by RevComp (rc_ prefix): Undo takes the colour back to the old name, and keeps a colour given after it
+  await loadFasta(page, '>a\nACGTACGTAC\n>b\nACGTACGTAA\n>c\nACGTACGTTT\n');
+  await page.evaluate(() => { colourState.mappings.clear(); });
+  await paint('a', '#00ff00');
+  await page.evaluate(() => { state.selectedRows = new Set([0]); renderAlignment(); document.activeElement?.blur?.(); });
+  await page.keyboard.press('Control+r'); await page.waitForTimeout(400);
+  out.renamed = await page.evaluate(() => state.seqs[0].header);
+  out.afterRc = await cols();
+  await paint('c', '#0000ff');
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  out.afterRcUndo = await cols();
+  out.name = await page.evaluate(() => state.seqs[0].header);
+  await page.evaluate(() => { colourState.mappings.clear(); applyColourToSeqNames(colourState.mappings); });
+  const pass = out.order === 'abcd' && out.afterUndo.b === '#ff0000' && out.afterRedo.b === '#ff0000'
+    && out.renamed !== 'a' && out.afterRc[out.renamed] === '#00ff00'
+    && out.name === 'a' && out.afterRcUndo.a === '#00ff00' && !(out.renamed in out.afterRcUndo) && out.afterRcUndo.c === '#0000ff';
+  return { pass, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
