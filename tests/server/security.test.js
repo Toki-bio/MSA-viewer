@@ -239,6 +239,28 @@ async function main() {
             check(`queue poll (${srv}) prints the queued path between the markers`,
                 /=START_QUEUE=\s*\/data\/dir\s+aln\.fa\s*=END_QUEUE=/.test(qOut), JSON.stringify({ qCmd, qOut }));
         }
+        // The queue file has a fixed name in the shared /tmp of the remote host. Another user there could
+        // put a symlink in its place: the poll then read the file it points at as a queued path and emptied
+        // it (cp /dev/null "$Q" writes through the link). A link, or a file someone else owns, is now left
+        // alone. (Windows: making a symlink needs extra rights, so this runs where links can be made.)
+        const victim = path.join(tmp, 'victim.txt');
+        fs.writeFileSync(victim, '/home/victim/private.fa\n');
+        let linkOk = true;
+        try { fs.rmSync(qFile, { force: true }); fs.symlinkSync(victim, qFile); } catch (_) { linkOk = false; }
+        if (linkOk) {
+            for (const srv of ['direct', 'inner']) {
+                if (fs.existsSync(argLog)) fs.unlinkSync(argLog);
+                await request(port, `/api/ssh-poll-file?server=${srv}`);
+                const qArgs = fs.existsSync(argLog) ? JSON.parse(fs.readFileSync(argLog, 'utf8')) : [];
+                const qCmd = (qArgs[qArgs.length - 1] || '').split('/tmp/.msa_viewer_queue').join(qFile);
+                const qOut = runSh(qCmd, { PATH: remotePath(sshOnly) });
+                check(`queue poll (${srv}) ignores a symlink in place of the queue file and leaves its target intact`,
+                    !/START_QUEUE|victim/.test(qOut) && fs.readFileSync(victim, 'utf8') === '/home/victim/private.fa\n', JSON.stringify({ qCmd, qOut, victim: fs.readFileSync(victim, 'utf8') }));
+                fs.writeFileSync(victim, '/home/victim/private.fa\n');
+            }
+        } else {
+            console.log('skip queue symlink check (cannot make a symlink here)');
+        }
     } finally {
         // Windows: the server holds its folder (cwd) open until it has exited, and rmSync died with
         // EPERM, which also hid any error thrown above and skipped the summary line and exit code
