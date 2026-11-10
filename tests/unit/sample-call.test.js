@@ -96,6 +96,18 @@ check('an insertion in 55% of reads is heterozygous and adds no columns', i55.va
   check('a change only on reverse reads: altFwd 0, altRev 4', rv && rv.altFwd === 0 && rv.altRev === 4 && rv.refFwd === 4, JSON.stringify(rv));
 }
 
+// An insertion written at a read's end (no aligned base after it: e.g. the read reaches the end of the loaded region
+// there) was counted as an insertion event, but that read did not count in the depth across the junction: half the
+// reads ending so gave an allele fraction of 200% and a homozygous call (audit M25). Such a read is no evidence
+// of an insertion between two bases; the fraction must never pass 100%.
+{
+  const endIns = SC.call([...Array(5)].map(() => rd(0, '4M2I', 'ACGTGG')).concat([...Array(5)].map(() => rd(0, '4M2I4M', 'ACGTGGACGT'))), toyRef);
+  const v = endIns.variants.find(x => x.type === 'ins');
+  check('an insertion at read ends is not counted: fraction 100% from the 5 reads that span it, never 200%', v && v.frac === 1 && v.depth === 5 && v.altFwd === 5 && endIns.variants.every(x => x.frac <= 1), JSON.stringify(endIns.variants));
+  const onlyEnds = SC.call([...Array(6)].map(() => rd(0, '4M2I', 'ACGTGG')).concat([...Array(6)].map(() => rd(0, '8M', 'ACGTACGT'))), toyRef);
+  check('reads that only end in an insertion give no insertion call', !onlyEnds.variants.some(x => x.type === 'ins') && onlyEnds.insAfter.size === 0, JSON.stringify(onlyEnds.variants));
+}
+
 // '=' in SEQ means "the same base as the reference" (SAMv1 1.4, e.g. samtools calmd -e). It was counted as N, so a
 // SAM written that way gave a row of N (fewer than 3 real bases) and no calls (audit M26). Same for BAM's 4-bit code 0.
 {

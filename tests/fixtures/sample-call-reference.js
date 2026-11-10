@@ -62,7 +62,7 @@
             if (!usable(r)) continue;
             const strandRev = !!((r.flag || 0) & 0x10);
             const S = strandRev ? rev : fwd;
-            let rp = 0, p = r.pos, first = -1, last = -1;
+            let rp = 0, p = r.pos, first = -1, last = -1, pendIns = null;
             for (const { op, len } of r.cigar) {
                 if (op === 'M' || op === '=' || op === 'X') {
                     for (let i = 0; i < len; i++) {
@@ -95,9 +95,8 @@
                         // sequence's last base (the inserted sequence rotates)
                         let pn = p, sq = r.seq.substr(rp, len).toUpperCase();
                         while (pn > lo + 1 && (refSeq[pn - 1] || '').toUpperCase() === sq[sq.length - 1]) { sq = sq[sq.length - 1] + sq.slice(0, -1); pn--; }
-                        const k = pn + ':' + sq;
-                        const e = insEv.get(k) || [0, 0]; e[strandRev ? 1 : 0]++; insEv.set(k, e);
-                        ins[p - lo]++;
+                        // (reads audit M25, also in sample-call.js) counted only if the read has a base or a deletion after it
+                        (pendIns || (pendIns = [])).push(pn + ':' + sq, p);
                     }
                     rp += len;
                 } else if (op === 'S') {
@@ -105,6 +104,11 @@
                 } else if (op === 'N') {
                     p += len;                       // an intron: no evidence either way
                 }
+            }
+            if (pendIns) for (let i = 0; i < pendIns.length; i += 2) {
+                if (pendIns[i + 1] > last) continue;
+                const k = pendIns[i], e = insEv.get(k) || [0, 0]; e[strandRev ? 1 : 0]++; insEv.set(k, e);
+                ins[pendIns[i + 1] - lo]++;
             }
             if (first >= 0) for (let q = first + 1; q <= last; q++) span[q - lo]++;
         }

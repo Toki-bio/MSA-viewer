@@ -71,7 +71,7 @@
             if (!usable(r)) continue;
             const strandRev = !!((r.flag || 0) & 0x10);
             const S = strandRev ? rev : fwd;
-            let rp = 0, p = r.pos, first = -1, last = -1;
+            let rp = 0, p = r.pos, first = -1, last = -1, pendIns = null;
             for (const { op, len } of r.cigar) {
                 if (op === 'M' || op === '=' || op === 'X') {
                     // this 30-million-base loop made a string per base: 3.9 s for 200,000 reads
@@ -119,9 +119,10 @@
                         // sequence's last base (the inserted sequence rotates)
                         let pn = p, sq = r.seq.substr(rp, len).toUpperCase();
                         while (pn > lo + 1 && (refSeq[pn - 1] || '').toUpperCase() === sq[sq.length - 1]) { sq = sq[sq.length - 1] + sq.slice(0, -1); pn--; }
-                        const k = pn + ':' + sq;
-                        const e = insEv.get(k) || [0, 0]; e[strandRev ? 1 : 0]++; insEv.set(k, e);
-                        ins[p - lo]++;
+                        // counted once the read is done, and only if it has a base or a deletion after it (last >= p): an
+                        // insertion at the read's end (e.g. where the loaded region stops) is no evidence of one between
+                        // two bases, and that read is not in span[p], so it gave fractions up to 200% and a homozygous call
+                        (pendIns || (pendIns = [])).push(pn + ':' + sq, p);
                     }
                     rp += len;
                 } else if (op === 'S') {
@@ -129,6 +130,12 @@
                 } else if (op === 'N') {
                     p += len;                       // an intron: no evidence either way
                 }
+            }
+            if (pendIns) for (let i = 0; i < pendIns.length; i += 2) {
+                const k = pendIns[i], pi = pendIns[i + 1];
+                if (pi > last) continue;
+                const e = insEv.get(k) || [0, 0]; e[strandRev ? 1 : 0]++; insEv.set(k, e);
+                ins[pi - lo]++;
             }
             // as differences, summed once below: a loop per read over its whole span cost as much as the bases
             if (first >= 0 && last > first) { span[first + 1 - lo]++; if (last + 1 - lo <= W) span[last + 1 - lo]--; }
