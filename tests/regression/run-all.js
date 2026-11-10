@@ -17970,6 +17970,52 @@ check('Audit M16: a second Ctrl+Shift+R during a region realign leaves the busy 
   return { pass: shown && w === 1, detail: JSON.stringify({ overlayStillShown: shown, running, sameWidth: w === 1 }) };
 }, { timeoutMs: 240000 });
 
+// Audit 2026-11-10, M17. What used to go wrong: a drag selection followed the pointer only while it was
+// over a residue. A quick drag off the right edge or below the last row left the last columns or rows
+// out (from column 23 past the edge: 13 columns on 2 rows instead of 17 on 3). While the pointer is
+// outside, the selection now runs to the nearest cell, so to the edge. Canvas and Canvas Block, with
+// real mouse events; residue drag, ruler (column) drag and name (row) drag.
+check('Audit M17: a drag past the last column or row selects up to the edge (residues, ruler columns, names) in Canvas and Canvas Block', async (page) => {
+  return withCanvasBlockPage(page, async (p, origin) => {
+    await p.goto(origin + '/index.html', { waitUntil: 'networkidle' });
+    const bad = [];
+    for (const mode of ['canvas', 'block']) {
+      await loadFasta(p, makeFasta(12, 40));
+      await setMode(p, mode);
+      await p.waitForTimeout(400);
+      const g = await p.evaluate(() => { const c = _canvasState.canvas.getBoundingClientRect(), m = _canvasState.metrics; return { l: c.left, t: c.top, r: c.right, b: c.bottom, nameW: m.nameW, H: m.headerH || m.charH, ch: m.charH, cw: m.charW, ph: _canvasState.rowPitch || m.charH, W: state.seqs[0].seq.length, N: state.seqs.length }; });
+      const cx = col => g.l + g.nameW + (col + 0.5) * g.cw, cy = row => g.t + g.H + (row + 0.5) * g.ph;
+      const clear = () => p.evaluate(() => { state.selectedNucs.clear(); state.selectedColumns.clear(); state.selectedRows.clear(); state.pendingNucStart = null; renderAlignment(); });
+      const drag = async (x0, y0, x1, y1) => { await p.mouse.move(x0, y0); await p.mouse.down(); await p.mouse.move((x0 + x1) / 2, (y0 + y1) / 2, { steps: 2 }); await p.mouse.move(x1, y1, { steps: 3 }); await p.mouse.up(); await p.waitForTimeout(200); };
+      // residues: from (row 9, col 23) past the right edge and below the last row
+      await clear();
+      await drag(cx(23), cy(9), cx(g.W - 1) + 12 * g.cw, cy(g.N - 1) + 6 * g.ph);
+      let r = await p.evaluate(() => [...state.selectedNucs.entries()].map(([row, set]) => [row, Math.min(...set), Math.max(...set), set.size]).sort((a, b) => a[0] - b[0]));
+      if (JSON.stringify(r) !== JSON.stringify([9, 10, 11].map(row => [row, 23, g.W - 1, g.W - 23]))) bad.push(`${mode} residues right/down: ${JSON.stringify(r)}`);
+      // residues: from (row 2, col 6) to the left of the first column and above the first row
+      await clear();
+      await drag(cx(6), cy(2), g.l + 3, g.t - 30 < 2 ? 2 : g.t - 30);
+      r = await p.evaluate(() => [...state.selectedNucs.entries()].map(([row, set]) => [row, Math.min(...set), Math.max(...set)]).sort((a, b) => a[0] - b[0]));
+      if (JSON.stringify(r) !== JSON.stringify([0, 1, 2].map(row => [row, 0, 6]))) bad.push(`${mode} residues left/up: ${JSON.stringify(r)}`);
+      // ruler: columns from 30 past the right edge
+      await clear();
+      await p.keyboard.down('Control'); await p.keyboard.down('Alt');   // a column drag is Ctrl+Alt+drag
+      await drag(cx(30), g.t + g.ch / 2, cx(g.W - 1) + 12 * g.cw, g.t + g.ch / 2);   // the ruler is the first line of the header
+      await p.keyboard.up('Alt'); await p.keyboard.up('Control');
+      r = await p.evaluate(() => [...state.selectedColumns].sort((a, b) => a - b));
+      if (r[0] !== 30 || r[r.length - 1] !== g.W - 1 || r.length !== g.W - 30) bad.push(`${mode} ruler: ${r[0]}..${r[r.length - 1]} (${r.length})`);
+      // names: rows from 8 to below the last row
+      await clear();
+      await p.keyboard.down('Control');   // a row drag on the names is Ctrl+drag
+      await drag(g.l + g.nameW / 2, cy(8), g.l + g.nameW / 2, cy(g.N - 1) + 6 * g.ph);
+      await p.keyboard.up('Control');
+      r = await p.evaluate(() => [...state.selectedRows].sort((a, b) => a - b));
+      if (JSON.stringify(r) !== JSON.stringify([8, 9, 10, 11])) bad.push(`${mode} names: ${JSON.stringify(r)}`);
+    }
+    return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : 'residues, ruler and names reach the edge in both views' };
+  });
+}, { timeoutMs: 120000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

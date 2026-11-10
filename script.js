@@ -6056,6 +6056,27 @@ function _canvasHitTest(clientX, clientY, opts) {
 
 // Hit-test the scale ruler area (top row, y < SCALE_H in canvas coords).
 // Returns { col } or null if outside the ruler's column range.
+// The cell nearest to a client point, for a drag whose pointer has left the cells: past the last
+// column or row, over the names, above the ruler, outside the canvas. A drag used to stop growing
+// there, so a quick drag off the edge left the last columns or rows out (audit M17).
+function _canvasDragCell(clientX, clientY) {
+    const canvas = _canvasState.canvas, m = _canvasState.metrics;
+    if (!canvas || !m || !m.nameW) return null;
+    const nSeqs = _canvasState.seqsLen || (state.seqs ? state.seqs.length : 0);
+    const nSlots = _canvasState.nSlots || (state.seqs && state.seqs.length ? _maxOf(state.seqs, q => q.seq.length) : 0);
+    if (!nSeqs || !nSlots) return null;
+    const rect = canvas.getBoundingClientRect();
+    const H = m.headerH || m.charH, pitch = _canvasState.rowPitch || m.charH;
+    const cy = Math.max(rect.top + 1, Math.min(rect.bottom - 1, clientY));
+    const P = _canvasLocal(Math.max(rect.left, Math.min(rect.right - 1, clientX)), cy);
+    const leftEdge = P.sticky ? m.nameW : Math.max(0, m.nameW - P.ox);
+    const x = Math.max(leftEdge, P.x);
+    let slot = Math.floor((x - m.nameW + P.ox) / m.charW);
+    slot = Math.max(P.s0 || 0, Math.min(Math.min(P.s1, nSlots) - 1, slot));
+    let row = Math.floor((Math.max(H, P.y) - H + P.oy) / pitch);
+    row = Math.max(0, Math.min(nSeqs - 1, row));
+    return { row, col: _canvasSlotToCol(slot), slot };
+}
 function _canvasHitTestRuler(clientX, clientY) {
     const canvas = _canvasState.canvas;
     if (!canvas) return null;
@@ -16731,7 +16752,8 @@ function handleMouseMove(e) {
     if (!state.isDragging) return;
     if (state.dragMode === 'row') {
         if (isCanvasMode()) {
-            const index = _canvasRowFromClientY(e.clientY);
+            let index = _canvasRowFromClientY(e.clientY);
+            if (index < 0) index = (_canvasDragCell(e.clientX, e.clientY) || { row: -1 }).row;   // past the last row: up to it (audit M17)
             if (index >= 0) {
                 _rowRangeSelect(state.dragStartRow, index, !!state.dragRowRemove);
                 updateRowSelections();
@@ -16752,7 +16774,8 @@ function handleMouseMove(e) {
     } else if (state.dragMode === 'col') {
         hideTooltip();
         if (isCanvasMode()) {
-            const pos = _canvasColFromClientX(e.clientX, e.clientY);
+            let pos = _canvasColFromClientX(e.clientX, e.clientY);
+            if (pos < 0) pos = (_canvasDragCell(e.clientX, e.clientY) || { col: -1 }).col;   // past the last column: up to it (audit M17)
             if (pos >= 0) {
                 const start = Math.min(state.dragStartCol, pos);
                 const end = Math.max(state.dragStartCol, pos);
@@ -16776,7 +16799,7 @@ function handleMouseMove(e) {
     } else if (state.dragMode === 'nuc') {
         if (isCanvasMode()) {
             // Canvas mode: hit-test instead of DOM span lookup
-            const hit = _canvasHitTest(e.clientX, e.clientY);
+            const hit = _canvasHitTest(e.clientX, e.clientY) || _canvasDragCell(e.clientX, e.clientY);   // off the cells: the nearest one (audit M17)
             if (hit && hit.row === state.dragStartRow) {
                 const rowSet = buildNucSelectionSet(hit.row, state.dragStartCol, hit.col);
                 state.selectedNucs.clear();
