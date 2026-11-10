@@ -98,6 +98,29 @@ asyncChecks.push(() => checkAsync('#188 clustering: no group comes back with few
     return bad.length ? 'groups returned with ' + bad.join(', ') : true;
 }));
 
+// Reads audit L26: a BAM read whose SEQ is '*' (l_seq 0; samtools writes secondary alignments so) was kept: it was drawn
+// as a bar of N mismatches and passed to the views as a read with bases. A SAM read with SEQ '*' was already dropped
+// ('no CIGAR or sequence'); a BAM one is dropped the same way, and counted.
+const BamP = require(path.join(ROOT, 'bam-parser.js'));
+check('reads L26: a BAM read with SEQ * (l_seq 0) is not kept, and is counted as skipped', () => {
+    const rec = (name, lSeq) => {
+        const nm = Buffer.from(name + '\0'), sb = (lSeq + 1) >> 1, b = Buffer.alloc(4 + 32 + nm.length + 4 + sb + lSeq);
+        b.writeInt32LE(b.length - 4, 0); b.writeInt32LE(0, 4); b.writeInt32LE(10, 8); b[12] = nm.length; b[13] = 60;
+        b.writeUInt16LE(1, 16); b.writeUInt16LE(0, 18); b.writeInt32LE(lSeq, 20); b.writeInt32LE(-1, 24); b.writeInt32LE(-1, 28);
+        let o = 36; nm.copy(b, o); o += nm.length; b.writeUInt32LE(4 * 16, o); o += 4;   // CIGAR 4M
+        for (let i = 0; i < sb; i++) b[o++] = 0x12;                                     // bases AC AC
+        b.fill(0xff, o, o + lSeq);
+        return b;
+    };
+    const head = Buffer.alloc(12 + 4 + 5 + 4); head.write('BAM\x01', 0, 'latin1'); head.writeUInt32LE(0, 4); head.writeUInt32LE(1, 8);
+    head.writeUInt32LE(5, 12); head.write('chr1\0', 16, 'latin1'); head.writeUInt32LE(100, 21);
+    const buf = new Uint8Array(Buffer.concat([head, rec('withSeq', 4), rec('noSeq', 0)]));
+    const h = BamP.parseBAMHeader(buf), got = BamP.parseBAMRecords(buf, h.headerEndOffset, true);
+    const names = got.records.map(r => r.name);
+    const nSkipped = Object.values(got.skipped).reduce((a, x) => a + x, 0);
+    return names.join() === 'withSeq' && got.totalReads === 2 && nSkipped === 1 ? true : JSON.stringify({ names, skipped: got.skipped, total: got.totalReads });
+});
+
 (async () => {
     for (const run of asyncChecks) await run();
     console.log(`\naudit-low: ${n - fail}/${n} passed`);

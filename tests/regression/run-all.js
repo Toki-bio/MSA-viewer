@@ -18241,6 +18241,137 @@ check('Audit U15: a clustering preset named __proto__ is stored like any other n
   return { pass, detail: JSON.stringify(r).slice(0, 500) };
 });
 
+// ---- reads audit batch (fix-reads): M23, M26, L29, L26 VCF, M22 ----
+
+// A SAM saved on Windows (CRLF line ends) with QUAL '*' and no tags: the last field of every read was '*\r', not '*',
+// so the '*' (no qualities) was read as a quality string whose bases were all below the minimum: the sample row was all
+// N, no variants, and nothing said why (reads audit M23). The SAM text was split on '\n' only.
+check('Reads SAM with CRLF line ends, QUAL * and no tags: the sample is called, the variant found', async (page) => {
+  const L = 400, RL = 100, b = 'ACGT'; let seed = 41; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const alt = c => (c === 'A' ? 'C' : 'A');
+  const lines = [`@HD\tVN:1.6\tSO:coordinate`, `@SQ\tSN:chrC\tLN:${L}`];
+  for (let p = 0; p + RL <= L; p += 5) {
+    let s = ref.slice(p, p + RL); const k = 200 - p;
+    if (k >= 0 && k < RL) s = s.slice(0, k) + alt(s[k]) + s.slice(k + 1);     // every read: a homozygous change at 201
+    lines.push(`c${p}\t0\tchrC\t${p + 1}\t60\t${RL}M\t*\t0\t0\t${s}\t*`);
+  }
+  await page.setInputFiles('#fileInput', { name: 'c.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrC\r\n' + ref + '\r\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(400);
+  await page.setInputFiles('#bamFileInput', { name: 'c.sam', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\r\n') + '\r\n') });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView, null, { timeout: 30000 });
+  // positions 20-379 have at least 3 reads (the ends fewer: N there is right)
+  const o = await page.evaluate(() => { const c = _readsCalls(), row = c.bases.slice(20, 380).join('');
+    return { nN: (row.match(/N/g) || []).length, len: row.length, vars: c.variants.map(v => v.pos + v.ref + '>' + v.alt), qual: JSON.stringify(bamState.allReads[0].qual), name: bamState.allReads[0].name }; });
+  const ok = o.len === 360 && o.nN === 0 && o.vars.length === 1 && o.vars[0].startsWith('201') && !/\r/.test(o.qual + o.name);
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 60000 });
+
+// '=' in SEQ means "the same base as the reference" (SAMv1; samtools calmd -e writes it). It was taken as a base of its
+// own: every '=' was drawn as a red mismatch and called N, so the sample row was N and the Variants list empty
+// (reads audit M26). Each '=' is now the reference base for the caller, the drawing, the tooltip and the sort.
+check("Reads SAM with '=' bases: no mismatch is drawn for them, the sample is called and only the real change is listed", async (page) => {
+  const L = 300, RL = 60, b = 'ACGT'; let seed = 43; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const alt = c => (c === 'A' ? 'C' : 'A');
+  const lines = [`@SQ\tSN:chrE\tLN:${L}`];
+  for (let p = 100; p + RL <= 220; p += 4) {
+    const k = 150 - p;
+    let s = '='.repeat(RL); if (k >= 0 && k < RL) s = s.slice(0, k) + alt(ref[150]) + s.slice(k + 1);   // a change at 151, the rest '='
+    lines.push(`e${p}\t0\tchrE\t${p + 1}\t60\t${RL}M\t*\t0\t0\t${s}\t*`);
+  }
+  await page.setInputFiles('#fileInput', { name: 'e.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrE\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(400);
+  await page.setInputFiles('#bamFileInput', { name: 'e.sam', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\n') + '\n') });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView, null, { timeout: 30000 });
+  await page.evaluate(READS_PX);
+  const o = await page.evaluate(() => {
+    const q = bamState.reads.find(x => x.name === 'e120');
+    _readsFit(110, 200); alignmentContainer.scrollTop = 0; _readsDraw();
+    const y = __rowY(q), cell = _readsCell();
+    const c = _readsCalls(), row = c.bases.slice(120, 200).join('');   // 3 reads or more over all of it (the ends have fewer: N)
+    const f = _getReadCigarFeatures(q, bamState.refSeq);
+    return { cell, redEq: __has(__colX(140), y + 3, cell, 10, '#e74c3c', 40), redAlt: __has(__colX(150), y + 3, cell, 10, '#e74c3c', 40),
+      nN: (row.match(/N/g) || []).length, vars: c.variants.map(v => v.pos + v.ref + '>' + v.alt),
+      featMism: [...f.bases.values()].filter(x => x.type === 'mismatch').length, base140: _readBaseAt(q, 140), ref140: bamState.refSeq[140] };
+  });
+  const ok = !o.redEq && o.redAlt && o.nN === 0 && o.vars.length === 1 && o.vars[0].startsWith('151') && o.featMism === 1 && o.base140 === o.ref140;
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 60000 });
+
+// Reads audit L29 said Clear reads left the Variants window showing the old list. On 0cddc88 it did not reproduce:
+// renderAlignment hides the window once no reads are left (since the window was added, 94825d2). This check pins that:
+// a later change to Clear reads or renderAlignment must not leave a list of changes from reads that are gone.
+check('Clear reads: the Variants window does not keep showing the old changes', async (page) => {
+  const L = 300, RL = 60, b = 'ACGT'; let seed = 47; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const lines = [`@SQ\tSN:chrK\tLN:${L}`];
+  for (let p = 0; p + RL <= L; p += 4) { const k = 150 - p; let s = ref.slice(p, p + RL); if (k >= 0 && k < RL) s = s.slice(0, k) + (s[k] === 'A' ? 'C' : 'A') + s.slice(k + 1); lines.push(`k${p}\t0\tchrK\t${p + 1}\t60\t${RL}M\t*\t0\t0\t${s}\t*`); }
+  await page.setInputFiles('#fileInput', { name: 'k.fa', mimeType: 'text/plain', buffer: Buffer.from('>chrK\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(400);
+  await page.setInputFiles('#bamFileInput', { name: 'k.sam', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\n') + '\n') });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView, null, { timeout: 30000 });
+  await page.click('#readsVariantsButton'); await page.waitForTimeout(200);
+  const before = await page.evaluate(() => ({ shown: getComputedStyle(el('variantsWindow')).display !== 'none', rows: el('variantsTable').querySelectorAll('tr[data-pos]').length }));
+  await page.click('#clearReadsButton'); await page.waitForTimeout(300);
+  const after = await page.evaluate(() => { const w = el('variantsWindow'); return { shown: !!w && getComputedStyle(w).display !== 'none', rows: w ? w.querySelectorAll('tr[data-pos]').length : 0 }; });
+  const ok = before.shown && before.rows === 1 && (!after.shown || after.rows === 0);
+  return { pass: ok, detail: JSON.stringify({ before, after }) };
+}, { timeoutMs: 60000 });
+
+// A VCF beside the reads matched only the exact chromosome name: '5' did not go on chr5 (as the reads' own matching
+// allows a chr prefix, a version, case), so a VCF from another pipeline showed nothing. And GT 1/2 (two different
+// alternative alleles: heterozygous) was coloured as homozygous, since every allele was non-reference (reads audit L26).
+check('Reads VCF: a chromosome named without chr matches, GT 1/2 is heterozygous, 1/1 homozygous', async (page) => {
+  const L = 2000, RL = 100, b = 'ACGT'; let seed = 53; const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x80000000;
+  let ref = ''; for (let i = 0; i < L; i++) ref += b[(rnd() * 4) | 0];
+  const lines = [`@SQ\tSN:chr5\tLN:${L}`];
+  for (let p = 0; p + RL <= L; p += 10) lines.push(`v${p}\t0\tchr5\t${p + 1}\t60\t${RL}M\t*\t0\t0\t${ref.slice(p, p + RL)}\t*`);
+  await page.setInputFiles('#fileInput', { name: 'v5.fa', mimeType: 'text/plain', buffer: Buffer.from('>chr5\n' + ref + '\n') });
+  await page.waitForFunction(() => state.seqs && state.seqs.length === 1);
+  await page.waitForTimeout(400);
+  await page.setInputFiles('#bamFileInput', { name: 'v5.sam', mimeType: 'text/plain', buffer: Buffer.from(lines.join('\n') + '\n') });
+  await page.waitForFunction(() => document.getElementById('readsCanvas') && _readsView, null, { timeout: 30000 });
+  await page.evaluate(READS_PX);
+  const vcf = ['##fileformat=VCFv4.2', '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2',
+    `5\t1001\tmulti\t${ref[1000]}\tG,T\t50\tPASS\t.\tGT\t1/2\t1/1`].join('\n') + '\n';
+  await page.setInputFiles('#bamFileInput', { name: 'v5.vcf', mimeType: 'text/plain', buffer: Buffer.from(vcf) }); await page.waitForTimeout(500);
+  const o = await page.evaluate(() => {
+    const v = bamState.vcf; if (!v || !v.sites.length) return { n: 0, msg: el('statusMessage').textContent };
+    _readsFit(950, 1050); _readsDraw();
+    const y0 = _READS_REF_H + _READS_SCALE_H + _COV_H + _readsView.geneH, x = __colX(1000);
+    return { n: v.sites.length, pos: v.sites[0].pos,
+      s1het: __has(x, y0 + 12, 3, 5, '#3182ce', 30), s1hom: __has(x, y0 + 12, 3, 5, '#0ea5e9', 30),
+      s2hom: __has(x, y0 + 18, 3, 5, '#0ea5e9', 30) };
+  });
+  const ok = o.n === 1 && o.pos === 1000 && o.s1het && !o.s1hom && o.s2hom;
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 60000 });
+
+// A dot plot of a part of two proteins (Parts: from-to) judged protein vs DNA from the plotted part alone: a stretch
+// with no letter outside the IUPAC nucleotide codes (e.g. N, K, A, G, D) was taken as DNA, so N (asparagine) was
+// "unknown" and every word with an N lost its dot (reads audit M22). For protein only X (and * ?) are unknown.
+check('Dot plot of a protein part: N is asparagine, its dots stay', async (page) => {
+  const head = 'MEEFLLIIPPQQEEFFLLIIPPQQ', mid = 'NNKNNAGNNDNNHNNRNNWNNSNNYNNKNNAGNNDNNHNN', tail = 'QQPPIILLFFEEQQPPIILLFFEE';
+  const prot = head + mid + tail;
+  await loadFasta(page, `>p1\n${prot}\n>p2\n${prot}\n`);
+  const o = await page.evaluate(async ([from, to]) => {
+    document.querySelector('input[name="dotPlotMode"][value="spin"]').checked = true; _dotOnModeChange();
+    document.getElementById('dotPlotWindow').value = 6;
+    const a = state.seqs[0], b = state.seqs[1];
+    await openDotPlot(a.seq, b.seq, a.header, b.header, { rowIndexA: 0, rowIndexB: 1, alignedSeqA: a.seq, alignedSeqB: b.seq, rangeA: [from, to], rangeB: [from, to] });
+    const S = _dotPlotState; let diag = 0;
+    for (let i = 0; i < S.seqA.length; i++) if (_dotIsDot(i, i)) diag++;
+    return { len: S.seqA.length, diag, unknown: S.unknown };
+  }, [head.length + 1, head.length + mid.length]);
+  // a 6-letter word fits 35 times on the diagonal of the 40-letter part; all of them are matches of a protein to itself
+  const ok = o.len === mid.length && o.diag >= o.len - 6 && !/N/.test(o.unknown);
+  return { pass: ok, detail: JSON.stringify(o) };
+}, { timeoutMs: 60000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

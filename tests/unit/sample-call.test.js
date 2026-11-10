@@ -96,5 +96,21 @@ check('an insertion in 55% of reads is heterozygous and adds no columns', i55.va
   check('a change only on reverse reads: altFwd 0, altRev 4', rv && rv.altFwd === 0 && rv.altRev === 4 && rv.refFwd === 4, JSON.stringify(rv));
 }
 
+// '=' in SEQ means "the same base as the reference" (SAMv1 1.4, e.g. samtools calmd -e). It was counted as N, so a
+// SAM written that way gave a row of N (fewer than 3 real bases) and no calls (audit M26). Same for BAM's 4-bit code 0.
+{
+  const eq = SC.call([0, 1, 2].map(() => rd(0, '4M', '==T=')), toyRef);
+  check("'=' bases are the reference base: the row is ACTT, the T a homozygous change", eq.bases.slice(0, 4).join('') === 'ACTT' && eq.variants.length === 1 && eq.variants[0].pos === 3 && eq.variants[0].alt === 'T', eq.bases.join('') + ' ' + JSON.stringify(eq.variants));
+  const BamParser = require('../../bam-parser.js');
+  // a BAM record with bases '==T=' (codes 0 0 8 0), parsed by the real parser
+  const name = Buffer.from('e\0'), b = Buffer.alloc(4 + 32 + name.length + 4 + 2 + 4);
+  b.writeInt32LE(b.length - 4, 0); b.writeInt32LE(0, 4); b.writeInt32LE(0, 8); b[12] = name.length; b[13] = 60;
+  b.writeUInt16LE(1, 16); b.writeUInt16LE(0, 18); b.writeInt32LE(4, 20); b.writeInt32LE(-1, 24); b.writeInt32LE(-1, 28);
+  let o = 36; name.copy(b, o); o += name.length; b.writeUInt32LE(4 * 16 + 0, o); o += 4; b[o++] = 0x00; b[o++] = 0x80; b.fill(0xff, o, o + 4);
+  const recs = [0, 1, 2].map(() => BamParser.parseBAMRecord(new Uint8Array(b), 0).record);
+  const eqB = SC.call(recs, toyRef);
+  check("BAM base code 0 ('=') is the reference base", eqB.bases.slice(0, 4).join('') === 'ACTT', eqB.bases.join(''));
+}
+
 console.log(fails ? `\n${fails} failed` : '\nall passed');
 process.exit(fails ? 1 : 0);
