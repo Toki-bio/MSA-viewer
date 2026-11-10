@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v333';
+const BUILD_TAG = 'v334';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -8269,28 +8269,45 @@ function _isClustalInput(text) {
     return /^(CLUSTAL|MUSCLE|MSAPROBS|PROBCONS|Kalign)\b/i.test(first);
 }
 
+// Rows of an interleaved file (Clustal, Stockholm), joined over its blocks. A row is the n-th line with its name
+// within a block: keyed by name alone, two sequences with the same name (names cut short by the writer) became
+// one row of double length and a sequence was lost (audit 2026-11-10, H7).
+function _interleavedRows() {
+    const rows = new Map();      // name + "\u0000" + occurrence in the block -> { name, seq }
+    let seenInBlock = new Map();
+    return {
+        blockEnd() { seenInBlock = new Map(); },
+        add(name, piece) {
+            const n = seenInBlock.get(name) || 0;
+            seenInBlock.set(name, n + 1);
+            const key = name + '\u0000' + n;
+            if (!rows.has(key)) rows.set(key, { name, seq: '' });
+            rows.get(key).seq += piece;
+        },
+        seqs() {
+            return [...rows.values()].map(r => ({ header: r.name, fullHeader: r.name, seq: r.seq, gaplessPositions: calculateGaplessPositions(r.seq) }));
+        },
+        get size() { return rows.size; }
+    };
+}
 function parseClustal(text) {
     const lines = text.split(/\r\n|\r|\n/);
-    const seqMap = new Map();
+    const rows = _interleavedRows();
     let started = false;
     for (const line of lines) {
         if (!started) {
             if (line.trim()) started = true;
             continue;
         }
-        if (!line.trim() || /^\s/.test(line) || line.startsWith('//')) continue;
+        if (!line.trim()) { rows.blockEnd(); continue; }   // a blank line ends a block
+        if (/^\s/.test(line)) { rows.blockEnd(); continue; }   // so does the conservation line under a block
+        if (line.startsWith('//')) continue;
         const m = line.match(/^(\S+)\s+(\S+)(?:\s+\d+)?\s*$/);
         if (!m) continue;
-        const name = m[1];
-        if (!seqMap.has(name)) seqMap.set(name, '');
-        seqMap.set(name, seqMap.get(name) + m[2]);
+        rows.add(m[1], m[2]);
     }
-    if (seqMap.size === 0) return null;
-    const seqs = [];
-    for (const [name, seq] of seqMap) {
-        seqs.push({ header: name, fullHeader: name, seq: seq, gaplessPositions: calculateGaplessPositions(seq) });
-    }
-    return seqs;
+    if (rows.size === 0) return null;
+    return rows.seqs();
 }
 
 // PHYLIP format parser. Strict PHYLIP gives names a fixed 10-character field
@@ -8559,7 +8576,7 @@ function parseNexus(text) {
 // Stockholm format parser (Pfam/HMMER/Rfam)
 function parseStockholm(text) {
     const lines = text.split(/\r?\n/);
-    const seqMap = new Map();
+    const rows = _interleavedRows();
     let inAlign = false;
     for (let li = 0; li < lines.length; li++) {
         const t = lines[li].trim();
@@ -8570,20 +8587,16 @@ function parseStockholm(text) {
             break;
         }
         if (/^# STOCKHOLM\b/.test(t) || t.startsWith('#=GF')) { inAlign = true; continue; }
-        if (t.startsWith('#=GR') || t.startsWith('#=GC') || t.startsWith('#')) continue;
-        if (!inAlign || !t) continue;
+        if (!t) { rows.blockEnd(); continue; }   // a blank line ends a block
+        if (t.startsWith('#=GC')) { rows.blockEnd(); continue; }   // per-column lines close a block too
+        if (t.startsWith('#')) continue;
+        if (!inAlign) continue;
         const m = t.match(/^(\S+)\s+(.+)$/);
         if (!m) continue;
-        const name = m[1], seq = m[2].replace(/\s/g, '').replace(/[.-]/g, '-');
-        if (!seqMap.has(name)) seqMap.set(name, '');
-        seqMap.set(name, seqMap.get(name) + seq);
+        rows.add(m[1], m[2].replace(/\s/g, '').replace(/[.-]/g, '-'));
     }
-    if (seqMap.size === 0) return null;
-    const seqs = [];
-    for (const [name, seq] of seqMap) {
-        seqs.push({ header: name, fullHeader: name, seq: seq, gaplessPositions: calculateGaplessPositions(seq) });
-    }
-    return seqs;
+    if (rows.size === 0) return null;
+    return rows.seqs();
 }
 
 const FASTA_NUCLEOTIDE_CHARS = /^[ACGTUNRYMKSWHBVD.-]+$/i;
@@ -8605,10 +8618,15 @@ function _sanitizeFastaSequence(rawSeq, isProtein) {
     return compact.replace(/[^ACGTUNRYMKSWHBVD.-]/gi, 'N');
 }
 
-function _pushParsedFastaSequence(seqs, header, seq) {
+// A record made only of digits, ?, - and . (and at least one digit) is a row of character states (a 0/1 or
+// morphological matrix saved from NEXUS), not letters with line numbers: its digits are the data. They used to be
+// deleted as layout, so such a matrix did not survive Save FASTA or a snapshot (audit 2026-11-10, H6).
+function _fastaStateRow(rawNoSpace) { return /\d/.test(rawNoSpace) && /^[0-9?.\-]+$/.test(rawNoSpace); }
+function _pushParsedFastaSequence(seqs, header, seq, raw) {
     const cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ');
     const displayHeader = cleanHeader.split(/\s+/)[0] || 'unnamed';
-    const processedSeq = _sanitizeFastaSequence(seq, _isProteinFastaSequence(seq));
+    const states = raw !== undefined && _fastaStateRow(raw);
+    const processedSeq = states ? raw.replace(/\./g, '-') : _sanitizeFastaSequence(seq, _isProteinFastaSequence(seq));
     const gaplessPositions = seqs.length * processedSeq.length < GAPLESS_TABLE_MAX_RESIDUES ? calculateGaplessPositions(processedSeq) : null;
     seqs.push({ header: displayHeader, fullHeader: cleanHeader, seq: processedSeq, gaplessPositions: gaplessPositions });
 }
@@ -8714,7 +8732,7 @@ function parseFasta(text) {
     if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip BOM
     const lines = text.split(/\r\n|\r|\n/);
     const seqs = [];
-    let seq = '', header = '';
+    let seq = '', raw = '', header = '';   // raw: the record with only spaces removed (see _fastaStateRow)
     // PIR/NBRF: '>P1;name' (or F1, DL, DC, RL, RC, N1, N3, XX) is followed by
     // a free-text title line, and the sequence ends with '*'
     const PIR_HEADER = /^>(P1|F1|DL|DC|RL|RC|N1|N3|XX);/;
@@ -8730,9 +8748,9 @@ function parseFasta(text) {
             if (!line || line.startsWith(';')) continue; // ';' lines are comments in Pearson FASTA
             if (line.startsWith('>')) {
                 if (header) {
-                    _pushParsedFastaSequence(seqs, header, isPir ? seq.replace(/\*$/, '') : seq);
+                    _pushParsedFastaSequence(seqs, header, isPir ? seq.replace(/\*$/, '') : seq, isPir ? undefined : raw);
                 }
-                seq = '';
+                seq = ''; raw = '';
                 isPir = PIR_HEADER.test(line);
                 header = isPir ? '>' + line.slice(4) : line;
                 pirTitleNext = isPir;
@@ -8741,10 +8759,11 @@ function parseFasta(text) {
                 // column (unknown symbols become N/X when sanitised, so the
                 // row keeps its length). '?' is missing data, not a gap.
                 seq += line.replace(/[_~]/g, '-').replace(/[\s\d]/g, '');
+                raw += line.replace(/[_~]/g, '-').replace(/\s/g, '');
             }
         }
         if (header) {
-            _pushParsedFastaSequence(seqs, header, isPir ? seq.replace(/\*$/, '') : seq);
+            _pushParsedFastaSequence(seqs, header, isPir ? seq.replace(/\*$/, '') : seq, isPir ? undefined : raw);
         }
     } catch (err) {
         console.error('Error in parseFasta:', err);
@@ -8831,6 +8850,9 @@ function parseMsf(text) {
                 name += (name ? ' ' : '') + parts[j];
                 j++;
             }
+            // GCG puts a filler "oo" between the name and Len: ("Name: seq1 oo  Len: 8"). It is not part of the
+            // name: with it no sequence line matched and the file loaded nothing (audit 2026-11-10, M1)
+            if (/\S\s+oo$/.test(name)) name = name.replace(/\s+oo$/, '');
             if (name) {
                 names.push(name);
             }

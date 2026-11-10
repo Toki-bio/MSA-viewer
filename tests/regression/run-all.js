@@ -17390,6 +17390,71 @@ check('Audit H5: region realign with Adjust direction turns round only the rever
   return { pass: ['r2', 'ref', 'x', 'y'].every(h => out[h] === 'ok'), detail: JSON.stringify(out) };
 }, { timeoutMs: 120000 });
 
+// ---- Audit 2026-11-10, batch 3 -------------------------------------------------------------------------------
+// H7: Clustal (and Stockholm) rows were keyed by name: two sequences with the same name (names cut short by the
+// program that wrote the file) became ONE row of double length, and a sequence was gone.
+check('Audit H7: Clustal and Stockholm rows that share a name stay separate rows, over one block and over several', async (page) => {
+  const load = async (name, text) => {
+    await page.setInputFiles('#fileInput', { name, mimeType: 'text/plain', buffer: Buffer.from(text) });
+    await page.waitForTimeout(900);
+    return page.evaluate(() => state.seqs.map(q => q.header + ':' + q.seq));
+  };
+  const out = {};
+  out.one = await load('one.aln', 'CLUSTAL W (1.83) multiple sequence alignment\n\nseqname    ACGT\nseqname    TTTT\nother      ACGA\n            *  \n');
+  out.two = await load('two.aln', 'CLUSTAL W (1.83) multiple sequence alignment\n\nNC_045512.2_sample ATGC--AT\nNC_045512.2_sample ATGCAAGG\nMN908947.3         ATGCATGA\n\nNC_045512.2_sample GCAA\nNC_045512.2_sample GC--\nMN908947.3         ----\n');
+  out.plain = await load('plain.aln', 'CLUSTAL W (1.83) multiple sequence alignment\n\na    ACGT 4\nb    AC-T 3\n     ** *\n\na    GG 6\nb    GA 5\n');
+  out.sto = await load('dup.sto', '# STOCKHOLM 1.0\ns1  ACGU\ns1  ACGA\ns2  AC-U\n\ns1  GG\ns1  GC\ns2  G-\n//\n');
+  const want = {
+    one: ['seqname:ACGT', 'seqname:TTTT', 'other:ACGA'],
+    two: ['NC_045512.2_sample:ATGC--ATGCAA', 'NC_045512.2_sample:ATGCAAGGGC--', 'MN908947.3:ATGCATGA----'],
+    plain: ['a:ACGTGG', 'b:AC-TGA'],
+    sto: ['s1:ACGUGG', 's1:ACGAGC', 's2:AC-UG-'],
+  };
+  const ok = Object.keys(want).every(k => JSON.stringify(out[k]) === JSON.stringify(want[k]));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// H6: a NEXUS matrix of 0/1 states (datatype=standard) loads and shows correctly, but Save FASTA and snapshots write
+// it as FASTA, and the FASTA reader deleted every digit as "layout": after Save and reopen, row 01?10 was "N" and
+// row 11001 was "-". A FASTA record made only of digits, ?, - and . is now a row of states; numbers beside
+// letters (GenBank-style numbered lines) are still layout.
+check('Audit H6: NEXUS 0/1 data survives Save FASTA and a snapshot; numbered sequence lines still lose their numbers', async (page) => {
+  const nex = '#NEXUS\nbegin data;\ndimensions ntax=2 nchar=5;\nformat datatype=standard symbols="01" missing=?;\nmatrix\nA 01?10\nB 11001\n;\nend;\n';
+  await page.setInputFiles('#fileInput', { name: 'm.nex', mimeType: 'text/plain', buffer: Buffer.from(nex) });
+  await page.waitForTimeout(900);
+  const rows = () => page.evaluate(() => state.seqs.map(q => q.header + ':' + q.seq));
+  const out = { loaded: await rows() };
+  const fasta = await page.evaluate(() => state.seqs.map(q => '>' + (q.fullHeader || q.header) + '\n' + q.seq).join('\n') + '\n');
+  await loadFasta(page, fasta);
+  out.fastaBack = await rows();
+  // through the snapshot payload, as "Open snapshot" does
+  await page.setInputFiles('#fileInput', { name: 'm.nex', mimeType: 'text/plain', buffer: Buffer.from(nex) });
+  await page.waitForTimeout(900);
+  out.snapBack = await page.evaluate(async () => {
+    const payload = typeof _buildSnapshotPayload === 'function' ? _buildSnapshotPayload() : null;
+    if (!payload) return 'no _buildSnapshotPayload';
+    await _loadSnapshotPayload(JSON.parse(JSON.stringify(payload)));
+    return state.seqs.map(q => q.header + ':' + q.seq);
+  });
+  await loadFasta(page, '>g\n1 acgtacgtac gtacgtacgt\n21 acgt\n');
+  out.numbered = await rows();
+  const want = ['A:01?10', 'B:11001'];
+  const ok = [out.loaded, out.fastaBack, out.snapBack].every(r => JSON.stringify(r) === JSON.stringify(want)) && JSON.stringify(out.numbered) === JSON.stringify(['g:acgtacgtacgtacgtacgtacgt']);
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// M1: GCG writes MSF Name: lines as "Name: seq1 oo  Len: 8 ...". The "oo" was taken into the name ("seq1 oo"), no
+// sequence line started with it, and the file gave "No valid sequences found".
+check('Audit M1: an MSF file with "oo" on its Name: lines loads; MSF names with spaces still load', async (page) => {
+  const msf = (n1, n2) => `PileUp\n\n MSF: 8  Type: N  Check: 0 ..\n\n Name: ${n1}  Len: 8  Check: 1  Weight: 1.00\n Name: ${n2}  Len: 8  Check: 2  Weight: 1.00\n\n//\n\n`;
+  const load = async (text) => { await page.setInputFiles('#fileInput', { name: 't.msf', mimeType: 'text/plain', buffer: Buffer.from(text) }); await page.waitForTimeout(900); return page.evaluate(() => state.seqs.map(q => q.header + ':' + q.seq)); };
+  const out = {};
+  out.oo = await load(msf('seq1 oo', 'seq2 oo') + 'seq1  ACGTAC.T\nseq2  ACG~ACGT\n');
+  out.spaces = await load(msf('Homo sapiens', 'Pan paniscus') + 'Homo sapiens  ACGTACGT\nPan paniscus  ACGAACGT\n');
+  const ok = out.oo.length === 2 && /^seq1:ACGTAC.T$/.test(out.oo[0]) && /^seq2:ACG.ACGT$/.test(out.oo[1]) && out.spaces.length === 2 && out.spaces.every(r => /:ACG[TA]ACGT$/.test(r));
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

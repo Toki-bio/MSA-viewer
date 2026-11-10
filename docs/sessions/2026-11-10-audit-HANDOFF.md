@@ -2,7 +2,7 @@
 
 This file is for a local Claude Code session. It has two jobs:
 
-1. run the GLM check on the fixes of batch 1 (build v332) and batch 2 (build v333), and
+1. run the GLM check on the fixes of batches 1 to 3 (builds v332, v333, v334), and
 2. carry on with the open findings listed at the end.
 
 Follow CLAUDE.md throughout: a failing check first for every fix, never weaken a check without asking the
@@ -11,7 +11,7 @@ owner, run the suites before every push.
 ## Prompt to give local Claude Code
 
 > Read docs/sessions/2026-11-10-audit-HANDOFF.md and CLAUDE.md. Run the GLM check described there on the batch 1
-> and batch 2 changes (commits "v332: audit batch 1" and "v333: audit batch 2"), using the GLM harness on this machine the same way as for the earlier
+> to batch 3 changes (commits "v332: audit batch 1", "v333: audit batch 2", "v334: audit batch 3"), using the GLM harness on this machine the same way as for the earlier
 > GLM audits (see dev-tools/reads-audit/REPORT.md). Check every GLM finding against the code before believing it.
 > For each confirmed finding: write a regression check that fails first, fix it, and report. Do not start on the
 > open findings until the GLM check is done and I say so.
@@ -39,6 +39,16 @@ Checks: "Audit H4", "Audit H5", "Audit H8" in `tests/regression/run-all.js`.
 | H4 | MAFFT drops `*`: a row came back one residue short, with the case after the `*` shifted, and a success message. | `_alignerGuardInput` sends `*` as a placeholder (X for protein, N otherwise); `_alignerRestoreResidues` writes every residue of the result back from the row that was sent, position by position, and throws when a row comes back with a different number of residues. Used in `_mafftAlignWithUiRun` and `alignSequenceToConsensusProfile`. The codon aligner path is not covered. |
 | H5 | Region realign with Adjust direction also reverse-complemented a row NAMED like an internal row id (`r2`). | realign-region.js: rows that carry `_rk` are looked up by that key only (`inKeySet`, `lookupHeader`, `applyOrder`). |
 | H8 | An RNA alignment got its consensus in T; an inserted consensus row turned the alignment into DNA for RevComp. | `_getConsensusOptions().isRna` (`_alignmentIsRnaCached`); `_consensusDecide` gives U for T when it is set. |
+
+## What batch 3 changed (v334)
+
+Checks: "Audit H6", "Audit H7", "Audit M1".
+
+| Finding | What used to happen | Change |
+|---|---|---|
+| H7 | Clustal and Stockholm rows were keyed by name: two rows with one name became one row of double length. | `_interleavedRows()`: a row is the n-th line with its name within a block. A blank line, a Clustal conservation line and a Stockholm `#=GC` line end a block. |
+| H6 | `parseFasta` deleted every digit, so a NEXUS 0/1 matrix did not survive Save FASTA or a snapshot. | A FASTA record made only of digits, `?`, `-`, `.` (with at least one digit) is kept as a row of states (`_fastaStateRow`). Numbers beside letters are still layout. |
+| M1 | MSF `Name: seq1 oo  Len: 8` gave the name "seq1 oo" and nothing loaded. | A trailing ` oo` is dropped from the name. |
 
 ## What the GLM check should look at
 
@@ -72,6 +82,12 @@ Read-only tasks, each answered with exact code quotes:
 10. Batch 2, `_alignmentIsRnaCached`: its key is the rows array, the row count and the undo/redo lengths. Is
     there an edit that changes a T or U without touching any of these?
 
+11. Batch 3, `_interleavedRows`: a Clustal file whose blocks are separated by neither a blank line nor a
+    conservation line would now give one row per block line. Does any writer produce that? Check the
+    Stockholm path with `#=GR` lines between sequence lines and with `#=GS` lines inside the alignment.
+12. Batch 3, `_fastaStateRow`: which FASTA-like inputs consist only of digits and gap symbols but are not
+    state rows (the PIR path passes no raw text; quality lines; a pasted ruler)?
+
 ## Two regression checks that fail on Linux (not caused by batch 1)
 
 They fail on a21f9a3 too, also when run alone:
@@ -91,9 +107,8 @@ marked code-read.
 
 1. **M11** MAFFT fails on protein U/O and nucleotide I/E without naming the row or the letter. (H4 fixed in v333.)
 2. (H5 fixed in v333.)
-3. **H6** Save FASTA and snapshots destroy NEXUS 0/1 data (`parseFasta` deletes digits; snapshots store FASTA).
-   **H7** Clustal rows with the same name are merged (`seqMap` keyed by name).
-   **M1** MSF with `oo` on Name lines loads nothing. **M2** strict PHYLIP names lose a trailing number.
+3. (H6, H7, M1 fixed in v334.) **M2** strict PHYLIP names lose a trailing number; binary 0/1 PHYLIP is
+   still refused (L15).
    **M3** GenBank qualifier lines starting LOCUS/DEFINITION/ORGANISM rewrite the record.
    **M4** `?` becomes N in protein rows that look like DNA. **M5** Save and snapshots rename rows whose name
    is not the first word of fullHeader. **M6** a snapshot .json with an empty `fasta` keeps the old alignment
