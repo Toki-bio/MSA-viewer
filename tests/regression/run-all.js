@@ -13948,23 +13948,35 @@ check('Repeat Finder owner 2026-10-31: a long search shows progress, Pause stops
   await loadFasta(page, `>polyAT\n${'AT'.repeat(12500)}\n>o\n${'ACGT'.repeat(6250)}\n`);
   await page.evaluate(() => openRepeatFinder(0));
   const out = {};
+  // Pause is pressed by the page itself the moment the bar passes a set value, never after a fixed wait: this
+  // polyAT search lasts about a second and ends on its own at its work limit (about 80 %), so on GitHub CI
+  // (2026-11-10) a fixed wait let it end before Pause or Cancel arrived. The click lands inside the slice that set
+  // the bar, so no further slice runs; Cancel is pressed while paused, a path the app handles (it resumes to stop).
+  const pauseWhenPast = (page, step, resume) => page.evaluate(({ step, resume }) => new Promise(res => {
+    const bar = document.querySelector('#repeatResults .rf-progress progress');
+    const btn = document.getElementById('repeatPauseBtn');
+    const read = () => ({ value: bar.value, text: document.getElementById('repeatResults').textContent.slice(0, 160),
+      findDisabled: document.getElementById('repeatRunBtn').disabled, pause: btn.textContent });
+    const before = read();
+    const target = before.value + step;
+    const obs = new MutationObserver(() => {
+      if (bar.value < target) return;
+      obs.disconnect();
+      const at = read();   // still searching, past the target
+      btn.click();         // Pause
+      res({ before, at });
+    });
+    obs.observe(bar, { attributes: true });
+    if (resume) btn.click();   // Resume
+  }), { step, resume });
   await rfStartLong(page, { mode: 'direct', scope: 'single', minLen: 10, maxDiv: 15 });
-  await page.waitForTimeout(400);
-  out.p1 = await rfProgress(page);
-  await page.waitForTimeout(500);
-  out.p2 = await rfProgress(page);
-  await page.click('#repeatPauseBtn');
+  const a = await pauseWhenPast(page, 0.3, false);
+  out.p1 = a.before; out.p2 = a.at;
   await page.waitForTimeout(100);
   out.p3 = await rfProgress(page);
   await page.waitForTimeout(800);
   out.p4 = await rfProgress(page);
-  await page.click('#repeatPauseBtn');   // now Resume
-  await page.waitForTimeout(300);
-  out.p5 = await rfProgress(page);
-  // pause again before Cancel: on a slow machine (GitHub CI, 2026-11-10) the polyAT search ran into its own work
-  // limit (about 80 %) between this read and the Cancel click, so the text said "work limit", not "stopped by you".
-  // A paused search cannot end on its own; Cancel while paused is a path the app handles (it resumes to stop).
-  await page.click('#repeatPauseBtn');   // now Pause
+  out.p5 = (await pauseWhenPast(page, 0.15, true)).at;
   await page.click('#repeatCancelBtn');
   await page.waitForFunction(() => !document.querySelector('#repeatResults .rf-progress'), null, { timeout: 15000 });
   out.end = await page.evaluate(() => ({ text: document.getElementById('repeatResults').textContent.slice(0, 300),
