@@ -88,17 +88,15 @@ Read-only tasks, each answered with exact code quotes:
 12. Batch 3, `_fastaStateRow`: which FASTA-like inputs consist only of digits and gap symbols but are not
     state rows (the PIR path passes no raw text; quality lines; a pasted ruler)?
 
-## Two regression checks that fail on Linux (not caused by batch 1)
+## The two regression checks that failed on Linux: settled 2026-11-10
 
-They fail on a21f9a3 too, also when run alone:
+Neither was a viewer defect; both checks were changed with the owner's yes.
 
-- "Canvas mode: codon analysis draws stops, syn/nonsyn, the codon track, frame tags and AA only like
-  Full/Block": `frame tags per row: [0,1,-1] (expected [0,1,2])`.
-- "Dot plot: Highlight all marks every shown stretch on both rows, survives scrolling and a view switch,
-  Clear marks removes it (Canvas, Block, Full)": `blockPx: 0` after the switch to Canvas Block.
-
-Find out whether each is a real Canvas defect or a font-dependent pixel check. Do not change what they expect
-without asking the owner.
+- "Canvas mode: codon analysis draws stops...": the letter-colour tolerance was fitted to one machine's
+  antialiasing (19); the frame-3 tag's nearest pixel is 27 off on another. Now 30 (tag colours are 49+ apart).
+- "Dot plot: Highlight all marks every shown stretch...": the check scrolled to the top, which put marked row
+  100 below the view, then counted tint after a view switch that keeps the place. It now goes back to the
+  marked row before the switch.
 
 ## Open findings, in the suggested order
 

@@ -5092,7 +5092,9 @@ check('Canvas mode: codon analysis draws stops, syn/nonsyn, the codon track, fra
   // frame-2 tag; 7 for frame 3). 19 is the smallest that passes there. It cannot take another colour for the letter:
   // the boxes' backgrounds are >= 100 away from their letters, and a frame tag's row is 49 (Windows) / 59 (Linux)
   // from the nearest other tag colour, white or the black names far more.
-  const LETTER_TOL = 19;
+  // 30 since 2026-11-10 (owner's yes): on another Linux machine (other antialiasing) the frame-3 tag's nearest pixel is 27 off.
+  // Still below half of the 49 / 59 between two tag colours, so one tag cannot pass for another.
+  const LETTER_TOL = 30;
   const letterDist = {};
   const hasLetter = (list, c, what) => {
     const w = c.match(/\d+/g).map(Number);
@@ -10907,6 +10909,9 @@ check('Dot plot: Highlight all marks every shown stretch on both rows, survives 
   // scroll the alignment: marks stay
   await p.evaluate(() => { _canvasState.offsetY = 0; _canvasState.scheduleDraw?.(); _canvasState.onOffsetChange?.(); }); await p.waitForTimeout(300);
   out.afterScroll = await p.evaluate(() => state.dotRegionMarks?.get(100)?.size || 0);
+  // back to the marked row first (owner's yes 2026-11-10): the scroll to the top above leaves row 100 below the view, a view
+  // switch keeps the place, and the tint count below then had nothing on screen to count (0 px, with the marks all there)
+  await p.evaluate(() => _showRowInAlignment(100)); await p.waitForTimeout(300);
   // view switches: Block, then Full
   await setMode(p, 'block'); await p.waitForTimeout(500);
   out.block = await p.evaluate(() => ({ kind: _canvasState.layout?.kind, marks: state.dotRegionMarks?.get(100)?.size || 0 }));
