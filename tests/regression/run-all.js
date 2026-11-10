@@ -18560,6 +18560,20 @@ check('GLM 1110 #10: with a full undo history, typing T over every U turns the c
   return { pass: out.cons0 === 'ACGUACGUAA' && out.u0 === out.u1 && out.rna === false && out.cons1 === 'ACGTACGTAA', detail: JSON.stringify(out) };
 });
 
+// #11: Add & Align sent the pasted rows as pasted, gaps included; the '*' restore skips gapped rows, so a pasted
+// MK-VLA*GHH came back as MKvLAXgHH (placeholder X, case shifted by the gap) with a success message.
+check('GLM 1110 #11: Add & Align with a pasted row that has gaps keeps its "*" and letter case', async (page) => {
+  page.on('dialog', d => d.accept());
+  await loadFasta(page, '>p1 first protein\nMKVLA*GHHEE\n>p2 second one\nMKVLAQGHHEE\n>p3 third\nMKVIAQGHHE*\n');
+  await page.evaluate(() => { document.getElementById('addSeqInput').value = '>n1 new\nMK-VLA*GHH\n'; addSequencesAndAlign(); });
+  await page.waitForTimeout(300);
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 60000 });
+  await page.waitForTimeout(800);
+  const out = await page.evaluate(() => ({ rows: state.seqs.map(s => s.header + ':' + s.seq.replace(/[-.]/g, '')), msg: document.getElementById('statusMessage').textContent.slice(0, 80) }));
+  const want = ['p1:MKVLA*GHHEE', 'p2:MKVLAQGHHEE', 'p3:MKVIAQGHHE*', 'n1:MKVLA*GHH'];
+  return { pass: JSON.stringify(out.rows.slice().sort()) === JSON.stringify(want.slice().sort()), detail: JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

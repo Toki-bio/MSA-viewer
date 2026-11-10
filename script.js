@@ -27273,11 +27273,14 @@ function addSequencesAndAlign() {
     const { args: extraArgs, seqType, adjustDir, reorder } = getMafftExtraArgs();
     const atTop = !!document.getElementById('addSeqAtTop')?.checked;
 
+    // The pasted rows go in without gaps, as the existing ones do: sent gapped, a row skipped the '*' restore and came
+    // back with the placeholder X and its case shifted by the gaps (MK-VLA*GHH -> MKvLAXgHH; GLM check 2026-11-10, #11)
+    const ungappedNewText = newText.split('\n').map(line => line.trim().startsWith('>') ? line : line.replace(/[-.]/g, '')).join('\n');
     // Pre-alignment: adjust direction on new sequences if requested
-    let adjustedNewText = newText;
+    let adjustedNewText = ungappedNewText;
     if (adjustDir && (seqType === '2' || seqType === 'codon')) {
         // Use first existing sequence as reference orientation
-        const refFasta = `>${state.seqs[0].header}\n${state.seqs[0].seq.replace(/[-.]/g, '')}\n${newText}`;
+        const refFasta = `>${state.seqs[0].header}\n${state.seqs[0].seq.replace(/[-.]/g, '')}\n${ungappedNewText}`;
         const adj = _adjustDirection(refFasta);
         // Extract only the new sequences (skip the reference we prepended)
         const adjLines = adj.fasta.split('\n');
