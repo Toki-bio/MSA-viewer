@@ -18479,6 +18479,19 @@ check('GLM 1110 #5: Escape while the aligner runs keeps the selection', async (p
   return { pass: out.busy && out.rows === '5,6', detail: JSON.stringify(out) };
 }, { timeoutMs: 240000 });
 
+// #6: when the rows changed during a region realign, _mafftAlignWithUi said why it dropped the result, and the caller
+// then wrote "Region realign cancelled." over it.
+check('GLM 1110 #6: a region realign whose rows changed during the run says so, not "cancelled"', async (page) => {
+  await loadFasta(page, audit1Big());
+  await page.evaluate(() => { state.selectedColumns = new Set(Array.from({ length: 1200 }, (_, i) => i + 10)); renderAlignment(); realignSelectedBlock({ skipPrompt: true, applyAdjustFull: true, applyReorder: false }); });
+  await glmBusyUp(page);
+  await page.evaluate(() => { const a = state.seqs[4]; state.seqs[4] = state.seqs[5]; state.seqs[5] = a; });
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 180000 });
+  await page.waitForTimeout(400);
+  const msg = await page.evaluate(() => document.getElementById('statusMessage').textContent.slice(0, 100));
+  return { pass: /changed while/i.test(msg) && !/cancelled/i.test(msg), detail: msg };
+}, { timeoutMs: 240000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

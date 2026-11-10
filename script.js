@@ -26398,7 +26398,11 @@ async function _codonAlignWithUi(fasta, label) {
 // edit, an undo, a move, another file) the result is dropped and the callers treat it as "no result": written
 // back by row number it replaced one sequence with another's residues (audit 2026-11-10, H1 and H2).
 let _skipNextNoOpDrop = false;
+// set when the last run's result was dropped because the rows changed: the region/block realign callers then keep that
+// message instead of writing "cancelled" over it (GLM check 2026-11-10, #6)
+let _mafftResultStale = false;
 async function _mafftAlignWithUi(fasta, extraArgs, label) {
+    _mafftResultStale = false;
     const startSeqs = state.seqs, startFp = _seqsFingerprint();
     const undoTop = state.deletedHistory[state.deletedHistory.length - 1];   // the caller's own undo step, if it pushed one
     const result = await _mafftAlignWithUiRun(fasta, extraArgs, label);
@@ -26407,6 +26411,7 @@ async function _mafftAlignWithUi(fasta, extraArgs, label) {
         // the callers take their undo step back on "no result": only if it is still the last one
         if (state.deletedHistory[state.deletedHistory.length - 1] !== undoTop) { _skipNextNoOpDrop = true; setTimeout(() => { _skipNextNoOpDrop = false; }, 0); }   // the caller's continuation runs before the timer
         _pendingAlignNote = null;
+        _mafftResultStale = true;
         showMessage('The alignment changed while the aligner was running, so its result was not used. Run it again.', 7000);
         return null;
     }
@@ -26548,6 +26553,7 @@ async function realignSelectedBlock(opts) {
     }
 
     try {
+        _mafftResultStale = false;
         _alignRowIds = true;   // RealignRegion sends rows as r<index> too
         const result = await RealignRegion.run(state.seqs, state.selectedColumns, {
             adjustDir: extra.adjustDir && extra.seqType === '2',
@@ -26563,7 +26569,7 @@ async function realignSelectedBlock(opts) {
             reverseComplement: _rcForAlignment()
         }).finally(() => { _alignRowIds = false; });
         if (result.cancelled) {
-            showMessage('Region realign cancelled.', 2500);
+            if (!_mafftResultStale) showMessage('Region realign cancelled.', 2500);
             return;
         }
         if (result.noop && !result.aligned && !result.orderApplied && !(result.flipped && result.flipped.length)) {
@@ -26624,6 +26630,7 @@ async function _realignRectangle(rect, opts) {
     const subset = rect.rows.map(i => ({ ...state.seqs[i], seq: padTo(state.seqs[i].seq, L) }));
     const before = subset.map(s => s.seq);
     try {
+        _mafftResultStale = false;
         _alignRowIds = true;
         const result = await RealignRegion.run(subset, cols, {
             adjustDir: false, reorder: false, reorderOnly: false, applyAdjustFull: false, applyReorder: false,
@@ -26634,7 +26641,7 @@ async function _realignRectangle(rect, opts) {
             reorderByGuideTree: (fa) => _reorderByGuideTree(fa),
             reverseComplement: _rcForAlignment()
         }).finally(() => { _alignRowIds = false; });
-        if (result.cancelled) { showMessage('Block realign cancelled.', 2500); return; }
+        if (result.cancelled) { if (!_mafftResultStale) showMessage('Block realign cancelled.', 2500); return; }
         if (!result.aligned) { showMessage(result.message || 'Nothing to do.', 2500); return; }
         const spanLen = rect.c1 - rect.c0 + 1;
         const newRows = result.seqs;
