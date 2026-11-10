@@ -27106,13 +27106,8 @@ function addSequencesAndAlign() {
     }
 
     // Save undo state
+    const redoBeforeAdd = state.redoHistory;
     pushUndo('add-and-align');
-
-    // Build ungapped FASTA from existing sequences
-    let existingFasta = '';
-    for (const s of state.seqs) {
-        existingFasta += `>${s.fullHeader || s.header}\n${s.seq.replace(/[-.]/g, '')}\n`;
-    }
 
     const { args: extraArgs, seqType, adjustDir, reorder } = getMafftExtraArgs();
     const atTop = !!document.getElementById('addSeqAtTop')?.checked;
@@ -27141,69 +27136,65 @@ function addSequencesAndAlign() {
         }
     }
 
-    const addedFullHeaders = new Set();
-    adjustedNewText.split('\n').forEach(line => {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('>')) {
-            addedFullHeaders.add(trimmed.substring(1).trim());
-        }
-    });
+    // Rows go to MAFFT under row ids (r0, r1, ... for the rows of the alignment, then the new ones) and
+    // come back by id, as in Realign All. By name, an existing row named like a new one was taken for
+    // new and moved, rows sharing a name got one row's letter case, and a name over 254 characters
+    // came back cut (audit M14).
+    const nExisting = state.seqs.length;
+    const sources = state.seqs.map(q => ({ header: q.header, fullHeader: q.fullHeader, sent: q.seq.replace(/[-.]/g, ''), isNew: false }));
+    for (const rec of parseMafftOutput(adjustedNewText)) {
+        const full = String(rec.name || '').trim().replace(/\s+/g, ' ') || 'unnamed';
+        sources.push({ header: full.split(/\s+/)[0], fullHeader: full, sent: rec.seq.replace(/[-.\s]/g, ''), isNew: true });
+    }
+    if (sources.length === nExisting) {
+        _dropNoOpUndo(redoBeforeAdd);
+        showMessage("No valid FASTA sequences found.", 2000);
+        return;
+    }
+    const sourceById = new Map(sources.map((q, i) => ['r' + i, q]));
+    let fasta = sources.map((q, i) => `>r${i}\n${q.sent}\n`).join('');
+    let guideOrder = null;
+    if (reorder) {
+        const reordered = _reorderByGuideTree(fasta);
+        fasta = reordered.fasta;
+        guideOrder = reordered.order.map(id => String(id).split(/\s+/)[0]);
+    }
 
     closeAddSequencesModal();
 
-    const combinedFasta = existingFasta + '\n' + adjustedNewText;
-    // See originalCaseByHeader note in realignAll -- captured post-adjustDir
-    // (adjustedNewText already reflects any reverse-complementing done above).
-    const originalCaseByHeader = new Map();
-    for (const entry of parseMafftOutput(combinedFasta)) originalCaseByHeader.set(entry.name, entry.seq);
-    _mafftAlignWithUi(combinedFasta, extraArgs, 'Adding sequences and aligning with MAFFT...').then(result => {
-        if (!result) return;
+    _alignRowIds = true;
+    let run;
+    try { run = _mafftAlignWithUi(fasta, extraArgs, 'Adding sequences and aligning with MAFFT...'); }
+    catch (err) { _alignRowIds = false; throw err; }
+    run.finally(() => { _alignRowIds = false; }).then(result => {
+        // no result (cancelled, or refused because the rows changed meanwhile): nothing changed, no undo step (audit L9)
+        if (!result) { _dropNoOpUndo(redoBeforeAdd); return; }
         const aligned = parseMafftOutput(result);
         if (aligned.length === 0) {
+            _dropNoOpUndo(redoBeforeAdd);
             showMessage("Error: MAFFT returned no sequences.", 3000);
             return;
         }
-
-        // Build new seqs array; if reorder requested, sort by guide tree
-        let newSeqs = [];
-        for (const a of aligned) {
-            const name = a.name.split(/\s+/)[0];
-            const origCase = originalCaseByHeader.get(a.name);
-            newSeqs.push({
-                header: name,
-                fullHeader: a.name,
-                seq: origCase ? _remapCaseOntoAligned(origCase, a.seq) : a.seq,
-                gaplessPositions: calculateGaplessPositions(a.seq)
-            });
+        const alignedById = new Map(aligned.map(a => [a.name.split(/\s+/)[0], a]));
+        const lost = [...sourceById].filter(([id, q]) => !alignedById.has(id) && q.sent.length).map(([, q]) => q.header);
+        if (lost.length) {
+            _dropNoOpUndo(redoBeforeAdd);
+            showMessage(`The aligner returned no sequence for ${lost.slice(0, 3).join(', ')}${lost.length > 3 ? ` and ${lost.length - 3} more` : ''}; the alignment was not changed.`, 6000);
+            return;
         }
-
-        if (reorder) {
-            // Re-derive guide tree order from the combined ungapped sequences
-            const combinedFasta = newSeqs.map(s => `>${s.fullHeader || s.header}\n${s.seq.replace(/[-. ]/g, '')}`).join('\n');
-            const reordered = _reorderByGuideTree(combinedFasta);
-            const orderMap = new Map(reordered.order.map((h, i) => [h, i]));
-            newSeqs.sort((a, b) => {
-                const ia = orderMap.get(a.fullHeader) ?? orderMap.get(a.header) ?? 9999;
-                const ib = orderMap.get(b.fullHeader) ?? orderMap.get(b.header) ?? 9999;
-                return ia - ib;
-            });
-        }
-
-        // Respect "Place at top" after Add & Align
-        if (addedFullHeaders.size > 0) {
-            const added = [];
-            const existing = [];
-            for (const seqObj of newSeqs) {
-                if (addedFullHeaders.has(seqObj.fullHeader || seqObj.header)) {
-                    added.push(seqObj);
-                } else {
-                    existing.push(seqObj);
-                }
-            }
-            if (added.length > 0) {
-                newSeqs = atTop ? [...added, ...existing] : [...existing, ...added];
-            }
-        }
+        const newWidth = aligned.reduce((m, a) => Math.max(m, a.seq.length), 0);
+        const build = (id) => {
+            const q = sourceById.get(id), a = alignedById.get(id);
+            const seq = a ? _remapCaseOntoAligned(q.sent, a.seq) : '-'.repeat(newWidth);   // a row without residues may be dropped by the aligner
+            return { header: q.header, fullHeader: q.fullHeader, seq, gaplessPositions: calculateGaplessPositions(seq), _isNew: q.isNew };
+        };
+        const order = guideOrder ? guideOrder.filter(id => sourceById.has(id)) : [...sourceById.keys()];
+        for (const id of sourceById.keys()) if (!order.includes(id)) order.push(id);
+        let newSeqs = order.map(build);
+        // "Place at top" / at bottom: the new rows as a block, the rows of the alignment in their order
+        const added = newSeqs.filter(q => q._isNew), existing = newSeqs.filter(q => !q._isNew);
+        newSeqs = atTop ? [...added, ...existing] : [...existing, ...added];
+        newSeqs.forEach(q => { delete q._isNew; });
 
         state.seqs = newSeqs;
         state.selectedRows.clear();
@@ -27213,6 +27204,7 @@ function addSequencesAndAlign() {
         renderAlignment();
         showMessage(`Aligned ${state.seqs.length} sequences successfully!`, 2000);
     }).catch(err => {
+        _dropNoOpUndo(redoBeforeAdd);
         showMessage("MAFFT add & align error: " + err.message, 4000);
         console.error("MAFFT add & align error:", err);
     });
@@ -27464,6 +27456,13 @@ function closeSeqEditor() {
     if (modal) modal.style.display = 'none';
 }
 
+// The residues of an editor record: no spaces and no position numbers (pasted GenBank-style text
+// "1 acgtacgtac gtacgtacgt" used to keep them as residues; audit M13). A record made only of digits
+// and gap signs is a row of character states and keeps its digits (as in parseFasta).
+function _seqEditCleanSeq(text) {
+    const compact = String(text || '').replace(/\s+/g, '');
+    return _fastaStateRow(compact) ? compact : compact.replace(/\d+/g, '');
+}
 function _getSeqEditSequence() {
     const textarea = document.getElementById('seqEditTextarea');
     if (!textarea) return '';
@@ -27473,7 +27472,7 @@ function _getSeqEditSequence() {
         const trimmed = line.trim();
         if (!trimmed.startsWith('>')) seq += trimmed;
     }
-    return seq;
+    return _seqEditCleanSeq(seq);
 }
 
 /** Parse multi-FASTA from textarea into [{header, seq}, ...] */
@@ -27488,7 +27487,7 @@ function _getSeqEditMultiFasta() {
         const trimmed = line.trim();
         if (trimmed.startsWith('>')) {
             if (currentHeader !== null) {
-                result.push({ header: currentHeader, seq: currentSeq });
+                result.push({ header: currentHeader, seq: _seqEditCleanSeq(currentSeq) });
             }
             currentHeader = trimmed.substring(1).trim();
             currentSeq = '';
@@ -27497,7 +27496,7 @@ function _getSeqEditMultiFasta() {
         }
     }
     if (currentHeader !== null) {
-        result.push({ header: currentHeader, seq: currentSeq });
+        result.push({ header: currentHeader, seq: _seqEditCleanSeq(currentSeq) });
     }
     return result;
 }
@@ -27602,11 +27601,40 @@ function seqEditApply() {
             return;
         }
 
+        // Which record belongs to which row. Same count: by position, so a row can be renamed. A different
+        // count: by name (the n-th record with a name is the n-th opened row with it). By position, a
+        // removed middle record gave the next row's name and residues to the row before (audit M12).
+        const targetOf = new Array(entries.length).fill(-1);
+        let untouched = 0;
+        if (entries.length === indices.length) {
+            for (let i = 0; i < entries.length; i++) targetOf[i] = indices[i];
+        } else {
+            const byName = new Map();
+            indices.forEach(idx => { const q = state.seqs[idx]; if (!q) return; const k = q.fullHeader || q.header; if (!byName.has(k)) byName.set(k, []); byName.get(k).push(idx); });
+            let matched = 0;
+            entries.forEach((e, i) => { const q = byName.get(e.header); if (q && q.length) { targetOf[i] = q.shift(); matched++; } });
+            if (entries.length < indices.length && matched < entries.length) {
+                showMessage(`The text has ${entries.length} records for ${indices.length} rows and a changed name, so it is not clear which row is which. Nothing was changed: keep the names, or keep one record per row.`, 9000);
+                return;
+            }
+            if (entries.length > indices.length && matched < indices.length) {
+                // names were changed and records added: the first records are the rows, as before
+                targetOf.fill(-1);
+                for (let i = 0; i < indices.length; i++) targetOf[i] = indices[i];
+            }
+            untouched = indices.length - targetOf.filter(t => t >= 0).length;
+        }
+        const order = targetOf.map((t, i) => i).filter(i => targetOf[i] >= 0).concat(targetOf.map((t, i) => i).filter(i => targetOf[i] < 0));
+        const orderedEntries = order.map(i => entries[i]);
+        const orderedTargets = order.map(i => targetOf[i]).filter(t => t >= 0);
+        entries.length = 0; orderedEntries.forEach(e => entries.push(e));
+        indices.length = 0; orderedTargets.forEach(t => indices.push(t));
+
         pushUndo('seqedit-multi');
         const padCheckbox = document.getElementById('seqEditPadGaps');
         const alignLen = state.seqs.length > 0 ? _maxOf(state.seqs, s => s.seq.length) : 0;
 
-        // Update existing sequences (matched by index order)
+        // Update existing sequences (the records come first that belong to a row, in the order of `indices`)
         const updateCount = Math.min(entries.length, indices.length);
         for (let i = 0; i < updateCount; i++) {
             const idx = indices[i];
@@ -27636,7 +27664,10 @@ function seqEditApply() {
         if (padCheckbox && padCheckbox.checked) { normalizeAlignmentLengths(); refreshAllGaplessPositions(); }
         closeSeqEditor();
         renderAlignment();
-        showMessage(`${updateCount} sequence${updateCount > 1 ? 's' : ''} updated!`, 2000);
+        const added = entries.length - updateCount;
+        showMessage(`${updateCount} sequence${updateCount > 1 ? 's' : ''} updated!`
+            + (added > 0 ? ` ${added} added.` : '')
+            + (untouched > 0 ? ` ${untouched} row${untouched > 1 ? 's' : ''} without a record in the text ${untouched > 1 ? 'were' : 'was'} left as ${untouched > 1 ? 'they were' : 'it was'}.` : ''), untouched > 0 ? 6000 : 2000);
         return;
     }
 
@@ -27649,15 +27680,25 @@ function seqEditApply() {
         return;
     }
 
+    // Two ">" records in the one-row editor used to be joined into one row (audit L10)
+    const records = _getSeqEditMultiFasta();
+    if (records.length > 1) {
+        showMessage(`The text holds ${records.length} records, but this editor changes one row. Remove the extra record, or select several rows and open the editor for them.`, 8000);
+        return;
+    }
     let seq = _getSeqEditSequence();
     if (!seq) {
         showMessage("Sequence is empty.", 2000);
         return;
     }
 
-    // Get header from name input field (preferred) or textarea first line
+    // The name: the Name field when the user changed it, else a name typed on the ">" line of the
+    // text (it used to be ignored; audit L10), else the Name field as it stands
     const nameInput = document.getElementById('seqEditNameInput');
     let newFullHeader = nameInput ? nameInput.value.trim() : '';
+    const openedAs = isFreeform ? 'new_sequence' : (_seqEditTargetObjs[0] ? (_seqEditTargetObjs[0].fullHeader || _seqEditTargetObjs[0].header) : newFullHeader);
+    const typedName = records.length === 1 ? records[0].header : '';
+    if (typedName && typedName !== openedAs && newFullHeader === openedAs) newFullHeader = typedName;
     if (!newFullHeader) {
         const textarea = document.getElementById('seqEditTextarea');
         const firstLine = textarea.value.split('\n')[0].trim();

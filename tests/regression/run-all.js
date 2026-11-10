@@ -17812,6 +17812,118 @@ check('Audit M10: link parameters (?url=, ?snapshotFile=, ?mask=, ?bed=, ?reads=
   return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : `5 links: no /api/ request; an ordinary file loads (${n} rows)` };
 }, { timeoutMs: 120000 });
 
+// Audit 2026-11-10, M12, M13, L10: the Sequence editor.
+// M12: with several rows open, records were matched to rows by position. Delete the middle record of
+//      three and Apply: the second row got the third's name and residues ("2 sequences updated!").
+//      Records are now matched to the rows by name when the count differs; a row whose record was
+//      removed is left as it was, and the message says so.
+// M13: digits and spaces inside the text were kept as residues: pasted GenBank-style numbered text gave
+//      a row like "1 acgtacgtac gtacgtacgt21 acgt".
+// L10: in the one-row editor a name typed in the text box (the ">" line) was ignored, and two records
+//      pasted there were joined into one row.
+check('Audit M12: the Sequence editor matches records to rows by name when one is removed, drops numbers and spaces, takes a name typed in the text, and refuses two records for one row', async (page) => {
+  const fa = '>r1 first\nAAAACCCC\n>r2 second\nGGGGTTTT\n>r3 third\nACGTACGT\n>r4\nTTTTAAAA\n';
+  const rows = () => page.evaluate(() => state.seqs.map(q => q.fullHeader + '=' + q.seq));
+  const msg = () => page.evaluate(() => document.getElementById('statusMessage').textContent);
+  const setText = (t) => page.evaluate((t) => { const ta = document.getElementById('seqEditTextarea'); ta.value = t; ta.dispatchEvent(new Event('input', { bubbles: true })); }, t);
+  const apply = async () => { await page.evaluate(() => document.getElementById('seqEditApplyBtn').click()); await page.waitForTimeout(250); };
+  const closeIfOpen = () => page.evaluate(() => { const m = document.getElementById('seqEditModal'); if (m && m.style.display !== 'none') closeSeqEditor(); });
+  const bad = [];
+  // M12: three rows open, the middle record removed
+  await loadFasta(page, fa);
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1, 2]); renderAlignment(); openSeqEditorMulti(); });
+  await setText('>r1 first\nAAAACCCC\n>r3 third\nACGTACGA');
+  await apply();
+  let r = await rows(), m = await msg();
+  if (JSON.stringify(r) !== JSON.stringify(['r1 first=AAAACCCC', 'r2 second=GGGGTTTT', 'r3 third=ACGTACGA', 'r4=TTTTAAAA'])) bad.push('M12 removed record: ' + r.join(', '));
+  if (!/1 sequence updated|left as/i.test(m)) bad.push(`M12 message: "${m}"`);
+  await closeIfOpen();
+  // same count: by position, so a row can be renamed (as before)
+  await loadFasta(page, fa);
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1]); renderAlignment(); openSeqEditorMulti(); });
+  await setText('>r1 first\nAAAACCCC\n>renamed second\nGGGGTTTA');
+  await apply();
+  r = await rows();
+  if (r[1] !== 'renamed second=GGGGTTTA' || r[0] !== 'r1 first=AAAACCCC') bad.push('rename with the same count: ' + r.join(', '));
+  await closeIfOpen();
+  // M13: numbered text, one row and several rows
+  await loadFasta(page, fa);
+  await page.evaluate(() => openSeqEditor(3));
+  await setText('>r4\n        1 ttttaaaa cc\n       11 gg');
+  await apply();
+  r = await rows();
+  if (r[3].replace(/-/g, '') !== 'r4=ttttaaaaccgg') bad.push('M13 one row: ' + r[3]);
+  await closeIfOpen();
+  await loadFasta(page, fa);
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1]); renderAlignment(); openSeqEditorMulti(); });
+  await setText('>r1 first\n1 AAAA CCCC\n>r2 second\n1 GGGG TTTT 8');
+  await apply();
+  r = await rows();
+  if (r[0] !== 'r1 first=AAAACCCC' || r[1] !== 'r2 second=GGGGTTTT') bad.push('M13 several rows: ' + r.slice(0, 2).join(', '));
+  await closeIfOpen();
+  // L10: a name typed on the ">" line; two records for one row
+  await loadFasta(page, fa);
+  await page.evaluate(() => openSeqEditor(3));
+  await setText('>r4x new name\nTTTTAAAC');
+  await apply();
+  r = await rows();
+  if (r[3] !== 'r4x new name=TTTTAAAC') bad.push('L10 name in the text: ' + r[3]);
+  await closeIfOpen();
+  await loadFasta(page, fa);
+  await page.evaluate(() => openSeqEditor(3));
+  await setText('>r4\nTTTTAAAA\n>extra\nCCCCGGGG');
+  await apply();
+  r = await rows(); m = await msg();
+  if (r.length !== 4 || r[3] !== 'r4=TTTTAAAA') bad.push('L10 two records: ' + r.join(', '));
+  if (!/2 (records|sequences)/i.test(m)) bad.push(`L10 two records message: "${m}"`);
+  await closeIfOpen();
+  return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : 'removed record, rename, numbered text, name in the text, two records: all right' };
+});
+
+// Audit 2026-11-10, M14 and L9: Add & Align (the full-MAFFT button of Add Sequences).
+// What used to go wrong: rows went to MAFFT under their names and came back by name. An existing row
+// with the same full name as a new one was taken for a new row and moved to the bottom (or top); two
+// rows sharing a name got one row's letter case; a name over 254 characters came back cut. A run that
+// gave no result (cancelled, or refused because the rows changed meanwhile) left an empty Undo step.
+// Rows now go out under row ids, like Realign All.
+check('Audit M14: Add & Align keeps existing rows in place and every name, residue and letter case when names repeat or are very long; a run without a result leaves no Undo step', async (page) => {
+  let x = 7; const rnd = () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296;
+  let base = ''; for (let i = 0; i < 90; i++) base += 'ACGT'[Math.floor(rnd() * 4)];
+  const mut = () => base.split('').map(c => rnd() < 0.06 ? 'ACGT'[Math.floor(rnd() * 4)] : c).join('');
+  const longName = 'long_' + 'n'.repeat(300) + ' end of the long name';
+  const ex = [['dup same name', mut().toLowerCase()], ['x one', mut()], ['dup same name', mut().toUpperCase()], ['z last', mut().slice(0, 40).toLowerCase() + mut().slice(40)]];
+  const add = [['dup same name', mut().slice(3, 80)], [longName, mut().slice(0, 70).toLowerCase()], ['new plain', mut()]];
+  const fa = a => a.map(([n, q]) => `>${n}\n${q}\n`).join('');
+  const idle = async () => { await page.waitForTimeout(300); await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 90000 }); await page.waitForTimeout(500); };
+  const rows = () => page.evaluate(() => state.seqs.map(q => [q.fullHeader, q.seq.replace(/[-.]/g, '')]));
+  const start = async (atTop) => {
+    await loadFasta(page, fa(ex));
+    await page.evaluate(([t, atTop]) => { openAddSequencesModal(); document.getElementById('addSeqInput').value = t; document.getElementById('addSeqAtTop').checked = atTop; document.getElementById('addSeqSubmitButton').click(); }, [fa(add), atTop]);
+  };
+  const bad = [];
+  for (const atTop of [false, true]) {
+    await start(atTop); await idle();
+    const r = await rows();
+    const want = atTop ? add.concat(ex) : ex.concat(add);
+    if (JSON.stringify(r) !== JSON.stringify(want)) {
+      const diff = want.map((w, i) => (r[i] && r[i][0] === w[0] && r[i][1] === w[1]) ? null : `row ${i + 1}: got "${(r[i] || [''])[0].slice(0, 24)}" ${((r[i] || ['', ''])[1]).slice(0, 12)}, want "${w[0].slice(0, 24)}" ${w[1].slice(0, 12)}`).filter(Boolean);
+      bad.push(`${atTop ? 'at top' : 'at bottom'}: ${r.length} rows; ` + diff.slice(0, 3).join('; '));
+    }
+    const w = await page.evaluate(() => new Set(state.seqs.map(q => q.seq.length)).size);
+    if (w !== 1) bad.push('rows of different width');
+  }
+  // L9: no result (the rows changed during the run): nothing added, no Undo step left
+  await loadFasta(page, fa(ex));
+  const undo0 = await page.evaluate(() => state.deletedHistory.length);
+  await page.evaluate((t) => { openAddSequencesModal(); document.getElementById('addSeqInput').value = t; document.getElementById('addSeqSubmitButton').click(); }, fa(add));
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !!b && !b.hidden; }, null, { timeout: 15000 });
+  await page.evaluate(() => { const a = state.seqs[0]; state.seqs[0] = state.seqs[1]; state.seqs[1] = a; });
+  await idle();
+  const after = await page.evaluate(() => [state.seqs.length, state.deletedHistory.length]);
+  if (after[0] !== 4 || after[1] !== undo0) bad.push(`no result: ${after[0]} rows, ${after[1] - undo0} Undo step(s) left`);
+  return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : 'at bottom and at top: 7 rows in place with names, residues and case; no Undo step after a run without result' };
+}, { timeoutMs: 300000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
