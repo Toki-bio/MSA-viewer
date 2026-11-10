@@ -17562,6 +17562,162 @@ check('Audit L1: Canvas and Canvas Block measure their cells at the final font s
   });
 }, { timeoutMs: 120000 });
 
+// Audit 2026-11-10, M2. What used to go wrong: strict PHYLIP names (10 columns) that end in a number lost
+// the number: "Clone 1", "Clone 2" and "Clone 12" all loaded as "Clone", because the relaxed reading
+// (name = first word) was tried first and position numbers are dropped from the sequence text.
+// When both readings give the same sequences, a number inside the first 10 columns belongs to the name.
+check('Audit M2: strict PHYLIP names ending in a number keep it (Clone 1, Clone 2, Clone 12), sequential and interleaved', async (page) => {
+  const out = {};
+  const names = async (text) => { await loadFasta(page, text); return page.evaluate(() => state.seqs.map(q => q.header + '=' + q.seq)); };
+  out.seq = await names(' 3 12\nClone 1   ACGTACGTACGT\nClone 2   ACGTACGAACGT\nClone 12  ACGTTCGTACGT\n');
+  out.inter = await names(' 3 16\nClone 1   ACGTACGT\nClone 2   ACGTACGA\nClone 12  ACGTTCGT\n\nGGGGCCCC\nGGGGCCCA\nGGGGCCCT\n');
+  // relaxed files stay as they were: names without a number part, and position numbers at line ends
+  out.relaxed = await names(' 2 8\nalpha ACGT ACGT\nbeta  ACGA ACGT\n');
+  out.numbered = await names(' 2 8\nalpha ACGTACGT 8\nbeta  ACGAACGT 8\n');
+  const want = {
+    seq: ['Clone 1=ACGTACGTACGT', 'Clone 2=ACGTACGAACGT', 'Clone 12=ACGTTCGTACGT'],
+    inter: ['Clone 1=ACGTACGTGGGGCCCC', 'Clone 2=ACGTACGAGGGGCCCA', 'Clone 12=ACGTTCGTGGGGCCCT'],
+    relaxed: ['alpha=ACGTACGT', 'beta=ACGAACGT'], numbered: ['alpha=ACGTACGT', 'beta=ACGAACGT'],
+  };
+  const pass = JSON.stringify(out) === JSON.stringify(want);
+  return { pass, detail: pass ? 'names kept in both layouts; relaxed files unchanged' : JSON.stringify(out) };
+});
+
+// Audit 2026-11-10, M3 and L18. What used to go wrong: header keywords were looked for on every line of a
+// GenBank record, with the indent removed. A /note continuation line starting "locus is described"
+// renamed the row to "is"; one starting "definition of" replaced the description; one starting
+// "organism names" ended the feature table, so the features after it were lost. A DEFINITION that
+// runs over two lines was cut to its first line.
+check('Audit M3: GenBank qualifier text starting with LOCUS, DEFINITION or ORGANISM does not rewrite the record; a two-line DEFINITION is read whole', async (page) => {
+  const gb = [
+    'LOCUS       REC1                  40 bp    DNA     linear   SYN 01-JAN-2026',
+    'DEFINITION  A test record whose description is long enough to need',
+    '            a second line.',
+    'ACCESSION   REC1',
+    'SOURCE      Homo sapiens',
+    '  ORGANISM  Homo sapiens',
+    '            Eukaryota; Metazoa.',
+    'FEATURES             Location/Qualifiers',
+    '     gene            1..20',
+    '                     /gene="abc"',
+    '                     /note="the first part of the note; the',
+    '                     locus is described in the paper, with a',
+    '                     definition of its borders, and the',
+    '                     organism names vary between authors"',
+    '     CDS             5..16',
+    '                     /product="kept"',
+    'ORIGIN',
+    '        1 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt',
+    '//', ''].join('\n');
+  await loadFasta(page, gb);
+  const r = await page.evaluate(() => { const q = state.seqs[0] || {}; return { n: state.seqs.length, header: q.header, full: q.fullHeader, len: (q.seq || '').length,
+    feats: ((q._genbank || {}).features || []).map(f => f.type + ':' + (f.qualifiers.product || f.qualifiers.gene || '')), note: (((q._genbank || {}).features || [])[0] || { qualifiers: {} }).qualifiers.note }; });
+  const bad = [];
+  if (r.n !== 1 || r.header !== 'REC1') bad.push(`row name ${r.header}`);
+  if (!/long enough to need a second line/.test(r.full || '')) bad.push(`description: ${r.full}`);
+  if (/Homo sapiens/.test(r.full || '') === false) bad.push(`organism missing: ${r.full}`);
+  if (JSON.stringify(r.feats) !== JSON.stringify(['gene:abc', 'CDS:kept'])) bad.push(`features ${JSON.stringify(r.feats)}`);
+  if (!/locus is described.*definition of its borders.*organism names vary/.test(r.note || '')) bad.push(`note: ${r.note}`);
+  if (r.len !== 40) bad.push(`length ${r.len}`);
+  return { pass: !bad.length, detail: bad.length ? bad.join(' | ') : `REC1, both features, whole note, "${r.full}"` };
+});
+
+// Audit 2026-11-10, M4 and L12. What used to go wrong: "?" (missing data) in a FASTA record became N in a
+// row made only of nucleotide-looking letters and X in other rows. In a protein alignment a row such
+// as GAGA?TCA therefore got an asparagine that is not in the data, and a PHYLIP or NEXUS file with "?"
+// lost every "?" on Save FASTA or in a snapshot (both go through the FASTA text). "?" is now kept.
+// Realign sends it to the aligner as the placeholder and writes it back, like "*".
+check('Audit M4: "?" in a FASTA record stays "?" (protein row that looks like DNA, DNA row, Save FASTA round trip) and survives Realign All', async (page) => {
+  const idle = async () => { await page.waitForTimeout(200); await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 60000 }); await page.waitForTimeout(400); };
+  const rows = () => page.evaluate(() => state.seqs.map(q => q.seq));
+  const bad = [];
+  await loadFasta(page, '>p1\nMKVLAAGIVW\n>p2\nGAGA?TCAGA\n>p3\nMKVLA?GIVW\n');
+  let r = await rows();
+  if (r[1] !== 'GAGA?TCAGA' || r[2] !== 'MKVLA?GIVW') bad.push('protein: ' + r.join(','));
+  await loadFasta(page, '>d1\nACGT?ACGTA\n>d2\nACGTTACGTA\n');
+  r = await rows();
+  if (r[0] !== 'ACGT?ACGTA') bad.push('dna: ' + r.join(','));
+  // PHYLIP with "?" through Save FASTA text and back
+  await loadFasta(page, ' 2 10\nalpha     ACGT?ACGTA\nbeta      AC?TTACGTA\n');
+  const saved = await page.evaluate(() => state.seqs.map(q => '>' + q.fullHeader + '\n' + q.seq + '\n').join(''));
+  await loadFasta(page, saved);
+  r = await rows();
+  if (r[0] !== 'ACGT?ACGTA' || r[1] !== 'AC?TTACGTA') bad.push('round trip: ' + r.join(','));
+  // Realign All keeps "?" in its place
+  const dna = 'ACGTACGGTACCATGACGTAGCATGCATGCAAGTCGATCGTTGACC';
+  const a = dna.slice(0, 12) + '?' + dna.slice(12), b = dna.slice(0, 20) + dna.slice(23);
+  await loadFasta(page, `>a\n${a}\n>b\n${b}\n>c\n${dna}\n`);
+  await page.evaluate(() => document.getElementById('realignAllButton').click());
+  await idle();
+  r = await rows();
+  const msg = await page.evaluate(() => document.getElementById('statusMessage').textContent.slice(0, 80));
+  if (r[0].replace(/-/g, '') !== a || !/[A-Z]-+[A-Z]/.test(r[1])) bad.push(`realign: ${r[0]} / ${r[1]} (${msg})`);
+  return { pass: !bad.length, detail: bad.length ? bad.join(' | ') : '"?" kept in protein and DNA rows, through the FASTA text, and through Realign All' };
+}, { timeoutMs: 120000 });
+
+// Audit 2026-11-10, M5. What used to go wrong: Save FASTA, Copy and snapshots wrote a row's long name
+// (fullHeader) alone. Where the row's name is not the first word of the long name (NEXUS Homo_sapiens
+// is kept with the long name "Homo sapiens"), the file read back named the row by the first word:
+// Homo_sapiens and Homo_erectus both came back as "Homo". The name is now written first in that case.
+check('Audit M5: Save FASTA and a snapshot keep row names that are not the first word of the long name (NEXUS Homo_sapiens, Homo_erectus)', async (page) => {
+  const nex = "#NEXUS\nbegin data;\ndimensions ntax=3 nchar=8;\nformat datatype=dna gap=- missing=?;\nmatrix\nHomo_sapiens ACGTACGT\nHomo_erectus ACGTACGA\n'Pan troglodytes' ACGTTCGT\n;\nend;\n";
+  const open = async () => { await page.setInputFiles('#fileInput', { name: 'm.nex', mimeType: 'text/plain', buffer: Buffer.from(nex) }); await page.waitForTimeout(900); };
+  const names = () => page.evaluate(() => state.seqs.map(q => q.header));
+  await open();
+  const out = { loaded: await names() };
+  const fasta = await page.evaluate(() => _alignmentFastaText() + '\n');
+  await loadFasta(page, fasta);
+  out.fastaBack = await names();
+  out.fastaTwice = await page.evaluate(() => _alignmentFastaText() + '\n') === fasta;   // a second save writes the same text
+  await open();
+  out.snapBack = await page.evaluate(async () => { await _loadSnapshotPayload(JSON.parse(JSON.stringify(_buildSnapshotPayload()))); return state.seqs.map(q => q.header); });
+  // ordinary FASTA deflines are written as they were read
+  const plain = '>sp|P1|A_HUMAN desc one\nACGT\n>x y z\nACGA';
+  await loadFasta(page, plain + '\n');
+  out.plainSame = await page.evaluate(() => _alignmentFastaText()) === plain;
+  const want = ['Homo_sapiens', 'Homo_erectus', 'Pan_troglodytes'];
+  const pass = [out.loaded, out.fastaBack, out.snapBack].every(r => JSON.stringify(r) === JSON.stringify(want)) && out.fastaTwice && out.plainSame;
+  return { pass, detail: JSON.stringify(out) };
+});
+
+// Audit 2026-11-10, M6 and L17. What used to go wrong when a snapshot .json was opened over an alignment:
+// with an empty "fasta" the page threw, the status stayed at "Scanning alignment..." and the OLD rows
+// stayed under the NEW file name (Save would have written them as that file); with unreadable "fasta"
+// the error was shown but the snapshot's view was still applied to no rows and threw; a file with
+// names and no residues loaded "successfully" as 0 columns. All three are now a failed load like any
+// other: a message, no rows, no file name, no page error.
+check('Audit M6: a snapshot or FASTA file without residues is a failed load (message, no rows, no file name), not the old rows under the new name', async (page) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  const open = async (name, text) => { await page.setInputFiles('#fileInput', { name, mimeType: 'text/plain', buffer: Buffer.from(text) }); await page.waitForTimeout(1100); };
+  const st = () => page.evaluate(() => ({ n: state.seqs.length, file: state.currentFilename, msg: document.getElementById('statusMessage').textContent, shown: document.getElementById('alignmentContainer').textContent.slice(0, 200) }));
+  const bad = [];
+  const cases = [
+    ['snap.json', '{"schema":1,"title":"T","fasta":""}'],
+    ['snap.json', '{"schema":1,"title":"T","fasta":"hello world this is not fasta"}'],
+    ['snap.json', '{"schema":1,"title":"T","fasta":">a\\n>b\\n"}'],
+    ['names.fa', '>a\n>b\n'],
+  ];
+  for (const [name, body] of cases) {
+    errors.length = 0;
+    await open('old.fa', '>o1\nACGTACGT\n>o2\nACGTACGA\n>o3\nACGTACGA\n');
+    const before = await st();
+    if (before.n !== 3 || before.file !== 'old.fa') return { pass: false, detail: 'setup: ' + JSON.stringify(before) };
+    await open(name, body);
+    const r = await st();
+    const tag = `${name} ${body.slice(0, 44)}`;
+    if (r.n !== 0 || r.file) bad.push(`${tag}: ${r.n} rows under "${r.file}"`);
+    if (!/error|no (valid )?sequence|no alignment|no residues/i.test(r.msg + ' ' + r.shown)) bad.push(`${tag}: no error shown (status "${r.msg}", view "${r.shown.slice(0, 60)}")`);
+    if (/Scanning|loaded/i.test(r.msg)) bad.push(`${tag}: status says "${r.msg}"`);
+    if (errors.length) bad.push(`${tag}: page error ${errors[0]}`);
+  }
+  // a good file still loads afterwards
+  await open('good.fa', '>g1\nACGT\n>g2\nACGA\n');
+  const g = await st();
+  if (g.n !== 2 || g.file !== 'good.fa') bad.push('a good file after the failures: ' + JSON.stringify(g));
+  return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : '4 files without residues: failed load each time; a good file loads after' };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

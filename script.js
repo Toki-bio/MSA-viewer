@@ -4766,7 +4766,7 @@ function parseGenBank(text) {
 function _parseGenBankRecord(text) {
     const lines = text.split(/\r?\n/);
     let locus = '', definition = '', accession = '', organism = '', lineage = '', version = '';
-    let inFeatures = false, inOrigin = false, inOrganism = false;
+    let inFeatures = false, inOrigin = false, inOrganism = false, inDefinition = false;
     let seqParts = [];
     const features = [];
     let currentFeature = null;
@@ -4785,33 +4785,41 @@ function _parseGenBankRecord(text) {
         // End of record
         if (trimmed === '//') break;
 
-        // HEADER fields
-        if (/^LOCUS\s+/i.test(trimmed)) {
+        // HEADER fields. Only before the feature table: a qualifier continuation line that starts
+        // "locus is described", "definition of" or "organism names" is text, not a field (audit M3).
+        const inHeader = !inFeatures && !inOrigin;
+        if (inHeader && inDefinition) {
+            // A DEFINITION runs on over indented lines (audit L18: it was cut to its first line)
+            if (/^\s{5,}\S/.test(line)) { definition += ' ' + trimmed; continue; }
+            inDefinition = false;
+        }
+        if (inHeader && /^LOCUS\s+/i.test(trimmed)) {
             const parts = trimmed.split(/\s+/);
             // LOCUS name is the first token; the rest is length/type/date
             if (parts.length > 1) locus = parts[1];
             continue;
         }
-        if (/^DEFINITION\s+/i.test(trimmed)) {
+        if (inHeader && /^DEFINITION\s+/i.test(trimmed)) {
             definition = trimmed.replace(/^DEFINITION\s+/i, '');
+            inDefinition = true;
             continue;
         }
-        if (/^ACCESSION\s+/i.test(trimmed)) {
+        if (inHeader && /^ACCESSION\s+/i.test(trimmed)) {
             accession = trimmed.replace(/^ACCESSION\s+/i, '');
             continue;
         }
-        if (/^VERSION\s+/i.test(trimmed)) {
+        if (inHeader && /^VERSION\s+/i.test(trimmed)) {
             version = trimmed.replace(/^VERSION\s+/i, '');
             continue;
         }
 
         // ORGANISM block (multi-line)
-        if (/^\s*ORGANISM\s+/i.test(line)) {
+        if (inHeader && /^\s*ORGANISM\s+/i.test(line)) {
             organism = line.replace(/^\s*ORGANISM\s+/i, '');
             inOrganism = true;
             continue;
         }
-        if (inOrganism && /^\s{5,}\S/.test(line)) {
+        if (inHeader && inOrganism && /^\s{5,}\S/.test(line)) {
             // Indented lines under ORGANISM are the taxonomic lineage
             lineage = lineage ? `${lineage} ${trimmed}` : trimmed;
             continue;
@@ -8379,7 +8387,24 @@ function parsePhylip(text) {
     ];
     let entries = null;
     const results = attempts.map(a => a());
-    entries = results.find(got => got && got.length === nSeqs && got.every(e => e.seq.length === alignLen)) || null;
+    const fits = got => got && got.length === nSeqs && got.every(e => e.seq.length === alignLen);
+    entries = results.find(fits) || null;
+    // A number inside the 10 name columns is part of the name ("Clone 1", "Clone 12"), not a position
+    // number: the relaxed reading dropped it and gave three rows named "Clone" (audit M2). Taken only
+    // when the strict reading gives the same sequences and its names are the relaxed ones plus digits.
+    const ri = results.indexOf(entries);
+    if (entries && ri < 2 && fits(results[ri + 2])) {
+        const st = results[ri + 2];
+        let differs = false;
+        const same = st.every((e, k) => {
+            const r = entries[k];
+            if (e.seq !== r.seq) return false;
+            if (e.name === r.name) return true;
+            differs = true;
+            return e.name.startsWith(r.name) && /^\s+\d[\d\s]*$/.test(e.name.slice(r.name.length));
+        });
+        if (same && differs) entries = st;
+    }
     if (!entries) {
         // Nothing fits the header's length. Prefer a reading that gives every
         // sequence the same length (relaxed names first), and say so: a stale
@@ -8627,9 +8652,11 @@ function _isProteinFastaSequence(rawSeq) {
 function _sanitizeFastaSequence(rawSeq, isProtein) {
     const compact = String(rawSeq || '').replace(/\s+/g, '').replace(/\./g, '-');
     if (isProtein) {
-        return compact.replace(/[^ACDEFGHIKLMNPQRSTVWYBXZJUO*.-]/gi, 'X');
+        return compact.replace(/[^ACDEFGHIKLMNPQRSTVWYBXZJUO*?.-]/gi, 'X');
     }
-    return compact.replace(/[^ACGTUNRYMKSWHBVD.-]/gi, 'N');
+    // "?" (missing data) is kept: it used to become N here, an asparagine in a protein row made
+    // of nucleotide-looking letters, and was lost from PHYLIP/NEXUS data on Save (audit M4, L12)
+    return compact.replace(/[^ACGTUNRYMKSWHBVD?.-]/gi, 'N');
 }
 
 // A record made only of digits, ?, - and . (and at least one digit) is a row of character states (a 0/1 or
@@ -12325,16 +12352,24 @@ function _foldVisibleSeq(seq) {
     for (const r of state.hiddenCols) { out += seq.slice(p, r[0]); p = r[1] + 1; }
     return out + seq.slice(p);
 }
+// The text after ">" for a row. Normally the long name as read. Where the row's name is not how
+// the long name starts (NEXUS keeps Homo_sapiens with the long name "Homo sapiens"), the name goes
+// first, or the file read back would name the row by the long name's first word (audit M5).
+function _fastaDefline(q) {
+    const full = q.fullHeader != null ? q.fullHeader : q.header;
+    if (!full || !q.header || full.startsWith(q.header)) return full;
+    return q.header + ' ' + full;
+}
 // The FASTA text of Copy Align / the toolbar Copy and Save, and of Copy Sel (selected rows, degapped)
 function _alignmentFastaText() {
     const vis = _foldVisibleOnly();
-    return state.seqs.map(q => `>${q.fullHeader != null ? q.fullHeader : q.header}\n${vis ? _foldVisibleSeq(q.seq) : q.seq}`).join('\n');
+    return state.seqs.map(q => `>${_fastaDefline(q)}\n${vis ? _foldVisibleSeq(q.seq) : q.seq}`).join('\n');
 }
 function _selectedRowsFastaText() {
     const vis = _foldVisibleOnly();
     return Array.from(state.selectedRows).sort((a, b) => a - b).filter(i => state.seqs[i]).map(i => {
         const q = state.seqs[i];
-        return `>${q.fullHeader || q.header}\n${degapResidues(vis ? _foldVisibleSeq(q.seq) : q.seq)}`;
+        return `>${_fastaDefline(q)}\n${degapResidues(vis ? _foldVisibleSeq(q.seq) : q.seq)}`;
     }).join('\n');
 }
 // The fold holding a column, or null
@@ -15376,8 +15411,14 @@ async function parseAndRender(isFromDrop = false) {
         let payload = null;
         try { payload = JSON.parse(inputText); } catch (_) {}
         if (payload && typeof payload === 'object' && typeof payload.fasta === 'string' && 'schema' in payload) {
-            _loadSnapshotPayload(payload);
-            return;
+            // An empty "fasta" used to throw, leaving the old rows under the snapshot's file name (audit M6)
+            if (!payload.fasta.trim()) {
+                _clearFailedLoad();
+                alignmentContainer.innerHTML = '<div class="error-message">Error: this snapshot file has no alignment data.</div>';
+                showMessage('Error: this snapshot file has no alignment data.', 5000);
+                return;
+            }
+            return _loadSnapshotPayload(payload);
         }
     }
 
@@ -15507,6 +15548,8 @@ async function parseAndRender(isFromDrop = false) {
             parsed = parseFasta(inputText);
         }
         if (!parsed) throw new Error("No valid sequences found");
+        // Names without a single residue used to load "successfully" as 0 columns and replace the open alignment (audit L17)
+        if (Array.isArray(parsed) && parsed.length && parsed.every(q => !q || !q.seq)) throw new Error("No residues found: the file has sequence names but no sequence");
         if (!isFromDrop && !state.currentFilename) {
             state.currentFilename = 'Clipboard';
             state.currentFilePath = '';
@@ -17751,7 +17794,7 @@ function copySelectedColumns() {
     const cols = Array.from(state.selectedColumns).sort((a,b) => a - b);
     const fasta = state.seqs.map(s => {
         const seq = degapResidues(cols.map(pos => s.seq[pos] || '').join(''));
-        return `>${s.fullHeader || s.header}\n${seq}`;
+        return `>${_fastaDefline(s)}\n${seq}`;
     }).join('\n');
     navigator.clipboard.writeText(fasta).then(() => {
         showMessage("Selected columns copied as FASTA (ungapped)!", 2000);
@@ -18538,7 +18581,7 @@ function openSelectedInNewTab() {
     const rows = Array.from(state.selectedRows).sort((a, b) => a - b);
     const fasta = rows.map(i => {
         const s = state.seqs[i];
-        return `>${s.fullHeader || s.header}\n${s.seq}`;
+        return `>${_fastaDefline(s)}\n${s.seq}`;
     }).join('\n') + '\n';
     const base = (state.currentFilename || 'alignment').replace(/\.[^.]+$/, '');
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -18719,7 +18762,7 @@ function _fromBase64Utf8(base64) {
 
 // opts.panes: also the pane layout (a saved snapshot; not Clone Tab or a pane's own copy)
 function _buildSnapshotPayload(opts = {}) {
-    const fasta = state.seqs.map(s => `>${s.fullHeader != null ? s.fullHeader : s.header}\n${s.seq}`).join('\n');
+    const fasta = state.seqs.map(s => `>${_fastaDefline(s)}\n${s.seq}`).join('\n');
     const consensusTypeEl = document.querySelector('input[name="consensusType"]:checked');
     const shadeModeEl = document.querySelector('input[name="shadeMode"]:checked');
     const consensusPosEl = document.querySelector('input[name="consensusPosition"]:checked');
@@ -18983,6 +19026,7 @@ function _loadSnapshotPayload(payload) {
     // Parse and render first, THEN apply view settings
 
     return parseAndRender(true).then(() => {
+        if (!state.seqs.length) return;   // the alignment text could not be read: the error is on screen, nothing to apply the view to (audit M6)
         // the trim first: _applySnapshotView renders, and the consensus, the ruler and the Canvas read the trim then
         if (payload.trim && Number.isInteger(payload.trim.leftTrimEnd) && Number.isInteger(payload.trim.rightTrimStart)) {
             _setTrimBounds(payload.trim.leftTrimEnd, payload.trim.rightTrimStart, false);
@@ -19206,10 +19250,10 @@ async function openSnapshotFromPath(snapshotPath) {
         const resp = await fetch(normalizedPath, { signal: AbortSignal.timeout(10000) });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
         const payload = await resp.json();
-        _loadSnapshotPayload(payload);
+        await _loadSnapshotPayload(payload);
         const pathInput = el('snapshotPathInput');
         if (pathInput) pathInput.value = normalizedPath;
-        showMessage(`Snapshot loaded from ${normalizedPath}`, 2500);
+        if (state.seqs.length) showMessage(`Snapshot loaded from ${normalizedPath}`, 2500);   // not over a load error (audit M6)
     } catch (err) {
         console.error('Snapshot open failed:', err);
         showMessage(`Failed to open snapshot: ${err.message}`, 5000);
@@ -26214,8 +26258,8 @@ function _alignerGuardInput(fasta) {
     }
     const protein = !(letters && acgt / letters > 0.75);
     const ph = protein ? 'X' : 'N';
-    const unknown = protein ? /[*UOuo]/g : /[*EFIJLOPQZefijlopqz]/g;
-    const swap = (seq) => /[-.]/.test(seq) ? seq.replace(/\*/g, ph) : seq.replace(unknown, ph);
+    const unknown = protein ? /[*?UOuo]/g : /[*?EFIJLOPQZefijlopqz]/g;
+    const swap = (seq) => /[-.]/.test(seq) ? seq.replace(/[*?]/g, ph) : seq.replace(unknown, ph);
     let changed = false;
     const sent = recs.map(r => { const t = swap(r.seq); if (t !== r.seq) changed = true; return t; });
     if (!changed) return { fasta, recs };
@@ -28966,8 +29010,7 @@ function initializeAppUI() {
                 return resp.json();
             })
             .then(payload => {
-                _loadSnapshotPayload(payload);
-                showMessage('Snapshot file loaded', 2200);
+                return Promise.resolve(_loadSnapshotPayload(payload)).then(() => { if (state.seqs.length) showMessage('Snapshot file loaded', 2200); });
             })
             .catch(err => {
                 console.error('Snapshot file load failed:', err);
@@ -28977,8 +29020,8 @@ function initializeAppUI() {
         try {
             const snapshotText = _fromBase64Utf8(autoSnapshot);
             const payload = JSON.parse(snapshotText);
-            _loadSnapshotPayload(payload);
-            showMessage('Snapshot loaded', 2200);
+            Promise.resolve(_loadSnapshotPayload(payload)).then(() => { if (state.seqs.length) showMessage('Snapshot loaded', 2200); })   // not over a load error (audit M6)
+                .catch(err => { console.error('Snapshot load failed:', err); showMessage(`Failed to load snapshot: ${err.message}`, 5000); });
         } catch (err) {
             console.error('Snapshot load failed:', err);
             showMessage(`Failed to load snapshot: ${err.message}`, 5000);
