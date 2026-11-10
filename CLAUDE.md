@@ -68,5 +68,6 @@ the others. When you change or rewrite a rendering, selection, scrolling or edit
 - Bump the cache-busting `?v=` in index.html for script.js/styles.css when you change them.
 - The version must agree in package.json, `RELEASE_VERSION` in script.js (and CITATION.cff /
   .zenodo.json if present); `tests/meta/version.test.js` checks it.
-- The public site deploys from `main` (.github/workflows/pages.yml); tests run on every push
+- The public site deploys from `main` once the Tests workflow has passed for that push (.github/workflows/pages.yml;
+  `tests/meta/workflows.test.js` checks it); tests run on every push
   (.github/workflows/tests.yml).

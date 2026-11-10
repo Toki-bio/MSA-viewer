@@ -1,16 +1,21 @@
-# Deploys the public site (tools/build-site.sh) to GitHub Pages on every push to main, and on demand
-# (Actions > Deploy to GitHub Pages > Run workflow). Replaces the automatic
-# "deploy from a branch" build, which stopped being queued on pushes on 2026-10-04.
+# Deploys the public site (tools/build-site.sh) to GitHub Pages once the Tests workflow has PASSED for a
+# push to main, and on demand (Actions > Deploy to GitHub Pages > Run workflow; that one does not wait).
+# It used to deploy on every push to main without waiting, so a commit that failed its tests was
+# public about an hour before the failure showed (audit 2026-11-10, T2; owner's choice: wait for the tests).
+# Replaces the automatic "deploy from a branch" build, which stopped being queued on pushes on 2026-10-04.
 # Settings > Pages > Source must be "GitHub Actions" for this to publish.
 name: Deploy to GitHub Pages
 
 on:
-  push:
+  workflow_run:
+    workflows: [Tests]      # the `name:` of .github/workflows/tests.yml; tests/meta/workflows.test.js checks it
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read            # to see which newer commits have passed already
   pages: write
   id-token: write
 
@@ -20,19 +25,51 @@ concurrency:
 
 jobs:
   deploy:
+    # only a passed test run of a push; a failed, cancelled or timed-out run deploys nothing
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # the commit that was tested, not whatever main points to by now
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+      # Test runs of two pushes overlap and the older one can finish last: it must not put the older
+      # site over the newer one. Skip when a commit after this one has passed its tests already.
+      - id: newest
+        name: Is this the newest commit that passed?
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          THIS_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+        run: |
+          superseded=no
+          for sha in $(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?branch=main&event=push&status=success&per_page=30" --jq '.workflow_runs[].head_sha'); do
+            [ "$sha" = "$THIS_SHA" ] && continue
+            if git cat-file -e "$sha^{commit}" 2>/dev/null && git merge-base --is-ancestor "$THIS_SHA" "$sha"; then
+              superseded=yes
+              echo "::notice::Not deployed: the later commit $sha has passed its tests already."
+              break
+            fi
+          done
+          echo "superseded=$superseded" >> "$GITHUB_OUTPUT"
       - uses: actions/configure-pages@v5
+        if: steps.newest.outputs.superseded != 'yes'
       # Publish only the viewer, manual, examples and licences (see the
       # allowlist in tools/build-site.sh), not the whole repository
       - name: Assemble the public site
+        if: steps.newest.outputs.superseded != 'yes'
         run: tools/build-site.sh _site
       - uses: actions/upload-pages-artifact@v3
+        if: steps.newest.outputs.superseded != 'yes'
         with:
           path: _site
       - id: deployment
+        if: steps.newest.outputs.superseded != 'yes'
         uses: actions/deploy-pages@v4
