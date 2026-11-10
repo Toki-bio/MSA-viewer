@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v331';
+const BUILD_TAG = 'v332';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -16732,6 +16732,24 @@ function _isTextEntry(node) {
     if (node.tagName === 'TEXTAREA' || node.tagName === 'SELECT' || node.isContentEditable) return true;
     return node.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|color|range|file|image)$/i.test(node.type || '');
 }
+// Where the keyboard is when it is not the alignment's: 'busy' while the busy overlay is up (a job is running),
+// 'window' when focus is inside an open window or a blocking dialog is open, '' otherwise.
+const _KEY_WINDOW_IDS = ['statsModal'];   // non-blocking windows: only while focus is inside them
+const _KEY_BLOCKING_IDS = ['infoModal', 'seqEditModal', 'addSeqModal'];   // dialogs: while they are open
+function _alignmentKeysAway() {
+    const busy = document.getElementById('busyOverlay');
+    if (busy && !busy.hidden) return 'busy';
+    const shown = (id) => { const m = document.getElementById(id); return !!m && m.style.display !== 'none' && m.getClientRects().length > 0; };
+    if (_KEY_BLOCKING_IDS.some(shown)) return 'window';
+    const ae = document.activeElement;
+    if (ae && ae !== document.body) {
+        for (const id of EXCLUSIVE_MODAL_IDS.concat(_KEY_WINDOW_IDS)) {
+            const m = document.getElementById(id);
+            if (m && m.contains(ae) && shown(id)) return 'window';
+        }
+    }
+    return '';
+}
 function handleKeyDown(e) {
     if (e.key === 'Escape') {
         // A rename box handles its own Esc (cancel); closing menus here blurred it, and the
@@ -16758,6 +16776,31 @@ function handleKeyDown(e) {
         return;
     }
 
+    // The alignment's shortcuts do nothing while the aligner runs or while the keyboard is in an open window
+    // (audit 2026-11-10, H1-H3). The busy overlay stopped the mouse only: Ctrl+Up during Realign Selected moved
+    // rows and the result landed in the wrong ones. With focus on a button of Statistics, Info, the Tree window
+    // and the rest, Ctrl+R / Ctrl+U / Ctrl+D edited the alignment behind the window.
+    const keysAway = _alignmentKeysAway();
+    if (keysAway) {
+        const ae = document.activeElement;
+        const inText = _isTextEntry(ae) && ae.getClientRects().length > 0;
+        // the Sequence editor's own undo keys (handled further down) and native keys of a text field stay
+        const editorUndo = keysAway === 'window' && _seqEditOpen() && (e.ctrlKey || e.metaKey) && /^[zy]$/i.test(e.key);
+        if (!editorUndo && !(keysAway === 'window' && inText)) {
+            if (e.ctrlKey || e.metaKey || e.altKey) {
+                const k = e.key.toLowerCase();
+                // copy, paste, cut, select all, find and print stay the browser's; the rest must not reach it either
+                // (Ctrl+R would reload the page in the middle of a run)
+                if (!((e.ctrlKey || e.metaKey) && !e.altKey && /^[cvxafp]$/.test(k)) && !/^(control|meta|alt|shift)$/.test(k)) {
+                    e.preventDefault();
+                    showMessage(keysAway === 'busy' ? 'Wait until the running job is done (or press Stop): the alignment cannot be changed meanwhile.'
+                        : 'This shortcut works on the alignment: click the alignment first.', 3000);
+                }
+            }
+            return;
+        }
+    }
+
     // Ctrl+D (Ctrl+Shift+D: ask first) deletes columns. Handled before everything else
     // and never left to the browser (bookmark dialog) unless the user is typing in a
     // visible text field: before, the browser got it whenever the viewer had nothing to
@@ -16765,8 +16808,9 @@ function handleKeyDown(e) {
     // a text box such as the Input box after Ctrl+L.
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'd') {
         const ae = document.activeElement;
-        const typing = ae && ae.getClientRects().length && (ae.tagName === 'TEXTAREA' || ae.isContentEditable
-            || (ae.tagName === 'INPUT' && /^(text|search|url|email|password|)$/i.test(ae.type || '')));
+        // any field that takes typed text or a choice (a number box or a drop-down too: Ctrl+D used to delete
+        // columns from there, audit 2026-11-10 U5)
+        const typing = ae && ae.getClientRects().length && _isTextEntry(ae);
         if (!typing) {
             e.preventDefault();
             if (!state.seqs?.length) return;
@@ -16888,8 +16932,12 @@ function handleKeyDown(e) {
                 break;
             case 'l':
                 if (!e.shiftKey && !e.altKey) {
-                    el('loadButton')?.click();
                     e.preventDefault();
+                    // Load reads the Input box again, which still holds the text first loaded: with edits made since,
+                    // that silently threw them and the undo history away (audit 2026-11-10, U1)
+                    const edits = state.deletedHistory.length;
+                    if (edits && !confirm(`Load the text in the Input box again? This discards ${edits} edit${edits === 1 ? '' : 's'} made since and cannot be undone.`)) break;
+                    el('loadButton')?.click();
                 }
                 break;
             case 'a':
@@ -17183,6 +17231,7 @@ function _restoreGroupOrder(order) {
 // An edit that turned out to change nothing: take back the undo entry it pushed and give back the
 // redo steps the push cleared (a no-op used to add an empty Undo step and lose Redo)
 function _dropNoOpUndo(redoBefore) {
+    if (typeof _skipNextNoOpDrop !== 'undefined' && _skipNextNoOpDrop) { _skipNextNoOpDrop = false; return; }   // that step is no longer the last one (see _mafftAlignWithUi)
     state.deletedHistory.pop();
     state.redoHistory = redoBefore || [];
 }
@@ -26069,7 +26118,25 @@ async function _codonAlignWithUi(fasta, label) {
     }
 }
 
+// The result of an aligner run belongs to the rows it was started on. If the rows change during the run (an
+// edit, an undo, a move, another file) the result is dropped and the callers treat it as "no result": written
+// back by row number it replaced one sequence with another's residues (audit 2026-11-10, H1 and H2).
+let _skipNextNoOpDrop = false;
 async function _mafftAlignWithUi(fasta, extraArgs, label) {
+    const startSeqs = state.seqs, startFp = _seqsFingerprint();
+    const undoTop = state.deletedHistory[state.deletedHistory.length - 1];   // the caller's own undo step, if it pushed one
+    const result = await _mafftAlignWithUiRun(fasta, extraArgs, label);
+    if (result == null) return result;
+    if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp) {
+        // the callers take their undo step back on "no result": only if it is still the last one
+        if (state.deletedHistory[state.deletedHistory.length - 1] !== undoTop) { _skipNextNoOpDrop = true; setTimeout(() => { _skipNextNoOpDrop = false; }, 0); }   // the caller's continuation runs before the timer
+        _pendingAlignNote = null;
+        showMessage('The alignment changed while the aligner was running, so its result was not used. Run it again.', 7000);
+        return null;
+    }
+    return result;
+}
+async function _mafftAlignWithUiRun(fasta, extraArgs, label) {
     if (_isCodonAlignMode()) return _codonAlignWithUi(fasta, label && label.replace(/MAFFT/g, 'codon aligner'));
     const stats = _mafftFastaStats(fasta);
     const confirmed = _confirmMafftJob(stats, extraArgs);
@@ -33756,7 +33823,13 @@ async function realignSequenceAgainstConsensus(index) {
         const consensusArgs = [...extraArgs];
 
         showMessage('Re-aligning sequence against consensus...', 0);
+        const startSeqs = state.seqs, startFp = _seqsFingerprint();
         const alignedProfile = await alignSequenceToConsensusProfile(state.seqs[index].seq, gappedCons, consensusArgs);
+        // no busy overlay here: the rows may have changed meanwhile (audit 2026-11-10, H2)
+        if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp) {
+            showMessage('The alignment changed while the sequence was being re-aligned, so the result was not used. Run it again.', 7000);
+            return;
+        }
 
         pushUndo('realign-to-consensus');
         state.seqs = state.seqs.map((seqObj, seqIndex) => {

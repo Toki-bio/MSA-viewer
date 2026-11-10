@@ -17210,6 +17210,111 @@ check('Sequence editor box: Complement in freeform mode decides DNA/RNA from the
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// ---- Audit 2026-11-10, batch 1 -------------------------------------------------------------------------------
+// H3 / U3 / U5: editing shortcuts used to act on the alignment while the keyboard was in an open window. With
+// Statistics, Info or the Tree window open and focus on one of its buttons, Ctrl+Up moved a row, Ctrl+R
+// reverse-complemented and renamed it, Ctrl+U duplicated it and Ctrl+D deleted the selected columns, all behind
+// the window. Ctrl+D also deleted columns with focus in a number box or a drop-down of the menus.
+const AUDIT1_FA = '>s0\nACGTACGTACGTAAAC\n>s1\nACGTTCGTACGTAAAC\n>s2\nACGTACGAACGTAAAC\n>s3\nACGTACGTACCTAAAC\n';
+const audit1Snap = (page) => page.evaluate(() => state.seqs.map(s => s.header + ':' + s.seq).join('|') + ' undo' + state.deletedHistory.length);
+check('Audit H3: editing keys pressed on a button of an open window (Statistics, Info, Tree) or in a number box / drop-down leave the alignment alone', async (page) => {
+  const out = {}; let ok = true;
+  const cases = [
+    ['stats', () => document.getElementById('statsButton').click(), '#statsCloseBtn'],
+    ['info', () => document.getElementById('infoButton').click(), '#infoModal button'],
+    ['tree', () => document.getElementById('buildTreeButton').click(), '#treeCopyNewickBtn'],
+    ['numberBox', null, '#hideGappyPct'],
+    ['dropDown', null, '#linkColsBy'],
+  ];
+  for (const [name, open, focusSel] of cases) {
+    await page.goto(page.url(), { waitUntil: 'networkidle' });
+    await loadFasta(page, AUDIT1_FA);
+    await page.evaluate(() => { state.selectedRows = new Set([1]); state.selectedColumns = new Set([3, 4, 5]); renderAlignment(); });
+    const before = await audit1Snap(page);
+    if (open) { await page.evaluate(open); await page.waitForTimeout(700); }
+    await page.evaluate((sel) => { const e = document.querySelector(sel); e.closest('#controls .menu-section')?.classList.add('menu-open'); e.focus(); }, focusSel);
+    const focused = await page.evaluate((sel) => document.activeElement === document.querySelector(sel), focusSel);
+    const keys = open ? ['Control+ArrowUp', 'Control+r', 'Control+u', 'Control+b', 'Control+d'] : ['Control+d'];
+    for (const k of keys) { await page.keyboard.press(k); await page.waitForTimeout(150); }
+    const after = await audit1Snap(page);
+    out[name] = { focused, same: after === before };
+    if (!focused || after !== before) { ok = false; out[name].after = after.slice(0, 120); }
+  }
+  // the keys still work on the alignment itself once the keyboard is back there
+  await page.goto(page.url(), { waitUntil: 'networkidle' });
+  await loadFasta(page, AUDIT1_FA);
+  await page.evaluate(() => { state.selectedRows = new Set([1]); renderAlignment(); document.activeElement?.blur?.(); });
+  await page.keyboard.press('Control+u'); await page.waitForTimeout(300);
+  out.aliveRows = await page.evaluate(() => state.seqs.length);
+  if (out.aliveRows !== 5) ok = false;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// H1 / H2: while MAFFT ran, the busy overlay blocked the mouse but not the keyboard. Ctrl+Up during Realign Selected
+// moved the rows, and the result was then written into the old row numbers: one sequence was replaced by another's
+// residues ("Realigned 2 selected sequences!"). Ctrl+Z during the run removed the realign's own undo step.
+const audit1Big = () => { let x = 7; const r = () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296; let base = ''; for (let i = 0; i < 1500; i++) base += 'ACGT'[Math.floor(r() * 4)]; let f = ''; for (let i = 0; i < 40; i++) { let q = ''; for (let j = 0; j < base.length; j++) { const u = r(); q += u < 0.06 ? 'ACGT'[Math.floor(r() * 4)] : u < 0.09 ? '' : base[j]; } f += `>s${i}\n${q}\n`; } return f; };
+const audit1Rows = (page) => page.evaluate(() => state.seqs.map(s => s.header + ':' + s.seq.replace(/[-.]/g, '').toUpperCase()));
+const audit1Busy = (page) => page.evaluate(() => { const b = document.getElementById('busyOverlay'); return !!b && !b.hidden; });
+check('Audit H1: keys pressed while the aligner runs do not edit the alignment; every row keeps its own residues after Realign Selected', async (page) => {
+  await loadFasta(page, audit1Big());
+  await page.evaluate(() => { state.selectedRows = new Set([5, 6]); renderAlignment(); });
+  const before = await audit1Rows(page); const undo0 = await page.evaluate(() => state.deletedHistory.length);
+  await page.evaluate(() => document.getElementById('realignSelectedButton').click());
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !!b && !b.hidden; }, null, { timeout: 15000 });
+  const out = { busy: await audit1Busy(page) };
+  for (const k of ['Control+ArrowUp', 'Control+r', 'Control+u', 'Control+z']) await page.keyboard.press(k);
+  out.busyAfterKeys = await audit1Busy(page);
+  out.midSame = JSON.stringify(await audit1Rows(page)) === JSON.stringify(before);
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 120000 });
+  await page.waitForTimeout(500);
+  const after = await audit1Rows(page);
+  out.endSame = JSON.stringify(after) === JSON.stringify(before);
+  out.undo = (await page.evaluate(() => state.deletedHistory.length)) - undo0;
+  out.msg = await page.evaluate(() => document.getElementById('statusMessage').textContent.slice(0, 60));
+  if (!out.endSame) out.diff = after.map((r, i) => r === before[i] ? null : i).filter(i => i !== null).slice(0, 6);
+  const ok = out.busy && out.busyAfterKeys && out.midSame && out.endSame && out.undo === 1;
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 240000 });
+
+// H1 / H2, second guard: whatever changes the rows during a run (not only a key), a result computed for the old
+// rows must not be written over the new ones. Rows 5 and 6 are swapped by the page itself during the run.
+check('Audit H1: an aligner result is not applied when the rows changed during the run, and it says so', async (page) => {
+  await loadFasta(page, audit1Big());
+  await page.evaluate(() => { state.selectedRows = new Set([5, 6]); renderAlignment(); });
+  const before = await audit1Rows(page); const undo0 = await page.evaluate(() => state.deletedHistory.length);
+  await page.evaluate(() => document.getElementById('realignSelectedButton').click());
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !!b && !b.hidden; }, null, { timeout: 15000 });
+  await page.evaluate(() => { const a = state.seqs[4]; state.seqs[4] = state.seqs[5]; state.seqs[5] = a; });
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 120000 });
+  await page.waitForTimeout(500);
+  const after = await audit1Rows(page);
+  const want = before.slice(); const t = want[4]; want[4] = want[5]; want[5] = t;
+  const out = { rowsKept: JSON.stringify(after) === JSON.stringify(want), undo: (await page.evaluate(() => state.deletedHistory.length)) - undo0,
+    msg: await page.evaluate(() => document.getElementById('statusMessage').textContent.slice(0, 90)) };
+  return { pass: out.rowsKept && out.undo === 0 && /changed while/i.test(out.msg), detail: JSON.stringify(out) };
+}, { timeoutMs: 240000 });
+
+// U1: Ctrl+L outside the Input box pressed the Load button, which loads the text still in the Input box: every edit
+// and the whole undo history were gone without a question ("Nothing to undo."). It now asks first when there are edits.
+check('Audit U1: Ctrl+L with unsaved edits asks first; Cancel keeps the edits and the undo history', async (page) => {
+  await loadFasta(page, AUDIT1_FA);
+  await page.evaluate(() => { state.selectedRows = new Set([1]); renderAlignment(); document.activeElement?.blur?.(); });
+  await page.keyboard.press('Control+u'); await page.waitForTimeout(300);
+  const out = { edited: await page.evaluate(() => [state.seqs.length, state.deletedHistory.length]) };
+  let asked = 0;
+  const dismiss = async (d) => { asked++; out.question = d.message().slice(0, 80); await d.dismiss(); };
+  page.on('dialog', dismiss);
+  await page.keyboard.press('Control+l'); await page.waitForTimeout(800);
+  page.off('dialog', dismiss);
+  out.afterCancel = await page.evaluate(() => [state.seqs.length, state.deletedHistory.length]); out.asked = asked;
+  page.once('dialog', (d) => d.accept());
+  await page.keyboard.press('Control+l'); await page.waitForTimeout(800);
+  out.afterOk = await page.evaluate(() => state.seqs.length);
+  const ok = out.edited[0] === 5 && asked === 1 && out.afterCancel[0] === 5 && out.afterCancel[1] === out.edited[1] && out.afterOk === 4;
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

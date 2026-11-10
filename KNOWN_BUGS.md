@@ -1,7 +1,7 @@
 # Known bugs worth fixing later
 
-## Ctrl+D reaches the alignment behind the Sequence editor
+None listed at the moment. The open findings of the 2026-11-10 audit are in
+docs/sessions/2026-11-10-audit-HANDOFF.md.
 
-With the Sequence editor open and focus on one of its buttons, Ctrl+D deletes the selected columns behind the dialog. Found by the GLM audit on 2026-11-07, by reading the code; not yet reproduced in a browser.
-
-When fixing it, block Ctrl+D alone. An existing regression check expects Ctrl+Up to keep working behind the dialog, so the editor must not block every shortcut.
+Fixed 2026-11-10 (v332): Ctrl+D reached the alignment behind the Sequence editor. The alignment's shortcuts now do
+nothing while a dialog is open, while focus is inside a window, or while a job runs (regression check "Audit H3").
