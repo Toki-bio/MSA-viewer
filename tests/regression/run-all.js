@@ -18439,8 +18439,16 @@ async function main() {
           browser = await launch();
           const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
           page.setDefaultTimeout(30000);
+          // An uncaught error in the page fails the check, also when what the check looked at was fine: only
+          // 11 checks listened for page errors, so an exception during a passing check went unseen (audit T6).
+          // A check that provokes an error on purpose says so with { allowPageErrors: true }.
+          const pageErrors = [];
+          page.on('pageerror', e => pageErrors.push(String(e && e.message || e)));
           await page.goto(baseUrl + '/index.html?view=domblock', { waitUntil: 'networkidle' });
           outcome = await withTimeout(fn(page), checkTimeoutMs(opts));
+          if (outcome && outcome.pass && pageErrors.length && !(opts && opts.allowPageErrors)) {
+            outcome = { pass: false, detail: `uncaught page error(s) during a check that otherwise passed: ${[...new Set(pageErrors)].slice(0, 3).join(' | ').slice(0, 400)}` };
+          }
         } catch (e) {
           outcome = { pass: false, detail: `threw: ${e.message}` };
         }
