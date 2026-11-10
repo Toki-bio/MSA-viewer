@@ -223,6 +223,25 @@ function safeLocalGet(key, fallback) {
     }
 }
 
+// Opens or closes the Recent list. It opens under its button, kept inside the window: it used to open
+// at a fixed place near the right edge, about 700 px from the button on a wide window (audit U12).
+function _toggleRecentDropdown(button) {
+    const d = document.getElementById('recentDropdown');
+    if (!d) return;
+    if (d.style.display === 'block') { d.style.display = 'none'; return; }
+    d.style.display = 'block';
+    _historyManager.renderDropdown();
+    const r = button && button.getBoundingClientRect();
+    if (!r || (!r.width && !r.height)) return;   // button not on screen: the place set in index.html stays
+    const w = d.offsetWidth || 360;
+    const left = Math.max(4, Math.min(r.left, window.innerWidth - w - 4));
+    const top = Math.max(4, Math.min(r.bottom + 2, window.innerHeight - 120));
+    d.style.left = left + 'px';
+    d.style.right = 'auto';
+    d.style.top = top + 'px';
+    d.style.maxHeight = Math.max(100, Math.min(400, window.innerHeight - top - 8)) + 'px';
+}
+
 // Writes a localStorage value; storage can be full or blocked by the browser.
 // With a label, tells the user what could not be saved.
 function safeLocalSet(key, value, label) {
@@ -9160,7 +9179,15 @@ function _annotResolveChrom(chrom) {
     if (i < 0) i = seqs.findIndex(s => s.fullHeader === c);
     if (i < 0) {
         const lc = c.toLowerCase().replace(/\.\d+$/, '');
-        if (lc) i = seqs.findIndex(s => String(s.header || '').toLowerCase().includes(lc) || String(s.fullHeader || '').toLowerCase().includes(lc));
+        // as a whole word only: "seq1" (not in the alignment) was placed on "seq10" (audit L19)
+        const whole = name => {
+            const t = String(name || '').toLowerCase();
+            for (let at = t.indexOf(lc); at >= 0; at = t.indexOf(lc, at + 1)) {
+                if (!/[a-z0-9]/.test(t[at - 1] || '') && !/[a-z0-9]/.test(t[at + lc.length] || '')) return true;
+            }
+            return false;
+        };
+        if (lc) i = seqs.findIndex(s => whole(s.header) || whole(s.fullHeader));
     }
     return i;
 }
@@ -25220,7 +25247,13 @@ function copyStatsMatrix(kind) {
 function _statsDelimited(grid, fmt) {
     const sep = fmt === 'csv' ? ',' : '\t';
     const cell = fmt === 'csv'
-        ? v => /[",\r\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v)
+        ? v => {
+            // a text cell that a spreadsheet program would run as a formula (=..., @..., +... or -... that is
+            // no number) starts with an apostrophe in the .csv (audit L20)
+            let t = String(v);
+            if (typeof v !== 'number' && /^[=@+\-]/.test(t) && !/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(t)) t = "'" + t;
+            return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+        }
         : v => String(v).replace(/[\t\r\n]+/g, ' ');
     return grid.map(r => r.map(cell).join(sep)).join('\r\n') + '\r\n';
 }
@@ -29081,6 +29114,11 @@ function initializeAppUI() {
     // -- URL parameter auto-loading --
     // ...
 
+    // Esc closes the Recent list, like every other list (audit U12)
+    window.addEventListener('keydown', (e) => {
+        const dd = document.getElementById('recentDropdown');
+        if (e.key === 'Escape' && dd && dd.style.display === 'block') dd.style.display = 'none';
+    }, true);   // capture: the alignment's own key handler does not let Esc through
     // Click-outside to close recent dropdown
     document.addEventListener('click', (e) => {
         const dd = document.getElementById('recentDropdown');

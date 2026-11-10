@@ -39,7 +39,7 @@
                         <div style="display: flex; flex-direction: column; gap: 4px;">
                             <button id="loadButton" style="height: 20px; font-size: 10px;" title="Load the pasted or dropped FASTA/MSF data (shortcut: Ctrl+L)">Load</button>
                             <button id="clearButton" style="height: 24px; font-size: 12px;" title="Clear the sequence input">Clear</button>
-                            <button id="recentButton" style="height: 20px; font-size: 10px; position: relative;" title="Recent files and clipboard pastes" onclick="event.stopPropagation(); var d=document.getElementById('recentDropdown'); d.style.display=d.style.display==='block'?'none':'block'; _historyManager.renderDropdown();">Recent</button>
+                            <button id="recentButton" style="height: 20px; font-size: 10px; position: relative;" title="Recent files and clipboard pastes" onclick="event.stopPropagation(); _toggleRecentDropdown(this);">Recent</button>
                         </div>
                     </div>
                     <div id="sshLoadRow" style="display: none; margin-top: 4px;">

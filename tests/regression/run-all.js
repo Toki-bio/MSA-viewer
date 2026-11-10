@@ -18335,6 +18335,58 @@ check('Dot plot of a protein part: N is asparagine, its dots stay', async (page)
   return { pass: ok, detail: JSON.stringify(o) };
 }, { timeoutMs: 60000 });
 
+// Audit 2026-11-10, L19. What used to go wrong: a BED chrom that names no row was placed on the first row
+// whose name CONTAINS it, so features of "seq1" (not in the alignment) were drawn on "seq10". The loose
+// match stays for an accession inside a longer name (NC_069019.1 finds Sbet_NC_069019_DK), but the chrom
+// must stand there as a whole word, not as the start of another word or number.
+check('Audit L19: a BED chrom that names no row is not placed on a row whose name merely starts with it', async (page) => {
+  await loadFasta(page, '>seq10\nACGTACGTACGTACGTACGT\n>Sbet_NC_069019_DK\nACGTACGTACGTACGTACGT\n>alpha2\nACGTACGTACGTACGTACGT\n');
+  const r = await page.evaluate(() => ({
+    seq1: _annotResolveChrom('seq1'), alpha: _annotResolveChrom('alpha'), acc: _annotResolveChrom('NC_069019.1'),
+    exact: _annotResolveChrom('seq10'), lower: _annotResolveChrom('sbet_nc_069019_dk'),
+  }));
+  const pass = r.seq1 === -1 && r.alpha === -1 && r.acc === 1 && r.exact === 0 && r.lower === 1;
+  return { pass, detail: JSON.stringify(r) };
+});
+
+// Audit 2026-11-10, L20. What used to go wrong: a sequence named "=HYPERLINK(...)" or "@SUM(1)" went into the
+// statistics .csv as it was, and a spreadsheet program runs such a cell as a formula. In the .csv such a
+// name now starts with an apostrophe (shown as text). Numbers, also negative ones, and the .tsv stay as they are.
+check('Audit L20: a name starting with = or @ is not a formula in the statistics CSV', async (page) => {
+  await page.evaluate(() => {
+    state._statsData = { names: ['=HYPERLINK("http://x","y")', '@SUM(1)', '-plain', 'ok'], mode: 'rows',
+      identity: [[1, -0.5, 0, 0], [-0.5, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]] };
+  });
+  const r = await page.evaluate(() => {
+    const grid = _statsMatrixGrid('identity');
+    return { csv: _statsDelimited(grid, 'csv').split('\r\n'), tsv: _statsDelimited(grid, 'tsv').split('\r\n') };
+  });
+  const cells = r.csv.slice(1, 5).map(l => l.match(/^("(?:[^"]|"")*"|[^,]*)/)[1]);
+  const pass = cells[0].startsWith('"\'=HYPERLINK') && cells[1] === "'@SUM(1)" && cells[2] === "'-plain" && cells[3] === 'ok'
+    && r.csv[1].includes(',-0.5,') && r.tsv[1].startsWith('=HYPERLINK');
+  return { pass, detail: JSON.stringify({ cells, row1: r.csv[1], tsv1: r.tsv[1] }).slice(0, 400) };
+});
+
+// Audit 2026-11-10, U12. What used to go wrong: the Recent list stayed open when Esc was pressed (every other
+// list and window closes with Esc), and it opened at a fixed place (top 140 px, right 20 px) that was
+// about 700 px from its button on a wide window. It now opens under its button and Esc closes it.
+check('Audit U12: the Recent list opens under its button and Esc closes it', async (page) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await loadFasta(page, makeFasta(4, 40));
+  await page.hover('#input-section .section-header');
+  await page.click('#recentButton');
+  const shown = await page.evaluate(() => {
+    const b = document.getElementById('recentButton');
+    const d = document.getElementById('recentDropdown').getBoundingClientRect(), r = b.getBoundingClientRect();
+    return { open: document.getElementById('recentDropdown').style.display === 'block', dx: Math.round(Math.min(Math.abs(d.left - r.left), Math.abs(d.right - r.right))), dy: Math.round(d.top - r.bottom),
+      inside: d.left >= 0 && d.right <= innerWidth && d.top >= 0 };
+  });
+  await page.keyboard.press('Escape');
+  const after = await page.evaluate(() => document.getElementById('recentDropdown').style.display);
+  const pass = shown.open && shown.dx <= 40 && shown.dy >= 0 && shown.dy <= 40 && shown.inside && after === 'none';
+  return { pass, detail: JSON.stringify({ shown, after }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
