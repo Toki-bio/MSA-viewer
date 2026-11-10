@@ -63,6 +63,9 @@
         const fwd = BASES.map(() => new Int32Array(W)), rev = BASES.map(() => new Int32Array(W));
         const del = new Int32Array(W), ins = new Int32Array(W), depth = new Int32Array(W), span = new Int32Array(W + 1);
         const delEv = new Map(), insEv = new Map();      // key -> [forward reads, reverse reads]
+        // '=' in SEQ (SAM text, or BAM code 0) is the reference base: it was counted as N, a row of N and no calls
+        const refIdx = new Uint8Array(W);
+        for (let q = lo; q < hi; q++) { const c = refSeq.charCodeAt(q); refIdx[q - lo] = c < 256 ? CHAR_IDX[c] : 4; }
 
         for (const r of reads) {
             if (!usable(r)) continue;
@@ -83,7 +86,8 @@
                                 depth[q - lo]++;
                                 const j = q + off;
                                 if (hq) { const bq = B[qo + j]; if (bq !== 255 && bq < minQ) continue; }
-                                S[j < r._n ? NIB_IDX[(B[so + (j >> 1)] >> ((~j & 1) << 2)) & 15] : 4][q - lo]++;
+                                const nib = j < r._n ? (B[so + (j >> 1)] >> ((~j & 1) << 2)) & 15 : 15;
+                                S[nib === 0 ? refIdx[q - lo] : NIB_IDX[nib]][q - lo]++;
                             }
                         } else {
                             const seq = r.seq, qual = r.qual, sq = typeof qual === 'string' && qual.length > 0 && qual !== '*';
@@ -91,7 +95,7 @@
                                 depth[q - lo]++;
                                 const j = q + off;
                                 const bq = sq ? qual.charCodeAt(j) - 33 : baseQ(qual, j);
-                                if (bq === 255 || bq >= minQ) { const c = seq.charCodeAt(j); S[c < 256 ? CHAR_IDX[c] : 4][q - lo]++; }
+                                if (bq === 255 || bq >= minQ) { const c = seq.charCodeAt(j); S[c === 61 ? refIdx[q - lo] : c < 256 ? CHAR_IDX[c] : 4][q - lo]++; }
                             }
                         }
                     }

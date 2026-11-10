@@ -27,6 +27,8 @@ function skipReason(flag, keepFlagged) {
     for (const [bit, why] of SKIP_FLAGS) if (flag & bit) return why;
     return null;
 }
+// a record that is no evidence for its bases: no CIGAR, or no sequence (SEQ '*', l_seq 0)
+function noBases(r) { return !r.cigar.length ? 'no CIGAR' : !r._n ? 'no sequence' : null; }
 const SEQ_DECODE = '=ACMGRSVTWYHKDBN'; // 4-bit → IUPAC base (0==, 1=A, 2=C, 4=G, 8=T...)
 const SEQ_CODES = Uint8Array.from({ length: 16 }, (_, i) => (SEQ_DECODE[i] || 'N').charCodeAt(0));
 const CIGAR_OPS = 'MIDNSHP=X';
@@ -369,8 +371,9 @@ function parseBAMRecords(buf, headerEndOffset, keepFlagged) {
         if (!result) break;
         offset = result.nextOffset;
         totalReads++;
-        const why = skipReason(result.record.flag, keepFlagged);
-        if (why || !result.record.cigar.length) { skipped[why || 'no CIGAR'] = (skipped[why || 'no CIGAR'] || 0) + 1; continue; }
+        // SEQ '*' (l_seq 0) is no read bases: kept, it was drawn as a bar of N (a SAM read with SEQ '*' was already dropped)
+        const why = skipReason(result.record.flag, keepFlagged) || noBases(result.record);
+        if (why) { skipped[why] = (skipped[why] || 0) + 1; continue; }
         if (records.length >= MAX_READS) { exceededLimit = true; continue; }
         records.push(result.record);
     }
@@ -771,8 +774,8 @@ async function readBamRegion(file, index, refId, beg, end, keepFlagged, opts) {
                 for (const c of r.cigar) if ('MDN=X'.includes(c.op)) span += c.len;
                 if (r.pos + Math.max(1, span) <= beg) continue;
                 totalReads++;
-                const why = skipReason(r.flag, keepFlagged);
-                if (why || !r.cigar.length) { skipped[why || 'no CIGAR'] = (skipped[why || 'no CIGAR'] || 0) + 1; continue; }
+                const why = skipReason(r.flag, keepFlagged) || noBases(r);
+                if (why) { skipped[why] = (skipped[why] || 0) + 1; continue; }
                 if (maxReads && records.length >= maxReads) { cut = true; past = true; break; }
                 if (records.length < MAX_READS) records.push(r);
             }

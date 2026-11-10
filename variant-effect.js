@@ -10,7 +10,8 @@
 //   region: 'CDS', 'UTR' (exon outside the CDS), 'intron', 'splice site' (intron, within 2 bases of an exon),
 //           'non-coding gene', 'intergenic'.   genes may carry blocks (all exons) for the UTR test.
 //   effect: 'synonymous', 'missense', 'stop gained', 'stop lost', 'start lost', 'frameshift', 'in-frame deletion',
-//           'in-frame insertion', 'intron', 'splice site', 'non-coding', 'intergenic', 'unknown codon'.
+//           'in-frame insertion', 'intron', 'splice site', 'non-coding', 'intergenic', 'unknown codon'; a deletion that also
+//           takes intron bases next to an exon adds ', splice site' (e.g. 'frameshift, splice site').
 //   c.: HGVS-like coding position (1 = the A of the start codon, after codon_start); p.: one-letter, e.g. p.R140Q,
 //   p.R30=, p.S51*, p.G170fs.
 (function (root) {
@@ -47,8 +48,14 @@
         const inExon = q => g.cdsBlocks.some(([a, b]) => q >= a && q < b);
         const lastPos = v.type === 'del' ? p0 + v.ref.length - 1 : p0;
         const touched = [];
-        for (let q = p0; q <= lastPos; q++) if (inExon(q)) touched.push(q);
-        if (v.type === 'ins' && inExon(p0) && inExon(p0 - 1)) touched.push(p0);   // between two coding bases
+        // an insertion is in the CDS only between two coding bases: just before a block's first base it is not (it
+        // was taken as in, and the base before it, with no transcript position, gave c.NaN_NaNins and a false frameshift)
+        if (v.type === 'ins') { if (inExon(p0) && inExon(p0 - 1)) touched.push(p0); }
+        else for (let q = p0; q <= lastPos; q++) if (inExon(q)) touched.push(q);
+        // the intron bases next to an exon (2 each side) a deletion takes with it: it also breaks the splice site
+        const nearExon = q => !inExon(q) && q > span[0] && q < span[1] && g.cdsBlocks.some(([a, b]) => q === b || q === b + 1 || q === a - 1 || q === a - 2);
+        let spliceToo = false;
+        if (v.type === 'del') for (let q = p0; q <= lastPos; q++) if (nearExon(q)) spliceToo = true;
         if (!touched.length) {
             const dist = Math.min(...g.cdsBlocks.map(([a, b]) => Math.min(Math.abs(p0 - (a - 1)), Math.abs(p0 - b))));
             // an exon outside the CDS (BED12 blocks with a thick part): UTR
@@ -100,7 +107,7 @@
         out.refCodon = tseq.substr(3 * k, 3);
         if (v.type === 'del') {
             out.c = idx.length > 1 ? `c.${idx[0] + 1}_${idx[idx.length - 1] + 1}del` : `c.${idx[0] + 1}del`;
-            out.effect = frameshift ? 'frameshift' : 'in-frame deletion';
+            out.effect = (frameshift ? 'frameshift' : 'in-frame deletion') + (spliceToo ? ', splice site' : '');
             if (frameshift) out.p = `p.${refAA}${k + 1}fs`;
             else {
                 const k2 = Math.floor(idx[idx.length - 1] / 3);

@@ -4713,7 +4713,7 @@ function computeConsensusForSequencesChunked(seqArray, onDone, token) {
 
 // SAM/BAM detection - detects @HD/@SQ headers or tab-separated CIGAR lines
 function _isSamInput(text) {
-    const lines = text.split('\n').filter(l => l.trim());
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
     if (lines.length < 2) return false;
     const headerLines = lines.filter(l => l.startsWith('@'));
     if (headerLines.length > 0) {
@@ -4903,7 +4903,8 @@ function _parseGenBankRecord(text) {
 
 // Parse SAM into FASTA-like alignment (pileup reference + gapped reads)
 function parseSamToAlignment(samText) {
-    const lines = samText.split('\n').filter(l => l.trim() && !l.startsWith('@'));
+    // CRLF (a SAM saved on Windows): split on '\n' alone, the '\r' stayed on the last field
+    const lines = samText.split(/\r?\n/).filter(l => l.trim() && !l.startsWith('@'));
     if (lines.length === 0) return null;
 
     const records = [];
@@ -10334,7 +10335,9 @@ function parseSAMToBuffer(text) {
     // Parse SAM text into BAM-like records for the reads view pipeline.
     // Returns a pseudo-buffer object with header and records compatible with
     // BamParser.parseBAMHeader and BamParser.parseBAMRecords.
-    const lines = text.split('\n').filter(l => l.trim());
+    // CRLF line ends (a SAM saved on Windows): split on '\n' alone, the last field kept its '\r', so QUAL '*' was '*\r',
+    // read as a quality string of low values: every base failed the quality minimum, a row of N and no variants
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
     const headerLines = lines.filter(l => l.startsWith('@'));
     const readLines = lines.filter(l => !l.startsWith('@'));
 
@@ -10452,8 +10455,10 @@ function _getReadCigarFeatures(read, refSeq) {
             case 'M': case '=': case 'X':
                 seenRefConsuming = true;
                 for (let i = 0; i < len; i++) {
-                    const rb = (read.seq[readPos + i] || 'N').toUpperCase();
                     const refb = (refSeq[refPos + i] || 'N').toUpperCase();
+                    // '=' in SEQ: the reference base (it was a base of its own, a mismatch everywhere)
+                    let rb = (read.seq[readPos + i] || 'N').toUpperCase();
+                    if (rb === '=') rb = refb;
                     const isMatch = type === '=' || (type === 'M' && rb === refb);
                     features.bases.set(refPos + i, { base: rb, type: isMatch ? 'match' : 'mismatch' });
                 }
@@ -10878,14 +10883,19 @@ function _readsParseVcf(text) {
     const sites = [];
     let samples = [], other = 0, outside = 0, seen = new Set();
     const off = bamState.offset || 0, n = bamState.refSeq.length;
+    // the chromosome as the reads' own matching takes it (BamParser.matchReference): apart from case, a 'chr' prefix,
+    // a '.version' suffix, M/MT. Only the exact name matched: a VCF naming chr5 '5' showed nothing
+    const norm = x => { const t = String(x).toLowerCase().replace(/^chr/, '').replace(/\.\d+$/, ''); return t === 'mt' ? 'm' : t; };
+    const nBam = bamState.bamRefName != null ? norm(bamState.bamRefName) : null, nRef = bamState.refName != null ? norm(bamState.refName) : null;
     for (const line of text.split(/\r?\n/)) {
         if (!line) continue;
         if (line[0] === '#') { if (line.startsWith('#CHROM')) samples = line.split('\t').slice(9); continue; }
         const f = line.split('\t');
         if (f.length < 8) continue;
         seen.add(f[0]);
-        if (f[0] !== bamState.bamRefName && f[0] !== bamState.refName) { other++; continue; }
-        const pos = parseInt(f[1], 10) - 1 - (f[0] === bamState.bamRefName ? off : 0);
+        const onBam = f[0] === bamState.bamRefName || (f[0] !== bamState.refName && norm(f[0]) === nBam);
+        if (!onBam && f[0] !== bamState.refName && norm(f[0]) !== nRef) { other++; continue; }
+        const pos = parseInt(f[1], 10) - 1 - (onBam ? off : 0);
         if (!(pos >= 0 && pos < n)) { outside++; continue; }
         const keys = (f[8] || '').split(':'), gi = keys.indexOf('GT');
         const gts = f.slice(9).map(x => (gi >= 0 ? x.split(':')[gi] : ''));
@@ -10932,8 +10942,10 @@ function _readsDrawVcf(v, a, b, X, top) {
         ctx.fillStyle = _readsVcfType(s) === 'snv' ? '#2b6cb0' : '#dd6b20';
         ctx.fillRect(x, top + 1, tw, _READS_VCF_SITE_H - 3);
         for (let k = 0; k < nS; k++) {
+            // homozygous only when every allele is the same alternative one: 1/2 (two different alternatives) was drawn as homozygous
             const al = String(s.gts[k] || '.').split(/[/|]/), called = al.every(g => g !== '.' && g !== ''), alt = al.filter(g => g !== '0').length;
-            ctx.fillStyle = !called ? '#e2e2e2' : !alt ? '#c8c8c8' : alt < al.length ? '#3182ce' : '#0ea5e9';
+            const hom = alt === al.length && al.every(g => g === al[0]);
+            ctx.fillStyle = !called ? '#e2e2e2' : !alt ? '#c8c8c8' : !hom ? '#3182ce' : '#0ea5e9';
             ctx.fillRect(x, top + _READS_VCF_SITE_H + k * _READS_VCF_GT_H, tw, _READS_VCF_GT_H - 1);
         }
     }
@@ -11710,9 +11722,11 @@ function _readsPaintRead(ctx, read, y, a, b, sl, X, selected, cell) {
         if (op === 'M' || op === '=' || op === 'X') {
             const s = Math.max(q, a, rLo), e = Math.min(q + len, b, rHi);
             for (let p = s; p < e; p++) {
-                // & 0xDF: upper case, without a string per base (at low zoom this runs over many reads)
-                const mism = op === 'X' || (op === 'M' && (seq.charCodeAt(rp + p - q) & 0xDF) !== (refSeq.charCodeAt(p - rb) & 0xDF));
-                if (showAll || mism) letters.push(p, (seq[rp + p - q] || 'N').toUpperCase(), mism ? _readsBaseAlpha(read, rp + p - q) : 1);
+                // & 0xDF: upper case, without a string per base (at low zoom this runs over many reads). '=' (61) in SEQ is
+                // the reference base: it was drawn as a red mismatch letter '='
+                const sc = seq.charCodeAt(rp + p - q), eq = sc === 61;
+                const mism = op === 'X' || (op === 'M' && !eq && (sc & 0xDF) !== (refSeq.charCodeAt(p - rb) & 0xDF));
+                if (showAll || mism) letters.push(p, eq ? (refSeq[p - rb] || 'N').toUpperCase() : (seq[rp + p - q] || 'N').toUpperCase(), mism ? _readsBaseAlpha(read, rp + p - q) : 1);
             }
             q += len; rp += len;
         } else if (op === 'D') {
@@ -12015,7 +12029,10 @@ function _readBaseAt(read, p) {
     if (read.start != null && (p < read.start || p > read.end)) return null;   // and the read stays packed
     let q = read.pos, rp = 0;
     for (const { op, len } of read.cigar) {
-        if (op === 'M' || op === '=' || op === 'X') { if (p >= q && p < q + len) return (read.seq[rp + p - q] || 'N').toUpperCase(); q += len; rp += len; }
+        if (op === 'M' || op === '=' || op === 'X') {
+            if (p >= q && p < q + len) { const c = (read.seq[rp + p - q] || 'N').toUpperCase(); return c === '=' ? (_readsRefChar(p) || 'N').toUpperCase() : c; }   // '=': the reference base
+            q += len; rp += len;
+        }
         else if (op === 'D') { if (p >= q && p < q + len) return '-'; q += len; }
         else if (op === 'N') { if (p >= q && p < q + len) return null; q += len; }
         else if (op === 'I' || op === 'S') rp += len;
@@ -34052,11 +34069,13 @@ function _dotNormAt(row, col) {
     return _dotIdentityAt(row * S.cols + col);
 }
 
-// Residues that never match, so runs of unknown bases do not draw solid blocks
-function _dotUnknownChars(seqA, seqB) {
+// Residues that never match, so runs of unknown bases do not draw solid blocks. Protein: X, * and ?; N is asparagine.
+// Judged on the whole sequences (and the alignment's type when the rows come from it), not on the plotted part: a part
+// of a protein with no letter outside the nucleotide codes (N, K, A, G, D ...) was taken as DNA and its N's lost their dots.
+function _dotUnknownChars(seqA, seqB, proteinHint) {
     // Letters that exist in protein but not in nucleotide IUPAC codes
-    const protein = /[EFIJLOPQZ*]/.test(seqA) || /[EFIJLOPQZ*]/.test(seqB);
-    return protein ? 'X*' : 'NX';
+    const protein = !!proteinHint || /[EFIJLOPQZ*]/.test(seqA) || /[EFIJLOPQZ*]/.test(seqB);
+    return protein ? 'X*?' : 'NX';
 }
 
 const _dotWorkerJobs = {};   // file -> reject function of the job in flight
@@ -36331,7 +36350,7 @@ async function openDotPlot(seqA, seqB, nameA, nameB, meta = null) {
         if (S.alignMapB) S.alignMapB = [...S.alignMapB].reverse();
         S.dispOffB = S.fullLenB - S.offB - S.seqB.length;   // the plotted B starts this far into the reverse complement of the whole sequence
     }
-    S.unknown = _dotUnknownChars(S.seqA, S.seqB);
+    S.unknown = _dotUnknownChars(S.sourceSeqA, S.sourceSeqB, (S.rowIndexA >= 0 || S.rowIndexB >= 0) && isProteinAlignment());
     _dotCheckEdits();   // a recalculation or range change of a plot whose rows were edited keeps saying so (and a fresh plot costs the fast path)
 
     const modal = document.getElementById('dotPlotModal');
