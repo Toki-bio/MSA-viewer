@@ -1,26 +1,26 @@
 # Remote Push-to-Load Guide
 
-This feature lets you press a key in Midnight Commander on a remote server and have the file automatically appear in MSA Viewer in your browser — no copy-paste needed.
+This feature lets you press a key in Midnight Commander on a remote server, then click **Check Queue** in ViewAlign to load that file. No copy-paste is needed.
 
 ## How It Works
 
 ```
 MC on server  →  writes /tmp/.msa_viewer_queue
                         ↓
-Browser polls  /api/ssh-poll-file  (every few seconds, or manual "Check Queue")
+You click "Check Queue"; browser calls  /api/ssh-poll-file  (it never polls by itself)
                         ↓
 Server reads queue via plink/SSH, returns file path
                         ↓
 Browser fetches file content via  /api/ssh-cat
                         ↓
-MSA Viewer loads and renders alignment
+ViewAlign loads and renders the alignment
 ```
 
 ## Requirements
 
-- **Node.js** server running locally (`node server.js` or `start-server.bat`)
-- **PuTTY / plink** installed and on `PATH` (Windows)
-- Your SSH private key in PuTTY PPK format (`.ppk`)
+- **Node.js** server running on your own machine (`node server.js` or `start-server.bat`); SSH loading works only for clients on that machine unless `ALLOW_REMOTE_FILE_ACCESS=1` is set
+- **PuTTY / plink** installed and on `PATH`. The server runs `plink` for every SSH call, on any system
+- Your SSH private key in a format plink can read (PuTTY `.ppk`)
 - A configured `ssh-servers.json` (see below — file is gitignored)
 
 ---
@@ -71,15 +71,9 @@ Copy that line (starting with `ssh-ed25519 ...`) into your `ssh-servers.json` as
 
 ---
 
-## 2 — PPK Key Path
+## 2: Key Path
 
-The PPK path is hardcoded near the top of `server.js`:
-
-```js
-const PPK = 'C:\\Users\\toki\\.ssh\\id_ed25519.ppk';
-```
-
-Change this to match your actual PPK file path if needed.
+The server uses `~/.ssh/id_ed25519` (`~/.ssh/id_ed25519.ppk` on Windows). To use another key, set the environment variable `SSH_KEY_PATH` to its full path before starting the server.
 
 ---
 
@@ -94,7 +88,7 @@ v   View in MSA viewer
 
 Then in MC: `F2 → v` queues the currently highlighted file.
 
-Make the queue file writable by all users (so any login can write):
+The server reads `/tmp/.msa_viewer_queue` on the remote machine. Make it writable by all users (so any login can write):
 ```bash
 touch /tmp/.msa_viewer_queue
 chmod 666 /tmp/.msa_viewer_queue
@@ -108,16 +102,15 @@ chmod 666 /tmp/.msa_viewer_queue
 2. The **Input** section shows a row of server buttons (one per entry in `ssh-servers.json`)
 3. Navigate to a file in MC and press `F2 → v`
 4. In the browser:
-   - The auto-poller checks every few seconds (pollable servers only — no `via` hop)
-   - Or click **Check Queue** to check immediately
+   - Click **Check Queue** for the selected server. Nothing polls in the background.
 
 A mini-console appears in the bottom-right corner showing the fetch progress:
 ```
-Checking toki-server…
-Found: alignment.fas — fetching…
-✓ alignment.fas · 127 seqs · toki-server
+Checking myserver...
+Found: alignment.fas - fetching...
+[OK] alignment.fas | 127 seqs | myserver
 ```
-It closes automatically on success. On error it stays open and shows the error in red.
+It closes by itself a few seconds after success. On error it stays open and shows the error in red.
 
 ---
 
@@ -133,7 +126,7 @@ If your target server is only reachable through a gateway:
 ```
 
 - plink connects to `gateway`, then runs `ssh` inside to reach `target`
-- Only servers without `via` (direct connections) are included in the auto-poller to avoid timeout buildup
+- The inner `ssh` accepts a new host key on first contact (`StrictHostKeyChecking=accept-new`); `hostKey` pins only the first hop
 
 ---
 
@@ -148,7 +141,7 @@ plink cannot accept the host key non-interactively. Fix:
 ### "Queue check failed: HTTP 500"
 
 The server returned a non-zero plink exit code. The real error is now shown in the mini-console and in the Node console log (`[POLL] serverKey failed: ...`). Common causes:
-- Wrong PPK path in `server.js`  
+- Wrong key path (set `SSH_KEY_PATH`)  
 - Wrong `host`/`port`/`user` in `ssh-servers.json`
 - SSH tunnel down (check that port forwarding is active)
 
@@ -158,10 +151,3 @@ Queue file `/tmp/.msa_viewer_queue` on the remote server is empty. Either:
 - MC menu entry was not triggered yet
 - Queue was already consumed by a previous poll
 - Path in MC menu entry is wrong (check `%d/%f` expansion)
-
-### BLAST warning on startup
-
-```
-WARNING: BLAST is not installed or not in PATH
-```
-This is expected if BLAST+ is not installed. It does not affect SSH file loading — only the local BLAST search feature.

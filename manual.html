@@ -166,7 +166,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
       <a href="#gs-formats">1.3 Supported Formats</a>
       <a href="#gs-interface">1.4 Interface Layout</a>
       <a href="#gs-recent">1.5 Recent Files &amp; History</a>
-      <a href="#gs-updates">1.6 Recent Updates</a>
+      <a href="#gs-examples">1.6 Worked Examples</a>
+      <a href="#gs-updates">1.7 Recent Updates</a>
     </div>
   </div>
 
@@ -347,7 +348,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>Paste &amp; Load</td><td>Paste FASTA or MSF text into the Input textarea and click <strong>Load</strong> (or press <kbd>Ctrl+L</kbd>)</td></tr>
     <tr><td>Drag &amp; Drop</td><td>Drop a file onto the drop zone - any format in 1.3; the format is recognised from the content, not the extension, and gzip-compressed files (<code>.gz</code>) are unpacked first</td></tr>
     <tr><td>File Picker</td><td>Click the drop zone to browse for a file</td></tr>
-    <tr><td>URL parameter</td><td>Open the viewer with <code>?url=&lt;fasta-url&gt;</code> (optional <code>&amp;title=</code>, and <code>&amp;view=full</code>, <code>block</code> or <code>canvas</code> to choose the view). See the starter alignment below</td></tr>
+    <tr><td>URL parameter</td><td>Open the viewer with <code>?url=&lt;fasta-url&gt;</code> (optional <code>&amp;title=</code>, and <code>&amp;view=full</code>, <code>block</code> or <code>canvas</code> to choose the view). See the starter alignment below. With <code>&amp;demo=&lt;id&gt;</code> the viewer also runs a worked example once the file has loaded (see &ldquo;Worked examples&rdquo; below)</td></tr>
     <tr><td>SAM Paste</td><td>Paste SAM text directly - auto-detected and parsed with CIGAR expansion</td></tr>
     <tr><td>SSH Remote</td><td>Fetch files from a remote server via SSH (requires server with SSH configuration)</td></tr>
     <tr><td>Accession</td><td>Paste one or more GenBank/RefSeq accessions (nucleotide or protein, separated by spaces, commas or new lines) and click <strong>Load</strong>; the records are fetched from NCBI. Works without the server</td></tr>
@@ -437,7 +438,22 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     History persists across browser sessions via <code>localStorage</code>.
   </p>
 
-  <h3 id="gs-updates">1.6 Recent Updates</h3>
+  <h3 id="gs-examples">1.6 Worked Examples</h3>
+  <p>A feature panel that has an example shows a small <strong>Example</strong> pill (in a window, beside its title bar buttons). A click opens the example in a new tab: the viewer loads the example file, runs the feature, and shows a closable note that says what the result is. The same thing can be opened by a link: <code>?url=&lt;file&gt;&amp;title=&lt;title&gt;&amp;demo=&lt;id&gt;</code>. The ids are <code>kmer</code>, <code>snp</code>, <code>bicluster</code>, <code>trim</code>, <code>autocolour</code>, <code>macse</code>, <code>codon</code>, <code>dotplot</code>, <code>repeats</code>, <code>resites</code>, <code>reads</code> and <code>tree</code>. An id the viewer does not know does nothing. The example files are in the <code>examples</code> folder of the repository.</p>
+
+  <h3 id="gs-updates">1.7 Recent Updates</h3>
+  <p><strong>Version 1.34.1</strong> (build v335) and <strong>1.34.0</strong> (build v330). Builds v244 to v335 also changed these things:</p>
+  <ul>
+    <li><strong>Worked examples</strong> - many feature panels have a small <em>Example</em> pill that opens a ready-made example in a new tab. It uses a link of the form <code>?url=&lt;file&gt;&amp;title=&lt;title&gt;&amp;demo=&lt;id&gt;</code> (and <code>&amp;reads=</code> for the SAM/BAM example). The files come from the <code>examples</code> folder (see &ldquo;Worked examples&rdquo; below).</li>
+    <li><strong>Find a function</strong> - the bar in the menu row, or <kbd>Ctrl+K</kbd>, lists every function of the program (&sect;10).</li>
+    <li><strong>Block is drawn on the canvas</strong> - Block uses the Canvas renderer; Full is hidden from the view switch (open it with <code>?view=full</code>); the view switch is compact (&sect;5.1).</li>
+    <li><strong>Genome view</strong> - the <em>Open genome...</em> button in the Input menu opens a whole genome with its reads, read only where you look: select the FASTA, its <code>.fai</code>, and optionally the BAM and its <code>.bai</code> together.</li>
+    <li><strong>Dot plot</strong> - dot plot of parts (selected columns, typed ranges, a rectangle or a pasted sequence), B numbered in the row's own residues.</li>
+    <li><strong>Repeat Finder</strong> - adjacent copy pairs, microsatellite pairs grouped by unit, a search that shows progress and can be paused or cancelled, and Undo last marking.</li>
+    <li><strong>Reads</strong> - <code>?reads=&lt;url&gt;</code> opens a SAM/BAM on the <code>?url=</code> reference in Reads mode.</li>
+    <li><strong>Sequence editor</strong> - Undo and Redo work inside the open editor.</li>
+    <li><strong>Fixes</strong> - keyboard shortcuts leave the alignment alone while a job runs or a window is in front; stale aligner results are dropped; <kbd>Ctrl+L</kbd> asks before it discards edits; Realign keeps <code>*</code> and every residue and accepts letters MAFFT does not know; region Realign flips only the reversed row; consensus of RNA is written in U; rows with the same name in Clustal and Stockholm files stay separate; 0/1 state rows survive FASTA; MSF names with <code>oo</code> load.</li>
+  </ul>
   <p><strong>Version 1.33.3</strong> (build v243):</p>
   <ul>
     <li><strong>Codon analysis by gene, compact</strong> - in Block mode a block without CDS gets no translation rows, and a second translation row appears only in blocks where two genes overlap; before, every row of every block kept two empty translation rows on a mitogenome, so the first screen (tRNA-Phe, 12S rRNA) looked blank. The message on switching it on names the first CDS and its column (§5.4).</li>
@@ -2340,7 +2356,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><td><kbd>Ctrl+K</kbd></td><td>Find a function</td></tr>
     <tr><td><kbd>Ctrl+L</kbd></td><td>Load the pasted input</td></tr>
     <tr><td><kbd>Ctrl+H</kbd></td><td>Hide / show menu bar</td></tr>
-    <tr><td><kbd>Ctrl+M</kbd></td><td>Toggle all menu sections</td></tr>
+    <tr><td><kbd>Ctrl+M</kbd></td><td>Shows the note "Menus now work on hover". It no longer toggles menu sections, because the menus open when the pointer is over them</td></tr>
     <tr><td><kbd>Ctrl+I</kbd></td><td>Show keyboard shortcuts reference</td></tr>
     <tr><td><kbd>Ctrl+Shift+S</kbd></td><td>Save preset</td></tr>
     <tr><td><kbd>Ctrl+O</kbd></td><td>Load preset</td></tr>

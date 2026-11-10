@@ -10,8 +10,13 @@ come from elsewhere; each keeps its own licence.
 | MAFFT v7.525 core (Katoh & Standley), compiled to WebAssembly | `disttbfast.js`, `disttbfast.wasm` | BSD | `LICENSE-MAFFT` |
 | Emscripten runtime (generated glue code inside `disttbfast.js`) | `disttbfast.js` | MIT (Emscripten authors) | https://github.com/emscripten-core/emscripten/blob/main/LICENSE |
 | MACSE v2.07 `alignSequences`, ported to JavaScript (Ranwez et al. 2011, 2018) | `macse-align.js`, `macse-worker.js`, `macse-dp-wasm.js`, `tests/macse-port/*` | CeCILL 2.1 | `LICENSE-MACSE` |
-| @gmod/cram v14.1.1 (JBrowse CRAM reader), unmodified browser bundle | `vendor/gmod-cram/` | MIT | `vendor/gmod-cram/LICENSE`, `vendor/gmod-cram/README.md` |
-| is-buffer (Feross Aboukhadijeh), inside the CRAM bundle | `vendor/gmod-cram/cram-bundle.js` | MIT | `vendor/gmod-cram/cram-bundle.js.LICENSE.txt` |
+| @gmod/cram v14.1.1 (JBrowse CRAM reader; Copyright (c) 2017 Robert Buels), unmodified browser bundle | `vendor/gmod-cram/cram-bundle.js` and its lazily loaded chunk `vendor/gmod-cram/643.cram-bundle.js` | MIT | `vendor/gmod-cram/LICENSE`, `vendor/gmod-cram/README.md` |
+| is-buffer (Feross Aboukhadijeh), inside the CRAM bundle | `vendor/gmod-cram/cram-bundle.js`, `643.cram-bundle.js` | MIT | `vendor/gmod-cram/cram-bundle.js.LICENSE.txt` |
+
+The bundler collected a notice only for is-buffer. The two CRAM bundle files also contain code of
+other packages that @gmod/cram depends on (CRAM codec and checksum code: the words bzip2, crc32, md5,
+rans and xz appear in them). Their licence notices are not part of the bundle, and this repository
+does not record them. See https://github.com/GMOD/cram-js for the dependency list.
 
 ### How the CeCILL 2.1 part sits next to the MIT code
 
@@ -33,6 +38,9 @@ itself, including any change to it, stays under CeCILL 2.1.
 | `examples/real/ncbi_*` | NCBI RefSeq | public, no NCBI restrictions |
 | `examples/real/pfam_*`, `examples/real/rfam_*` | Pfam (InterPro), Rfam | CC0 |
 | `examples/synthetic/*`, `examples/compat/*` | generated for ViewAlign | MIT, as ViewAlign |
+| `examples/demo/alu_subfamilies.fa`, `examples/demo/alu_copy.fa` | Alu copies from human chromosome 1 (hg38, UCSC RepeatMasker track), aligned with ViewAlign's MAFFT | UCSC Genome Browser data; terms not recorded in this repository |
+| `examples/demo/cmah_primates.fa` | CMAH coding sequences of chimpanzee (NM_001009041), bonobo (AF494221), gorilla (AF494223), orangutan (AF494225), rhesus macaque (NM_001032856) and human (D86324) | GenBank/RefSeq records; terms not recorded in this repository |
+| `examples/demo/andricus_cytb.fa` | 15 cytochrome b sequences of Andricus grossulariae and A. quercusramuli, GenBank JQ416366 to JQ416415 | GenBank records; terms not recorded in this repository |
 
 `examples/real/README.md` lists each file with the exact upstream commit.
 

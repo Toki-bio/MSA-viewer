@@ -10,9 +10,11 @@ No installation, no build step, no framework dependencies.
 - **Ten input formats with auto-detection**: FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm,
   GenBank flatfile, ABI (AB1) chromatograms, SAM, and BAM/CRAM (read in the browser onto an open reference);
   GenBank/RefSeq records can also be fetched by accession
-- **Four view modes**: Full, Block, Canvas (viewport-culled; Full and Block window
-  the alignment above about 100,000 residues, and Canvas auto-activates above
-  5 million), and Reads (a read viewer for mapped SAM/BAM/CRAM data: zoom, sort, colour, group, pairs, gene and VCF rows). Opening an
+- **Four view modes**: Canvas (the default view at every size, viewport-culled), Block (wrapped
+  bands drawn by the Canvas renderer; the B button in the view switch), Reads (a read viewer for mapped
+  SAM/BAM/CRAM data: zoom, sort, colour, group, pairs, gene and VCF rows) and Full (the alignment as
+  page text; hidden from the view switch, open it with `?view=full`; from about 100,000 residues Full
+  draws only a window of the alignment). Opening an
   alignment with more than 500 sequences *and* more than 3,000 columns, or more than
   5 million residues, first asks before loading
 - **GeneDoc-style editing**: residue-level edits, Move NoGaps / Slide KeepGaps, gap column
@@ -27,7 +29,7 @@ No installation, no build step, no framework dependencies.
   quality thresholds, plus diagnostic-feature tables and cluster colouring
 - **Sequence search**: BLAST-*like* search against loaded FASTA databases, runs entirely
   client-side in a Web Worker with selectable water/ssearch36/blastn-style scoring presets
-  (not real NCBI BLAST or ssearch36, no install required). See `features-inventory.md` §
+  (not real NCBI BLAST or ssearch36, no install required). See `features-inventory.md` (in the [GitHub repository](https://github.com/Toki-bio/MSA-viewer/blob/main/features-inventory.md)) §
   "Sequence search" for exactly how this works, including a real incident where it silently
   broke and how it's guarded against recurring.
 - **Annotation track**: BED features (genes, exons, repeats) drawn as a compact track above
@@ -46,6 +48,10 @@ No installation, no build step, no framework dependencies.
 **Try a starter alignment (40 SINE copies, 4 groups):**
 https://toki-bio.github.io/MSA-viewer/?url=https://toki-bio.github.io/MSA-viewer/examples/svk_k4.fa&title=SVK%20SINE%20(K1–K4)
 
+**Worked examples:** many feature panels have a small **Example** pill. It opens a ready-made
+example in a new tab, using a link of the form `?url=<file>&title=<title>&demo=<id>`. The example
+runs the feature on files from the `examples/` folder and shows a closable note about the result.
+
 ### Requirements
 A current desktop browser: Chrome or Edge 80+, Firefox 100+, Safari 15.4+. Opening
 compressed files (`.gz`, BAM) needs Firefox 113+ or Safari 16.4+. The automated tests run in
@@ -54,7 +60,7 @@ a colour-blind-safe nucleotide scheme (Display menu > Colours).
 
 ### Browser only (no install)
 Use the hosted app above, or serve this folder over HTTP and open it, for example
-`python3 -m http.server 8000` then `http://localhost:8000/`. More examples: [examples/](examples/).
+`python3 -m http.server 8000` then `http://localhost:8000/`. More examples: [examples/ on GitHub](https://github.com/Toki-bio/MSA-viewer/tree/main/examples).
 
 Opening `index.html` directly from disk (`file://`) shows and edits alignments, but browsers
 block Web Workers and file fetches there, so MAFFT, MACSE, sequence search, dot plots and
@@ -74,7 +80,7 @@ Adds:
 
 ## Remote File Loading Setup
 
-See **[REMOTE_PUSH_TO_LOAD_GUIDE.md](REMOTE_PUSH_TO_LOAD_GUIDE.md)** for comprehensive setup instructions including:
+See **[REMOTE_PUSH_TO_LOAD_GUIDE.md](https://github.com/Toki-bio/MSA-viewer/blob/main/REMOTE_PUSH_TO_LOAD_GUIDE.md)** for comprehensive setup instructions including:
 - Configuring remote servers
 - Installing MC menu entries
 - Troubleshooting SSH connections
@@ -121,12 +127,23 @@ The `Snapshot` button exports:
 - a JSON snapshot file (for short-link hosting)
 - an HTML launcher file
 
-For short, stable links on GitHub Pages:
-1. Export snapshot JSON from the app.
-2. Commit the JSON file into [snapshots/README.md](snapshots/README.md) folder (`snapshots/`).
-3. Open using:
+A snapshot file opens with `?snapshotFile=<address of the JSON>`. The address is fetched by the
+browser, so it can be any public address that allows cross-origin requests.
 
-`?snapshotFile=snapshots/<snapshot_file>.json`
+Putting the file in this repository's `snapshots/` folder does **not** publish it, for two reasons:
+- `.gitignore` excludes `snapshots/*.json` (snapshots may hold personal alignment data).
+- `tools/build-site.sh`, which builds the GitHub Pages site, copies only `snapshots/README.md` and
+  `snapshots/index.json` from that folder.
+
+To publish snapshots on your own copy (fork) of the site:
+1. Export the snapshot JSON from the app.
+2. Remove the `snapshots/*.json` line from `.gitignore` (or use `git add -f`), and commit the file into `snapshots/`.
+3. In `tools/build-site.sh`, extend the `cp snapshots/README.md snapshots/index.json` line to copy your file too.
+4. Optional: list the file in `snapshots/index.json` as `{"files": [{"path": "snapshots/<file>.json", "name": "<label>"}]}`; the Input menu's snapshot list then shows it.
+5. Open it with `?snapshotFile=snapshots/<file>.json`.
+
+Without changing those files, host the JSON anywhere else that is public and use its full address.
+See also the [snapshots folder notes](https://github.com/Toki-bio/MSA-viewer/blob/main/snapshots/README.md).
 
 ## Security Notes
 

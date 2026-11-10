@@ -1,69 +1,106 @@
-# MSA Viewer — Public Server Deployment Guide
-## NAR Web Server Issue preparation
+# Running the ViewAlign server behind a domain
 
----
+ViewAlign needs no server: the hosted app on GitHub Pages does everything in the browser.
+The optional Node.js server (`server.js`) adds hosted BLAST databases, a native MAFFT
+endpoint, BAM-to-SAM conversion with samtools, and loading files over SSH. It also serves
+the viewer itself, so the page and its `/api` calls share one address.
 
-## Option A: Deploy on a Linux server (Ubuntu/Debian recommended)
+This guide puts the server on a Linux machine behind nginx with HTTPS. Read the access rules
+below first: by default the server accepts only requests from its own machine.
 
-### Prerequisites
-- Root/sudo access on the server
-- Domain name (or use the IP directly, but HTTPS needs a domain)
-- Node.js already installed (yes — used for other tools)
+## What the server reads from the environment
 
-### Step 1: Clone and configure
+The server reads these environment variables, and nothing else. It does not read a `.env`
+file. Set them in the shell, in a systemd unit, or in a PM2 ecosystem file.
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `PORT` | Port to listen on | `3000` |
+| `HOST` | Address to bind | `127.0.0.1` (this machine only) |
+| `ALLOWED_HOSTS` | Comma-separated host names that may appear in the `Host` header, besides `localhost` and IP addresses | none |
+| `TAILSCALE_IP` | One more address accepted as a host name | none |
+| `CORS_ORIGIN` | One more web origin allowed to call `/api` | `http://localhost:PORT` and `http://127.0.0.1:PORT` |
+| `ALLOW_REMOTE_FILE_ACCESS` | `1` lets clients that are not on this machine use the file and SSH routes | off |
+| `LOCAL_FILE_ROOTS` | Folders the local-file routes may read, separated by the path delimiter (`:` on Linux) | the ViewAlign folder and the home folder |
+| `SSH_KEY_PATH` | Private key used by SSH file loading | `~/.ssh/id_ed25519` (`id_ed25519.ppk` on Windows) |
+| `MAFFT_BIN` | Path of the native MAFFT binary used by `POST /api/mafft` | `/staging/conda/envs/bioinfo/bin/mafft`, so set it |
+| `CHILD_OUTPUT_MAX_BYTES` | Output cap for child processes such as samtools | 200 MB |
+
+BLAST+ (`blastn`, `makeblastdb`) and `samtools` are looked up on `PATH`. There are no
+variables for them. The viewer's own "BLAST-like" search runs in the browser and needs no
+BLAST+ install.
+
+## Access rules that matter behind a proxy
+
+- **Host check.** The `Host` header must be `localhost`, an IP address, or a name in
+  `ALLOWED_HOSTS`. Any other name gets `403 Host not allowed`. With nginx passing
+  `Host $host`, set `ALLOWED_HOSTS=msa-viewer.example.com` (your domain).
+- **Local-file and SSH routes.** `/api/local-cat`, `/api/bam2sam`, `/api/ssh-cat`,
+  `/api/ssh-ls`, `/api/ssh-poll-file`, `/api/queue-file` and `/api/poll-file` answer only
+  clients on the same machine. A request that carries `X-Forwarded-For` or `X-Real-IP`
+  counts as remote, so through the nginx recipe below these routes return `403`. That is
+  the safe setting for a public site. Set `ALLOW_REMOTE_FILE_ACCESS=1` only for a private
+  site, because it lets every visitor read files that the server user can read inside
+  `LOCAL_FILE_ROOTS` and use your SSH servers.
+- **Cross-site requests.** `/api` requests sent by another site's page are refused. The
+  viewer served by this same server passes.
+
+## Step 1: Install
 
 ```bash
-ssh user@your-server.example.com
 cd /srv
 git clone https://github.com/Toki-bio/MSA-viewer.git msa-server
 cd msa-server
 npm install
 ```
 
-### Step 2: Environment configuration
+Optional tools, only for the routes that use them:
 
-Create `/srv/msa-server/.env`:
-```env
-PORT=3000
-CORS_ORIGIN=https://toki-bio.github.io
-SSH_KEY_PATH=/home/user/.ssh/id_ed25519
-MAFFT_PATH=/usr/bin/mafft  # adjust
-BLAST_PATH=/usr/bin        # adjust — NOTE: only affects the unused real-blastn REST routes (POST /api/blast, /api/blast-all); the actual "BLAST Search" UI is a client-side JS engine that needs no BLAST+ install at all, see features-inventory.md
-SAMTOOLS_PATH=/usr/bin     # adjust
-USAGE_STATS=true
-RATE_LIMIT_WINDOW_MS=60000
-RATE_LIMIT_MAX=100
+```bash
+sudo apt install -y mafft samtools
 ```
 
-### Step 3: Nginx reverse proxy + HTTPS
+## Step 2: Start the server with PM2
 
-Install nginx and certbot:
+```bash
+npm install -g pm2
+cd /srv/msa-server
+PORT=3000 ALLOWED_HOSTS=msa-viewer.example.com MAFFT_BIN=/usr/bin/mafft \
+  pm2 start server.js --name msa-viewer --max-memory-restart 500M
+pm2 save
+pm2 startup systemd
+```
+
+The server stays on `127.0.0.1`, so only nginx on the same machine can reach it.
+
+## Step 3: nginx with HTTPS
+
 ```bash
 sudo apt update && sudo apt install -y nginx certbot python3-certbot-nginx
 ```
 
-Nginx config `/etc/nginx/sites-available/msa-viewer`:
+`/etc/nginx/sites-available/msa-viewer`:
+
 ```nginx
 server {
     listen 80;
-    server_name msa-viewer.example.com;  # your domain
+    server_name msa-viewer.example.com;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 120s;  # MAFFT can take time
+        proxy_read_timeout 120s;
         client_max_body_size 10m;
     }
 }
 ```
 
-Enable and get certificate:
+The server accepts request bodies up to 10 MB, which `client_max_body_size` matches.
+
 ```bash
 sudo ln -s /etc/nginx/sites-available/msa-viewer /etc/nginx/sites-enabled/
 sudo nginx -t
@@ -71,135 +108,21 @@ sudo systemctl reload nginx
 sudo certbot --nginx -d msa-viewer.example.com
 ```
 
-### Step 4: Process management (PM2)
+Check it: `curl https://msa-viewer.example.com/api/viewer-info` should return JSON. A
+`Host not allowed` reply means `ALLOWED_HOSTS` is missing the name.
+
+## Step 4: The page finds the server by itself
+
+The viewer calls `/api/...` on the address it was loaded from. Open
+`https://msa-viewer.example.com/` and the server features appear. There is no setting to
+change in `script.js`. The page on GitHub Pages never looks for a server, so the hosted
+app and your server are separate sites.
+
+## Updating
 
 ```bash
-npm install -g pm2
 cd /srv/msa-server
-pm2 start server.js --name msa-viewer --max-memory-restart 500M
-pm2 save
-pm2 startup systemd
+git pull
+npm install
+pm2 restart msa-viewer
 ```
-
-### Step 5: Health check endpoint
-
-Add to `server.js`:
-```js
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', uptime: process.uptime(), version: '1.0' });
-});
-```
-
-### Step 6: Usage statistics (for NAR submission)
-
-Add to `server.js`:
-```js
-let usageCounter = { total: 0, unique_ips: new Set(), endpoints: {} };
-
-app.use((req, res, next) => {
-    if (req.path.startsWith('/api/')) {
-        usageCounter.total++;
-        const ip = req.ip || req.connection.remoteAddress;
-        usageCounter.unique_ips.add(ip);
-        usageCounter.endpoints[req.path] = (usageCounter.endpoints[req.path] || 0) + 1;
-    }
-    next();
-});
-
-app.get('/api/stats', (req, res) => {
-    res.json({
-        total_requests: usageCounter.total,
-        unique_visitors: usageCounter.unique_ips.size,
-        endpoints: usageCounter.endpoints,
-        uptime: process.uptime()
-    });
-});
-```
-
-### Step 7: Update client to point to server
-
-In `script.js`, change the server URL from `localhost:3000` to the public URL:
-```js
-const SERVER_URL = 'https://msa-viewer.example.com';
-```
-
-Or better — make it configurable with a setting in the UI.
-
----
-
-## Option B: Deploy on a fresh cloud VPS
-
-Identical steps to Option A, but on a dedicated VM:
-
-| Provider | Cheapest VM | Monthly cost |
-|----------|------------|--------------|
-| Hetzner | CX22 (2 vCPU, 4 GB) | ~€4 |
-| DigitalOcean | Basic (1 vCPU, 1 GB) | ~$6 |
-| Vultr | Regular (1 vCPU, 1 GB) | ~$6 |
-
-### Quick Hetzner setup
-
-```bash
-# Create CX22 VM with Ubuntu 24.04
-# SSH in and:
-apt update && apt install -y nodejs npm nginx certbot python3-certbot-nginx build-essential
-# Add mafft
-apt install -y mafft
-# Add samtools
-apt install -y samtools
-# Then follow Steps 1-7 from Option A
-```
-
----
-
-## Option C: Simplified — GitHub Pages + serverless
-
-If deploying a full server is too much overhead, consider:
-
-1. **Keep the client on GitHub Pages** (already done)
-2. **Use serverless functions** for compute-heavy operations:
-   - Fly.io free tier for MAFFT/BLAST endpoints
-   - Or Cloudflare Workers
-
-This is less NAR-appropriate but simpler to maintain.
-
----
-
-## What changes in the paper for NAR
-
-If targeting NAR Web Server Issue, shift emphasis:
-
-| Section | Change |
-|---------|--------|
-| **Title** | "MSA Viewer: a web server for..." (not "a browser-based platform") |
-| **Abstract** | Lead with server URL and online availability |
-| **Introduction** | Frame as a web service, not a desktop replacement |
-| **Features** | Server endpoints first, client second |
-| **Usage** | "Accessed by 500+ unique users..." (need to track) |
-| **Submit pre-approval** | 1-page summary to Dr. Gary Benson by Dec 20 |
-
----
-
-## Pre-approval deadline for NAR
-
-December 20 — send a one-page summary to the NAR Web Server editor describing:
-1. What the server does
-2. Why it's novel
-3. Who the audience is
-4. URL (must be live)
-5. Basic usage statistics
-
-Format: email to the editor with description as PDF attachment.
-
----
-
-## My recommendation
-
-| Question | Answer |
-|----------|--------|
-| Is NAR worth the effort? | Yes — IF ~16 impact factor matters and December deadline is feasible |
-| Can we deploy in a day? | Yes — on existing KIT server or a €4/month Hetzner VM |
-| What's the blocking item? | Domain name (need to buy/configure one) |
-| Fallback? | Bioinformatics Application Note — year-round, no server requirement, still IF ~6 |
-
-The manuscript is written for Bioinformatics. Adapting it for NAR takes ~1 hour of rewriting to shift the focus from "platform" to "web server." The deployment takes ~2-3 hours. The pre-approval summary takes ~30 minutes.
