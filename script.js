@@ -16952,6 +16952,14 @@ function _alignmentKeysAway() {
     }
     return '';
 }
+// A press on the alignment takes the keyboard back from an open window. The handlers that call preventDefault (a
+// residue in Full mode, the name column of the canvas, ...) kept the focus on the window's button, so the next
+// shortcut said "click the alignment first" (GLM check 2026-11-10, #4).
+function _blurFocusInWindow() {
+    const ae = document.activeElement;
+    if (!ae || ae === document.body) return;
+    if (EXCLUSIVE_MODAL_IDS.concat(_KEY_WINDOW_IDS).some(id => { const m = document.getElementById(id); return m && m.contains(ae); })) ae.blur();
+}
 function handleKeyDown(e) {
     if (e.key === 'Escape') {
         // A rename box handles its own Esc (cancel); closing menus here blurred it, and the
@@ -30169,6 +30177,7 @@ function attachUIListeners() {
         document.addEventListener('mousedown', (e) => {
             const container = document.getElementById('alignmentContainer');
             if (!container || !container.contains(domEventTarget(e))) return;
+            if (e.button === 0) _blurFocusInWindow();
             // Capture-phase chain: column (Ctrl+Alt) -> row name (Ctrl/Shift) -> nucleotide (Ctrl) -> edit
             if (handleTrimEdgeMouseDown(e)) return;
             if (handleColumnSelectMouseDown(e)) return;

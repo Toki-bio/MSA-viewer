@@ -18428,6 +18428,46 @@ check('Audit H10: a browser the local server does not know is told to open the s
   return { pass, detail: JSON.stringify({ note: note.slice(0, 160), asked }) };
 });
 
+// #4: a click on a residue in Full mode (and on the name column in Canvas) calls preventDefault, so the focus stayed
+// on a button of an open window: the user selected a residue and the next shortcut said "click the alignment first".
+check('GLM 1110 #4: a click on the alignment (Full residue, Canvas name column) takes the keyboard out of an open window', async (page) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  let fa = ''; for (let i = 0; i < 6; i++) fa += `>s${i}\n` + 'ACGTACGTACGTAAACACGTACGTACGTAAAC'.repeat(3) + '\n';
+  const out = {}; let ok = true;
+  for (const mode of ['full', 'canvas']) {
+    await page.goto(page.url(), { waitUntil: 'networkidle' });
+    await loadFasta(page, fa);
+    await setMode(page, mode); await page.waitForTimeout(400);
+    await page.evaluate(() => document.getElementById('statsButton').click()); await page.waitForTimeout(800);
+    await page.evaluate(() => { const b = [...document.querySelectorAll('#statsModal button')].find(x => x.getClientRects().length); b.focus(); });
+    const pt = await page.evaluate((mode) => {
+      const w = document.getElementById('statsModal');
+      if (mode === 'full') {
+        for (const s of document.querySelectorAll('#alignmentContainer .seq-data span[data-pos]')) {
+          if (!s.getClientRects().length) continue;
+          const r = s.getBoundingClientRect(); const x = r.left + r.width / 2, y = r.top + r.height / 2; const h = document.elementFromPoint(x, y);
+          if (h === s && !w.contains(h)) return { x, y };
+        }
+        return null;
+      }
+      const c = [...document.querySelectorAll('#alignmentContainer canvas')].find(x => x.getClientRects().length);
+      const r = c.getBoundingClientRect();
+      for (let x = r.left + 3; x < r.right; x += 5) for (let y = r.top + 3; y < Math.min(r.bottom, innerHeight); y += 4) {
+        if (document.elementFromPoint(x, y) !== c) continue;
+        if (_canvasHitTestName(x, y)) return { x, y };
+      }
+      return null;
+    }, mode);
+    const awayBefore = await page.evaluate(() => _alignmentKeysAway());
+    if (!pt) { ok = false; out[mode] = 'no point to click'; continue; }
+    await page.mouse.click(pt.x, pt.y); await page.waitForTimeout(200);
+    out[mode] = await page.evaluate(() => ({ active: document.activeElement.id || document.activeElement.tagName, away: _alignmentKeysAway() }));
+    out[mode].awayBefore = awayBefore;
+    if (awayBefore !== 'window' || out[mode].away !== '') ok = false;
+  }
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
