@@ -16937,7 +16937,7 @@ function _isTextEntry(node) {
 // Where the keyboard is when it is not the alignment's: 'busy' while the busy overlay is up (a job is running),
 // 'window' when focus is inside an open window or a blocking dialog is open, '' otherwise.
 const _KEY_WINDOW_IDS = ['statsModal'];   // non-blocking windows: only while focus is inside them
-const _KEY_BLOCKING_IDS = ['infoModal', 'seqEditModal', 'addSeqModal'];   // dialogs: while they are open
+const _KEY_BLOCKING_IDS = ['infoModal', 'seqEditModal', 'addSeqModal', 'mafftAskOverlay'];   // dialogs: while they are open
 function _alignmentKeysAway() {
     const busy = document.getElementById('busyOverlay');
     if (busy && !busy.hidden) return 'busy';
@@ -24089,6 +24089,7 @@ function _mafftAskYesNo({ message, defaultYes, dontAskKey, defaultKey, skipPromp
     if (typeof document === 'undefined') return Promise.resolve(!!defaultYes);
     return new Promise((resolve) => {
         const overlay = document.createElement('div');
+        overlay.id = 'mafftAskOverlay';   // a blocking dialog for the key guard (_KEY_BLOCKING_IDS): keys edited behind it (GLM check 2026-11-10, #3)
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10050;display:flex;align-items:center;justify-content:center;';
         const box = document.createElement('div');
         box.style.cssText = 'background:#fff;padding:16px 18px;max-width:440px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);font-size:13px;line-height:1.45;';
