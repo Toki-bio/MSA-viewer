@@ -2,7 +2,7 @@
 
 This file is for a local Claude Code session. It has two jobs:
 
-1. run the GLM check on the fixes of batch 1 (build v332), and
+1. run the GLM check on the fixes of batch 1 (build v332) and batch 2 (build v333), and
 2. carry on with the open findings listed at the end.
 
 Follow CLAUDE.md throughout: a failing check first for every fix, never weaken a check without asking the
@@ -11,7 +11,7 @@ owner, run the suites before every push.
 ## Prompt to give local Claude Code
 
 > Read docs/sessions/2026-11-10-audit-HANDOFF.md and CLAUDE.md. Run the GLM check described there on the batch 1
-> changes (commit "v332: audit batch 1"), using the GLM harness on this machine the same way as for the earlier
+> and batch 2 changes (commits "v332: audit batch 1" and "v333: audit batch 2"), using the GLM harness on this machine the same way as for the earlier
 > GLM audits (see dev-tools/reads-audit/REPORT.md). Check every GLM finding against the code before believing it.
 > For each confirmed finding: write a regression check that fails first, fix it, and report. Do not start on the
 > open findings until the GLM check is done and I say so.
@@ -29,6 +29,16 @@ All in `script.js`; checks in `tests/regression/run-all.js` (names start with "A
 
 `_dropNoOpUndo` skips its pop once when the stale-result guard found that the caller's undo step is no longer
 the last one (`_skipNextNoOpDrop`, cleared by a 0 ms timer).
+
+## What batch 2 changed (v333)
+
+Checks: "Audit H4", "Audit H5", "Audit H8" in `tests/regression/run-all.js`.
+
+| Finding | What used to happen | Change |
+|---|---|---|
+| H4 | MAFFT drops `*`: a row came back one residue short, with the case after the `*` shifted, and a success message. | `_alignerGuardInput` sends `*` as a placeholder (X for protein, N otherwise); `_alignerRestoreResidues` writes every residue of the result back from the row that was sent, position by position, and throws when a row comes back with a different number of residues. Used in `_mafftAlignWithUiRun` and `alignSequenceToConsensusProfile`. The codon aligner path is not covered. |
+| H5 | Region realign with Adjust direction also reverse-complemented a row NAMED like an internal row id (`r2`). | realign-region.js: rows that carry `_rk` are looked up by that key only (`inKeySet`, `lookupHeader`, `applyOrder`). |
+| H8 | An RNA alignment got its consensus in T; an inserted consensus row turned the alignment into DNA for RevComp. | `_getConsensusOptions().isRna` (`_alignmentIsRnaCached`); `_consensusDecide` gives U for T when it is set. |
 
 ## What the GLM check should look at
 
@@ -53,6 +63,15 @@ Read-only tasks, each answered with exact code quotes:
 7. Jobs that show no busy overlay (`realignSequenceAgainstConsensus`, clustering, repeat finder, dot plot):
    which of them write to `state.seqs` after an `await`?
 
+8. Batch 2, `_alignerRestoreResidues`: records are matched to the rows sent by name, in order for repeated
+   names. Is there a caller whose result legitimately has a different residue count for a row (it would now
+   be refused), or whose input rows contain gaps? Does the codon aligner (`_codonAlignWithUi`) also lose `*`?
+9. Batch 2, `isRna` in the consensus options: list every place that builds consensus options by hand instead
+   of `_getConsensusOptions()` (they would still give T), and every consumer that compares a consensus
+   character with a row character and would now see U where it expected T.
+10. Batch 2, `_alignmentIsRnaCached`: its key is the rows array, the row count and the undo/redo lengths. Is
+    there an edit that changes a T or U without touching any of these?
+
 ## Two regression checks that fail on Linux (not caused by batch 1)
 
 They fail on a21f9a3 too, also when run alone:
@@ -70,11 +89,8 @@ without asking the owner.
 Numbers are those of the audit report ("ViewAlign audit 2026-11-10"). All reproduced in a browser unless
 marked code-read.
 
-1. **H4** every MAFFT path deletes `*` and shifts letter case after it (`_remapCaseOntoAligned`,
-   realign-region.js `remapCaseOntoAligned`). Check after each run that the ungapped residues came back.
-   **M11** MAFFT fails on protein U/O and nucleotide I/E without naming the row or the letter.
-2. **H5** region realign with Adjust direction flips a row named like an internal id (`r2`):
-   realign-region.js lines 346, 354, 372 match by name; `applyOrder` (166) likewise (code-read).
+1. **M11** MAFFT fails on protein U/O and nucleotide I/E without naming the row or the letter. (H4 fixed in v333.)
+2. (H5 fixed in v333.)
 3. **H6** Save FASTA and snapshots destroy NEXUS 0/1 data (`parseFasta` deletes digits; snapshots store FASTA).
    **H7** Clustal rows with the same name are merged (`seqMap` keyed by name).
    **M1** MSF with `oo` on Name lines loads nothing. **M2** strict PHYLIP names lose a trailing number.
@@ -82,7 +98,7 @@ marked code-read.
    **M4** `?` becomes N in protein rows that look like DNA. **M5** Save and snapshots rename rows whose name
    is not the first word of fullHeader. **M6** a snapshot .json with an empty `fasta` keeps the old alignment
    under the new name.
-4. **H8** RNA alignments get a consensus with T; inserting it (Ctrl+B) turns the alignment into DNA for RevComp.
+4. (H8 fixed in v333.)
 5. **H9 / T9** `finder.js?v=1` was not raised when finder.js changed; the version test should check every
    `?v=` against the file's last change.
 6. **T1-T5** CI has been red on main since 2026-11-04; pages.yml deploys without waiting for the tests; 55 %

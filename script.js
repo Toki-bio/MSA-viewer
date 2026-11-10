@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v332';
+const BUILD_TAG = 'v333';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -4547,7 +4547,19 @@ function _getConsensusOptions() {
         consType: _checkedRadioValue('consensusType', 'normal'),
         fallbackMode: (document.getElementById('consensusFallback')?.value) || 'gap',
         isProtein: isProteinAlignment(),
+        isRna: _alignmentIsRnaCached(),   // an RNA alignment gets its consensus in U (audit 2026-11-10, H8)
     };
+}
+// alignmentIsRna() reads every row; the consensus options are asked for on every redraw. Every edit makes an
+// undo step, so the answer is kept until the rows array or the history changes.
+let _rnaCache = null;
+function _alignmentIsRnaCached() {
+    const c = _rnaCache, seqs = state.seqs;
+    const u = state.deletedHistory ? state.deletedHistory.length : 0, r = state.redoHistory ? state.redoHistory.length : 0;
+    if (c && c.seqs === seqs && c.n === (seqs ? seqs.length : 0) && c.u === u && c.r === r) return c.v;
+    const v = !isProteinAlignment() && alignmentIsRna();
+    _rnaCache = { seqs, n: seqs ? seqs.length : 0, u, r, v };
+    return v;
 }
 
 // Protein ambiguity codes for a below-threshold column: B = D/N, Z = E/Q,
@@ -4609,7 +4621,13 @@ function _computeConsensusCharForColumn_orig(seqArray, pos, opts) {
     return _consensusDecide(counts, rows, nonGap, opts);
 }
 
+// U is counted as T (one base); an RNA alignment gets it back as U. It used to come out as T: the shown and
+// copied consensus was DNA, and an inserted consensus row made the whole alignment count as DNA for RevComp.
 function _consensusDecide(counts, rows, nonGap, opts) {
+    const ch = _consensusDecideDna(counts, rows, nonGap, opts);
+    return opts.isRna && ch === 'T' ? 'U' : ch;
+}
+function _consensusDecideDna(counts, rows, nonGap, opts) {
     const { threshold, coverageMin, consType, fallbackMode } = opts;
     const isProtein = !!opts.isProtein;
     if (nonGap === 0) return '-';
@@ -26136,8 +26154,40 @@ async function _mafftAlignWithUi(fasta, extraArgs, label) {
     }
     return result;
 }
+// MAFFT drops "*" from its input (and may change other symbols). Sent as they were, a row came back one residue
+// short and the case of everything after the "*" moved by one, with a success message (audit 2026-11-10, H4).
+// So: "*" goes in as a placeholder letter, and every residue of the result is written back from the row that was
+// sent, position by position. A result with a different number of residues for a row is refused.
+function _alignerGuardInput(fasta) {
+    const recs = parseMafftOutput(fasta);
+    if (!recs.some(r => r.seq.includes('*'))) return { fasta, recs };
+    const ph = isProteinAlignment() ? 'X' : 'N';
+    return { fasta: recs.map(r => `>${r.name}\n${r.seq.replace(/\*/g, ph)}\n`).join(''), recs };
+}
+function _alignerRestoreResidues(result, recs) {
+    if (typeof result !== 'string') return result;
+    const byName = new Map();
+    for (const r of recs) { const k = r.name; if (!byName.has(k)) byName.set(k, []); byName.get(k).push(r); }
+    const out = parseMafftOutput(result);
+    for (const o of out) {
+        const q = byName.get(o.name) || byName.get(o.name.split(/\s+/)[0]);
+        const src = q && q.shift();
+        if (!src || /[-.]/.test(src.seq)) continue;   // not one of the rows sent, or sent with gaps: left as returned
+        const n = o.seq.replace(/[-.]/g, '').length;
+        if (n !== src.seq.length) {
+            const shown = /^r\d+$/.test(o.name) && typeof _alignIdName === 'function' ? _alignIdName(o.name) : o.name;
+            throw new Error(`the aligner returned ${n} residues for "${shown}", which has ${src.seq.length}; the alignment was not changed`);
+        }
+        let i = 0, t = '';
+        for (let k = 0; k < o.seq.length; k++) { const c = o.seq[k]; t += (c === '-' || c === '.') ? c : src.seq[i++]; }
+        o.seq = t;
+    }
+    return out.map(o => `>${o.name}\n${o.seq}\n`).join('');
+}
 async function _mafftAlignWithUiRun(fasta, extraArgs, label) {
     if (_isCodonAlignMode()) return _codonAlignWithUi(fasta, label && label.replace(/MAFFT/g, 'codon aligner'));
+    const guarded = _alignerGuardInput(fasta);
+    fasta = guarded.fasta;
     const stats = _mafftFastaStats(fasta);
     const confirmed = _confirmMafftJob(stats, extraArgs);
     if (!confirmed.ok) return null;
@@ -26159,7 +26209,7 @@ async function _mafftAlignWithUiRun(fasta, extraArgs, label) {
             showMessage('MAFFT alignment cancelled.', 2500);
             return null;
         }
-        return result;
+        return _alignerRestoreResidues(result, guarded.recs);
     } catch (err) {
         if (cancelled || String(err?.message || '').includes('cancelled')) return null;
         throw err;
@@ -26895,9 +26945,9 @@ async function alignSequenceToConsensusProfile(seq, profile, extraArgs = []) {
         };
     }
 
-    const pairwiseFasta = `>consensus\n${ungappedProfile}\n>query\n${ungappedSeq}\n`;
+    const guarded = _alignerGuardInput(`>consensus\n${ungappedProfile}\n>query\n${ungappedSeq}\n`);   // keeps "*" (audit 2026-11-10, H4)
     const mafft = new MafftWasm();
-    const result = await mafft.align(pairwiseFasta, extraArgs);
+    const result = _alignerRestoreResidues(await mafft.align(guarded.fasta, extraArgs), guarded.recs);
     const aligned = parseMafftOutput(result);
 
     if (aligned.length < 2) {

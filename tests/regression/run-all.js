@@ -17315,6 +17315,81 @@ check('Audit U1: Ctrl+L with unsaved edits asks first; Cancel keeps the edits an
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// ---- Audit 2026-11-10, batch 2 -------------------------------------------------------------------------------
+// H8: an RNA alignment (U, no T) showed and copied its consensus in T, and "+ Consensus Below" (Ctrl+B) inserted a
+// row with T. From then on alignmentIsRna() was false and RevComp turned the RNA rows into DNA.
+check('Audit H8: an RNA alignment gets its consensus in U (shown, copied, inserted), and RevComp after inserting it keeps RNA; DNA keeps T', async (page) => {
+  await loadFasta(page, '>a\nACGUACGUUU\n>b\nACGUACGUUU\n>c\nACGUACGAUU\n');
+  const out = {};
+  out.shown = await page.evaluate(() => getConsensusSequenceGapped());
+  out.computed = await page.evaluate(() => computeConsensusForSequences(state.seqs.map(q => q.seq)));
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1, 2]); renderAlignment(); document.getElementById('insertGroupConsensusButton').click(); });
+  await page.waitForTimeout(500);
+  out.rows = await page.evaluate(() => state.seqs.map(q => q.seq));
+  out.rna = await page.evaluate(() => alignmentIsRna());
+  await page.evaluate(() => { state.selectedRows = new Set([0]); renderAlignment(); document.activeElement?.blur?.(); });
+  await page.keyboard.press('Control+r'); await page.waitForTimeout(400);
+  out.rc = await page.evaluate(() => state.seqs[0].seq);
+  await loadFasta(page, '>a\nACGTACGTTT\n>b\nACGTACGTTT\n>c\nACGTACGATT\n');
+  out.dna = await page.evaluate(() => computeConsensusForSequences(state.seqs.map(q => q.seq)));
+  const ok = out.shown === 'ACGUACGUUU' && out.computed === 'ACGUACGUUU' && out.rows.length === 4 && out.rows.every(q => !/t/i.test(q)) && out.rows.includes('ACGUACGUUU')
+    && out.rna === true && out.rc === 'AAACGUACGU' && out.dna === 'ACGTACGTTT';
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// H4: MAFFT drops "*" from its input. Every MAFFT path gave the row back one residue short, with the letter case of
+// everything after the "*" shifted by one (MKVLAAGIVA*LLL -> MKVLAAGIVAlLL), and reported success.
+check('Audit H4: realign keeps "*" and every other residue, in its place and case (Realign All protein and DNA, Realign Selected, against the consensus)', async (page) => {
+  const base = 'MKVLAAGIVALLLAAGCSSWERTYIPDFHKNQ', dna = 'ACGTACGGTACCATGACGTAGCATGCATGCAAGTCGATCG';
+  const ung = () => page.evaluate(() => state.seqs.map(q => q.header + ':' + q.seq.replace(/[-.]/g, '')));
+  const idle = async () => { await page.waitForTimeout(200); await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 60000 }); await page.waitForTimeout(400); };
+  const out = {}; let ok = true;
+  const run = async (name, fa, act) => {
+    await loadFasta(page, fa);
+    const before = await ung();
+    await act(); await idle();
+    const after = await ung();
+    const msg = await page.evaluate(() => document.getElementById('statusMessage').textContent.slice(0, 60));
+    const same = JSON.stringify(before.slice().sort()) === JSON.stringify(after.slice().sort());
+    out[name] = same ? 'same' : { before, after, msg };
+    if (!same) ok = false;
+  };
+  const prot = `>p1\n${base.slice(0, 10)}*${base.slice(10).toLowerCase()}\n>p2\n${base.slice(0, 15)}${base.slice(17)}\n>p3\n${base}*\n`;
+  const nuc = `>d1\n${dna.slice(0, 10)}*${dna.slice(10).toLowerCase()}\n>d2\n${dna.slice(0, 15)}${dna.slice(17)}\n>d3\n*${dna}\n`;
+  await run('allProtein', prot, () => page.evaluate(() => document.getElementById('realignAllButton').click()));
+  await run('allDna', nuc, () => page.evaluate(() => document.getElementById('realignAllButton').click()));
+  await run('selected', nuc, () => page.evaluate(() => { state.selectedRows = new Set([0, 2]); renderAlignment(); document.getElementById('realignSelectedButton').click(); }));
+  await run('consensus', nuc, () => page.evaluate(() => realignSequenceAgainstConsensus(0)));
+  return { pass: ok, detail: JSON.stringify(out) };
+}, { timeoutMs: 240000 });
+
+// H5: region realign (Ctrl+Shift+R) with Adjust direction looked flipped rows up by internal row id AND by name. A
+// row NAMED like an internal id ("r2") was reverse-complemented whenever the row with that id (the third row) was:
+// status "RC'd: x." with both r2 and x turned round.
+check('Audit H5: region realign with Adjust direction turns round only the reversed row, also when another row is named like a row id (r2)', async (page) => {
+  let x = 11; const r = () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296;
+  let base = ''; for (let i = 0; i < 200; i++) base += 'ACGT'[Math.floor(r() * 4)];
+  const mut = () => base.split('').map(c => r() < 0.05 ? 'ACGT'[Math.floor(r() * 4)] : c).join('');
+  const rc = (t) => t.split('').reverse().map(c => ({ A: 'T', C: 'G', G: 'C', T: 'A' })[c] || c).join('');
+  const rows = [mut(), mut(), mut(), mut()];
+  await loadFasta(page, `>r2\n${rows[0]}\n>ref\n${rows[1]}\n>x\n${rc(rows[2])}\n>y\n${rows[3]}\n`);
+  await page.evaluate(() => {
+    localStorage.setItem('msaviewer_mafft_dontAsk_applyAdjustFull', '1'); localStorage.setItem('msaviewer_mafft_default_applyAdjustFull', '1');
+    document.getElementById('mafftAdjustDir').checked = true;
+    const W = state.seqs[0].seq.length; state.selectedColumns.clear(); for (let c = 0; c < W; c++) state.selectedColumns.add(c);
+    renderAlignment(); document.activeElement?.blur?.();
+  });
+  await page.keyboard.press('Control+Shift+R');
+  await page.waitForTimeout(400);
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 60000 });
+  await page.waitForTimeout(500);
+  const after = await page.evaluate(() => state.seqs.map(q => [q.header, q.seq.replace(/[-.]/g, '').toUpperCase()]));
+  const want = { r2: rows[0], ref: rows[1], x: rows[2], y: rows[3] };   // x turned round, the others as loaded
+  const out = { status: await page.evaluate(() => document.getElementById('statusMessage').textContent.slice(0, 60)) };
+  for (const [h, q] of after) out[h] = q === want[h] ? 'ok' : q === rc(want[h]) ? 'REVERSED' : 'other';
+  return { pass: ['r2', 'ref', 'x', 'y'].every(h => out[h] === 'ok'), detail: JSON.stringify(out) };
+}, { timeoutMs: 120000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

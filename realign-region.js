@@ -155,9 +155,18 @@
         return ungapped(s);
     }
 
+    // A row that carries an internal row key (_rk, set by the viewer) is found by that key alone. Looking it up
+    // by its name as well made a row NAMED like a key ("r2") stand in for the row that has that key: it was
+    // reverse-complemented with it (audit 2026-11-10, H5). Rows without a key (plain use) are found by name.
+    function inKeySet(set, s) {
+        if (s && s._rk) return set.has(s._rk);
+        return set.has(headerKey(s)) || set.has(s.header) || set.has(s.fullHeader);
+    }
+
     function lookupHeader(byHeader, s) {
         var k = headerKey(s);
         if (byHeader[k] !== undefined) return byHeader[k];
+        if (s && s._rk) return undefined;
         if (s.header && byHeader[s.header] !== undefined) return byHeader[s.header];
         if (s.fullHeader && byHeader[s.fullHeader] !== undefined) return byHeader[s.fullHeader];
         return undefined;
@@ -167,6 +176,7 @@
         var byKey = {};
         for (var i = 0; i < seqs.length; i++) {
             byKey[headerKey(seqs[i])] = seqs[i];
+            if (seqs[i]._rk) continue;   // keyed rows are ordered by key only (see inKeySet)
             if (seqs[i].header) byKey[seqs[i].header] = seqs[i];
             if (seqs[i].fullHeader) byKey[seqs[i].fullHeader] = seqs[i];
         }
@@ -343,7 +353,7 @@
                 if (applyAdjustFull) {
                     working = working.map(function (s) {
                         var k = headerKey(s);
-                        if (!flippedSet.has(k) && !flippedSet.has(s.header) && !flippedSet.has(s.fullHeader)) return s;
+                        if (!inKeySet(flippedSet, s)) return s;
                         var c = cloneSeq(s);
                         c.seq = rcFn(s.seq);
                         return c;
@@ -351,7 +361,7 @@
                 } else {
                     working = working.map(function (s) {
                         var k = headerKey(s);
-                        if (!flippedSet.has(k) && !flippedSet.has(s.header) && !flippedSet.has(s.fullHeader)) return s;
+                        if (!inKeySet(flippedSet, s)) return s;
                         var seq = s.seq;
                         var sortedRuns = runs.slice().sort(function (a, b) { return a.start - b.start; });
                         for (var r = sortedRuns.length - 1; r >= 0; r--) {
@@ -368,8 +378,7 @@
         }
 
         function isFlipped(s) {
-            var k = headerKey(s);
-            return flippedSet.has(k) || flippedSet.has(s.header) || flippedSet.has(s.fullHeader);
+            return inKeySet(flippedSet, s);
         }
 
         function coordsFor(s, run) {
