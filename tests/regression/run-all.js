@@ -13959,8 +13959,12 @@ check('Repeat Finder owner 2026-10-31: a long search shows progress, Pause stops
   await page.waitForTimeout(800);
   out.p4 = await rfProgress(page);
   await page.click('#repeatPauseBtn');   // now Resume
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(300);
   out.p5 = await rfProgress(page);
+  // pause again before Cancel: on a slow machine (GitHub CI, 2026-11-10) the polyAT search ran into its own work
+  // limit (about 80 %) between this read and the Cancel click, so the text said "work limit", not "stopped by you".
+  // A paused search cannot end on its own; Cancel while paused is a path the app handles (it resumes to stop).
+  await page.click('#repeatPauseBtn');   // now Pause
   await page.click('#repeatCancelBtn');
   await page.waitForFunction(() => !document.querySelector('#repeatResults .rf-progress'), null, { timeout: 15000 });
   out.end = await page.evaluate(() => ({ text: document.getElementById('repeatResults').textContent.slice(0, 300),
