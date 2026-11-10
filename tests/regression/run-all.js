@@ -18574,6 +18574,35 @@ check('GLM 1110 #11: Add & Align with a pasted row that has gaps keeps its "*" a
   return { pass: JSON.stringify(out.rows.slice().sort()) === JSON.stringify(want.slice().sort()), detail: JSON.stringify(out) };
 }, { timeoutMs: 120000 });
 
+// #9 (owner decision 2026-11-10): with focus in the Input box, Ctrl+L pressed the Load button, and the Load button itself
+// never asked: the text still in the box was loaded again and every edit and the undo history were gone ("Nothing to
+// undo."). Both now ask first when there are edits, with the batch-1 question; Cancel keeps rows and undo.
+check('GLM 1110 #9: Ctrl+L in the Input box and the Load button ask first when there are edits; Cancel keeps them, OK loads', async (page) => {
+  const out = {}; let ok = true;
+  for (const [name, act] of [
+      ['ctrlLInBox', async () => { await page.evaluate(() => { document.querySelector('#input-section')?.classList.add('menu-open'); fastaInput.focus(); }); await page.keyboard.press('Control+l'); }],
+      ['loadButton', async () => { await page.evaluate(() => document.getElementById('loadButton').click()); }]]) {
+    await page.goto(page.url(), { waitUntil: 'networkidle' });
+    await loadFasta(page, AUDIT1_FA);
+    await page.evaluate(() => { state.selectedRows = new Set([1]); renderAlignment(); document.activeElement?.blur?.(); });
+    await page.keyboard.press('Control+u'); await page.waitForTimeout(300);
+    const r = { edited: await page.evaluate(() => [state.seqs.length, state.deletedHistory.length]) };
+    let asked = 0;
+    const dismiss = async (d) => { asked++; r.question = d.message().slice(0, 60); await d.dismiss(); };
+    page.on('dialog', dismiss);
+    await act(); await page.waitForTimeout(800);
+    page.off('dialog', dismiss);
+    r.afterCancel = await page.evaluate(() => [state.seqs.length, state.deletedHistory.length]); r.asked = asked;
+    page.once('dialog', (d) => d.accept());
+    await act(); await page.waitForTimeout(800);
+    r.afterOk = await page.evaluate(() => [state.seqs.length, state.deletedHistory.length]);
+    out[name] = r;
+    if (!(r.edited[0] === 5 && r.edited[1] >= 1 && asked === 1 && /^Load the text in the Input box again\?/.test(r.question || '')
+      && r.afterCancel[0] === 5 && r.afterCancel[1] === r.edited[1] && r.afterOk[0] === 4 && r.afterOk[1] === 0)) ok = false;
+  }
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

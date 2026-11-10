@@ -16963,6 +16963,13 @@ function _blurFocusInWindow() {
     if (!ae || ae === document.body) return;
     if (EXCLUSIVE_MODAL_IDS.concat(_KEY_WINDOW_IDS).some(id => { const m = document.getElementById(id); return m && m.contains(ae); })) ae.blur();
 }
+// Load reads the Input box again, which still holds the text first loaded: with edits made since, that silently threw
+// them and the undo history away (audit 2026-11-10, U1, for Ctrl+L outside the box). The owner decided (2026-11-10,
+// GLM check #9) that the Load button itself, and so Ctrl+L in the Input box, asks first too.
+function _loadDiscardsEditsOk() {
+    const edits = state.deletedHistory.length;
+    return !edits || confirm(`Load the text in the Input box again? This discards ${edits} edit${edits === 1 ? '' : 's'} made since and cannot be undone.`);
+}
 function handleKeyDown(e) {
     if (e.key === 'Escape') {
         // while a job runs Esc leaves the selection alone (it cleared it behind the busy overlay; GLM check 2026-11-10, #5)
@@ -17150,11 +17157,7 @@ function handleKeyDown(e) {
             case 'l':
                 if (!e.shiftKey && !e.altKey) {
                     e.preventDefault();
-                    // Load reads the Input box again, which still holds the text first loaded: with edits made since,
-                    // that silently threw them and the undo history away (audit 2026-11-10, U1)
-                    const edits = state.deletedHistory.length;
-                    if (edits && !confirm(`Load the text in the Input box again? This discards ${edits} edit${edits === 1 ? '' : 's'} made since and cannot be undone.`)) break;
-                    el('loadButton')?.click();
+                    el('loadButton')?.click();   // the Load button asks first when there are edits (_loadDiscardsEditsOk)
                 }
                 break;
             case 'a':
@@ -28869,7 +28872,7 @@ function initializeAppUI() {
     // Attach listeners to all buttons
     const buttonActions = {
         'clearButton': () => _setInputText(''),
-        'loadButton': () => parseAndRender(false),
+        'loadButton': () => { if (_loadDiscardsEditsOk()) parseAndRender(false); },
         'reverseComplementButton': reverseComplementSelected,
         'reverseComplementAllButton': reverseComplementAll,
         // Ctrl+C stays silent with nothing selected (it is pressed everywhere); the button says so
