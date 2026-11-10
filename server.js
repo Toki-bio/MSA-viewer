@@ -15,8 +15,11 @@ app.use(express.json({ limit: '10mb' }));
 //    ALLOWED_HOSTS (stops DNS-rebinding pages from reaching it by name);
 //  - /api requests sent by another site's page are refused (CSRF), using
 //    Sec-Fetch-Site and Origin; curl and the viewer's own page pass;
-//  - the routes that read files or reach SSH servers answer only clients on
-//    this machine unless ALLOW_REMOTE_FILE_ACCESS=1.
+//  - the routes that read files or reach SSH servers, and the ones that add or
+//    delete databases or run MAFFT/BLAST, answer only clients on this machine
+//    unless ALLOW_REMOTE_FILE_ACCESS=1;
+//  - only the files the viewer loads are served (STATIC_SERVE_ALL=1 serves the
+//    whole folder, for development pages such as benchmark.html).
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 const CORS_ORIGINS = new Set(['http://localhost:' + PORT, 'http://127.0.0.1:' + PORT]);
@@ -47,6 +50,13 @@ function isLoopbackClient(req) {
     return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 }
 
+// The path the access checks compare. Express matches routes ignoring case and a trailing slash, so
+// /API/local-cat and /api/local-cat/ reached the routes while the checks, which compared the exact
+// path, let them through (no loopback or cross-site check).
+function routePath(req) {
+    return req.path.toLowerCase().replace(/\/+$/, '') || '/';
+}
+
 function isCrossSiteRequest(req) {
     const origin = req.get('origin');
     if (origin && !CORS_ORIGINS.has(origin)) {
@@ -68,7 +78,7 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Headers', 'Content-Type');
     res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') return res.sendStatus(200);
-    if (req.path.startsWith('/api/') && isCrossSiteRequest(req)) {
+    if (routePath(req).startsWith('/api/') && isCrossSiteRequest(req)) {
         return res.status(403).json({ error: 'Cross-site request refused' });
     }
     next();
@@ -77,9 +87,20 @@ app.use((req, res, next) => {
 // Routes that read local files or reach configured SSH servers
 const FILE_ACCESS_ROUTES = new Set(['/api/local-cat', '/api/bam2sam', '/api/ssh-cat', '/api/ssh-ls',
     '/api/ssh-poll-file', '/api/queue-file', '/api/poll-file']);
+// Routes that write or delete files on this machine or run programs (MAFFT, BLAST). With HOST=0.0.0.0
+// any machine on the network could delete or add databases and run MAFFT here.
+function changesThisMachine(req) {
+    const p = routePath(req);
+    if (req.method === 'POST' && ['/api/blast-db', '/api/mafft', '/api/blast', '/api/blast-all'].includes(p)) return true;
+    return req.method === 'DELETE' && p.startsWith('/api/blast-db/');
+}
 app.use((req, res, next) => {
-    if (FILE_ACCESS_ROUTES.has(req.path) && !ALLOW_REMOTE_FILE_ACCESS && !isLoopbackClient(req)) {
+    if (ALLOW_REMOTE_FILE_ACCESS || isLoopbackClient(req)) return next();
+    if (FILE_ACCESS_ROUTES.has(routePath(req))) {
         return res.status(403).json({ error: 'File and SSH access is limited to this machine (set ALLOW_REMOTE_FILE_ACCESS=1 to change)' });
+    }
+    if (changesThisMachine(req)) {
+        return res.status(403).json({ error: 'Adding or deleting databases and running MAFFT/BLAST is limited to this machine (set ALLOW_REMOTE_FILE_ACCESS=1 to change)' });
     }
     next();
 });
@@ -93,6 +114,37 @@ app.use((req, res, next) => {
         return res.sendStatus(404);
     }
     next();
+});
+// The static handler served the whole folder: tests, notes, package.json, anything put in it. Now it
+// serves what the viewer loads: the public site's files (keep in step with APP_FILES and the folders in
+// tools/build-site.sh; tests/server/hardening.test.js checks both), the user's snapshots and the
+// BLAST databases added in the page (the search worker fetches their FASTA).
+const PUBLIC_FILES = new Set([
+    'index.html', 'manual.html', 'styles.css', 'version.json',
+    'script.js', 'genome-fasta.js', 'genome-window.js', 'genome-view.js', 'a11y.js', 'ab1-parser.js', 'bam-parser.js',
+    'block-bicluster.js', 'block-mask.js', 'chromatogram-viewer.js', 'cluster.js', 'kmer-tree.js', 'peel.js',
+    'realign-region.js', 'sample-call.js', 'variant-effect.js', 'tree-draw.js', 'finder.js',
+    'mafft-wasm.js', 'mafft-worker.js', 'disttbfast.js', 'disttbfast.wasm',
+    'blast-worker.js', 'doter-worker.js', 'doter-word-worker.js',
+    'codon-align-worker.js', 'codon-align.js',
+    'macse-worker.js', 'macse-align.js', 'macse-dp-wasm.js',
+    'example-colour-names.fa',
+    'README.md', 'LICENSE', 'LICENSE-MACSE', 'LICENSE-MAFFT', 'THIRD_PARTY_NOTICES.md',
+]);
+const PUBLIC_DIRS = new Set(['img', 'examples', 'vendor', 'snapshots', 'blast_dbs']);
+const STATIC_SERVE_ALL = process.env.STATIC_SERVE_ALL === '1';
+function isPublicPath(urlPath) {
+    let p;
+    try { p = decodeURIComponent(urlPath); } catch (_) { return false; }
+    if (p === '/') return true;   // index.html
+    const segs = p.slice(1).split('/');
+    if (segs.some(seg => seg === '' || seg === '.' || seg === '..' || seg.includes('\\'))) return false;
+    if (segs.length === 1) return PUBLIC_FILES.has(segs[0]);
+    return PUBLIC_DIRS.has(segs[0]);
+}
+app.use((req, res, next) => {
+    if (STATIC_SERVE_ALL || routePath(req).startsWith('/api/') || isPublicPath(req.path)) return next();
+    res.sendStatus(404);
 });
 app.use(express.static(__dirname, { dotfiles: 'deny' }));
 
@@ -130,11 +182,27 @@ function loadDbRegistry() {
     return {};
 }
 
-function saveDbRegistry(registry) {
+function saveDbRegistry(registry, { throwOnError = false } = {}) {
     try {
         fs.writeFileSync(DB_REGISTRY_FILE, JSON.stringify(registry, null, 2), 'utf8');
     } catch (e) {
         console.error('Failed to save DB registry:', e.message);
+        if (throwOnError) throw e;
+    }
+}
+
+// Files the server may delete: those in blast_dbs/ (after resolving links), never a link itself. A
+// database registered from elsewhere is the user's own file: deleting the database used to unlink it.
+const BLAST_DB_DIR = path.join(__dirname, 'blast_dbs');
+function isOwnedDbFile(f) {
+    try {
+        const st = fs.lstatSync(f);
+        if (!st.isFile()) return false;
+        const dirReal = fs.realpathSync(BLAST_DB_DIR);
+        const real = fs.realpathSync(f);
+        return real.startsWith(dirReal + path.sep);
+    } catch (_) {
+        return false;
     }
 }
 
@@ -534,7 +602,11 @@ app.post('/api/blast', (req, res) => {
         let blastAvailable = false;
         try { execSync('blastn -version', { stdio: 'ignore' }); blastAvailable = true; } catch (_) {}
 
-        if (process.arch === 'arm64' || !blastAvailable) {
+        // without makeblastdb's indices blastn cannot search the database: use the built-in search
+        // (a database added where makeblastdb was missing failed every search here)
+        const hasIndex = ['.nhr', '.nal', '.00.nhr'].some(ext => fs.existsSync(dbBaseName + ext));
+
+        if (process.arch === 'arm64' || !blastAvailable || !hasIndex) {
             console.log('Using local SW search for: ' + dbName);
             const querySeq = fs.readFileSync(queryFile, 'utf8').split(/\r?\n/).filter(l => !l.startsWith('>')).join('').replace(/\s+/g, '').toUpperCase();
             const cached = DB_CACHE[dbName];
@@ -687,26 +759,34 @@ app.post('/api/blast-db', (req, res) => {
     if (DATABASES[safeName]) {
         return res.status(409).json({ error: 'Database "' + safeName + '" already exists. Delete it first.' });
     }
+    // The search in the page (blast-worker.js) fetches the FASTA itself and needs no BLAST+, so a
+    // database is added also where makeblastdb is missing or fails: the indices only serve the
+    // server's own /api/blast route, which falls back to its built-in search without them. An add
+    // that fails removes the FASTA it wrote (it used to stay in blast_dbs/, unregistered).
+    const fastaPath = path.join(BLAST_DB_DIR, safeName + '.fa');
+    let wrote = false;
     try {
-        const dbDir = path.join(__dirname, 'blast_dbs');
-        if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-        const fastaPath = path.join(dbDir, safeName + '.fa');
+        if (!fs.existsSync(BLAST_DB_DIR)) fs.mkdirSync(BLAST_DB_DIR, { recursive: true });
+        wrote = true;
         fs.writeFileSync(fastaPath, fasta, 'utf8');
         console.log('Creating BLAST database: ' + safeName);
         const formatted = formatDatabase(fastaPath, safeName);
-        if (!formatted) {
-            return res.status(500).json({ error: 'makeblastdb failed. Is BLAST+ installed?' });
-        }
         DATABASES[safeName] = {
             path: fastaPath,
             desc: (description || '').substring(0, 200)
         };
-        saveDbRegistry(DATABASES);
+        saveDbRegistry(DATABASES, { throwOnError: true });
         loadDbCache();
-        console.log('Database "' + safeName + '" registered and formatted');
-        res.json({ success: true, name: safeName, description: DATABASES[safeName].desc });
+        console.log('Database "' + safeName + '" registered' + (formatted ? ' and formatted' : ' (no BLAST+ indices; the page search does not need them)'));
+        res.json({ success: true, name: safeName, description: DATABASES[safeName].desc, formatted });
     } catch (err) {
-        console.error('Failed to create database ' + safeName + ':', err);
+        console.error('Failed to create database ' + safeName + ':', err.message);
+        delete DATABASES[safeName];
+        if (wrote) {
+            for (const f of [fastaPath, ...['.nhr', '.nin', '.nsq', '.nog', '.nsd', '.nsi', '.ndb', '.not', '.ntf', '.nto', '.njs'].map(e => path.join(BLAST_DB_DIR, safeName + e))]) {
+                if (isOwnedDbFile(f)) { try { fs.unlinkSync(f); } catch (_) {} }
+            }
+        }
         res.status(500).json({ error: 'Failed to create database: ' + err.message });
     }
 });
@@ -723,17 +803,20 @@ app.delete('/api/blast-db/:name', async (req, res) => {
         const dbDir = path.dirname(dbInfo.path);
         const basePath = path.join(dbDir, dbName);
         const extensions = ['.nhr','.nin','.nsq','.nog','.nsd','.nsi','.ndb','.not','.ntf','.nto','.njs'];
+        // only files inside blast_dbs/ are deleted: a database registered from elsewhere is unregistered
+        // and its FASTA (and anything next to it) left where it is
         for (const ext of extensions) {
             const f = basePath + ext;
-            if (fs.existsSync(f)) { try { fs.unlinkSync(f); } catch (_) {} }
+            if (isOwnedDbFile(f)) { try { fs.unlinkSync(f); } catch (_) {} }
         }
-        if (fs.existsSync(dbInfo.path)) { try { fs.unlinkSync(dbInfo.path); } catch (_) {} }
+        const owned = isOwnedDbFile(dbInfo.path);
+        if (owned) { try { fs.unlinkSync(dbInfo.path); } catch (_) {} }
         delete DATABASES[dbName];
         delete DB_CACHE[dbName];
         delete DB_INDEX[dbName];
         saveDbRegistry(DATABASES);
-        console.log('Database "' + dbName + '" deleted');
-        res.json({ success: true, name: dbName });
+        console.log('Database "' + dbName + '" ' + (owned ? 'deleted' : 'unregistered (its file outside blast_dbs/ was kept: ' + dbInfo.path + ')'));
+        res.json({ success: true, name: dbName, fileKept: !owned && fs.existsSync(dbInfo.path) });
     } catch (err) {
         console.error('Failed to delete database ' + dbName + ':', err);
         res.status(500).json({ error: 'Failed to delete database: ' + err.message });
@@ -1031,7 +1114,12 @@ app.get('/api/poll-file', (req, res) => {
     res.json({ queued: true, server: qf.server, file: qf.file });
 });
 
-// Poll queue file from remote server (MC writes to ~/.msa_viewer_queue)
+// The queue file is read and emptied only when it is a regular file owned by the logged-in user: its
+// name is fixed in the remote host's shared /tmp, and a symlink another user put there was read as a
+// queued path and the file it points at emptied (cp /dev/null writes through the link).
+const REMOTE_QUEUE_CMD = 'Q=/tmp/.msa_viewer_queue; if [ -f "$Q" ] && [ ! -h "$Q" ] && [ -O "$Q" ] && [ -s "$Q" ]; then echo "=START_QUEUE="; cat "$Q"; echo "=END_QUEUE="; cp /dev/null "$Q" 2>/dev/null || true; fi';
+
+// Poll queue file from remote server (MC writes to /tmp/.msa_viewer_queue)
 app.get('/api/ssh-poll-file', (req, res) => {
     const serverKey = req.query.server || 'default';
     console.log(`[POLL] Checking queue for server: ${serverKey}`);
@@ -1045,7 +1133,7 @@ app.get('/api/ssh-poll-file', (req, res) => {
         // Direct: read queue and clear it. Use /tmp so any user can write.
         // Queue file has 2 lines: line 1 = directory, line 2 = filename (from MC %d and %f)
         // Or 1 line with full path (from MC %p)
-        const cmd = 'Q=/tmp/.msa_viewer_queue; if [ -s "$Q" ]; then echo "=START_QUEUE="; cat "$Q"; echo "=END_QUEUE="; cp /dev/null "$Q" 2>/dev/null || true; fi';
+        const cmd = REMOTE_QUEUE_CMD;
         const port = srv.port || 22;
         const args = [...baseArgs];
         if (port !== 22) args.push('-P', port.toString());
@@ -1058,7 +1146,7 @@ app.get('/api/ssh-poll-file', (req, res) => {
         const innerPortArgs = port !== 22 ? ` -p ${port}` : '';
         // Same queue command as the direct path: the reply below is parsed between the markers,
         // so without them a queued file was read, deleted and reported as "nothing queued".
-        const queueCmd = 'Q=/tmp/.msa_viewer_queue; if [ -s "$Q" ]; then echo "=START_QUEUE="; cat "$Q"; echo "=END_QUEUE="; cp /dev/null "$Q" 2>/dev/null || true; fi';
+        const queueCmd = REMOTE_QUEUE_CMD;
         const innerCmd = `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new${innerPortArgs} ${srv.user}@${srv.host} '${queueCmd}'`;
         sshArgs = [...getPlinkBaseArgs(via), `${via.user}@${via.host}`, innerCmd];
     }
@@ -1236,6 +1324,16 @@ app.post('/api/bam2sam', (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// Errors that reach Express (e.g. a request body that is not valid JSON) are answered with their message
+// only: Express's own error page shows the stack trace, with the server's file paths, outside production.
+app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    const status = Number(err.status || err.statusCode) || 500;
+    console.error(`[${req.method} ${req.path}]`, err.message);
+    res.status(status >= 400 && status < 600 ? status : 500)
+        .json({ error: err.expose ? err.message : (status < 500 ? 'Bad request' : 'Internal server error') });
 });
 
 app.listen(PORT, HOST, () => {

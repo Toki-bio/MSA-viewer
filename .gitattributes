@@ -2,3 +2,7 @@
 # byte-order marks are what some of these files exist to test.
 examples/compat/** -text
 examples/real/** -text
+
+# Windows batch files: cmd.exe misreads labels and long lines in LF files, so they are checked out
+# (and exported in archives such as the GitHub zip) with CRLF
+*.bat text eol=crlf
