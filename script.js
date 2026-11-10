@@ -4615,9 +4615,12 @@ let _rnaCache = null;
 function _alignmentIsRnaCached() {
     const c = _rnaCache, seqs = state.seqs;
     const u = state.deletedHistory ? state.deletedHistory.length : 0, r = state.redoHistory ? state.redoHistory.length : 0;
-    if (c && c.seqs === seqs && c.n === (seqs ? seqs.length : 0) && c.u === u && c.r === r) return c.v;
+    // the top entries too: with the history full (200 steps) an edit keeps both lengths, and the consensus stayed in U
+    // after T was typed over every U (GLM check 2026-11-10, #10). Every push, undo and redo puts a new entry on top.
+    const ut = u ? state.deletedHistory[u - 1] : null, rt = r ? state.redoHistory[r - 1] : null;
+    if (c && c.seqs === seqs && c.n === (seqs ? seqs.length : 0) && c.u === u && c.r === r && c.ut === ut && c.rt === rt) return c.v;
     const v = !isProteinAlignment() && alignmentIsRna();
-    _rnaCache = { seqs, n: seqs ? seqs.length : 0, u, r, v };
+    _rnaCache = { seqs, n: seqs ? seqs.length : 0, u, r, ut, rt, v };
     return v;
 }
 

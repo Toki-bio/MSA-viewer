@@ -18537,6 +18537,29 @@ check('GLM 1110 #8: Add Sequences "align to consensus" refused as stale keeps th
   return { pass: during.done === false && during.rows === 41 && end.rows === 41 && end.undo.at(-1) === 'duplicate' && /changed while/i.test(end.msg), detail: JSON.stringify({ during, end }) };
 }, { timeoutMs: 240000 });
 
+// #10: the RNA test of the consensus options is cached on the rows array, the row count and the undo/redo lengths.
+// With the undo history full (200 steps) an in-place row edit keeps every one of those: T typed over every U left
+// the consensus in U although the alignment had become DNA.
+check('GLM 1110 #10: with a full undo history, typing T over every U turns the consensus to T', async (page) => {
+  await loadFasta(page, '>a\nACGUACGUAA\n>b\nACGUACGUAA\n>c\nACGUACGUAA\n');
+  const out = await page.evaluate(() => {
+    const r = {};
+    for (let i = 0; i < 205; i++) pushUndo('filler');
+    r.cons0 = computeConsensusForSequences(state.seqs.map(s => s.seq));
+    r.u0 = state.deletedHistory.length;
+    for (let row = 0; row < 3; row++) {   // what handleGeneDocResidueKey (the Type tool) does: edit in place, push a row patch
+      const before = state.seqs[row].seq, after = before.replace(/U/g, 'T');
+      state.seqs[row].seq = after;
+      pushUndoRowPatch('geneDocResidueEdit', row, before, after, before.length, after.length, 'TypeResidue');
+    }
+    r.u1 = state.deletedHistory.length;
+    r.rna = alignmentIsRna();
+    r.cons1 = computeConsensusForSequences(state.seqs.map(s => s.seq));
+    return r;
+  });
+  return { pass: out.cons0 === 'ACGUACGUAA' && out.u0 === out.u1 && out.rna === false && out.cons1 === 'ACGTACGTAA', detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
