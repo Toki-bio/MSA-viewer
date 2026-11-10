@@ -12555,6 +12555,9 @@ function _computeVarSites(len) {
             }
             return { first, last };
         });
+        // An unknown residue (?, X, and N unless the alignment is protein, where N is asparagine) is not
+        // a difference: a column of A and N used to be flagged as variable (audit M19)
+        const nIsUnknown = !isProteinAlignment();
         for (let pos = 0; pos < len; pos++) {
             const counts = {};
             let covered = 0;
@@ -12562,6 +12565,7 @@ function _computeVarSites(len) {
                 const { first, last } = spans[i];
                 if (first === -1 || pos < first || pos > last) continue;
                 const base = (state.seqs[i].seq[pos] || '-').toUpperCase();
+                if (base === '?' || base === 'X' || (base === 'N' && nIsUnknown)) continue;
                 const ch = (base === '-' || base === '.') ? '-' : base;
                 counts[ch] = (counts[ch] || 0) + 1;
                 covered++;
@@ -20488,7 +20492,9 @@ function searchResEnzyme() {
     const palette = ['#FFD700','#FF6B6B','#00CED1','#FF8C00','#9370DB','#3CB371','#FF69B4','#20B2AA',
                      '#FFB347','#87CEEB','#FF6347','#98FB98','#DDA0DD','#F0E68C','#00BFFF','#FFA07A'];
     let colorIdx = state._searchColorOffset || 0;
-    const bothStrands = !!el('searchBothStrands')?.checked;
+    // An enzyme cuts double-stranded DNA, so a site on the minus strand is a site: always both strands,
+    // not only when the Search panel's box is ticked (minus-strand BsaI, BsmBI, SapI sites were missed; audit M20)
+    const bothStrands = true;
     const currentResults = [];
     enzymes.forEach(({ name, site }) => {
         const regex = restrictionSiteToRegex(site);
@@ -24454,8 +24460,13 @@ function buildNJTreeFromAlignment(seqObjects, model) {
 
         // Branch lengths
         const dij = dist[minI][minJ];
-        const bi = Math.max(0, (dij + (r[minI] - r[minJ]) / (m - 2)) / 2);
-        const bj = Math.max(0, dij - bi);
+        // The two lengths always add up to the pair's distance. A negative one is set to 0 and the
+        // other takes the whole distance: the second used to be set to 0 while the first kept a
+        // length above the distance, so sisters were drawn further apart than measured (audit M18).
+        let bi = (dij + (r[minI] - r[minJ]) / (m - 2)) / 2;
+        let bj = dij - bi;
+        if (bi < 0) { bi = 0; bj = Math.max(0, dij); }
+        else if (bj < 0) { bj = 0; bi = Math.max(0, dij); }
 
         const clusterI = clusters[activeIndices[minI]];
         const clusterJ = clusters[activeIndices[minJ]];

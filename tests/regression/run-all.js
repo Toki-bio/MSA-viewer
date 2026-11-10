@@ -18053,6 +18053,90 @@ check('Audit U4: undoing an earlier edit keeps name colours applied after it; a 
   return { pass, detail: JSON.stringify(out) };
 });
 
+// Audit 2026-11-10, M18. What used to go wrong in the neighbour-joining tree: when the second node of a
+// joined pair would get a negative branch length it was set to 0, but its sister kept a length longer
+// than the distance between the two. Two sister sequences were then drawn further apart than their
+// measured distance (up to twice), and which of the two it hit depended on the row order.
+// For every pair of sister leaves, the two branch lengths must add up to the pair's distance.
+check('Audit M18: in the NJ tree the branch lengths of two sister leaves add up to their distance, whatever the row order', async (page) => {
+  await loadFasta(page, makeFasta(4, 20));
+  const r = await page.evaluate(() => {
+    let x = 12345; const rnd = () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296;
+    let worst = 0, cherries = 0, badTrees = 0, example = '';
+    for (let t = 0; t < 400; t++) {
+      const n = 4 + Math.floor(rnd() * 5), L = 30;
+      let base = ''; for (let i = 0; i < L; i++) base += 'ACGT'[Math.floor(rnd() * 4)];
+      const rows = [];
+      for (let k = 0; k < n; k++) {
+        const rate = 0.03 + rnd() * 0.5;
+        rows.push({ header: 's' + k, seq: base.split('').map(c => rnd() < rate ? 'ACGT-'[Math.floor(rnd() * 5)] : c).join('') });
+      }
+      for (const order of [rows, rows.slice().reverse()]) {
+        const D = _treeDistanceMatrix(order, 'raw').D;
+        const idx = new Map(order.map((q, i) => [q.header, i]));
+        const tree = buildNJTreeFromAlignment(order, 'raw');
+        let treeBad = false;
+        // sister leaves in the Newick text: (name:len,name:len); the last join (the root's two sides) is not a measured pair
+        const nw = tree.newick, re = /\((s\d+):([0-9.eE+-]+),(s\d+):([0-9.eE+-]+)\)/g;
+        let m;
+        while ((m = re.exec(nw)) !== null) {
+          if (m.index === 0 && m[0].length >= nw.replace(/;\s*$/, '').length) continue;
+          cherries++;
+          const d = D[idx.get(m[1])][idx.get(m[3])], sum = parseFloat(m[2]) + parseFloat(m[4]);
+          const off = Math.abs(sum - d);
+          if (off > 2e-5) { treeBad = true; if (off > worst) { worst = off; example = `${m[1]}+${m[3]}: ${sum.toFixed(4)} for distance ${d.toFixed(4)} in ${nw.slice(0, 120)}`; } }
+        }
+        if (treeBad) badTrees++;
+      }
+    }
+    return { cherries, badTrees, worst, example };
+  });
+  return { pass: r.badTrees === 0 && r.cherries > 500, detail: JSON.stringify(r) };
+});
+
+// Audit 2026-11-10, M19. What used to go wrong: Variable sites and Highlight diffs counted an unknown
+// residue as a difference: a column holding only A and N (or ?, or X in protein) was flagged as
+// variable. The conservation shading already reads these as unknown. They are now left out of the
+// count, like the positions outside a row's span. In protein N is asparagine and still counts.
+check('Audit M19: Variable sites do not count N, X or ? as a difference (DNA: N and ?; protein: X and ?, while N still counts)', async (page) => {
+  const diffCols = async (fa) => {
+    await loadFasta(page, fa);
+    return page.evaluate(() => {
+      const set = (id, v, ev) => { const e = document.getElementById(id); if (e.type === 'checkbox') { if (e.checked !== v) { e.checked = v; e.dispatchEvent(new Event('change', { bubbles: true })); } } else { e.value = v; e.dispatchEvent(new Event(ev || 'change', { bubbles: true })); } };
+      set('varThresholdMode', 'count'); set('varSitesThreshold', '1', 'input'); set('highlightDiffs', true);
+      renderAlignment();
+      const out = [...(state._diffColumns || [])].sort((a, b) => a - b);
+      set('highlightDiffs', false);
+      return out;
+    });
+  };
+  const out = {};
+  //                 0123456
+  out.dna = await diffCols('>a\nACGTACA\n>b\nACGNACA\n>c\nAC?TACA\n>d\nACGTCCN\n>e\nACGTACA\n');
+  out.protein = await diffCols('>p1\nMKVLWEF\n>p2\nMKXLWEF\n>p3\nMK?LWEF\n>p4\nMNVLWEY\n>p5\nMKVLWEF\n');
+  const pass = JSON.stringify(out.dna) === '[4]' && JSON.stringify(out.protein) === '[1,6]';
+  return { pass, detail: JSON.stringify(out) + ' (wanted dna [4], protein [1,6])' };
+});
+
+// Audit 2026-11-10, M20. What used to go wrong: the restriction search looked at the plus strand only
+// unless the Search panel's "Search both strands" box was ticked (the Restriction Sites window does not
+// show that box). For a non-palindromic enzyme such as BsaI (GGTCTC) a site on the minus strand, read
+// GAGACC on the plus strand, was missed. An enzyme cuts double-stranded DNA: both strands are always
+// searched now; a palindromic site (GAATTC) still gives one entry.
+check('Audit M20: restriction search finds minus-strand sites of non-palindromic enzymes (BsaI as GAGACC) without the both-strands box', async (page) => {
+  await loadFasta(page, '>plus\nAAAAGGTCTCAAAAAAAAAAAAAAGAATTCAAAA\n>minus\nAAAAAAAAAAAAGAGACCAAAAAAGAATTCAAAA\n>none\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n');
+  const r = await page.evaluate(() => {
+    document.getElementById('searchBothStrands').checked = false;
+    document.querySelectorAll('.re-cb:checked').forEach(c => { c.checked = false; });
+    document.getElementById('reSiteManualInput').value = 'BsaI:GGTCTC, EcoRI:GAATTC';
+    searchResEnzyme();
+    return { entries: state.searchHistory.map(h => [h.label, h.matchCount]), msg: document.getElementById('statusMessage').textContent };
+  });
+  const bsa = r.entries.filter(e => /BsaI/.test(e[0])), eco = r.entries.filter(e => /EcoRI/.test(e[0]));
+  const pass = bsa.length === 2 && bsa.every(e => e[1] === 1) && eco.length === 1 && /^Found 3 unique restriction sites/.test(r.msg);
+  return { pass, detail: JSON.stringify(r) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
