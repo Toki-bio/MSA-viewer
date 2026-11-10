@@ -23137,7 +23137,20 @@ function _geRowClaimer() {
     const claimed = new Set();
     return (m) => {
         let row = (m.obj && present.has(m.obj) && !claimed.has(m.obj)) ? m.obj : null;
-        if (!row) for (const o of (byName.get(m.id) || [])) if (!claimed.has(o)) { row = o; break; }
+        if (!row) {
+            // The recorded row object is gone (Undo and Redo put back copies). Among the unclaimed rows
+            // with the name, take the one with the recorded long name and residues, then the long name,
+            // then the residues, then the first: by name alone, "x one" and "x two" in two groups both
+            // became the first row named x (audit M15).
+            const cands = (byName.get(m.id) || []).filter(o => !claimed.has(o));
+            const was = m.obj || null;
+            const full = o => o.fullHeader || o.header, res = o => String(o.seq || '').replace(/[-.]/g, '');
+            if (was && cands.length > 1) {
+                const wf = full(was), wr = res(was);
+                row = cands.find(o => full(o) === wf && res(o) === wr) || cands.find(o => full(o) === wf) || cands.find(o => res(o) === wr) || null;
+            }
+            if (!row) row = cands[0] || null;
+        }
         if (row) { claimed.add(row); m.obj = row; }
         return row;
     };
@@ -23802,19 +23815,9 @@ function highlightCluster(clusterIdx) {
         el.style.backgroundColor = '';
     });
 
-    let headersToHighlight = [];
-
-    if (clusterIdx === -1) {
-        // Highlight unassigned
-        headersToHighlight = results.unassigned.map(s => s.id);
-    } else {
-        // Highlight specific cluster
-        headersToHighlight = results.clusters[clusterIdx].sequences.map(s => s.id);
-    }
-
-    // Map headers to current row indices (sequences may have been reordered since clustering)
-    const headerToIdx = new Map(state.seqs.map((s, i) => [s.header, i]));
-    const indicesToHighlight = headersToHighlight.map(h => headerToIdx.get(h)).filter(i => i !== undefined);
+    // The group's own rows (rows may have moved since the grouping). By name alone, the last row with
+    // a name was painted for every group that holds a row of that name (audit M15).
+    const indicesToHighlight = _geMemberRows(clusterIdx === -1 ? 'unassigned' : 'cluster', clusterIdx).map(r => state.seqs.indexOf(r)).filter(i => i >= 0);
 
     const color = clusterIdx === -1
         ? (state.clusterUnassignedColor || '#999999')

@@ -17924,6 +17924,52 @@ check('Audit M14: Add & Align keeps existing rows in place and every name, resid
   return { pass: !bad.length, detail: bad.length ? bad.join(' | ').slice(0, 900) : 'at bottom and at top: 7 rows in place with names, residues and case; no Undo step after a run without result' };
 }, { timeoutMs: 300000 });
 
+// Audit 2026-11-10, M15. What used to go wrong: a group remembers its rows by row object and, when that
+// object is gone, by the row's name (first word). Undo puts back copies of the rows, so after an Undo
+// two rows named "x one" and "x two" in different groups were both looked up as "x": Copy group FASTA
+// of the second group gave the first group's row, and Highlight painted the last row named "x" for
+// both groups. A group member is now found again by name AND residues before name alone.
+check('Audit M15: after an Undo, a group still stands for its own row when two rows share a first word (Copy group FASTA, Highlight)', async (page) => {
+  await loadFasta(page, '>x one\nAAAACCCCGG\n>y\nACGTACGTAC\n>x two\nGGGGTTTTAA\n>z\nACGTACGTTT\n');
+  await page.evaluate(() => {
+    state.clusterResults = { clusters: [
+      { sequences: [{ id: 'x', obj: state.seqs[0] }, { id: 'y', obj: state.seqs[1] }], color: '#ff0000' },
+      { sequences: [{ id: 'x', obj: state.seqs[2] }, { id: 'z', obj: state.seqs[3] }], color: '#0000ff' }], unassigned: [] };
+    state.selectedRows = new Set([3]); renderAlignment(); document.activeElement?.blur?.();
+  });
+  const groups = () => page.evaluate(() => [0, 1].map(i => _geGroupFasta('cluster', i, true).split('\n').filter(l => l[0] === '>').join(',')));
+  const out = { before: await groups() };
+  await page.keyboard.press('Control+u');   // move row 4 up one: an edit with an undo step
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(400);
+  out.order = await page.evaluate(() => state.seqs.map(q => q.fullHeader).join(','));
+  out.after = await groups();
+  out.rows = await page.evaluate(() => [0, 1].map(i => _geMemberRows('cluster', i).map(r => state.seqs.indexOf(r))));
+  const want = ['>x one,>y', '>x two,>z'];
+  const pass = JSON.stringify(out.before) === JSON.stringify(want) && JSON.stringify(out.after) === JSON.stringify(want) && JSON.stringify(out.rows) === '[[0,1],[2,3]]' && out.order === 'x one,y,x two,z';
+  return { pass, detail: JSON.stringify(out) };
+});
+
+// Audit 2026-11-10, M16. What used to go wrong: Ctrl+Shift+R pressed a second time while a region
+// realign was running hid the busy overlay; the mouse was free again and the result, when it came,
+// overwrote whatever had been done meanwhile. Since v332 keys do nothing while the overlay is shown;
+// this check keeps it so for this key in particular.
+check('Audit M16: a second Ctrl+Shift+R during a region realign leaves the busy overlay up until the run ends', async (page) => {
+  await loadFasta(page, audit1Big());
+  await page.evaluate(() => { const W = state.seqs[0].seq.length; state.selectedColumns.clear(); for (let c = 0; c < W; c++) state.selectedColumns.add(c); renderAlignment(); document.activeElement?.blur?.(); });
+  await page.keyboard.press('Control+Shift+R');
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !!b && !b.hidden; }, null, { timeout: 15000 });
+  await page.keyboard.press('Control+Shift+R');
+  await page.waitForTimeout(60);
+  const shown = await page.evaluate(() => { const b = document.getElementById('busyOverlay'); return !!b && !b.hidden && getComputedStyle(b).display !== 'none'; });
+  const running = await page.evaluate(() => typeof _mafftBusy !== 'undefined' ? !!_mafftBusy : null);
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 120000 });
+  await page.waitForTimeout(400);
+  const w = await page.evaluate(() => new Set(state.seqs.map(q => q.seq.length)).size);
+  return { pass: shown && w === 1, detail: JSON.stringify({ overlayStillShown: shown, running, sameWidth: w === 1 }) };
+}, { timeoutMs: 240000 });
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
