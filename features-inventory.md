@@ -42,8 +42,8 @@ localStorage-backed panel. Stores metadata + full alignment text (100 KB cap per
 
 **Why novel:** Most viewers offer 1–2 modes. Three modes serve distinct workflows — publication inspection (Block), editing and large alignments (Canvas), and NGS reads (Reads). Variable Sites Only adds variant scanning to any mode.
 
-### Canvas renderer with automatic activation
-Canvas 2D context with viewport culling. Draws only rows and columns visible in the viewport per frame — no per-residue DOM nodes. Activates automatically when the alignment exceeds 5,000,000 total residues with a status message and user override option. Mouse wheel + click-drag panning.
+### Canvas renderer, the default view
+Canvas 2D context with viewport culling. Draws only rows and columns visible in the viewport per frame, with no per-residue DOM nodes. It is the default view at every alignment size (a note on the first load says so). Block is drawn by the same renderer. The DOM Full view is reachable only with `?view=full`; from 100,000 residues (`ALIGN_WINDOWED_DOM_THRESHOLD`) Full builds only a window of rows and columns. Choosing Block for a session keeps Block for smaller files, but alignments from 40,000 residues still open in Canvas. 5,000,000 residues is a different limit: above it (or above 500 sequences and 3,000 columns together) opening an alignment first asks for confirmation. Mouse wheel + click-drag panning.
 
 **Why novel:** Handles alignments that crash pure-DOM viewers. Auto-activation removes the performance decision from the user — the tool adapts.
 
@@ -305,7 +305,7 @@ Save complete viewer state as JSON: alignment data, colour assignments, search h
 
 6. **Colour-as-selection-metadata** — copy by colour, group by colour, sort by colour. Colour assignments become a data organization and export pipeline, not just decoration.
 
-7. **Canvas renderer with automatic threshold activation** — handles alignments 10× larger than DOM-based viewers. User doesn't configure performance — the tool detects and adapts.
+7. **Canvas renderer as the default view** : handles alignments far larger than DOM-based viewers. User doesn't configure performance; large alignments also get a windowed DOM view in the hidden Full mode.
 
 8. **IGV-style read packing in a general MSA tool** — diffs-only mode with "Show bases" toggle, soft-clip display, deletion gaps, insertion ticks. NGS visualization without leaving the alignment viewer.
 
@@ -340,7 +340,7 @@ Save complete viewer state as JSON: alignment data, colour assignments, search h
 | **Auto-colour by name** | ✅ n-gram Jaccard | ❌ | ❌ | ❌ | ❌ |
 | **Copy by colour** | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Reads mode** | ✅ IGV-style | ❌ | ❌ | ❌ | ✅ |
-| **Canvas large-align** | ✅ auto threshold | ✅ fixed | ❌ | ✅ | ✅ |
+| **Canvas large-align** | ✅ default view | ✅ fixed | ❌ | ✅ | ✅ |
 | **Block realignment** | ✅ Ctrl+Shift+R | ❌ | ❌ | ❌ | ❌ |
 | **Block degapping** | ✅ + column cleanup | ❌ | ❌ | ❌ | ❌ |
 | **Guide tree reorder** | ✅ optimal leaf | ❌ | ❌ | ❌ | ❌ |
