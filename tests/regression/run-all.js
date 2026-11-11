@@ -18445,6 +18445,37 @@ check('Audit L15: a binary 0/1 PHYLIP matrix loads as rows of states', async (pa
   return { pass, detail: JSON.stringify(out).slice(0, 400) };
 });
 
+// Audit 2026-11-10, L16. What used to go wrong: with Case set to AA (or aa) the screen showed every residue in
+// upper (lower) case, but the full-alignment SVG and the RTF export wrote the letters as stored, so the file
+// did not look like the screen. The consensus row keeps its own case in both, as on screen.
+check('Audit L16: the full SVG and the RTF export follow the Case setting', async (page) => {
+  await loadFasta(page, '>s1\nacgtACGTacgtACGT\n>s2\nacgtACGTacgaACGT\n');
+  const grab = (fn, mode) => page.evaluate(async ({ fn, mode }) => {
+    setResidueCase(mode);
+    let blob = null;
+    const keep = window._downloadBlob;
+    window._downloadBlob = b => { blob = b; };
+    try { window[fn](); } finally { window._downloadBlob = keep; }
+    return blob ? await blob.text() : '';
+  }, { fn, mode });
+  const letters = async (fn, mode) => {
+    const text = await grab(fn, mode);
+    const body = fn === 'exportAlignmentAsRtf'
+      ? text.split('\n').filter(l => /\{\\b s[12] /.test(l)).join('').replace(/\{\\b s[12] +\}/g, '').replace(/\\[a-z]+\d*/g, '').replace(/[{} ]/g, '')
+      : text.split(/(?=<text x="2" )/).filter(seg => /^<text x="2" [^>]*>s[12]<\/text>/.test(seg))   // a name, then that row's cells
+          .map(seg => [...seg.replace(/^<text[^>]*>[^<]*<\/text>/, '').matchAll(/<text [^>]*>([^<]*)<\/text>/g)].map(m => m[1]).join('')).join('');
+    return body.replace(/[^A-Za-z]/g, '');
+  };
+  const out = {};
+  for (const fn of ['_exportFullAlignmentSvgFromData', 'exportAlignmentAsRtf']) {
+    const up = await letters(fn, 'upper'), low = await letters(fn, 'lower'), asis = await letters(fn, 'asis');
+    out[fn] = { up: up.slice(0, 40), low: low.slice(0, 40), asis: asis.slice(0, 40),
+      ok: up.length >= 32 && /acgtACGT/.test(asis) && /ACGTACGTACGTACGT/.test(up) && !/[a-z]{4}/.test(up) && /acgtacgtacgtacgt/.test(low) && !/[A-Z]{4}/.test(low) };
+  }
+  const pass = Object.values(out).every(o => o.ok);
+  return { pass, detail: JSON.stringify(out).slice(0, 500) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

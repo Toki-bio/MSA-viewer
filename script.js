@@ -20186,6 +20186,14 @@ function _exportCanvasViewportSvg() {
 
 // Full-alignment SVG built from the data with the screen's colours (see
 // _makeCellStyleProbe); works in every view mode, including windowed views.
+// A row's letters as the Case setting shows them (aa | Aa | AA). The full SVG and the RTF export wrote the
+// stored letters, so the file did not look like the screen (audit L16). Colours are still judged on the
+// stored letter; the consensus row keeps its own case, as on screen.
+function _exportCaseText(seq) {
+    const mode = state.residueCase || 'asis';
+    return mode === 'upper' ? seq.toUpperCase() : mode === 'lower' ? seq.toLowerCase() : seq;
+}
+
 function _exportFullAlignmentSvgFromData() {
     const L = _exportLayout();
     const fontSize = parseFloat(getComputedStyle(alignmentContainer).fontSize) || 13;
@@ -20225,7 +20233,7 @@ function _exportFullAlignmentSvgFromData() {
             if (L.consensus && L.consensusPosition === 'top') consensusLine(start, end);
             for (const q of state.seqs) {
                 drawName((q.header || '').substring(0, L.nameLen));
-                drawCells(q.seq, start, end, p => _exportCellClass(q.seq[p] || '-', L.conservation[p], L.config), false);
+                drawCells(_exportCaseText(q.seq), start, end, p => _exportCellClass(q.seq[p] || '-', L.conservation[p], L.config), false);
                 y += lineH;
             }
             if (L.consensus && L.consensusPosition === 'bottom') consensusLine(start, end);
@@ -20330,7 +20338,7 @@ function exportAlignmentAsRtf() {
                 const q = state.seqs[i];
                 const name = pad(q.header || `Seq${i + 1}`, L.nameLen);
                 body.push(`{\\b ${_rtfEscape(name)} }` +
-                    cells(q.seq, start, end, p => _exportCellClass(q.seq[p] || '-', L.conservation[p], L.config), false) + '\\line');
+                    cells(_exportCaseText(q.seq), start, end, p => _exportCellClass(q.seq[p] || '-', L.conservation[p], L.config), false) + '\\line');
             }
             if (L.consensus && L.consensusPosition === 'bottom') consensusLine();
             body.push('\\line');
