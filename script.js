@@ -24419,9 +24419,12 @@ function _k80Distance(P, Q) {
 // Compute pairwise distance using the selected model
 // NaN when the pair shares no aligned base: there is nothing to compare, so no distance.
 // (It used to return 1 for every model, as if the two were completely different.)
+const TREE_MIN_OVERLAP = 10;   // shared aligned residues a pair needs for a tree distance (see _modelPairDistance)
 function _modelPairDistance(seqOne, seqTwo, model, protein = false) {
     const m = _alignmentPairMetrics(seqOne, seqTwo, protein);
-    if (m.compared === 0) return NaN;
+    // Fewer than 10 shared aligned residues (or fewer than the alignment has columns, for a narrower one): unknown,
+    // like no overlap. One shared column gave p = 0 or 1 as if certain (owner 2026-11-11; Qwen tree audit T4).
+    if (m.compared === 0 || m.compared < Math.min(TREE_MIN_OVERLAP, seqOne.length)) return NaN;
     switch (model) {
         case 'jc69': return _jc69Distance(m.p);
         case 'k80':
@@ -24766,13 +24769,13 @@ function openTreeBuilder() {
                 // Pairs without a usable distance were set to the largest one: say which
                 if (st.filledWith !== null) {
                     const parts = [];
-                    if (st.noOverlap.length) parts.push(`${st.noOverlap.length} pair${st.noOverlap.length > 1 ? 's share' : ' shares'} no aligned base: distance unknown, set to ${st.filledWith.toFixed(4)} (the largest defined distance, or 1 if all are 0)`);
+                    if (st.noOverlap.length) parts.push(`${st.noOverlap.length} pair${st.noOverlap.length > 1 ? 's share' : ' shares'} no aligned base, or fewer than ${TREE_MIN_OVERLAP}: distance unknown, set to ${st.filledWith.toFixed(4)} (the largest defined distance, or 1 if all are 0)`);
                     if (st.saturated.length) parts.push(`${st.saturated.length} pair${st.saturated.length > 1 ? 's are' : ' is'} saturated under ${modelName}: set to twice the largest (${st.saturatedFill.toFixed(4)})`);
                     const warn = document.createElement('span');
                     warn.className = 'tree-distance-warning';
                     warn.textContent = ` | ${parts.join('; ')}`;
                     const list = pairs => pairs.slice(0, 30).map(([i, j]) => `${st.names[i]} × ${st.names[j]}`).join('\n');
-                    warn.title = [st.noOverlap.length ? 'No shared aligned base:\n' + list(st.noOverlap) : '',
+                    warn.title = [st.noOverlap.length ? `No shared aligned base, or fewer than ${TREE_MIN_OVERLAP}:\n` + list(st.noOverlap) : '',
                         st.saturated.length ? 'Saturated:\n' + list(st.saturated) : ''].filter(Boolean).join('\n\n');
                     summary.appendChild(warn);
                 }

@@ -2712,8 +2712,8 @@ check('Heatmap inverted range and tree fill when all defined distances are 0 (au
   const r = await page.evaluate(() => {
     const hc = { lo: 90, hi: 90, reverse: false, stops: [[0, 0, 0], [255, 255, 255]] };
     const single = [_statsHeatColour(hc, 80).bg, _statsHeatColour(hc, 95).bg];
-    // identical comparable sequences plus one that overlaps none of them
-    const seqs = [{ header: 'a', seq: 'ACGTACGT--------' }, { header: 'b', seq: 'ACGTACGT--------' }, { header: 'c', seq: '--------TTTTGGGG' }];
+    // identical comparable sequences plus one that overlaps none of them (12 shared bases: a pair needs 10 since T4, 2026-11-11)
+    const seqs = [{ header: 'a', seq: 'ACGTACGTACGT------------' }, { header: 'b', seq: 'ACGTACGTACGT------------' }, { header: 'c', seq: '------------TTTTGGGGCCCC' }];
     const m = _treeDistanceMatrix(seqs, 'raw');
     return { single, acDist: m.D[0][2], fill: m.stats.filledWith, nw: buildUPGMATreeFromAlignment(seqs, 'raw').newick };
   });

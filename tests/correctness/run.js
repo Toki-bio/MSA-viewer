@@ -655,6 +655,22 @@ check('Newick [comments] (FigTree [&...] annotations) are skipped, not read into
   return { pass: r === 'A:1,B:2,C[1]:3', detail: r };
 });
 
+check('Tree distances: a pair sharing fewer than 10 aligned bases counts as unknown (filled, listed), not as certain', async (page) => {
+  // One shared column gave p = 0 or 1 at full weight, with no warning; a fragment could decide the tree. Owner
+  // 2026-11-11: below 10 shared bases the pair is handled like a pair that shares none (Qwen tree audit T4).
+  const a = 'ACGTTGCAAGCTTGCAACGTAGCTAGCTAGGATCCAGTCA', b = a.slice(0, 20) + 'TTTTT' + a.slice(25);
+  const frag = 'ACG' + '-'.repeat(37), mid = '-'.repeat(10) + a.slice(10, 22) + '-'.repeat(18);
+  await loadFasta(page, `>a\n${a}\n>b\n${b}\n>frag\n${frag}\n>mid\n${mid}\n`);
+  const r = await page.evaluate(() => {
+    const st = _treeDistanceMatrix(state.seqs, 'raw').stats;
+    const nm = ([i, j]) => st.names[i] + '-' + st.names[j];
+    return { noOverlap: st.noOverlap.map(nm).sort().join(','), short: _treeDistanceMatrix([{ header: 'x', seq: 'ACGTA' }, { header: 'y', seq: 'ACGTT' }], 'raw').D[0][1] };
+  });
+  // frag shares 3 bases with a and b and none with mid; mid shares 12 with a and b
+  const ok = r.noOverlap === 'a-frag,b-frag,frag-mid' && Math.abs(r.short - 0.2) < 1e-9;
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 check('restriction sites: overlapping sites are all found (HhaI in GCGCGC)', async (page) => {
   // The regex loop resumed after each match, so GCGC at 3 and 5 in AAGCGCGCAA counted once.
   await loadFasta(page, '>a\nAAGCGCGCAA\n>b\nAA-GCGC-GCAA\n');
