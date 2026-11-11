@@ -206,8 +206,10 @@
                 const sub = peel(g.map(i => seqs[i]), Object.assign({}, opts, { refine: depth - 1, outliers: false, metric, minDiag: opts.refineMinDiag != null ? opts.refineMinDiag : (opts.minDiag != null ? opts.minDiag : 3), minSize: opts.refineMinSize || minSize, indelWeight: opts.refineIndelWeight != null ? opts.refineIndelWeight : opts.indelWeight, tolerate: opts.refineTolerate != null ? opts.refineTolerate : opts.tolerate, _map: i => outer(g[i]), _level: (opts._level || 0) + 1 }));
                 if (sub.groups.length < 2 && !(sub.groups.length === 1 && sub.remaining.length >= minSize)) { refined.push(g); continue; }
                 sub.groups.forEach(x => refined.push(x.map(i => g[i])));
-                if (sub.remaining.length >= minSize) refined.push(sub.remaining.map(i => g[i]));
-                else sub.remaining.forEach(i => remaining.push(g[i]));      // too few left to be a group: back to the unassigned
+                // What the sub-peel left over failed its remainder test (a tight remainder is already one of sub.groups),
+                // so it is unassigned, as at the first level; it used to become a group regardless (Qwen clustering
+                // audit 2026-11-11, C2; owner: the same test as the first level).
+                sub.remaining.forEach(i => remaining.push(g[i]));
             }
         }
         return { groups: refined, coarse: groups, outliers, unassigned: remaining.concat(outliers).sort((a, b) => a - b), remaining, steps, metric };

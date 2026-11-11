@@ -22,6 +22,23 @@ check('#158 peel: the result names the distance actually used (k-mer when the ro
     const r = Peel.peel(seqs, Object.assign({}, Peel.defaults, { metric: 'pdist' }));
     return r.metric !== 'pdist' ? true : 'metric reported as ' + r.metric;
 });
+check('peel refine: what is left inside a group becomes a group only if it is as tight as the groups found (Qwen C2)', () => {
+    // Family F = F1 (5 rows, CCCCC at 30-34) + F2 (5 rows, AAAAA) + 4 scatter rows, each with its own letters at 30-34;
+    // O = 15 rows that hide F's private columns until F is peeled whole. The refine pass made the 4 scatter rows a
+    // group of their own (they share no diagnostic column); the first pass leaves such a remainder unassigned.
+    let x = 7; const rnd = () => (x = (x * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const bg = Array.from({ length: 120 }, () => 'ACGT'[Math.floor(rnd() * 4)]);
+    const mk = (fam, p) => { const a = bg.slice(); for (let i = 0; i < 6; i++) a[10 + i] = fam; for (let i = 0; i < 5; i++) a[30 + i] = p[i]; return a.join(''); };
+    const seqs = [];
+    for (let i = 0; i < 5; i++) seqs.push({ name: 'F1_' + i, seq: mk('T', 'CCCCC') });
+    for (let i = 0; i < 5; i++) seqs.push({ name: 'F2_' + i, seq: mk('T', 'AAAAA') });
+    ['GTGTG', 'TGTGT', 'GGGTT', 'TTGGG'].forEach((p, i) => seqs.push({ name: 'S_' + i, seq: mk('T', p) }));
+    for (let i = 0; i < 15; i++) seqs.push({ name: 'O_' + i, seq: mk('G', 'CCCCC') });
+    const r = Peel.peel(seqs, Object.assign({}, Peel.defaults));
+    const tag = g => g.map(i => seqs[i].name.split('_')[0]).join('');
+    const groups = r.groups.map(tag).sort().join(' | '), un = r.unassigned.map(i => seqs[i].name.split('_')[0]).join('');
+    return groups === 'F1F1F1F1F1 | F2F2F2F2F2 | OOOOOOOOOOOOOOO' && un === 'SSSS' ? true : `groups ${groups}; unassigned ${un}`;
+});
 
 // Random planted-family alignments (seeds 224 and 92) on which the old code differed
 const toFasta = rows => rows.map(([n, s]) => '>' + n + '\n' + s).join('\n') + '\n';
