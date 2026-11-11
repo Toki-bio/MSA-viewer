@@ -14524,6 +14524,11 @@ function _relabelSeqNameCells(index) {
 // Applies a rename (undoable), relabels the DOM name cells, resizes a "No limit" name
 // column. Returns false when nothing changed.
 function _commitSeqRename(index, newName) {
+    // A FASTA name ends at the first space: "my seq" was saved as ">my seq" and came back, here and in any
+    // other program, as "my". Spaces become "_" and the message says so (owner 2026-11-11; GLM check Q15a).
+    const typed = String(newName || '').trim();
+    newName = typed.replace(/\s+/g, '_');
+    const spaced = newName !== typed;
     if (!newName || !state.seqs[index] || newName === state.seqs[index].header) return false;
     const oldName = state.seqs[index].header;
     pushUndo('rename');
@@ -14540,7 +14545,8 @@ function _commitSeqRename(index, newName) {
         applyNameLengthLive(effectiveNameLength());
         if (isCanvasMode()) renderAlignment();   // Canvas sizes its name column when it renders
     }
-    showMessage('Sequence renamed', 1500);
+    if (spaced) showMessage(`Renamed to "${newName}": spaces were replaced with _ , because a FASTA name ends at the first space`, 6000);
+    else showMessage('Sequence renamed', 1500);
     return true;
 }
 
@@ -17486,11 +17492,22 @@ function _dropNoOpUndo(redoBefore) {
 // get their stored colour, and names that it takes away lose theirs (a rename: the colour goes back to
 // the old name). Names present before and after keep the colour they have now: the whole stored set
 // used to be put back, which wiped every colour given after the undone step (audit U4).
-function _restoreNameColours(saved, namesBefore) {
+function _restoreNameColours(saved, namesBefore, countsBefore) {
     if (!saved || !colourState?.mappings) return;
     const namesNow = new Set(state.seqs.map(q => q.header));
     for (const n of namesBefore) if (!namesNow.has(n)) colourState.mappings.delete(n);
     for (const n of namesNow) if (!namesBefore.has(n) && saved.has(n)) colourState.mappings.set(n, saved.get(n));
+    // A name that is there before and after, but on another number of rows: a row was renamed onto it (or
+    // back off it), and the rename moved that row's colour onto the name. The name gets the colour it had
+    // in the restored state; else the other row with that name kept the renamed row's colour (GLM check Q17).
+    if (countsBefore) {
+        const countsNow = new Map();
+        for (const q of state.seqs) countsNow.set(q.header, (countsNow.get(q.header) || 0) + 1);
+        for (const [n, c] of countsNow) {
+            if (!countsBefore.has(n) || countsBefore.get(n) === c) continue;
+            if (saved.has(n)) colourState.mappings.set(n, saved.get(n)); else colourState.mappings.delete(n);
+        }
+    }
 }
 
 function pushUndo(type) {
@@ -17688,9 +17705,10 @@ function undoDelete(quiet) {
     if (last.colStateBefore) redoEntry.colStateAfter = _snapshotColumnState();
     state.redoHistory.push(redoEntry);
     const namesBeforeUndo = new Set(state.seqs.map(q => q.header));
+    const nameCountsBeforeUndo = new Map(); for (const q of state.seqs) nameCountsBeforeUndo.set(q.header, (nameCountsBeforeUndo.get(q.header) || 0) + 1);
     state.seqs = _undoRestoreSeqs(last.seqs);
     if (typeof _statsInvalidate === 'function') _statsInvalidate(false);
-    _restoreNameColours(last.colours, namesBeforeUndo);
+    _restoreNameColours(last.colours, namesBeforeUndo, nameCountsBeforeUndo);
     _restoreGroupOrder(last.groupOrder);
     if (last.colStateBefore) _restoreColumnState(last.colStateBefore);
     state.selectedRows = last.selectedRows || new Set();
@@ -17733,9 +17751,10 @@ function redoAction(quiet) {
     undoEntry.groupOrder = state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null;
     state.deletedHistory.push(undoEntry);
     const namesBeforeRedo = new Set(state.seqs.map(q => q.header));
+    const nameCountsBeforeRedo = new Map(); for (const q of state.seqs) nameCountsBeforeRedo.set(q.header, (nameCountsBeforeRedo.get(q.header) || 0) + 1);
     state.seqs = _undoRestoreSeqs(next.seqs);
     if (typeof _statsInvalidate === 'function') _statsInvalidate(false);
-    _restoreNameColours(next.colours, namesBeforeRedo);
+    _restoreNameColours(next.colours, namesBeforeRedo, nameCountsBeforeRedo);
     _restoreGroupOrder(next.groupOrder);
     if (next.colStateAfter) _restoreColumnState(next.colStateAfter);
     state.selectedRows = next.selectedRows || new Set();

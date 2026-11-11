@@ -1952,7 +1952,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     not available elsewhere:
   </p>
   <ul>
-    <li><strong>Rename sequence</strong> - inline edit of the sequence name. Colour mappings are automatically migrated to the new name.</li>
+    <li><strong>Rename sequence</strong> - inline edit of the sequence name. Colour mappings are automatically migrated to the new name. Spaces in the typed name are stored as <code>_</code> (the message says so), because a FASTA name ends at the first space.</li>
     <li><strong>Replace N selected with consensus</strong> - replaces all selected sequences with a single consensus row (available when ≥2 sequences are selected)</li>
     <li><strong>Add consensus below</strong> - inserts a consensus row after the selected group</li>
     <li><strong>Re-align against consensus</strong> - realigns a single sequence against the alignment consensus profile using MAFFT (available in the right-click menu under analysis tools)</li>

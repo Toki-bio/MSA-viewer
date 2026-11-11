@@ -2979,14 +2979,16 @@ check('Rename: box over the name, no shift, Esc cancels, Enter/click-away save w
   await page.keyboard.type('renamed two');
   await page.keyboard.press('Enter');
   await page.waitForTimeout(150);
-  out.enterSaves = await page.evaluate(() => state.seqs[2].header === 'renamed two'
+  // the typed names hold spaces: since v339 Rename stores them as "_" (owner 2026-11-11: a FASTA name ends at
+  // the first space, so "renamed two" came back as "renamed" after Save; this check expected the spaces kept)
+  out.enterSaves = await page.evaluate(() => state.seqs[2].header === 'renamed_two'
     && [...document.querySelectorAll('.seq-name[data-seq-index="2"]')].every(c => c.textContent.startsWith('renamed')));
   await openBox(4);
   await page.keyboard.press('Control+A');
   await page.keyboard.type('four by click');
   await page.mouse.click(700, 5);
   await page.waitForTimeout(150);
-  out.clickAwaySaves = await page.evaluate(() => state.seqs[4].header === 'four by click' && !document.querySelector('.seq-name-edit'));
+  out.clickAwaySaves = await page.evaluate(() => state.seqs[4].header === 'four_by_click' && !document.querySelector('.seq-name-edit'));
   out.noRedraw = !(await redrawn());
   out.noShiftAfter = JSON.stringify(await geo(2)) === JSON.stringify(before);
   await page.evaluate(() => document.body.focus());
@@ -18585,6 +18587,36 @@ check('GLM 1111 Q16: an aligner error during Add & Align names a pasted row by i
   });
   const pass = /"my pasted row"/.test(r.msg) && !/"r2"/.test(r.msg) && r.after === 'r2';
   return { pass, detail: JSON.stringify(r) };
+});
+
+// GLM 1111 Q15a #1 and Q17 #0 (owner 2026-11-11: spaces to "_" with a warning; undo as proposed).
+// Q15a: Rename accepted "my seq"; Save wrote ">my seq", and a FASTA name ends at the first space, so the row
+// came back as "my" (and other programs read "my"). Rename now writes "my_seq" and says so.
+// Q17: renaming row s2 to the name of another row (B) moved s2's colour onto the name B; Undo left it there,
+// so the first B kept s2's colour and its own was lost.
+check('GLM 1111 Q15a, Q17: Rename turns spaces into _ with a note; undoing a rename onto another row\'s name gives that row its colour back', async (page) => {
+  await loadFasta(page, '>B\nACGTACGT\n>s2\nACGTACGA\n>s3\nACGTACGC\n');
+  const out = {};
+  out.did = await page.evaluate(() => _commitSeqRename(2, '  my  new seq '));
+  out.name = await page.evaluate(() => state.seqs[2].header + '|' + state.seqs[2].fullHeader);
+  out.msg = await page.evaluate(() => document.getElementById('statusMessage').textContent);
+  out.reloaded = await page.evaluate(() => parseFasta(_alignmentFastaText()).map(q => q.header).join(','));
+  await page.evaluate(() => {
+    colourState.mappings.clear();
+    colourState.mappings.set('B', '#ff0000'); colourState.mappings.set('s2', '#0000ff');
+    applyColourToSeqNames(colourState.mappings); renderAlignment(); document.activeElement?.blur?.();
+  });
+  await page.evaluate(() => _commitSeqRename(1, 'B'));
+  out.afterRename = await page.evaluate(() => colourState.mappings.get('B'));
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  out.afterUndo = await page.evaluate(() => ({ names: state.seqs.map(q => q.header).join(','), B: colourState.mappings.get('B') || null, s2: colourState.mappings.get('s2') || null }));
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(300);
+  out.afterRedo = await page.evaluate(() => ({ names: state.seqs.map(q => q.header).join(','), B: colourState.mappings.get('B') || null }));
+  const pass = out.did === true && out.name === 'my_new_seq|my_new_seq' && /space/i.test(out.msg) && /_/.test(out.msg)
+    && out.reloaded === 'B,s2,my_new_seq'
+    && out.afterUndo.names === 'B,s2,my_new_seq' && out.afterUndo.B === '#ff0000' && out.afterUndo.s2 === '#0000ff'
+    && out.afterRedo.names === 'B,B,my_new_seq' && out.afterRedo.B === out.afterRename;
+  return { pass, detail: JSON.stringify(out) };
 });
 
 async function main() {

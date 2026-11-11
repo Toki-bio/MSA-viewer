@@ -150,8 +150,11 @@ Report: `dev-tools/audit-2026-11-11/glm-check.md`. Checks "GLM 1111 Q15b", "GLM 
   without, `#=GC` and the return of the block's first name (after other names) do.
 - **Q16 #3** `_alignIdNames`: an aligner error during Add & Align names a pasted row.
 
-Left for the owner: **Q15a #1** (Rename accepts spaces; Save and reload show the first word as the name),
-**Q17 #0** (undo of a rename onto an existing name, part of M15), and the UNSURE items of the report (databases
+- **Q15a #1** (owner 2026-11-11) Rename turns spaces into `_` and says so. **Q17 #0** undo or redo of a rename
+  onto a name another row has gives that name the colour of the restored state (`_restoreNameColours`, by row
+  counts per name). Check "GLM 1111 Q15a, Q17".
+
+Left for the owner: and the UNSURE items of the report (databases
 and snapshots readable without the access key; the key cookie is shared by all localhost ports).
 
 ## What the GLM check should look at
