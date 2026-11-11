@@ -7,7 +7,8 @@
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
-const read = f => fs.readFileSync(path.join(ROOT, '.github', 'workflows', f), 'utf8');
+// a Windows checkout has CRLF line ends (core.autocrlf); the line patterns below expect LF
+const read = f => fs.readFileSync(path.join(ROOT, '.github', 'workflows', f), 'utf8').replace(/\r\n/g, '\n');
 // comments say what the file used to do: judge the YAML without them
 const noComments = s => s.split('\n').map(l => l.replace(/(^|\s)#.*$/, '')).join('\n');
 const pages = noComments(read('pages.yml'));
