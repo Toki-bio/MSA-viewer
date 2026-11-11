@@ -18473,10 +18473,23 @@ check('GLM 1110 #4: a click on the alignment (Full residue, Canvas name column) 
 // #5: Escape is handled before the batch-1 guard, so during a run it cleared the selection (behind the overlay).
 check('GLM 1110 #5: Escape while the aligner runs keeps the selection', async (page) => {
   await loadFasta(page, audit1Big());
-  await page.evaluate(() => { state.selectedRows = new Set([5, 6]); renderAlignment(); document.getElementById('realignSelectedButton').click(); });
-  await glmBusyUp(page);
-  await page.keyboard.press('Escape'); await page.waitForTimeout(100);
-  const out = await page.evaluate(() => ({ busy: !document.getElementById('busyOverlay').hidden, rows: [...state.selectedRows].sort((a, b) => a - b).join(',') }));
+  // Esc is pressed the moment the busy box appears, and judged at that moment: a fixed wait after it appeared let a
+  // fast machine (GitHub's runner) finish the 2-row align first, so Esc came after the job and the check failed.
+  await page.evaluate(() => { state.selectedRows = new Set([5, 6]); renderAlignment(); });
+  await page.evaluate(() => new Promise((resolve) => {
+    const shown = () => { const b = document.getElementById('busyOverlay'); return !!b && !b.hidden; };
+    const mo = new MutationObserver(() => {
+      if (!shown()) return;
+      mo.disconnect();
+      const busy = shown();
+      (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      window.__glm5 = { busy, rows: [...state.selectedRows].sort((a, b) => a - b).join(',') };
+      resolve();
+    });
+    mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+    document.getElementById('realignSelectedButton').click();
+  }));
+  const out = await page.evaluate(() => window.__glm5);
   await glmBusyEnd(page);
   return { pass: out.busy && out.rows === '5,6', detail: JSON.stringify(out) };
 }, { timeoutMs: 240000 });
