@@ -8415,7 +8415,7 @@ function parsePhylip(text) {
     if (nSeqs < 1 || alignLen < 1) return null;
     const body = lines.slice(1);
     // Whitespace and position numbers some writers put at line ends are not residues
-    const strip = s => s.replace(/[\s\d]/g, '');
+    let strip = s => s.replace(/[\s\d]/g, '');
     const splitName = {
         relaxed: l => { const m = l.trim().match(/^(\S+)\s+(.*)$/); return m ? [m[1], strip(m[2])] : null; },
         strict: l => l.length > 10 ? [l.substring(0, 10).trim(), strip(l.substring(10))] : null
@@ -8456,6 +8456,16 @@ function parsePhylip(text) {
     const results = attempts.map(a => a());
     const fits = got => got && got.length === nSeqs && got.every(e => e.seq.length === alignLen);
     entries = results.find(fits) || null;
+    if (!entries) {
+        // A matrix of states (binary 0/1, restriction sites): its digits are the data, not position
+        // numbers. Removing them left empty rows and the file was refused (audit L15). Read again keeping
+        // digits; taken only when every row is states and fits the header.
+        const stripLetters = strip;
+        strip = s => s.replace(/\s/g, '');
+        const asStates = attempts.map(a => a()).find(got => fits(got) && got.every(e => /\d/.test(e.seq) && /^[0-9?.\-]+$/.test(e.seq)));
+        if (asStates) return asStates.map(e => ({ header: e.name, fullHeader: e.name, seq: e.seq, gaplessPositions: calculateGaplessPositions(e.seq) }));
+        strip = stripLetters;
+    }
     // A number inside the 10 name columns is part of the name ("Clone 1", "Clone 12"), not a position
     // number: the relaxed reading dropped it and gave three rows named "Clone" (audit M2). Taken only
     // when the strict reading gives the same sequences and its names are the relaxed ones plus digits.

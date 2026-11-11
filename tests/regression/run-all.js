@@ -18428,6 +18428,23 @@ check('Audit H10: a browser the local server does not know is told to open the s
   return { pass, detail: JSON.stringify({ note: note.slice(0, 160), asked }) };
 });
 
+// Audit 2026-11-10, L15. What used to go wrong: the PHYLIP reader removed every digit (position numbers at
+// line ends), so a binary 0/1 matrix (restriction sites, presence/absence; what RAxML and IQ-TREE take as
+// BIN) had empty rows and was refused with "the file does not have N sequences". A file whose rows are only
+// states (digits, ?, -, .) and fit the header is now read as states, sequential and interleaved.
+check('Audit L15: a binary 0/1 PHYLIP matrix loads as rows of states', async (page) => {
+  const rows = async (text) => { try { await loadFasta(page, text); } catch (e) { return 'threw ' + e.message.slice(0, 80); } return page.evaluate(() => state.seqs.map(q => q.header + '=' + q.seq)); };
+  await loadFasta(page, '>keep\nACGT\n');
+  const out = {};
+  out.seq = await rows(' 3 8\ntaxA 01010011\ntaxB 0101?011\ntaxC 1101-011\n');
+  out.inter = await rows(' 2 12\ntaxA      010100\ntaxB      110100\n\n110011\n110010\n');
+  // letters with position numbers at line ends stay as they were
+  out.numbered = await rows(' 2 8\nalpha ACGTACGT 8\nbeta  ACGAACGT 8\n');
+  const want = { seq: ['taxA=01010011', 'taxB=0101?011', 'taxC=1101-011'], inter: ['taxA=010100110011', 'taxB=110100110010'], numbered: ['alpha=ACGTACGT', 'beta=ACGAACGT'] };
+  const pass = JSON.stringify(out) === JSON.stringify(want);
+  return { pass, detail: JSON.stringify(out).slice(0, 400) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
