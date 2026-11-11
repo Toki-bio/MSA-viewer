@@ -9,9 +9,9 @@
 ## 📥 Input & Format Support
 
 ### 9-format automatic detection
-Load any of FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, BAM, or GenBank. Detection inspects content — `@HD`/`@SQ` headers for SAM, `CLUSTAL`/`MUSCLE` keywords for Clustal, `# STOCKHOLM 1.0` for Stockholm, `#NEXUS` for NEXUS, `MSF:` block for MSF, `nSeqs length` first-line pattern for PHYLIP, `LOCUS` header for GenBank. BAM is detected by file extension. No CRAM support.
+Load any of FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, AB1 chromatograms, SAM, BAM or CRAM. Detection inspects content — `@HD`/`@SQ` headers for SAM, `CLUSTAL`/`MUSCLE` keywords for Clustal, `# STOCKHOLM 1.0` for Stockholm, `#NEXUS` for NEXUS, `MSF:` block for MSF, `nSeqs length` first-line pattern for PHYLIP, `LOCUS` header for GenBank. BAM, CRAM and AB1 are recognised by their content (magic bytes), not the extension. CRAM is decoded in the browser against the loaded reference.
 
-**Why novel:** No other browser-based viewer accepts SAM, BAM, Stockholm, NEXUS, or GenBank. No desktop viewer auto-detects all 9 from content.
+**Why novel:** No other browser-based viewer accepts SAM, BAM, Stockholm, NEXUS, or GenBank. No desktop viewer auto-detects all of these from content.
 
 ### CIGAR expansion for SAM
 9 CIGAR operations (M, I, D, N, S, H, P, =, X) expanded to gapped nucleotide alignment via `_expandCigar()`. Pileup majority-rule consensus computed from mapped reads as the reference sequence. Secondary (flag 0x100), supplementary (flag 0x800), and unmapped (flag 0x4) reads automatically filtered.
@@ -24,7 +24,7 @@ Load any of FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, BAM, or GenBank.
 **Why novel:** NGS file inspection without a server or CLI. Unique among web viewers.
 
 ### Recent files history
-localStorage-backed panel. Stores metadata + full alignment text (100 KB cap per entry). Adjustable size 1–50. One-click reload of any past file, including clipboard pastes. Survives browser restarts.
+localStorage-backed panel. Stores metadata for every entry; the text itself only for clipboard pastes up to 100 KB. A file is reopened through its saved file handle where the browser allows, otherwise by opening it again. Adjustable size 1–50. One-click reload of any past file, including clipboard pastes. Survives browser restarts.
 
 **Why novel:** Alignments persist across sessions without a server or database. Most viewers forget everything on tab close.
 
@@ -64,7 +64,7 @@ Conserved-column set computed once from the alignment. Highlight Diffs dims full
 This is not a single feature — it's a complete colour assignment infrastructure with multiple entry points, all tracked and reversible.
 
 ### Auto-colour by name similarity
-`clusterByName()` normalizes sequence headers to first N configurable characters. Groups identical normalized keys into guaranteed-same-colour buckets. Optionally merges near-identical keys via Levenshtein distance with configurable sensitivity (0 = permissive, 10 = strict). Two rendering modes:
+`clusterByName()` normalizes sequence headers to first N configurable characters. Groups identical normalized keys into guaranteed-same-colour buckets. Optionally merges near-identical keys by n-gram Jaccard similarity with configurable sensitivity (0 = strict, 10 = loose). Two rendering modes:
 - **Discrete:** maximally-separated ColorBrewer/Tablaeu palette with golden-ratio hue distribution for >12 clusters. Every cluster gets a distinct colour.
 - **Gradient:** HSL shading within clusters — identical normalized names get identical hue, then brightness varies.
 
@@ -101,9 +101,9 @@ After running SINEClusterer, assign persistent colours to sequences by cluster m
 ## ✂️ Editing Operations
 
 ### GeneDoc-style residue editor
-Edit mode toggles per-residue keyboard input. Click a residue, type the replacement. Typing `-` or `.` replaces the current residue with a gap character at that position (does not insert a gap column). The edited span's shading updates immediately using cached conservation data; full conservation recomputation and gapless position cache updates happen on the next render. A separate "Live conservation" toggle enables real-time conservation recomputation during Move/Slide drag operations.
+Edit mode toggles per-residue keyboard input. Click a residue, type the replacement. Typing `-` or `.` replaces the current residue with a gap character at that position (does not insert a gap column). The edited span's shading updates immediately using cached conservation data; full conservation recomputation and gapless position cache updates happen on the next render. A separate "Shade while dragging" toggle enables real-time conservation recomputation during Move/Slide drag operations.
 
-**Why novel:** Browser-based MSA editing is rare. MSAViewer (Yachdav 2016) has no editing mode. Per-keystroke span updates with cached conservation shading, plus a live-conservation toggle for drag operations, have no equivalent in other browser-based viewers.
+**Why novel:** Browser-based MSA editing is rare. MSAViewer (Yachdav 2016) has no editing mode. Per-keystroke span updates with cached conservation shading, plus a shade-while-dragging toggle for drag operations, have no equivalent in other browser-based viewers.
 
 ### Full undo/redo with visual dropdown
 Every operation — row deletion, duplication, reverse-complement, column deletion, gap insertion, residue typing, block realignment, degapping, replace-with-consensus — pushes to an undo stack. TSD marking with lowercase style also pushes to the main stack; colour and bold TSD marking use a separate undo mechanism. The dropdown shows operation names in reverse chronological order (most recent first); click any to jump to that state. Not linear — random-access undo.
@@ -181,7 +181,7 @@ Save/restore parameter configurations as named presets. After clustering, assign
 **Why novel:** Reproducible clustering across TE families. Colour-as-validation makes cluster quality instantly visual.
 
 ### Dot plot with region detection
-Self-comparison or pairwise. Adjustable window (1–61, odd), identity threshold (0–100%), context radius (5–100 bp), RevComp axis B for inverted repeats. Region detector finds top 30 diagonal runs and presents them in a navigable sidebar. Click any region to scroll the alignment to that position. Hover shows aligned sequence context with mismatch highlighting. Copy Region exports the hovered region as FASTA. Export as PNG or SVG.
+Self-comparison or pairwise. Adjustable word length (2–20, word mode) or window (1–61, odd, window mode), identity threshold (0–100%), context radius (5–100 bp), RevComp axis B for inverted repeats. Region detector finds top 30 diagonal runs and presents them in a navigable sidebar. Click any region to scroll the alignment to that position. Hover shows aligned sequence context with mismatch highlighting. Copy Region exports the hovered region as FASTA. Export as PNG or SVG.
 
 **Why novel:** Region detector + sidebar navigation bridges dot plot exploration and alignment inspection. No other viewer connects these — you see a dot, you click it, you're looking at the aligned sequences. Copy Region turns exploratory browsing into data extraction.
 
@@ -191,7 +191,7 @@ Tandem repeat detection with configurable minimum length and mismatch tolerance 
 **Why novel:** Non-destructive TSD annotation with undo. Mark→inspect→undo workflow lets you try different parameter settings without polluting the alignment.
 
 ### UPGMA tree with optimal leaf ordering
-Pairwise identity distances → UPGMA clustering with orientation-optimized leaf ordering → Newick output with branch lengths → .nwk download → text tree visualization.
+Pairwise distances (p-distance, JC69 or K80) → UPGMA or Neighbor-Joining with orientation-optimized leaf ordering → Newick output with branch lengths → .nwk download → drawn tree (rectangular or unrooted) in the Tree window.
 
 ### Unrooted tree label controls
 Equal-angle (Felsenstein) unrooted layout with adjustable label rendering: **font size** stepper (6-28px, independent of Zoom), **font family** dropdown (System UI / Serif / Monospace / Sans), **angled vs horizontal** orientation toggle (angled rotates each label to its branch angle, normalized to avoid upside-down text; horizontal keeps flat text for users who prefer it), and **automatic overlap grouping** (angled mode only) — leaves whose angular gap falls under a font-size-scaled threshold merge into a single "+N" orange label with a hover tooltip listing all member names, capped at 6 members per group to prevent runaway cascade-merging at large font sizes. Works alongside the existing Label spacing control from the equal-angle layout's density-floor heuristic.
@@ -204,7 +204,7 @@ Clicking any branch or node shows a dismissable info line above the tree canvas:
 **Why novel:** Lets you drill into one crowded clade of a large tree at full size without losing your place in — or altering — the main view.
 
 ### Multi-mode consensus engine
-Two modes: **Plurity** (strict nucleotide — normal bases only, A/C/G/T priority, U→T normalization) and **Ambiguous** (IUPAC codes for multi-base positions). Independent **threshold** (frequency of majority base) and **coverage minimum** (fraction of non-gap sequences required). **Fallback mode**: gap or keep-best when no base meets threshold. Used by the consensus line, group consensus, replace-with-consensus, and SAM pileup consensus — all sharing the same engine with per-use configurable parameters.
+Two modes: **Normal** (strict nucleotide — normal bases only, A/C/G/T priority, U→T normalization) and **Ambiguous** (IUPAC codes for multi-base positions). Independent **threshold** (frequency of majority base) and **coverage minimum** (fraction of non-gap sequences required). **Fallback mode**: gap, N or an IUPAC code when no base meets threshold. Used by the consensus line, group consensus, replace-with-consensus, and SAM pileup consensus — all sharing the same engine with per-use configurable parameters.
 
 **Why novel:** Independent threshold + coverage minimum is not standard. Most tools have a single "consensus threshold." The coverage minimum prevents calling a consensus base from 2 sequences out of 100. The IUPAC ambiguous mode preserves positional uncertainty information that plurality mode discards.
 
@@ -218,7 +218,7 @@ Search bar accepts exact motifs (with configurable 0–10 mismatches) or JavaScr
 **This is the single most confused feature in the codebase (2026-08-23: it silently broke, took hours to root-cause, see below) — read this whole section before touching any of the files it names.**
 
 **What it actually is:** a 100% client-side, in-browser search engine. It is *not* NCBI BLAST — `blastn` is never invoked for this feature. Right-click a sequence → "BLAST Search" → pick databases → `runBlastSearch()` (`script.js`) posts a message to a Web Worker (`blast-worker.js`), which:
-1. `fetch()`es the chosen database's raw FASTA file directly (served statically by `express.static('.')` in `server.js` — any file in the project root is fetchable by its own filename over HTTP)
+1. `fetch()`es the chosen database's raw FASTA file directly (served statically by `server.js`, which serves only the viewer's own files, `snapshots/` and the added databases)
 2. caches it in IndexedDB so repeat searches skip re-downloading
 3. parses it, builds an in-memory inverted k-mer index, and searches against it in pure JS
 
@@ -285,7 +285,7 @@ Save complete viewer state as JSON: alignment data, colour assignments, search h
 - **Copy alignment** — full alignment as FASTA
 - **Copy consensus** — consensus sequence as FASTA
 - **Copy by colour** — all sequences with a specific colour, gapped or ungapped
-- **Copy tree Newick** — UPGMA output to clipboard
+- **Copy tree Newick** — the UPGMA or Neighbor-Joining tree to clipboard
 
 **Why novel:** Copy selected **columns** has no equivalent in any other viewer. It exports a structural element (column range) rather than a sequence element.
 
@@ -317,13 +317,13 @@ Save complete viewer state as JSON: alignment data, colour assignments, search h
 
 12. **Snapshot system with search + colour state** — URL-loadable saved states include colour assignments and search highlights, not just alignment data. Shareable links to exact viewer configurations.
 
-13. **9-format automatic content detection** — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, SAM, BAM, GenBank. No file extension guessing. More formats than any browser viewer.
+13. **Automatic content detection of 11 formats** — FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, AB1, SAM, BAM, CRAM. No file extension guessing. More formats than any browser viewer.
 
 14. **Save/load sequence order as portable JSON** — export current order to a file, reimport after reloading data. Decouples ordering from alignment content. Matches by header name, handles missing/extra entries gracefully.
 
 15. **Browser-based BLAST database CRUD** — upload FASTA → `makeblastdb` on server → registered in `blast_dbs.json`. Delete databases with index file cleanup. All from the viewer modal — no server CLI needed.
 
-16. **Zero-dependency vanilla JavaScript architecture** — 12,000 lines. No framework, no build step, no installation. Runs from GitHub Pages.
+16. **Vanilla JavaScript architecture without a framework or build step** — about 40,000 lines in the main script; MAFFT (WebAssembly), the MACSE port and the CRAM reader are bundled. No framework, no build step, no installation. Runs from GitHub Pages.
 
 ---
 
@@ -331,7 +331,7 @@ Save complete viewer state as JSON: alignment data, colour assignments, search h
 
 | Feature | ViewAlign | MSAViewer (Yachdav) | JalviewJS | AliView* | IGV.js |
 |---------|-----------|---------------------|-----------|----------|--------|
-| **Formats** | 9 (auto-detect) | 1 (FASTA) | 5+ | 5+ | SAM/BAM |
+| **Formats** | 11 (auto-detect) | 1 (FASTA) | 5+ | 5+ | SAM/BAM |
 | **View modes** | 4 | 1 | 2 | 2 | 1 |
 | **Residue editing** | ✅ GeneDoc-style | ❌ | ❌ | ✅ | ❌ |
 | **Codon analysis** | ✅ 15 codes | ❌ | ❌ | ❌ | ❌ |

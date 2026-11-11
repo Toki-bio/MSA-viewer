@@ -98,7 +98,9 @@ chmod 666 /tmp/.msa_viewer_queue
 
 ## 4 — Browser UI
 
-1. Open `http://localhost:3000`
+1. Open the viewer. The first time in a browser, use the link the server printed when it started
+   (`http://localhost:3000/?key=...`, also shown by `start-server.bat`): it carries your access key.
+   Afterwards `http://localhost:3000` works. Without the key the server buttons do not appear.
 2. The **Input** section shows a row of server buttons (one per entry in `ssh-servers.json`)
 3. Navigate to a file in MC and press `F2 → v`
 4. In the browser:

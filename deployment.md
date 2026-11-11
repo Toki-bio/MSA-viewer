@@ -20,7 +20,8 @@ file. Set them in the shell, in a systemd unit, or in a PM2 ecosystem file.
 | `ALLOWED_HOSTS` | Comma-separated host names that may appear in the `Host` header, besides `localhost` and IP addresses | none |
 | `TAILSCALE_IP` | One more address accepted as a host name | none |
 | `CORS_ORIGIN` | One more web origin allowed to call `/api` | `http://localhost:PORT` and `http://127.0.0.1:PORT` |
-| `ALLOW_REMOTE_FILE_ACCESS` | `1` lets clients that are not on this machine use the file and SSH routes | off |
+| `ALLOW_REMOTE_FILE_ACCESS` | `1` lets clients that are not on this machine use the file and SSH routes, add or delete databases and run MAFFT/BLAST (they still need the access key) | off |
+| `STATIC_SERVE_ALL` | `1` serves every file of the folder, not only the viewer's own files | off |
 | `LOCAL_FILE_ROOTS` | Folders the local-file routes may read, separated by the path delimiter (`:` on Linux) | the ViewAlign folder and the home folder |
 | `SSH_KEY_PATH` | Private key used by SSH file loading | `~/.ssh/id_ed25519` (`id_ed25519.ppk` on Windows) |
 | `MAFFT_BIN` | Path of the native MAFFT binary used by `POST /api/mafft` | `/staging/conda/envs/bioinfo/bin/mafft`, so set it |
@@ -42,6 +43,16 @@ BLAST+ install.
   the safe setting for a public site. Set `ALLOW_REMOTE_FILE_ACCESS=1` only for a private
   site, because it lets every visitor read files that the server user can read inside
   `LOCAL_FILE_ROOTS` and use your SSH servers.
+- **Routes that change the server or run programs.** Adding or deleting a database and running MAFFT or
+  BLAST (`POST /api/blast-db`, `DELETE /api/blast-db/...`, `POST /api/mafft`, `/api/blast`,
+  `/api/blast-all`) follow the same rule: same machine only unless `ALLOW_REMOTE_FILE_ACCESS=1`.
+- **Access key.** All the routes of the two points above, and `/api/ssh-servers`, also need the access
+  key. The server prints a link `http://localhost:PORT/?key=...` at start and keeps the key in
+  `~/.viewalign/access-key` of the server user. A browser must open the site once with `/?key=<key>`
+  (through nginx: `https://msa-viewer.example.com/?key=<key>`) to get the cookie. Without it these routes
+  return `401` and the page shows a note; the viewer itself works.
+- **Files served.** Only the viewer's own files, `snapshots/` and the added databases are served.
+  `STATIC_SERVE_ALL=1` serves the whole folder (development pages); do not set it on a public site.
 - **Cross-site requests.** `/api` requests sent by another site's page are refused. The
   viewer served by this same server passes.
 
@@ -114,7 +125,8 @@ Check it: `curl https://msa-viewer.example.com/api/viewer-info` should return JS
 ## Step 4: The page finds the server by itself
 
 The viewer calls `/api/...` on the address it was loaded from. Open
-`https://msa-viewer.example.com/` and the server features appear. There is no setting to
+`https://msa-viewer.example.com/` and the viewer works; the file, SSH and database features appear only
+for a browser that has the access key and only where the access rules above allow them. There is no setting to
 change in `script.js`. The page on GitHub Pages never looks for a server, so the hosted
 app and your server are separate sites.
 
