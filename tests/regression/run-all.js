@@ -18476,6 +18476,18 @@ check('Audit L16: the full SVG and the RTF export follow the Case setting', asyn
   return { pass, detail: JSON.stringify(out).slice(0, 500) };
 });
 
+// Audit 2026-11-10, L21 (U as T). What used to go wrong: Sort by similarity compared letters as written, so
+// an RNA copy of the first row (U for T) counted every U as a difference and was ranked below a DNA row
+// with real differences.
+check('Audit L21: Sort by similarity counts U as T', async (page) => {
+  await loadFasta(page, '>ref\nACGTTTACGTTTACGTTTAC\n>far\nACGTTTACGAAAACGAAAAC\n>rna\nACGUUUACGUUUACGUUUAC\n>near\nACGTTTACGTTTACGTTAAC\n');
+  await page.evaluate(() => sortBySimilarity());
+  await page.waitForTimeout(600);
+  const order = await page.evaluate(() => state.seqs.map(q => q.header));
+  const pass = JSON.stringify(order) === JSON.stringify(['ref', 'rna', 'near', 'far']);
+  return { pass, detail: JSON.stringify(order) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

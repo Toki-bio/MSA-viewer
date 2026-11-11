@@ -17334,10 +17334,13 @@ function sortBySimilarity() {
     if (state.seqs.length < 2) return;
     pushUndo('sort-similarity');
     const ref = state.seqs[0].seq;
+    // U is T in a nucleotide alignment: an RNA copy of the first row was ranked as different at every U (audit L21)
+    const uIsT = !isProteinAlignment();
+    const letter = c => { c = c.toUpperCase(); return uIsT && c === 'U' ? 'T' : c; };
     const scored = state.seqs.map((s, i) => {
         let match = 0, total = 0;
         for (let p = 0; p < ref.length; p++) {
-            const a = ref[p].toUpperCase(), b = (s.seq[p] || '-').toUpperCase();   // soft-masked (lowercase) copies count as identical
+            const a = letter(ref[p]), b = letter(s.seq[p] || '-');   // soft-masked (lowercase) copies count as identical
             if (a !== '-' && a !== '.' && b !== '-' && b !== '.') { total++; if (a === b) match++; }
         }
         return { idx: i, score: total > 0 ? match / total : 0 };
