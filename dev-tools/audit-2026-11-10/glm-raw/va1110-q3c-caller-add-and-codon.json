@@ -1,0 +1,74 @@
+{
+  "findings": [
+    {
+      "title": "addSequencesAndAlign leaves its 'add-and-align' undo step in history when _mafftAlignWithUi resolves null",
+      "verdict": "defect",
+      "file": "script.js",
+      "line": 27031,
+      "quote": "if (!result) return;",
+      "reasoning": "26980 pushes the undo step (pushUndo also clears state.redoHistory). On null from _mafftAlignWithUi (Stop clicked, MAFFT error, or the stale check at 26148), the .then at 27030 returns at 27031 without any _dropNoOpUndo (grep: _dropNoOpUndo is only called at 26490 and 26608, never inside addSequencesAndAlign). realignAll handles this case at 26490: 'if (!result) { _dropNoOpUndo(redoBeforeRealign); return; }   // cancelled: no change, no undo step', which pops the junk step and restores the redo stack; addSequencesAndAlign does neither, so the stack keeps a snapshot of the unchanged alignment and the redoHistory cleared by pushUndo stays cleared. Note _skipNextNoOpUndoDrop set at 26150 (stale case) is harmless here because this caller never calls _dropNoOpUndo and the setTimeout(0) clears it before any later user action, so no wrong step is popped.",
+      "scenario": "User does an edit, undoes it (redo stack has work), opens Add & Align, pastes sequences, clicks Stop / gets a MAFFT error / triggers the stale check; no visible change happens, but the next Ctrl+Z silently restores the identical alignment (undo appears dead for one press), the redo work captured before pushUndo is destroyed (pushUndo clears state.redoHistory at 17273), and every retry leaves another junk step.",
+      "severity": "medium",
+      "confidence": 4
+    },
+    {
+      "title": "State is not modified before the run: startSeqs/startFp at 26144 snapshot exactly the state the result will be applied to",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 26980,
+      "quote": "pushUndo('add-and-align');",
+      "reasoning": "Reading 26968-27030: before _mafftAlignWithUi is called, the function only reads state.seqs to build strings (26984-26986 builds existingFasta, 26995 uses state.seqs[0] as _adjustDirection reference), collects headers (27015-27021), calls closeAddSequencesModal() (27023), and parses the combined FASTA into the originalCaseByHeader map (27028-27029). state.seqs is not reassigned until 27079 ('state.seqs = newSeqs;') and no array element is mutated beforehand, so no false 'stale' verdict is possible at 26148 and the abandoned snapshot pushed at 26980 equals the live alignment (making the leftover step a no-op rather than wrong data).",
+      "scenario": "Covers the normal and stale-result paths of Add & Align in both MAFFT and codon mode: the result is only applied to the exact alignment that was sent to the aligner.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "The stale-result snapshot at 26144 is taken before the codon dispatch at 26188, so the check covers codon runs end to end",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 26188,
+      "quote": "if (_isCodonAlignMode()) return _codonAlignWithUi(fasta, label && label.replace(/MAFFT/g, 'codon aligner'));",
+      "reasoning": "_mafftAlignWithUi captures startSeqs/startFp identity and _seqsFingerprint at 26144 before awaiting _mafftAlignWithUiRun at 26146; _mafftAlignWithUiRun routes codon mode into _codonAlignWithUi at 26188, so any change to state.seqs during the whole codon run, including the _mafftAskYesNo question and runWithProgress, trips 26148 ('if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp)') and the codon output is discarded with the message at 26152. This also covers addSequencesAndAlign calling through this wrapper: it reaches 26143 via _mafftAlignWithUi (27030) with seqType 'codon' when the option is checked.",
+      "scenario": "Codon-mode Add & Align and realign runs are protected exactly as MAFFT runs are; a stale codon result never lands.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "realignAll handles a null result correctly, giving a pattern addSequencesAndAlign missed",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 26490,
+      "quote": "if (!result) { _dropNoOpUndo(redoBeforeRealign); return; }   // cancelled: no change, no undo step",
+      "reasoning": "On a cancelled run _mafftAlignWithUi returns null at 26147; _dropNoOpUndo pops the caller's undo step and restores the redo stack, so both Stop-to-cancel and stale-to-discard end with clean, unchanged undo history. This is the pattern that 26149-26150 comment explicitly sites ('the callers take their undo step back on \"no result\": only if it is still the last one') and that addSequencesAndAlign (27031) fails to follow.",
+      "scenario": "Cancelling Realign all leaves the undo stack exactly as before, unlike the Add & Align path.",
+      "severity": "none",
+      "confidence": 4
+    },
+    {
+      "title": "The codon run's yes/no question is asked before the busy overlay exists, so alignment state can diverge during the answer window; the stale check then silently discards the run",
+      "verdict": "defect",
+      "file": "script.js",
+      "line": 26071,
+      "quote": "const go = await _mafftAskYesNo({",
+      "reasoning": "_codonAlignWithUi awaits _mafftAskYesNo at 26071-26077 and only calls runWithProgress (which raises the busy overlay) at 26084, so the question is up while no busy overlay blocks input and the dialog is not part of the exactly described window set that makes _alignmentKeysAway return early (per Batch 1, _alignmentKeysAway returns 'busy' only while #busyOverlay shows and 'window' for EXCLUSIVE_MODAL_IDS at 2538 plus statsModal). If keys edit the alignment while the question is pending, 26148 ('if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp)') reliably discards the codon result with the 26152 message ('...changed while the aligner was running...'), so no wrong data lands, but the run is wasted, the user must re-run, and finding 1's leftover undo step applies (26150 then also sets _skipNextNoOpUndoDrop, which the setTimeout on the same line clears before any later caller's drop, so no wrong pop for others). Note: I could not re-verify within budget whether any key besides the window list makes _mafftAskYesNo key-blocking, so the liveness of shortcuts during the dialog specifically is moderately (not fully) verified; the snapshot-before-ask coverage at 26144/26146 is fully verified.",
+      "scenario": "Codon mode on, Add & Align with rows containing stop codons in every frame: the yes/no dialog appears; the user edits with keyboard shortcuts while deciding (no busy overlay yet), then clicks Yes; MACSE runs and finishes but its output is rejected, the user must re-run, and 'add-and-align' undo steps accumulate.",
+      "severity": "low",
+      "confidence": 3
+    },
+    {
+      "title": "A 'No' answer to the codon question returns null through the stale-check wrapper, leaving the caller's situation to the caller as designed",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 26078,
+      "quote": "if (!go) { showMessage('Codon alignment not run: the sequences are not coding from end to end.', 5000); return null; }",
+      "reasoning": "_codonAlignWithUi returns null without running anything and without touching state.seqs; 26147 ('if (result == null) return result;') passes null out unchanged to callers like addSequencesAndAlign (27030), which correctly leaves state.seqs untouched. The remaining cleanup obligation (dropping the surplus undo step, restoring redoHistory) falls on the caller as demonstrated by realignAll (26490), which addSequencesAndAlign currently does not perform — that gap is tracked separately above.",
+      "scenario": "Codon Ask: clicking No cleanly aborts with no state or undo-state mutation beyond what the caller has already pushed (see the separate leftover-step defect).",
+      "severity": "none",
+      "confidence": 4
+    }
+  ],
+  "counts": {
+    "findings": 6
+  },
+  "note": "Q3(a): addSequencesAndAlign is safe on the data axis but imperfect on the undo axis — it does NOT touch state.seqs before the run (only string/map building, closeAddSequencesModal, then `_mafftAlignWithUi(...).then(result => { if (!result) return; })`), and it never pops an undo step, so it can never pop someone else's; but when _mafftAlignWithUi resolves null (cancelled, error, stale) the 'add-and-align' step pushed at 26980 is left in history and the redoHistory cleared by pushUndo is not restored, unlike realignAll's guarded pattern at 26490 `if (!result) { _dropNoOpUndo(redoBeforeRealign); return; }`. Q3/Q4: the stale check does cover codon runs — _mafftAlignWithUi snapshots startSeqs/startFp at 26144 before awaiting _mafftAlignWithUiRun at 26146, and 26188 routes codon mode into _codonAlignWithUi, whose pre-overlay `_mafftAskYesNo` (26071) is also inside that window — so edits made during the yes/no question (no busy overlay exists yet) are caught at 26148, discarding the run rather than landing stale codon output; the run is wasted and the leftover-undo issue applies. The _skipNextNoOpDrop set at 26150 is harmless for addSequencesAndAlign (it never calls _dropNoOpUndo) and is cleared by its own setTimeout before any later caller could consume it."
+}

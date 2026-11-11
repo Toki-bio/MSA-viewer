@@ -1,0 +1,41 @@
+{
+  "findings": [
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 16850,
+      "quote": "el('loadButton')?.click(); // Ctrl+L = Load, as the Load button advertises",
+      "reasoning": "In handleKeyDown's textarea branch, 16849 gates on `activeEl === fastaInput && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l'` and 16850 immediately clicks loadButton with NO check of state.deletedHistory and no confirm() — unlike the outside-the-Input-box branch at 16941 which guards with `state.deletedHistory.length && !window.confirm(...)` (line 16941) before 16958 `el('loadButton')?.click();`. The click runs the handler at 28538 `'loadButton': () => parseAndRender(false)`, and parseAndRender (15294) takes its text from line 15298 `let inputText = (_bigInputText ?? fastaInput.value).trim();` — the ORIGINAL file text (the box is only written by _setInputText at 2477/2482 on file load / clear, never from the edited alignment). parseAndRender then executes line 15497 `state.deletedHistory = [];` and 15498 `state.redoHistory = [];`, wiping the undo stack. So the edits are gone and Ctrl+Z restores nothing.",
+      "scenario": "1) User edits the alignment (drag rows, delete a sequence, run MAFFT) so state.deletedHistory is non-empty. 2) User clicks in the Input box (fastaInput), whose text is still the ORIGINAL uploaded file. 3) User presses Ctrl+L expecting address-bar focus / harmless navigation. 4) Line 16850 loads the original file over the edited alignment AND line 15497 clears deletedHistory. 5) Ctrl+Z brings nothing back — the undo history is cleared, so the edits are permanently lost, with no confirmation dialog — exactly the loss the v333/outside-branch fix was meant to prevent.",
+      "severity": "high",
+      "title": "Ctrl+L in the Input box (textarea branch) loads the ORIGINAL file and silently clears the undo history — user's edits are unrecoverable",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 15497,
+      "quote": "state.deletedHistory = [];",
+      "reasoning": "parseAndRender unconditionally resets the undo stack, with the explanatory comment at 15496: `// Undo/redo hold the previous file's rows: Ctrl+Z after a load put them back under the new file's name`. Line 15498 also clears redoHistory. Because the Click at 16850 funnels straight into parseAndRender(false) (28538), after a textarea-branch Ctrl+L there is no history left for Ctrl+Z. Note the safeguard at 15298-15307 (empty paste box keeps the shown alignment and shows 'The paste box is empty: paste FASTA or MSF first (the alignment shown is kept).') does not apply: the box holds the original file text, not empty.",
+      "scenario": "Answers the question's second half directly: the undo history is NOT kept. After Ctrl+L in fastaInput with the original file text still in the box, state.deletedHistory is set to [], so Ctrl+Z cannot bring the user's edits back.",
+      "severity": "high",
+      "title": "Word from the source: parseAndRender hard-clears the undo stack, so Ctrl+Z cannot recover the edits lost to a textarea-branch Ctrl+L",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 16941,
+      "quote": "state.deletedHistory.length && !window.confirm('Reload the alignment? Your changes here are not saved.')",
+      "reasoning": "Outside the Input box, Ctrl+L is gated at 16936 `} else if (key.toLowerCase() === 'l' && (e.ctrlKey || e.metaKey)) {` with the confirming gate at 16941 before 16958 `el('loadButton')?.click();` — the careful behavior the fix intended. But 16853 `return; // let browser handle all keys in textarea (Input window etc.)` only skips the early-return; the fastaInput-specific branch at 16849-16851 runs FIRST and handles Ctrl+L with no confirmation. The comment at 16826 `// user rare case: the alignment is edited and the keyboard focus stayed in a text box such as the Input box after Ctrl+L` shows the author was aware of the edited-alignment-plus-text-field-focus hazard, yet the textarea branch bypasses the guard. (Physical/foreign quoted line numbers verified for 16849, 16850, 16853, 16936, 16941, 16958, 15294, 15298, 28538.)",
+      "scenario": "Covered: Ctrl+L with focus anywhere outside a textarea still asks the confirm dialog when deletedHistory is non-empty. Not covered: the exact same keystroke with focus in fastaInput, which silently destroys the edits — the gap this finding reports.",
+      "severity": "low",
+      "title": "The fixed branch (Ctrl+L OUTSIDE the Input box) does ask first and is reachable — that case itself is handled correctly",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 3
+  },
+  "note": "Q6 answer: In the textarea branch (focus in fastaInput), line 16850 clicks `el('loadButton')` unconditionally with no confirmation, and the handler (28538) calls parseAndRender(false), which reads the box's text (15298) — still the ORIGINAL file — then clears the undo stack at 15497 (`state.deletedHistory = []`) and redoHistory at 15498. So the edited alignment is replaced by the original file and the undo history is NOT kept: Ctrl+Z restores nothing; the edits are unrecoverable. This is a data-loss defect; the outer-branch confirm at 16941 covers only focus outside the Input box."
+}

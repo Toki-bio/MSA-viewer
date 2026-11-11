@@ -1,0 +1,74 @@
+{
+  "findings": [
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 29851,
+      "quote": "            if (handleNucleotideSelectMouseDown(e)) return;",
+      "reasoning": "The DOM (Full/Block) rows' shared mousedown chain (29849-29851) calls handleNucleotideSelectMouseDown (16526), whose left-button path ends with e.preventDefault() (my read of 16580-16593 placed it at 16586, with the comment that it cancels a fresh selection drag). The residue spans have no tabindex (repo-wide grep found tabindex only in a11y.js on dialog nodes and one slider at 29347), so the ONLY thing that would move focus off a side window is the browser's default mousedown focus behaviour - and preventDefault suppresses exactly that. So after the user clicks the tree-name-typed block or a button in Dot plot / Tree / Group explorer / Statistics (focus inside the modal, checked by _alignmentKeysAway's activeElement containment for EXCLUSIVE_MODAL_IDS + statsModal), clicking residues in Full mode never moves activeElement out.",
+      "scenario": "1) Open Tree (treeBuilderModal), click Run so a button inside it is focused. 2) Switch display mode to Full. 3) Click residues in the alignment repeatedly - selection works, but focus silently never leaves the window. 4) _alignmentKeysAway keeps returning 'window', handleKeyDown returns early: arrow keys, Delete-key row deletion etc. are permanently dead while the user is clearly editing the alignment.",
+      "severity": "high",
+      "title": "Full (DOM rows) mode: every plain left-click on a residue calls e.preventDefault() in handleNucleotideSelectMouseDown, so focus NEVER leaves a side window and alignment shortcuts stay dead while the user clicks the alignment",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 7844,
+      "quote": "            if (fh && fh.fold) { e.preventDefault(); hideTooltip(); _foldReveal(fh.fold); return; }",
+      "reasoning": "The canvas element carries a single mousedown handler (7825) for Canvas AND Canvas Block (both are isCanvasMode(); the trim handler at 21607 branches on isCanvasMode() for 'Block' too). Its plain-click branches for trim borders (7834), fold markers (7844), annotation features (7852), 2D row-type masks (7969) and name-drag reorder (8015) all call e.preventDefault(), which keeps activeElement wherever it was - including on a focused button inside dotPlotModal / treeBuilderModal / statsModal. Only the residue-selection (7972-8006), Ctrl+Alt column select, Ctrl/Shift row-select and pan fall-through branches omit preventDefault.",
+      "scenario": "With Dot plot open and its canvas focused (or any button in the window focused), the user clicks a fold marker '+', an annotation feature or drags a row name in the alignment; focus stays inside dotPlotModal and every alignment keyboard shortcut stays blocked even though the user just operated on the alignment.",
+      "severity": "medium",
+      "title": "Canvas and Canvas Block modes: clicks on fold markers, annotation features, 2D masks and name-drag all call e.preventDefault(), so focus stays trapped in the side window",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 2,
+      "file": "script.js",
+      "line": 16492,
+      "quote": "function handleColumnSelectMouseDown(e) {",
+      "reasoning": "handleColumnSelectMouseDown (Ctrl+Alt column toggle) contains e.preventDefault() at 16521 ('the column click shouldn't focus/shine'), and handleRowSelectMouseDown's Ctrl+click and Shift+click branches call e.preventDefault() at 16609 and 16619 with 'return true'. Both suppress the default focus move, so focus cannot escape the side window via these either.",
+      "scenario": "Tree window open with a focused control inside; user Ctrl+Alt-clicks a residue to toggle a column or Ctrl+clicks a row name to multi-select - alignment shortcuts remain dead afterwards.",
+      "severity": "medium",
+      "title": "Full mode: Ctrl+Alt column-click and Ctrl/Shift row-name clicks also preventDefault (handleColumnSelectMouseDown / handleRowSelectMouseDown), same focus trap",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 7975,
+      "quote": "            const idx = hit.row, pos = hit.col;",
+      "reasoning": "For the most common gesture - a plain left-click on a residue to start a selection - the canvas handler's branch (7972-8006, key lines 7975-8006) mutates state and calls hideTooltip(); scheduleOverlay(); return; with no e.preventDefault() anywhere, and the pan fall-through (8020-8027) likewise has none. Since the canvas has no tabindex (repo-wide grep: only script.js:29347 '<input type=\"range\" tabindex=\"-1\">' and a11y.js, which sets tabindex/-1 only on dialog nodes, never on the canvas or rows), the default mousedown behaviour in Chrome/Firefox moves activeElement to body, so _alignmentKeysAway stops returning 'window' and the shortcuts work.",
+      "scenario": "Dot plot open, focus inside it; user plain-clicks a residue or pans the canvas - focus moves out and alignment keyboard shortcuts resume as intended.",
+      "severity": "none",
+      "title": "Canvas and Canvas Block: a plain residue click and the pan fall-through do NOT preventDefault, so focus leaves the side window and shortcuts return",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 2,
+      "file": "script.js",
+      "line": 29347,
+      "quote": "    pop.innerHTML = '<input type=\"range\" tabindex=\"-1\">';",
+      "reasoning": "A repo-wide grep for 'tabindex' returns only script.js:29347 (a slider popup input) and a11y.js, which assigns tabindex=-1 programmatically on dialog nodes only - never on the alignment canvas, .seq-row, .seq-data or .seq-name elements. So there is no focusable alignment element that could hold focus; whenever a mousedown handler forgets preventDefault, focus lands on body and the shortcuts work, and no explicit focus()/blur() call exists in any of the alignment mousedown handlers to compensate for the preventDefault cases.",
+      "scenario": "Explains why the defect is preventDefault-only: no tabindex on canvases or rows means the default mousedown focus behaviour is the only mechanism returning focus to the page, and preventDefault removes it.",
+      "severity": "none",
+      "title": "Neither the alignment canvases nor the DOM rows are focusable (no tabindex anywhere except a slider pop and a11y.js dialog nodes), so a click that isn't preventDefault-ed moves focus to body in Chrome/Firefox",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 2,
+      "file": "script.js",
+      "line": 22847,
+      "quote": "        ? 'Open Group explorer as a floating window'",
+      "reasoning": "The UI text at 22829/22847/22848 shows the Group explorer is the window whose id is clusteringModal (toggle title 'Clusterability'/'Group explorer', button 'Open Group explorer as a floating window' / 'Dock Group explorer into the Groups menu'). My read of 2538-2557 placed 'clusteringModal' as an entry of EXCLUSIVE_MODAL_IDS (line 2541), together with dotPlotModal and treeBuilderModal, and _alignmentKeysAway (16755-16785) blocks alignment keys for those via activeElement containment - so the Group explorer behaves like the others: it blocks the alignment shortcuts only while focus is inside it. Note: the transcripts of my reads of 2538-2557 were noisy, so the exact EXCLUSIVE_MODAL_IDS line could not be quoted character-for-character; clusteringModal's membership rests on the 2541 content I read but is confidence 2-3.",
+      "scenario": "Open Groups > Group explorer (clusteringModal, float or docked), click a button inside it, then click the alignment: whether the shortcuts come back depends entirely on which element was clicked, per the defects above.",
+      "severity": "none",
+      "title": "Group explorer = clusteringModal, and it IS listed in EXCLUSIVE_MODAL_IDS, so it blocks alignment keys exactly like Dot plot and Tree",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 6
+  },
+  "note": "Q2 answered with 6 findings. Core result: a click on the alignment does NOT always move focus out of a side window. Full (DOM) mode is a full focus trap: handleNucleotideSelectMouseDown calls e.preventDefault() on every plain left-click on a residue, and handleColumnSelectMouseDown / handleRowSelectMouseDown's Ctrl and Shift branches do too, so with Dot plot / Tree / Group explorer / Statistics open and focused, activeElement never leaves the window and handleKeyDown stays locked out while the user edits the alignment (high/medium defects). In Canvas and Canvas Block, only feature clicks (trim edge, fold marker, annotation, 2D mask, name-drag) call preventDefault and trap focus; the common residue-click and pan branches do not, and since no alignment element has a tabindex (grep: only script.js:29347 slider and a11y.js on dialog nodes), focus moves to body and shortcuts resume (ok). No handler contains an explicit focus()/blur() that compensates. The Group explorer is clusteringModal and is in EXCLUSIVE_MODAL_IDS. Caveat noted in the last finding: quotes for the EXCLUSIVE_MODAL_IDS line could not be verified character-for-character from my noisy reads, so that membership statement carries reduced confidence."
+}

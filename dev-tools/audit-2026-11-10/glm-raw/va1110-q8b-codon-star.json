@@ -1,0 +1,96 @@
+{
+  "findings": [
+    {
+      "file": "macse-align.js",
+      "line": 113,
+      "quote": "                out[i] = 'N';",
+      "reasoning": "The MACSE SeqNT constructor applies checkNT to the raw seq (I read the constructor around line 250: this.acids = check === false ? acids : checkNT(acids)); checkNT keeps a character only if N2B[upper(c)] !== 0 (line 105: '            if (N2B[u] !== 0) continue;'), otherwise a letter is replaced by 'N' in what SeqNT stores, and characters that are not letters throw. macse-worker.js:24 ('        const NT_OK = new Set('ACGTacgtRYSWKMBDHVNrYsWkMbDhVn U u'.split(''));') lets U (and any '*' below its threshold) through to the engine, so those letters are rewritten to 'N' in the aligned rows that _mafftAlignWithUiRun returns; _alignerRestoreResidues (script.js:26167) is never called on this path, so no residue is put back. The residue order is preserved, but the character itself is changed in the saved alignment.",
+      "scenario": "User selects the codon aligner (MACSE engine) on CDS rows whose letters include U (RNA-style coding rows) or an IUPAC code outside MACSE's A/C/G/T/R/Y/N set, runs the alignment and saves; every such letter comes back as N in state.seqs - the input character was altered without warning.",
+      "severity": "medium",
+      "title": "MACSE codon path rewrites letters unknown to MACSE (e.g. U) into 'N' in the result rows",
+      "verdict": "defect",
+      "confidence": 3
+    },
+    {
+      "file": "script.js",
+      "line": 26189,
+      "quote": "    const guarded = _alignerGuardInput(fasta);",
+      "reasoning": "Line 26188 branches to the codon path before the guard: if (_isCodonAlignMode()) return _codonAlignWithUi(fasta, label && label.replace(/MAFFT/g, 'codon aligner')); (I recomposed it from reading script.js 26181-26195; main discrepancy risk: only line 26188's exact text is not as verified as quote 26189). After this, guard runs at script.js:26187 function _mafftAlignWithUiRun line 26189: const guarded = _alignerGuardInput(fasta). My grep of _runCodonAlignInWorker showed the codon path _runCodonAlignInWorker at script.js:26003, called from script.js:26091 inside _codonAlignWithUi. I confirmed _mafftAlignWithUiRun (script.js:26187) reaches the codon branch return (26188) before the guard (26189); _alignerRestoreResidues occurs only at script.js:26212 in the MAFFT branch. Hence _alignerGuardInput is never applied in codon mode — matches the premise in the handoff.",
+      "scenario": "Confirmation of the handoff: guard absent from codon path, applied post-codon-code only",
+      "severity": "none",
+      "title": "Confirmed: _alignerGuardInput runs at 26189 only after the codon branch has returned",
+      "verdict": "ok",
+      "confidence": 4
+    },
+    {
+      "file": "codon-align-worker.js",
+      "line": 11,
+      "quote": "    const records = CodonAlign.parseFasta(fasta).map(r => ({ name: r.name, seq: r.seq.replace(/[-.!]/g, '') }));",
+      "reasoning": "Worker strips only '-' '.' '!' before sending rows to CodonAlign.alignMultiple (folded in by alignMultiple's caller in macse-worker.js: const workflow = opts.engine === 'macse' ? 'refuses protein-like input (MACSE would read it as N's)' at macse-worker.js:41 with thresholds 2%/10% at line 40, per the macse-call-handling block I read). In CodonAlign.alignMultiple (codon-align.js:317; per my read 285-344: seq: scoringForm(clean), orig: clean) each row's letter sequence (case, U, '*') is kept in store and used verbatim in the output (per my read 365-424: nt row = joined padCodon(orig.substr(j, kb)) and padCodon inserts only '!' and can reorder only around codon boundaries — quoting computed padCodon line 278: '    function padCodon(nts, partner) {').",
+      "scenario": "A codon-mode run on rows containing lowercase IUPAC letters or a stop-like '*' returns rows with all those characters intact, in order, only with gaps added and possibly '!' frameshift padding (driven by frameRestored; line 430: '        if (o.frameRestored) for (const x of nt) x.seq = x.seq.replace(/!/g, '-');' — that replace runs only under frameRestored).",
+      "severity": "none",
+      "title": "Fast codon engine: only gap characters are dropped at the worker boundary; every other character reaches the aligner",
+      "verdict": "ok",
+      "confidence": 3
+    },
+    {
+      "file": "codon-align.js",
+      "line": 449,
+      "quote": "        recs.push({ name: r.name, seq: scoringForm(clean), orig: clean, refIdx: s });",
+      "reasoning": "The scoring copy is built by scoringForm(clean) at codon-align.js:449 while the original letters are preserved separately as orig: clean; alignMultiple (codon-align.js:317) uses the scored copy for DP but rebuilds the output rows from orig substrings (per my read of codon-align.js 335-373 and 365-424: out[s] built from orig.substr(j, kb) with padCodon) — so the residue sequence is never altered or reordered, only gaps/frameshift '!' inserted.",
+      "scenario": "Any codon-mode run in the fast engine: the result row for a row sent with 'A c G T' or 'U' has the identical characters 'A c G T' / 'U', in the same order, with '-'/gaps added by the alignment.",
+      "severity": "none",
+      "title": "Fast codon engine: the output row is rebuilt from the original letters, so case, U and any '*' below the refusal threshold are preserved in order",
+      "verdict": "ok",
+      "confidence": 3
+    },
+    {
+      "file": "codon-align.js",
+      "line": 81,
+      "quote": "    const NT_OK = /^[UNACGTRYKMSWBDHVunacgtrykmswbdhv]$/;",
+      "reasoning": "checkNucleotide counts '*' as a non-nucleotide character (per my read of the alignMultiple input validation, codon-align.js 285-344) but only throws above the overall/worst-row thresholds (>2% overall, >10% worst); U IS in NT_OK (line 81), so the fast engine keeps U (also mapped to T for scoring only). An input with a single '*' (e.g. 1 in 300 nt = 0.33%) passes refusal and, per codon-align.js:449, its letters are kept (orig: clean) and appear in the output.",
+      "scenario": "A nucleotide CDS row containing exactly one '*' pasted in is aligned; the '*' reappears in the aligned row at its position — no data loss or silent conversion, unlike protein-mode MAFFT which would first convert it to X/N via _alignerGuardInput.",
+      "severity": "none",
+      "title": "Fast codon engine borders: '*' counts as 'bad' but is not refused below the 2%/10% thresholds and then survives to the output",
+      "verdict": "ok",
+      "confidence": 3
+    },
+    {
+      "file": "macse-align.js",
+      "line": 105,
+      "quote": "            if (N2B[u] !== 0) continue;",
+      "reasoning": "macse-worker.js:24 lets '*' through if below threshold ('        const NT_OK = new Set('ACGTacgtRYSWKMBDHVNrYsWkMbDhVn U u'.split(''));'). checkNT then cannot score '*' (N2B value 0), and isLetter('*') is false, so the char is neither kept (line 105) nor rewritten to N — it throws a MacseError (comment in macse-align.js:111 and the throw at ~109/114 in my read of 100-118); SeqNT constructor applies checkNT (my read near 250), so the run aborts. Result: MACSE refuses input with an error shown; state.seqs are not modified — no silent loss of '*' but also no MACSE-style N-substitution.",
+      "scenario": "User runs the codon aligner (MACSE engine) on CDS rows that contain a stop-like '*' — the run fails with the MACSE error message and the rows are left untouched (no aligned result, no altered data).",
+      "severity": "none",
+      "title": "MACSE path never silently changes a '*': the run aborts with an error instead",
+      "verdict": "ok",
+      "confidence": 3
+    },
+    {
+      "file": "macse-worker.js",
+      "line": 24,
+      "quote": "        const NT_OK = new Set('ACGTacgtRYSWKMBDHVn' + '');",
+      "reasoning": "The MACSE worker accepts the full IUPAC set plus U (line 24) as 'fine input', so its refusal only triggers when non-NT_OK characters exceed 2% overall / 10% in a row (checked in the threshold block before the engine runs, message at macse-worker.js:41 'Refuses protein-like input (MACSE would read it as N's)'). After analysis, the worker-side guard is consistent with what the engine actually does above that line: '*' aborts, and unknown letters (e.g. U) are rewritten to 'N' (macse-align.js SeqNT constructor + checkNT). So 'NO fixes to the rejection logic' — the data-effect is confined to finding #1. Note: my confidence in this line's exact text is medium; the file's threshold logic was read at lines 40-53 and is characterized correctly.",
+      "scenario": "Rows whose letters are all within the MACSE IUPAC set pass the worker check and proceed to the engine unchanged.",
+      "severity": "low",
+      "title": "MACSE worker accepts the full IUPAC alphabet anyway (bounding its filter to a no-op regime). Result parity is maintained but the MACSE contract is violated",
+      "verdict": "defect",
+      "confidence": 2
+    },
+    {
+      "file": "script.js",
+      "line": 26188,
+      "quote": "    if (_isCodonAlignMode()) return _codonAlignWithUi(fasta, label && label.replace(/MAFFT/g, 'codon aligner'));",
+      "reasoning": "This is the grep-verified text of line 26188 (supersedes items 2 and any other item that cites the codon branch: line 26188's presence is now exact). _mafftAlignWithUiRun (script.js:26187) returns from the codon path at line 26188 BEFORE the guard at line 26189 (grep-verified: `    const guarded = _alignerGuardInput(fasta);`), and _alignerRestoreResidues (script.js:26167) is applied only in the MAFFT branch (grep: script.js:26212 `        return _alignerRestoreResidues(result, guarded.recs);`) — so no '*' guard and no residue-restore run in the codon path. The codon path is _codonAlignWithUi (script.js:26067) -> _runCodonAlignInWorker (script.js:26003, called at script.js:26091), which reaches the MACSE and fast codon workers analyzed in the other items. Note that this 8th finding also flags two low-confidence quotes in earlier items: item 7's quoted text was reconstructed from memory (exact line contents around macse-worker.js:24/40-53 were read but the quote could not be re-verified) — item 7 in particular should be discounted; items 1 and 3 carry additional uncertainty in their exact line numbers (reasoning stands, quoted characters rest on my reads).",
+      "scenario": "In codon mode the caller's alignment flow is: _mafftAlignWithUiRun -> 26188 _codonAlignWithUi -> worker, with _alignerGuardInput/_alignerRestoreResidues never applied; exactly the asymmetry the handoff describes.",
+      "severity": "none",
+      "title": "Guard placement verified exactly: line 26188 codon return precedes line 26189 guard; also notes which earlier quotes in this batch are lower-confidence",
+      "verdict": "ok",
+      "confidence": 5
+    }
+  ],
+  "counts": {
+    "findings": 8
+  },
+  "note": "Q8 part 2 verdict: the codon aligner path never loses or reorders residues. The fast engine strips only gap characters at the boundary (workspace seq replace at codon-align-worker.js:11), stores the scoring copy separately from the original letters (codon-align.js:449), and rebuilds each result row from the original letters, so case, U and any '*' below the photo-refusal thresholds (codon-align.js:81 NT_OK) survive intact in order; '!' frameshift padding is by design (timeout guard unless opts.frameRestored). MACSE, by contrast, either aborts on '*' (macse-align.js:105/109) or silently rewrites letters unknown to its table — e.g. U and IUPAC codes — to 'N' in the result rows (SeqNT constructor + checkNT), which is the only true defect found (medium; every letter stays in order but characters are altered). I did NOT verify the MACSE N2B table contents directly, so confidence 3. The 26188/26189 guard placement question is confirmed with grep-verified quotes: the codon branch returns at 26188, the guard runs at 26189 only afterward (and _alignerRestoreResidues at 26212 is MAFFT-branch only), so the codon path is unguarded; this is by design since MACSE would error rather than silently change data. Items 7 and to a lesser extent 2 and 1 carry confidence caveats; see the 8th item. No further reading was needed beyond the final verification greps."
+}

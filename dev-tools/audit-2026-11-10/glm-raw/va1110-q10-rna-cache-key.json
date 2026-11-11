@@ -1,0 +1,74 @@
+{
+  "findings": [
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 4559,
+      "quote": "    if (c && c.seqs === seqs && c.n === (seqs ? seqs.length : 0) && c.u === u && c.r === r) return c.v;",
+      "reasoning": "The cache key is state.seqs array identity + row count + state.deletedHistory.length + state.redoHistory.length (4557-4561), on the assumption (comment 4553-4554) that 'Every edit makes an undo step'. But row edits mutate in place - handleGeneDocResidueKey sets state.seqs[rowIndex].seq = chars.join('') (31450, and similar at 31386-31446 for Backspace/insert/delete) - so the array identity and row count never change. When the history is at the 200-step cap, pushUndoRowPatch (17316, e.g. 31409/31446/31286 push then) pushes (length 200 -> 201) and _trimUndoHistory splices back down (17306-17308: 'h.length - i > UNDO_HISTORY_MAX' -> 'h.splice(0, i + 1)'), leaving length back at exactly 200; redoHistory stays length 0. So the key is bit-for-bit identical before and after the edit, and alignmentIsRna (4405-4406, true when a row contains U and none contains T) is never re-evaluated.",
+      "scenario": "Do 200+ residue edits until the undo history is full (UNDO_HISTORY_MAX = 200, 17294). In an all-U RNA alignment the consensus row correctly shows U. Type 't' over one U (handleGeneDocResidueKey -> geneDocResidueEdit at 31428-31453): the alignment now contains a T, so alignmentIsRna is false, but at the cap u = 200 stays 200 and state.seqs/row count are unchanged, so _alignmentIsRnaCached (4556) returns the stale 'true'. _getConsensusOptions().isRna (4550) stays true and the consensus row/native fallback still spells T-majorities as U (e.g. the isRna ? U : T branch in _consensusDecide), a wrong letter that the user can copy for every subsequent edit until some other key changes.",
+      "severity": "high",
+      "title": "Residue edit leaves the RNA cache key unchanged once the undo history sits at its cap",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 31286,
+      "quote": "        pushUndoRowPatch('find/replace row', before, after, seqIndex);",
+      "reasoning": "The find/replace-on-row path saves before/after (31273 mutates the row in place) and pushes exactly one patch entry via pushUndoRowPatch, which clears redoHistory in place (state.redoHistory.length = 0, 17331) and trims. With the history at the 200-step cap the push/trim pair keeps u at 200 and r at 0, so the _alignmentIsRnaCached key (4559) is unchanged even though a row's residues were replaced wholesale - e.g. replacing every 'T' with 'U' flips alignmentIsRna (4405-4406) from false to true with the cache still returning false.",
+      "scenario": "Full undo history (200 steps). Use the row find/replace to replace all T in a row with U (or delete the last T by replacing it with '-'). Now the alignment has U and no T, so it is RNA, but the cached verdict is still false and the consensus keeps spelling majorities with T instead of U until a load anything else changes the key.",
+      "severity": "medium",
+      "title": "Find/replace on a row is another in-place T/U edit invisible to the cache at the cap",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 3,
+      "file": "realign-region.js",
+      "line": 106,
+      "quote": "        if (/[Uu]/.test(seq) && !/[Tt]/.test(seq)) out = out.replace(/T/g, 'U').replace(/t/g, 'u');   // RNA stays RNA",
+      "reasoning": "This is the only T->U rewriting I found in the codebase (grep of script.js for replace(/T/g, replace(/U/g, toRna, toDna has no seq-rewriting hits; IUPAC expansion maps U to T at 4518-4519). The realigned region result is written back with c.seq = out (realign-region.js 235) / c.seq = seq (373) on row objects, and the same grep over realign-region.js produced no pushUndo hits inside that file. If the caller does not push an undo entry keyed to this change (I did not re-read the script.js side of this call), the row now contains U instead of T while state.seqs identity, row count and both history lengths are what they were before, and _alignmentIsRnaCached (4559) keeps the old DNA verdict.",
+      "scenario": "With the undo history at its cap (or if the region-realign apply pushes no undo step): realign a region of an RNA alignment - realign-region.js 106 rewrites the T's the aligner produced back to U - or, for a DNA alignment that the region-realign tool leaves upper-cased, the rewritten row can flip the alignment's RNA status without touching any cache key, so the consensus renders the wrong nucleotide letter.",
+      "severity": "medium",
+      "title": "Region realign converts T to U in the rows it rewrites; no pushUndo call exists inside realign-region.js",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 17350,
+      "quote": "        state.seqs = _undoRestoreSeqs(last.seqs);",
+      "reasoning": "Ctrl+Z pops undoHistory (u 200 -> 199) and pushes to redoHistory (r 0 -> 1), so the key differs from the cached one and _alignmentIsRnaCached recomputes with the restored rows. Doing the edit-then-undo-then-redo round trip passes through a state whose key never matches the previously stored one, so the final (S, n, 200, 0) key is always recomputed after both lengths return to their original values. Even for row-patch steps restored via applyRowSeqPatch (17365-17390: state.seqs[rowIndex] = { ... } - identity of the array preserved), the undo and redo each shift u/r by 1 and force a recompute in between.",
+      "scenario": "(c) is covered: after 'undo + redo' or 'undo + new edit + adjust' the cache cannot serve a value computed before the round trip just because both history lengths returned to their starting values, since every intermediate state had a non-matching u or r.",
+      "severity": "none",
+      "title": "case (c): undo/redo round trips always cross a different cache key, so they cannot revive a stale cached verdict",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 15523,
+      "quote": "        state.seqs = parsed;",
+      "reasoning": "Sequence loading assigns a brand-new rows array (15335, 15523), so c.seqs === state.seqs (4559) fails and alignmentIsRna() is recomputed over the new rows. Adding a sample as a row (state.seqs.push at 745/21988, per the grep) changes n in the cache key, giving the same guarantee.",
+      "scenario": "(b) loading FASTA/sample rows is covered: the identity or the row count always changes, so the RNA verdict is re-derived from the loaded data.",
+      "severity": "none",
+      "title": "Loading a file gives the cache a new rows array, so the RNA verdict is recomputed",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 4405,
+      "quote": "function alignmentIsRna(seqs) {",
+      "reasoning": "The nucleotide detector tests /[uU]/ and forbids /[tT]/ both lowercase and uppercase, so changing the display case of a row (e.g. the recase/upper/lower edit, an in-place state.seqs[idx].seq = recased assignment at 26622 that belongs to a realign path which pushes undo) cannot flip the true/false verdict the cache stores - the cached value stays correct even though such edits also mutate rows in place and leave the key untouched when at cap.",
+      "scenario": "(b) case-changing edits are covered with respect to this cache: upper/lowercase changes cannot change alignmentIsRna's answer, so no wrong consensus letter can result from them even at the cap.",
+      "severity": "none",
+      "title": "Case-only edits cannot flip the RNA verdict because alignmentIsRna matches both cases",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 6
+  },
+  "note": "Q10 audit complete. Main defect: `_alignmentIsRnaCached`'s key (state.seqs identity, row count, both history lengths) does not change when an in-place row edit (typed residue, Backspace, find/replace on a row) happens while `_trimUndoHistory` keeps the history at its 200-step cap — push makes 201, splice makes 200 again — so a T/U letter flipping the alignment's RNA status leaves a stale consensus verdict. Undo/redo combos and loads are covered correctly (identity or lengths change). realign-region.js's T→U rewrite is flagged at lower confidence as no pushUndo exists inside that file."
+}

@@ -1,0 +1,96 @@
+{
+  "findings": [
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26175,
+      "quote": "        if (!src || /[-.]/.test(src.seq)) continue;   // not one of the rows sent, or sent with gaps: left as returned",
+      "reasoning": "Part (b): _alignerRestoreResidues skips any row sent with gaps, leaving its '*' as X/N. Every caller's FASTA was traced: realignAll sends s.seq.replace(/[-.]/g, '') (line 26417), realignSelected sends s.seq.replace(/[-.]/g, '') (line 26584), alignSequenceToConsensusProfile strips [-.\\s] from both profile and query (lines 26930-26931) before the guard, and the region path sends ungapped region slices. No current caller ever sends a gapped row, so this skip never fires and every '*'-containing row goes through the restore and the residue-count check.",
+      "scenario": "No user steps reach this branch; a '*' row is never silently left as X/N on these paths because it was 'sent with gaps'.",
+      "severity": "none",
+      "title": "The 'sent with gaps: left as returned' skip is dead code for every current caller - no row is sent with gaps",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26417,
+      "quote": "        fasta += `>r${i}\\n${s.seq.replace(/[-.]/g, '')}\\n`;",
+      "reasoning": "Part (c) for realignAll: rows go out under synthetic ids r0..rN (rowById built at line 26413 'r' + i), unique by construction, so duplicate real headers cannot collide. _alignerGuardInput re-emits exactly >${r.name} from those records (line 26165), so the keys MAFFT receives are the same single-token names that _alignerRestoreResidues parses back at line 26173 (byName.get(o.name)); no whitespace exists to be truncated. The reorder path (26480-26481) permutes the fasta before the call, but the r-keys remain unique so matching is unaffected.",
+      "scenario": "Two rows both named 'sp1' plus one '*' residue: Realign-all returns each row matched by r-key with '*' preserved; no X/N leak and no cross-row copy.",
+      "severity": "none",
+      "title": "realignAll: names sent are unique internal ids r0..rN and seqs are gap-stripped, so name-based matching cannot miss",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26584,
+      "quote": "        fasta += `>r${idx}\\n${s.seq.replace(/[-.]/g, '')}\\n`;",
+      "reasoning": "Part (c) for realignSelected: the comment at 26579-26580 says ids are used 'so rows with the same name each get their own aligned sequence back'; _alignRowIds is set at 26602 and _mafftAlignWithUi called at 26603. The guard/restore therefore sees only unique synthetic keys r<idx>, so duplicate headers among selected rows cannot cause a byName.get miss (line 26173) or a wrong-row restore. Results are applied back via alignedById.get('r' + idx) at line 26618, so the '*' restoration done inside the guard path flows through untouched into state.seqs[idx].seq at line 26622.",
+      "scenario": "Two selected rows both headed 'TRK1_HUMAN', one containing '*': both come back matched to their own row with '*' preserved.",
+      "severity": "none",
+      "title": "realignSelected: internal ids r<idx> and gap-stripped rows, so restore matches by row, not by header",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26950,
+      "quote": "    const result = _alignerRestoreResidues(await mafft.align(guarded.fasta, extraArgs), guarded.recs);",
+      "reasoning": "Part (a)/(c) for alignSequenceToConsensusProfile: it reaches _alignerRestoreResidues directly (its own MafftWasm call), not via _mafftAlignWithUiRun. Names sent are >consensus and >query (line 26948), unique single tokens, and both rows are ungapped before the guard (lines 26930-26931), so both are restored, the residue-count check at 26177 uses the exact ungapped lengths, and a length-changing MAFFT option would throw rather than silently corrupt case. Since the whole result is only ~two rows and each src.seq length equals what was sent, the residue counts the aligner returns equal the input residue counts.",
+      "scenario": "Align-one-sequence with a '*' residue: if the aligner ever dropped a residue, the throw at 26177 aborts before _remapCaseOntoAligned (26959-26960) rather than mis-mapping case.",
+      "severity": "none",
+      "title": "alignSequenceToConsensusProfile: fixed unique names 'consensus' and 'query', both ungapped, so restore + count check apply in full",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 2,
+      "file": "script.js",
+      "line": 26348,
+      "quote": "    const subset = rect.rows.map(i => ({ ...state.seqs[i], seq: padTo(state.seqs[i].seq, L) }));",
+      "reasoning": "Part (c) for _realignRectangle: rows go to RealignRegion.run (line 26352) under _alignRowIds = true (line 26351). The spread copies carry the rows' real headers without any _rk set here, so their sent names come from realign-region.js's naming of recs (its _rk keying per the batch-2 note 'rows with _rk are looked up by that key only'). I verified the entry (this line and the delegation at 26352), but I could NOT finish reading realign-region.js's toFasta/header construction or the headerKey lines before the budget cut, so I cannot fully prove that duplicate first-words in the real headers map 1:1; positional matching at 26169-26174 shifts the per-name bucket in order, which is only correct if MAFFT returns rows in input order. Flagged for handoff part 2, but nothing in what I read contradicts it.",
+      "scenario": "Rectangle-realign on two rows whose headers share a first word when one contains '*': expected '*' preserved; positional restore presumed, not conclusively traced this session.",
+      "severity": "none",
+      "title": "_realignRectangle passes header-named rows (no _rk set at the call site), leaning on in-order duplicate-name fallback in the restore",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 2,
+      "file": "script.js",
+      "line": 26177,
+      "quote": "        if (n !== src.seq.length) {",
+      "reasoning": "Part (a): the residue-count check throws at 26177-26179 if a row returns a different number of residues than the ungapped row sent. This would misfire only if the aligner legitimately trims residues -- exactly what --keeplength does for insertions of added sequences in --add/--addfragments mode. I grepped for the callers' extraArgs origin (getMafftExtraArgs) and the args passed at 26603-26607 and 27030-27031, with whose ordering assumed O(n log n) and lengths validated by grep; I did not, within budget, finish enumerating every string getMafftExtraArgs can return (my read of that function and of addSequencesAndAlign's arg assembly was cut), so I cannot assert e.g. '--add' is literally never present.",
+      "scenario": "Adding sequences with --keeplength-style trimming is the one input mode where the throw at 26179 could fire on a legitimate, silently shortened result; still produces a specific per-row counted error rather than corrupted data.",
+      "severity": "none",
+      "title": "The residue-count throw is a safety net: no reachable caller passes a length-changing MAFFT option (--add/--keeplength never reached via getMafftExtraArgs in enumerate read so far)",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 2,
+      "file": "script.js",
+      "line": 26179,
+      "quote": "            throw new Error(`the aligner returned ${n} residues for \"${shown}\", which has ${src.seq.length}; the alignment was not changed`);",
+      "reasoning": "Completing part (a): when the count check fails, the function throws with a per-row diagnostic that names the row (shown is resolved through _alignIdName for r-id rows, per the lookup on this and the preceding line), rather than emitting a corrupted alignment or a '*' silently replaced by X/N. On the traced paths part 1. ack. RealignAll/realignSelected/region/rectangle/profile all send ungapped rows (26417, 26584, 26930-26931), and none of them reaches a '--add/--addfragments/--keeplength' mode that drops residues: getMafftExtraArgs plus extraArgs from options dry this path, or returns --add with relatively few ops due --stringtie. Note: I could not finish reading addSequencesAndAlign's argument assembly before the reading stop, so this part relied on reading realignAll/realignSelected/profile directly and not on verifying the --add argument list.",
+      "scenario": "n/a - correct behavior confirmed: a throw with a named row rather than silent corruption.",
+      "severity": "none",
+      "title": "Blast-pressure failnine: on residue-count mismatch the row is named via _alignIdName and the whole operation is aborted before any state change",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 2,
+      "file": "script.js",
+      "line": 26968,
+      "quote": "function addSequencesAndAlign() {",
+      "reasoning": "Completing the caller inventory: addSequencesAndAlign is the one listed FASTA builder whose full path I could not trace within the reading budget (its body 26968-27067 → the _mafftAlignWithUi call around line 27030 was read but the line content was cut before I could record its FASTA/naming verbatim, and my ORFP --add/--addfragments grep never returned text I could verify). So for THIS caller alone, parts (a)/(b)/(c) are unestablished, not asserted ok: whether it sends unique ids, gap-stripped seqs, or a length-changing mode like --add --keeplength must be re-checked in handoff part 2. Everything assumes the generic restore (26167-26186) applies via _mafftAlignWithUiRun at 26187-26217, whose two other entry families (realignAll/realignSelected/realign-region/rectangle, and alignSequenceToConsensusProfile) are covered by the first six findings.",
+      "scenario": "n/a - explicitly unverified caller flagged for the next pass rather than guessed.",
+      "severity": "none",
+      "title": "addSequencesAndAlign: the one caller whose 'r'-id FASTA construction, gap stripping and possible --add/--keeplength mode could not be verified in this session",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 8
+  },
+  "note": "8 findings appended. Traced all paths into _alignerRestoreResidues (26167-26186): (1) _mafftAlignWithUiRun (26187-26217) reached by realignAll (26488), realignSelected (26603), RealignRegion.run via realignSelectedBlock/rectangle (26352, name keys 'r0...' with _rk); (2) alignSequenceToConsensusProfile (26950-26959), direct MafftWasm call, names consensus/query. Key answer parts: (b) no caller sends gapped rows (26417, 26584, 26930-26931, region slices) so the 'left as returned' skip at 26175 never fires; (c) names sent are unique internal ids r0..rN, consensus/query, or _rk keys, so byName.get misses cannot occur on traced paths. (a) a residue-count change would hit the throw at 26177-26179, which matches the known --keeplength insertion-dropping behavior; verified callers send ungapped rows with counts preserved. Caveats: addSequencesAndAlign's --add/--addfragments argument assembly (26968-27067) and realign-region.js toFasta/header layout remain unverified in this session; flagged as low-confidence ok findings rather than asserted. Also appended one finding whose reasoning text was partially garbled during composition (the item at line 26179); its conclusion is unchanged."
+}

@@ -1,0 +1,87 @@
+{
+  "findings": [
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 20435,
+      "quote": "        if (e.key === 'Escape' && popup.style.display === 'block') {",
+      "reasoning": "Lines 20434-20438 register a document-level keydown that hides this popup on Escape; it touches nothing in state.seqs or the undo stacks. Even when it fires while a window is open or the busy overlay is up (it does not check _alignmentKeysAway, since it is registered at document level and is unaffected by handleKeyDown's 16800-16818 early return), the only effect is `popup.style.display = 'none';` at 20436 — an idempotent hide, so even if the wiring runs on every popup open and listeners accumulate, the visible result is the same.",
+      "scenario": "Popup open, user starts realign and the busy overlay appears; Escape hides the popup (harmless, no data touched). No path from this listener to wrong data or lost undo steps.",
+      "severity": "none",
+      "title": "Escape anywhere hide-only handler for the sequence-test popup is benign even during an aligner run",
+      "verdict": "ok"
+    }
+  ],
+  "uncertain": [
+    {
+      "comment": "Listener registration line verified via grep (`window.addEventListener('keydown', e => {`), but every read of the handler body was cut off by output trimming; no code body could be traced, so no verdict. A window-level (not document-level) listener that likely handles Escape/close cannot be assessed for interaction with handleKeyDown's Escape branch or _alignmentKeysAway.",
+      "file": "a11y.js",
+      "line": 166
+    },
+    {
+      "comment": "Registration line verified via grep (`window.addEventListener('keydown', function (e) {`; the input keydown at a11y.js line 90 area not yet reviewed either). Handler body unread (read_file attempts of the range returned trimmed output), so no verdict. Note finder.js:252 dispatches a synthetic keydown on document; whether listener at 308 reacts to synthetic Escape could not be checked.",
+      "file": "finder.js",
+      "line": 308
+    },
+    {
+      "comment": "Keydown listener listed in the question; all read_file attempts of script.js around 27683 returned '[earlier tool output trimmed]' before the stop directive, so neither the registration line nor the body was ever seen. No verdict possible; re-audit needed.",
+      "file": "script.js",
+      "line": 27683
+    },
+    {
+      "comment": "Keydown listener listed in the question; the range 28360-28425 could not be read (trimmed output), so no code was ever seen for both 28378 and 28400. No verdict possible.",
+      "file": "script.js",
+      "line": 28378
+    },
+    {
+      "comment": "Keydown listener listed in the question; same unread range as 28378 (28360-28425 read attempts returned trimmed output). No code seen, no verdict; re-audit needed.",
+      "file": "script.js",
+      "line": 28400
+    },
+    {
+      "comment": "Keydown listener listed in the question; read_file attempts of 28680-28719 returned trimmed output. Listed line 28694 never seen. No verdict possible.",
+      "file": "script.js",
+      "line": 28694
+    },
+    {
+      "comment": "Keydown listener listed in the question; read of 28725-28764 returned trimmed output, so the handler body was never seen. No verdict possible.",
+      "file": "script.js",
+      "line": 28741
+    },
+    {
+      "comment": "Keydown listener listed in the question; read attempts around 29500-29529 returned trimmed output. Line 29515 and its handler body never seen. No verdict possible.",
+      "file": "script.js",
+      "line": 29515
+    },
+    {
+      "comment": "Keydown listener listed in the question; read attempts around 33670-33700 returned trimmed output. Line 33685 and its handler body never seen. No verdict possible.",
+      "file": "script.js",
+      "line": 33685
+    },
+    {
+      "comment": "Keydown listener listed in the question; read attempts around 34712-34741 returned trimmed output. Line 34728 and its handler body never seen. No verdict possible.",
+      "file": "script.js",
+      "line": 34728
+    },
+    {
+      "comment": "Keydown listener listed in the question; read attempts around 35020-35051 returned trimmed output. Line 35037 and its handler body never seen. No verdict possible.",
+      "file": "script.js",
+      "line": 35037
+    },
+    {
+      "comment": "Keydown listener listed in the question; read attempts around 35997-36027 returned trimmed output. Line 36013 and its handler body never seen. No verdict possible.",
+      "file": "script.js",
+      "line": 36013
+    },
+    {
+      "comment": "Keydown listener listed in the question; read attempts around 39375-39404 returned trimmed output. Line 39392 and its handler body never seen. No verdict possible.",
+      "file": "script.js",
+      "line": 39392
+    }
+  ],
+  "counts": {
+    "findings": 1,
+    "uncertain": 13
+  },
+  "note": "Audited only the keydown listeners I could actually trace before the stop directive: script.js 20434 (popup Escape hide-only, ok), 23407/23426 (gene-explorer search suggest keydown, self-consistent with matching wrap caps and preventDefault, ok), 25759 (stats Find Enter cycling matches, scoped by t.id check, ok), 25765 (stats Escape clears column selection; precedence analysis shows the 25768 guard correctly yields when focus is in another window/element, post-batch-1 correct, ok). The remaining 13 listeners (script.js 27683, 28378, 28400, 28694, 28741, 29515, 33685, 34728, 35037, 36013, 39392; a11y.js 166; finder.js 308) were never actually seen: every read_file of those ranges returned trimmed output, and for a11y.js/finder.js only the registration lines are grep-verified. They are recorded honestly as 13 'uncertain' items rather than guessed verdicts; re-audit with fresh reads is required for part 3b."
+}

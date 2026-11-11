@@ -1,0 +1,107 @@
+{
+  "findings": [
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26492,
+      "quote": "        if (aligned.length === 0) {",
+      "reasoning": "realignAll pushed its own undo step at 26409 and captured redoBeforeRealign at 26408. The null case (26490) calls _dropNoOpUndo(redoBeforeRealign), but this branch returns at 26494 without it: nothing was changed, yet the 'realign-all' step stays on state.deletedHistory (the next Ctrl+Z silently 'undoes' a realign that never happened), and state.redoHistory, which pushUndo cleared, is not restored either. _mafftAlignWithUiRun returned a non-null result string that parseMafftOutput() parses to zero records, so the changed-rows guard passed and could not help.",
+      "scenario": "User triggers Realign → All; the aligner job returns success with output that parses to no records (e.g. a blank/garbage worker result). The toast 'Error: MAFFT returned no sequences.' shows, no sequence changed, but the undo stack now has a spurious 'realign-all' entry: the next Ctrl+Z appears to undo a realign that never ran, and any redo steps the user had are gone.",
+      "severity": "medium",
+      "title": "realignAll leaves an empty 'realign-all' undo step when a non-null MAFFT result parses to 0 sequences",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 26610,
+      "quote": "        if (aligned.length === 0) {",
+      "reasoning": "Same structure as realignAll: realignSelected pushed at 26573 and took redoBeforeRealign at 26572; the null path drops the step, but on a non-null result parsing to 0 rows it shows a brief 'The aligner returned no sequences...' message (on window close at _dropNoOpUndo's Message trail) and returns without _dropNoOpUndo(redoBeforeRealign), leaving an unchanged-state undo step and not restoring redo history.",
+      "scenario": "User with N>=2 selected rows runs Realign → Shared selection / strand open and closed only (as exposed by _dropNoOpUndo restoring a message window at the close of the window); the rows did not change but the undo menu shows 2 entries, and pressing Ctrl+Z changes nothing while consuming an undo step (likely leaving the redo menu inconsistent/empty).",
+      "severity": "medium",
+      "title": "realignSelected also leaves an empty undo step on a non-null result that parses to 0 rows",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26490,
+      "quote": "        if (!result) { _dropNoOpUndo(redoBeforeRealign); return; }   // cancelled: no change, no undo step",
+      "reasoning": "On a cancel, a declined confirm, or a changed-rows refusal (26147-26159), _mafftAlignWithUi returns null. realignAll drops the step it pushed at 26409 and returns before touching state.seqs; _dropNoOpUndo also restores state.redoHistory from redoBeforeRealign captured at 26408, so the redo stack is not lost. When the guard set _skipNextNoOpUndo because another step landed on top, the drop is skipped, so no foreign step is popped. This branch covers the null contract correctly.",
+      "scenario": "User starts Realign → All and presses Stop on the busy overlay (or declines the stats confirm): alignment unchanged, and Ctrl+Z still undoes the previous real user action, not a phantom 'realign-all'.",
+      "severity": "none",
+      "title": "realignAll handles a null from _mafftAlignWithUi correctly: drops its own undo step and restores redo history",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 26608,
+      "quote": "        if (!result) { _dropNoOpUndo(redoBeforeRealign); return; }",
+      "reasoning": "realignSelected mirrors realignAll: the step pushed at 26573 is dropped via _dropNoOpUndo(redoBeforeRealign) immediately on a null result, before any row mutation inside the .then chain (parse/length/count remain a chained .then); the _skipNextNoOpUndo case is handled by the same drop helper. No path here pops a step other than its own when _skipNextNoOpUndo is set.",
+      "scenario": "User runs Realign on a selection and cancels at the busy overlay: no phantom undo step; the previous undo step stays on top.",
+      "severity": "none",
+      "title": "realignSelected handles a null from _mafftAlignWithUi without leaving an undo step or popping a foreign one",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26532,
+      "quote": "        for (let i = newSeqs.length - 1; i >= 0; i--) if (!newSeqs[i]) newSeqs.splice(i, 1);",
+      "reasoning": "Between the call at 26488 and the result, realignAll is suspended in the await; the only places it assigns state.seqs are the reorderOnly early-return path (26146/26161/gaplessPositions: state.seqs = newSeqs) and the success path rebuilding newSeqs (26532-26553/26532 splice onward), both AFTER the guard's snapshot+check inside _mafftAlignWithUi. Everything before the call (pushUndo 26409, _adjustDirection 26146, _reorderByGuideTree 26450) happens before the snapshot, so it cannot make a run look 'changed'. Therefore every normal run is not falsely refused by the changed-rows guard.",
+      "scenario": "Normal Realign → All run proceeds and is accepted by the guard; it is never refused with 'changed during run' caused by the caller itself.",
+      "severity": "none",
+      "title": "realignAll does not change state.seqs between calling _mafftAlignWithUi and the result arriving, so runs are never falsely refused",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 26621,
+      "quote": "            state.seqs[idx].seq = recased;",
+      "reasoning": "The row mutation (and the later padEnd loop to the new alignment width) runs in the .then continuation after the null check at 26608 and after _mafftAlignWithUi has already done its snapshot+compare (26153-26154) and returned the result, so the caller's own mutations cannot trip the changed-rows guard; the rows changed are only mutated once the result is accepted.",
+      "scenario": "Realign on a selection completes normally: case-mapping and width padding apply only after the guard has passed, so the result is never refused as 'changed during run'.",
+      "severity": "none",
+      "title": "realignSelected mutates row .seq only after the result (and guard) has arrived, so it never poisons the changed-rows check",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 26153,
+      "quote": "    if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp) {",
+      "reasoning": "When the rows change during the run, the guard refuses the result (returns null) and, per the v333 handoff, sets _skipNextNoOpUndo so the caller's _dropNoOpUndo does not pop whatever step is now on top. Both callers' null paths (26490, 26608) route through _dropNoOpUndo, which honors the flag, so a concurrent editor's undo step is safe. The mutation itself is rejected: neither caller replaces rows from a refused result. No defect found for the 'rows changed during run' refusal path.",
+      "scenario": "Rows are somehow edited while the alignment job runs; the result is refused, and Ctrl+Z still undoes the user's own edit rather than the aligner popping it.",
+      "severity": "none",
+      "title": "_mafftAlignWithUi's changed-rows check makes the caller refuse the result instead of applying it, and _skipNextNoOpUndo protects foreign undo steps",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26409,
+      "quote": "    pushUndo('realign-all');",
+      "reasoning": "The undo step is pushed synchronously at 26409, and everything up to the _mafftAlignWithUi call at 26488 (building fasta, _adjustDirection at 26462, _reorderByGuideTree at 26480) is synchronous on the same tick, so the snapshot _mafftAlignWithUi takes when called (undoTop = last deletedHistory entry) is the 'realign-all' step itself. On a null return the dropped step is therefore the caller's own, not someone else's.",
+      "scenario": "Any Realign → All run: the guard records the caller's fresh step as undo top; cancel/decline drops exactly that step and returns the prior stack intact.",
+      "severity": "none",
+      "title": "realignAll pushes its undo step before any await, so the snapshot's undoTop is its own 'realign-all' step",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 25845,
+      "quote": "function _confirmMafftJob(stats, extraArgs) {",
+      "reasoning": "_confirmMafftJob uses a native window.confirm ('Mafft on 2+...'), which blocks the main thread; the user cannot edit rows between _mafftAlignWithUi's snapshot and the decline, so a declined-confirm null cannot come with user edits or foreign undo steps on top. The decline path therefore drops only the caller's own step. (Line text taken from grep; reported at lower confidence.)",
+      "scenario": "User declines the MAFFT stats confirm: nothing changed, no phantom undo step, redo history restored.",
+      "severity": "none",
+      "title": "The 'declined confirm' path is race-free: _confirmMafftJob uses a blocking native confirm, so no foreign undo step can precede the null",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 9
+  },
+  "note": "Both callers handle a null result correctly (drop their own undo step, restore redo history, honor _skipNextNoOpUndo), and neither mutates state.seqs between the call and the result arriving, so no run is falsely refused as 'changed'. Two defects found: both realignAll (26492) and realignSelected (26610) return without dropping their undo step when a NON-null result parses to zero sequences, leaving an empty undo entry and losing the redo history; this branch is the one 'no change' outcome not routed through _dropNoOpUndo."
+}

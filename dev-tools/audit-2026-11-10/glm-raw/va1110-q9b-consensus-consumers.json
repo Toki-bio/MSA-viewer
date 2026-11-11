@@ -1,0 +1,52 @@
+{
+  "findings": [
+    {
+      "title": "Monochrome conservation shading never reads the consensus string, so the U change cannot desync \"differs from consensus\" shading",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 14217,
+      "quote": "        if (baseUp !== '-' && baseUp !== '.' && posData.consensusBases?.has(baseUp)) {",
+      "reasoning": "applyConservationShadeClass compares the row's uppercased residue with posData.consensusBases, and those sets are built fresh from the row letters in _computeConservationForColumn (9716-9730, line 9730 \"    for (const c of order) if (buf[c] === maxCount) consensusBases.add(String.fromCharCode(c));\") with uppercasing at 9720 (\"        if (c >= 97 && c <= 122) c -= 32;\"). The consensus string from computeConsensusForSequences is never an input here, so v333's U change does not affect this path; row 'u' and consensus char 'U' are both produced by the same row-side normalization.",
+      "scenario": "RNA alignment, monochrome scheme, conservation sliders on: residues equal to the column majority shade black/dark/light exactly as before v333, U or T alike.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "Colour-table lookup for a U residue gets the same class keys as T ('base-U' letter class + pyrimidine group)",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 14190,
+      "quote": "    if (baseUp === 'C' || baseUp === 'T' || baseUp === 'U') classes.push('pp-pyrimidine');",
+      "reasoning": "getResidueAnnotationClasses (14163) uppercases first (14164 \"    const baseUp = String(base || '-').toUpperCase();\"), pushes the per-letter colour key at 14169 (\"        classes.push(`base-${baseUp}`);\") for any single A-Z letter including U, and explicitly maps U into the same pyrimidine group as T at 14190. So a consensus char 'U' and a row char 'T' receive pyrimidine group class on both sides; the only asymmetry is the base-* letter class name itself (base-U vs base-T), which is a consistent rename, not a half-mapped comparison, for U-residue columns. I did not get to read RESIDUE_SCHEME_STYLES to verify a 'base-U' entry exists in every nucleotide palette; if some palette only defines keys under class priority names it could miss a styled colour for U, so that sub-case remains unverified.",
+      "scenario": "Consensus inserted as a row in an RNA alignment, any colour scheme: each U residue classifies as pyrimidine like T, and GET_ENTRY standard/ambiguous letter classes (line 14179) treat it as a known nucleotide.",
+      "severity": "none",
+      "confidence": 4
+    },
+    {
+      "title": "A consensus row made of U letters cannot flip the alignment into \"protein\" mode",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 14096,
+      "quote": "for (const ch of 'ACGTUNRYMKSWHBVDacgtunrymkswhbvd') _NUCLEOTIDE_LETTER[ch.charCodeAt(0)] = 1;",
+      "reasoning": "_alignmentLooksProtein (14097) counts a nucleotide-alignment consensus row's U's as nucleotide letters because the Uint8Array marks uppercase and lowercase U; combined with the >10%-other test at 14109 (\"    return letters > 0 && other / letters > 0.1;\") an inserted consensus row (a computeConsensusForSequences caller) of A/C/G/U/gaps leaves the alignment nucleotide-type, so colour-scheme remapping at 14131 (\"    if (isProteinAlignment() && NUCLEOTIDE_ORIENTED_SCHEMES.has(scheme)) {\") is not triggered by the new U characters.",
+      "scenario": "RNA alignment with 'Insert consensus as sequence': the alignment is not reclassified as protein and nucleotide colour schemes are kept.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "Consensus char path maps U->T before counting (4598) but the conservation-shading path counts U and T as distinct letters, so a mixed U/T RNA column can shade the inserted consensus row as a mismatch",
+      "verdict": "defect",
+      "file": "script.js",
+      "line": 9723,
+      "quote": "        if (c === 88 || c === 63 || (unknownN && c === 78)) continue;   // X ? (N)",
+      "reasoning": "The consensus decision folds U into T: line 4598 \"        if (!isProtein && c === 85) c = 84;          // U -> T\" and _getConsensusOptions sets isRna (line 4550 \"        isRna: _alignmentIsRnaCached(),   // an RNA alignment gets its consensus in U (audit 2026-11-10, H8)\"), so an RNA column of mixed T and u letters yields consensus char 'U'. But _computeConservationForColumn (9711-9737) has no U/T folding (its only skip is the quoted line 9723), so consensusBases at line 9730 contains only 'T' when T is the majority. The consensus row inserted as a sequence then fails the equality test at 14217 (\"posData.consensusBases?.has(baseUp)\") for its own U residues: every U of the consensus row renders in the 'other'/mismatch shade in monochrome mode instead of the conserved shade, because one side of the comparison folds U/T together (4598) and the other (9723/9730) does not.",
+      "scenario": "Load an RNA alignment detected as RNA by alignmentIsRna() where some rows still hold DNA-style T (mixed U/T input). Shade mode monochrome, insert the consensus as a sequence (a computeConsensusForSequences caller). The consensus row's U letters, which the row-side consensus fold produced from the very same rows, are shaded as differing from the column consensus while the T rows shade as matching - the inserted consensus looks like a mismatch row against its own definition.",
+      "severity": "low",
+      "confidence": 2
+    }
+  ],
+  "counts": {
+    "findings": 4
+  },
+  "note": "Audited the consensus-U consumers I could trace within the reading budget. Key results: (1) conservation/monochrome \"differs from consensus\" shading is built entirely from row letters (_computeConservationForColumn, script.js 9711-9737) and never reads the consensus string, so v333's U change cannot desynchronize it (ok, line 14217); (2) colour-class lookup in getResidueAnnotationClasses uppercases both sides and maps U into the same pyrimidine group as T (lines 14164/14169/14190) — base-U vs base-T letter keys are a consistent rename (ok), though I could not verify that every RESIDUE_SCHEME_STYLES palette defines a U entry for the value case; (3) a U consensus row cannot flip the alignment to protein because _NUCLEOTIDE_LETTER marks u/U as nucleotides (line 14096); (4) low-confidence defect: the consensus decision folds U->T (line 4598) and back to U via isRna, while the conservation path counts U and T as distinct letters (9723/9730), so in a mixed U/T RNA alignment the inserted consensus row's own U letters shade as mismatches (line 9723 quoted). Unverified within the remaining budget: the dot-plot consensus comparison (_dotConsPrivate ~34480), realign-against-consensus, identity-to-consensus stats and export consumers (callers at 12884, 13854, 17667-17894, 19419, 23015, 26763, 30223-30471, 33866, 34488) — I ran out of read budget before reaching them and have not claimed anything about them."
+}

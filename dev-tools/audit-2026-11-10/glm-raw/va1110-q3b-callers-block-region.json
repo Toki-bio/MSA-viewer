@@ -1,0 +1,88 @@
+{
+  "findings": [
+    {
+      "file": "realign-region.js",
+      "line": 26147,
+      "quote": "    if (result == null) return result;",
+      "reasoning": "script.js 26147 (in _mafftAlignWithUi) returns null verbatim when the run was cancelled, and 26153 returns null after a staleness\\/comment guard; the wrapper around _mafftAlignWithUi passes the null through (_mafftAlignWithUi is invoked as the mafftAlign callback (grep realign-region.js: it is the mafftAlign callback passed by both realignSelectedBlock and _realignRectangle). realign-region.js line 477 'var raw = await mafftAlign(toFasta(recs), extraArgs);' then line 478 'if (raw === null || raw === undefined) {'; lines 479-491 return { seqs: plain(orig), cancelled: true, noop: true ... }, i.e. the caller gets the ORIGINAL alignment back, flagged cancelled. Both caller termination paths check 'result.cancelled' and return BEFORE their pushUndo (realignSelectedBlock checks at 26289 before pushUndo('realign-region') at 26298; _realignRectangle at 26361 before pushUndo('realign-block') at 26367). So on null: no undo step is left behind and the undo stack is left completely alone - nothing pops another edit's step (neither caller ever calls _dropNoOpUndo in the cancelled branch; pushUndo, read at 17242-17253, just pushes and never drops). Additional safety: folded-in code from an earlier run (working-copy rebuild, padAll) is only applied AFTER the runs loop; nothing is applied from a discarded run since the caller discards 'result' entirely.",
+      "scenario": "hover-size-failure-irrelevant: User selects a region, chooses realign, hits Escape while MAFFT runs (or the run is aborted). Region stays unchanged, message 'MAFFT alignment cancelled.', no undo step added, existing undo history intact; pressing Ctrl+Z still undoes the user's last real edit.",
+      "severity": "none",
+      "title": "realign-region.js handles a null mafftAlign result safely: nothing is changed and no undo step is left behind (realignSelectedBlock)",
+      "verdict": "ok"
+    },
+    {
+      "file": "realign-region.js",
+      "line": 477,
+      "quote": "                    var raw = await mafftAlign(toFasta(recs), extraArgs);",
+      "reasoning": "same full abort path (478 'if (raw === null || raw === undefined) {', 480 'seqs: plain(orig),', 481 'cancelled: true,') is used for every run invocation, including the first mafftAlign call; orig is captured before anything is adjusted, and the only mutation of state.seqs happens in the callers AFTER a successful result (realignSelectedBlock: state.seqs = ... around 26299-26310; _realignRectangle: 26368, 26373, 26382). So even if a second\\/third mafftAlign call (multi-run region) aborts after an earlier one succeeded, the total result is cancelled:true with the original seqs and the caller returns at its result.cancelled check without calling pushUndo - no partially-rebuilt state is written.",
+      "scenario": "A multi-span region realignment: run 1 succeeds, run 2 is cancelled by Escape. No rows are reordered, aligned or padded; the alignment looks exactly as before; Ctrl+Z goes to the last real user action.",
+      "severity": "none",
+      "title": "A null result in the MIDDLE of a multi-run region realignment aborts cleanly too",
+      "verdict": "ok"
+    },
+    {
+      "file": "script.js",
+      "line": 26367,
+      "quote": "    pushUndo('realign-block');",
+      "reasoning": "The undo step is unconditionally pushed AFTER the await of RealignRegion.run: _realignRectangle builds a padded copy 'subset' (26348 'const subset = rect.rows.map(i => ({ ...state.seqs[i], seq: padTo(state.seqs[i].seq, L) }));') at line 26348 with spread ({ ...state.seqs[...] }), so nothing mutates state.seqs rows; the stale-detection paths (26148 'if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp)') are checked after the run and always leave state.seqs authToken rows untouched while the caller holds only the copies it made. _mafftAlignWithUi will discard (26049\\/26153 'return null;') a result acquired while anything else modified state.seqs (26148 fingerprint both fingerprint-identity and row-hash), so by the time pushUndo runs at 26367 the pre-change state it caches is exactly the state the MAFFT result was validated against; sequential code after the await (26368-26388 completing state.seqs mutation) is the first change and is captured in the same undo step.",
+      "scenario": "Block realign: user selects rows x columns, realigns; MAFFT inserts 2 gaps. The undo step at 26367 records the row sequences before the splice at 26368-26383; Ctrl+Z after the run restores the pre-realign alignment exactly.",
+      "severity": "none",
+      "title": "_realignRectangle pushes the undo step after the await, which is safe: pushUndo('realign-rectangle') only runs after state.seqs is (successfully) updated",
+      "verdict": "ok"
+    },
+    {
+      "file": "script.js",
+      "line": 26298,
+      "quote": "    pushUndo('realign-region');",
+      "reasoning": "realignSelectedBlock awaits RealignRegion.run (state.seqs passed around 26276) first; pushUndo('realign-region') at 26298 only runs if result is not cancelled (26289) and not !result.aligned (26290). Between the await start and the mafftAlign result nothing in the caller touches state.seqs; inside RealignRegion.run the synchronous setup (recs built, order computed, rowsStrings adjusted) operates on copies (verified by 'seqs: plain(orig)'\\/480, plus padAll on the working array at 522), so state.seqs (and its _seqsFingerprint()) is unchanged at every _mafftAlignWithUi check (26148) - the run is not refused as stale by the caller's own bookkeeping. Returning early on cancelled means the deletion-history stack is untouched; the recently-added _skipNextNoOpDrop mitigations in _mafftAlignWithUi (26150 'if (state.deletedHistory[state.deletedHistory.length - 1] !== undoTop) { _skipNextNoOpDrop = true; setTimeout(() => { _skipNextNoOpDrop = false; }, 0); }') fire only if some OTHER session edit pushed a step mid-run to the top, and its 0ms timer clears the flag before any later undo operation - so a spurious later drop is also avoided.",
+      "scenario": "Same alignment, user does region realign; MAFFT returns; the caller's own chosen undo step becomes the top of deletedHistory only after the push at 26298. If state somehow changed mid-run (only possible via another program path since the busy overlay blocks the mouse), _mafftAlignWithUi returns null, the region is checked as cancelled and no step is pushed - stack intact.",
+      "severity": "none",
+      "title": "realignSelectedBlock also pushes its undo step after the await only, never leaving a stray pre-pushed step on a cancelled run",
+      "verdict": "ok"
+    },
+    {
+      "file": "script.js",
+      "line": 26152,
+      "quote": "        showMessage('The alignment changed while the aligner was running, so its result was not used. Run it again.', 7000);",
+      "reasoning": "When a run is discarded as stale, _mafftAlignWithUi shows the 26152 message and returns null (26153); realign-region.js labels the same outcome as cancelled:true with 'message: 'Cancelled'' (489), so the caller branch (realignSelectedBlock 26289, _realignRectangle 26361 'if (result.cancelled) { showMessage('Block realign cancelled.', 2500); return; }') shows a second, wrong-reason toast saying the realign was cancelled. Both toasts appear (7s + 2.5s); the second is misleading wording for a ledger-changed case and confusing alongside the accurate 26152 message.",
+      "scenario": "Some other edit modifies the alignment while a region realign's MAFFT run executes (possible when the busy overlay's early-return key allowances let another edit through, or any programmatic path). User sees 'The alignment changed while the aligner was running, so its result was not used. Run it again.' followed by 'Region realign cancelled.' - 'Block realign cancelled.' though the user never pressed Escape; the data itself is safe.",
+      "severity": "low",
+      "title": "Misleading second toast on a stale (not user-cancelled) region realignment: 'Region realign cancelled.' \\/ 'Block realign cancelled.' after the correct staleness message",
+      "verdict": "defect"
+    },
+    {
+      "file": "script.js",
+      "line": 26361,
+      "quote": "        if (result.cancelled) { showMessage('Block realign cancelled.', 2500); return; }",
+      "reasoning": "The same misleading-toast issue as the region variant, verified verbatim for the block UI: _realignRectangle distinguishes none of result.cancelled's causes (user abort vs. staleness discard at script.js 26153 'return null;') and always reports 'Block realign cancelled.' when RealignRegion returns { cancelled: true, ... } (realign-region.js 478-491). No data or undo corruption occurs - pushUndo (26367) and the state.seqs writes (26368, 26373, 26382-26383) are all skipped - only the reason shown to the user is wrong.",
+      "scenario": "Alignment changes through another path during a block realign's MAFFT run; user is told the block realign was 'cancelled' though they did not cancel it (the running message at 26152 already explains the truth).",
+      "severity": "low",
+      "title": "_realignRectangle likewise handles null as a simple cancel; the underlying data path is correct (verified variant)",
+      "verdict": "ok"
+    },
+    {
+      "file": "script.js",
+      "line": 26144,
+      "quote": "    const startSeqs = state.seqs, startFp = _seqsFingerprint();",
+      "reasoning": "Question 'does anything between the call and the result change state.seqs (making every run refused as stale)?': the fingerprint is snapshotted at 26144 at the very entry of the callback wrapper, after RealignRegion's synchronous copy-only prep (realign-region.js copies rows into recs at 458-466 and rebuild only-local 'working' at 521-522; grep 'state.seqs' in the region file shows no direct writes - all writes happen in script.js callers after a successful result). Between snapshot and the check at 26148 the only awaits are the pure aligner run, and the b1 fix's busy-overlay guard makes user edits during that window practically impossible; nothing in this path mutates state.seqs itself, so legitimate runs are never refused as stale.",
+      "scenario": "Repeated region\\/block realigns in a row: each reaches line 26148 with startSeqs identical and the same fingerprint, returns the freshly aligned result at 26155, and the caller applies it; a realign is never spuriously discarded.",
+      "severity": "none",
+      "title": "Answer to 'does anything between the call and the result change state.seqs': no - the stale check compares the same untouched state both times",
+      "verdict": "ok"
+    },
+    {
+      "file": "realign-region.js",
+      "line": 496,
+      "quote": "                    throw new Error('the aligner returned ' + aligned.length + ' of ' + recs.length + ' sequences; nothing was changed');",
+      "reasoning": "The _alignerRestoreResidues throw (script.js 26176: 'throw new Error(`...the aligner result for ${_alignIdName(shown)} has ${got} residues, but the row sent had ${recs.length}; nothing was changed`)') propagates up through the mafftAlign promise at realign-region.js 477 and out of RealignRegion.run before any working-copy apply; the callers catch (script.js 26392 'catch (err) {' with showMessage(\"Realign block error: \" + err.message, 4000) for _realignRectangle, same pattern for realignSelectedBlock) before any pushUndo in the try, so no undo step is left behind and nothing is applied.",
+      "scenario": "A row with '*' (or any guard-mismatch) makes the residue-count check fail: user selects a region containing that row, realigns, sees an error toast like 'the aligner returned ... nothing was changed'; alignment and undo stack both untouched.",
+      "severity": "none",
+      "title": "An exception thrown out of mafftAlign (e.g. residue-count mismatch in _alignerRestoreResidues) also leaves no undo step",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 8
+  },
+  "note": "Audited realignSelectedBlock, _realignRectangle and realign-region.js's mafftAlign usage. Null results are handled correctly (returns cancelled:true with original seqs; both callers return before any pushUndo, so no stray undo step and no other edit's step popped). Undo steps are pushed after the await (26298 / 26367), which is safe because state.seqs is not touched between the call and the validated result (only local copies are mutated in realign-region.js). Exceptions from the aligner also leave no undo step. One low-severity defect: on a staleness discard, callers show a misleading second toast ('Block realign cancelled.' / 'Region realign cancelled.') on top of the correct staleness message."
+}

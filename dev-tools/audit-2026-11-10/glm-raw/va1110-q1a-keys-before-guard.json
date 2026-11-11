@@ -1,0 +1,85 @@
+{
+  "findings": [
+    {
+      "title": "Ctrl+Z / Ctrl+U / Ctrl+R still mutate state.seqs and state.deletedHistory when focus is on a <select> dropdown inside an open window",
+      "verdict": "defect",
+      "file": "script.js",
+      "line": 16929,
+      "quote": "            case 'z': if (_seqEditOpen()) { if (e.shiftKey) _seqEditRedo(); else _seqEditUndo(); } else if (e.altKey || e.ctrlKey) { if (_seqEditOpen()) return; undoDelete(); } break;",
+      "reasoning": "The guard (16801-16807) only returns when !editorUndo && !(keysAway==='window' && inText). inText uses _isTextEntry, which includes SELECT, so with a dropdown focused in an open window the event passes the guard; isFormField at 16846 (INPUT/TEXTAREA/contentEditable only) does not classify a SELECT as a form field, so nothing below short-circuits and case 'z' runs undoDelete() (state.deletedHistory popped, state.seqs restored behind the window), case 'u' duplicateSelected() at 16942 and case 'r' reverseComplementSelected() at 16915 likewise. Windows with dropdowns confirmed: dotPlotModal (index.html 1188) contains dotPresetSelect (index.html 1241); repeatFinderModal (index.html 1342) contains tsdMarkStyle (index.html 1422); treeDistanceModel (index.html 1451) is inside treeBuilderModal (index.html 1439); all three modals are in EXCLUSIVE_MODAL_IDS (script.js 2542/2546/2547), so keysAway==='window'.",
+      "scenario": "Open the Tree Builder window; click its treeDistanceModel dropdown; press Ctrl+Z: undoDelete() pops the undo stack behind the window; Ctrl+U duplicates selected rows, Ctrl+R reverse-complements them -- exactly the editing-behind-a-window that v332 was meant to stop.",
+      "severity": "high",
+      "confidence": 4
+    },
+    {
+      "title": "Ctrl+A on the same dropdown path changes the selection via selectAllSequences() behind a window",
+      "verdict": "defect",
+      "file": "script.js",
+      "line": 16962,
+      "quote": "                selectAllSequences();",
+      "reasoning": "For a focused <select> inside an open window, the guard exemption at 16807 (keysAway==='window' && inText) lets the event through, but the isFormField pass-through at 16846-16881 does not classify a SELECT, so case 'a' at 16961-16964 runs selectAllSequences() with preventDefault, changing state.selectedRows while the keyboard is in a window in front of the alignment; the guard's native list [cvxafp] at 16812 shows Ctrl+A was intended to stay native.",
+      "scenario": "Open the Dot plot or Repeat window, click a dropdown such as dotPresetSelect, press Ctrl+A: instead of native select-all in the dropdown, every alignment row becomes selected behind the window.",
+      "severity": "medium",
+      "confidence": 4
+    },
+    {
+      "title": "Escape is handled before the _alignmentKeysAway guard, so Escape during a busy run still calls clearActiveSelection()",
+      "verdict": "defect",
+      "file": "script.js",
+      "line": 16792,
+      "quote": "    if (!somethingOpen && !state.editDrag) clearActiveSelection();",
+      "reasoning": "The Escape branch (16772-16795) runs before the keysAway check at 16801-16807 whose comment at 16797 says 'The alignment's shortcuts do nothing while the aligner runs'. During a run nothingOpen is normally false (menus closed, focus on the page under #busyOverlay), so the clearActiveSelection() call in that branch clears state.selectedRows/selectedColumns/residue selection while the overlay makes mouse restoration impossible; clearActiveSelection is defined at script.js 21152. Caveat: the echo of that earlier read was later trimmed by the harness, so I could not re-verify the 16792 text character-for-character within budget; the ordering (Escape branch returns before the guard) is confirmed by the guard block I did re-read verbatim (16797-16820).",
+      "scenario": "Select rows/columns, start Realign Selected (busy overlay shows), press Escape: the selection is silently cleared mid-run instead of surviving until the job finishes.",
+      "severity": "medium",
+      "confidence": 3
+    },
+    {
+      "title": "handleKeyUp is unguarded but never edits seqs, selection or undo history",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 17093,
+      "quote": "        state.ctrlPressed = false;",
+      "reasoning": "handleKeyUp at 17091 has no _alignmentKeysAway check, but its body (17091-17094 visible) only sets state.ctrlPressed back to false; it never writes state.seqs, selectedRows/selectedColumns/selectedNucs or deletedHistory, so during 'busy' or 'window' key releases nothing audited changes.",
+      "scenario": "Any key release during an aligner run or with a window open: no mutation of the audited state.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "The editorUndo exemption edits only the Sequence editor's own buffer, not state.seqs or deletedHistory",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 16933,
+      "quote": "                if (_seqEditOpen()) _seqEditRedo();",
+      "reasoning": "editorUndo (16805) requires keysAway==='window' && _seqEditOpen() && Ctrl/Cmd && key z/y. With _seqEditOpen() true, cases 'z' (16923-16931) and 'y' (16932-16936) route to _seqEditUndo()/_seqEditRedo() (definitions at script.js 21049 and 21079), whose bodies push/splice the editor's own undo array (21085-21092), not state.seqs or state.deletedHistory.",
+      "scenario": "Sequence editor open; Ctrl+Z outside its text fields: only the editor buffer rolls back, the alignment and its undo stack are untouched.",
+      "severity": "none",
+      "confidence": 4
+    },
+    {
+      "title": "While busy, no key reaches the editing code below the guard",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 16807,
+      "quote": "        if (!editorUndo && !(keysAway === 'window' && inText)) {",
+      "reasoning": "For keysAway==='busy' the inText exemption cannot apply (it requires keysAway==='window'), so the guard always returns at 16818 before any editing branch (the switch at 16903 onward, undoDelete 16929, duplicateSelected 16942, selectAllSequences 16962); only Ctrl/Cmd+C/V/X/A/F/P (16812) are handed to the browser native and returned without preventDefault.",
+      "scenario": "Start an aligner job, press any key or combination (arrows, Delete, Ctrl+U): nothing below the guard runs; the browser gets nothing it can act on.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "Ctrl+D does not delete columns while a dropdown or text field is focused",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 16831,
+      "quote": "        const typing = ae && ae.getClientRects().length && _isTextEntry(ae);",
+      "reasoning": "The early Ctrl+D handler (16827-16840) checks _isTextEntry on the focused element, which includes SELECT dropdowns and single-line inputs, so with focus on e.g. dotPresetSelect (index.html 1241) the deleteSelectedColumns()/deleteColumnsOfResidueSelection() calls at 16835-16836 are not reached; the comment at 16829-16830 records that this was fixed for the drop-down case in audit 2026-11-10 U5.",
+      "scenario": "Focus a dropdown inside the Dot plot window and press Ctrl+D: columns are not deleted.",
+      "severity": "none",
+      "confidence": 3
+    }
+  ],
+  "counts": {
+    "findings": 7
+  },
+  "note": "Part 1 audit complete (7 findings). Most serious: while keysAway==='window' with focus on a <select> dropdown inside an open window (dot plot / repeat finder / tree builder), the guard's inText exemption (which treats SELECT as a text entry) lets Ctrl+Z (undoDelete), Ctrl+U (duplicateSelected), Ctrl+R (reverseComplementSelected) and Ctrl+A (selectAllSequences) mutate state.seqs, the selection and state.deletedHistory behind the window, because isFormField (16846) does not classify a SELECT. Escape also runs before the guard and (per a partially re-verified read) clears the selection via clearActiveSelection() even while the busy overlay is up. OK: no key passes the guard while busy; editorUndo only touches the Sequence editor's own buffer; Ctrl+D is safe on dropdowns; handleKeyUp clears only modifier flags."
+}

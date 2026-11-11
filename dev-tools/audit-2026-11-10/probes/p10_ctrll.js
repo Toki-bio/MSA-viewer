@@ -1,0 +1,20 @@
+const L = 'C:/work/MSA-viewer-new/tests/lib/';
+const { start } = require(L + 'static-server');
+const { launch, loadFasta } = require(L + 'browser');
+const FA = '>s0\nACGTACGTACGTAAAC\n>s1\nACGTTCGTACGTAAAC\n>s2\nACGTACGAACGTAAAC\n>s3\nACGTACGTACCTAAAC\n';
+(async () => {
+  const { server, baseUrl } = await start();
+  const browser = await launch();
+  const page = await browser.newPage();
+  let dialogs = 0; page.on('dialog', d => { dialogs++; d.dismiss(); });
+  await page.goto(baseUrl + '/index.html', { waitUntil: 'networkidle' });
+  await loadFasta(page, FA);
+  await page.evaluate(() => { state.selectedRows = new Set([1]); renderAlignment(); document.activeElement?.blur?.(); });
+  await page.keyboard.press('Control+u'); await page.waitForTimeout(200);
+  const edited = await page.evaluate(() => ({ rows: state.seqs.length, undo: state.deletedHistory.length }));
+  const foc = await page.evaluate(() => { const t = document.getElementById('fastaInput'); t.closest('.menu-section')?.classList.add('menu-open'); t.focus(); return { active: document.activeElement.id, visible: t.getClientRects().length > 0, away: _alignmentKeysAway(), sec: t.closest('.menu-section')?.className }; }); console.log(JSON.stringify(foc));
+  await page.keyboard.press('Control+l'); await page.waitForTimeout(1200);
+  const after = await page.evaluate(() => ({ rows: state.seqs.length, undo: state.deletedHistory.length }));
+  console.log(JSON.stringify({ edited, after, dialogs }));
+  await browser.close(); server.close();
+})().catch(e => { console.error(e); process.exit(1); });

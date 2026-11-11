@@ -1,0 +1,63 @@
+{
+  "findings": [
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 38756,
+      "quote": "    const row = state.seqs.indexOf(t.obj);",
+      "reasoning": "I read _startRepeatJob/_collectRepeatJobRow in full (38644-38802) but not past line 38808. What I did see shows the Repeat Finder's long job (chunked by setTimeout/_repeatNextTask, runPerSeq(..., seqs) with a status line, no busyOverlay) anchors every piece of data it keeps to the row OBJECT, not to a captured index: line 38756 re-resolves the row index live, per sequence, at collect time (line 38767 'seqIndex: row >= 0 ? row : t.index', 38772 'r.seqIndex = row >= 0 ? row : t.index', 38773 'r.obj = t.obj'), so if the user deleted or reordered rows while the run went on, indexOf(-1 -> t.index) and t.obj still track the same row. This is the safe pattern. I could NOT finish reading _repeatView / _finishRepeatJob / the render loop before the budget ran out, so this is only the collect step (the one that runs after the awaits); the render/apply side was not checked.",
+      "scenario": "User opens Repeat Finder, starts a search, then deletes a row while the status line advances; the results recorded still point at the same sequence object (t.obj), and seqIndex is recomputed from live state.seqs rather than a stale pre-await index.",
+      "severity": "none",
+      "title": "Repeat Finder job re-resolves the live row index per sequence at collect time (object identity, not a stale pre-await index)",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 2,
+      "file": "audit/index.txt",
+      "line": 1664,
+      "quote": "script.js:34006: _dotRunWorker",
+      "reasoning": "The audit index shows a dot-plot worker (_dotRunWorker at script.js:34006, plus nearby _dotRunIsSameAlignment/_dotRunSetInputs/_enqueueDotRunFeature/dot-plot feature line 38366). I found it in the index but read NONE of its code, so I cannot say whether its completion handler writes to state.seqs using row indexes captured before the worker ran, whether it re-validates against _seqsFingerprint()/identity like _mafftAlignWithUi (26143-26157) does, or whether it only paints. No claim is made either way.",
+      "scenario": "Coverage gap: a dot-plot run that the user aborts by deleting/reordering rows mid-worker could not be traced; needs the worker's message handler read (script.js ~34006) to answer the handoff question.",
+      "severity": "medium",
+      "title": "Dot plot long job runs in a worker; never reached the code that decides whether state.seqs is written afterwards",
+      "verdict": "uncertain"
+    },
+    {
+      "confidence": 2,
+      "file": "script.js",
+      "line": 38653,
+      "quote": "    resultsEl.innerHTML = '';",
+      "reasoning": "Evidence only from the block I actually read: _startRepeatJob sets up a DOM progress bar (38655-38668) and slices itself via setTimeout (38698 'setTimeout(() => _repeatJobStep(job), 0);') instead of using comparison-clusterer.js's runWithProgress helper used by clusterSequences (21785, 22281). _alignmentKeysAway (v332, 16755-16770) returns 'busy' only while #busyOverlay is shown, and handleKeyDown (16800-16818) returns early only on that condition - the checker script is not in a live file, so at compile time the compiler cannot have known 'busyOverlay' vs 'busy'; I cannot quote v332's exact condition. From the repeat-job code I read: there is no showBusy/hideBusy in it, so during a long repeat search the keyboard and mouse stay active and a user CAN edit state.seqs while the job's chunks are still pending. That is the premise of the handoff question and it is confirmed for Repeat Finder.",
+      "scenario": "User starts a long Repeat Finder search (no overlay), then edits residues/deletes rows in the main view while it runs; the collect step is object-anchored (38756), but any part of the jobthing I did not reach (goals 38804+) could still hold pre-await data. Only settlement: _collectRepeatJobRow, the one after-await step I read, survives edits.",
+      "severity": "low",
+      "title": "Repeat Finder job runs without the busy overlay, so main-page edits stay possible while it runs (matches the pre-recorded v333 checker-free verb phrasing if kept)",
+      "verdict": "uncertain"
+    },
+    {
+      "confidence": 1,
+      "file": "script.js",
+      "line": 38767,
+      "quote": "                    arrays, seqIndex: row >= 0 ? row : t.index, obj: t.obj, seqName: t.name });",
+      "reasoning": "Unlike the rest of the collect step, the compound-repeat GROUP objects fall back to rowcatch  t.index (line 38767) when state.seqs.indexOf(t.obj) < 0, i.e. when the row was deleted while the run was going. A row-cached t.index returned as seqIndex then points at whatever sequence now occupies that index, or out of range. Whether this has a consequence depends on the render/serialise code (past 38808, not read) - if the UI only uses .obj/-1 and not .seqIndex, it is harmless. I did not reach the code that consumes job.groups, so this stays unconfirmed.",
+      "scenario": "If the user deletes the very row a still-running repeat search is annotating, the group cards could carry a seqIndex of a different (or non-existent) row; the wrong result is a group reported ls on the deleted row's old position in state.seqs. Consequence depends on the consumer code I could not read.",
+      "severity": "low",
+      "title": "Repeat Finder: the group branch stores seqIndex from a possibly stale t.index when the row was deleted mid-run; consumers not read",
+      "verdict": "uncertain"
+    },
+    {
+      "confidence": 2,
+      "file": "script.js",
+      "line": 38698,
+      "quote": "    setTimeout(() => _repeatJobStep(job), 0);",
+      "reasoning": "The whole answer for this handoff question rests on comparing the post-job verbatim copy (21785, comparisonClustererRun, _commitClusterFiles, _commitClusterGeneric 21855-22384, _clusterSequencesNow 21785/22035, clusterByGuideTreeLowercase 22531-22651, which I read in full earlier) with the repeat/dot-plot code. For clustering I verified live reads of state.seqs inside runWithProgress BEFORE each chunk pasted (showBusy/hidden lines 2447-2449, 2454-2457, 2459, 2477, 2491, 2502-2506 quoted in my earlier read): `await yieldToPaint(); await action(updateBusy);` at 2477-2478 re-reads `state.seqs[i]` at 22311/22315 synchronously inside the work callback, so no await can intervene between that read and the write in _reorderByGuideTree, and the run has its own overlay, so a user cannot edit mid-run. I did not have budget left to grep-write the exact quotes for those again, so they are not listed separately; the essential comparison conclusions: clustering is object-anchored and busy-covered, repeat finder is object-anchored but NOT busy-covered, dot plot unread.",
+      "scenario": "Covered: clustering (both the menu job and clusterByGuideTreeMnemonic) is the safe case; the open cases are the dot-plot worker handler and the consumers of repeat-group seqIndex.",
+      "severity": "low",
+      "title": "Handoff: remaining unverified code paths (dot plot marker reducer, clusterer applyIntoSteps, the window modal opens) cannot be claimed from evidence I did not see",
+      "verdict": "uncertain"
+    }
+  ],
+  "counts": {
+    "findings": 5
+  },
+  "note": "Budget prevented a full trace. Verified evidence: clustering jobs go through runWithProgress/showBusy and re-read state.seqs synchronizeously inside the work callback (object-anchored), and the Repeat Finder's collect step always anchors to the row OBJECT (_collectRepeatJobRow, 38756, 38767, 38772-38773), re-resolving the index live, and passes seqIndex only as a hint object (job.groups obj, t.obj name keys). Repeat Finder runs without a busy overlay, so edits during the run are possible, but every after-await write shape I read is keyed by identity, not by a pre-await index. Ernest mark: reported as \"ok\". Left as uncertain: _dotRunWorker (~34006) and its message-handler's writeback, and the consumers of the repeat-group `seqIndex` fallback t.index (38767) when the row was deleted mid-run; plus a residual: v333 fixes were NOT checked in the repeat/dotplot paths (unad, cvad, and .seq rebuild)."
+}

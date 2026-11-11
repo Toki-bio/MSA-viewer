@@ -1,0 +1,85 @@
+{
+  "findings": [
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 26961,
+      "quote": "return { seq: alignedSeq, gapsPerInterval, extraColumnsPerSlot, layout: profileSlots };",
+      "reasoning": "alignSequenceToConsensusProfile (26929-26963) only processes its arguments and awaits MAFFT (26950); it never assigns state.seqs or any row of it. The early bailing at 26932-26935 returns a gapless result without state changes. All state.seqs writes happen in its callers after their change-checks, so this function has no post-await state write at all.",
+      "scenario": "Covered: the profile function itself cannot corrupt state during the await window; corruption risk lives only in the callers (realignSequenceAgainstConsensus 33885, checked correct; addSequencesAndAlign 26788/26790, checked correct).",
+      "severity": "none",
+      "title": "alignSequenceToConsensusProfile is pure: no write to state.seqs or a row of it after the await",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26790,
+      "quote": "state.seqs = workingSeqs;",
+      "reasoning": "In addSequencesAndAlign the writes at 26788 and 26790 occur after the awaits at 26764, but are preceded by the change-check at 33876-style guard at 26781 (if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp)), which returns at 26784 before any assignment; between the check and the writes there is no further await (26786-26791 is synchronous). workingSeqs was built at 26760 from the same pre-await state.seqs, so the merge is safe whenever the check passes.",
+      "scenario": "Covered: user edits rows while the MAFFT runs run; check at 26781 refuses and nothing is written to state.seqs, so the new rows are not interleaved into a changed alignment.",
+      "severity": "none",
+      "title": "Post-await writes at 26788/26790 in addSequencesAndAlign are guarded by the identity+fingerprint check with no intervening await",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26782,
+      "quote": "state.deletedHistory.pop();   // the undo entry pushed for this add: nothing was added",
+      "reasoning": "pushUndo('add-sequences') at 26748 runs BEFORE the await at 26764 (loop over ns of newSeqs, one await each) and before the check at 26781. Any change of state.seqs during those awaits goes through pushUndo (17257-17285, which pushes unconditionally at 17285), placing the user's frame ON TOP of the add frame; pullUndo likewise mutates the top before restoring state.seqs. The branch at 26781 is entered precisely when state.seqs changed, so pop() at 26782 then removes the user's frame, not the add frame. The 17251 guard function protects nothing here; this is the exact case _mafftAlignWithUi handles via _skipNextNoOpDrop (26150-26156), absent here, and the stale frame stays on the stack.",
+      "scenario": "User submits Add Sequences with align-to-consensus hit (no busy overlay, per the comment at 26757-26758); while the MAFFT loop awaits, user right-clicks a row and deletes it, stacking 'delete-row' on top of 'add-sequences'. Refusal at 26781 then pops at 26782, destroying the user's delete-row frame: Ctrl+Z can no longer undo just the deletion; it falls through to the stale pre-add snapshot, collapsing multiple actions into one undo, and a no-op add frame remains in the stack.",
+      "severity": "medium",
+      "title": "addSequencesAndAlign blindly pops the top of state.deletedHistory on refusal, destroying a user undo step pushed during the awaits",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 26795,
+      "quote": "state.deletedHistory.pop();   // nothing was added",
+      "reasoning": "Same blind-pop pattern as the refusal path. The catch at 26793-26797 runs after MAFFT (26949-26950 await at 26950) or the profile rebuild throws; the user may have changed state.seqs during the awaits at 26764, pushing a frame on top of the 'add-sequences' frame pushed at 26748 (pushUndo at 17285 pushes unconditionally). The pop at 26795 removes whichever frame is top at that moment, which after a user edit is the user's frame, not the add frame.",
+      "scenario": "User starts Add Sequences with align-to-consensus, edits a row while MAFFT runs (pushing an edit frame), then the worker rejects ('Add-to-consensus alignment failed:', 26796); the catch pops the user's edit frame instead of the add frame, silently destroying that edit's undo step while leaving the stale add frame.",
+      "severity": "medium",
+      "title": "Error path of addSequencesAndAlign also pops state.deletedHistory blindly rather than the 'add-sequences' frame",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 33879,
+      "quote": "if (state.seqs !== startSeqs || _seqsFingerprint() !== startFp) {",
+      "reasoning": "Both guards are captured at 33876 ('const startSeqs = state.seqs, startFp = _seqsFingerprint();') BEFORE the await at 33877; the comparison at 33879 runs immediately after the await and BEFORE any write: pushUndo at 33884 and the state.seqs assignment at 33885 both come after it. On mismatch it shows the message at 33880 and returns at 33881-33882 without touching seqs or history. _seqsFingerprint (12580-12599) hashes every row's seq and the row count, so a splice/delete during the run changes the count hashed at 12599 and is caught; a header-only rename passes both checks, but the row at index then still has the same seq passed at 33877, so the result stays valid for it (headers do not affect the realign).",
+      "scenario": "Covered: while the MAFFT call at 33877 runs with no busy overlay, the user deletes, moves, or edits rows; the check at 33879 fires and the stale MAFFT result is refused instead of being applied to changed rows.",
+      "severity": "none",
+      "title": "realignSequenceAgainstConsensus change-check is correct: identity + fingerprint, captured before the await, compared before any write",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 33885,
+      "quote": "state.seqs = state.seqs.map((cmd, seqIndex) => {",
+      "reasoning": "The only post-await write is the map at 33885 (there is no in-place row write after the await). After 33879, seqIndex === index at 33888 matches the same row, because the check guarantees the identical array object (identity), the same row count (12599) and the same per-row seq content (12586-12593), so no move or delete slipped through; gappedCons at 33866 was computed from the same pre-awa(element)it rows, so the result is consistent with the row at that index.",
+      "scenario": "Covered: a row deletion or move during the MAFFT run changes the array identity or the count in the fingerprint, the check refuses, and the map therefore cannot apply the realigned profile to a wrong row at a stale index.",
+      "severity": "none",
+      "title": "The only state.seqs write after the await in realignSequenceAgainstConsensus is at 33885, and the row at index is still the same row",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 33884,
+      "quote": "pushUndo('realign-against-consensus');",
+      "reasoning": "pushUndo at 33884 sits AFTER the check at 33879; nothing is pushed before the await at 33877. The refused-result path (33880-33882) returns without reaching 33884, so no orphan undo step is left on state.deletedHistory when the result is refused.",
+      "scenario": "Covered: user triggers the re-align and edits during the run; the refusal returns cleanly with the undo stack untouched, so the next Ctrl+Z undoes the user's own edit rather than popping a stale frame.",
+      "severity": "none",
+      "title": "No undo step is pushed before the await in realignSequenceAgainstConsensus; refusal leaves nothing behind",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 7
+  },
+  "note": "Q7 part 1 audited. realignSequenceAgainstConsensus: post-await write only at 33885; change-check at 33879 (identity + _seqsFingerprint, captured at 33876 before the await) is done correctly before any write; index safety guaranteed; no pre-await pushUndo, so refusal leaves nothing behind (all ok). alignSequenceToConsensusProfile is pure (returns at 26961, no state.seqs writes). The caller addSequencesAndAlign, however, pushes 'add-sequences' at 26748 before the awaits at 26764 and pops state.deletedHistory blindly at 26782 (refusal) and 26795 (catch) — destroying a user undo step pushed during the run instead of the add frame, lacking the _skipNextNoOpDrop guard _mafftAlignWithUi has; its post-await writes at 26788/26790 are otherwise properly guarded. 7 findings appended."
+}

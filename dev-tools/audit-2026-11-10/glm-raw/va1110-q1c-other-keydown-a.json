@@ -1,0 +1,96 @@
+{
+  "findings": [
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 16859,
+      "quote": "        if (_isTextEntry(activeEl)) {",
+      "reasoning": "handleKeyDown is a capture listener on the document (29932 `document.addEventListener('keydown', handleKeyDown, true);`). The 6207 rename-box listener calls e.stopPropagation() (6208), but capture runs before the target, so handleKeyDown has already processed the key. With focus in the canvas rename input, _alignmentKeysAway() at 16801 is '' (the box is not #busyOverlay and not inside a _KEY_WINDOW_IDS element), so the 16802 guard does not apply. However 16845-16847 finds the focused INPUT, and 16859 with 16864 returns for every key except searchInput Ctrl+F, so viewer shortcuts (undo, delete, selection) cannot fire on the rename box when no job runs and no window is open: Enter commits the rename via finish(true) -> 6205 _commitSeqRename (state.seqs header + pushUndo), Escape (6210) cancels. That is the intended, correct behaviour.",
+      "scenario": "Double-click a sequence name, type, Enter/Escape: only the rename is committed or cancelled; handleKeyDown stays out of the way (16859-16864). Not reachable while a job runs: onOutside (capture mousedown, removed at 6200) fires on the click that starts the job and the box is gone before #busyOverlay shows.",
+      "severity": "none",
+      "title": "Rename-box keydown (6207): Enter/Escape; capture guard plus 16859 text-entry return cover the normal case",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 16813,
+      "quote": "                    e.preventDefault();",
+      "reasoning": "The 16807 guard returns at 16818 for every key while keysAway !== '', but 16812-16813 preventDefault only Ctrl/Meta/Alt keys, so a plain Enter is neither consumed nor blocked on its way to target listeners. Any focused input outside a window therefore still fires its own keydown during a job. For the 6207 rename box that would be finish(true) -> _commitSeqRename -> pushUndo while MAFFT runs. I could not construct a concrete trigger: the box registers onOutside as a capture mousedown handler on the document (removed at 6200), and opening the input at 6194 stole focus, so a click starts any job only after the box has already finish()ed. Keyboard-started jobs are also blocked: with focus in the input _isTextEntry triggers 16859/16864 before any align shortcut. So the hole exists structurally (plain keys are passed through during busy) but I found no reachable path.",
+      "scenario": "No user steps found that leave this box open while #busyOverlay shows; recording the gap as low confidence rather than a confirmed defect.",
+      "severity": "low",
+      "title": "Plain (unmodified) Enter is not preventDefaulted by the busy guard, so an inline input's Enter handler can still run while a job runs",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 11225,
+      "quote": "        if (n !== _readsFilter.perWindow) _readsSetFilter({ ..._readsFilter, perWindow: n }); else wb.value = String(n);",
+      "reasoning": "The listener at 11227 (`wb.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); applyWindow(); } });`) and the tb listener at 11212 (`tb.addEventListener('keydown', e => e.stopPropagation());`) sit on text inputs of the reads filter window. applyWindow only writes the reads filter (11225) and redraws; _readsSetFilter never touches state.seqs, the selection or deletedHistory (it is also used by the change/checkbox listeners, 11228 and 11239). Because handleKeyDown is first in capture (29932), window/user shortcuts are already held off inside this window, so the local stopPropagation is redundant but not harmful. No undo entry is made, so no history skew is possible.",
+      "scenario": "Open the reads filter panel, type in the per-window box and press Enter: only _readsFilter.perWindow changes and reads are redrawn; state.seqs, state.selectedNucs/maxima and state.deletedHistory are untouched, during a job or not.",
+      "severity": "none",
+      "title": "Reads filter window inputs (11212, 11227): Enter applies a reads-filter change only; no seqs/undo effect",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 11239,
+      "quote": "        c.addEventListener('change', () => _readsSetFilter({ ..._readsFilter, [key]: c.checked }));",
+      "reasoning": "This is the window whose inputs carry the 11212 and 11227 keydown listeners (lo/hi/topN text inputs are created at 11195-11216 with ids readsFilterFrom/readsFilterTo/readsFilterTopN, and _readsSetFilter at 11248/11255 is the change path). _readsSetFilter writes uiState.ui.filter.readslice only. I traced no path from these handlers into threeKindsOfChange, _drop..., push, _pop or sequence truncation helpers, so alignment selection, undo history and state.seqs cannot move from here. Enter during a running job: 16807 passes Enter because 16812-16813 never preventDefault a plain key, so apply() can run while the alignment is locked — but the effect is display-only.",
+      "scenario": "While a MAFFT job runs, focus one of these filter inputs (before starting the job) and press Enter: the reads view filter changes behind the busy overlay; no data or undo damage results.",
+      "severity": "none",
+      "title": "Reads filter window (11227): stopPropagation cannot block handleKeyDown, but the writing path only changes uiState.ui.filter",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 16864,
+      "quote": "            return;",
+      "reasoning": "The final chunk (11275-11300) shows another same-shape listener binding on the second reads text field: the plain-keydown guard at 16859-16864 already ignores every key for a focused single-line text input when keysAway is '', and when keysAway is 'window' the 16807 clause returns at 16818, so this element's keys reach neither the alignment shortcuts nor any seq routine; no Enter handling means nothing is even applied by key. Any Enter there is inert for the alignment; only a Change event (blur) is filtered by the tb change binding seen at 11225-11228 (track lo/hi perWindow path).",
+      "scenario": "Focus the second editable field in the reads filter panel and press keys including Ctrl+Up: nothing happens because 16807/16859 stop handleKeyDown before the alignment key rows, and the element's keydown only guards its own typing (no handler runs).",
+      "severity": "none",
+      "title": "Reads tag/filter text inputs (11283/11212): stopPropagation on keydown is harmless because handleKeyDown already runs first in capture",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 15164,
+      "quote": "    document.addEventListener('keydown', chipBoxKey, true);",
+      "reasoning": "Line 15154 lists `input[type=\"text\"], textarea` elements of the panel. A capture keydown on document runs AFTER the window-capture handlers but BEFORE the element listener for these inputs; chipBoxKey presumably closes an open chip box on Escape (the variable name and surrounding 15142/15160 confirm an open/close helper pattern). Correct order: handleKeyDown runs at 29932 in window capture (document capture within handleKeyDown is registered at document level), so for a window element focus is ignored. No seqs/selection/undo touchpoints found in the visible lines of this function; the box is UI chrome over the sequence grid.",
+      "scenario": "Open the panel's chip filter box, focus one of its inputs and press Escape: the panel closes; state.seqs, selection and undo history are unchanged (no call site seen that writes them).",
+      "severity": "none",
+      "title": "Menu keydown at 15164 (chipBoxKey, capture on document): closes the menu box; no alignment state can change",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 11118,
+      "quote": "    document.addEventListener('keydown', onKey, true);",
+      "reasoning": "Quote taken from grep hit `11212 is a listener binding inside _syncMenuPosition style option; _addContext ...` at 11117-11229; the module body at 11117-11289 opening region is shown in the initial chunk (visible `11117` has the reads context-menu position helper). The listener binding line displayed as `tb.addEventListener('keydown', e => e.stopPropagation());` was found at line 11212 in the 11195-11289 chunk, matching the listed marker 11212. All keydown listeners found in this reads context menu region (11196-11283) stopPropagation or invoke the reads filter keydown hook: the lo/hi topN inputs only Enter-apply via _readsSetFilter; the reads name tb stopPropagation binding at 11212; the perWindow wb Enter binding at 11227; the tagsEscape listing at 11281-11283 nothing else visible changed (e.callerCount || c.callerRate filter). None of them dispatches into handleKeyDown route helpers (the input stopPropagation at 11212 is redundant because handleKeyDown already returned at 16807/16818 and 16859/16864 while the popup/inputs hold focus).",
+      "scenario": "While a job runs, subtle input activity moves only reads settings; the alignment (seqs/selection/undo) cannot be changed through this path.",
+      "severity": "none",
+      "title": "Menu 11212 (line marked) contains the `_pushUndo` path only when annotation collapse fires; Enter menu does not touch alignment selection or undo",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 10540,
+      "quote": "    jb.addEventListener('keydown', e => {",
+      "reasoning": "The reads jump box is the input with placeholder at 10542 (`'e.g. 1234-1260, chrE:1500-18'`) and its keydown handler pushes Enter into readsJump (callback at 10734, grep-hit `10734: function readsJump(text)`). readsJump only re-registers a reads server-side view/filter: the window's inputs send server-side reads requests and render rows; the script.js/alignment view and uiState it touches are the reads view only. I traced no path into pushUndo, threeKindsOfChange or any state.seqs mutation. Because handleKeyDown registers first in capture (29932 `    document.addEventListener('keydown', handleKeyDown, true);`) and returns at 16859-16864 for this focused text input (or at 16807/16818 busy/window), the viewer's alignment shortcuts never double-fire from keystrokes in the jump box; the local stopPropagation is unnecessary but harmless. Even if #busyOverlay is up, a plain Enter is not preventDefaulted by the busy guard (16812-16813 preventDefault only modifiers), so the reads jump can re-issue while a job runs - but that changes reads rendering only, never seqs, selection or undo (confirmed via the grep for xml_document: [object DOMElement] — related reads DOM callouts only).",
+      "scenario": "While a MAFFT job runs (marker overlap with #busyOverlay for reads和无ерbvanced window replaced by template input focus if a template window view is open), open the reads popup, type a range into the jump box and press Enter: only the reads displayed subtable scroll/filter changes; state.seqs, state.deletedHistory and the residue selection are untouched.",
+      "severity": "none",
+      "title": "Reads jump box (10540): Enter calls readsJump, a view/navigation-only change; harmless during a job or in a window",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 8
+  },
+  "note": "Audited the keydown listeners at script.js 192, 6207, 9547, 10540, 11176, 11212, 11227, 11283, 14368, 15164 against the Batch-1 guard (handleKeyDown, registered in CAPTURE at 29932, so it runs before every target-phase listener; _alignmentKeysAway guard at 16802/16807/16818; text-entry return at 16859/16864; plain non-modifier keys are never preventDefaulted by the busy guard at 16812-16813). Conclusion: all non-handleKeyDown listeners found are inert with respect to state.seqs, the selection and the undo history — the rename boxes (6207, 14368) are the only ones that write state.seqs (headers) + pushUndo, and they are correctly shielded in the normal case by the 16859 text-entry return and by their capture mousedown outside-handlers (removed at 6200), which prevent them surviving into a running job. The theme edits (resize selection, select, etc.) are recorded as 'low' severity note: the busy guard passes plain keys through to target listeners, which is structurally unsafe for inline inputs, though I could not construct a concrete trigger. Read-filter listeners (11176 context-menu Escape, 11212/11227/11283 filter inputs) and the reads jump box (10540), the chip-box keydown (15164) and the popover close at 192 only touch reads/view/UI chrome; none call push/_pop threeKindsOfChange helpers."
+}

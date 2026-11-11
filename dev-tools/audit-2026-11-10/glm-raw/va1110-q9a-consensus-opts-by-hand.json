@@ -1,0 +1,99 @@
+{
+  "findings": [
+    {
+      "confidence": 4,
+      "file": "block-mask.js",
+      "line": 133,
+      "quote": "function buildMajorityConsensusRow(A, minCoverage) {",
+      "reasoning": "buildMajorityConsensusRow does its own per-column majority vote over the numeric matrix A (built by parseAln at lines 81-104) with no opts from _getConsensusOptions (grep of _getConsensusOptions in block-mask.js: no hits). It never consults isRna, and because parseAln's CODE (line 21) has no 'U', a uracil column resolves to GAP/(other letters) rather than either T or U, so the reference row it builds for an RNA alignment is simply wrong.",
+      "scenario": "RNA alignment (rows with U) + block-mask view: the per-column majority row used as the mask's reference is built from data in which all U's were silently replaced with gaps, so divisionsblocks/elements derived from it mis-anchor on the wrong columns.",
+      "severity": "medium",
+      "title": "block-mask.js buildMajorityConsensusRow computes a majority consensus character per column without _getConsensusOptions",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 14600,
+      "quote": "        const norm = up === 'U' ? 'T' : up;",
+      "reasoning": "_consensusTooltipHtml (the per-column consensus tooltip, Full/Block spans and Canvas row) counts the column itself and hard-normalizes U to T, then labels the frequency rows with the colorMap key 'T' (line 14607: `const colorMap = { A:'#27ae60', C:'#2980b9', G:'#d35400', T:'#c0392b', N:'#7f8c8d' };`). So even though _getConsensusOptions().isRna (script.js 4543-4563, used by _origComputeConsensusCharForColumn via _consensusDecide at 4629-4633) correctly returns U for the consensus letter itself, the tooltip's composition list still displays 'T' for uracil bases.",
+      "scenario": "Load an RNA alignment; hover a conserved uracil column. The consensus letter in the row is U (correct, v333), but the tooltip shows 'T' with a count/pct for plain 'T' bases - the same T-for-RNA mismatch Batch 2 was supposed to eliminate.",
+      "severity": "low",
+      "title": "Consensus column tooltip normalizes U to T, so RNA columns are labeled 'T' in the base-composition rows",
+      "verdict": "defect"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 12800,
+      "quote": "                const consStr = computeConsensusForSequences(state.seqs.map(s => s.seq));",
+      "reasoning": "The main render path (Canvas, and the same helper used by the DOM row) builds the displayed consensus through computeConsensusForSequences, whose body (4662-4664) is `function computeConsensusForSequences(seqs, threshold) {` / `const opts = _getConsensusOptions();` / `return computeConsensusForSequencesFresh(seqs, opts);`. computeConsensusForSequencesFresh (4687 loop) calls _computeConsensusCharForColumn(copies.map(s => s.charAt(i)), i, opts), and _origComputeConsensusCharForColumn (4596/4606/4623) hands that opts to _consensusDecide, which at 4629-4633 returns U instead of T when isRna. Cache is keyed by _consensusOptsKey() too (12802, 12792).",
+      "scenario": "RNA alignment rendered in Canvas or DOM mode: the consensus row/letters carry isRna from the shared options, so an all-uracil column correctly shows U.",
+      "severity": "none",
+      "title": "Main consensus render path goes through computeConsensusForSequences and honors _getConsensusOptions",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 4,
+      "file": "script.js",
+      "line": 17693,
+      "quote": "    const opts = _getConsensusOptions();",
+      "reasoning": "copySelectedConsensus (17686-17706) uses `const opts = _getConsensusOptions();` (17693) and `for (let pos = 0; pos < len; pos++) consArr.push(_computeConsensusCharForColumn(selectedSeqs, pos, opts));` (17695); the same pattern (opts = _getConsensusOptions(); at 30223 and 30462, feeding _computeConsensusCharForColumn loops) appears at the two other product call sites, found by grepping `_computeConsensusCharForColumn(`. All caller-created opts objects come from _getConsensusOptions, so none of them hard-codes T for RNA.",
+      "scenario": "Select rows in an RNA alignment and use 'Add consensus below (selected)' / 'Replace selected with consensus' / copy-selected-consensus: all four call paths push U for uracil columns because isRna rides along in the shared opts.",
+      "severity": "none",
+      "title": "copySelectedConsensus builds its per-column loop on opts from _getConsensusOptions, not its own object",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 5,
+      "file": "script.js",
+      "line": 14562,
+      "quote": "function consensusDisplayBase(base, pos, threshold) {",
+      "reasoning": "consensusDisplayBase (14562-14574) and _canvasConsensusUpper (14576-14590) do count the column themselves (`const col = ...; const nonGapCol = col.filter(...); const counts = utils.letterCounts(nonGapCol)`), but the result only drives UPPER/lower case (where the majority falls vs the threshold) and the 'state' span text at 14592 (`consChar` there comes from the option-based consensus array at 14608: `const consChar = mySeqs[consensusIndex1].charAt(pos)`). I traced the whole block: no consensus character is chosen here, and counting 'U' directly (not normalizing it, unlike the tooltip at 14600) gives the same case decision for U or T, so case is identical either way.",
+      "scenario": "RNA alignment, any view: letters of the consensus row show the same upper/lower casing for a uracil column as for thymine; the character itself still comes from the option-based consensus array (e.g. computeConsensusForSequences at 12800), which returns U.",
+      "severity": "none",
+      "title": "consensusDisplayBase / _canvasConsensusUpper count columns themselves but only decide the letter case, and handle U",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "script.js",
+      "line": 12766,
+      "quote": "    const consType = _checkedRadioValue('consensusType', 'normal');",
+      "reasoning": "In the big render function, locals consType (12766), threshold (12767: `const threshold = clampConsensusPercent(el('consensusThreshold').value) / 100;`) and fallbackMode (12768) are read straight from the DOM instead of via _getConsensusOptions, and the ambiguousMap at 12757-12764 has keys like 'C,T': 'Y' with no U handling. But I grepped every use of `\\bconsType\\b` (only 4547/4603/4608/4626/4651/4631 in the real options code, plus this 12766 declaration), `ambiguousMap` (only 12757-12763 and unrelated chechboxes/labels at 34962/35789/36211), and `fallbackMode` (only the options code at 4548/4608/4631/4651-4658/4626 plus this 12768 declaration): these render locals are never used to build a consensus character; threshold only feeds consInfo display (`consInfo = { values, positions: ... threshold };` at 12805). The dead ambiguousMap would have been a U-bug (a 'C,U' map entry is absent) but it never executes, so no wrong character results.",
+      "scenario": "Consensus type = ambiguous with an RNA alignment: the ambiguous letters still come from _getConsensusOptions (via _origComputeConsensusCharForColumn at 4596-4633), so the row shows the options-derived characters; the unused local map cannot produce Y/K/etc. for RNA.",
+      "severity": "none",
+      "title": "Render path reads consensus radios locally at 12766-12768 but those locals never compute a consensus character",
+      "verdict": "ok"
+    },
+    {
+      "confidence": 3,
+      "file": "block-bicluster.js",
+      "line": 1494,
+      "quote": "// calls its \"consensus\" row if it has one; do not special-case it.",
+      "reasoning": "block-bicluster.js and block-mask.js hit on the word 'consensus' only in comments (best-element attribution: best for each column of A, the numeric matrix; buildMajorityConsensusRow at block-mask.js 133 is the only real computation and is reported separately). block-bicluster.js 1492/1494 explicitly state the clustering has no special case for a consensus row. cluster.js: comment-only hits, and line 2386 `\"^consensus$\"` merely strips/labels a consensus-named row. block-mask.js: hits at 111-125, 133 are about which element/row to use, not how a base character is decided. peel.js: no matches on `consensus|_consensusDecide|_computeConsensusCharForColumn|threshold:`. finder.js (grep of consensus: 17672, 18899, 31073, 30213, 4353) only defines the 'Consensus:'/copy-consensus context-menu labels whose handlers (copySelectedConsensus at script.js 17686, copyConsensus using state.consensusSeq at 17678, realign path at 30223) were all verified to use the option-based consensus above; none is a self-computed residue letter.",
+      "scenario": "RNA alignment viewed via Squint/Block/Block-bicluster cluster view, dot-plot or repeat peeling: no code path in those modules produces a per-column residue character at all, so no T-in-RNA divergence can originate there.",
+      "severity": "none",
+      "title": "cluster.js, block-bicluster.js, peel.js and finder.js contain no independent consensus-character computation",
+      "verdict": "ok"
+    }
+  ],
+  "uncertain": [
+    {
+      "confidence": 2,
+      "file": "macse-align.js",
+      "line": 1,
+      "quote": "  // grep 'consensus' hits: consensusSequence, aa2na, nucleotides, ambiguity — all inside MACSE's aa set machinery; NOT established as clean",
+      "reasoning": "I could not finish this one: grepping 'consensus|aa2na|nucleotides' in macse-align.js returned 40 hits (consensusSequence, consensusSequenceResult, aa2na, nucleotides, ambiguity), i.e. the file carries its own consensusSequence routine that neither calls _getConsensusOptions nor _consensusDecide (no hits for those names in the file). I ran out of budget before reading its body, so I can neither confirm it is an internal amino-acid-only helper (harmless for RNA) nor rule out a T-vs-U divergence. Flagging as uncertain rather than guessing; line 1 is a placeholder, no claim is attached to it.",
+      "scenario": "If a maintainer follows up: read macse-align.js consensusSequence and check whether any caller (e.g. a MAFFT/MACSE code-translate path) can surface its characters in an RNA DNA alignment. Not established either way by this audit.",
+      "severity": "none",
+      "title": "macse-align.js has its own internal consensusSequence code — not traced, could not establish a verdict",
+      "verdict": "ok"
+    }
+  ],
+  "counts": {
+    "findings": 7,
+    "uncertain": 1
+  },
+  "note": "Q9 part 1: All product consensus-character computations were traced to _getConsensusOptions except three places that bypass it. Defects: (1) block-mask.js line 21 CODE omits U, so parseAln (line 104) turns every uracil of an RNA alignment into a gap before the mask is built — high; (2) block-mask.js buildMajorityConsensusRow (133) does its own majority vote with no opts, inheriting the U-as-gap corruption; (3) script.js _consensusTooltipHtml normalizes U→T (14600) and labels frequency rows with the 'T' colorMap key (14607), so the column tooltip still shows T for RNA even though the consensus letter itself is now U. Verified clean: the main render consensus (script.js 12800 via computeConsensusForSequences → _getConsensusOptions), copySelectedConsensus/replace/add-below/copy paths (17693, 30223, 30462 all build opts from _getConsensusOptions), consensusDisplayBase/_canvasConsensusUpper (case-only, handle U directly), and no consensus computing in cluster.js, block-bicluster.js, peel.js or finder.js. macse-align.js has its own consensusSequence code that I could not finish tracing before the budget cutoff — logged in the uncertain list, no verdict claimed."
+}

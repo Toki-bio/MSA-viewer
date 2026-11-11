@@ -1,0 +1,74 @@
+{
+  "findings": [
+    {
+      "title": "Pane header 'swap' writes the pane's alignment into MAIN state.seqs and would defeat the v332 fingerprint check if the pane paints above #busyOverlay",
+      "verdict": "defect",
+      "file": "script.js",
+      "line": 18369,
+      "quote": "    _loadSnapshotPayload(theirs);",
+      "reasoning": "paneSwap (18350) is wired to the pane header Swap button and, for a pane that is not a mirror, builds payloads from both sides (18363-18368) and ends with _loadSnapshotPayload(theirs) (18369), replacing the MAIN view's state.seqs. The dock and overlay are siblings appended to document.body ('document.body.appendChild(d);' at 18224; #busyOverlay is created lazily by _busyOverlay and appended on demand), both position:fixed; grep of index.html for z-index/<style/stylesheet and for busy/pane/context/dock found NO CSS rule for #busyOverlay, .pane-dock or .context-menu in this frozen copy, so I could not confirm stacking. If .pane-dock carries no z-index (not found anywhere in the repo), DOM order wins, and a pane opened after the first showBusy (which appended #busyOverlay earlier) paints ABOVE the overlay, so its header stays clickable while a run is in flight.",
+      "scenario": "User runs one alignment (creates #busyOverlay in document.body), opens a linked pane (#paneDock appended later, thus later in DOM), then runs MAFFT again (overlay shows) and clicks the pane header 'swap' during the run: line 18369 swaps state.seqs mid-run, so _mafftAlignWithUi's state.seqs-identity/_seqsFingerprint comparison between before and after sees a difference and drops the fresh result (or mixes it with the swapped-in alignment). Stacking itself could not be established from this copy - the needed CSS is absent - hence low confidence.",
+      "severity": "high",
+      "confidence": 2
+    },
+    {
+      "title": "(b) Edits made inside a pane never reach the MAIN state.seqs; _paneChildEdited only flips the pane's local mode",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 18338,
+      "quote": "    if (!rec || rec.mode !== 'own') return;",
+      "reasoning": "Wait - the returned line text at 18338 is '    if (!seq || rec.mode !== e) return;'? No: the block at 18336-18342 (_paneChildEdited) is: 18337 const rec = _panes.list.find(r => r.frame.contentWindow === win); 18338 if (!rec || rec.mode !== 'mirror') return; 18339 rec.mode = 'own'; 18340 _paneShowMode(rec); 18341 showMessage('The pane you edited is now its own copy...', 4000). It never touches state.seqs, state.deletedHistory or state.redoHistory of the parent - it only demotes the pane record from mirror to own copy; the pane's edits live in the iframe's own globals (confirmed by the header titles at 18313: '(own copy)' and the refresh button being hidden for non-mirrors at 18319). Verified on read of 18336-18342. (The quote field holds the exact text of line 18338: if (!rec || rec.mode !== 'mirror') return; )",
+      "scenario": "During an aligner run the pane shows no overlay of its own and the user edits a residue inside the pane: the pane's pushUndo notifies the parent via postMessage, _paneChildEdited only sets rec.mode='own' and toasts; the MAIN window's state.seqs is untouched, so nothing can race the MAFFT result.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "(a) In mirror mode the pane 'swap' only exchanges view anchors and cannot change MAIN state.seqs",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 18357,
+      "quote": "        if (theirs) _applyViewAnchor(theirs);",
+      "reasoning": "paneSwap (18350) takes the mirror branch first (18353 'if (rec.mode === \\'mirror\\') {'), captures anchors from both sides (18354), mutes link churn for 400 ms (18355-18356), then only applies anchors each way (18357-18358: _applyViewAnchor(theirs) / pw._applyViewAnchor(mine)) and returns at 18359 - it never reaches the payload swap at 18362-18369. _applyViewAnchor only positions the view, so state.seqs of the main window is unchanged even if this ran during an aligner job.",
+      "scenario": "A linked mirror pane's 'swap' clicked while MAFFT runs: only scroll/column positions move on each side; no sequence data crosses, so the v332 before/after comparison in _mafftAlignWithUi stays valid.",
+      "severity": "none",
+      "confidence": 5
+    },
+    {
+      "title": "(b) Guard: a pane cannot pose as the main view over the postMessage bridge - all its actions are declared read-only",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 18230,
+      "quote": "            if (!msgW || msgW !== rec.frame.contentWindow) return { type: 'unauthorized' };",
+      "reasoning": "The window-message listener (18225-18235) only accepts messages from the main window itself (18233 'if (e.source !== window.parent) return;' is the pane's outgoing side; the incoming frame check is at 18230), and every action it performs for a pane (18301-18307: setRowVisible, nav, canvastilt) is declared explicitly read-only. Nothing in this bridge writes state.seqs; the only parent-side write paths for a pane are the swap payload transfer (18368-18369) and mode/refresh bookkeeping (18312-18334).",
+      "scenario": "Even a pane that sends forged postMessage payloads during an aligner run cannot modify the MAIN alignment: the listener either ignores it (wrong source, 18230/18233) or applies only vis/nav changes that _mafftAlignWithUi's fingerprint (which hashes only rows' seq and the row count, 12580) does not include.",
+      "severity": "none",
+      "confidence": 4
+    },
+    {
+      "title": "(c) Cannot establish the overlay vs .context-menu / .pane-dock stacking: the CSS rules are absent from this frozen copy",
+      "verdict": "defect",
+      "file": "script.js",
+      "line": 18190,
+      "quote": "    d.className = 'pane-dock pane-dock-' + _panes.side + (d.classList.contains('pane-dragging') ? ' pane-dragging' : '');",
+      "reasoning": "The question asks to compare z-indexes in index.html, but grep of index.html for 'busyOverlay' and for 'context-menu', 'pane-dock', '#paneDock' returned no matches, and grep for 'z-index|<style|stylesheet' found only inline styles of OTHER widgets (infoModal 10001, seqEditModal 10002, recentDropdown 10003, reSitePopup 10050, minimizeBar 100); the repo directory lists no .css file. The context menu itself is styled from JS only via 'contextMenu.className = \\'context-menu\\';' (27732). handleKeyDown/_alignmentKeysAway does consider an open menu at 16780 '|| !!document.querySelector(\\'.context-menu\\')', so the code assumes a menu may be open during typing, but whether the dismissed-by-timer menu (checkContextTimeout, 27706-27712) sits above #busyOverlay in DOM order cannot be decided from this copy - the z-index comparison the question asks for was impossible.",
+      "scenario": "User opens a row context-menu, then starts an aligner job; whether the menu stays clickable over the overlay (issuing row deletions/renoise into state.seqs mid-run, defeating the v332 fingerprint check) or is covered by it could not be determined: the overlay/pane/menu CSS is simply not present in the provided files. Recommend shipping the busy-overlay/pane/context-menu CSS with the audit copy and re-checking z-index vs DOM order (busy overlay is appended lazily on first showBusy, panes at 18224, so DOM order favors whatever opened later).",
+      "severity": "low",
+      "confidence": 1
+    },
+    {
+      "title": "CORRECTION to finding 2: exact quotes for _paneChildEdited (18337-18341)",
+      "verdict": "ok",
+      "file": "script.js",
+      "line": 18339,
+      "quote": "    rec.mode = 'own';",
+      "reasoning": "This supersedes the quote field of the second finding, which I mistyped as \"if (!rec || rec.mode !== 'own') return;\". The read of 18336-18342 gave: 18337 '    const rec = _panes.list.find(r => r.frame.contentWindow === win);' 18338 '    if (!rec || rec.mode !== \\'mirror\\') return;' 18339 '    rec.mode = \\'own\\';' 18341 the showMessage('The pane you edited is now its own copy: edits in the main view no longer reload it.', 4000) call. _paneChildEdited only changes the pane record's mode and toasts; it writes nothing to the parent's state.seqs, state.deletedHistory or state.redoHistory, so pane edits stay in the iframe's own state during a run. The verdict 'ok' from the second finding stands; only its quote field was wrong.",
+      "scenario": "User edits a residue inside a pane while an aligner job runs in the main window: the parent only learns that this pane has become an own copy; MAIN state.seqs is untouched and _mafftAlignWithUi's before/after comparison is unaffected.",
+      "severity": "none",
+      "confidence": 4
+    }
+  ],
+  "counts": {
+    "findings": 6
+  },
+  "note": "Q5 audit done, 6 findings. Summary: (a) paneSwap ends in _loadSnapshotPayload(theirs) (script.js 18369) which replaces MAIN state.seqs; #paneDock is a document.body sibling of #busyOverlay (18224), both fixed-position, but NO CSS for #busyOverlay/.pane-dock/.context-menu exists in this frozen copy (no .css file; grep of index.html found only unrelated inline z-indexes), so overlay-vs-pane stacking could not be established - flagged as a potential high-severity path (Swap clickable during a run -> v332 fingerprint check aborts the fresh result) with confidence 2. Mirror-mode Swap is provably view-anchor-only (18353-18359) = ok. (b) _paneChildEdited (18336-18342) never touches MAIN state.seqs - ok, confidence 5 (quote corrected by an appended item). (c) the z-index comparison the question asks for was impossible: the relevant CSS is absent; only code-level facts (16780 '.context-menu' check, 27732 menu class) could be cited - confidence 1, severity low."
+}

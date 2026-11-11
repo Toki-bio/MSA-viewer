@@ -1,0 +1,96 @@
+{
+  "findings": [
+    {
+      "file": "script.js",
+      "line": 16846,
+      "quote": "    const isFormField = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);",
+      "reasoning": "The guard at 16807 exempts keysAway==='window' && inText, where inText = _isTextEntry(ae) && ae.getClientRects().length > 0 (16804). _isTextEntry returns true for a visible <select> (a drop-down), but line 16846 defines isFormField WITHOUT SELECT, so a focused <select> inside an open window skips the whole fast-path block 16847-16881 (the 'return' at 16853 and 16864 never runs) and the entire alignment-shortcut body at 16882+ executes behind the window. Window selects exist: '<select' at index.html:1241 (dotPlotModal begins at index.html:1188), index.html:1371 (repeatFinderModal at index.html:1342), index.html:1451 (treeBuilderModal at index.html:1439).",
+      "scenario": "User opens the Dot plot window (dotPlotModal), clicks its preset drop-down dotPresetSelect (index.html:1241) so it is the visible focused element, then presses Ctrl+Z: _alignmentKeysAway() returns 'window' but inText is true, the guard at 16807 does not return, isFormField at 16846 is false, and undoDelete() at 16929 mutates the alignment behind the window while the drop-down still shows focus inside it.",
+      "severity": "high",
+      "title": "Focus in a <select> inside an open window: isFormField omits SELECT, so every alignment shortcut below runs",
+      "verdict": "defect",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 16929,
+      "quote": "                else undoDelete();",
+      "reasoning": "Once a <select> in an open window falls through 16846 (finding 1), these branches of the ctrl/meta switch (16902 'if (e.ctrlKey || e.metaKey) {') mutate state.seqs, the selection or state.deletedHistory with NO _isTextEntry/activeElement check of their own: case 'delete' deleteSelected (16920), case 'z' undoDelete (16929) / redoAction (16928), case 'y' redoAction (16934), case 'b' insertGroupConsensus (16938), and the same switch routes case 'r' reverseComplementSelected (16915), case 'u' and the modified-arrow row reorder further down. Line 16927 correctly diverts case z/y to the Sequence editor's own undo when _seqEditOpen() - that part is the intended editor-undo fix - but for every other open window these cases act on the alignment.",
+      "scenario": "With the Tree window open, focus its model drop-down treeDistanceModel (index.html:1451), then press Ctrl+Up / Ctrl+Z / Ctrl+R / Ctrl+Delete: rows are reordered or the alignment is undone / reverse-complemented / deleted behind the window, and undo history changes, with no way for the user to see it without closing the window.",
+      "severity": "high",
+      "title": "No branch of the ctrl/meta switch (Ctrl+Z/Y/R/U/Delete/B, modified arrows) checks _isTextEntry - reachable via the SELECT fall-through",
+      "verdict": "defect",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 16850,
+      "quote": "                el('loadButton')?.click(); // Ctrl+L = Load, as the Load button advertises",
+      "reasoning": "When keysAway==='window' and focus is in a TEXTAREA inside a window (the fast-path 16848-16853) or in the fastaInput reached via the fast-path's EXCLUSIVE window exemption, the only branch of 16830-17090 that acts is 16849-16851: on Ctrl+L in fastaInput it clicks the Load button immediately. The v332 change made Ctrl+L outside the Input box ask first, but this textarea fast-path bypasses that: no edits-count confirmation at all. Note: I could not verify (no line read) whether the Load button's click handler itself shows a dialog; if it does, this finding is moot. The textarea fast-path otherwise correctly returns at 16853 for ALL other keys, so no other branch can change state.",
+      "scenario": "User has deleted rows / made edits (state.deletedHistory non-empty), is typing in the Input box, a blocking dialog such as Add Sequences or Info is opened or keysAway is '', and focus stays in fastaInput; pressing Ctrl+L loads the Input-box text with no \"replace the alignment? / discarding N edits\" ask, replacing state.seqs behind the dialog. Wrong result: the loaded text replaces the alignment and the edits history is unreachable, with no warning shown.",
+      "severity": "medium",
+      "title": "Ctrl+L while focus is in the textarea fires Load immediately; the ask-first fix is bypassed on this path",
+      "verdict": "defect",
+      "confidence": 2
+    },
+    {
+      "file": "script.js",
+      "line": 16831,
+      "quote": "        const typing = ae && ae.getClientRects().length && _isTextEntry(ae);",
+      "reasoning": "When keysAway==='window' && inText, the guard at 16807 does not return and flow reaches 16827, the first branch of 16830+. Line 16831 uses the same _isTextEntry + visibility test as inText, so line 16829 skips 16832 _confirmDeleteColumns / 16834 (commented as 'same as X-delete ... Ctrl+D used to fire behind a text field in a window or the timer') and lets the browser have the key instead. This is the one mutation branch before the switch that DOES check the active element first.",
+      "scenario": "Focus in a visible text field (or a select) inside an open Dot plot / Repeat finder window, press Ctrl+D: nothing is deleted from the alignment; the browser receives the key. Covered.",
+      "severity": "none",
+      "title": "ok: the Ctrl+D branch (16827) does check _isTextEntry before acting",
+      "verdict": "ok",
+      "confidence": 5
+    },
+    {
+      "file": "script.js",
+      "line": 16859,
+      "quote": "        if (_isTextEntry(activeEl)) {",
+      "reasoning": "For a focused single-line INPUT inside an open window (rename box, search box, SeqEdit name), 16859-16864 intercepts every key: only searchInput Ctrl+F (16860-16862) runs searchMotif(), which does not touch state.seqs / selection / deletedHistory; all other keys return at 16864 for native editing per the comment 16855-16858 ('Ctrl+Z/Y/Home/End/arrows used to reach the viewer from here'). So none of 16866-17090 can change state in this case; the branch checks _isTextEntry first.",
+      "scenario": "Sequence editor open with focus in its name field, or the rename box focused inside a window; press Ctrl+Z, Ctrl+Up, Delete or plain arrows: 16859 returns, no state change. Covered - exactly the U-Item 1 case this batch fixed.",
+      "severity": "none",
+      "title": "ok: single-line text field fast-path returns for everything except searchInput's Ctrl+F",
+      "verdict": "ok",
+      "confidence": 5
+    },
+    {
+      "file": "script.js",
+      "line": 16807,
+      "quote": "        if (!editorUndo && !(keysAway === 'window' && inText)) {",
+      "reasoning": "With keysAway==='busy', the inText exemption can never apply because 16807 conditions it on keysAway === 'window'; the !editorUndo is false only for keysAway==='window' too. So EVERY key - including keys typed into a visible fastaInput - returns at 16818 before flow can reach 16849-16851's loadButton click or any branch of 16830-17090. The user CAN keep typing into the Input box during a job: handleKeyDown only preventDefaults modifier shortcuts (16813, inside the 16812 test that lets /^[cvxafp]$/ and pure modifier keys pass), so plain characters still reach the textarea natively; ctrl combinations get the toast at 16814 ('Wait until the running job is done (or press Stop): the alignment cannot be changed meanwhile.'). This does not matter for state: the drafted text is inert until the user explicitly clicks Load after the job, and _mafftAlignWithUi (script.js 26143-26157) fingerprints state.seqs before/after the run so a Load landing mid-run is caught rather than overwriting the result. Covered.",
+      "scenario": "Job running (busy overlay), focus already in the Input box: user types residues - browser inserts them (harmless draft); presses Ctrl+L expecting Load - gets the 'Wait until the running job is done' toast instead of 16850's click, so state.seqs and state.deletedHistory cannot be touched from the keyboard during a run.",
+      "severity": "none",
+      "title": "ok: keysAway==='busy' returns at 16818 for all keys including textarea focus - typing in fastaInput stays native and cannot change state",
+      "verdict": "ok",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 16806,
+      "quote": "        const editorUndo = keysAway === 'window' && _seqEditOpen() && (e.ctrlKey || e.metaKey) && /^[zy]$/i.test(e.key);",
+      "reasoning": "When keysAway==='window' (Sequence editor is a blocking dialog) and focus is in a visible text field inside it, inText is true so the guard lets the event through; the only alignment branches then reachable are case 'z' (16923-16931) and case 'y' (16932-16936), both of which first test _seqEditOpen() (16927 'if (_seqEditOpen()) { if (e.shiftKey) _seqEditRedo(); else _seqEditUndo(); }', 16933 'if (_seqEditOpen()) _seqEditRedo();') and thus route to the editor's own undo/redo, which edits the textarea, not state.seqs. If focus is instead in a name field or the sequence textarea, keys are returned at 16853/16864 anyway. Covered.",
+      "scenario": "Sequence editor dialog open, focus anywhere inside it, Ctrl+Z: the editor's text undo runs (editorUndo at 16806 exempted exactly this); with focus in a text field, 16859/16853 return before the switch, so no alignment/history change. Covered.",
+      "severity": "none",
+      "title": "ok: with the Sequence editor open, Ctrl+Z/Ctrl+Y reach only _seqEditUndo/_seqEditRedo, which cannot corrupt the alignment",
+      "verdict": "ok",
+      "confidence": 4
+    },
+    {
+      "file": "script.js",
+      "line": 16927,
+      "quote": "                if (_seqEditOpen()) { if (e.shiftKey) _seqEditRedo(); else _seqEditUndo(); }",
+      "reasoning": "This same line also shows the failure mode of findings 1-2 from the opposite side: case 'z' deliberately checks _seqEditOpen() first because a blanket undo action while keysAway==='window' would corrupt state - proving the authors accepted the premise. But no other case of the 16902 switch, and none of the modified-arrow branches, performs any _isTextEntry or _seqEditOpen or activeElement check; their only protection is the fast-path exit at 16853/16864, which line 16846 fails to give a focused <select>. Net answer to the question: for TEXTAREA and single-line INPUT fields inside a window, NO branch of 16830-17090 can change state.seqs / selection / undo (16827-16831 skips via typing check, 16849-16853 returns except the fastaInput Ctrl+L load, 16859-16864 returns); the only lever that reaches the mutation switch under keysAway==='window' is a focused <select>, plus the unconfirmed Load at 16850.",
+      "scenario": "Any keyboard action from a window select or from the Input-box Ctrl+L while a window is open is unguarded; from every other field the case is covered.",
+      "severity": "medium",
+      "title": "Only the editor provices a pattern check before acting; the remaining switch cases rely entirely on the fast-path exits that a <select> misses",
+      "verdict": "defect",
+      "confidence": 3
+    }
+  ],
+  "counts": {
+    "findings": 8
+  },
+  "note": "Q1 part 2 summary. With keysAway==='window' and focus in a visible text field inside the window, the guard (16807) lets the event run the full body. For TEXTAREAs, 16848-16853 returns for all keys except line 16850's Ctrl+L in fastaInput, which clicks Load with NO ask-first confirmation (v332 added the confirmation only for Ctrl+L outside text fields; I could not verify whether the Load button handler itself confirms). For single-line INPUTs, 16859-16864 returns everything except searchInput's Ctrl+F (harmless). Ctrl+D checks _isTextEntry (16831) and is safe. The real hole: _isTextEntry counts a <select> as text entry (so a visible focused drop-down in dotPlotModal / repeatFinderModal / treeBuilderModal - index.html 1241, 1371, 1451 - is exempt from the window guard), but isFormField at 16846 omits SELECT, so the select falls past the fast-path into the full switch at 16902+, where Ctrl+R/Ctrl+Delete/Ctrl+Z/Ctrl+Y/Ctrl+B/Ctrl+U and the modified-arrow row moves mutate state.seqs, the selection and the undo history with no _isTextEntry check of their own. The Sequence editor's Ctrl+Z/Y are correctly diverted to _seqEditUndo/_seqEditRedo (line 16927). Busy case: inText is not consulted when keysAway==='busy' (16807 conditions it on 'window'), so 16818 returns for every key; the user can still type into fastaInput natively (only modifier shortcuts are preventDefaulted), but nothing in 16830-17090 is reachable during a job - typing is an inert draft, Ctrl+L gets the toast at 16814, and _mafftAlignWithUi's fingerprint check is a second line of defense."
+}
