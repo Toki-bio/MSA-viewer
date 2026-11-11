@@ -614,6 +614,21 @@ check('Newick: names with ":" (bedtools chr1:100-200) are quoted, and the tree p
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Newick written after a swap keeps negative and zero branch lengths; a tree without lengths stays without', async (page) => {
+  // toNewick wrote a length only when it was above 0, so after a swap or re-root the Newick box (Copy, .nwk) lost
+  // NJ's negative branches and the zero ones, and the tree's distances changed (Qwen tree audit 2026-11-11, T2).
+  await loadFasta(page, fa(['ACGTACGTAC', 'ACGTACGTTT']));
+  const r = await page.evaluate(() => {
+    const T = _treeDraw, out = {};
+    const a = T.parseNewick('((A:-0.01,B:0.05):0,C:0.2);'); T.swapAt(a.children[0]);
+    out.lens = T.toNewick(a);
+    out.bare = T.toNewick(T.parseNewick('((A,B),C);'));
+    return out;
+  });
+  const ok = r.lens === '((B:0.05,A:-0.01):0,C:0.2);' && r.bare === '((A,B),C);';
+  return { pass: ok, detail: JSON.stringify(r) };
+});
+
 check('restriction sites: overlapping sites are all found (HhaI in GCGCGC)', async (page) => {
   // The regex loop resumed after each match, so GCGC at 3 and 5 in AAGCGCGCAA counted once.
   await loadFasta(page, '>a\nAAGCGCGCAA\n>b\nAA-GCGC-GCAA\n');

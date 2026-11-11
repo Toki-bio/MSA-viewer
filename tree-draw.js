@@ -61,8 +61,15 @@
 
   // Serialise back to Newick so a re-rooted or rotated tree can be copied out.
   function toNewick(root) {
+    // A tree with branch lengths gets every length written, zero and negative too (NJ gives negative ones); writing
+    // only lengths above 0 changed the tree's distances after a swap or re-root (Qwen tree audit 2026-11-11, T2).
+    // A tree read without lengths (all 0 here) is written without them.
+    var hasLens = (function any(n, isRoot) {
+      if (!isRoot && n.len) return true;
+      return n.children.some(function (c) { return any(c, false); });
+    })(root, true);
     function fmtLen(v) {
-      if (!(v > 0)) return '';
+      if (!hasLens || !isFinite(v)) return '';
       return ':' + (Math.round(v * 1e6) / 1e6);
     }
     function rec(n, isRoot) {
