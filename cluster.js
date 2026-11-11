@@ -29,6 +29,18 @@ class SINEClusterer {
         this.nSeqs = sequences.length;
         this.alnLen = sequences[0].seq.length;
         this.matrix = sequences.map(s => s.seq.toUpperCase().split(''));   // a and A are the same base (soft-masked rows)
+        // N, ambiguity codes, '?' and '*' in a nucleotide alignment (X and '?' in a protein one) are missing data: they are
+        // read as gaps, so they are never diagnostic and never a group character. Rows sharing only N at the same
+        // places were made a group (Qwen clustering audit 2026-11-11, C3; owner: ignore them; Peel reads them so too).
+        // Nucleotide or protein is judged as MAFFT does: more than 75 % of the letters are A, C, G, T, U or N.
+        let letters = 0, acgtn = 0;
+        for (const row of this.matrix) for (const ch of row) {
+            if (ch < 'A' || ch > 'Z') continue;
+            letters++;
+            if ('ACGTUN'.includes(ch)) acgtn++;
+        }
+        const missing = letters && acgtn / letters > 0.75 ? /[^ACGTU\-.]/ : /[X?]/;
+        for (const row of this.matrix) for (let p = 0; p < row.length; p++) if (missing.test(row[p])) row[p] = '-';
         this._allSeqIndices = Array.from({length: this.nSeqs}, (_, i) => i);
         this._globalMaxSizeCache = null;
         this._columnCharCounts = null;
@@ -635,7 +647,9 @@ class SINEClusterer {
                 const inFreq = inside / gsize;
                 const outFreq = outsideN > 0 ? outside / outsideN : 0;
 
-                if (outside === 0 && inside >= minSize) {
+                // perfect also needs the share a cloudy feature needs: 3 of 100 members was listed as perfect
+                // (Qwen clustering audit 2026-11-11, C7; owner: 55 % like cloudy)
+                if (outside === 0 && inside >= minSize && inFreq >= inMin) {
                     strict.push({ pos: pos + 1, char: b, countOutside: 0, inFreq: inFreq, outFreq: outFreq });
                 } else if (inside >= minSize && inFreq >= inMin && outFreq <= outMax && (inFreq - outFreq) >= deltaMin) {
                     cloudy.push({ pos: pos + 1, char: b, countOutside: outside, inFreq: inFreq, outFreq: outFreq });

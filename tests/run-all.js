@@ -98,6 +98,7 @@ const SUITES = [
   { name: 'clustering: SVK subset', args: ['tests/clustering/svk_subset.test.js'] },
   { name: 'clustering: guided small cases', args: ['tests/clustering/guided_small.test.js'] },
   { name: 'clustering: multiple data sets', args: ['tests/clustering/multi_dataset.test.js'] },
+  { name: 'clustering: N and ambiguity codes are missing data; perfect features need 55 % of the group', args: ['tests/clustering/missing_letters.test.js'] },
   { name: 'bicluster oracle', args: ['tests/bicluster/oracle.js'] },
   { name: 'optional server security', args: ['tests/server/security.test.js'] },
   { name: 'optional server hardening', args: ['tests/server/hardening.test.js'] },
