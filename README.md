@@ -71,7 +71,11 @@ block Web Workers and file fetches there, so MAFFT, MACSE, sequence search, dot 
 npm install
 node server.js
 ```
-Visit `http://localhost:3000`
+The server prints a link such as `http://localhost:3000/?key=...`. Open it once in each browser you use: it
+carries your access key, which the server keeps in `~/.viewalign/access-key` (readable by you only). After
+that `http://localhost:3000` works in that browser. Without the key the viewer still opens, but the server
+refuses to read files, reach SSH servers, change databases or run MAFFT/BLAST, so that another user of the
+same computer cannot use your server. Delete the key file and restart the server for a new key.
 
 Adds:
 - Hosted BLAST databases, searched with NCBI blastn when it is installed (the BLAST-like

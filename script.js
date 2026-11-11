@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v336';
+const BUILD_TAG = 'v337';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -1809,6 +1809,24 @@ function optionalServerInfo() {
     return _optionalServerProbe;
 }
 
+// The local server gives file, SSH, database and MAFFT/BLAST access only to a browser that has opened the
+// link it prints at start (the link carries the access key; audit H10). A browser without it, for example
+// the bookmark http://localhost:3000 on first use, gets one note saying so; a click removes the note.
+function _noteServerKeyMissing(info) {
+    if (!info || info.authorized !== false || document.getElementById('serverKeyNote')) return;
+    const note = document.createElement('div');
+    note.id = 'serverKeyNote';
+    note.setAttribute('role', 'status');
+    note.title = 'Click to hide';
+    note.style.cssText = 'position:fixed;left:8px;bottom:8px;max-width:420px;z-index:10004;background:#fff8e1;color:#333;border:1px solid #e0b000;'
+        + 'border-radius:4px;padding:6px 8px;font:12px Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.2);cursor:pointer;';
+    note.textContent = 'The local server does not know this browser yet. Open the link the server printed when it started '
+        + '(it carries your access key), once. Until then, loading files by path or SSH, databases and server MAFFT/BLAST are off; '
+        + 'everything else works.';
+    note.addEventListener('click', () => note.remove());
+    document.body.appendChild(note);
+}
+
 function updateVersionIndicator() {
     const elVersion = document.getElementById('versionIndicator');
     if (!elVersion) return;
@@ -1817,6 +1835,7 @@ function updateVersionIndicator() {
     optionalServerInfo()
         .then(info => {
             if (!info) return;
+            _noteServerKeyMissing(info);
             const local = info.buildTag || info.scriptVersion;
             if (local && local !== BUILD_TAG) {
                 elVersion.textContent = `ViewAlign ${RELEASE_VERSION} (build ${BUILD_TAG}, served js v${local})`;
@@ -1907,7 +1926,9 @@ function _buildServerButtons(servers) {
 
 async function checkSshServer() {
     try {
-        if (!(await optionalServerInfo())) return; // static site: no SSH
+        const info = await optionalServerInfo();
+        if (!info) return; // static site: no SSH
+        if (info.authorized === false) return;   // no access key in this browser: the server would refuse (audit H10)
         const resp = await fetch('/api/ssh-servers', { signal: AbortSignal.timeout(2000) });
         if (resp.ok) {
             _sshServerAvailable = true;

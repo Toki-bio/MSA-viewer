@@ -27,7 +27,13 @@ function freePort() {
     });
 }
 
+// The access key of the server under test (audit H10), read from its key file by startServer. Every
+// request carries it as the browser would, in a cookie; { Cookie: '' } sends none.
+let KEY = '';
 function request(port, urlPath, headers = {}, method = 'GET', body = null, host = '127.0.0.1') {
+    headers = { ...headers };
+    if (!('Cookie' in headers) && KEY) headers.Cookie = `viewalign_key_${port}=${KEY}`;
+    if (headers.Cookie === '') delete headers.Cookie;
     return new Promise((resolve, reject) => {
         const req = http.request({ host, port, path: urlPath, method, headers }, res => {
             let data = '';
@@ -59,14 +65,18 @@ function mirrorCheckout(app) {
 
 async function startServer(app, envExtra) {
     const port = await freePort();
-    const env = { ...process.env, PORT: String(port), ...envExtra };
+    // a home folder of its own: the server keeps its access key there (~/.viewalign/access-key)
+    const home = path.join(app, '..', 'home');
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, PORT: String(port), HOME: home, USERPROFILE: home, ...envExtra };
     for (const k of ['HOST', 'ALLOW_REMOTE_FILE_ACCESS', 'LOCAL_FILE_ROOTS', 'ALLOWED_HOSTS', 'NODE_ENV', 'STATIC_SERVE_ALL']) if (!(k in envExtra)) delete env[k];
     const proc = spawn(process.execPath, ['server.js'], { cwd: app, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let log = '';
     proc.stdout.on('data', d => { log += d; });
     proc.stderr.on('data', d => { log += d; });
     for (let i = 0; i < 200 && !/Initializing BLAST databases/.test(log); i++) await new Promise(r => setTimeout(r, 100));
-    return { port, proc, log: () => log };
+    try { KEY = fs.readFileSync(path.join(home, '.viewalign', 'access-key'), 'utf8').trim(); } catch (_) { KEY = ''; }
+    return { port, proc, log: () => log, home };
 }
 async function stopServer(s) {
     const exited = new Promise(r => s.proc.once('exit', r));
@@ -252,6 +262,45 @@ async function main() {
         // the user's own page on this machine keeps working
         r = await request(port(), '/api/blast-db/keep', { Origin: `http://localhost:${port()}`, 'Sec-Fetch-Site': 'same-origin', Host: `localhost:${port()}` }, 'DELETE');
         check('the viewer page on this machine can still delete a database', r.status === 200, r.status + ' ' + r.body);
+
+        // --- H10: the access key. What used to go wrong: any program or any other user of this computer could
+        // ask the server on 127.0.0.1 to read the owner's files, reach the SSH servers, delete databases and
+        // run MAFFT/BLAST. Those routes now need the key the server keeps in the owner's home folder
+        // (readable by the owner only); the browser gets it once from the link the server prints.
+        const noKey = { Cookie: '' };
+        const keyFile = path.join(s.home, '.viewalign', 'access-key');
+        check('access key: the server wrote a key of 32+ characters to ~/.viewalign/access-key', /^[0-9a-f]{32,}$/.test(KEY), KEY.length + ' chars');
+        if (!WIN && KEY) check('access key: the key file is readable by its owner only', (fs.statSync(keyFile).mode & 0o077) === 0, (fs.statSync(keyFile).mode & 0o777).toString(8));
+        check('access key: the start-up text shows the link with the key', KEY && s.log().includes(`/?key=${KEY}`), s.log().slice(0, 300));
+        for (const p of ['/api/local-cat', '/api/ssh-cat', '/api/ssh-ls', '/api/queue-file', '/api/poll-file', '/api/ssh-poll-file', '/api/ssh-servers']) {
+            r = await request(port(), p + '?file=' + encodeURIComponent(homeFile), noKey);
+            check(`access key: ${p} without the key is refused (401)`, r.status === 401, 'status ' + r.status);
+            r = await request(port(), p + '?file=' + encodeURIComponent(homeFile), { Cookie: `viewalign_key_${port()}=${'0'.repeat(KEY.length || 48)}` });
+            check(`access key: ${p} with a wrong key is refused (401)`, r.status === 401, 'status ' + r.status);
+            r = await request(port(), p + '?file=' + encodeURIComponent(homeFile));
+            check(`access key: ${p} with the key is not refused for the key`, r.status !== 401, 'status ' + r.status);
+        }
+        r = await request(port(), '/API/local-cat/?file=' + encodeURIComponent(homeFile), noKey);
+        check('access key: other spellings of a route are refused too', r.status === 401, 'status ' + r.status);
+        r = await request(port(), '/api/blast-db/keep', noKey, 'DELETE');
+        check('access key: DELETE of a database without the key is refused (401)', r.status === 401, 'status ' + r.status);
+        r = await postJson(port(), '/api/mafft', { sequences: '>a\nACGT\n>b\nACGT\n' }, noKey);
+        check('access key: MAFFT without the key is refused (401)', r.status === 401, 'status ' + r.status);
+        r = await postJson(port(), '/api/blast-db', { name: 'nokey', fasta: FASTA }, noKey);
+        check('access key: adding a database without the key is refused (401)', r.status === 401, 'status ' + r.status);
+        r = await request(port(), '/index.html', noKey);
+        check('access key: the viewer page itself needs no key', r.status === 200, 'status ' + r.status);
+        r = await request(port(), '/api/viewer-info', noKey);
+        check('access key: viewer-info says the browser has no key', r.status === 200 && JSON.parse(r.body).authorized === false, r.body.slice(0, 120));
+        r = await request(port(), '/api/viewer-info');
+        check('access key: viewer-info says the browser has the key', r.status === 200 && JSON.parse(r.body).authorized === true, r.body.slice(0, 120));
+        r = await request(port(), '/?key=' + KEY, noKey);
+        const setCookie = String((r.headers['set-cookie'] || [])[0] || '');
+        check('access key: the link with the key sets the cookie (HttpOnly, SameSite=Strict) and goes on to the viewer without the key in the address',
+            r.status === 302 && r.headers.location === '/' && setCookie.startsWith(`viewalign_key_${port()}=${KEY};`) && /HttpOnly/i.test(setCookie) && /SameSite=Strict/i.test(setCookie), r.status + ' ' + r.headers.location + ' ' + setCookie.replace(KEY, '<key>'));
+        r = await request(port(), '/?key=' + '0'.repeat(48), noKey);
+        check('access key: a link with a wrong key sets nothing (403)', r.status === 403 && !r.headers['set-cookie'], 'status ' + r.status);
+        check('access key: the page keeps no copy of the key (it is not in any served file)', !!KEY && !(await request(port(), '/index.html')).body.includes(KEY));
         await stopServer(s);
         // a real client over the network: HOST=0.0.0.0 and this machine's own non-loopback address
         const lan = Object.values(os.networkInterfaces()).flat().find(a => a && !a.internal && a.family === 'IPv4');

@@ -18,6 +18,8 @@ app.use(express.json({ limit: '10mb' }));
 //  - the routes that read files or reach SSH servers, and the ones that add or
 //    delete databases or run MAFFT/BLAST, answer only clients on this machine
 //    unless ALLOW_REMOTE_FILE_ACCESS=1;
+//  - those same routes, and the list of SSH servers, need the access key (below): another user of this
+//    computer, or a program that only knows the port, cannot use them;
 //  - only the files the viewer loads are served (STATIC_SERVE_ALL=1 serves the
 //    whole folder, for development pages such as benchmark.html).
 const PORT = Number(process.env.PORT) || 3000;
@@ -29,6 +31,47 @@ for (const h of [process.env.TAILSCALE_IP, ...(process.env.ALLOWED_HOSTS || '').
     if (h && h.trim()) ALLOWED_HOSTS.add(h.trim().toLowerCase());
 }
 const ALLOW_REMOTE_FILE_ACCESS = process.env.ALLOW_REMOTE_FILE_ACCESS === '1';
+
+// ---- Access key (audit 2026-11-10, H10) ----
+// 127.0.0.1 is shared by every user and program of the computer, so "the client is on this machine" did not
+// mean "the client is the owner": another user could read the owner's files through /api/local-cat. The
+// server keeps a random key in the owner's home folder (~/.viewalign/access-key, readable by the owner
+// only) and prints a link that carries it. Opening that link once stores the key in a cookie of that
+// browser (HttpOnly: page scripts cannot read it; SameSite=Strict: other sites cannot send it). The key
+// stays the same across restarts, so the bookmark http://localhost:3000 keeps working afterwards.
+const crypto = require('crypto');
+const ACCESS_KEY_FILE = path.join(os.homedir(), '.viewalign', 'access-key');
+const ACCESS_COOKIE = 'viewalign_key_' + PORT;   // cookies are shared between ports of one host
+function loadAccessKey() {
+    try {
+        const k = fs.readFileSync(ACCESS_KEY_FILE, 'utf8').trim();
+        if (/^[0-9a-f]{48}$/.test(k)) {
+            try { fs.chmodSync(ACCESS_KEY_FILE, 0o600); } catch (_) {}
+            return k;
+        }
+    } catch (_) {}
+    const k = crypto.randomBytes(24).toString('hex');
+    try {
+        fs.mkdirSync(path.dirname(ACCESS_KEY_FILE), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(ACCESS_KEY_FILE, k + '\n', { mode: 0o600 });
+        fs.chmodSync(ACCESS_KEY_FILE, 0o600);
+    } catch (e) {
+        console.warn('Could not save the access key (' + e.message + '): it is valid until the server stops.');
+    }
+    return k;
+}
+const ACCESS_KEY = loadAccessKey();
+function sameKey(given) {
+    const a = Buffer.from(String(given || '')), b = Buffer.from(ACCESS_KEY);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+function hasAccessKey(req) {
+    for (const part of String(req.headers.cookie || '').split(';')) {
+        const i = part.indexOf('=');
+        if (i > 0 && part.slice(0, i).trim() === ACCESS_COOKIE && sameKey(part.slice(i + 1).trim())) return true;
+    }
+    return false;
+}
 
 function hostnameOf(hostHeader) {
     const h = String(hostHeader || '').toLowerCase();
@@ -105,6 +148,25 @@ app.use((req, res, next) => {
     next();
 });
 
+// The link with the key: store it in a cookie and go on to the same address without the key, so the key
+// stays out of the address bar, the history and bookmarks.
+app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.query.key === undefined || routePath(req).startsWith('/api/')) return next();
+    if (!sameKey(req.query.key)) {
+        return res.status(403).type('text/plain').send('This access key is not the one of the running server. Use the link the server printed when it started.');
+    }
+    res.setHeader('Set-Cookie', `${ACCESS_COOKIE}=${ACCESS_KEY}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.redirect(302, req.path);
+});
+const NEEDS_KEY_MESSAGE = 'The local server does not know this browser yet. Open the link the server printed when it started '
+    + '(it is also shown by start-server.bat); it has to be opened once per browser.';
+app.use((req, res, next) => {
+    const p = routePath(req);
+    if (!(FILE_ACCESS_ROUTES.has(p) || p === '/api/ssh-servers' || changesThisMachine(req)) || hasAccessKey(req)) return next();
+    res.status(401).json({ error: NEEDS_KEY_MESSAGE, needsKey: true });
+});
+
 // Never serve private configuration, logs or the server source
 const PRIVATE_STATIC = /(^|\/)(ssh-servers\.json|blast_dbs\.json|server\.js|\.env[^/]*|[^/]*\.log|[^/]*\.out)$/i;
 app.use((req, res, next) => {
@@ -161,7 +223,7 @@ app.get('/api/viewer-info', (req, res) => {
         const m = js.match(/const BUILD_TAG = '(v\d+)'/);
         if (m) buildTag = m[1];
     } catch (_) {}
-    res.json({ root: __dirname, scriptVersion, buildTag });
+    res.json({ root: __dirname, scriptVersion, buildTag, authorized: hasAccessKey(req) });
 });
 
 
@@ -1341,6 +1403,8 @@ app.listen(PORT, HOST, () => {
     const tailscaleMsg = tailscaleIp && HOST !== '127.0.0.1' ? `  (also on Tailscale ${tailscaleIp}:${PORT})` : '';
     console.log(`ViewAlign server running on http://localhost:${PORT}${tailscaleMsg}`);
     if (HOST === '127.0.0.1') console.log('Listening on this machine only (set HOST=0.0.0.0 to accept other machines).');
+    console.log(`Open this link once in each browser you use (it carries your access key):\n  http://localhost:${PORT}/?key=${ACCESS_KEY}`);
+    console.log(`The key is kept in ${ACCESS_KEY_FILE}; delete that file and restart for a new one.`);
     initializeDatabases();
     loadDbCache();
 });

@@ -62,7 +62,11 @@ function freePort() {
     });
 }
 
+// The server's access key (audit H10), read from the throwaway HOME once the server runs; every request
+// carries it in a cookie, as the owner's browser does. tests/server/hardening.test.js checks the key itself.
+let KEY = '';
 function request(port, urlPath, headers = {}, method = 'GET', body = null) {
+    if (KEY && !('Cookie' in headers)) headers = { ...headers, Cookie: `viewalign_key_${port}=${KEY}` };
     return new Promise((resolve, reject) => {
         const req = http.request({ host: '127.0.0.1', port, path: urlPath, method, headers }, res => {
             let data = '';
@@ -120,6 +124,7 @@ async function main() {
     // Wait for the whole startup banner: "running on" and the loopback notice
     // are separate writes, and a slow runner can read between them
     for (let i = 0; i < 200 && !/Initializing BLAST databases/.test(log); i++) await new Promise(r => setTimeout(r, 100));
+    try { KEY = fs.readFileSync(path.join(home, '.viewalign', 'access-key'), 'utf8').trim(); } catch (_) {}
 
     try {
         check('server listens on loopback only by default', /this machine only/.test(log), log);

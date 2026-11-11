@@ -18409,6 +18409,25 @@ check('Audit U8: hiding and showing the menu with Ctrl+H leaves the alignment wh
   return { pass, detail: JSON.stringify({ before, rounds }) };
 });
 
+// Audit 2026-11-10, H10 (page side). The local server now asks for an access key that the browser gets
+// from the link the server prints. A browser without it (the bookmark http://localhost:3000 opened before
+// the link) must be told what to do, once, and must not ask for the SSH server list (a 401 in the console
+// on every load). What used to go wrong before the key: any user of the computer could use the server.
+check('Audit H10: a browser the local server does not know is told to open the server\'s link, and does not ask for SSH servers', async (page) => {
+  const asked = [];
+  await page.route('**/api/**', route => {
+    const u = new URL(route.request().url());
+    asked.push(u.pathname);
+    if (u.pathname === '/api/viewer-info') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ root: '/x', scriptVersion: '1', buildTag: 'v1', authorized: false }) });
+    return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'needs key', needsKey: true }) });
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(800);
+  const note = await page.evaluate(() => document.getElementById('serverKeyNote')?.textContent || '');
+  const pass = /link/i.test(note) && /server/i.test(note) && !asked.includes('/api/ssh-servers');
+  return { pass, detail: JSON.stringify({ note: note.slice(0, 160), asked }) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];

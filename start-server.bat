@@ -36,7 +36,7 @@ if defined OLD_PID (
     if "!MATCH!"=="same" (
         if "%SILENT%"=="0" (
             echo Server already running from this folder on port 3000.
-            echo   URL : http://localhost:3000
+            call :showlink
             echo   Stop: run stop-server.bat
         )
         set "NEED_START=0"
@@ -63,8 +63,25 @@ start "MSA Viewer Server" /min cmd /k "cd /d "%~dp0" && node server.js"
 if "%SILENT%"=="0" (
     echo.
     echo Server started. It runs in its own window independent of this terminal.
-    echo   URL : http://localhost:3000
+    call :showlink
     echo   Stop: run stop-server.bat (or close the MSA Viewer Server window)
     echo   Auto-start at login: run install-autostart.bat
     echo.
 )
+exit /b 0
+
+REM Prints the link with the access key. The server keeps the key in the user's own folder; the link has
+REM to be opened once in each browser, afterwards http://localhost:3000 works there (audit H10).
+:showlink
+set "KEYFILE=%USERPROFILE%\.viewalign\access-key"
+set "VKEY="
+for /l %%i in (1,1,8) do if not exist "%KEYFILE%" timeout /t 1 /nobreak >nul
+if exist "%KEYFILE%" set /p VKEY=<"%KEYFILE%"
+if defined VKEY (
+    echo   Open once in each browser: http://localhost:3000/?key=!VKEY!
+    echo   Afterwards             : http://localhost:3000
+) else (
+    echo   URL : http://localhost:3000
+    echo   First open the link shown in the MSA Viewer Server window ^(it carries your access key^).
+)
+exit /b 0

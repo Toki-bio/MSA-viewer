@@ -112,6 +112,19 @@ GLM tasks for v336:
 19. pages.yml: can a failed or cancelled Tests run, or a pull request run, reach the deploy? Can an older commit be deployed over a newer one?
 20. server.js: `isOwnedDbFile` and the loopback test with IPv4-mapped IPv6 addresses and a symlink inside `blast_dbs/`.
 
+## What build v337 changed (H10, owner's yes 2026-11-11)
+
+server.js keeps a random access key in `~/.viewalign/access-key` (mode 600) and prints
+`http://localhost:3000/?key=...`. That link sets the cookie `viewalign_key_<port>` (HttpOnly, SameSite=Strict)
+and redirects to the address without the key. The file and SSH routes, `/api/ssh-servers`, database add and
+delete and MAFFT/BLAST answer 401 without the cookie. `/api/viewer-info` reports `authorized`; the page shows
+`#serverKeyNote` and does not ask for the SSH list when it is false. start-server.bat prints the link (not
+run here: no Windows). Checks: "access key: ..." in `tests/server/hardening.test.js`, regression "Audit H10".
+
+GLM task 21: can any protected route be reached without the cookie (method override, HEAD, a path form that
+`routePath` does not normalise, a route missing from `FILE_ACCESS_ROUTES` / `changesThisMachine`)? Is the key
+ever written to a log, an error reply or a served file?
+
 ## What the GLM check should look at
 
 Read-only tasks, each answered with exact code quotes:
@@ -166,8 +179,6 @@ Numbers are those of the audit report ("ViewAlign audit 2026-11-10").
 
 Waiting for the owner's decision:
 
-- **H10** optional server: another user of the same computer can read files through the local server. Two designs:
-  a start-up token kept in a cookie, or a check that the caller is the same OS user.
 - **M21** repeat finder: a pair with a mismatch one base before its end is reported one base short. Keeping the
   longer end on a tie moved the planted pairs in three "Repeat Finder ... owner 2026-10-31" checks, so it was taken
   back out. Tandem coverage is a tuned heuristic too.
