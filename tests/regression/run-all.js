@@ -18603,6 +18603,73 @@ check('GLM 1110 #9: Ctrl+L in the Input box and the Load button ask first when t
   return { pass: ok, detail: JSON.stringify(out) };
 });
 
+// ---- GLM check of v332/v333, 2026-11-10 (dev-tools/audit-2026-11-10/glm-check.md) ---------------------------
+const glmBusyUp = (page) => page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !!b && !b.hidden; }, null, { timeout: 15000 });
+// Stop the job if it can be stopped (saves minutes), then wait until the overlay is gone
+const glmBusyEnd = async (page) => {
+  await page.evaluate(() => { const s = document.getElementById('busyStop'); if (s && !s.hidden && !s.disabled) s.click(); });
+  await page.waitForFunction(() => { const b = document.getElementById('busyOverlay'); return !b || b.hidden; }, null, { timeout: 180000 });
+  await page.waitForTimeout(300);
+};
+// #1: the keyboard guard of batch 1 counted a drop-down (SELECT) as a text field and let keys through to it, but the
+// text-field branch further down did not treat a SELECT as one: with focus on a drop-down of Statistics or the Tree
+// window, Ctrl+U duplicated a row, Ctrl+R reverse-complemented it and Ctrl+A selected every row, behind the window.
+check('GLM 1110 #1: editing keys and Ctrl+A on a drop-down inside an open window (Statistics, Tree) leave the alignment and the selection alone', async (page) => {
+  const out = {}; let ok = true;
+  for (const [name, open, selId] of [
+      ['stats', () => document.getElementById('statsButton').click(), 'statsIdMode'],
+      ['tree', () => document.getElementById('buildTreeButton').click(), 'treeDistanceModel']]) {
+    await page.goto(page.url(), { waitUntil: 'networkidle' });
+    await loadFasta(page, AUDIT1_FA);
+    await page.evaluate(() => { state.selectedRows = new Set([1]); renderAlignment(); });
+    const before = await audit1Snap(page);
+    await page.evaluate(open); await page.waitForTimeout(800);
+    const pre = await page.evaluate((id) => { const s = document.getElementById(id); s.focus(); return { focused: document.activeElement === s, away: _alignmentKeysAway() }; }, selId);
+    for (const k of ['Control+u', 'Control+r', 'Control+z', 'Control+a']) { await page.keyboard.press(k); await page.waitForTimeout(150); }
+    const after = await audit1Snap(page);
+    const rows = await page.evaluate(() => [...state.selectedRows].sort((a, b) => a - b).join(','));
+    out[name] = { ...pre, same: after === before, rows };
+    if (!pre.focused || pre.away !== 'window' || after !== before || rows !== '1') { ok = false; out[name].after = after.slice(0, 100); }
+  }
+  return { pass: ok, detail: JSON.stringify(out) };
+});
+
+// #2: the function finder (Ctrl+K) listens on window in the capture phase and stops the key, so the batch-1 guard
+// never saw it; its Enter then clicked the chosen command's button. During Realign Selected, Ctrl+K, "Duplicate",
+// Enter took the rows from 40 to 80 behind the busy overlay.
+check('GLM 1110 #2: Ctrl+K and a finder command do nothing while the aligner runs', async (page) => {
+  let x = 7; const r = () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296;
+  let base = ''; for (let i = 0; i < 4000; i++) base += 'ACGT'[Math.floor(r() * 4)];
+  let fa = ''; for (let i = 0; i < 40; i++) { let q = ''; for (let j = 0; j < base.length; j++) { const u = r(); q += u < 0.06 ? 'ACGT'[Math.floor(r() * 4)] : u < 0.09 ? '' : base[j]; } fa += `>s${i}\n${q}\n`; }
+  page.on('dialog', d => d.accept());
+  await loadFasta(page, fa);
+  await page.evaluate(() => { state.selectedRows = new Set(Array.from({ length: 40 }, (_, i) => i)); renderAlignment(); document.getElementById('realignSelectedButton').click(); });
+  await glmBusyUp(page);
+  await page.keyboard.press('Control+k'); await page.waitForTimeout(200);
+  await page.keyboard.type('Duplicate'); await page.waitForTimeout(300);
+  await page.keyboard.press('Enter'); await page.waitForTimeout(300);
+  const mid = await page.evaluate(() => ({ busy: !document.getElementById('busyOverlay').hidden, rows: state.seqs.length, top: state.deletedHistory.at(-1)?.type, focus: document.activeElement?.id || '' }));
+  await glmBusyEnd(page);
+  return { pass: mid.busy && mid.rows === 40 && mid.top !== 'duplicate', detail: JSON.stringify(mid) };
+}, { timeoutMs: 240000 });
+
+// #3: the aligner's yes/no question (_mafftAskYesNo: codon mode, region realign's Adjust direction / Reorder) is a
+// plain overlay that _alignmentKeysAway() did not know: with the question up, Ctrl+U duplicated a row behind it.
+check('GLM 1110 #3: keys do not edit the alignment while the aligner\'s yes/no question is up', async (page) => {
+  await loadFasta(page, AUDIT1_FA);
+  await page.evaluate(() => { state.selectedRows = new Set([1]); renderAlignment(); window.__ask = _mafftAskYesNo({ message: 'q?', defaultYes: false, dontAskKey: 'glm1110Ask', defaultKey: 'glm1110Def' }); });
+  await page.waitForTimeout(300);
+  const before = await audit1Snap(page);
+  for (const k of ['Control+u', 'Control+r', 'Control+ArrowUp']) { await page.keyboard.press(k); await page.waitForTimeout(150); }
+  const out = { away: await page.evaluate(() => _alignmentKeysAway()), same: (await audit1Snap(page)) === before };
+  await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent === 'No' && b.getClientRects().length).click());
+  out.answer = await page.evaluate(() => window.__ask);
+  await page.evaluate(() => document.activeElement?.blur?.());
+  await page.keyboard.press('Control+u'); await page.waitForTimeout(300);
+  out.aliveRows = await page.evaluate(() => state.seqs.length);   // once the question is answered the keys work again
+  return { pass: out.away === 'window' && out.same && out.answer === false && out.aliveRows === 5, detail: JSON.stringify(out) };
+});
+
 async function main() {
   const { server, baseUrl } = await start();
   const results = [];
