@@ -18,7 +18,7 @@
   'use strict';
 
   var GAP = 4;
-  var CODE = { a: 0, c: 1, g: 2, t: 3, A: 0, C: 1, G: 2, T: 3 };
+  var CODE = { a: 0, c: 1, g: 2, t: 3, u: 3, A: 0, C: 1, G: 2, T: 3, U: 3 };   // U is T (it was read as a gap; Qwen clustering audit 2026-11-11, C4)
 
   var DEFAULTS = {
     MIN_COL_COVERAGE: 3,     // a column needs >= this many covered rows to count toward coherence

@@ -69,6 +69,18 @@ try {
   check('clean_core: computeBiclusterMask does not throw', false, e.message);
 }
 
+// ---- 6. RNA reads as DNA: U is T, not a gap (Qwen clustering audit 2026-11-11, C4) --------
+// CODE had no U, so every U became a gap: an RNA copy of an alignment gave other blocks than the DNA one.
+try {
+  const fa = fs.readFileSync(path.join(FIXDIR, 'mosaic_subset.aln.fa'), 'utf8');
+  const rna = fa.split('\n').map(l => l[0] === '>' ? l : l.replace(/T/g, 'U').replace(/t/g, 'u')).join('\n');
+  const key = m => JSON.stringify((m.blocks || []).map(b => [b.rows, b.col_start, b.col_end, b.kind]));
+  const d = key(BC.computeBiclusterMask(fa, {})), r = key(BC.computeBiclusterMask(rna, {}));
+  check('RNA (U) gives the same blocks as the DNA (T) copy', d === r, 'DNA ' + d.length + ' chars of blocks, RNA ' + r.length);
+} catch (e) {
+  check('RNA copy: computeBiclusterMask does not throw', false, e.message);
+}
+
 if (failures.length) {
   console.log('FAIL (' + failures.length + '):');
   failures.forEach(f => console.log('  - ' + f));
