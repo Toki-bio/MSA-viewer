@@ -645,6 +645,16 @@ check('Re-root of an imported tree whose root has one child leaves no empty leaf
   return { pass: ok, detail: JSON.stringify(r) };
 });
 
+check('Newick [comments] (FigTree [&...] annotations) are skipped, not read into names; a quoted [ ] stays', async (page) => {
+  // The reader stopped a name only at ( ) : , ; so A[&rate=2] became the leaf name (Qwen tree audit 2026-11-11, T6).
+  await loadFasta(page, fa(['ACGTACGTAC', 'ACGTACGTTT']));
+  const r = await page.evaluate(() => {
+    const t = _treeDraw.parseNewick("(A[&rate=2]:1,B:[c]2,'C[1]':3)[&R];");
+    return t.children.map(c => c.name + ':' + c.len).join(',');
+  });
+  return { pass: r === 'A:1,B:2,C[1]:3', detail: r };
+});
+
 check('restriction sites: overlapping sites are all found (HhaI in GCGCGC)', async (page) => {
   // The regex loop resumed after each match, so GCGC at 3 and 5 in AAGCGCGCAA counted once.
   await loadFasta(page, '>a\nAAGCGCGCAA\n>b\nAA-GCGC-GCAA\n');

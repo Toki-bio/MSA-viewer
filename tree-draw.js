@@ -22,6 +22,19 @@
   // ---------- Newick <-> tree ----------
   function parseNewick(s) {
     s = String(s || '').trim();
+    // [ ... ] is a Newick comment (FigTree writes [&...] annotations): dropped, except inside a quoted name. They were
+    // read into names, or into a length, which then became 0 (Qwen tree audit 2026-11-11, T6).
+    if (s.indexOf('[') !== -1) {
+      var t = '', q = false, depth = 0;
+      for (var k = 0; k < s.length; k++) {
+        var ch = s[k];
+        if (depth) { if (ch === '[') depth++; else if (ch === ']') depth--; continue; }
+        if (ch === "'") q = !q;
+        if (!q && ch === '[') { depth = 1; continue; }
+        t += ch;
+      }
+      s = t.trim();
+    }
     var i = 0;
     function readName() {
       var nm = '';
