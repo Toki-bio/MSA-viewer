@@ -2979,14 +2979,16 @@ check('Rename: box over the name, no shift, Esc cancels, Enter/click-away save w
   await page.keyboard.type('renamed two');
   await page.keyboard.press('Enter');
   await page.waitForTimeout(150);
-  out.enterSaves = await page.evaluate(() => state.seqs[2].header === 'renamed two'
+  // the typed names hold spaces: since v339 Rename stores them as "_" (owner 2026-11-11: a FASTA name ends at
+  // the first space, so "renamed two" came back as "renamed" after Save; this check expected the spaces kept)
+  out.enterSaves = await page.evaluate(() => state.seqs[2].header === 'renamed_two'
     && [...document.querySelectorAll('.seq-name[data-seq-index="2"]')].every(c => c.textContent.startsWith('renamed')));
   await openBox(4);
   await page.keyboard.press('Control+A');
   await page.keyboard.type('four by click');
   await page.mouse.click(700, 5);
   await page.waitForTimeout(150);
-  out.clickAwaySaves = await page.evaluate(() => state.seqs[4].header === 'four by click' && !document.querySelector('.seq-name-edit'));
+  out.clickAwaySaves = await page.evaluate(() => state.seqs[4].header === 'four_by_click' && !document.querySelector('.seq-name-edit'));
   out.noRedraw = !(await redrawn());
   out.noShiftAfter = JSON.stringify(await geo(2)) === JSON.stringify(before);
   await page.evaluate(() => document.body.focus());
@@ -18668,6 +18670,195 @@ check('GLM 1110 #3: keys do not edit the alignment while the aligner\'s yes/no q
   await page.keyboard.press('Control+u'); await page.waitForTimeout(300);
   out.aliveRows = await page.evaluate(() => state.seqs.length);   // once the question is answered the keys work again
   return { pass: out.away === 'window' && out.same && out.answer === false && out.aliveRows === 5, detail: JSON.stringify(out) };
+});
+
+// Audit 2026-11-10, L15. What used to go wrong: the PHYLIP reader removed every digit (position numbers at
+// line ends), so a binary 0/1 matrix (restriction sites, presence/absence; what RAxML and IQ-TREE take as
+// BIN) had empty rows and was refused with "the file does not have N sequences". A file whose rows are only
+// states (digits, ?, -, .) and fit the header is now read as states, sequential and interleaved.
+check('Audit L15: a binary 0/1 PHYLIP matrix loads as rows of states', async (page) => {
+  const rows = async (text) => { try { await loadFasta(page, text); } catch (e) { return 'threw ' + e.message.slice(0, 80); } return page.evaluate(() => state.seqs.map(q => q.header + '=' + q.seq)); };
+  await loadFasta(page, '>keep\nACGT\n');
+  const out = {};
+  out.seq = await rows(' 3 8\ntaxA 01010011\ntaxB 0101?011\ntaxC 1101-011\n');
+  out.inter = await rows(' 2 12\ntaxA      010100\ntaxB      110100\n\n110011\n110010\n');
+  // letters with position numbers at line ends stay as they were
+  out.numbered = await rows(' 2 8\nalpha ACGTACGT 8\nbeta  ACGAACGT 8\n');
+  const want = { seq: ['taxA=01010011', 'taxB=0101?011', 'taxC=1101-011'], inter: ['taxA=010100110011', 'taxB=110100110010'], numbered: ['alpha=ACGTACGT', 'beta=ACGAACGT'] };
+  const pass = JSON.stringify(out) === JSON.stringify(want);
+  return { pass, detail: JSON.stringify(out).slice(0, 400) };
+});
+
+// Audit 2026-11-10, L16. What used to go wrong: with Case set to AA (or aa) the screen showed every residue in
+// upper (lower) case, but the full-alignment SVG and the RTF export wrote the letters as stored, so the file
+// did not look like the screen. The consensus row keeps its own case in both, as on screen.
+check('Audit L16: the full SVG and the RTF export follow the Case setting', async (page) => {
+  await loadFasta(page, '>s1\nacgtACGTacgtACGT\n>s2\nacgtACGTacgaACGT\n');
+  const grab = (fn, mode) => page.evaluate(async ({ fn, mode }) => {
+    setResidueCase(mode);
+    let blob = null;
+    const keep = window._downloadBlob;
+    window._downloadBlob = b => { blob = b; };
+    try { window[fn](); } finally { window._downloadBlob = keep; }
+    return blob ? await blob.text() : '';
+  }, { fn, mode });
+  const letters = async (fn, mode) => {
+    const text = await grab(fn, mode);
+    const body = fn === 'exportAlignmentAsRtf'
+      ? text.split('\n').filter(l => /\{\\b s[12] /.test(l)).join('').replace(/\{\\b s[12] +\}/g, '').replace(/\\[a-z]+\d*/g, '').replace(/[{} ]/g, '')
+      : text.split(/(?=<text x="2" )/).filter(seg => /^<text x="2" [^>]*>s[12]<\/text>/.test(seg))   // a name, then that row's cells
+          .map(seg => [...seg.replace(/^<text[^>]*>[^<]*<\/text>/, '').matchAll(/<text [^>]*>([^<]*)<\/text>/g)].map(m => m[1]).join('')).join('');
+    return body.replace(/[^A-Za-z]/g, '');
+  };
+  const out = {};
+  for (const fn of ['_exportFullAlignmentSvgFromData', 'exportAlignmentAsRtf']) {
+    const up = await letters(fn, 'upper'), low = await letters(fn, 'lower'), asis = await letters(fn, 'asis');
+    out[fn] = { up: up.slice(0, 40), low: low.slice(0, 40), asis: asis.slice(0, 40),
+      ok: up.length >= 32 && /acgtACGT/.test(asis) && /ACGTACGTACGTACGT/.test(up) && !/[a-z]{4}/.test(up) && /acgtacgtacgtacgt/.test(low) && !/[A-Z]{4}/.test(low) };
+  }
+  const pass = Object.values(out).every(o => o.ok);
+  return { pass, detail: JSON.stringify(out).slice(0, 500) };
+});
+
+// Audit 2026-11-10, L21 (U as T). What used to go wrong: Sort by similarity compared letters as written, so
+// an RNA copy of the first row (U for T) counted every U as a difference and was ranked below a DNA row
+// with real differences.
+check('Audit L21: Sort by similarity counts U as T', async (page) => {
+  await loadFasta(page, '>ref\nACGTTTACGTTTACGTTTAC\n>far\nACGTTTACGAAAACGAAAAC\n>rna\nACGUUUACGUUUACGUUUAC\n>near\nACGTTTACGTTTACGTTAAC\n');
+  await page.evaluate(() => sortBySimilarity());
+  await page.waitForTimeout(600);
+  const order = await page.evaluate(() => state.seqs.map(q => q.header));
+  const pass = JSON.stringify(order) === JSON.stringify(['ref', 'rna', 'near', 'far']);
+  return { pass, detail: JSON.stringify(order) };
+});
+
+// ---- Findings of the local GLM check of v334-v337 (dev-tools/audit-2026-11-11/glm-check.md) ----
+
+// GLM 1111 Q15b #0-#2. What used to go wrong: the Sequence editor's Apply set a row's name to the first word of
+// its long name. A row whose name is not that first word (NEXUS "Homo_sapiens", long name "Homo sapiens") was
+// renamed to "Homo" by changing one residue, and its name colour, kept under the old name, was gone. In the
+// editor for several rows a record line ">" with no name gave the row an empty name.
+check('GLM 1111 Q15b: the Sequence editor keeps a row\'s name and colour when its long name was not changed, one row and several; an empty ">" keeps the old name', async (page) => {
+  const setText = (t) => page.evaluate((t) => { const ta = document.getElementById('seqEditTextarea'); ta.value = t; ta.dispatchEvent(new Event('input', { bubbles: true })); }, t);
+  const getText = () => page.evaluate(() => document.getElementById('seqEditTextarea').value);
+  const apply = async () => { await page.evaluate(() => document.getElementById('seqEditApplyBtn').click()); await page.waitForTimeout(250); };
+  const prep = async () => {
+    await loadFasta(page, '>a\nACGTACGT\n>b\nACGTACGA\n>c\nACGTACGC\n');
+    await page.evaluate(() => {
+      state.seqs[0].header = 'Homo_sapiens'; state.seqs[0].fullHeader = 'Homo sapiens';
+      state.seqs[1].header = 'Pan_troglodytes'; state.seqs[1].fullHeader = 'Pan troglodytes';
+      colourState.mappings.set('Homo_sapiens', '#ff0000'); colourState.mappings.set('Pan_troglodytes', '#0000ff');
+      renderAlignment();
+    });
+  };
+  const rows = () => page.evaluate(() => ({ names: state.seqs.map(q => q.header + '|' + q.fullHeader + '|' + q.seq), col: [colourState.mappings.get(state.seqs[0].header) || null, colourState.mappings.get(state.seqs[1].header) || null] }));
+  const out = {};
+  await prep();
+  await page.evaluate(() => openSeqEditor(0));
+  await setText((await getText()).replace('ACGTACGT', 'ACGTACGG'));
+  await apply();
+  out.one = await rows();
+  await prep();
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1]); renderAlignment(); openSeqEditorMulti(); });
+  await setText((await getText()).replace('ACGTACGA', 'ACGTACTA'));
+  await apply();
+  out.multi = await rows();
+  // a changed long name still renames (first word), as before
+  await prep();
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1]); renderAlignment(); openSeqEditorMulti(); });
+  await setText('>Homo sapiens\nACGTACGT\n>Gorilla gorilla\nACGTACGA');
+  await apply();
+  out.renamed = await rows();
+  // ">" with no name
+  await prep();
+  await page.evaluate(() => { state.selectedRows = new Set([0, 1]); renderAlignment(); openSeqEditorMulti(); });
+  await setText('>\nACGTACGT\n>Pan troglodytes\nACGTACGA');
+  await apply();
+  out.empty = await rows();
+  const pass = out.one.names[0] === 'Homo_sapiens|Homo sapiens|ACGTACGG' && out.one.col[0] === '#ff0000'
+    && out.multi.names[0] === 'Homo_sapiens|Homo sapiens|ACGTACGT' && out.multi.names[1] === 'Pan_troglodytes|Pan troglodytes|ACGTACTA' && out.multi.col.join() === '#ff0000,#0000ff'
+    && out.renamed.names[1] === 'Gorilla|Gorilla gorilla|ACGTACGA' && out.renamed.names[0].startsWith('Homo_sapiens|')
+    && out.empty.names[0].split('|')[0] !== '' && out.empty.names[0].split('|')[1] !== '';
+  return { pass, detail: JSON.stringify(out).slice(0, 700) };
+});
+
+// GLM 1111 Q12 #0, #1. What used to go wrong (since v334, which keeps rows of digits as states): a FASTA record
+// of gaps only, written with position numbers at the line ends ("------ 6" / "------ 12"), was taken for a row
+// of states and the numbers became residues (15 long beside rows of 12). Same in the Sequence editor. A
+// number after a gap-only line that equals the count of residues so far is a position number.
+// Q11b #0, #1: Stockholm blocks that are not separated by a blank line gave one row per block line, and a
+// "#=GC" line between two lines with one name in a block joined them. The 0/1 matrix (H6) and two rows with
+// one name in a block (H7) must stay as they are.
+check('GLM 1111 Q12, Q11b: numbered all-gap FASTA records keep their length; Stockholm blocks without blank lines join; state rows and same-name rows stay', async (page) => {
+  const r = await page.evaluate(() => {
+    const rows = a => a ? a.map(q => q.header + '=' + q.seq) : null;
+    return {
+      fasta: rows(parseFasta('>a\nACGTAC 6\nACGTAC 12\n>b\n------ 6\n------ 12\n')),
+      lead: rows(parseFasta('>a\n1 ACGTAC\n7 ACGTAC\n>b\n1 ------\n7 ------\n')),
+      states: rows(parseFasta('>t1\n0101 0011\n>t2\n01-1 ?011\n')),
+      editor: [_seqEditCleanSeq('------ 6'), _seqEditCleanSeq('0101 0011'), _seqEditCleanSeq('acgt 4')],
+      stoNoBlank: rows(parseStockholm('# STOCKHOLM 1.0\na ACGT\nb AC-T\na GGGG\nb GG-G\n//\n')),
+      stoGc: rows(parseStockholm('# STOCKHOLM 1.0\nx ACGT\n#=GC RF xxxx\nx AC-T\n\nx GGGG\n#=GC RF xxxx\nx GG-G\n//\n')),
+      stoSameName: rows(parseStockholm('# STOCKHOLM 1.0\nx ACGT\nx AC-T\n\nx GGGG\nx GG-G\n//\n')),
+      stoBlocks: rows(parseStockholm('# STOCKHOLM 1.0\na ACGT\nb AC-T\n#=GC SS_cons ....\n\na GGGG\nb GG-G\n#=GC SS_cons ....\n//\n')),
+    };
+  });
+  const want = {
+    fasta: ['a=ACGTACACGTAC', 'b=------------'], lead: ['a=ACGTACACGTAC', 'b=------------'],
+    states: ['t1=01010011', 't2=01-1?011'], editor: ['------', '01010011', 'acgt'],
+    stoNoBlank: ['a=ACGTGGGG', 'b=AC-TGG-G'], stoGc: ['x=ACGTGGGG', 'x=AC-TGG-G'],
+    stoSameName: ['x=ACGTGGGG', 'x=AC-TGG-G'], stoBlocks: ['a=ACGTGGGG', 'b=AC-TGG-G'],
+  };
+  const bad = Object.keys(want).filter(k => JSON.stringify(r[k]) !== JSON.stringify(want[k]));
+  return { pass: !bad.length, detail: bad.length ? JSON.stringify(Object.fromEntries(bad.map(k => [k, r[k]]))) : 'all eight inputs read as expected' };
+});
+
+// GLM 1111 Q16 #3. What used to go wrong: during Add & Align every row goes to the aligner as r<number>; when
+// the aligner returned the wrong number of residues for a PASTED row, the error named it by that id ("r12"),
+// because the id was looked up among the alignment's rows only. The message now carries the pasted name.
+check('GLM 1111 Q16: an aligner error during Add & Align names a pasted row by its name, not by its row id', async (page) => {
+  await loadFasta(page, '>s1\nACGTACGT\n>s2\nACGTACGA\n');
+  const r = await page.evaluate(() => {
+    _alignRowIds = true;
+    _alignIdNames = new Map([['r0', 's1'], ['r1', 's2'], ['r2', 'my pasted row']]);
+    let msg = '';
+    try { _alignerRestoreResidues('>r0\nACGTACGT\n>r1\nACGTACGA\n>r2\nACGTAC\n', [{ name: 'r0', seq: 'ACGTACGT' }, { name: 'r1', seq: 'ACGTACGA' }, { name: 'r2', seq: 'ACGTACGG' }]); }
+    catch (e) { msg = e.message; }
+    finally { _alignRowIds = false; _alignIdNames = null; }
+    return { msg, after: _alignIdName('r2') };
+  });
+  const pass = /"my pasted row"/.test(r.msg) && !/"r2"/.test(r.msg) && r.after === 'r2';
+  return { pass, detail: JSON.stringify(r) };
+});
+
+// GLM 1111 Q15a #1 and Q17 #0 (owner 2026-11-11: spaces to "_" with a warning; undo as proposed).
+// Q15a: Rename accepted "my seq"; Save wrote ">my seq", and a FASTA name ends at the first space, so the row
+// came back as "my" (and other programs read "my"). Rename now writes "my_seq" and says so.
+// Q17: renaming row s2 to the name of another row (B) moved s2's colour onto the name B; Undo left it there,
+// so the first B kept s2's colour and its own was lost.
+check('GLM 1111 Q15a, Q17: Rename turns spaces into _ with a note; undoing a rename onto another row\'s name gives that row its colour back', async (page) => {
+  await loadFasta(page, '>B\nACGTACGT\n>s2\nACGTACGA\n>s3\nACGTACGC\n');
+  const out = {};
+  out.did = await page.evaluate(() => _commitSeqRename(2, '  my  new seq '));
+  out.name = await page.evaluate(() => state.seqs[2].header + '|' + state.seqs[2].fullHeader);
+  out.msg = await page.evaluate(() => document.getElementById('statusMessage').textContent);
+  out.reloaded = await page.evaluate(() => parseFasta(_alignmentFastaText()).map(q => q.header).join(','));
+  await page.evaluate(() => {
+    colourState.mappings.clear();
+    colourState.mappings.set('B', '#ff0000'); colourState.mappings.set('s2', '#0000ff');
+    applyColourToSeqNames(colourState.mappings); renderAlignment(); document.activeElement?.blur?.();
+  });
+  await page.evaluate(() => _commitSeqRename(1, 'B'));
+  out.afterRename = await page.evaluate(() => colourState.mappings.get('B'));
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(300);
+  out.afterUndo = await page.evaluate(() => ({ names: state.seqs.map(q => q.header).join(','), B: colourState.mappings.get('B') || null, s2: colourState.mappings.get('s2') || null }));
+  await page.keyboard.press('Control+y'); await page.waitForTimeout(300);
+  out.afterRedo = await page.evaluate(() => ({ names: state.seqs.map(q => q.header).join(','), B: colourState.mappings.get('B') || null }));
+  const pass = out.did === true && out.name === 'my_new_seq|my_new_seq' && /space/i.test(out.msg) && /_/.test(out.msg)
+    && out.reloaded === 'B,s2,my_new_seq'
+    && out.afterUndo.names === 'B,s2,my_new_seq' && out.afterUndo.B === '#ff0000' && out.afterUndo.s2 === '#0000ff'
+    && out.afterRedo.names === 'B,B,my_new_seq' && out.afterRedo.B === out.afterRename;
+  return { pass, detail: JSON.stringify(out) };
 });
 
 async function main() {

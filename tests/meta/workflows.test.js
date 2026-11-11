@@ -25,6 +25,11 @@ if (!named || !testsName || named.trim().replace(/^["']|["']$/g, '') !== testsNa
 if (!/branches:\s*\[main\]/.test(onBlock)) problems.push('the workflow_run trigger is not limited to main');
 if (!/workflow_run\.conclusion\s*==\s*'success'/.test(pages)) problems.push('the deploy job does not require the test run to have passed');
 if (!/ref:\s*\$\{\{\s*github\.event\.workflow_run\.head_sha/.test(pages)) problems.push('the deploy does not check out the commit that was tested');
+// An older commit's deploy run must not cancel the running deploy of a newer one: with cancel-in-progress the old
+// run cancelled it and then skipped itself as superseded, so the site stayed on an even older version
+// (GLM check 2026-11-11, Q19). Runs queue; the "newest" step already keeps old from going over new.
+const conc = (pages.match(/^concurrency:\n((?:[ \t]+.*\n)+)/m) || [])[1] || '';
+if (!/cancel-in-progress:\s*false/.test(conc)) problems.push('pages.yml lets a later-started deploy run cancel the one in progress (cancel-in-progress must be false)');
 if (!/^\s+push:/m.test(tests)) problems.push('tests.yml does not run on a push, so nothing would ever deploy');
 
 if (problems.length) {

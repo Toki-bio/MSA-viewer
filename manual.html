@@ -378,12 +378,13 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <tr><td>BAM</td><td><code>.bam</code></td><td>Read in the browser; open the reference sequence first. Recognised by content. See 2.5</td></tr>
     <tr><td>CRAM</td><td><code>.cram</code></td><td>Decoded in the browser against the loaded reference; open the reference sequence first. Recognised by content. See 2.5</td></tr>
     <tr><td>Clustal</td><td><code>.aln</code></td><td>Clustal-format output of ClustalW, Clustal Omega, MUSCLE, MSAProbs, ProbCons and Kalign; residue counts and conservation lines are ignored</td></tr>
-    <tr><td>PHYLIP</td><td><code>.phy</code></td><td>Strict (10-character names) and relaxed (names of any length), each sequential or interleaved; the layout that gives every sequence the declared length is used</td></tr>
-    <tr><td>NEXUS</td><td><code>.nex</code>, <code>.nexus</code></td><td>NEXUS <code>DATA</code> or <code>CHARACTERS</code> block, sequential or interleaved; <code>[comments]</code> are ignored and quoted taxon names may contain spaces</td></tr>
+    <tr><td>PHYLIP</td><td><code>.phy</code></td><td>Strict (10-character names) and relaxed (names of any length), each sequential or interleaved; the layout that gives every sequence the declared length is used. A binary 0/1 matrix (rows of states) loads as states</td></tr>
+    <tr><td>NEXUS</td><td><code>.nex</code>, <code>.nexus</code></td><td>NEXUS <code>DATA</code> or <code>CHARACTERS</code> block, sequential or interleaved; <code>[comments]</code> are ignored and quoted taxon names may contain spaces; a <code>DATATYPE=STANDARD</code> matrix of 0/1 states is kept as states</td></tr>
     <tr><td>Stockholm</td><td><code>.sto</code>, <code>.stockholm</code></td><td>Pfam/Rfam Stockholm, sequential or interleaved; <code>#=GF</code>/<code>#=GS</code>/<code>#=GR</code>/<code>#=GC</code> lines are skipped</td></tr>
     <tr><td>GenBank</td><td><code>.gb</code>, <code>.gbk</code></td><td>Flatfile import from <code>LOCUS</code>/<code>FEATURES</code>/<code>ORIGIN</code>; every record in a multi-record file loads as its own row; records can also be fetched by accession (1.2)</td></tr>
     <tr><td>AB1</td><td><code>.ab1</code></td><td>Sanger chromatogram (dropped or picked, also in Add Sequences): the called bases become one row, and right-click → <strong>View Chromatogram...</strong> shows the trace. Recognised by content</td></tr>
   </table>
+  <p><strong>Missing data and state matrices.</strong> A <code>?</code> stays <code>?</code> when a file loads and in Save and snapshots: it means missing data, while <code>N</code> or <code>X</code> means any residue. Rows made only of digits, <code>?</code>, <code>-</code> and <code>.</code> (a presence/absence or restriction-site matrix in NEXUS, PHYLIP or FASTA) are kept as rows of states and survive Save and snapshots; digits beside letters are still treated as position numbers and dropped.</p>
   <p>A3M (lowercase insert states expanded into columns) and PIR/NBRF files are read as FASTA variants. EMBL flatfiles are not supported and are refused ("No valid sequences found").</p>
 
   <h3 id="gs-interface">1.4 Interface Layout</h3>
@@ -442,7 +443,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <p>A feature panel that has an example shows a small <strong>Example</strong> pill (in a window, beside its title bar buttons). A click opens the example in a new tab: the viewer loads the example file, runs the feature, and shows a closable note that says what the result is. The same thing can be opened by a link: <code>?url=&lt;file&gt;&amp;title=&lt;title&gt;&amp;demo=&lt;id&gt;</code>. The ids are <code>kmer</code>, <code>snp</code>, <code>bicluster</code>, <code>trim</code>, <code>autocolour</code>, <code>macse</code>, <code>codon</code>, <code>dotplot</code>, <code>repeats</code>, <code>resites</code>, <code>reads</code> and <code>tree</code>. An id the viewer does not know does nothing. The example files are in the <code>examples</code> folder of the repository.</p>
 
   <h3 id="gs-updates">1.7 Recent Updates</h3>
-  <p><strong>Version 1.34.1</strong> (build v337) and <strong>1.34.0</strong> (build v330). Builds v244 to v337 also changed these things:</p>
+  <p><strong>Version 1.34.1</strong> (build v338) and <strong>1.34.0</strong> (build v330). Builds v244 to v338 also changed these things:</p>
   <ul>
     <li><strong>Worked examples</strong> - many feature panels have a small <em>Example</em> pill that opens a ready-made example in a new tab. It uses a link of the form <code>?url=&lt;file&gt;&amp;title=&lt;title&gt;&amp;demo=&lt;id&gt;</code> (and <code>&amp;reads=</code> for the SAM/BAM example). The files come from the <code>examples</code> folder (see &ldquo;Worked examples&rdquo; below).</li>
     <li><strong>Find a function</strong> - the bar in the menu row, or <kbd>Ctrl+K</kbd>, lists every function of the program (&sect;10).</li>
@@ -522,7 +523,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li><strong>Faster editing</strong> - Move and Slide dragging, entering and leaving Edit Mode, and undo/redo are no longer slowed by alignment size; conservation shading now drops only on residues a drag actually moved, instead of the whole row.</li>
     <li><strong>Variable-sites threshold &amp; breakpoint markers</strong> - percentage-based slider (0–100%) controls minimum variation for a column to be shown; breakpoint separators (⋮) indicate where conserved columns were hidden.</li>
     <li><strong>BLAST search with database management</strong> - right-click BLAST search with dynamic local database creation (makeblastdb), add/remove databases from the viewer, batch BLAST against all databases.</li>
-    <li><strong>Restriction Sites</strong> search in the Search menu, with 50 common enzymes, manual site input, IUPAC ambiguity support, and optional reverse-complement search.</li>
+    <li><strong>Restriction Sites</strong> search in the Search menu, with 50 common enzymes, manual site input, IUPAC ambiguity support; both strands are always searched.</li>
     <li><strong>Reads view mode</strong> for SAM/BAM data with IGV-style read packing and CIGAR-expanded match/mismatch colouring.</li>
     <li><strong>Tree Builder</strong> supports both UPGMA and Neighbor-Joining with three distance correction models (p-distance, Jukes-Cantor, Kimura 2-parameter).</li>
     <li><strong>Statistics</strong> follows esl-alistat and esl-alipid (with documented tooltips), and opens in a window you can move, resize from any edge, maximise or dock. Its matrices can be copied (whole or selected columns) or saved as CSV, TSV or Excel, and pairs past a threshold listed and saved as a table, names or sequences.</li>
@@ -561,10 +562,10 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     realignment (Seq Type <em>Protein</em>) and export all work on protein. The dot plot,
     SNP and k-mer grouping, the Repeat/TSD finder and codon analysis were designed for
     nucleotides: they run on amino-acid letters, but strand options, inverted repeats
-    and TSDs have no meaning there. In-browser MAFFT drops a terminal <code>*</code>, and a
-    sequence containing <code>U</code> (selenocysteine) or <code>O</code> (pyrrolysine) makes
-    it return no alignment (the viewer says so and keeps the alignment); replace them with
-    <code>X</code> before realigning.
+    and TSDs have no meaning there. MAFFT itself drops <code>*</code> and does not know <code>U</code> (selenocysteine),
+    <code>O</code> (pyrrolysine) or, in nucleotides, letters that are no base code: the viewer sends
+    such residues as <code>X</code> (or <code>N</code>) and writes the original letters back into
+    the result, so they are kept.
   </p>
   <p>
     GenBank flatfiles can also be pasted directly. Records beginning with <code>LOCUS</code>
@@ -576,7 +577,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <h3 id="in-file">2.2 File Loading</h3>
   <p>
     The drop zone accepts files via drag-and-drop. Click the zone to open a file picker.
-    Supported file types are detected by extension and content inspection. After loading,
+    The file type is recognised from the content, not the extension (1.2). After loading,
     the file name appears in the top-right info panel.
   </p>
 
@@ -707,13 +708,33 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li>Codon realignment (<strong>MACSE&hellip;</strong>) is for coding sequences: rows with stop codons in every
       frame (a gene with its flanks or introns) get a warning first, since an aligner explains each stop with
       frameshifts. To realign one gene, click it on the annotation track (its columns are selected) and use
-      Realign selected region. Its summary counts frameshifts inside the sequences, not the padding of
+      <strong>Realign Block</strong> (Alignment menu). Its summary counts frameshifts inside the sequences, not the padding of
       fragments that start or end inside a codon.</li>
   </ol>
   <p>
     The optional server also exposes <code>POST /api/bam2sam</code> (see 11.4), which converts a BAM or
     CRAM file on the server's disk to SAM text with <code>samtools view -h</code>, for scripted use.
   </p>
+
+  <h4 id="in-genome">Genome view: a whole genome with its reads</h4>
+  <p>
+    <strong>Open genome...</strong> in the Input menu opens a genome without loading it whole. Select the
+    reference FASTA and its <code>.fai</code> together, and optionally a BAM with its <code>.bai</code>
+    (make the indexes with <code>samtools faidx</code> and <code>samtools index</code>). Only the part you
+    look at is read from the files, so a human chromosome opens at once.
+  </p>
+  <ul>
+    <li>The <strong>chromosome list</strong> beside the zoom buttons changes chromosome; the jump box takes
+      <code>chr:position</code>, a position, or a chromosome name. <strong>Close genome</strong> closes the
+      genome and its reads.</li>
+    <li>Reads are shown as in the Reads view (above), read for the window on screen. A view whose reads would
+      cost more than 16 MB of compressed BAM shows coverage of nothing: zoom in and the reads appear. The
+      sample row is called for the window on screen.</li>
+    <li>Opening a genome closes the open alignment (the viewer asks first) and clears Undo.</li>
+    <li>Not read in the genome view yet: CRAM and <code>.crai</code>, <code>.csi</code> indexes, a compressed
+      FASTA (<code>.fa.gz</code>), VCF rows, and Sample &rarr; row. The viewer says which file is missing or
+      not readable when the selection does not fit.</li>
+  </ul>
 
   <h3 id="in-snapshot">2.6 Snapshots (Save &amp; Load)</h3>
   <p>
@@ -910,8 +931,8 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <ul>
     <li><strong>Not NCBI BLAST</strong> - the search always runs in the browser worker; the viewer
-        never queries <code>blastn</code>. Adding a database from the viewer (§3.5) runs
-        <code>makeblastdb</code> on the server, so that step needs the NCBI BLAST+ suite installed</li>
+        never queries <code>blastn</code>. Adding a database from the viewer (§3.5) stores its FASTA on the server; when the
+        NCBI BLAST+ suite is installed the server also runs <code>makeblastdb</code> on it, but the viewer's search does not need that</li>
     <li><strong>Server required</strong> - BLAST needs the Node.js server running. On the
         static GitHub Pages deployment the dialog reports
         &quot;Server not available - no BLAST databases&quot;</li>
@@ -927,7 +948,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   </p>
   <ul>
     <li><strong>List databases</strong> - view all configured databases with availability status</li>
-    <li><strong>Add database</strong> - upload a FASTA file, set a name and description; the server runs <code>makeblastdb</code> to index it</li>
+    <li><strong>Add database</strong> - upload a FASTA file, set a name and description; the server stores it and, when BLAST+ is installed, runs <code>makeblastdb</code> to index it</li>
     <li><strong>Delete database</strong> - remove a database and its BLAST index files (<code>.nhr</code>, <code>.nin</code>, <code>.nsq</code>, etc.)</li>
   </ul>
   <p>
@@ -1699,7 +1720,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     <li>The popup includes 50 commonly used enzymes, each labelled with its recognition sequence.</li>
     <li>Use <strong>Manual enzymes/sites</strong> for additional enzymes. Enter comma-separated values such as <code>BspQI:GCTCTTC, GAATTC</code>.</li>
     <li>IUPAC ambiguity codes are supported in recognition sites, for example <code>GANTC</code>.</li>
-    <li>Enable <strong>Search both strands</strong> to include reverse-complement matches (nucleotide alignments; a regular expression or a protein alignment is searched on the forward strand only, and the result message says so).</li>
+    <li>Both strands are always searched in a nucleotide alignment, whatever <strong>Search both strands</strong> says: an enzyme with a non-palindromic site (BsaI, <code>GGTCTC</code>) is also found where the site lies on the other strand (<code>GAGACC</code>). A protein alignment is searched on the forward strand only, and the result message says so.</li>
     <li>Results are highlighted in the alignment and reported as unique sites, affected sequences, and raw row matches.</li>
   </ul>
 
@@ -1931,7 +1952,7 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
     not available elsewhere:
   </p>
   <ul>
-    <li><strong>Rename sequence</strong> - inline edit of the sequence name. Colour mappings are automatically migrated to the new name.</li>
+    <li><strong>Rename sequence</strong> - inline edit of the sequence name. Colour mappings are automatically migrated to the new name. Spaces in the typed name are stored as <code>_</code> (the message says so), because a FASTA name ends at the first space.</li>
     <li><strong>Replace N selected with consensus</strong> - replaces all selected sequences with a single consensus row (available when ≥2 sequences are selected)</li>
     <li><strong>Add consensus below</strong> - inserts a consensus row after the selected group</li>
     <li><strong>Re-align against consensus</strong> - realigns a single sequence against the alignment consensus profile using MAFFT (available in the right-click menu under analysis tools)</li>
@@ -2239,10 +2260,11 @@ img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; marg
   <table>
     <tr><th>Format</th><th>Use</th><th>Notes</th></tr>
     <tr><td>FASTA</td><td>Downstream tools</td><td>Toolbar <strong>Save</strong> button (full alignment); selected sequences by Copy Sel / New Tab</td></tr>
-    <tr><td>RTF</td><td>Microsoft Word</td><td>Input menu <strong>RTF</strong>. Monospace, per-residue shading, scale ruler, consensus line. Blocks of the Block Size width; in Block view, of the width the blocks have on screen (narrower when the window holds fewer columns). Every column, including hidden ones and those Variable sites only hides</td></tr>
-    <tr><td>SVG</td><td>Publication figures</td><td>Input menu <strong>SVG</strong> / <strong>Full SVG</strong>. Vector graphics. <em>Viewport</em> saves what is on screen, overlays included, in Full, Block and Canvas (in Block and Canvas it is drawn from what the canvas draws: names, ruler, consensus, residues with their colours and marks, translation rows, annotation track, selections); <em>Full</em> draws every sequence and column from the data in the screen's colours (ruler, names, consensus; search and annotation overlays are not included), in any view mode, wrapped like the blocks on screen in Block view and unwrapped in the others; it holds every column, including hidden ones</td></tr>
+    <tr><td>RTF</td><td>Microsoft Word</td><td>Input menu <strong>RTF</strong>. Monospace, per-residue shading, scale ruler, consensus line. Blocks of the Block Size width; in Block view, of the width the blocks have on screen (narrower when the window holds fewer columns). Every column, including hidden ones and those Variable sites only hides. Letters follow the Case setting (aa | Aa | AA)</td></tr>
+    <tr><td>SVG</td><td>Publication figures</td><td>Input menu <strong>SVG</strong> / <strong>Full SVG</strong>. Vector graphics. <em>Viewport</em> saves what is on screen, overlays included, in Full, Block and Canvas (in Block and Canvas it is drawn from what the canvas draws: names, ruler, consensus, residues with their colours and marks, translation rows, annotation track, selections); <em>Full</em> draws every sequence and column from the data in the screen's colours (ruler, names, consensus; search and annotation overlays are not included), in any view mode, wrapped like the blocks on screen in Block view and unwrapped in the others; it holds every column, including hidden ones, and its letters follow the Case setting</td></tr>
     <tr><td>Print</td><td>Paper, PDF</td><td>The browser's Print (<kbd>Ctrl+P</kbd>). In Block view every block is printed, as vector graphics scaled to the paper's width, in place of the page (a block taller than a page is split between rows); above 400,000 residues the blocks from the one in view are printed up to that size, under a note, and <strong>Full SVG</strong> has the rest. In Canvas view the print is the picture on screen; Full (hidden) prints the page as it is</td></tr>
     <tr><td>Newick (<code>.nwk</code>)</td><td>Phylogenetics tools</td><td>Tree window <strong>Download .nwk</strong>: UPGMA or Neighbor-Joining tree with branch lengths, whichever the Tree window last built</td></tr>
+    <tr><td>Tables and pictures of the windows</td><td>Spreadsheets, figures</td><td>Statistics: matrix as CSV, TSV or Excel, pairs as a table or FASTA (in the CSV a name starting with <code>=</code>, <code>@</code>, <code>+</code> or <code>-</code> gets a leading apostrophe, so a spreadsheet does not run it as a formula). Variants: <code>.tsv</code>. Dot plot: PNG, SVG and the collection as a table. Tree: SVG or PNG. Translation: Copy AA / Save AA. Row order: a <code>.json</code> file (Order: Export / Import)</td></tr>
     <tr><td>Standalone HTML</td><td>Sharing</td><td>Input menu <strong>Create</strong>: a JSON snapshot plus a self-contained HTML snapshot page with embedded alignment, and a <code>?snapshot=</code> URL on the clipboard (§2.6)</td></tr>
     <tr><td>New tab</td><td>A sub-alignment</td><td>Selected sequences opened as an alignment in a new ViewAlign tab (<kbd>Alt+T</kbd>)</td></tr>
     <tr><td>Clone tab</td><td>This view</td><td>The whole alignment in a new tab exactly as shown here, searches, selections and marks included (Actions &gt; Clone Tab)</td></tr>
@@ -2423,6 +2445,15 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
   </p>
   <pre>node server.js</pre>
   <p>The server listens on port 3000 by default.</p>
+  <div class="note">
+    <strong>Access key.</strong> When it starts, the server prints a link such as
+    <code>http://localhost:3000/?key=...</code> (<code>start-server.bat</code> shows it too). Open that link
+    once in each browser you use; after that <code>http://localhost:3000</code> works there. The key is kept in
+    <code>~/.viewalign/access-key</code>, readable by you only, and stays the same across restarts (delete the
+    file and restart for a new one). Without the key the viewer opens and says so in a note, and the server
+    refuses to read files, reach SSH servers, add or delete databases or run MAFFT/BLAST. This keeps other
+    users and programs on the same computer from using your server.
+  </div>
 
   <h3 id="sv-setup">11.1 Setup</h3>
   <p>Requirements:</p>
@@ -2431,7 +2462,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <li><strong>MAFFT</strong> - only for the <code>/api/mafft</code> endpoint (optional; path set by <code>MAFFT_BIN</code>). The viewer itself realigns in the browser</li>
     <li><strong>BLAST+</strong> - for local BLAST search (optional)</li>
     <li><strong>samtools</strong> - only for the <code>/api/bam2sam</code> endpoint (optional; the viewer reads BAM and CRAM itself)</li>
-    <li><strong>SSH key</strong> - for remote file access (optional)</li>
+    <li><strong>SSH key and PuTTY <code>plink</code></strong> - for remote file access (optional): the server reaches SSH hosts by running <code>plink</code>, which must be on the PATH</li>
   </ul>
   <p>Environment variables:</p>
   <table>
@@ -2440,6 +2471,10 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <tr><td><code>SSH_KEY_PATH</code></td><td>Path to SSH private key for remote access</td></tr>
     <tr><td><code>MAFFT_BIN</code></td><td>Path to the native MAFFT binary used by <code>POST /api/mafft</code></td></tr>
     <tr><td><code>PORT</code>, <code>HOST</code></td><td>Port (default 3000) and bind address (default <code>127.0.0.1</code>; set <code>HOST=0.0.0.0</code> to accept other machines)</td></tr>
+    <tr><td><code>ALLOW_REMOTE_FILE_ACCESS</code></td><td>Reading files, SSH, adding or deleting databases and running MAFFT/BLAST answer only clients on the same machine; <code>1</code> lets other machines use them (they still need the access key)</td></tr>
+    <tr><td><code>LOCAL_FILE_ROOTS</code></td><td>Folders the server may read files from (default: the server folder and your home folder; never hidden folders such as <code>~/.ssh</code>)</td></tr>
+    <tr><td><code>STATIC_SERVE_ALL</code></td><td>The server serves only the viewer's own files, snapshots and added databases; <code>1</code> serves the whole folder (development pages)</td></tr>
+    <tr><td><code>CHILD_OUTPUT_MAX_BYTES</code></td><td>Largest output accepted from a program the server runs (ssh, samtools)</td></tr>
     <tr><td><code>ALLOWED_HOSTS</code>, <code>TAILSCALE_IP</code></td><td>Host names (comma-separated) or a Tailscale address, besides <code>localhost</code>, that requests may use; blocks DNS-rebinding pages</td></tr>
   </table>
 
@@ -2454,8 +2489,9 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
 
   <h3 id="sv-ssh">11.3 SSH Remote Access</h3>
   <p>
-    Fetch alignment files from remote servers via SSH. Configuration is read from
-    the SSH config and key path. Files are read with <code>cat</code> and streamed
+    Fetch alignment files from remote servers via SSH. The servers are listed in
+    <code>ssh-servers.json</code> beside <code>server.js</code> (copy <code>ssh-servers.example.json</code>), and reached with PuTTY's <code>plink</code> and the key path.
+    <strong>Check Queue</strong> in the Input menu loads a file whose path was written to a queue file on the remote host (see <code>REMOTE_PUSH_TO_LOAD_GUIDE.md</code>); the browser never polls by itself. Files are read with <code>cat</code> and streamed
     to the browser - no temporary files on disk.
   </p>
   <div class="note">
@@ -2479,6 +2515,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
 
   <h3 id="sv-security">11.5 Security</h3>
   <ul>
+    <li><strong>Access key</strong> - file, SSH, database and MAFFT/BLAST routes need the key cookie set by the link the server prints (above)</li>
     <li><strong>CORS</strong> - restricted to localhost by default; configurable via <code>CORS_ORIGIN</code></li>
     <li><strong>Request body limit</strong> - capped at 10 MB</li>
     <li><strong>Path traversal</strong> - <code>..</code> and shell metacharacters blocked in file paths</li>
@@ -2577,7 +2614,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     </tr>
     <tr>
       <td><strong>NCBI BLAST</strong></td>
-      <td><code>makeblastdb</code> indexing of databases added through the optional server (§3.5); the viewer's own search (§3.4) runs in the browser and does not call BLAST</td>
+      <td><code>makeblastdb</code> indexing of databases added through the optional server (§3.5), and <code>blastn</code> behind the server's <code>/api/blast</code> endpoints, when BLAST+ is installed; the viewer's own search (§3.4) runs in the browser and does not call BLAST</td>
       <td>Public Domain</td>
       <td>Camacho C et al. (2009) <em>BMC Bioinformatics</em> 10:421</td>
     </tr>
@@ -2592,9 +2629,9 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
       <td>Nicholas KB et al. (1997) <em>EMBNEW.NEWS</em> 4:14</td>
     </tr>
     <tr>
-      <td><strong>IGV</strong></td>
-      <td>Compact read-packing view mode</td>
-      <td>Robinson JT et al. (2011) <em>Nat Biotechnol</em> 29:24-26</td>
+      <td><strong>IGV</strong> and <strong>igv.js</strong></td>
+      <td>The Reads view follows IGV's conventions: compact read packing, bases faded by quality (Phred 5 to 20), strand colours, downsampling of deep coverage, sort by base. Original code; no IGV source is included.</td>
+      <td>Robinson JT et al. (2011) <em>Nat Biotechnol</em> 29:24-26; Robinson JT et al. (2023) <em>Bioinformatics</em> 39:btac830</td>
     </tr>
     <tr>
       <td><strong>MACSE</strong></td>
@@ -2603,17 +2640,17 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     </tr>
     <tr>
       <td><strong>Clustal</strong></td>
-      <td>ClustalW conservation shading scheme and .aln format parser</td>
-      <td>Sievers F et al. (2011) <em>Mol Syst Biol</em> 7:539</td>
+      <td>The &ldquo;Clustal-like&rdquo; amino-acid colours group residues by property after the ClustalX colour scheme (in ViewAlign's own colours; the conservation shading is ViewAlign's own, by identity); reader for the <code>.aln</code> format</td>
+      <td>Thompson JD et al. (1997) <em>Nucleic Acids Res</em> 25:4876-4882 (ClustalX); Sievers F et al. (2011) <em>Mol Syst Biol</em> 7:539</td>
     </tr>
     <tr>
       <td><strong>BLOSUM62</strong></td>
-      <td>Amino acid similarity matrix for conservation grouping</td>
+      <td>Amino-acid scoring matrix of the codon aligners (the fast engine and the MACSE port) and of MAFFT in protein mode (MAFFT's other protein matrix offered is JTT 200: Jones DT, Taylor WR, Thornton JM (1992) <em>CABIOS</em> 8:275-282)</td>
       <td>Henikoff S, Henikoff JG (1992) <em>PNAS</em> 89:10915-10919</td>
     </tr>
     <tr>
       <td><strong>Jalview</strong></td>
-      <td>Zappo colour scheme, conservation shading model</td>
+      <td>The &ldquo;Jalview-like&rdquo; amino-acid colours: residues grouped by physico-chemical property in the manner of Jalview's property schemes, in ViewAlign's own colours (it is not Jalview's Zappo table)</td>
       <td>Waterhouse AM et al. (2009) <em>Bioinformatics</em> 25:1189-1191</td>
     </tr>
     <tr>
@@ -2638,6 +2675,33 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     </tr>
   </table>
 
+  <h3>Published Methods Implemented Here</h3>
+  <p>Each of these is ViewAlign's own code written from the published description.</p>
+  <table>
+    <tr><th>Method</th><th>Where</th><th>Citation</th></tr>
+    <tr><td>UPGMA</td><td>Tree window; guide trees of the grouping tools</td><td>Sokal RR, Michener CD (1958) <em>Univ Kansas Sci Bull</em> 38:1409-1438</td></tr>
+    <tr><td>Neighbor-Joining</td><td>Tree window</td><td>Saitou N, Nei M (1987) <em>Mol Biol Evol</em> 4:406-425</td></tr>
+    <tr><td>Jukes-Cantor and Kimura two-parameter distances</td><td>Statistics, Tree window</td><td>Jukes TH, Cantor CR (1969) in <em>Mammalian Protein Metabolism</em>, pp. 21-132; Kimura M (1980) <em>J Mol Evol</em> 16:111-120</td></tr>
+    <tr><td>Equal-angle layout of unrooted trees</td><td>Tree window</td><td>Felsenstein J (2004) <em>Inferring Phylogenies</em>, Sinauer</td></tr>
+    <tr><td>Local alignment with affine gaps; E-values and bit scores</td><td>Sequence search (§3.4), codon aligner</td><td>Smith TF, Waterman MS (1981) <em>J Mol Biol</em> 147:195-197; Gotoh O (1982) <em>J Mol Biol</em> 162:705-708; Karlin S, Altschul SF (1990) <em>PNAS</em> 87:2264-2268. The score colour bands follow NCBI BLAST's graphic summary.</td></tr>
+    <tr><td>Centre-star multiple alignment</td><td>Fast codon aligner</td><td>Gusfield D (1993) <em>Bull Math Biol</em> 55:141-154</td></tr>
+    <tr><td>Gaps as missing data or as a state</td><td>Variable sites, 2D grouping</td><td>Simmons MP, Ochoterena H (2000) <em>Syst Biol</em> 49:369-381</td></tr>
+    <tr><td>Copy number of tandem repeats as in Tandem Repeats Finder</td><td>Repeat Finder</td><td>Benson G (1999) <em>Nucleic Acids Res</em> 27:573-580</td></tr>
+    <tr><td>Phred quality scores</td><td>Reads view, sample row, chromatograms</td><td>Ewing B, Green P (1998) <em>Genome Res</em> 8:186-194</td></tr>
+    <tr><td>HGVS-style names of changes (<code>c.</code>, <code>p.</code>)</td><td>Variants window</td><td>den Dunnen JT et al. (2016) <em>Hum Mutat</em> 37:564-569</td></tr>
+    <tr><td>SubFam k-mer ordering and workflow</td><td>Group by k-mer reproduces the row order of SubFam; Peel follows its workflow</td><td><a href="https://github.com/Toki-bio/SubFam" target="_blank">github.com/Toki-bio/SubFam</a></td></tr>
+  </table>
+
+  <h3>Colours and Reference Data</h3>
+  <ul>
+    <li><strong>ColorBrewer</strong> - the heat-map palettes YlOrRd, RdBu and Greens and the distinct group colours are colour specifications from ColorBrewer by Cynthia A. Brewer, Pennsylvania State University (<a href="https://colorbrewer2.org" target="_blank">colorbrewer2.org</a>), Apache License 2.0. Harrower M, Brewer CA (2003) <em>Cartogr J</em> 40:27-37</li>
+    <li><strong>Viridis</strong> - colour map by St&eacute;fan van der Walt and Nathaniel Smith for matplotlib (CC0)</li>
+    <li><strong>Colour-blind safe nucleotide colours</strong> - the palette of Okabe M, Ito K (2008) <em>Color Universal Design</em></li>
+    <li><strong>Restriction enzyme sites</strong> - recognition sequences as listed in REBASE: Roberts RJ, Vincze T, Posfai J, Macelis D (2015) <em>Nucleic Acids Res</em> 43:D298-D299</li>
+    <li><strong>Records fetched by accession</strong> come from NCBI through the E-utilities service</li>
+    <li><strong>AB1 chromatograms</strong> - read from the Applied Biosystems ABIF file format specification</li>
+  </ul>
+
   <h3>Format Standards</h3>
   <ul>
     <li><strong>FASTA</strong> - Pearson WR, Lipman DJ (1988) <em>PNAS</em> 85:2444-2448</li>
@@ -2645,7 +2709,7 @@ Hsap_AluSx_chr9_12388   Mmus_B2_chr13_40988</pre>
     <li><strong>Clustal</strong> - Thompson JD et al. (1994) <em>Nucleic Acids Res</em> 22:4673-4680</li>
     <li><strong>PHYLIP</strong> - Felsenstein J (1989) <em>Cladistics</em> 5:164-166</li>
     <li><strong>NEXUS</strong> - Maddison DR et al. (1997) <em>Syst Biol</em> 46:590-621</li>
-    <li><strong>Stockholm</strong> - Sonnhammer ELL et al. (1998) <em>Proc ISMB</em> 6:175-182. The parser reads the format used by HMMER and Pfam. HMMER source is not included.</li>
+    <li><strong>Stockholm</strong> - the alignment format of Pfam and HMMER: Sonnhammer ELL, Eddy SR, Durbin R (1997) <em>Proteins</em> 28:405-420. The parser reads the format used by HMMER and Pfam. HMMER source is not included.</li>
     <li><strong>NCBI Genetic Codes</strong> - <a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi" target="_blank">NCBI Taxonomy</a></li>
   </ul>
 

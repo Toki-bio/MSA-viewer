@@ -3,7 +3,7 @@
 // RELEASE_VERSION is the release version (package.json, CITATION.cff, git tag
 // v<RELEASE_VERSION>, tests/meta/version.test.js); BUILD_TAG counts every deploy.
 const RELEASE_VERSION = '1.34.1';
-const BUILD_TAG = 'v337';
+const BUILD_TAG = 'v339';
 // Sentinel row index for consensus-line nucleotide selection (not in state.seqs).
 const CONSENSUS_ROW_INDEX = -1;
 const COL_SEL_EDGE = '#4fc3f7';   // the edge line of a run of selected columns (styles.css .col-sel-l / .col-sel-r)
@@ -8418,7 +8418,7 @@ function parsePhylip(text) {
     if (nSeqs < 1 || alignLen < 1) return null;
     const body = lines.slice(1);
     // Whitespace and position numbers some writers put at line ends are not residues
-    const strip = s => s.replace(/[\s\d]/g, '');
+    let strip = s => s.replace(/[\s\d]/g, '');
     const splitName = {
         relaxed: l => { const m = l.trim().match(/^(\S+)\s+(.*)$/); return m ? [m[1], strip(m[2])] : null; },
         strict: l => l.length > 10 ? [l.substring(0, 10).trim(), strip(l.substring(10))] : null
@@ -8459,6 +8459,16 @@ function parsePhylip(text) {
     const results = attempts.map(a => a());
     const fits = got => got && got.length === nSeqs && got.every(e => e.seq.length === alignLen);
     entries = results.find(fits) || null;
+    if (!entries) {
+        // A matrix of states (binary 0/1, restriction sites): its digits are the data, not position
+        // numbers. Removing them left empty rows and the file was refused (audit L15). Read again keeping
+        // digits; taken only when every row is states and fits the header.
+        const stripLetters = strip;
+        strip = s => s.replace(/\s/g, '');
+        const asStates = attempts.map(a => a()).find(got => fits(got) && got.every(e => /\d/.test(e.seq) && /^[0-9?.\-]+$/.test(e.seq)));
+        if (asStates) return asStates.map(e => ({ header: e.name, fullHeader: e.name, seq: e.seq, gaplessPositions: calculateGaplessPositions(e.seq) }));
+        strip = stripLetters;
+    }
     // A number inside the 10 name columns is part of the name ("Clone 1", "Clone 12"), not a position
     // number: the relaxed reading dropped it and gave three rows named "Clone" (audit M2). Taken only
     // when the strict reading gives the same sequences and its names are the relaxed ones plus digits.
@@ -8687,6 +8697,21 @@ function parseStockholm(text) {
     const lines = text.split(/\r?\n/);
     const rows = _interleavedRows();
     let inAlign = false;
+    // Where blocks end (GLM check 2026-11-11, Q11b). A file that separates its blocks with blank lines: at the
+    // blank lines only (a "#=GC" line between two lines with one name does not split them). A file with no
+    // blank line between sequence lines: at a "#=GC" line, and where the first name of the block comes again
+    // after other names (such a file used to give one row per block line).
+    let seqSeen = false, blankPending = false, blankSeparated = false;
+    for (const l of lines) {
+        const t = l.trim();
+        if (t === '//') break;
+        if (!t) { if (seqSeen) blankPending = true; continue; }
+        if (t.startsWith('#')) continue;
+        if (blankPending) { blankSeparated = true; break; }
+        seqSeen = true;
+    }
+    let blockFirst = null, blockNames = new Set();
+    const endBlock = () => { rows.blockEnd(); blockFirst = null; blockNames = new Set(); };
     for (let li = 0; li < lines.length; li++) {
         const t = lines[li].trim();
         if (t === '//') {
@@ -8696,12 +8721,15 @@ function parseStockholm(text) {
             break;
         }
         if (/^# STOCKHOLM\b/.test(t) || t.startsWith('#=GF')) { inAlign = true; continue; }
-        if (!t) { rows.blockEnd(); continue; }   // a blank line ends a block
-        if (t.startsWith('#=GC')) { rows.blockEnd(); continue; }   // per-column lines close a block too
+        if (!t) { endBlock(); continue; }   // a blank line ends a block
+        if (t.startsWith('#=GC')) { if (!blankSeparated) endBlock(); continue; }   // per-column lines close a block where no blank lines do
         if (t.startsWith('#')) continue;
         if (!inAlign) continue;
         const m = t.match(/^(\S+)\s+(.+)$/);
         if (!m) continue;
+        if (!blankSeparated && m[1] === blockFirst && blockNames.size > 1) endBlock();
+        if (blockFirst === null) blockFirst = m[1];
+        blockNames.add(m[1]);
         rows.add(m[1], m[2].replace(/\s/g, '').replace(/[.-]/g, '-'));
     }
     if (rows.size === 0) return null;
@@ -8732,6 +8760,17 @@ function _sanitizeFastaSequence(rawSeq, isProtein) {
 // A record made only of digits, ?, - and . (and at least one digit) is a row of character states (a 0/1 or
 // morphological matrix saved from NEXUS), not letters with line numbers: its digits are the data. They used to be
 // deleted as layout, so such a matrix did not survive Save FASTA or a snapshot (audit 2026-11-10, H6).
+// A line of gap symbols only, with the position number some writers put at the line's end ("------ 12") or
+// start ("7 ------"): the number is layout. Without this an all-gap record written that way was taken for a
+// row of states and its numbers became residues (GLM check 2026-11-11, Q12). Only a number that fits the count
+// of residues so far is dropped, so a row of states such as "---- 0101" is not touched.
+function _dropGapLinePositionNumber(line, residuesBefore) {
+    let m = /^([-.?\s]*[-.?])\s+(\d+)$/.exec(line);
+    if (m && +m[2] === residuesBefore + m[1].replace(/\s/g, '').length) return m[1];
+    m = /^(\d+)\s+([-.?][-.?\s]*)$/.exec(line);
+    if (m && +m[1] === residuesBefore + 1) return m[2];
+    return line;
+}
 function _fastaStateRow(rawNoSpace) { return /\d/.test(rawNoSpace) && /^[0-9?.\-]+$/.test(rawNoSpace); }
 function _pushParsedFastaSequence(seqs, header, seq, raw) {
     const cleanHeader = header.replace(/^>/, '').trim().replace(/\s+/g, ' ');
@@ -8869,8 +8908,9 @@ function parseFasta(text) {
                 // Whitespace and digits are layout; any other symbol is a
                 // column (unknown symbols become N/X when sanitised, so the
                 // row keeps its length). '?' is missing data, not a gap.
-                seq += line.replace(/[_~]/g, '-').replace(/[\s\d]/g, '');
-                raw += line.replace(/[_~]/g, '-').replace(/\s/g, '');
+                line = _dropGapLinePositionNumber(line.replace(/[_~]/g, '-'), raw.length);
+                seq += line.replace(/[\s\d]/g, '');
+                raw += line.replace(/\s/g, '');
             }
         }
         if (header) {
@@ -14487,6 +14527,11 @@ function _relabelSeqNameCells(index) {
 // Applies a rename (undoable), relabels the DOM name cells, resizes a "No limit" name
 // column. Returns false when nothing changed.
 function _commitSeqRename(index, newName) {
+    // A FASTA name ends at the first space: "my seq" was saved as ">my seq" and came back, here and in any
+    // other program, as "my". Spaces become "_" and the message says so (owner 2026-11-11; GLM check Q15a).
+    const typed = String(newName || '').trim();
+    newName = typed.replace(/\s+/g, '_');
+    const spaced = newName !== typed;
     if (!newName || !state.seqs[index] || newName === state.seqs[index].header) return false;
     const oldName = state.seqs[index].header;
     pushUndo('rename');
@@ -14503,7 +14548,8 @@ function _commitSeqRename(index, newName) {
         applyNameLengthLive(effectiveNameLength());
         if (isCanvasMode()) renderAlignment();   // Canvas sizes its name column when it renders
     }
-    showMessage('Sequence renamed', 1500);
+    if (spaced) showMessage(`Renamed to "${newName}": spaces were replaced with _ , because a FASTA name ends at the first space`, 6000);
+    else showMessage('Sequence renamed', 1500);
     return true;
 }
 
@@ -17342,10 +17388,13 @@ function sortBySimilarity() {
     if (state.seqs.length < 2) return;
     pushUndo('sort-similarity');
     const ref = state.seqs[0].seq;
+    // U is T in a nucleotide alignment: an RNA copy of the first row was ranked as different at every U (audit L21)
+    const uIsT = !isProteinAlignment();
+    const letter = c => { c = c.toUpperCase(); return uIsT && c === 'U' ? 'T' : c; };
     const scored = state.seqs.map((s, i) => {
         let match = 0, total = 0;
         for (let p = 0; p < ref.length; p++) {
-            const a = ref[p].toUpperCase(), b = (s.seq[p] || '-').toUpperCase();   // soft-masked (lowercase) copies count as identical
+            const a = letter(ref[p]), b = letter(s.seq[p] || '-');   // soft-masked (lowercase) copies count as identical
             if (a !== '-' && a !== '.' && b !== '-' && b !== '.') { total++; if (a === b) match++; }
         }
         return { idx: i, score: total > 0 ? match / total : 0 };
@@ -17461,11 +17510,22 @@ function _dropNoOpUndo(redoBefore) {
 // get their stored colour, and names that it takes away lose theirs (a rename: the colour goes back to
 // the old name). Names present before and after keep the colour they have now: the whole stored set
 // used to be put back, which wiped every colour given after the undone step (audit U4).
-function _restoreNameColours(saved, namesBefore) {
+function _restoreNameColours(saved, namesBefore, countsBefore) {
     if (!saved || !colourState?.mappings) return;
     const namesNow = new Set(state.seqs.map(q => q.header));
     for (const n of namesBefore) if (!namesNow.has(n)) colourState.mappings.delete(n);
     for (const n of namesNow) if (!namesBefore.has(n) && saved.has(n)) colourState.mappings.set(n, saved.get(n));
+    // A name that is there before and after, but on another number of rows: a row was renamed onto it (or
+    // back off it), and the rename moved that row's colour onto the name. The name gets the colour it had
+    // in the restored state; else the other row with that name kept the renamed row's colour (GLM check Q17).
+    if (countsBefore) {
+        const countsNow = new Map();
+        for (const q of state.seqs) countsNow.set(q.header, (countsNow.get(q.header) || 0) + 1);
+        for (const [n, c] of countsNow) {
+            if (!countsBefore.has(n) || countsBefore.get(n) === c) continue;
+            if (saved.has(n)) colourState.mappings.set(n, saved.get(n)); else colourState.mappings.delete(n);
+        }
+    }
 }
 
 function pushUndo(type) {
@@ -17663,9 +17723,10 @@ function undoDelete(quiet) {
     if (last.colStateBefore) redoEntry.colStateAfter = _snapshotColumnState();
     state.redoHistory.push(redoEntry);
     const namesBeforeUndo = new Set(state.seqs.map(q => q.header));
+    const nameCountsBeforeUndo = new Map(); for (const q of state.seqs) nameCountsBeforeUndo.set(q.header, (nameCountsBeforeUndo.get(q.header) || 0) + 1);
     state.seqs = _undoRestoreSeqs(last.seqs);
     if (typeof _statsInvalidate === 'function') _statsInvalidate(false);
-    _restoreNameColours(last.colours, namesBeforeUndo);
+    _restoreNameColours(last.colours, namesBeforeUndo, nameCountsBeforeUndo);
     _restoreGroupOrder(last.groupOrder);
     if (last.colStateBefore) _restoreColumnState(last.colStateBefore);
     state.selectedRows = last.selectedRows || new Set();
@@ -17708,9 +17769,10 @@ function redoAction(quiet) {
     undoEntry.groupOrder = state.clusterResults?.clusters ? state.clusterResults.clusters.slice() : null;
     state.deletedHistory.push(undoEntry);
     const namesBeforeRedo = new Set(state.seqs.map(q => q.header));
+    const nameCountsBeforeRedo = new Map(); for (const q of state.seqs) nameCountsBeforeRedo.set(q.header, (nameCountsBeforeRedo.get(q.header) || 0) + 1);
     state.seqs = _undoRestoreSeqs(next.seqs);
     if (typeof _statsInvalidate === 'function') _statsInvalidate(false);
-    _restoreNameColours(next.colours, namesBeforeRedo);
+    _restoreNameColours(next.colours, namesBeforeRedo, nameCountsBeforeRedo);
     _restoreGroupOrder(next.groupOrder);
     if (next.colStateAfter) _restoreColumnState(next.colStateAfter);
     state.selectedRows = next.selectedRows || new Set();
@@ -20194,6 +20256,14 @@ function _exportCanvasViewportSvg() {
 
 // Full-alignment SVG built from the data with the screen's colours (see
 // _makeCellStyleProbe); works in every view mode, including windowed views.
+// A row's letters as the Case setting shows them (aa | Aa | AA). The full SVG and the RTF export wrote the
+// stored letters, so the file did not look like the screen (audit L16). Colours are still judged on the
+// stored letter; the consensus row keeps its own case, as on screen.
+function _exportCaseText(seq) {
+    const mode = state.residueCase || 'asis';
+    return mode === 'upper' ? seq.toUpperCase() : mode === 'lower' ? seq.toLowerCase() : seq;
+}
+
 function _exportFullAlignmentSvgFromData() {
     const L = _exportLayout();
     const fontSize = parseFloat(getComputedStyle(alignmentContainer).fontSize) || 13;
@@ -20233,7 +20303,7 @@ function _exportFullAlignmentSvgFromData() {
             if (L.consensus && L.consensusPosition === 'top') consensusLine(start, end);
             for (const q of state.seqs) {
                 drawName((q.header || '').substring(0, L.nameLen));
-                drawCells(q.seq, start, end, p => _exportCellClass(q.seq[p] || '-', L.conservation[p], L.config), false);
+                drawCells(_exportCaseText(q.seq), start, end, p => _exportCellClass(q.seq[p] || '-', L.conservation[p], L.config), false);
                 y += lineH;
             }
             if (L.consensus && L.consensusPosition === 'bottom') consensusLine(start, end);
@@ -20338,7 +20408,7 @@ function exportAlignmentAsRtf() {
                 const q = state.seqs[i];
                 const name = pad(q.header || `Seq${i + 1}`, L.nameLen);
                 body.push(`{\\b ${_rtfEscape(name)} }` +
-                    cells(q.seq, start, end, p => _exportCellClass(q.seq[p] || '-', L.conservation[p], L.config), false) + '\\line');
+                    cells(_exportCaseText(q.seq), start, end, p => _exportCellClass(q.seq[p] || '-', L.conservation[p], L.config), false) + '\\line');
             }
             if (L.consensus && L.consensusPosition === 'bottom') consensusLine();
             body.push('\\line');
@@ -26203,7 +26273,15 @@ function _alignIdRow(id) {
     const m = _alignRowIds && /^r(\d+)$/.exec(String(id).split(/\s+/)[0]);
     return m ? state.seqs[+m[1]] || null : null;
 }
-function _alignIdName(id) { const r = _alignIdRow(id); return r ? (r.fullHeader || r.header) : id; }
+// Add & Align sends pasted rows too, which are no rows of the alignment yet: their names are kept here while it
+// runs, so that an error names a pasted row and not "r12" (GLM check 2026-11-11, Q16).
+let _alignIdNames = null;
+function _alignIdName(id) {
+    const key = String(id).split(/\s+/)[0];
+    if (_alignRowIds && _alignIdNames && _alignIdNames.has(key)) return _alignIdNames.get(key);
+    const r = _alignIdRow(id);
+    return r ? (r.fullHeader || r.header) : id;
+}
 
 function _codonAlignOpts(fasta) {
     const num = (id, dflt) => { const v = parseFloat(el(id)?.value); return isNaN(v) ? dflt : v; };
@@ -27330,10 +27408,11 @@ function addSequencesAndAlign() {
     closeAddSequencesModal();
 
     _alignRowIds = true;
+    _alignIdNames = new Map([...sourceById].map(([id, q]) => [id, q.fullHeader || q.header]));
     let run;
     try { run = _mafftAlignWithUi(fasta, extraArgs, 'Adding sequences and aligning with MAFFT...'); }
-    catch (err) { _alignRowIds = false; throw err; }
-    run.finally(() => { _alignRowIds = false; }).then(result => {
+    catch (err) { _alignRowIds = false; _alignIdNames = null; throw err; }
+    run.finally(() => { _alignRowIds = false; _alignIdNames = null; }).then(result => {
         // no result (cancelled, or refused because the rows changed meanwhile): nothing changed, no undo step (audit L9)
         if (!result) { _dropNoOpUndo(redoBeforeAdd); return; }
         const aligned = parseMafftOutput(result);
@@ -27627,7 +27706,9 @@ function closeSeqEditor() {
 // "1 acgtacgtac gtacgtacgt" used to keep them as residues; audit M13). A record made only of digits
 // and gap signs is a row of character states and keeps its digits (as in parseFasta).
 function _seqEditCleanSeq(text) {
-    const compact = String(text || '').replace(/\s+/g, '');
+    // line by line, so that a position number beside a gap-only line is seen as one (GLM check 2026-11-11, Q12)
+    let compact = '';
+    for (const line of String(text || '').split('\n')) compact += _dropGapLinePositionNumber(line.trim(), compact.length).replace(/\s+/g, '');
     return _fastaStateRow(compact) ? compact : compact.replace(/\d+/g, '');
 }
 function _getSeqEditSequence() {
@@ -27637,7 +27718,7 @@ function _getSeqEditSequence() {
     let seq = '';
     for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed.startsWith('>')) seq += trimmed;
+        if (!trimmed.startsWith('>')) seq += trimmed + '\n';
     }
     return _seqEditCleanSeq(seq);
 }
@@ -27659,7 +27740,7 @@ function _getSeqEditMultiFasta() {
             currentHeader = trimmed.substring(1).trim();
             currentSeq = '';
         } else {
-            currentSeq += trimmed;
+            currentSeq += trimmed + '\n';
         }
     }
     if (currentHeader !== null) {
@@ -27808,9 +27889,17 @@ function seqEditApply() {
             if (idx < 0 || idx >= state.seqs.length) continue;
             let seq = entries[i].seq;
             if (padCheckbox && padCheckbox.checked && alignLen > 0) seq = _seqEditFitWidth(seq, alignLen);
-            const fullH = entries[i].header;
-            state.seqs[idx].header = fullH.split(/\s+/)[0];
-            state.seqs[idx].fullHeader = fullH;
+            // The name changes only when the record's long name was changed. A row whose name is not the first
+            // word of its long name (NEXUS "Homo_sapiens" / "Homo sapiens") was renamed to "Homo" by any Apply
+            // and lost its name colour; a ">" with no name gave an empty name (GLM check 2026-11-11, Q15b).
+            const was = state.seqs[idx].fullHeader || state.seqs[idx].header;
+            const fullH = entries[i].header || was;
+            if (fullH !== was) {
+                const oldName = state.seqs[idx].header;
+                state.seqs[idx].header = fullH.split(/\s+/)[0];
+                state.seqs[idx].fullHeader = fullH;
+                _migrateColourMapping(oldName, state.seqs[idx].header);
+            }
             state.seqs[idx].seq = seq;
             state.seqs[idx].gaplessPositions = calculateGaplessPositions(seq);
         }
@@ -27820,7 +27909,7 @@ function seqEditApply() {
         for (let i = updateCount; i < entries.length; i++) {
             let seq = entries[i].seq;
             if (padCheckbox && padCheckbox.checked && updatedAlignLen > 0) seq = _seqEditFitWidth(seq, updatedAlignLen);
-            const fullH = entries[i].header;
+            const fullH = entries[i].header || 'unnamed';
             state.seqs.push({
                 header: fullH.split(/\s+/)[0],
                 fullHeader: fullH,
@@ -27874,7 +27963,9 @@ function seqEditApply() {
         }
     }
     if (!newFullHeader) newFullHeader = 'sequence';
-    const newHeader = newFullHeader.split(/\s+/)[0];
+    // an unchanged long name keeps the row's name (see the note in the several-rows branch above)
+    const keepName = !isFreeform && _seqEditTargetObjs[0] && newFullHeader === openedAs;
+    const newHeader = keepName ? _seqEditTargetObjs[0].header : newFullHeader.split(/\s+/)[0];
 
     // Pad or trim if checkbox is checked
     const padCheckbox = document.getElementById('seqEditPadGaps');
@@ -27898,6 +27989,7 @@ function seqEditApply() {
         showMessage("New sequence added!", 2000);
     } else {
         pushUndo('seqedit');
+        if (state.seqs[index].header !== newHeader) _migrateColourMapping(state.seqs[index].header, newHeader);
         state.seqs[index].header = newHeader;
         state.seqs[index].fullHeader = newFullHeader;
         state.seqs[index].seq = seq;

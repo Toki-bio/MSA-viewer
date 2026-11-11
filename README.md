@@ -9,7 +9,12 @@ No installation, no build step, no framework dependencies.
 
 - **Ten input formats with auto-detection**: FASTA, MSF, Clustal, PHYLIP, NEXUS, Stockholm,
   GenBank flatfile, ABI (AB1) chromatograms, SAM, and BAM/CRAM (read in the browser onto an open reference);
-  GenBank/RefSeq records can also be fetched by accession
+  GenBank/RefSeq records can also be fetched by accession. `?` (missing data) is kept, and binary 0/1
+  state matrices (NEXUS, PHYLIP, FASTA) load as rows of states
+- **Genome view**: open a whole genome (FASTA with `.fai`, optionally BAM with `.bai`) and read only the
+  part on screen
+- **Reads and variants**: a sample row called from the reads, a Variants window with the effect of each
+  change on annotated genes, VCF rows
 - **Four view modes**: Canvas (the default view at every size, viewport-culled), Block (wrapped
   bands drawn by the Canvas renderer; the B button in the view switch), Reads (a read viewer for mapped
   SAM/BAM/CRAM data: zoom, sort, colour, group, pairs, gene and VCF rows) and Full (the alignment as
@@ -37,7 +42,10 @@ No installation, no build step, no framework dependencies.
   gaps, so the track follows the alignment. Load from a file, a URL, or `?bed=<url>`; with
   codon analysis on, each annotated CDS is translated in its own frame and strand
 - **More analysis**: dot plots with region detection, repeat/TSD finder, UPGMA and neighbour-joining trees,
-  regex motif search, 50 restriction enzyme sites
+  regex motif search, 50 restriction enzyme sites, a Statistics window (identity and distance matrices,
+  alignment summary), grouping by k-mers, by SNPs and in 2D, a Group explorer
+- **Working with large alignments**: Find a function (`Ctrl+K`), side-by-side panes and linked views,
+  Clone Tab, hidden columns, saved selections
 - **Publication export**: SVG (viewport or full), Word-compatible RTF with per-residue
   conservation shading, FASTA, Newick
 - **Shareable snapshots**: save and reopen a viewer state as JSON, standalone HTML, or URL
@@ -78,8 +86,8 @@ refuses to read files, reach SSH servers, change databases or run MAFFT/BLAST, s
 same computer cannot use your server. Delete the key file and restart the server for a new key.
 
 Adds:
-- Hosted BLAST databases, searched with NCBI blastn when it is installed (the BLAST-like
-  search described above runs in the browser without a server)
+- Hosted sequence databases for the search (the BLAST-like search described above always runs in the
+  browser; the server stores the databases and, when BLAST+ is installed, indexes them with `makeblastdb`)
 - Remote SSH file loading
 
 ## Remote File Loading Setup
@@ -180,7 +188,7 @@ ViewAlign is released under the MIT License (`LICENSE`), except the MACSE port (
 `macse-dp-wasm.js`; Ranwez et al. 2011, 2018), which is under MACSE's CeCILL 2.1 licence (`LICENSE-MACSE`). The port
 runs in its own worker and talks to the rest of ViewAlign only by messages. The in-browser MAFFT (`disttbfast.*`) is
 under MAFFT's BSD licence (`LICENSE-MAFFT`). `THIRD_PARTY_NOTICES.md` lists every bundled component and data set with
-its licence.
+its licence. The manual's Credits section (13) cites the programs and published methods ViewAlign follows.
 
 The GitHub Pages site publishes only the files listed in `tools/build-site.sh` (viewer, manual, examples, licences).
 

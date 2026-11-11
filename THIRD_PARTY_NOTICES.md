@@ -28,6 +28,15 @@ the Software, running in a separate address space and calling it), which
 Article 5.3.3 allows to be distributed under its own licence. The MACSE port
 itself, including any change to it, stays under CeCILL 2.1.
 
+## Colour specifications
+
+| What | Where | Licence |
+|---|---|---|
+| ColorBrewer palettes YlOrRd, RdBu, Greens and the distinct group colours (Cynthia A. Brewer, Pennsylvania State University, colorbrewer2.org) | colour values in `script.js` (Statistics heat map, group colours) | Apache License 2.0 |
+| Viridis colour map (Stéfan van der Walt and Nathaniel Smith, matplotlib) | colour values in `script.js` | CC0 |
+
+This product includes color specifications and designs developed by Cynthia Brewer (http://colorbrewer.org/).
+
 ## Example and test data
 
 | Files | Source | Licence |

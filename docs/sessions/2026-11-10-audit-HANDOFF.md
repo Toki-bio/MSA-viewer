@@ -125,6 +125,38 @@ GLM task 21: can any protected route be reached without the cookie (method overr
 `routePath` does not normalise, a route missing from `FILE_ACCESS_ROUTES` / `changesThisMachine`)? Is the key
 ever written to a log, an error reply or a served file?
 
+## What build v338 changed
+
+Checks "Audit L15", "Audit L16", "Audit L21" in `tests/regression/run-all.js`.
+
+- **L15** `parsePhylip`: when no reading fits with digits removed, the file is read again keeping digits and taken
+  when every row is states (digits, `?`, `-`, `.`) and fits the header: binary 0/1 PHYLIP loads.
+- **L16** the full SVG and the RTF export write the letters as the Case setting shows them (`_exportCaseText`).
+  The Full-view viewport SVG is not changed.
+- **L21, part** Sort by similarity counts U as T in nucleotide alignments. A short fragment still ranks by its
+  identity over shared columns (owner's decision what the ranking should be).
+
+## What build v339 changed (findings of the GLM check of v334-v337)
+
+Report: `dev-tools/audit-2026-11-11/glm-check.md`. Checks "GLM 1111 Q15b", "GLM 1111 Q12, Q11b", "GLM 1111 Q16" in
+`tests/regression/run-all.js`; `tests/meta/workflows.test.js`.
+
+- **Q15b #0-#2** `seqEditApply`: a row keeps its name when the record's long name was not changed; a changed name
+  takes its colour along; `>` with no name keeps the old name (new rows: "unnamed").
+- **Q19 #0** pages.yml `cancel-in-progress: false`.
+- **Q12 #0, #1** `_dropGapLinePositionNumber`: a number beside a gap-only line that fits the residue count is
+  layout (parseFasta, `_seqEditCleanSeq`).
+- **Q11b #0, #1** `parseStockholm`: in a file with blank lines between blocks only those end a block; in a file
+  without, `#=GC` and the return of the block's first name (after other names) do.
+- **Q16 #3** `_alignIdNames`: an aligner error during Add & Align names a pasted row.
+
+- **Q15a #1** (owner 2026-11-11) Rename turns spaces into `_` and says so. **Q17 #0** undo or redo of a rename
+  onto a name another row has gives that name the colour of the restored state (`_restoreNameColours`, by row
+  counts per name). Check "GLM 1111 Q15a, Q17".
+
+Left for the owner: and the UNSURE items of the report (databases
+and snapshots readable without the access key; the key cookie is shared by all localhost ports).
+
 ## What the GLM check should look at
 
 Read-only tasks, each answered with exact code quotes:
@@ -196,7 +228,7 @@ Not done yet:
   currently-visible rows after scroll", the consensus windowing check, the windowed Full selection check).
   Making them strict needs the owner to say what the right behaviour is.
 - **T7, T8** runner gaps (exit code 3 collision, suites without a per-check limit) and fixed waits.
-- **L15** binary 0/1 PHYLIP refused. **L8** two start texts. **L11, L16, L21-L23, L25, L30-L40**, **U6, U7, U10,
+- **L8** two start texts. **L11, L21 (fragment ranking), L22, L23, L25, L30-L40**, **U6, U7, U10,
   U13, U16, U17**: see the report.
 - Reads: a SAM opened as an alignment still shows `=` as a letter; unclear errors for a cut-off BAM.
 - Server: Windows path forms in `/api/local-cat` are untested; dev pages give 404 under the server unless
