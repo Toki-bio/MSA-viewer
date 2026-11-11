@@ -20,7 +20,7 @@ HOW TO READ THE CODE (strict):
 5. Follow calls: before reporting that something is missing (a guard, a check, a cleanup), find the callers and
    the callees in the function lists and read them. Many guards live in the caller.
 
-WHAT TO REPORT:
+WHAT TO REPORT (plain text or Markdown in the chat; no HTML page, no web app, no charts):
 - Only defects that a user can reach. For each: ID, severity (high/medium/low), file:line, the code quoted
   exactly (copied from the piece, not retyped), the concrete input or clicks that trigger it, what happens, and
   what should happen.
