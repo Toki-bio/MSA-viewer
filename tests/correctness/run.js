@@ -267,9 +267,11 @@ check('A3M: lowercase insertions are expanded so rows line up', async (page) => 
   return { pass: ok && /A3M detected/.test(r.message), detail: JSON.stringify(r) };
 });
 
+// Until v335 this check required ? to load as N. The owner chose on 2026-11-11 (audit M4, L12) that ? stays ?:
+// it means missing data, N means any base, and PHYLIP and NEXUS files rely on the difference.
 check('FASTA: unknown punctuation keeps its column (becomes N), ? is missing data', async (page) => {
   const r = await openBytes(page, 't.fa', Buffer.from('>a\nACGT!ACGT\n>b\nACGT?ACGT\n'));
-  return { pass: r.seqs[0] === 'ACGTNACGT' && r.seqs[1] === 'ACGTNACGT', detail: JSON.stringify(r.seqs) };
+  return { pass: r.seqs[0] === 'ACGTNACGT' && r.seqs[1] === 'ACGT?ACGT', detail: JSON.stringify(r.seqs) };
 });
 
 check('FASTA: header words "#NEXUS" or "begin data" do not switch the format', async (page) => {
